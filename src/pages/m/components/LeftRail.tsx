@@ -32,11 +32,13 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Landmark,
+  Monitor,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { M } from "../theme";
 import { useMobileThemeMode } from "../lib/theme-mode";
 import { getCurrentUser, clearAuth } from "@/lib/auth";
+import { setPreferDesktop } from "@/lib/prefer-desktop";
 import { usePermissions } from "@/lib/use-permission";
 import { DASHBOARD_NAV_HREF } from "../screens/dashboard/dashboard-m-lib";
 import { FINANCE_NAV_GATES } from "../finance-menu";
@@ -97,6 +99,9 @@ export function LeftRail({
     <nav
       style={{
         width: compact ? 72 : 198,
+        // Eases the auto-compact / manual toggle; --m-motion-standard is 0.01ms under
+        // prefers-reduced-motion (theme-vars.css), so no extra media query is needed.
+        transition: "width var(--m-motion-standard, 180ms) ease",
         flex: "none",
         height: "100dvh",
         background: "#F3EEE6",
@@ -265,6 +270,11 @@ export function LeftRail({
         })}
       </div>
 
+      {/* Tablets have no NavDrawer, so this is their route to the desktop app.
+          The flag is set before the full-page navigation so the desktop shell's
+          mobile gate lets this device through (BUG-2026-10-02-250). */}
+      <DesktopAppRow compact={compact} />
+
       {/* Dark/Light mode toggle — CHANGELOG: "Fold 版在左栏底部". */}
       <ThemeModeRow compact={compact} />
 
@@ -339,6 +349,48 @@ export function LeftRail({
         </button>
       </div>
     </nav>
+  );
+}
+
+function DesktopAppRow({ compact = false }: { compact?: boolean }) {
+  return (
+    <a
+      href="/dashboard"
+      onClick={() => setPreferDesktop(true)}
+      aria-label="Open desktop app"
+      title={compact ? "Open desktop app" : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: compact ? 0 : 8,
+        justifyContent: compact ? "center" : "flex-start",
+        minHeight: 44,
+        padding: compact ? "8px" : "8px 10px",
+        textDecoration: "none",
+        WebkitTapHighlightColor: "transparent",
+        marginTop: 4,
+      }}
+    >
+      <span
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 7,
+          background: M.divider,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flex: "none",
+        }}
+      >
+        <Monitor size={14} color={M.taupe} strokeWidth={1.9} />
+      </span>
+      {compact ? null : (
+        <span style={{ flex: 1, fontSize: 12, color: M.raisin, fontWeight: 600 }}>
+          Open desktop app
+        </span>
+      )}
+    </a>
   );
 }
 

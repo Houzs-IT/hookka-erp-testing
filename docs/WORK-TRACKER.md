@@ -1,4 +1,15 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-23**: mobile Sales Orders responsive migration entry added (branch `feat/m-sales-responsive`, local commits only); nothing else re-checked.
+> **Last verified: 2026-10-22**: branch `fix/charts-tick-type` — build:strict is green on
+> staging again; it had TWO pre-existing errors, the second hidden behind the first. Three
+> unrelated test failures remain red and are named in the entry.
+ fix/mobile-tablet-routing
+> **Last verified: 2026-10-22**: mobile/tablet routing entry added (branch `fix/mobile-tablet-routing`, PR #1098); nothing else re-checked.
+
+> **Last verified: 2026-10-22**: branch `fix/staging-red-tests` — staging's three red tests
+> are green. One was a permission hole, not a stale test: a menu row gated only by
+> `navGateAny` was never filtered, so Finance showed to everyone on the phone surface.
+ staging
 > **Last verified: 2026-10-22**: mobile Invoices v2 round 6 (AR Aging live for verified SUPER_ADMIN / ADMIN) added; nothing else re-checked.
 > **Last verified: 2026-10-22**: mobile Invoices v2 round 5 (AR Aging access rule, Overdue findings) added to the Invoices v2 entry; nothing else re-checked.
 > **Last verified: 2026-10-22**: mobile Invoices v2 round 4 (two-tab, AR Aging gated) result added to the Invoices v2 entry; nothing else re-checked.
@@ -348,6 +359,34 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-23 — 🔵 Phase 2 step 1: Sales Orders list + detail, one adaptive UI for phone, foldable and tablet (branch `feat/m-sales-responsive` from `upstream/staging` `c36fa4ddc`; frontend only) — local commits, not pushed, awaiting the owner's visual check
+
+Owner decisions (2026-10-23): (1) Option A: one adaptive Sales Orders UI; (2) the approved 390px phone design and its read-only behaviour are unchanged; (3) the phone design language is the foundation for tablet, the legacy tablet appearance is not kept; (4) all existing Sales Order functionality stays, including the tablet actions and Paid / Balance / Payments; (5) the iPad sidebar is unchanged (no hamburger, no More flyout); (6) Products is NOT added to the tablet rail; (7) nothing from Invoices v2 is touched; (8) no API, backend, RBAC or unrelated-module change.
+
+Built: a markup fingerprint of the phone list + detail (fixture data) taken BEFORE any change and enforced by `tests/m-sales-phone-golden.test.mjs`; the tablet actions and Paid / Balance maths extracted unchanged (`lib/so-actions.ts`, `lib/use-so-actions.ts`, `lib/so-financials.ts`); `SalesDetailPhone` renamed `SalesOrderDetail` and made adaptive (Payments block, Customer PO Date row, status actions in `SalesOrderActionBar`, two columns at a >= 760px container); the Sales list uses the phone design at every width (`ResponsiveGrid` columns, one column in a phone and in the split list pane) with the Sort kept inside `SalesFilterSheet` on wider screens. `SalesDetailTablet` stays, unused, until parity is verified in a non-production environment.
+
+Known differences to review: the old tablet list card showed Order date (now only in the detail); the tablet Sort moved into the filter sheet; action buttons now use the Delivery detail's bar and buttons; toasts use the shared mobile toast (3.2 s / 5.2 s) instead of the old 2.4 s one; cancel / undo still use `window.confirm`.
+
+UNVERIFIED: how any of it looks at 768 / 1024 / 1180 (no browser run: screenshots needed); the tablet actions against a non-production environment (no mutation was run against production); whether `POST /api/delivery-orders` (Issue Delivery Order) is permission-gated as expected.
+
+
+## 2026-10-22 — 🟡 iPads and Android tablets enter `/m` by default (branch `fix/mobile-tablet-routing` → `staging`; routing only, PR #1098) — local commit `efec1cecf`, awaiting the owner's review
+
+Status 2026-10-22: committed locally with `--no-verify` (owner-approved) because the pre-commit `npm test` fails on three tests that also fail on a clean `upstream/staging` (`tests/m-finance-menu`, `tests/mobile-nav-drawer`, `tests/export-all-pages`); `tsc` also has two pre-existing errors outside `/m` (`dashboard-b/charts.tsx:312`, `dashboards/EmployeesView.tsx:189`). Not caused by this change. Responsive-layout work is a separate branch (`feat/mobile-responsive-foundation`) and is not part of this one.
+
+Owner decisions (2026-10-22):
+
+1. 🔵 Phones, foldables, iPads and Android tablets use `/m` by default; desktop and laptop stay on the desktop ERP.
+2. 🔵 iPadOS 13+ is detected as a `Macintosh` UA plus `navigator.maxTouchPoints > 1`; ambiguous devices stay on desktop.
+3. 🔵 The `sessionStorage` desktop preference is kept as is.
+4. 🟡 Desktop-to-`/m` deep-link mapping is deferred (a redirect lands on bare `/m`).
+5. 🟡 No hinge-specific logic; foldables use the existing width modes.
+6. 🔵 Tablets get an "Open desktop app" link (new `DesktopAppRow` in `LeftRail.tsx`) and a way back (the "Back to mobile app" bar now shows for every mobile-class device).
+7. 🔵 No backend, API, auth or RBAC change; no redirect loop (the redirect is one-way and the flag is set before the full-page navigation).
+
+Files: `src/lib/prefer-desktop.ts` (`isMobileClassDevice`, `shouldRedirectToMobile(ua, preferDesktop, maxTouchPoints?)`), `src/layouts/DashboardLayout.tsx`, `src/pages/m/components/LeftRail.tsx`, `tests/prefer-desktop.test.mjs` (UA matrix, 9 tests). Described in `docs/CODEBASE-MAP.md` (Install-as-an-app / phone-desktop switch row).
+
+Still unverified: real iPad, Android tablet and foldable hardware (detection is unit-tested with sample user agents only); the sign-in -> `/m` and "Open desktop app" -> "Back to mobile app" round trip on a device.
 ## 2026-10-21 — 🔵 Mobile Invoices v2 list + Invoice PDF card (/m/invoices, phone + tablet) from Claude Design `Invoices v2.dc.html` (branch `design/mobile-invoicesv2` → `staging`; frontend only) — in progress, uncommitted
 
 Status 2026-10-21: branch = `upstream/staging` `8027136f`, clean. Read-only audits (list, then PDF card) reported to the owner; decisions below are the owner's.
@@ -8365,3 +8404,85 @@ each verified by re-running on a clean worktree of `origin/staging`:
   `GET /revenue-split`, which is at `:2681` — a 326-line drift this branch
   cannot have caused. Corrected here because it was holding the anchor gate
   red; named so it is not mistaken for part of this change.
+
+## 2026-10-22 — build:strict is green on staging again (two errors, both pre-existing)
+
+Branch `fix/charts-tick-type`, to `staging`. Found while checking what a
+release would need: `npx tsc -p tsconfig.app.json --noEmit` was FAILING on the
+base branch, which CLAUDE.md names as a non-negotiable before every push. Two
+errors, neither from the branch that found them.
+
+**1. `dashboard-b/charts.tsx:312` — a hand-written tick prop type.** The inline
+`<XAxis tick={...}>` renderer declared `{ x: number; y: number; payload: {
+value: string } }`. Recharts types a tick's `x`/`y` as `number | string`, so
+the function was not assignable to `TickProp<XAxisTickContentProps>`. Fixed by
+taking the library's own exported `XAxisTickContentProps` and narrowing at the
+point of use (`String(payload.value)`), rather than re-declaring a shape
+Recharts never promised — the same mistake would come back the next time the
+library's types move. Swept the repo first: this was the only hand-written
+inline tick.
+
+**2. `dashboards/EmployeesView.tsx:189` — a missing import.** `KPI_ROW` is
+exported from `dashboard-shared-lib.ts` and used in two views;
+`AllOverviewView` imports it, `EmployeesView` uses it without importing. This
+one only became visible after #1 was fixed, because tsc stops reporting past
+a point — so "one error" on the base branch was really two.
+
+**MEASURED, not assumed**: both reproduce on a clean worktree of
+`origin/staging`; neither file is touched by any DEV-05 work. After the fix
+`tsc` exits 0 with zero errors.
+
+**Still red on staging, NOT addressed here** (each also reproduced on a clean
+`origin/staging` worktree): three test failures — `export-all-pages`
+("column text filters keep their modes"), `m-finance-menu` ("the Finance row"),
+`mobile-nav-drawer` ("module search filters by label"). They are unrelated to
+the type system and belong to their own owners; naming them so the next person
+reading "staging is green" knows exactly what that does and does not cover.
+## 2026-10-22 — staging's three red tests, and the permission hole one of them was reporting
+
+Branch `fix/staging-red-tests`, to `staging`. Three tests had been failing on
+the base branch; they were taken one at a time rather than as a batch to
+silence, which is how the second turned out not to be a test problem at all.
+
+**1. `export-all-pages` — a test harness missing an import.** The test lifts
+two slices of `data-grid.tsx` text into a temp module and imports it. The
+slices call `decodeRange` / `inRange`, which the real file imports from
+`@/lib/grid-layout`; the slices do not carry that import, so the module threw
+`ReferenceError: decodeRange is not defined` the moment a column filter ran.
+Fixed by loading the REAL `grid-layout.ts` into the temp module by path —
+it has no imports of its own, so nothing had to be stubbed. A stub would have
+let the two drift while the test kept passing.
+
+**2. `m-finance-menu` — NOT a stale test. A permission hole.**
+`visibleModuleGroups` (`src/pages/m/nav.ts`) filtered on `navGate` alone:
+
+```ts
+g.items.filter((i) => !i.navGate || isNavAllowed(i.navGate))
+```
+
+A row carrying only `navGateAny` satisfies `!i.navGate`, so it was **never
+filtered** — it showed to everyone. **Finance is exactly such a row**
+(`navGateAny: FINANCE_NAV_GATES`, `nav.ts:162`). `LeftRail.tsx:202` has always
+checked both gates, so the same entry was correctly hidden on the tablet rail
+and visible in the phone drawer. The filter used to live inline in
+`screens/More.tsx` and lost the `navGateAny` half when it moved here; the test
+was still asserting against `More.tsx`, so it reported the loss as a missing
+string rather than as the hole it is.
+
+Fixed in `nav.ts` to check both, mirroring `LeftRail`. **Whether the /m/finance
+route itself is authorised server-side is UNMEASURED here** — this change
+restores the menu gate, nothing more, and a hidden menu entry is not an access
+control.
+
+**3. `mobile-nav-drawer` — a genuinely stale expectation, plus the reason #2
+survived.** The search case still listed the "People & Finance" group as
+`["Employees", "Receivables"]`; Finance joined that group later. Updated. More
+usefully, the gate loop in the same file read
+`.filter((i) => i.navGate)` — so the one row gated purely by `navGateAny` was
+never gate-tested, which is precisely how #2 lived. It now filters
+`i.navGate || i.navGateAny`, and with every gate denied Finance must disappear.
+
+**Verified**: full suite 6644/6647, **0 failures** (was 3). `build:strict`
+still reports `dashboard-b/charts.tsx:312` on this branch — that is the
+pre-existing error fixed separately on `fix/charts-tick-type`, which this
+branch is not based on.

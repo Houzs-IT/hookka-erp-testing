@@ -63,11 +63,11 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales Â· Invoices Â
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1702` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:249` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2681` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2727` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:60 / 149` | Lazy recharts wrappers (~357 KB chunk) |
-| `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:75` | Single ~2000-line aggregate handler |
-| `captureTodayState` | `src/api/routes/dashboard-overview.ts:111` | Extract + upsert today's state snapshot |
+| `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:98` | Single ~2000-line aggregate handler |
+| `captureTodayState` | `src/api/routes/dashboard-overview.ts:136` | Extract + upsert today's state snapshot |
 | `readSnapshot` / `writeSnapshot` / `isSnapshotFresh` | `src/api/lib/dashboard-snapshot.ts:100 / 211 / 187` | Read-through snapshot (Layer 1) |
 | `getMaxSourceUpdatedAt` | `src/api/lib/dashboard-snapshot.ts:155` | Data-change probe for freshness |
 | `writeStateSnapshot` / `readStateSnapshotForMonth` | `src/api/lib/dashboard-state-snapshot.ts:63 / 108` | Daily state UPSERT + past-month read |

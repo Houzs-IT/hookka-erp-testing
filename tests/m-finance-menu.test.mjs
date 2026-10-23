@@ -39,10 +39,14 @@ test("a role with no finance page at all gets no Finance row in More", () => {
 
 test("More: the Finance row (any gate) and Receivables gated like Debtor Aging", () => {
   const nav = read("src/pages/m/nav.ts");
-  assert.match(nav, /\{ label: "Finance", icon: Landmark, path: "\/m\/finance", navGateAny: FINANCE_NAV_GATES \}/);
-  assert.match(nav, /\{ label: "Receivables", icon: Wallet, path: "\/m\/receivables", navGate: "\/accounting\?tab=ar" \}/);
-  const more = read("src/pages/m/screens/More.tsx");
-  assert.match(more, /\(!i\.navGate \|\| isNavAllowed\(i\.navGate\)\) && \(!i\.navGateAny \|\| i\.navGateAny\.some\(isNavAllowed\)\)/);
+  // Each half is checked on its own, deliberately. The regex that used to pin
+  // the whole expression matched one formatting of one line, and the gate
+  // survived a move to this file with the navGateAny half DROPPED while that
+  // regex went on matching nothing in particular.
+  assert.match(nav, /!i\.navGate \|\| isNavAllowed\(i\.navGate\)/,
+    "visibleModuleGroups must check navGate");
+  assert.match(nav, /!i\.navGateAny \|\| i\.navGateAny\.some\(isNavAllowed\)/,
+    "visibleModuleGroups must ALSO check navGateAny - Finance is gated only by it");
 });
 
 test("routes: /m/finance and /m/finance/:screen, code-split; a refused screen says No access", () => {

@@ -59,7 +59,10 @@ test("drawer module list keeps the 7 groups in order and respects navGate", () =
     "People & Finance",
     "System",
   ]);
-  const gated = MORE_GROUPS.flatMap((g) => g.items).filter((i) => i.navGate);
+  // BOTH gate shapes. This filter used to read `i.navGate` alone, so the one
+  // row gated purely by navGateAny (Finance) was never checked here — and it
+  // was ungated in visibleModuleGroups for exactly as long.
+  const gated = MORE_GROUPS.flatMap((g) => g.items).filter((i) => i.navGate || i.navGateAny);
   assert.ok(gated.length > 0);
   const allowAll = visibleModuleGroups(() => true);
   const denyGated = visibleModuleGroups(() => false);
@@ -75,7 +78,7 @@ test("module search filters by label or group title and drops empty groups", () 
   assert.deepEqual(hit.map((g) => g.title), ["Sales & Customers"]);
   assert.deepEqual(hit[0].items.map((i) => i.label), ["Invoices"]);
   const group = visibleModuleGroups(() => true, "people");
-  assert.deepEqual(group[0].items.map((i) => i.label), ["Employees", "Receivables"]);
+  assert.deepEqual(group[0].items.map((i) => i.label), ["Employees", "Finance", "Receivables"]);
   assert.deepEqual(visibleModuleGroups(() => true, "zzz-nothing"), []);
   // Search never reveals a gated row.
   const gated = MORE_GROUPS.flatMap((g) => g.items).find((i) => i.navGate);

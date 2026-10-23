@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-22**: newest entry BUG-2026-10-22-381 (branch `feat/dashboard-feed-snapshot`, to `staging`; 347-380 are taken on `main`).
 > **Last verified: 2026-10-22**: newest entries BUG-2026-10-22-350 / -351 (round 5; 349's mobile-impact line updated) — open, code-reading findings, prod UNMEASURED.
 > **Last verified: 2026-10-22**: newest entries BUG-2026-10-22-347 / -348 / -349 (branch `design/mobile-invoicesv2`, to `staging`) — all open, code-inspection findings logged for backend review, nothing fixed, prod UNMEASURED.
 > **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-346 (branch `design/mobile-products-v2`, to `staging`; committed `31afa056`; 344 and 345 are Procurement's, from `design/mobile-procurement`).
@@ -230,6 +231,17 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-22-381 — Experimental dashboard took 2-3 s to load whenever its cache had gone cold `dashboard` `performance` 🟡
+
+🟡 **Fixed on branch** (`feat/dashboard-feed-snapshot` → `staging`). Found 2026-10-22 by measuring `/dashboard-experimental` on staging after the owner asked why the new dashboard loads slowly. Prod impact UNMEASURED (no prod read).
+
+**Symptom.** Measured on staging 2026-10-22. `GET /api/dashboard/prototype` (5 MB, 306 KB on the wire) answered in 150-350 ms when warm, but **2,764 ms** after 7 minutes with no visitor, and the request right after it still took 1,906 ms. `GET /api/dashboard/overview` for a month nobody had opened took ~2.3 s (2,377 / 2,254 / 2,430 ms) against 80-175 ms warm.
+
+**Root cause.** Both feeds had only the 60 s KV copy (`cached()`, `src/api/lib/kv-cache.ts`), which is gone 6 minutes after the last read. The prototype feed had no database snapshot at all, and the overview's snapshot only covers `period=all`, which the new dashboard never sends (`widgetPeriod` always gives a month, quarter or year). So the first visitor after a quiet spell paid the full rebuild.
+
+**Fix.** Both feeds now read through `withSnapshot` (`src/api/lib/snapshot.ts`) behind the KV copy, into a new `dashboard_feed_snapshot` table (runtime self-applied, migration 0217). The saved copy is reused until a source table changes, served stale while it refreshes in the background, and the KV key is cleared when the refresh lands. Keys carry the payload version and the day, because both payloads hold "today" figures; rows older than two days are pruned on each rebuild. A prototype payload with a failed section (`availability.*.live === false`) is not saved, through a new `shouldStore` option on `withSnapshot`. Past months (already frozen), `period=all` (own snapshot) and the compare view are unchanged. The first visitor of each day still waits once, as the day key is new.
+
+**Regression.** `tests/snapshot-swr.test.mjs` (`shouldStore` false is never written, true is).
 ## BUG-2026-10-22-351 — Nothing advances an invoice to OVERDUE; desktop's Overdue KPI / chip count only manually-set rows `invoices` `docs-vs-code` 🟡
 
 🟡 **Open, not fixed.** Logged on branch `design/mobile-invoicesv2` (to `staging`) during the round-5 Overdue investigation. **Code-reading finding.** The owner's screenshot of `erp.hookka.com/invoices` (Super Admin, 2026-10-22) shows **Overdue 0** on both the KPI card and the status chip, with 237 Sent invoices — consistent with this reading; how many invoices are actually past their due date on prod is UNMEASURED.

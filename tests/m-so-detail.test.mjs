@@ -1,8 +1,9 @@
-// m-so-detail.test.mjs — the PHONE Sales Order detail
-// (src/pages/m/screens/SalesDetailPhone.tsx + src/pages/m/lib/so-detail.ts).
+// m-so-detail.test.mjs — the Sales Order detail
+// (src/pages/m/screens/SalesOrderDetail.tsx + src/pages/m/lib/so-detail.ts).
 // Rows mimic GET /api/sales-orders/:id and /api/audit-events output. The
-// display rules must match desktop src/pages/sales/detail.tsx, and the phone
-// screen must stay read-only with no Paid / Balance / Payments.
+// display rules must match desktop src/pages/sales/detail.tsx, and the PHONE
+// rendering must stay read-only with no Paid / Balance / Payments (the wider
+// layouts and their actions are covered by m-sales-detail-responsive.test.mjs).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -15,7 +16,7 @@ import {
 // EOL-agnostic (core.autocrlf checkouts are CRLF on disk).
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 // Code only: the file's header comment explains what was removed by name.
-const PHONE = read("src/pages/m/screens/SalesDetailPhone.tsx").replace(/^\s*\/\/.*$/gm, "");
+const PHONE = read("src/pages/m/screens/SalesOrderDetail.tsx").replace(/^\s*\/\/.*$/gm, "");
 const SCREEN = read("src/pages/m/screens/SalesDetailScreen.tsx");
 const DESKTOP = read("src/pages/sales/detail.tsx");
 
@@ -143,10 +144,11 @@ test("audit history reads actorUserName and never names balance / deposit fields
   assert.match(read("src/api/routes/audit-events.ts"), /actorUserName: r\.actorUserName/);
 });
 
-test("phone screen is read-only: no mutations, no action bar, no Paid / Balance / Payments", () => {
-  assert.doesNotMatch(PHONE, /mutateJson|FormSheet|editSalesOrderSpec|newDeliveryOrderSpec/);
+test("the detail file itself never mutates: requests live in the shared actions hook", () => {
+  // Rendering the PHONE markup has no actions / Paid / Balance / Payments: see
+  // m-sales-detail-responsive.test.mjs (rendered, not just source).
+  assert.doesNotMatch(PHONE, /mutateJson|editSalesOrderSpec|newDeliveryOrderSpec/);
   assert.doesNotMatch(PHONE, /method:\s*"(POST|PUT|PATCH|DELETE)"/);
-  assert.doesNotMatch(PHONE, /linkedPayments|paidAmount|paymentDate|"Paid"|"Balance"|Payments/);
   assert.doesNotMatch(PHONE, /Confirm Order|Cancel Order|Undo Cancel|Issue Delivery Order|Edit Draft/);
   // No relationship map / lifecycle stepper; production orders are not links.
   assert.doesNotMatch(PHONE, /DocumentChainMap|\/m\/production\//);
@@ -172,8 +174,11 @@ test("phone visual refinements (2026-10-16): no qty / line counters, honest miss
   assert.match(chip, /titleCaseStatus\(label\)/);
 });
 
-test("tablet keeps the original screen and its actions; phone gets the redesign", () => {
-  assert.match(SCREEN, /return phone \? <SalesDetailPhone \/> : <SalesDetailTablet \/>;/);
+test("one adaptive screen: the dispatcher always renders SalesOrderDetail; the legacy tablet screen is kept, unused", () => {
+  assert.match(SCREEN, /export function SalesDetailScreen\(\) \{\s*return <SalesOrderDetail \/>;\s*\}/);
+  assert.doesNotMatch(SCREEN, /phone \? <SalesDetail/);
+  // Kept until parity is verified in a non-production environment.
+  assert.match(SCREEN, /export function SalesDetailTablet\(\)/);
   assert.match(SCREEN, /Undo Cancel/);
   assert.match(SCREEN, /Confirm Order/);
   assert.match(SCREEN, /Issue Delivery Order/);

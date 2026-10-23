@@ -12,6 +12,7 @@ import { formatUnitPriceInput, roundUnitPriceSen } from "@/lib/unit-price";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, CloudOff, Ellipsis, Plus, Search, X, type LucideIcon } from "lucide-react";
 import { M } from "../../theme";
+import { ResponsiveGrid } from "../../components";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { segmentButton, segmentTrack, SEGMENT_ICON, CHIP_COUNT, CHIP_ROW, CHIP_ROW_CLASS, chip as chipStyle, chipDot } from "../../lib/control-styles";
 import type { FlowStep, Tone } from "../../lib/procurement-mobile";
@@ -218,13 +219,13 @@ function MetaValue({ m }: { m: MetaCell }) {
   );
 }
 
-export function SkeletonCards({ cols }: { cols: string }) {
+export function SkeletonCards({ maxColumns }: { maxColumns?: number }) {
   return (
-    <div aria-busy="true" aria-label="Loading" style={{ display: "grid", gridTemplateColumns: cols, gap: 10 }}>
+    <ResponsiveGrid aria-busy="true" aria-label="Loading" maxColumns={maxColumns} gap={10}>
       {[0, 1, 2].map((i) => (
         <div key={i} aria-hidden style={{ height: 118, borderRadius: 16, background: M.card, opacity: 0.7, boxShadow: SHADOW_CARD }} />
       ))}
-    </div>
+    </ResponsiveGrid>
   );
 }
 

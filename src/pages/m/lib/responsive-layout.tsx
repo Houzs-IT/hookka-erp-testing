@@ -51,6 +51,73 @@ export function writeRailExpandedPreference(
   }
 }
 
+/** True once the user has expanded or collapsed the rail themselves (a saved choice exists). */
+export function hasRailExpandedPreference(mode: TabletLayoutMode): boolean {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    return localStorage.getItem(RAIL_PREFERENCE_KEYS[mode]) != null;
+  } catch {
+    return false;
+  }
+}
+
+type RailRuleInput = {
+  shellWidth: number;
+  /** The saved choice, else the mode's default. */
+  preferred: boolean;
+  /** True once the user has set the rail themselves (a saved choice exists). */
+  explicit: boolean;
+  /** A split-view detail (/m/<module>/<id>) is open. */
+  splitDetailOpen: boolean;
+};
+
+/**
+ * Should the rail compact itself right now so the split view's detail keeps a
+ * usable width? Only when NO explicit choice exists, the preference is
+ * "expanded", a split-view detail is open, and the detail pane with the full
+ * rail would be below CONTAINER_REGULAR_MIN_WIDTH.
+ *
+ * It depends only on the shell width and the route, never on the current rail:
+ * it measures the detail pane as if the rail were expanded. So opening or
+ * closing the rail cannot change the answer, and there is no feedback loop.
+ * Compacting only ever widens the content, so the split view stays open.
+ */
+export function shouldAutoCompactRail({ shellWidth, preferred, explicit, splitDetailOpen }: RailRuleInput): boolean {
+  if (!preferred || explicit || !splitDetailOpen) return false;
+  const withFullRail = resolveResponsiveLayout(shellWidth, undefined, true);
+  if (withFullRail.mode === "phone" || !withFullRail.canSplitDetail) return false;
+  return estimatePaneWidths(withFullRail).detail < CONTAINER_REGULAR_MIN_WIDTH;
+}
+
+/**
+ * Whether the rail is shown expanded: the preference, except while it is
+ * auto-compacted. During auto-compact the user can expand it TEMPORARILY
+ * (`tempExpanded`); that is never saved, and the caller drops it as soon as
+ * auto-compact stops applying (the detail closes, the window is resized).
+ */
+export function resolveRailExpanded({
+  tempExpanded = false,
+  ...input
+}: RailRuleInput & { tempExpanded?: boolean }): boolean {
+  return shouldAutoCompactRail(input) ? tempExpanded : input.preferred;
+}
+
+/**
+ * What tapping the rail toggle does. While the rail is auto-compacted the tap
+ * only flips a TEMPORARY expand (nothing is saved, so auto-compact keeps working
+ * for the next detail). Otherwise it is the user's own choice: the opposite of
+ * what is shown, to be saved.
+ */
+export function railToggleOutcome({
+  autoCompact,
+  shown,
+}: {
+  autoCompact: boolean;
+  shown: boolean;
+}): { temporary: true } | { temporary: false; expanded: boolean } {
+  return autoCompact ? { temporary: true } : { temporary: false, expanded: !shown };
+}
+
 export type ResponsiveLayoutValue = {
   mode: MobileLayoutMode;
   shellWidth: number;
@@ -159,5 +226,95 @@ export function useResolvedResponsiveLayout(
   return useMemo(
     () => resolveResponsiveLayout(shellWidth, contentWidth),
     [shellWidth, contentWidth],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Container layout: how wide is the box THIS content sits in?
+//
+// The shell mode above answers "which navigation" (rail or bottom bar) from the
+// whole shell. It cannot answer "how many columns fit", because inside the
+// split view (TwoPane) the list and the detail each get only part of the
+// content width. Arrangement decisions (columns, side-by-side cards) read the
+// container below; navigation keeps reading `useResponsiveLayout()`.
+// ---------------------------------------------------------------------------
+
+export type ContainerSize = "compact" | "regular" | "wide";
+export type PaneKind = "full" | "list" | "detail";
+
+// The one place a content-width threshold is named, so screens stop inventing
+// their own (the screens today cap at 560, 640, 720 and 760 independently).
+//
+// PROVISIONAL: 520 and 880 are starting points, not design facts. They are fixed
+// when the first screens adopt them (Sales Order detail, Home KPIs), from what
+// those layouts actually need, and they change here, once. `compact` is the
+// approved 390px phone design: whatever is shown in a compact container must look
+// right as the phone stack, which is also what a 320-505px split pane gets.
+/** Below this the container is phone-sized: one stacked column (390px phone, a split list pane). */
+export const CONTAINER_REGULAR_MIN_WIDTH = 520;
+/** From this up there is room for a genuinely multi-column arrangement. */
+export const CONTAINER_WIDE_MIN_WIDTH = 880;
+
+export function resolveContainerSize(width: number): ContainerSize {
+  const w = Math.max(0, width);
+  if (w >= CONTAINER_WIDE_MIN_WIDTH) return "wide";
+  if (w >= CONTAINER_REGULAR_MIN_WIDTH) return "regular";
+  return "compact";
+}
+
+export type ContainerLayoutValue = {
+  /** Width of the box the content is laid out in, in CSS px. */
+  width: number;
+  size: ContainerSize;
+  /** `list` / `detail` inside the split view; `full` everywhere else. */
+  pane: PaneKind;
+};
+
+export function resolveContainerLayout(width: number, pane: PaneKind = "full"): ContainerLayoutValue {
+  const safe = Math.max(0, width);
+  return { width: safe, size: resolveContainerSize(safe), pane };
+}
+
+/** Per-pane widths of the split view, before the first measurement lands. */
+export function estimatePaneWidths(layout: ResponsiveLayoutValue): { list: number; detail: number } {
+  const list = layout.splitMasterWidth;
+  // The 1px divider between the panes belongs to the list pane's border.
+  return { list, detail: Math.max(0, layout.contentWidth - list - 1) };
+}
+
+const ContainerLayoutContext = createContext<ContainerLayoutValue | null>(null);
+
+/** Mounted by TwoPane around each pane so descendants see the pane's own width. */
+export function PaneProvider({
+  value,
+  children,
+}: {
+  value: ContainerLayoutValue;
+  children: ReactNode;
+}) {
+  return (
+    <ContainerLayoutContext.Provider value={value}>
+      {children}
+    </ContainerLayoutContext.Provider>
+  );
+}
+
+/**
+ * The width class of the nearest pane. Outside the split view there is no
+ * pane, so it falls back to the shell's content width, which is exactly what
+ * a screen saw before this hook existed.
+ *
+ * The context follows the React tree, not the screen geometry. A `Sheet` or
+ * dialog opened from inside a pane is still a descendant of that pane but is as
+ * wide as the viewport allows, so overlay content must size itself with CSS, or
+ * the overlay must provide its own PaneProvider; it must not read this hook and
+ * assume the pane's width.
+ */
+export function useContainerLayout(): ContainerLayoutValue {
+  const pane = useContext(ContainerLayoutContext);
+  const shell = useContext(ResponsiveLayoutContext);
+  return useMemo(
+    () => pane ?? resolveContainerLayout(shell.contentWidth, "full"),
+    [pane, shell.contentWidth],
   );
 }

@@ -415,24 +415,26 @@ export function ConfirmLines({ lines }: { lines: { icon: ConfirmIcon; text: stri
 // ---------------------------------------------------------------------------
 export type ToastTone = "success" | "error" | "warning" | "info";
 
-/** One toast; keyed per message so each gets its own dismiss timer. */
+/** One toast; keyed per message so each gets its own dismiss timer. It floats in
+ * the dock of the pane it was raised from (clear of the phone tab bar, 84px
+ * above a tablet's bottom edge), so it is no longer centred on the whole viewport. */
 export function ToastView({ text, tone, onDone }: { text: string; tone: ToastTone; onDone: () => void }) {
-  const layout = useResponsiveLayout();
   useTimeout(onDone, tone === "error" ? 5200 : 3200);
   return (
-    <div
-      role={tone === "error" ? "alert" : "status"}
-      onClick={onDone}
-      style={{
-        position: "fixed", left: "50%", transform: "translateX(-50%)",
-        bottom: layout.hasBottomNavigation ? "calc(104px + env(safe-area-inset-bottom))" : "calc(84px + env(safe-area-inset-bottom))",
-        zIndex: 80, width: "max-content", maxWidth: "min(340px, calc(100vw - 32px))", boxSizing: "border-box", padding: "10px 14px",
-        borderRadius: 12, background: M.raisin, color: M.paper, fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, textAlign: "center",
-        boxShadow: "0 10px 30px -10px rgba(31,29,27,.5)",
-      }}
-    >
-      {text}
-    </div>
+    <ResponsiveActionDock scope="auto" phoneBottom={104} tabletBottom={84} zIndex={80}>
+      <div
+        role={tone === "error" ? "alert" : "status"}
+        onClick={onDone}
+        style={{
+          pointerEvents: "auto",
+          width: "max-content", maxWidth: "min(340px, calc(100% - 32px))", boxSizing: "border-box", padding: "10px 14px",
+          borderRadius: 12, background: M.raisin, color: M.paper, fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, textAlign: "center",
+          boxShadow: "0 10px 30px -10px rgba(31,29,27,.5)",
+        }}
+      >
+        {text}
+      </div>
+    </ResponsiveActionDock>
   );
 }
 

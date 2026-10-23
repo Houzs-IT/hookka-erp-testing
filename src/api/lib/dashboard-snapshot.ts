@@ -37,6 +37,7 @@ import {
   getMaxSourceUpdatedAt as probeMaxSourceUpdatedAt,
   getSourceSignature,
 } from "./snapshot-freshness";
+import { subDays } from "date-fns";
 import { ensureSourceRowsColumn, pickSourceRows } from "./snapshot";
 
 // Source tables whose MAX(updated_at) feeds the Layer 2 freshness check.
@@ -61,7 +62,7 @@ import { ensureSourceRowsColumn, pickSourceRows } from "./snapshot";
 // nightly Layer 3 cron force-rebuilt). Now Layer 2 catches them on
 // the next read. Adding tables is always safe (stricter freshness);
 // removing risks a write slipping past.
-const TRACKED_TABLES = [
+export const TRACKED_TABLES = [
   // Original 5 — confirmed coverage of all SO/DO/Invoice/JC KPIs.
   "sales_orders",
   "delivery_orders",
@@ -269,4 +270,40 @@ export async function invalidateSnapshot(
     .prepare("DELETE FROM dashboard_snapshot WHERE org_id = ?")
     .bind(orgId)
     .run();
+}
+
+// Saved copies of GET /api/dashboard/prototype and the month / quarter / year
+// overview, read through withSnapshot (snapshot.ts). The cache key carries the
+// payload version and the day, so there is one row per feed and day.
+export const FEED_SNAPSHOT_TABLE = "dashboard_feed_snapshot";
+
+// Runtime self-apply (migrations do not run on deploy), same shape as
+// migration 0217. All TEXT, like accounting_dashboard_snapshot.
+export async function ensureFeedSnapshotTable(db: D1Database): Promise<void> {
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS dashboard_feed_snapshot (
+         org_id TEXT NOT NULL,
+         cache_key TEXT NOT NULL DEFAULT '',
+         data TEXT NOT NULL,
+         built_from TEXT NOT NULL,
+         built_at TEXT NOT NULL DEFAULT '',
+         refresh_count INTEGER NOT NULL DEFAULT 0,
+         PRIMARY KEY (org_id, cache_key)
+       )`,
+    )
+    .run();
+}
+
+// A day key is never read again once the day is over. Run on every rebuild so
+// the table holds about two days of rows, not one 5 MB row per day forever.
+export async function pruneFeedSnapshots(db: D1Database, orgId: string): Promise<void> {
+  try {
+    await db
+      .prepare("DELETE FROM dashboard_feed_snapshot WHERE org_id = ? AND built_at < ?")
+      .bind(orgId, subDays(new Date(), 2).toISOString())
+      .run();
+  } catch (e) {
+    console.warn("[dashboard-feed-snapshot] prune failed:", e);
+  }
 }
