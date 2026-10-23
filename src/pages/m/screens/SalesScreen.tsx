@@ -39,10 +39,9 @@
 //     button on a new "N ORDERS" row, with removable active-filter chips.
 // ===========================================================================
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   Search,
-  SlidersHorizontal,
   Plus,
   FileSearch,
   ChevronRight,
@@ -60,9 +59,8 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import {
   MobileCard,
   MobileHeader,
-  StatusPill,
-  FilterSheet,
   FormSheet,
+  ResponsiveGrid,
   ScanPOSheet,
 } from "../components";
 import { M, M_ACCENT, SEMANTIC, titleCaseStatus, type SemanticStyle } from "../theme";
@@ -129,7 +127,14 @@ const CHIPS: { key: string; label: string }[] = [
 
 export function SalesScreen() {
   const navigate = useNavigate();
-  const phone = useResponsiveLayout().mode === "phone";
+  // One list UI at every width (owner 2026-10-23): the approved phone design. Wider screens
+  // arrange the SAME cards in columns (one column in the split view's list pane) and keep
+  // the Sort the tablet list always had, inside the same filter sheet.
+  const layout = useResponsiveLayout();
+  const tablet = layout.mode !== "phone";
+  const { id: openId } = useParams();
+  const inPane = layout.canSplitDetail && !!openId;
+  const columns = tablet && !inPane;
   const source = salesConfig.sources[0];
 
   const { data, loading, error } = useCachedJson<unknown>(source.url);
@@ -182,12 +187,12 @@ export function SalesScreen() {
     [filters, source],
   );
   const openCreate = () => setCreateSpec(newSalesOrderSpec());
-  const narrowed = !!q || chip !== "all" || (phone && fCount > 0);
-  // Phone: the main chip and the sheet's Status never disagree — picking a chip
-  // replaces any sheet Status filter (lib/so-filter-presets.ts splitStatus).
+  const narrowed = !!q || chip !== "all" || fCount > 0;
+  // The main chip and the sheet's Status never disagree — picking a chip replaces any
+  // sheet Status filter (lib/so-filter-presets.ts splitStatus).
   const pickChip = (k: string) => {
     setChip(k);
-    if (phone) removeFilter("status");
+    removeFilter("status");
   };
   const chipLabel = chip === "all" ? "ALL SALES ORDERS" : (CHIPS.find((c) => c.key === chip)?.label ?? "").toUpperCase();
   const heroTitle = fCount > 0 ? (chip === "all" ? "FILTERED SALES ORDERS" : `${chipLabel} · FILTERED`) : chipLabel;
@@ -198,183 +203,49 @@ export function SalesScreen() {
       return next;
     });
 
+  const cards = rows.map((r) => (
+    <PhoneSoCard
+      key={str(r, "id", "companySO") || str(r, "companySO")}
+      r={r}
+      onClick={() => navigate(`/m/sales/${encodeURIComponent(str(r, "id", "companySO", "companySOId"))}`)}
+    />
+  ));
+
   return (
     <>
       <MobileHeader
         title="Sales Orders"
         onBack={() => navigate(-1)}
         menu
-        trailing={
-          phone ? (
-            <PhoneNewButton onClick={openCreate} />
-          ) : (
-          <button
-            onClick={openCreate}
-            aria-label="New Sales Order"
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 10,
-              border: "none",
-              backgroundColor: M.taupe,
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            <Plus size={20} strokeWidth={2.2} />
-          </button>
-          )
-        }
+        trailing={<PhoneNewButton onClick={openCreate} />}
       />
 
-      {phone ? (
-        <>
-          {data ? (
-            <PhoneSummary
-              title={heroTitle}
-              rows={rows}
-              count={summary.count}
-              rev={summary.rev}
-              open={summaryOpen}
-              onToggle={() => setSummaryOpen((o) => !o)}
-            />
-          ) : null}
-          <PhoneSearchRow q={q} setQ={setQ} onScan={() => setScanOpen(true)} />
-          <PhoneChips chip={chip} setChip={pickChip} counts={chipCounts} />
-          <PhoneListBar
-            count={data ? rows.length : null}
-            fCount={fCount}
-            onFilter={() => setFilterOpen(true)}
-          />
-          {fChips.length > 0 ? (
-            <PhoneActiveFilters
-              chips={fChips}
-              onRemove={removeFilter}
-              onClear={() => setFilters({})}
-            />
-          ) : null}
-        </>
-      ) : (
       <>
-      {/* Search + Scan PO + Filter */}
-      <div style={{ display: "flex", gap: 7, padding: "12px 18px 4px", minWidth: 0 }}>
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            padding: "11px 13px",
-            backgroundColor: M.card,
-            border: `1px solid ${M.hairline}`,
-            borderRadius: 12,
-          }}
-        >
-          <Search size={18} strokeWidth={1.75} color={M.faint} />
-          <input
-            value={q}
-            placeholder="Search SO · customer · PO · reference"
-            onChange={(e) => setQ(e.target.value)}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontSize: 14,
-              color: M.raisin,
-            }}
+        {data ? (
+          <PhoneSummary
+            title={heroTitle}
+            rows={rows}
+            count={summary.count}
+            rev={summary.rev}
+            open={summaryOpen}
+            onToggle={() => setSummaryOpen((o) => !o)}
           />
-        </div>
-        <button
-          onClick={() => setScanOpen(true)}
-          aria-label="Scan customer PO"
-          style={{
-            width: 44,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: M.taupe,
-            border: `1px solid ${M.taupe}`,
-            borderRadius: 12,
-            color: "#fff",
-            cursor: "pointer",
-            flexShrink: 0,
-            WebkitTapHighlightColor: "transparent",
-          }}
-        >
-          <FileSearch size={19} strokeWidth={1.75} />
-        </button>
-        <button
-          onClick={() => setFilterOpen(true)}
-          aria-label="Filter and sort"
-          style={{
-            position: "relative",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            width: fCount > 0 ? undefined : 44,
-            padding: fCount > 0 ? "0 14px" : 0,
-            backgroundColor: fCount > 0 ? M.taupe : M.card,
-            border: `1px solid ${fCount > 0 ? M.taupe : M.hairline}`,
-            borderRadius: 12,
-            color: fCount > 0 ? "#fff" : M.ink,
-            fontSize: 13,
-            fontWeight: 700,
-            cursor: "pointer",
-            flexShrink: 0,
-            WebkitTapHighlightColor: "transparent",
-          }}
-        >
-          <SlidersHorizontal size={19} strokeWidth={1.75} />
-          {fCount > 0 ? fCount : ""}
-        </button>
-      </div>
-
-      {/* Status chips — handoff chip style (lib/control-styles.ts, owner
-          2026-10-21); the tablet row keeps its own 10px top spacing. */}
-      <div className={CHIP_ROW_CLASS} style={{ ...CHIP_ROW, padding: "10px 18px 4px" }}>
-        {CHIPS.map((c) => {
-          const on = chip === c.key;
-          const n = chipCounts[c.key] ?? 0;
-          return (
-            <button key={c.key} type="button" onClick={() => setChip(c.key)} aria-pressed={on} style={chipStyle(on)}>
-              {c.label}
-              {n > 0 ? <span style={CHIP_COUNT}>{n}</span> : null}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Summary strip — count · revenue */}
-      {rows.length > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            flexWrap: "wrap",
-            fontSize: 11.5,
-            color: M.muted,
-            padding: "10px 20px 2px",
-          }}
-        >
-          <span>
-            <b style={{ color: M.raisin }}>{summary.count}</b> orders
-          </span>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span style={{ fontWeight: 700, color: M.raisin }}>
-            {money(summary.rev)} rev
-          </span>
-        </div>
-      ) : null}
+        ) : null}
+        <PhoneSearchRow q={q} setQ={setQ} onScan={() => setScanOpen(true)} />
+        <PhoneChips chip={chip} setChip={pickChip} counts={chipCounts} />
+        <PhoneListBar
+          count={data ? rows.length : null}
+          fCount={fCount}
+          onFilter={() => setFilterOpen(true)}
+        />
+        {fChips.length > 0 ? (
+          <PhoneActiveFilters
+            chips={fChips}
+            onRemove={removeFilter}
+            onClear={() => setFilters({})}
+          />
+        ) : null}
       </>
-      )}
 
       {loading && !data ? (
         <Msg text="Loading…" />
@@ -383,9 +254,9 @@ export function SalesScreen() {
       ) : rows.length === 0 ? (
         <Msg
           text={narrowed ? "No matching sales orders." : "No sales orders. Tap ＋ to create one."}
-          icon={phone}
+          icon
           onReset={
-            phone && narrowed
+            narrowed
               ? () => {
                   setQ("");
                   setChip("all");
@@ -395,64 +266,33 @@ export function SalesScreen() {
               : undefined
           }
         />
-      ) : phone ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 11, padding: "8px 18px 120px" }}>
-          {rows.map((r) => (
-            <PhoneSoCard
-              key={str(r, "id", "companySO") || str(r, "companySO")}
-              r={r}
-              onClick={() =>
-                navigate(
-                  `/m/sales/${encodeURIComponent(str(r, "id", "companySO", "companySOId"))}`,
-                )
-              }
-            />
-          ))}
-        </div>
+      ) : columns ? (
+        <ResponsiveGrid gap={11} style={{ padding: "8px 18px 120px" }}>
+          {cards}
+        </ResponsiveGrid>
       ) : (
-        <div style={{ padding: "8px 18px 120px" }}>
-          {rows.map((r) => (
-            <SoCard
-              key={str(r, "id", "companySO") || str(r, "companySO")}
-              r={r}
-              onClick={() =>
-                navigate(
-                  `/m/sales/${encodeURIComponent(str(r, "id", "companySO", "companySOId"))}`,
-                )
-              }
-            />
-          ))}
-        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11, padding: "8px 18px 120px" }}>{cards}</div>
       )}
 
-      {phone ? (
-        <SalesFilterSheet
-          open={filterOpen}
-          onClose={() => setFilterOpen(false)}
-          columns={source.columns}
-          rows={allRows}
-          search={dq}
-          filters={filters}
-          chip={chip}
-          chipKeys={CHIPS.map((c) => c.key).filter((k) => k !== "all")}
-          onApply={(nextFilters, nextChip) => {
-            setFilters(nextFilters);
-            setChip(nextChip);
-          }}
-        />
-      ) : (
-        <FilterSheet
-          open={filterOpen}
-          onClose={() => setFilterOpen(false)}
-          columns={source.columns}
-          filters={filters}
-          sort={sort}
-          onApply={(nextFilters, nextSort) => {
-            setFilters(nextFilters);
-            setSort(nextSort);
-          }}
-        />
-      )}
+      <SalesFilterSheet
+        open={filterOpen}
+        onClose={() => setFilterOpen(false)}
+        columns={source.columns}
+        rows={allRows}
+        search={dq}
+        filters={filters}
+        chip={chip}
+        chipKeys={CHIPS.map((c) => c.key).filter((k) => k !== "all")}
+        // Wider screens keep the Sort the tablet list always had.
+        withSort={tablet}
+        sort={sort}
+        sortDefault={source.defaultSort ?? null}
+        onApply={(nextFilters, nextChip, nextSort) => {
+          setFilters(nextFilters);
+          setChip(nextChip);
+          if (nextSort !== undefined) setSort(nextSort);
+        }}
+      />
       <FormSheet
         open={createSpec != null}
         onClose={() => setCreateSpec(null)}
@@ -1339,191 +1179,7 @@ function Metric({
   );
 }
 
-// ---- One SO card (v20 MobileSoList layout; tablet). ------------------------
-function SoCard({
-  r,
-  onClick,
-}: {
-  r: Record<string, unknown>;
-  onClick: () => void;
-}) {
-  const code = str(r, "companySO", "companySOId") || "—";
-  const customer = str(r, "customerName") || "—";
-  const custPO = str(r, "customerPO", "customerPOId");
-  const custSO = str(r, "customerSO", "customerSOId");
-  const orderDate = dateOnly(r, "companySODate");
-  const expected = dateOnly(r, "hookkaExpectedDD");
-  const total = num(r, "totalSen");
-  const cancelled = str(r, "status") === "CANCELLED";
-  const status = resolveStatus(str(r, "status"), STATUS_MAPS.so);
-
-  const sub = [custPO ? `PO ${custPO}` : "", custSO ? `Cust SO ${custSO}` : ""]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <div
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-      style={{
-        background: M.card,
-        border: `1px solid ${M.border}`,
-        borderRadius: 16,
-        padding: "13px 15px",
-        marginBottom: 11,
-        cursor: "pointer",
-        opacity: cancelled ? 0.55 : 1,
-        boxShadow: "0 1px 0 rgba(31,29,27,.03),0 6px 20px -12px rgba(31,29,27,.14)",
-        WebkitTapHighlightColor: "transparent",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 10,
-          alignItems: "center",
-        }}
-      >
-        <span
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 12,
-            fontWeight: 700,
-            color: M.taupe,
-            fontVariantNumeric: "tabular-nums",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {code}
-        </span>
-        <StatusPill style={status.style} label={status.label} size="sm" />
-      </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginTop: 8,
-        }}
-      >
-        <span
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 15,
-            fontWeight: 700,
-            color: M.raisin,
-            letterSpacing: "-0.2px",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {customer}
-        </span>
-        <ChevronRight
-          aria-hidden="true"
-          size={19}
-          strokeWidth={1.75}
-          color="#C4BDB2"
-          style={{ flexShrink: 0 }}
-        />
-      </div>
-      {sub ? (
-        <div
-          style={{
-            fontSize: 12.5,
-            color: M.taupe,
-            fontWeight: 500,
-            marginTop: 3,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {sub}
-        </div>
-      ) : null}
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) auto",
-          columnGap: 8,
-          alignItems: "end",
-          marginTop: 12,
-          paddingTop: 12,
-          borderTop: `1px solid ${M.divider}`,
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 10, color: "#A89F8D", fontWeight: 600, whiteSpace: "nowrap" }}>
-            ORDER DATE
-          </div>
-          <div
-            style={{
-              marginTop: 3,
-              fontSize: 13,
-              fontWeight: 600,
-              color: M.raisin,
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {orderDate || "—"}
-          </div>
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 10, color: "#A89F8D", fontWeight: 600, whiteSpace: "nowrap" }}>
-            EXPECTED DD
-          </div>
-          <div
-            style={{
-              marginTop: 3,
-              fontSize: 13,
-              fontWeight: 600,
-              color: M.raisin,
-              fontVariantNumeric: "tabular-nums",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {expected || "—"}
-          </div>
-        </div>
-        <div style={{ minWidth: 0, textAlign: "right" }}>
-          <div style={{ fontSize: 10, color: "#A89F8D", fontWeight: 600, whiteSpace: "nowrap" }}>
-            AMOUNT
-          </div>
-          <div
-            style={{
-              marginTop: 3,
-              fontSize: 13,
-              fontWeight: 600,
-              color: M.raisin,
-              whiteSpace: "nowrap",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {money(total)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Phone (icon): prototype empty state; the reset button only renders on phones. */
+/** The prototype empty state (icon + reset button). */
 function Msg({
   text,
   icon,

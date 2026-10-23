@@ -31,7 +31,7 @@ const { soTotalQty, soRefLine, activeFilterChips } = await import(
 const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const screen = read("screens/SalesScreen.tsx");
 const phoneCard = screen.slice(screen.indexOf("function PhoneSoCard"), screen.indexOf("function TilePill"));
-const metric = screen.slice(screen.indexOf("function Metric"), screen.indexOf("function SoCard"));
+const metric = screen.slice(screen.indexOf("function Metric"), screen.indexOf("/** The prototype empty state"));
 
 // ── Total quantity ─────────────────────────────────────────────────────────
 
@@ -78,7 +78,7 @@ test("phone: Scan PO tile inside the search field; one ScanPOSheet", () => {
 // Owner 2026-10-15 (live prototype): "+" back in the phone header, Sort row gone,
 // Filter on the "N ORDERS" bar, summary on top.
 test("phone: round + in the header opens the same FormSheet; no sort row", () => {
-  assert.match(screen, /trailing=\{\s*phone \? \(\s*<PhoneNewButton onClick=\{openCreate\} \/>/);
+  assert.match(screen, /trailing=\{<PhoneNewButton onClick=\{openCreate\} \/>\}/);
   const btn = screen.slice(screen.indexOf("function PhoneNewButton"), screen.indexOf("function PhoneListBar"));
   assert.match(btn, /aria-label="New Sales Order"/);
   assert.match(screen, /const openCreate = \(\) => setCreateSpec\(newSalesOrderSpec\(\)\);/);
@@ -91,12 +91,13 @@ test("phone: Filter lives on the list bar and opens the filter sheet", () => {
   assert.match(screen, /<PhoneListBar[\s\S]*?onFilter=\{\(\) => setFilterOpen\(true\)\}/);
   const search = screen.slice(screen.indexOf("function PhoneSearchRow"), screen.indexOf("function PhoneChips"));
   assert.doesNotMatch(search, /Filter orders/);
-  assert.equal(screen.match(/<FilterSheet/g).length, 1);
+  // One filter sheet at every width (the shared FilterSheet is no longer used by Sales).
+  assert.equal(screen.match(/<SalesFilterSheet/g).length, 1);
+  assert.doesNotMatch(screen, /<FilterSheet/);
 });
 
 test("phone: summary sits above search", () => {
-  const phoneBlock = screen.slice(screen.indexOf("{phone ? (\n        <>"), screen.indexOf("<PhoneActiveFilters"));
-  assert.ok(phoneBlock.indexOf("<PhoneSummary") < phoneBlock.indexOf("<PhoneSearchRow"));
+  assert.ok(screen.indexOf("<PhoneSummary") < screen.indexOf("<PhoneSearchRow"));
 });
 
 test("summary revenue still excludes Cancelled", () => {
@@ -171,9 +172,18 @@ test("phone card: status colours, both refs, dimmed Cancelled, repo typography",
   assert.doesNotMatch(metric, /fontSize: 14/);
 });
 
-test("tablet keeps SoCard and the separate Scan button", () => {
-  assert.match(screen, /<SoCard/);
-  assert.match(screen, /placeholder="Search SO · customer · PO · reference"/);
+test("wider screens use the SAME phone design: no separate tablet card, search or filter sheet", () => {
+  assert.doesNotMatch(screen, /<SoCard|function SoCard/);
+  assert.doesNotMatch(screen, /placeholder="Search SO · customer · PO · reference"/);
+  assert.match(screen, /const cards = rows\.map\(\(r\) => \(\s*<PhoneSoCard/);
+});
+
+test("wider screens arrange the cards in columns, one column in a phone or the split list pane", () => {
+  assert.match(screen, /const columns = tablet && !inPane;/);
+  assert.match(screen, /const inPane = layout\.canSplitDetail && !!openId;/);
+  assert.match(screen, /<ResponsiveGrid gap=\{11\} style=\{\{ padding: "8px 18px 120px" \}\}>/);
+  // Phone / pane: the original column, untouched.
+  assert.match(screen, /<div style=\{\{ display: "flex", flexDirection: "column", gap: 11, padding: "8px 18px 120px" \}\}>\{cards\}<\/div>/);
 });
 
 test("MobileCard is not edited", () => {

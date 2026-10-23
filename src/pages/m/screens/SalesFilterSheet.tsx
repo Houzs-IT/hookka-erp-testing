@@ -13,6 +13,9 @@
 //   N = applyFilters over the real rows with the draft.
 // Filter only, as the prototype (owner 2026-10-15: the Sort | Filter switch
 // was removed). The list keeps its sort state and applySort untouched.
+// Wider screens (owner 2026-10-23) pass `withSort`, which adds a "Sort by" section at the
+// top, so the Sort the tablet list always had is not lost; the phone passes nothing and
+// its sheet is unchanged.
 // ===========================================================================
 import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
@@ -34,6 +37,8 @@ import {
   type Draft,
 } from "../lib/so-filter-presets";
 
+type Sort = { key: string; dir: "asc" | "desc" } | null;
+
 const SHADOW_CONTROL = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
 const SHADOW_OFF = "0 1px 2px rgba(31,29,27,.06),0 3px 8px -4px rgba(31,29,27,.10)";
 const SHADOW_ON = "0 6px 14px -6px rgba(107,92,50,.6)";
@@ -48,6 +53,9 @@ export function SalesFilterSheet({
   filters,
   chip,
   chipKeys,
+  withSort = false,
+  sort = null,
+  sortDefault = null,
   onApply,
 }: {
   open: boolean;
@@ -59,11 +67,18 @@ export function SalesFilterSheet({
   filters: Record<string, ActiveFilter>;
   chip: string;
   chipKeys: string[];
-  onApply: (filters: Record<string, ActiveFilter>, chip: string) => void;
+  /** Wider screens: show a "Sort by" section (the phone sheet is filter-only). */
+  withSort?: boolean;
+  sort?: Sort;
+  /** What Reset returns the sort to (the list's own default). */
+  sortDefault?: Sort;
+  /** `sort` is passed only when `withSort`. */
+  onApply: (filters: Record<string, ActiveFilter>, chip: string, sort?: Sort) => void;
 }) {
   const [today, setToday] = useState(localToday);
   const [draft, setDraft] = useState<Draft>(() => seedDraft(filters, chip, columns, today));
   const [more, setMore] = useState(false);
+  const [draftSort, setDraftSort] = useState<Sort>(sort);
   const [wasOpen, setWasOpen] = useState(open);
   // Re-seed on every closed→open (same pattern as the shared FilterSheet).
   if (open && !wasOpen) {
@@ -72,6 +87,7 @@ export function SalesFilterSheet({
     setWasOpen(true);
     setToday(t);
     setDraft(d);
+    setDraftSort(sort);
     setMore(moreCount(d) > 0);
   } else if (!open && wasOpen) {
     setWasOpen(false);
@@ -92,13 +108,36 @@ export function SalesFilterSheet({
 
   const apply = () => {
     const s = splitStatus(built, chipKeys);
-    onApply(s.filters as Record<string, ActiveFilter>, s.chip);
+    onApply(s.filters as Record<string, ActiveFilter>, s.chip, withSort ? draftSort : undefined);
     onClose();
   };
 
   return (
     <Sheet open={open} onClose={onClose} title="Filter orders">
           <div style={{ display: "grid", gap: 22 }}>
+            {withSort ? (
+              <section aria-label="Sort by">
+                <Label>Sort by</Label>
+                <div role="radiogroup" aria-label="Sort by" style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                  {columns.flatMap((c) =>
+                    (["asc", "desc"] as const).map((dir) => (
+                      <Choice
+                        key={`${c.key}-${dir}`}
+                        on={draftSort?.key === c.key && draftSort.dir === dir}
+                        role="radio"
+                        onClick={() => setDraftSort({ key: c.key, dir })}
+                      >
+                        {c.label} {dir === "asc" ? "↑" : "↓"}
+                      </Choice>
+                    )),
+                  )}
+                  <Choice on={draftSort == null} role="radio" onClick={() => setDraftSort(null)}>
+                    None
+                  </Choice>
+                </div>
+              </section>
+            ) : null}
+
             {statusCol ? (
               <section aria-label="Status">
                 <Label hint={draft.status.length ? `${draft.status.length} selected` : "Any"}>
@@ -292,7 +331,10 @@ export function SalesFilterSheet({
           >
             <button
               type="button"
-              onClick={() => setDraft(seedDraft({}, "all", columns, today))}
+              onClick={() => {
+                setDraft(seedDraft({}, "all", columns, today));
+                setDraftSort(sortDefault);
+              }}
               style={{ ...btn, flex: 1, backgroundColor: M.card, color: M.body, boxShadow: SHADOW_CONTROL }}
             >
               Reset

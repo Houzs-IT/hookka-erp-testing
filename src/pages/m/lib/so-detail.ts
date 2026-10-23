@@ -1,6 +1,6 @@
 // ===========================================================================
 // so-detail — pure mapping behind the PHONE Sales Order detail
-// (screens/SalesDetailPhone.tsx). Every value comes from GET
+// (screens/SalesOrderDetail.tsx). Every value comes from GET
 // /api/sales-orders/:id (rowToSO / rowToItem / linkedPOs / linkedDOs /
 // linkedInvoices / statusHistory / priceOverrides) or /api/audit-events.
 // Display rules mirror the desktop page (src/pages/sales/detail.tsx) so the

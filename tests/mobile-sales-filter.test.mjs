@@ -160,8 +160,8 @@ test("one status with a chip becomes the chip; several keep the filter with chip
   assert.deepEqual(P.splitStatus({}, CHIP_KEYS), { chip: "all", filters: {} });
 });
 
-test("picking a main chip drops a sheet Status filter on phones", () => {
-  assert.match(screen, /const pickChip = \(k: string\) => \{\s*setChip\(k\);\s*if \(phone\) removeFilter\("status"\);/);
+test("picking a main chip drops a sheet Status filter at every width", () => {
+  assert.match(screen, /const pickChip = \(k: string\) => \{\s*setChip\(k\);\s*removeFilter\("status"\);/);
   assert.match(screen, /<PhoneChips chip=\{chip\} setChip=\{pickChip\}/);
 });
 
@@ -173,17 +173,20 @@ test("Show N orders is the real applyFilters count over the real rows", () => {
   assert.match(screen, /rows=\{allRows\}\s*search=\{dq\}/);
 });
 
-test("phone uses SalesFilterSheet; tablet keeps the shared FilterSheet", () => {
-  assert.match(screen, /\{phone \? \(\s*<SalesFilterSheet/);
-  assert.equal(screen.match(/<FilterSheet/g).length, 1);
+test("one SalesFilterSheet at every width; the shared FilterSheet itself is unchanged", () => {
+  assert.equal(screen.match(/<SalesFilterSheet/g).length, 1);
+  assert.doesNotMatch(screen, /<FilterSheet/);
   const shared = read("components/FilterSheet.tsx");
   assert.match(shared, /<Sheet open=\{open\} onClose=\{onClose\} title="Filter & sort">/);
 });
 
-test("Filter orders sheet only: no Sort | Filter switch, list sorting untouched", () => {
+test("Filter orders sheet: no Sort | Filter switch; the Sort section only on wider screens; list sorting untouched", () => {
   assert.ok(sheet.includes('<Sheet open={open} onClose={onClose} title="Filter orders">'));
   assert.doesNotMatch(sheet, /SegmentedSwitch|onSort|TOP_SORTS|SortList/);
-  assert.doesNotMatch(screen.slice(screen.indexOf("<SalesFilterSheet"), screen.indexOf("<FilterSheet")), /sort/i);
+  // The phone passes nothing sort-related; wider screens opt in with withSort.
+  assert.match(screen, /withSort=\{tablet\}/);
+  assert.match(sheet, /withSort = false,/);
+  assert.match(sheet, /\{withSort \? \(\s*<section aria-label="Sort by">/);
   // The list still sorts exactly as before: same state, default and applySort.
   assert.ok(screen.includes("const [sort, setSort] = useState<Sort>(source.defaultSort ?? null);"));
   assert.ok(screen.includes("return applySort(filtered, source.columns, sort);"));
