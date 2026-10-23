@@ -1,0 +1,21 @@
+{
+  "_note": "sha256/16 of the server-rendered markup of the APPROVED phone Sales Order screens (fixture data, shell width 390/600), captured from upstream/staging c36fa4ddc BEFORE the Sales responsive migration. A phone-mode change must not alter these; if a phone change is intended, regenerate and have it reviewed.",
+  "detail": {
+    "detail-390-CANCELLED": "372f794fde0589b3",
+    "detail-390-CONFIRMED": "15e7df7fee04d1ee",
+    "detail-390-DELIVERED": "ade118a2aa11fad8",
+    "detail-390-DRAFT": "9d1a33f75fe5d3c7",
+    "detail-390-IN_PRODUCTION": "6198fe1d450a1bb7",
+    "detail-390-ON_HOLD": "9b6bce4c2145bd30",
+    "detail-390-READY_TO_SHIP": "77ef0e117b936abc",
+    "detail-390-longnotes": "877df8cddbf8f065",
+    "detail-390-noitems": "b21024f685f20545",
+    "detail-390-nonotes": "e826a284842aff38",
+    "detail-600-CONFIRMED": "15e7df7fee04d1ee"
+  },
+  "list": {
+    "list-390-empty": "72dc76ff2536f9f1",
+    "list-390": "3270621b6ee20ab2",
+    "list-600": "3270621b6ee20ab2"
+  }
+}
