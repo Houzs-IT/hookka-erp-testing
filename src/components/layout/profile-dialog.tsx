@@ -24,6 +24,7 @@ export type Me = {
   department?: string;
   position?: string;
   photoFileId?: string | null;
+  twoFactorOn?: boolean;
 };
 
 export function ProfileDialog({

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-23**: 2FA entry gains item 4, the profile-menu set-up link (branch `feat/2fa-setup-button`, to `staging`); items 1-3 are merged to staging (PR #1102).
 > **Last verified: 2026-10-23**: branch `feat/2fa-login-code-step` (to `staging`, then `main`) added below (built, waiting on the staging PR; its entry is the newest).
 > **Last verified: 2026-10-23**: mobile Sales Orders responsive migration entry added (branch `feat/m-sales-responsive`, local commits only); nothing else re-checked.
 > **Last verified: 2026-10-22**: branch `fix/charts-tick-type` — build:strict is green on
@@ -366,6 +367,7 @@ Ask (owner): "is the 2fa on the staging?" → it was off on staging AND main (`T
 1. 🟡 Login page: after a correct password for an account with 2FA on, ask for the 6-digit code (or a backup code) and finish sign-in through `/api/auth/totp/login-verify`. Both layouts (phone and desktop).
 2. 🟡 Turn the login check back on; keep the "please set up 2FA" prompt OFF until the owner decides who must use it.
 3. 🟡 Lost phone: Super Admin can reset another account's 2FA (the setup page issues no backup codes, so without this a lost phone is a permanent lock-out).
+4. 🟡 "Set up two-step sign-in" in the profile menu (owner: "where is the setup button?" — /setup-2fa had no link once the prompt was off). Shows "Two-step sign-in on" instead once set up. Branch `feat/2fa-setup-button` → `staging`.
 
 Built on the branch, not yet on staging: BUG-2026-10-23-382, `tests/2fa-login-code-step.test.mjs` (8 tests, red on the old code). Who must set 2FA up is still the owner decision.
 
