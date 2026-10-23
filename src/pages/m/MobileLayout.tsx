@@ -145,6 +145,29 @@ function ProcurementDetailRoute() {
   );
 }
 
+// Invoices v2 list + detail (Claude Design `Invoices v2.dc.html`, owner
+// 2026-10-21), code-split like Delivery. The six tabs keep their sources.
+const InvoicesScreenLazy = lazy(() =>
+  import("./screens/invoices/InvoicesScreen").then((m) => ({ default: m.InvoicesScreen })),
+);
+function InvoicesRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <InvoicesScreenLazy />
+    </Suspense>
+  );
+}
+const InvoiceDetailLazy = lazy(() =>
+  import("./screens/invoices/InvoiceDetailScreen").then((m) => ({ default: m.InvoiceDetailScreen })),
+);
+function InvoiceDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <InvoiceDetailLazy />
+    </Suspense>
+  );
+}
+
 function DashboardRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -178,6 +201,9 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   delivery: DeliveryRoute,
   // Claude Design `Procurement.dc.html`: Orders · Receipts · Invoices, phone + tablet.
   procurement: ProcurementRoute,
+  // Claude Design `Invoices v2.dc.html`: six tabs (each gated on its API read
+  // permission), status chips, summary, v2 invoice + record cards. Phone + tablet.
+  invoices: InvoicesRoute,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -193,6 +219,10 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   products: ProductDetailScreen,
   // PO / GRN / PI detail with desktop's per-status actions.
   procurement: ProcurementDetailRoute,
+  // Invoices v2 detail (Claude Design `Invoices v2.dc.html`, owner 2026-10-21).
+  // Also the left pane of the tablet /:id/item/:itemId line route (see below);
+  // that route's right pane stays LineItemDetailScreen.
+  invoices: InvoiceDetailRoute,
 };
 
 /** True on /m/<module>/<id>[/…] when that module has a detail screen, i.e. when the split view
@@ -408,7 +438,10 @@ export default function MobileLayout() {
                   element={
                     layout.canSplitDetail ? (
                       <TwoPane
-                        left={<DocumentDetailScreen config={cfg} />}
+                        // Invoices only: the left pane is the dedicated Invoices v2
+                        // detail (owner 2026-10-22); every other module keeps the
+                        // generic detail. The right pane is unchanged.
+                        left={cfg.slug === "invoices" && CustomL2 ? <CustomL2 /> : <DocumentDetailScreen config={cfg} />}
                         right={<LineItemDetailScreen config={cfg} />}
                       />
                     ) : (

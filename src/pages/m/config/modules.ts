@@ -23,6 +23,8 @@ import {
 import { logHoursSpec, hubFormSpec, addAffectedProductSpec } from "./forms";
 import { DO_STATUS_LABEL, TIMELINE_STEPS } from "../lib/do-mobile";
 import { normalizeStoredPcbStatus, pcbHasFigure } from "@/lib/pcb";
+import { getStatusColor } from "@/lib/utils";
+import { PAYABLE_STATUSES, eInvoiceSen, methodLabel } from "../lib/invoices-mobile";
 import {
   type DetailConfig,
   type FlowStep,
@@ -761,22 +763,26 @@ const invoicesSource: DataSource = {
   subTabs: [{ key: "invoices", label: "Invoices", match: () => true }],
 };
 
+// GET /api/payments rows (payments.ts rowToPayment): receiptNumber, customerName,
+// date, amount (sen), method. The old keys (paymentNo / totalSen) are not on the
+// payload — the card showed the row id and RM 0.00 (owner D5, 2026-10-21).
 const paymentsSource: DataSource = {
   url: "/api/payments",
   select: selectData,
   toVM: (r): RowVM => ({
-    id: str(r, "id", "paymentNo"),
-    code: str(r, "paymentNo", "reference") || str(r, "id"),
+    id: str(r, "id", "receiptNumber"),
+    code: str(r, "receiptNumber") || str(r, "id"),
     title: str(r, "customerName") || "—",
-    subLine: str(r, "method", "paymentMethod") || undefined,
-    meta1: { label: "Order Date", value: dateOnly(r, "date", "paymentDate") || "—" },
-    meta2: { label: "Amount", value: money(num(r, "totalSen", "amountSen")) },
+    subLine: str(r, "method") ? methodLabel(str(r, "method")) : undefined,
+    meta1: { label: "Date", value: dateOnly(r, "date") || "—" },
+    meta2: { label: "Amount", value: money(num(r, "amount")) },
   }),
   columns: [
-    textCol("paymentNo", "Reference", (r) => str(r, "paymentNo")),
+    textCol("receiptNumber", "Receipt No", (r) => str(r, "receiptNumber")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    dateCol("date", "Order Date", (r) => dateOnly(r, "date", "paymentDate")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen", "amountSen")),
+    textCol("method", "Method", (r) => methodLabel(str(r, "method"))),
+    dateCol("date", "Date", (r) => dateOnly(r, "date")),
+    numCol("amount", "Amount", (r) => num(r, "amount")),
   ],
   defaultSort: { key: "date", dir: "desc" },
   subTabs: [{ key: "payments", label: "Payments", match: () => true }],
@@ -847,22 +853,30 @@ const debitNotesSource: DataSource = {
   subTabs: [{ key: "debit_notes", label: "Debit Notes", match: () => true }],
 };
 
+// GET /api/e-invoices rows (e-invoices.ts rowToEInvoice): totalIncludingTax is in
+// RINGGIT (eInvoiceSen converts once); statuses PENDING / SUBMITTED / VALID /
+// CANCELLED. The old totalSen key is not on the payload (RM 0.00) and VALID had
+// no colour (owner D5, 2026-10-21).
 const eInvoiceSource: DataSource = {
   url: "/api/e-invoices",
   select: selectData,
-  toVM: (r): RowVM => ({
-    id: str(r, "id", "invoiceNo"),
-    code: str(r, "invoiceNo") || str(r, "id"),
-    title: str(r, "customerName") || "—",
-    subLine: undefined,
-    meta1: { label: "Amount", value: money(num(r, "totalSen")) },
-    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
-  }),
+  toVM: (r): RowVM => {
+    const sen = eInvoiceSen(r);
+    const st = str(r, "status").toUpperCase() || "PENDING";
+    return {
+      id: str(r, "id", "invoiceNo"),
+      code: str(r, "invoiceNo") || str(r, "id"),
+      title: str(r, "customerName") || "—",
+      subLine: "LHDN MyInvois",
+      meta1: { label: "Amount", value: sen == null ? "—" : money(sen) },
+      status: { style: st === "VALID" ? getStatusColor("APPROVED") : getStatusColor(st), label: st },
+    };
+  },
   columns: [
-    textCol("invoiceNo", "Reference", (r) => str(r, "invoiceNo")),
+    textCol("invoiceNo", "Invoice No", (r) => str(r, "invoiceNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["VALIDATED", "SUBMITTED", "PENDING"]),
+    numCol("amount", "Amount", (r) => eInvoiceSen(r) ?? 0),
+    enumCol("status", "Status", (r) => str(r, "status"), ["PENDING", "SUBMITTED", "VALID", "CANCELLED"]),
   ],
   defaultSort: { key: "invoiceNo", dir: "desc" },
   subTabs: [{ key: "e_invoice", label: "e-Invoice", match: () => true }],
@@ -877,7 +891,13 @@ const invoiceDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "invoiceNo") || "—",
   title: (d) => str(d, "customerName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  // Desktop invoice status colours (getStatusColor: Overdue = WARNING_HIGH,
+  // Cancelled grey, Partial Paid amber) — invoice-only; the shared
+  // PAYMENT_STATUS_MAP is left as is for the modules that use it (owner 2026-10-21).
+  status: (d) => {
+    const st = str(d, "status").toUpperCase();
+    return { style: getStatusColor(st), label: st || "—" };
+  },
   flow: {
     steps: flowSteps(["UNPAID", "PARTIAL", "PAID"]),
     current: (d) => str(d, "status"),
@@ -948,7 +968,11 @@ const invoiceDetail: DetailConfig = {
     }
     return out;
   },
-  primaryCta: (d) => (str(d, "status") === "PAID" ? "Status" : "Record Payment"),
+  // No screen renders this config's action bar any more: the invoice detail —
+  // including the tablet line route's left pane — is InvoiceDetailScreen; this
+  // config only feeds LineItemDetailScreen. Kept restricted anyway (owner D2:
+  // never Draft / Cancelled / Paid, BUG-2026-10-22-347).
+  primaryCta: (d) => (PAYABLE_STATUSES.has(str(d, "status").toUpperCase()) ? "Record Payment" : undefined),
   attachmentsResource: (id) => ({ type: "INVOICE", id }),
   auditResource: () => "invoices",
   lineAttachmentsResource: (_parent, lineId) => ({ type: "INVOICE_LINE", id: lineId }),

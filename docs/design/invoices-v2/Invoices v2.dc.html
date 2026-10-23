@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="./lucide-icon.js"></script>
+<style>
+body{margin:0;background:#ECE7DF;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#6B5C32}a:hover{color:#574A28}
+input::placeholder{color:#9CA3AF}
+.so-scroll::-webkit-scrollbar{display:none}
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px;box-sizing:border-box">
+<div data-screen-label="Invoices" style="position:relative;width:390px;height:844px;border-radius:44px;overflow:hidden;background:#FAF8F4;color:#1F1D1B;font-family:system-ui, -apple-system, &quot;Segoe UI&quot;, Roboto, sans-serif;box-shadow:0 0 0 10px #1F1D1B,0 30px 80px -20px rgba(31,29,27,.45);display:flex;flex-direction:column">
+
+<div style="height:47px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 30px 0 34px;background:#FAF8F4">
+<span style="font-size:15px;font-weight:600;letter-spacing:-.2px">9:41</span>
+<div style="display:flex;align-items:center;gap:6px"><div style="width:17px;height:10px;border-radius:2px;background:#1F1D1B"></div><div style="width:24px;height:11px;border-radius:3px;border:1.5px solid #1F1D1B;box-sizing:border-box;padding:1.5px"><div style="width:70%;height:100%;background:#1F1D1B;border-radius:1px"></div></div></div>
+</div>
+
+<div class="so-scroll" style="flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none">
+<div style="position:sticky;top:0;z-index:20;background:rgba(250,248,244,.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
+<div style="display:flex;align-items:center;gap:4px;height:52px;padding:0 18px 0 12px;box-sizing:border-box">
+<button type="button" onClick="{{ openDrawer }}" aria-label="Open menu" aria-haspopup="dialog" style="width:44px;height:44px;margin-left:-10px;background:none;border:none;padding:0;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer;color:#1F1D1B"><l-icon name="Menu" size="20" stroke-width="1.9"></l-icon></button>
+<div style="flex:1;min-width:0;font-size:18px;font-weight:700;color:#1F1D1B;line-height:24px">Invoices</div>
+</div>
+<div style="padding:2px 18px 10px">
+<div role="tablist" aria-label="Invoices module" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;height:46px;box-sizing:border-box;padding:4px;border-radius:14px;background:#F0ECE9">
+<sc-for list="{{ sources }}" as="t" hint-placeholder-count="2">
+<button type="button" role="tab" aria-selected="{{ t.on }}" onClick="{{ t.onTap }}" style="height:100%;border-radius:10px;border:none;background:{{ t.bg }};color:{{ t.fg }};font-family:inherit;font-size:13px;font-weight:{{ t.weight }};white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;box-shadow:{{ t.shadow }}"><l-icon name="{{ t.icon }}" size="15" stroke-width="1.9"></l-icon>{{ t.label }}</button>
+</sc-for>
+</div>
+</div>
+</div>
+
+<div style="padding:14px 18px 0">
+<label style="height:44px;box-sizing:border-box;display:flex;align-items:center;gap:9px;padding:0 13px;background:#FFFFFF;border-radius:14px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)">
+<l-icon name="Search" size="18" stroke-width="1.75" color="#9CA3AF"></l-icon>
+<input value="{{ q }}" onChange="{{ onQ }}" placeholder="{{ searchPh }}" aria-label="Search" style="flex:1;min-width:0;border:none;outline:none;background:transparent;font-size:16px;font-family:inherit;color:#1F1D1B;padding:0"/>
+<sc-if value="{{ hasQ }}" hint-placeholder-val="{{ false }}"><button type="button" onClick="{{ clearQ }}" aria-label="Clear search" style="width:32px;height:32px;margin-right:-6px;border:none;background:none;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#9CA3AF"><l-icon name="X" size="16" stroke-width="2"></l-icon></button></sc-if>
+</label>
+</div>
+
+<sc-if value="{{ hasChips }}" hint-placeholder-val="{{ true }}">
+<div class="so-scroll" style="display:flex;gap:8px;overflow-x:auto;padding:12px 18px 4px;scrollbar-width:none">
+<sc-for list="{{ chips }}" as="c" hint-placeholder-count="6">
+<button type="button" aria-pressed="{{ c.on }}" onClick="{{ c.onTap }}" style="flex:none;height:34px;padding:0 13px;border-radius:999px;border:none;background:{{ c.bg }};color:{{ c.fg }};font-family:inherit;font-size:12.5px;font-weight:{{ c.weight }};cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;box-shadow:{{ c.shadow }}"><sc-if value="{{ c.dot }}" hint-placeholder-val="{{ false }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.dot }}"></span></sc-if>{{ c.label }}<span style="font-variant-numeric:tabular-nums;opacity:.8">{{ c.count }}</span></button>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{ isInv }}" hint-placeholder-val="{{ true }}">
+<section aria-label="Invoice summary" style="margin:12px 18px 4px;background:#FFFFFF;border-radius:20px;padding:16px 16px 14px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+<span style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32;white-space:nowrap"><span aria-hidden="true" style="width:14px;height:3px;border-radius:2px;background:#C9A961"></span>{{ sum.title }}</span>
+<span style="font-size:12px;color:#4D4630;white-space:nowrap;font-variant-numeric:tabular-nums">{{ sum.count }}</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:5px;margin-top:6px"><span style="font-size:14px;font-weight:600;color:#4D4630">RM</span><span style="font-size:28px;line-height:1.1;font-weight:700;letter-spacing:-.6px;color:#1F1D1B;font-variant-numeric:tabular-nums">{{ sum.total }}</span></div>
+<div style="font-size:12px;color:#4D4630;margin-top:2px">Invoiced total</div>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px">
+<div style="min-width:0;padding:10px 12px;border-radius:12px;background:#F7F1E3"><div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.5px;color:#6B5C32"><l-icon name="Wallet" size="13" stroke-width="2"></l-icon>OUTSTANDING</div><div style="font-size:15px;font-weight:700;color:#1F1D1B;margin-top:4px;white-space:nowrap;font-variant-numeric:tabular-nums">{{ sum.outstanding }}</div></div>
+<button type="button" onClick="{{ sum.onOverdue }}" aria-pressed="{{ sum.overdueOn }}" style="min-width:0;text-align:left;padding:10px 12px;border-radius:12px;border:none;font-family:inherit;cursor:pointer;background:{{ sum.overdueBg }};box-shadow:{{ sum.overdueRing }}"><div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.5px;color:#9A3A2D"><l-icon name="CircleAlert" size="13" stroke-width="2"></l-icon>OVERDUE</div><div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;white-space:nowrap"><span style="font-size:15px;font-weight:700;color:#9A3A2D;font-variant-numeric:tabular-nums">{{ sum.overdueAmt }}</span><span style="font-size:11.5px;color:#4D4630">{{ sum.overdueN }}</span></div></button>
+</div>
+</section>
+</sc-if>
+<sc-if value="{{ isAging }}" hint-placeholder-val="{{ false }}">
+<section aria-label="Accounts receivable aging summary" style="margin:12px 18px 4px;background:#FFFFFF;border-radius:20px;padding:16px 16px 14px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+<span style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32;white-space:nowrap"><span aria-hidden="true" style="width:14px;height:3px;border-radius:2px;background:#C9A961"></span>AR AGING</span>
+<span style="font-size:12px;color:#4D4630;white-space:nowrap;font-variant-numeric:tabular-nums">{{ ag.count }}</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:5px;margin-top:6px"><span style="font-size:14px;font-weight:600;color:#4D4630">RM</span><span style="font-size:28px;line-height:1.1;font-weight:700;letter-spacing:-.6px;color:#1F1D1B;font-variant-numeric:tabular-nums">{{ ag.total }}</span></div>
+<div style="font-size:12px;color:#4D4630;margin-top:2px">Total outstanding</div>
+<div role="img" aria-label="{{ ag.barAria }}" style="display:flex;gap:2px;height:10px;margin-top:14px;border-radius:999px;overflow:hidden;background:#F0ECE9">
+<sc-for list="{{ ag.segs }}" as="g" hint-placeholder-count="4"><span style="flex:{{ g.flex }};background:{{ g.color }}"></span></sc-for>
+</div>
+<div style="margin-top:12px;border-radius:12px;background:#FAF8F4;padding:2px 12px">
+<sc-for list="{{ ag.buckets }}" as="b" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:10px;min-height:40px;border-top:{{ b.divider }}">
+<span aria-hidden="true" style="width:8px;height:8px;flex:none;border-radius:50%;background:{{ b.color }}"></span>
+<span style="flex:1;min-width:0;font-size:12.5px;color:#3A352C;white-space:nowrap">{{ b.label }}</span>
+<span style="flex:none;min-width:96px;text-align:right;font-size:13.5px;font-weight:700;color:{{ b.valColor }};font-variant-numeric:tabular-nums;white-space:nowrap">{{ b.value }}</span>
+</div>
+</sc-for>
+</div>
+</section>
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 20px 8px"><span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32;white-space:nowrap">{{ ag.listLabel }}</span></div>
+<sc-if value="{{ ag.empty }}" hint-placeholder-val="{{ false }}"><div role="status" style="margin:0 18px;padding:28px 18px;text-align:center;background:#FFFFFF;border-radius:16px;font-size:13.5px;color:#4D4630;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">{{ ag.emptyText }}</div></sc-if>
+<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:0 18px">
+<sc-for list="{{ ag.rows }}" as="a" hint-placeholder-count="3">
+<button type="button" onClick="{{ a.onTap }}" aria-label="{{ a.aria }}" aria-haspopup="dialog" style="position:relative;overflow:hidden;width:100%;text-align:left;border:none;font-family:inherit;cursor:pointer;background:#FFFFFF;border-radius:16px;padding:13px 14px 13px 17px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)" style-active="transform:scale(.99)">
+<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:4px;background:{{ a.rail }}"></span>
+<div style="display:flex;align-items:flex-start;gap:8px">
+<div style="flex:1;min-width:0;font-size:15px;font-weight:700;color:#1F1D1B;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">{{ a.name }}</div>
+<l-icon name="ChevronRight" size="18" stroke-width="1.9" color="#8B7A4E"></l-icon>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px">
+<span style="height:22px;display:inline-flex;align-items:center;gap:5px;padding:0 9px;border-radius:999px;background:{{ a.oldBg }};color:{{ a.oldFg }};font-size:11px;font-weight:700;white-space:nowrap"><span style="width:6px;height:6px;border-radius:50%;background:{{ a.rail }}"></span>{{ a.oldLabel }}</span>
+<span style="font-size:15px;font-weight:700;color:#1F1D1B;white-space:nowrap;font-variant-numeric:tabular-nums">{{ a.total }}</span>
+</div>
+<div aria-hidden="true" style="display:flex;gap:2px;height:6px;margin-top:10px;border-radius:999px;overflow:hidden;background:#F0ECE9"><sc-for list="{{ a.segs }}" as="g" hint-placeholder-count="2"><span style="flex:{{ g.flex }};background:{{ g.color }}"></span></sc-for></div>
+</button>
+</sc-for>
+</div>
+<div style="display:flex;align-items:center;justify-content:center;gap:6px;padding:16px 18px 120px;font-size:11.5px;color:#4D4630;text-align:center"><l-icon name="FlaskConical" size="12" stroke-width="1.9" color="#8B7A4E"></l-icon>Buckets come from the server aging report · sample data</div>
+</sc-if>
+<sc-if value="{{ isInv }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 20px 8px">
+<span style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32;white-space:nowrap">{{ countLabel }}</span>
+</div>
+</sc-if>
+
+<sc-if value="{{ empty }}" hint-placeholder-val="{{ false }}"><div role="status" style="margin:12px 18px;padding:28px 18px;text-align:center;background:#FFFFFF;border-radius:16px;font-size:13.5px;color:#4D4630;box-shadow:0 1px 2px rgba(31,29,27,.05),0 10px 24px -14px rgba(31,29,27,.2)">{{ emptyText }}</div></sc-if>
+
+<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:0 18px 120px">
+<sc-for list="{{ rows }}" as="r" hint-placeholder-count="5">
+<div role="{{ r.role }}" tabindex="{{ r.tab }}" onClick="{{ r.onTap }}" style="position:relative;overflow:hidden;background:#FFFFFF;border-radius:16px;padding:13px 14px 12px 17px;cursor:{{ r.cursor }};box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:4px;background:{{ r.rail }}"></span>
+<div style="display:flex;align-items:center;gap:8px;min-width:0">
+<span style="font-size:14px;font-weight:700;color:#1F1D1B;white-space:nowrap;font-variant-numeric:tabular-nums">{{ r.code }}</span>
+<sc-if value="{{ r.status }}" hint-placeholder-val="{{ true }}"><span style="height:22px;display:inline-flex;align-items:center;gap:5px;padding:0 9px;border-radius:999px;background:{{ r.pillBg }};color:{{ r.pillFg }};font-size:11px;font-weight:700;white-space:nowrap"><span style="width:6px;height:6px;border-radius:50%;background:{{ r.rail }}"></span>{{ r.status }}</span></sc-if>
+<span style="flex:1"></span>
+<sc-if value="{{ r.link }}" hint-placeholder-val="{{ true }}"><l-icon name="ChevronRight" size="18" stroke-width="1.9" color="#8B7A4E"></l-icon></sc-if>
+</div>
+<div style="font-size:15px;font-weight:700;color:#1F1D1B;margin-top:6px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">{{ r.party }}</div>
+<sc-if value="{{ r.refs }}" hint-placeholder-val="{{ true }}"><div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px"><sc-for list="{{ r.refs }}" as="rf" hint-placeholder-count="2"><span style="height:22px;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border-radius:7px;background:#F4EFE6;font-size:11px;color:#4D4630;white-space:nowrap;font-variant-numeric:tabular-nums"><span style="color:#6B6252">{{ rf.k }}</span><span style="font-weight:700;color:#1F1D1B">{{ rf.v }}</span></span></sc-for></div></sc-if>
+<sc-if value="{{ r.subOnly }}" hint-placeholder-val="{{ false }}"><div style="font-size:12.5px;color:#4D4630;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.sub }}</div></sc-if>
+<sc-if value="{{ r.inv }}" hint-placeholder-val="{{ true }}">
+<sc-if value="{{ r.hasPay }}" hint-placeholder-val="{{ false }}">
+<div style="margin-top:10px"><div aria-hidden="true" style="height:6px;border-radius:999px;background:#F0ECE9;overflow:hidden"><div style="width:{{ r.payPct }};height:100%;border-radius:999px;background:#4F7C3A"></div></div>
+<div style="display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:11.5px;color:#4D4630;font-variant-numeric:tabular-nums"><span style="white-space:nowrap">Paid <span style="font-weight:700;color:#4F7C3A">{{ r.paid }}</span></span><span style="white-space:nowrap">{{ r.payPctLabel }}</span></div></div>
+</sc-if>
+<div style="display:flex;align-items:flex-end;gap:8px;margin-top:10px">
+<div style="flex:1;min-width:0;padding:7px 10px;border-radius:10px;background:{{ r.dueBg }}"><div style="display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.5px;color:{{ r.dueColor }}"><l-icon name="{{ r.dueIcon }}" size="12" stroke-width="2"></l-icon>{{ r.dueKey }}</div><div style="font-size:12.5px;font-weight:700;color:#1F1D1B;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums">{{ r.dueText }}<sc-if value="{{ r.countdown }}" hint-placeholder-val="{{ false }}"><span style="font-weight:600;color:{{ r.dueColor }}"> · {{ r.countdown }}</span></sc-if></div></div>
+<div style="flex:none;text-align:right;padding:7px 10px;border-radius:10px;background:#F7F1E3"><div style="font-size:10.5px;font-weight:700;letter-spacing:.5px;color:#6B5C32">{{ r.amtKey }}</div><div style="font-size:14px;font-weight:700;color:#1F1D1B;margin-top:2px;white-space:nowrap;font-variant-numeric:tabular-nums">{{ r.amt }}</div></div>
+</div>
+</sc-if>
+<sc-if value="{{ r.notInv }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:{{ r.cols }};gap:10px;margin-top:11px;padding-top:10px;box-shadow:inset 0 1px 0 #F0ECE9">
+<sc-for list="{{ r.metas }}" as="m" hint-placeholder-count="3">
+<div style="min-width:0;text-align:{{ m.align }}"><div style="font-size:10.5px;font-weight:700;letter-spacing:.5px;color:#6B5C32;white-space:nowrap">{{ m.k }}</div><div style="font-size:13px;font-weight:{{ m.weight }};color:{{ m.color }};margin-top:3px;white-space:nowrap;font-variant-numeric:tabular-nums">{{ m.v }}</div></div>
+</sc-for>
+</div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+
+<nav aria-label="Main" style="position:absolute;left:0;right:0;bottom:0;z-index:30;background:rgba(255,255,255,.94);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 -1px 0 rgba(31,29,27,.04),0 -8px 24px -10px rgba(31,29,27,.14);padding-bottom:22px">
+<div style="display:flex;align-items:stretch">
+<sc-for list="{{ tabs }}" as="t" hint-placeholder-count="5">
+<button onClick="{{ t.onTap }}" aria-label="{{ t.label }}" style="flex:1 1 0;min-width:0;min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:none;border:none;cursor:pointer;padding:8px 2px 6px;color:#A89F8D;font-family:inherit"><l-icon name="{{ t.icon }}" size="23" stroke-width="1.75"></l-icon><span style="max-width:100%;font-size:10px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.label }}</span></button>
+</sc-for>
+</div>
+<div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:999px;background:#1F1D1B"></div>
+</nav>
+
+<sc-if value="{{ detailOpen }}" hint-placeholder-val="{{ false }}">
+<div role="dialog" aria-modal="true" aria-label="Invoice detail" style="position:absolute;left:0;right:0;top:47px;bottom:0;z-index:40;background:#FAF8F4;display:flex;flex-direction:column">
+<div style="flex:none;display:flex;align-items:center;gap:4px;height:52px;padding:0 18px 0 12px;box-sizing:border-box">
+<button type="button" onClick="{{ closeDetail }}" aria-label="Back to Invoices" style="width:44px;height:44px;margin-left:-10px;background:none;border:none;padding:0;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer;color:#1F1D1B"><l-icon name="ChevronLeft" size="24" stroke-width="1.9"></l-icon></button>
+<div style="flex:1;min-width:0;font-size:18px;font-weight:700;color:#1F1D1B;line-height:24px;font-variant-numeric:tabular-nums">{{ dv.no }}</div>
+</div>
+<div class="so-scroll" style="flex:1;min-height:0;overflow-y:auto;scrollbar-width:none">
+<div style="padding:2px 18px 110px;display:grid;grid-template-columns:minmax(0,1fr)">
+
+<section aria-label="Invoice header" style="padding:0 2px">
+<span style="display:inline-flex;align-items:center;gap:6px;height:26px;white-space:nowrap;padding:0 11px;border-radius:999px;background:{{ dv.pillBg }};color:{{ dv.pillFg }};font-size:12.5px;font-weight:700"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:{{ dv.hex }}"></span>{{ dv.status }}</span>
+<h1 style="margin:10px 0 0;font-size:21px;line-height:1.3;font-weight:700;letter-spacing:-.3px;color:#1F1D1B;text-wrap:pretty">{{ dv.customer }}</h1>
+<div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:13px;color:#4D4630"><l-icon name="MapPin" size="13" stroke-width="1.9" color="#8B7A4E"></l-icon>{{ dv.state }}</div>
+<sc-if value="{{ dv.banner }}" hint-placeholder-val="{{ false }}"><div role="status" style="display:flex;gap:10px;align-items:center;margin-top:12px;padding:11px 13px;border-radius:12px;background:{{ dv.bannerBg }};font-size:12.5px;font-weight:600;color:{{ dv.bannerFg }}"><l-icon name="{{ dv.bannerIcon }}" size="16" stroke-width="2"></l-icon><span>{{ dv.banner }}</span></div></sc-if>
+</section>
+
+<section aria-label="Invoice overview" style="margin-top:16px;background:#FFFFFF;border-radius:20px;padding:18px 18px 16px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<div style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32"><span aria-hidden="true" style="width:14px;height:3px;border-radius:2px;background:#C9A961"></span>INVOICE TOTAL</div>
+<div style="display:flex;align-items:baseline;gap:5px;margin-top:6px"><span style="font-size:15px;font-weight:600;color:#4D4630">RM</span><span style="font-size:30px;line-height:1.1;font-weight:700;letter-spacing:-.6px;color:#1F1D1B;font-variant-numeric:tabular-nums">{{ dv.totalNum }}</span></div>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px">
+<div style="padding:10px 12px;border-radius:12px;background:#EEF3E4"><div style="font-size:11.5px;font-weight:600;color:#3D6229">Amount paid</div><div style="font-size:15px;font-weight:700;color:#1F1D1B;margin-top:3px;font-variant-numeric:tabular-nums">{{ dv.paid }}</div></div>
+<div style="padding:10px 12px;border-radius:12px;background:{{ dv.balBg }}"><div style="font-size:11.5px;font-weight:600;color:{{ dv.balFg }}">Balance due</div><div style="font-size:15px;font-weight:700;color:#1F1D1B;margin-top:3px;font-variant-numeric:tabular-nums">{{ dv.balance }}</div></div>
+</div>
+<div style="height:1px;background:#F0ECE9;margin:16px 0 14px"></div>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px">
+<div style="min-width:0"><div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#4D4630"><l-icon name="Calendar" size="14" stroke-width="1.9" color="#8B7A4E"></l-icon>Invoice Date</div><div style="font-size:15px;font-weight:700;color:#1F1D1B;margin-top:4px">{{ dv.invDate }}</div></div>
+<div style="min-width:0"><div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#4D4630"><l-icon name="CalendarClock" size="14" stroke-width="1.9" color="#8B7A4E"></l-icon>Due Date</div><div style="font-size:15px;font-weight:700;color:{{ dv.dueColor }};margin-top:4px">{{ dv.dueDate }}</div></div>
+</div>
+</section>
+
+<section aria-label="Invoice PDF" style="margin-top:12px;display:flex;align-items:center;gap:12px;background:#FFFFFF;border-radius:18px;padding:12px 12px 12px 14px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<span style="width:40px;height:40px;flex:none;border-radius:12px;background:#F9E1DA;display:flex;align-items:center;justify-content:center"><l-icon name="FileText" size="19" stroke-width="1.9" color="#9A3A2D"></l-icon></span>
+<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#1F1D1B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ dv.no }}.pdf</div><div style="font-size:12px;color:#4D4630;margin-top:2px">Invoice PDF</div></div>
+<button type="button" onClick="{{ viewPdf }}" aria-label="View invoice PDF" style="flex:none;height:40px;padding:0 13px;border-radius:11px;border:none;background:#F4EFE6;color:#6B5C32;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px"><l-icon name="Eye" size="15" stroke-width="2"></l-icon>View</button>
+<button type="button" onClick="{{ downloadPdf }}" aria-label="Download invoice PDF" style="flex:none;width:40px;height:40px;border-radius:11px;border:none;background:#6B5C32;color:#FFFFFF;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;box-shadow:0 6px 14px -8px rgba(107,92,50,.7)"><l-icon name="Download" size="17" stroke-width="2"></l-icon></button>
+</section>
+
+<section aria-label="Invoice lifecycle" style="margin-top:12px;background:#FFFFFF;border-radius:20px;padding:16px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<div style="display:flex;align-items:center;gap:8px"><l-icon name="Route" size="16" stroke-width="1.9" color="#6B5C32"></l-icon><span style="font-size:15px;font-weight:700;color:#1F1D1B">Invoice lifecycle</span></div>
+<sc-if value="{{ dv.inFlow }}" hint-placeholder-val="{{ true }}">
+<ol aria-label="Invoice lifecycle" style="list-style:none;margin:14px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))">
+<sc-for list="{{ dv.flow }}" as="f" hint-placeholder-count="3">
+<li aria-current="{{ f.cur }}" style="position:relative;display:flex;flex-direction:column;align-items:center">
+<span aria-hidden="true" style="position:absolute;top:13px;left:0;width:50%;height:2px;background:{{ f.lineL }}"></span>
+<span aria-hidden="true" style="position:absolute;top:13px;right:0;width:50%;height:2px;background:{{ f.lineR }}"></span>
+<span style="position:relative;width:28px;height:28px;box-sizing:border-box;border-radius:50%;background:{{ f.dotBg }};box-shadow:{{ f.dotRing }};display:flex;align-items:center;justify-content:center;color:{{ f.dotFg }};font-size:11.5px;font-weight:700">
+<sc-if value="{{ f.done }}" hint-placeholder-val="{{ false }}"><l-icon name="Check" size="14" stroke-width="3"></l-icon></sc-if>
+<sc-if value="{{ f.current }}" hint-placeholder-val="{{ false }}"><span style="width:9px;height:9px;border-radius:50%;background:#FFFFFF"></span></sc-if>
+<sc-if value="{{ f.pending }}" hint-placeholder-val="{{ true }}"><span>{{ f.n }}</span></sc-if>
+</span>
+<span style="margin-top:7px;font-size:12px;font-weight:{{ f.weight }};color:#1F1D1B;white-space:nowrap">{{ f.label }}</span>
+<span style="margin-top:2px;font-size:10.5px;font-weight:700;color:{{ f.stateColor }};white-space:nowrap">{{ f.state }}</span>
+</li>
+</sc-for>
+</ol>
+</sc-if>
+<sc-if value="{{ dv.flowNote }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:11px 13px;border-radius:12px;background:#FAF8F4;font-size:12.5px;line-height:1.45;color:#3A352C"><span style="width:9px;height:9px;flex:none;border-radius:50%;background:{{ dv.hex }};margin-top:4px"></span><span>{{ dv.flowNote }}</span></div></sc-if>
+</section>
+
+<div style="display:flex;align-items:center;gap:8px;margin:26px 2px 10px"><l-icon name="FileText" size="16" stroke-width="1.9" color="#6B5C32"></l-icon><span style="font-size:16px;font-weight:700;color:#1F1D1B">Line items</span><span style="font-size:12.5px;color:#4D4630">{{ dv.itemsSummary }}</span></div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr);gap:10px">
+<sc-for list="{{ dv.items }}" as="it" hint-placeholder-count="2">
+<div style="background:#FFFFFF;border-radius:16px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 10px 24px -14px rgba(31,29,27,.2);overflow:hidden">
+<button type="button" onClick="{{ it.toggle }}" aria-expanded="{{ it.ariaEx }}" style="width:100%;display:flex;align-items:flex-start;gap:10px;text-align:left;background:none;border:none;padding:14px 14px 13px 15px;font-family:inherit;cursor:pointer;color:inherit">
+<div style="flex:1;min-width:0">
+<div style="font-size:14.5px;font-weight:700;color:#1F1D1B;line-height:1.35">{{ it.name }}</div>
+<div style="font-size:12px;font-weight:600;color:#6B5C32;margin-top:3px;word-break:break-all">{{ it.sku }}</div>
+<div style="font-size:12.5px;color:#4D4630;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ it.specLine }}</div>
+</div>
+<div style="flex:none;text-align:right">
+<div style="font-size:14.5px;font-weight:700;color:#1F1D1B;font-variant-numeric:tabular-nums;white-space:nowrap">{{ it.total }}</div>
+<div style="font-size:12px;color:#4D4630;margin-top:3px;white-space:nowrap">Qty {{ it.qty }}</div>
+<span style="display:inline-flex;margin-top:4px;transform:{{ it.rot }};transition:transform .18s ease;color:#8B7A4E"><l-icon name="ChevronDown" size="18" stroke-width="1.9"></l-icon></span>
+</div>
+</button>
+<sc-if value="{{ it.open }}" hint-placeholder-val="{{ false }}">
+<div style="padding:0 15px 12px"><div style="height:1px;background:#F0ECE9;margin-bottom:6px"></div>
+<sc-for list="{{ it.rows }}" as="rw" hint-placeholder-count="3"><div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:12.5px"><span style="color:#4D4630">{{ rw.k }}</span><span style="font-weight:600;color:#1F1D1B;text-align:right;font-variant-numeric:tabular-nums">{{ rw.v }}</span></div></sc-for>
+</div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+<sc-if value="{{ dv.moreItems }}" hint-placeholder-val="{{ true }}"><button type="button" onClick="{{ toggleAllItems }}" style="margin-top:10px;width:100%;height:44px;border-radius:12px;border:none;background:#FFFFFF;color:#6B5C32;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;box-shadow:0 1px 2px rgba(31,29,27,.05),0 6px 16px -10px rgba(31,29,27,.18)">{{ dv.moreItems }}</button></sc-if>
+
+<section aria-label="Payment history" style="margin-top:26px;background:#FFFFFF;border-radius:18px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 10px 24px -14px rgba(31,29,27,.2);overflow:hidden">
+<div style="display:flex;align-items:center;gap:8px;padding:15px 15px 6px"><l-icon name="Wallet" size="16" stroke-width="1.9" color="#6B5C32"></l-icon><span style="flex:1;font-size:16px;font-weight:700;color:#1F1D1B">Payment history</span><span style="font-size:12.5px;color:#4D4630">{{ dv.payCount }}</span></div>
+<sc-if value="{{ dv.noPays }}" hint-placeholder-val="{{ false }}"><div style="padding:4px 15px 15px;font-size:12.5px;color:#4D4630">No payments recorded yet.</div></sc-if>
+<sc-for list="{{ dv.pays }}" as="p" hint-placeholder-count="1">
+<div style="display:flex;align-items:center;gap:12px;min-height:54px;padding:8px 15px;border-top:1px solid #F0ECE9">
+<span style="width:34px;height:34px;flex:none;border-radius:50%;background:#EEF3E4;display:flex;align-items:center;justify-content:center"><l-icon name="{{ p.icon }}" size="16" stroke-width="1.9" color="#4F7C3A"></l-icon></span>
+<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700;color:#1F1D1B">{{ p.method }}</div><div style="font-size:12px;color:#4D4630;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.sub }}</div></div>
+<span style="flex:none;font-size:14px;font-weight:700;color:#4F7C3A;font-variant-numeric:tabular-nums">{{ p.amount }}</span>
+</div>
+</sc-for>
+</section>
+
+<section aria-label="Related documents" style="margin-top:12px;background:#FFFFFF;border-radius:18px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 10px 24px -14px rgba(31,29,27,.2);overflow:hidden">
+<div style="display:flex;align-items:center;gap:8px;padding:15px 15px 4px"><l-icon name="Files" size="16" stroke-width="1.9" color="#6B5C32"></l-icon><span style="font-size:16px;font-weight:700;color:#1F1D1B">Related documents</span></div>
+<ol aria-label="Document relationship" style="list-style:none;margin:0;padding:8px 15px 10px">
+<sc-for list="{{ dv.chain }}" as="c" hint-placeholder-count="3">
+<li style="position:relative">
+<span aria-hidden="true" style="position:absolute;left:11px;top:34px;bottom:-6px;width:2px;background:{{ c.line }};border-radius:2px"></span>
+<button type="button" onClick="{{ c.onTap }}" aria-label="{{ c.aria }}" style="position:relative;width:100%;display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 0;background:none;border:none;font-family:inherit;text-align:left;cursor:pointer">
+<span aria-hidden="true" style="width:24px;height:24px;flex:none;box-sizing:border-box;border-radius:50%;background:{{ c.dotBg }};border:{{ c.dotBorder }};color:#FFFFFF;display:flex;align-items:center;justify-content:center"><sc-if value="{{ c.isLinked }}" hint-placeholder-val="{{ true }}"><l-icon name="Check" size="13" stroke-width="3"></l-icon></sc-if><sc-if value="{{ c.isCurrent }}" hint-placeholder-val="{{ false }}"><span style="width:8px;height:8px;border-radius:50%;background:#FFFFFF"></span></sc-if></span>
+<span style="flex:1;min-width:0"><span style="display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:{{ c.labelColor }}">{{ c.label }}</span><span style="display:block;font-size:14px;font-weight:700;color:{{ c.docColor }};margin-top:2px;font-variant-numeric:tabular-nums">{{ c.doc }}</span><span style="display:block;font-size:12px;color:#4D4630;margin-top:1px">{{ c.sub }}</span></span>
+<sc-if value="{{ c.link }}" hint-placeholder-val="{{ false }}"><l-icon name="ChevronRight" size="17" stroke-width="1.9" color="#8B7A4E"></l-icon></sc-if>
+</button>
+</li>
+</sc-for>
+</ol>
+<sc-if value="{{ dv.hasAdj }}" hint-placeholder-val="{{ false }}">
+<div style="border-top:1px solid #F0ECE9;padding:12px 15px 6px;font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32">ADJUSTMENTS</div>
+<sc-for list="{{ dv.adj }}" as="a" hint-placeholder-count="1">
+<div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:6px 15px 10px">
+<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13.5px;font-weight:700;color:#1F1D1B">{{ a.no }}</span><span style="height:22px;display:inline-flex;align-items:center;padding:0 9px;border-radius:999px;background:{{ a.pillBg }};color:{{ a.pillFg }};font-size:11px;font-weight:700">{{ a.status }}</span></div><div style="font-size:12px;color:#4D4630;margin-top:3px">{{ a.sub }}</div></div>
+<span style="flex:none;font-size:13.5px;font-weight:700;color:{{ a.color }};font-variant-numeric:tabular-nums">{{ a.amount }}</span>
+</div>
+</sc-for>
+</sc-if>
+</section>
+
+<section aria-label="Additional information" style="margin-top:12px;background:#FFFFFF;border-radius:18px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 10px 24px -14px rgba(31,29,27,.2);overflow:hidden">
+<button type="button" onClick="{{ toggleInfo }}" aria-expanded="{{ infoAria }}" style="width:100%;display:flex;align-items:center;gap:8px;min-height:56px;padding:0 15px;background:none;border:none;font-family:inherit;cursor:pointer;text-align:left"><l-icon name="Info" size="16" stroke-width="1.9" color="#6B5C32"></l-icon><span style="flex:1;font-size:16px;font-weight:700;color:#1F1D1B">Additional information</span><span style="display:flex;transform:{{ infoRot }};transition:transform .18s ease;color:#8B7A4E"><l-icon name="ChevronDown" size="18" stroke-width="1.9"></l-icon></span></button>
+<sc-if value="{{ infoOpen }}" hint-placeholder-val="{{ false }}"><div style="padding:0 15px 10px"><sc-for list="{{ dv.info }}" as="ir" hint-placeholder-count="4"><div style="display:flex;justify-content:space-between;align-items:center;gap:14px;min-height:42px;border-top:1px solid #F0ECE9"><span style="flex:none;font-size:12.5px;color:#4D4630">{{ ir.k }}</span><span style="min-width:0;font-size:13px;font-weight:600;color:#1F1D1B;text-align:right;word-break:break-word">{{ ir.v }}</span></div></sc-for></div></sc-if>
+</section>
+
+<section aria-label="History" style="margin-top:12px;background:#FFFFFF;border-radius:18px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 10px 24px -14px rgba(31,29,27,.2);overflow:hidden">
+<button type="button" onClick="{{ toggleHistory }}" aria-expanded="{{ historyAria }}" style="width:100%;display:flex;align-items:center;gap:8px;min-height:56px;padding:0 15px;background:none;border:none;font-family:inherit;cursor:pointer;text-align:left"><l-icon name="History" size="16" stroke-width="1.9" color="#6B5C32"></l-icon><span style="flex:1;font-size:16px;font-weight:700;color:#1F1D1B">Audit history</span><span style="display:flex;transform:{{ historyRot }};transition:transform .18s ease;color:#8B7A4E"><l-icon name="ChevronDown" size="18" stroke-width="1.9"></l-icon></span></button>
+<sc-if value="{{ historyOpen }}" hint-placeholder-val="{{ false }}">
+<div style="padding:0 15px 6px">
+<div style="font-size:12px;line-height:1.45;color:#4D4630">Recorded audit events only — may not include every historical change.</div>
+<ol style="list-style:none;margin:14px 0 0;padding:0">
+<sc-for list="{{ dv.audit }}" as="ev" hint-placeholder-count="3">
+<li style="position:relative;display:flex;gap:12px;padding-bottom:16px">
+<span aria-hidden="true" style="position:absolute;left:6px;top:16px;bottom:0;width:2px;background:{{ ev.line }}"></span>
+<span aria-hidden="true" style="position:relative;width:14px;height:14px;flex:none;box-sizing:border-box;border-radius:50%;margin-top:3px;background:{{ ev.fill }};border:3px solid #8B7A4E"></span>
+<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#1F1D1B">{{ ev.title }}</div><sc-if value="{{ ev.detail }}" hint-placeholder-val="{{ false }}"><div style="font-size:12.5px;color:#3A352C;margin-top:3px">{{ ev.detail }}</div></sc-if><div style="font-size:12px;color:#4D4630;margin-top:3px">{{ ev.meta }}</div></div>
+</li>
+</sc-for>
+</ol>
+</div>
+</sc-if>
+</section>
+
+<div style="margin-top:18px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11.5px;color:#4D4630"><l-icon name="FlaskConical" size="12" stroke-width="1.9" color="#8B7A4E"></l-icon>Illustrative sample data — not live ERP records</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<div aria-hidden="{{ drawerHidden }}" style="position:absolute;inset:0;z-index:70;pointer-events:{{ drawerPE }};visibility:{{ drawerVis }};transition:{{ drawerVisT }}">
+<div onClick="{{ closeDrawer }}" style="position:absolute;inset:0;background:rgba(31,29,27,.32);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);opacity:{{ drawerOpacity }};transition:opacity 240ms ease"></div>
+<div role="dialog" aria-modal="true" aria-label="Main menu" style="position:absolute;top:0;bottom:0;left:0;width:318px;max-width:calc(100% - 44px);display:flex;flex-direction:column;background:#FAF8F4;border-top-right-radius:28px;border-bottom-right-radius:28px;overflow:hidden;box-shadow:18px 0 48px -12px rgba(31,29,27,.32);transform:{{ drawerX }};transition:transform 260ms cubic-bezier(.2,.8,.2,1);padding-top:47px">
+<div style="flex:none;padding:6px 18px 0">
+<div style="display:flex;align-items:center;gap:11px;min-height:48px">
+<div aria-hidden="true" style="width:30px;height:30px;border-radius:8px;background:#1F1D1B;display:flex;align-items:center;justify-content:center;flex:none"><span style="font-weight:800;color:#fff;font-size:15px">H</span></div>
+<div style="flex:1;min-width:0;font-size:17px;font-weight:700;color:#1F1D1B;letter-spacing:-.2px">Hookka</div>
+<button type="button" onClick="{{ closeDrawer }}" aria-label="Close menu" style="width:40px;height:40px;margin-right:-4px;border-radius:50%;background:#FFFFFF;border:none;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#1F1D1B;box-shadow:0 1px 2px rgba(31,29,27,.06),0 6px 16px -8px rgba(31,29,27,.22)"><l-icon name="X" size="18" stroke-width="2"></l-icon></button>
+</div>
+<div style="display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 13px;border-radius:16px;background:#FFFFFF;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<div aria-hidden="true" style="position:relative;width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#8B7A4E,#6B5C32);color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:none">DU<span style="position:absolute;right:0;bottom:0;width:11px;height:11px;border-radius:50%;background:#4F7C3A;box-shadow:0 0 0 2px #FFFFFF"></span></div>
+<div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:700;color:#1F1D1B;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Demo User</div><div style="font-size:12px;color:#4D4630;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:#6B5C32;font-weight:600">Sales</span> · HOOKKA INDUSTRIES</div></div>
+</div>
+<label style="display:flex;align-items:center;gap:9px;height:44px;margin-top:12px;padding:0 13px;border-radius:14px;background:#FFFFFF;box-sizing:border-box;box-shadow:0 1px 2px rgba(31,29,27,.05),0 8px 22px -12px rgba(31,29,27,.18)">
+<l-icon name="Search" size="18" stroke-width="1.75" color="#9CA3AF"></l-icon>
+<input type="search" value="{{ mq }}" onChange="{{ onModuleSearch }}" placeholder="Search modules" aria-label="Search modules" style="flex:1;min-width:0;height:100%;border:none;outline:none;background:transparent;font-family:inherit;font-size:16px;color:#1F1D1B;padding:0"/>
+</label>
+</div>
+<div class="so-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 18px 16px;scrollbar-width:none">
+<sc-if value="{{ noModuleQuery }}" hint-placeholder-val="{{ true }}">
+<div style="margin-top:16px;background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(31,29,27,.05),0 8px 22px -14px rgba(31,29,27,.2)">
+<button type="button" onClick="{{ toggleTheme }}" role="switch" aria-checked="{{ dark }}" aria-label="Dark mode" style="width:100%;display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 14px 8px 12px;background:none;border:none;cursor:pointer;font-family:inherit;text-align:left">
+<span style="width:32px;height:32px;border-radius:50%;background:{{ themeTileBg }};display:flex;align-items:center;justify-content:center;flex:none"><l-icon name="{{ themeIcon }}" size="16" stroke-width="1.9" color="{{ themeIconColor }}"></l-icon></span>
+<span style="flex:1;min-width:0"><span style="display:block;font-size:14px;font-weight:600;color:#1F1D1B">{{ themeLabel }}</span><span style="display:block;font-size:12px;color:#4D4630;margin-top:1px">{{ themeSub }}</span></span>
+<span aria-hidden="true" style="width:44px;height:26px;border-radius:13px;background:{{ switchBg }};position:relative;flex:none;transition:background .18s"><span style="position:absolute;top:3px;left:{{ knobLeft }};width:20px;height:20px;border-radius:50%;background:#FFFFFF;transition:left .18s;box-shadow:0 1px 3px rgba(31,29,27,.25)"></span></span>
+</button>
+</div>
+</sc-if>
+<sc-for list="{{ moduleGroups }}" as="g" hint-placeholder-count="3">
+<section aria-label="{{ g.title }}">
+<div style="margin:20px 4px 8px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#6B5C32">{{ g.title }}</span></div>
+<div style="background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(31,29,27,.05),0 8px 22px -14px rgba(31,29,27,.2)">
+<sc-for list="{{ g.items }}" as="it" hint-placeholder-count="3">
+<button type="button" onClick="{{ it.onTap }}" aria-current="{{ it.current }}" style="position:relative;width:100%;display:flex;align-items:center;gap:12px;min-height:48px;padding:7px 14px 7px 12px;background:{{ it.bg }};border:none;border-top:{{ it.divider }};cursor:pointer;text-align:left;font-family:inherit">
+<span aria-hidden="true" style="position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:{{ it.bar }}"></span>
+<span style="width:32px;height:32px;border-radius:50%;background:{{ it.iconBg }};display:flex;align-items:center;justify-content:center;flex-shrink:0"><l-icon name="{{ it.icon }}" size="16" stroke-width="1.9" color="{{ it.iconFg }}"></l-icon></span>
+<span style="flex:1;min-width:0;font-size:14px;font-weight:{{ it.weight }};color:{{ it.color }};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ it.label }}</span>
+<sc-if value="{{ it.badge }}" hint-placeholder-val="{{ false }}"><span aria-label="{{ it.badgeAria }}" style="min-width:20px;height:20px;box-sizing:border-box;padding:0 6px;border-radius:999px;background:#9A3A2D;color:#FFFFFF;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums">{{ it.badge }}</span></sc-if>
+</button>
+</sc-for>
+</div>
+</section>
+</sc-for>
+<sc-if value="{{ noModules }}" hint-placeholder-val="{{ false }}"><div role="status" style="padding:28px 8px;text-align:center;font-size:13px;color:#4D4630">No modules match “{{ mqTrim }}”</div></sc-if>
+</div>
+<div style="flex:none;display:flex;align-items:center;gap:10px;padding:10px 18px 28px;background:#FAF8F4;box-shadow:0 -1px 0 #ECE6DC">
+<button type="button" onClick="{{ signOut }}" style="flex:1;display:flex;align-items:center;gap:10px;height:44px;padding:0 4px;border:none;background:none;font-family:inherit;cursor:pointer;color:#9A3A2D;font-size:14px;font-weight:700;text-align:left"><l-icon name="LogOut" size="18" stroke-width="2"></l-icon>Sign out</button>
+<span style="font-size:11px;color:#4D4630">Hookka ERP · Mobile</span>
+</div>
+</div>
+</div>
+
+<sc-if value="{{ agSheet }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closeAg }}" style="position:absolute;inset:0;z-index:60;background:rgba(31,29,27,.45);display:flex;flex-direction:column;justify-content:flex-end">
+<div onClick="{{ stopAg }}" role="dialog" aria-modal="true" aria-label="{{ agd.name }}" style="background:#FAF8F4;border-top-left-radius:20px;border-top-right-radius:20px;padding-bottom:30px;box-shadow:0 -8px 30px rgba(31,29,27,.18)">
+<div style="display:flex;justify-content:center;padding-top:8px"><div style="width:40px;height:4px;border-radius:999px;background:#E2DDD8"></div></div>
+<div style="display:flex;align-items:flex-start;gap:8px;padding:10px 16px 0">
+<div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;letter-spacing:1px;color:#6B5C32">AR AGING</div><div style="font-size:17px;font-weight:700;color:#1F1D1B;line-height:1.35;margin-top:3px;word-break:break-word">{{ agd.name }}</div></div>
+<button type="button" onClick="{{ closeAg }}" aria-label="Close" style="width:44px;height:44px;margin:-6px -10px 0 0;flex:none;background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#4D4630"><l-icon name="X" size="20" stroke-width="1.75"></l-icon></button>
+</div>
+<div style="margin:12px 16px 0;background:#FFFFFF;border-radius:18px;padding:15px 15px 12px;box-shadow:0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)">
+<div style="font-size:11px;font-weight:700;letter-spacing:.6px;color:#6B5C32">TOTAL OUTSTANDING</div>
+<div style="display:flex;align-items:baseline;gap:5px;margin-top:4px"><span style="font-size:14px;font-weight:600;color:#4D4630">RM</span><span style="font-size:26px;line-height:1.1;font-weight:700;letter-spacing:-.5px;color:#1F1D1B;font-variant-numeric:tabular-nums">{{ agd.totalNum }}</span></div>
+<div aria-hidden="true" style="display:flex;gap:2px;height:8px;margin-top:12px;border-radius:999px;overflow:hidden;background:#F0ECE9"><sc-for list="{{ agd.segs }}" as="g" hint-placeholder-count="2"><span style="flex:{{ g.flex }};background:{{ g.color }}"></span></sc-for></div>
+<div style="margin-top:8px">
+<sc-for list="{{ agd.buckets }}" as="b" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:10px;min-height:44px;border-top:{{ b.divider }}">
+<span aria-hidden="true" style="width:8px;height:8px;flex:none;border-radius:50%;background:{{ b.color }}"></span>
+<span style="flex:1;min-width:0;font-size:13px;color:#3A352C;white-space:nowrap">{{ b.label }}</span>
+<span style="flex:none;min-width:100px;text-align:right;font-size:14px;font-weight:700;color:{{ b.valColor }};white-space:nowrap;font-variant-numeric:tabular-nums">{{ b.value }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="padding:12px 18px 0;font-size:11.5px;line-height:1.45;color:#4D4630">Buckets come from the server aging report. Open invoices for this customer are on the Invoices tab.</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+<div role="status" style="position:absolute;left:50%;bottom:104px;transform:translateX(-50%);z-index:80;background:#1F1D1B;color:#FAF8F4;font-size:12.5px;font-weight:500;padding:10px 14px;border-radius:12px;white-space:nowrap;box-shadow:0 10px 30px -10px rgba(31,29,27,.5)">{{ toast }}</div>
+</sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const HEX = { NEUTRAL:"#6B7280", INFO:"#3E6570", SUCCESS:"#4F7C3A", WARNING:"#9C6F1E", DANGER:"#9A3A2D" };
+const PILL = { NEUTRAL:{bg:"#EEEBE6",fg:"#4B5260"}, INFO:{bg:"#E0EDF0",fg:"#3E6570"}, SUCCESS:{bg:"#EEF3E4",fg:"#4F7C3A"}, WARNING:{bg:"#FAEFCB",fg:"#85600F"}, DANGER:{bg:"#F9E1DA",fg:"#9A3A2D"} };
+const INV_SEM = { DRAFT:"NEUTRAL", SENT:"INFO", PARTIAL_PAID:"WARNING", PAID:"SUCCESS", OVERDUE:"DANGER", CANCELLED:"NEUTRAL" };
+const NOTE_SEM = { DRAFT:"NEUTRAL", POSTED:"SUCCESS" };
+const EINV_SEM = { VALID:"SUCCESS", PENDING:"WARNING", INVALID:"DANGER" };
+const INV_TABS = [["DRAFT","Draft"],["SENT","Sent"],["PARTIAL_PAID","Partial Paid"],["PAID","Paid"],["OVERDUE","Overdue"],["CANCELLED","Cancelled"]];
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDate = d => { if(!d) return "—"; const [y,m,dd]=d.slice(0,10).split("-"); return `${+dd} ${MONTHS[+m-1]} ${y}`; };
+const shortD = d => { if(!d) return "—"; const [y,m,dd]=d.slice(0,10).split("-"); return `${+dd} ${MONTHS[+m-1]}`; };
+const num = sen => (sen/100).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2});
+const money = sen => "RM " + num(sen);
+const titleCase = s => s.split("_").map(w=>w[0]+w.slice(1).toLowerCase()).join(" ");
+const pill = (map,v,l) => { const k=map[v]||"NEUTRAL"; return { status:l||titleCase(v), pillBg:PILL[k].bg, pillFg:PILL[k].fg, rail:HEX[k], hex:HEX[k] }; };
+const METHOD = { BANK_TRANSFER:["Bank Transfer","Landmark"], CHEQUE:["Cheque","FileText"], CASH:["Cash","Banknote"], CREDIT_CARD:["Credit Card","CreditCard"], E_WALLET:["E-Wallet","Smartphone"] };
+
+const item = (n,code,size,fabric,qty,unit,so) => ({ productName:n, productCode:code, sizeLabel:size, fabricCode:fabric, quantity:qty, unitPriceSen:unit, lineTotalSen:unit*qty, so });
+const INVOICES = [
+  { id:"inv-1", invoiceNo:"INV-2610-081", customerName:"Mewah Home Living Sdn Bhd", customerState:"Johor", doNo:"DO-2610-031", companySOId:"SO-2610-021", customerPOId:"MH-5520", invoiceDate:"2026-10-14", dueDate:"2026-11-13", totalSen:4356000, paidAmount:0, status:"SENT",
+    items:[item("Harbour Bedframe Queen","HB-5001-Q","Queen 5ft","VLV-021",12,189000,"SO-2610-021-01"),item("Scatter Cushion 45cm","ACC-PIL-45","45 × 45 cm","VLV-021",24,4500,"SO-2610-021-05"),item("Aspen 3-Seater Sofa","SF-ASP-3S","3S","KN-112",6,330000,"SO-2610-021")], pays:[], adj:[] },
+  { id:"inv-2", invoiceNo:"INV-2610-077", customerName:"Sri Damai Furnishing", customerState:"Selangor", doNo:"DO-2610-022", companySOId:"SO-2610-009", customerPOId:"SD-1180", invoiceDate:"2026-10-06", dueDate:"2026-11-05", totalSen:3324000, paidAmount:3324000, status:"PAID",
+    items:[item("Milan Bedframe King with Divan","HB-6002-K","King 6ft","LN-005",12,277000,"SO-2610-009-01")], pays:[{ date:"2026-10-11", method:"BANK_TRANSFER", reference:"MBB 88231907", amountSen:3324000 }], adj:[] },
+  { id:"inv-3", invoiceNo:"INV-2609-054", customerName:"Kian Furniture Gallery", customerState:"Penang", doNo:"DO-2609-118", companySOId:"SO-2609-077", customerPOId:"KF-0931", invoiceDate:"2026-09-01", dueDate:"2026-10-01", totalSen:2133000, paidAmount:800000, status:"OVERDUE",
+    items:[item("Harbour Bedframe Queen","HB-5001-Q","Queen 5ft","LN-005",10,189000,"SO-2609-077-01"),item("Scatter Cushion 45cm","ACC-PIL-45","45 × 45 cm","LN-005",54,4500,"SO-2609-077-02")], pays:[{ date:"2026-09-20", method:"CHEQUE", reference:"PBB 004412", amountSen:800000 }], adj:[{ type:"CN", no:"CN-2610-004", status:"POSTED", reason:"2 frames returned — fabric defect", amountSen:378000 }] },
+  { id:"inv-4", invoiceNo:"INV-2610-079", customerName:"Desa Interior Sdn Bhd", customerState:"Selangor", doNo:"DO-2610-044", companySOId:"SO-2610-012", customerPOId:"DI-8812", invoiceDate:"2026-10-15", dueDate:"2026-11-14", totalSen:387000, paidAmount:150000, status:"PARTIAL_PAID",
+    items:[item("Harbour Bedframe Queen","HB-5001-Q","Queen 5ft","VLV-021",2,189000,"SO-2610-012-01"),item("Scatter Cushion 45cm","ACC-PIL-45","45 × 45 cm","VLV-021",2,4500,"SO-2610-012-05")], pays:[{ date:"2026-10-15", method:"E_WALLET", reference:"DuitNow 7781", amountSen:150000 }], adj:[] },
+  { id:"inv-5", invoiceNo:"INV-2610-083", customerName:"Lim Brothers Furniture", customerState:"Perak", doNo:"DO-2610-049", companySOId:"SO-2610-030", customerPOId:"", invoiceDate:"2026-10-16", dueDate:"2026-11-15", totalSen:1260000, paidAmount:0, status:"DRAFT",
+    items:[item("Aspen 3-Seater Sofa","SF-ASP-3S","3S","KN-112",4,315000,"SO-2610-030")], pays:[], adj:[] },
+  { id:"inv-6", invoiceNo:"INV-2609-061", customerName:"Hotel Seri Pantai", customerState:"Kuala Lumpur", doNo:"DO-2609-130", companySOId:"SO-2609-088", customerPOId:"HSP-77", invoiceDate:"2026-09-12", dueDate:"2026-10-12", totalSen:910000, paidAmount:0, status:"CANCELLED",
+    items:[item("Harbour Bedframe Queen","HB-5001-Q","Queen 5ft","VLV-021",5,182000,"SO-2609-088-01")], pays:[], adj:[] }
+];
+const PAYMENTS = [
+  { no:"RCP-2610-041", party:"Sri Damai Furnishing", method:"Bank Transfer", date:"2026-10-11", amountSen:3324000 },
+  { no:"RCP-2610-044", party:"Desa Interior Sdn Bhd", method:"E-Wallet", date:"2026-10-15", amountSen:150000 },
+  { no:"RCP-2609-112", party:"Kian Furniture Gallery", method:"Cheque", date:"2026-09-20", amountSen:800000 }
+];
+const SUPPLIER_PAY = [
+  { no:"SPY-2610-018", party:"Global Foam Supply", date:"2026-10-10", amountSen:1845000 },
+  { no:"SPY-2610-021", party:"Velvet Textiles Sdn Bhd", date:"2026-10-14", amountSen:962500 }
+];
+const CREDIT = [ { no:"CN-2610-004", party:"Kian Furniture Gallery", reason:"2 frames returned — fabric defect", invoice:"INV-2609-054", date:"2026-10-03", amountSen:378000, status:"POSTED" },
+  { no:"CN-2610-006", party:"Mewah Home Living Sdn Bhd", reason:"Pricing correction", invoice:"INV-2610-081", date:"2026-10-15", amountSen:45000, status:"DRAFT" } ];
+const DEBIT = [ { no:"DN-2610-002", party:"Hotel Seri Pantai", reason:"Additional delivery charge", invoice:"INV-2609-061", date:"2026-10-02", amountSen:35000, status:"POSTED" } ];
+const EINV = [ { no:"INV-2610-077", party:"Sri Damai Furnishing", amountSen:3324000, status:"VALID" }, { no:"INV-2610-079", party:"Desa Interior Sdn Bhd", amountSen:387000, status:"PENDING" }, { no:"INV-2609-061", party:"Hotel Seri Pantai", amountSen:910000, status:"INVALID" } ];
+const AUDIT = [ { title:"Status", detail:"Draft → Sent", actor:"Demo User", at:"2026-10-14 16:20" }, { title:"Invoice created", detail:"From delivery order", actor:"Demo User", at:"2026-10-14 15:02" } ];
+const TODAY = "2026-10-16";
+const SOURCES = [["invoices","Invoices","List"],["aging","AR Aging","BarChart3"]];
+// Illustrative AgingRow[] — shape of GET /api/invoices/aging on desktop (src/pages/invoices/index.tsx AgingRow). Buckets are server-computed; not derived here.
+const AGING = [
+  { customerName:"Mewah Home Living Sdn Bhd", current:4356000, days31_60:0, days61_90:0, days90plus:0, total:4356000 },
+  { customerName:"Kian Furniture Gallery", current:0, days31_60:1333000, days61_90:0, days90plus:0, total:1333000 },
+  { customerName:"Desa Interior Sdn Bhd", current:237000, days31_60:0, days61_90:0, days90plus:0, total:237000 }
+];
+const BUCKETS = [["current","Current (0-30)","#4F7C3A","#EEF3E4"],["days31_60","31-60 Days","#9C6F1E","#FAEFCB"],["days61_90","61-90 Days","#B8601A","#FBE9DA"],["days90plus","90+ Days","#9A3A2D","#F9E1DA"]];
+const TABS = [["Home","House","Home.dc.html"],["Sales","ShoppingCart","Sales Orders.dc.html"],["Products","Shapes","Products Hub.dc.html"],["Delivery","Truck","Delivery.dc.html"],["Procurement","ShoppingBag","Procurement.dc.html"]];
+const GROUPS = [
+  ["Overview",[["Dashboard Prototype","FlaskConical","/m/dashboard"],["Announcements","Megaphone","/m/announcements"],["Mail Center","Mail","/m/mail-center"]]],
+  ["Sales & Customers",[["Sales Orders","ShoppingCart","/m/sales"],["Delivery Orders","Truck","/m/delivery"],["Invoices","Receipt","/m/invoices"],["Customers","Users","/m/customers"]]],
+  ["Service & Support",[["Service Cases","Wrench","/m/servicecases"],["Service Orders","Wrench","/m/serviceorders"]]],
+  ["Production",[["Production Orders","Factory","/m/production"],["Planning","CalendarRange","/m/planning"],["Products","Shapes","/m/products"],["Warehouse","Warehouse","/m/warehouse"],["R&D Projects","FlaskConical","/m/rd"]]],
+  ["Warehouse & Procurement",[["Procurement","ShoppingBag","/m/procurement"],["Purchase Returns","Undo2","/m/purchase-returns"],["Suppliers","SquareUser","/m/suppliers"],["MRP","Calculator","/m/mrp"],["Inventory","Package","/m/inventory"],["3PL Providers","Truck","/m/logistics"]]],
+  ["People & Finance",[["Employees","HardHat","/m/employees"],["Receivables","Wallet","/m/receivables"]]],
+  ["System",[["User Management","UserPlus","/m/usermgmt"],["IT Support","LifeBuoy","/m/it-support"]]]
+];
+
+class Component extends DCLogic {
+  state = { agName:null, src:"invoices", chip:"all", q:"", openId:null, open:{}, allItems:false, info:false, history:false, drawer:false, mq:"", dark:false, toast:"" };
+  componentDidMount(){ try{ const id=new URLSearchParams(location.search).get("invoice"); if(id){ const f=INVOICES.find(i=>i.invoiceNo===id||i.id===id); if(f) this.setState({openId:f.id}); } }catch(e){} }
+  componentWillUnmount(){ clearTimeout(this._t); }
+  showToast(m){ clearTimeout(this._t); this.setState({toast:m}); this._t=setTimeout(()=>this.setState({toast:""}),2200); }
+  go(h){ window.location.href=h; }
+  rowsFor(src){
+    if(src==="aging") return [];
+    const q=this.state.q.trim().toLowerCase(); const hit=(...f)=>!q||f.join(" ").toLowerCase().includes(q);
+    const metas3="minmax(0,1fr) minmax(0,1fr) auto", metas2="minmax(0,1fr) auto";
+    const plain=(r)=>({ role:undefined, tab:undefined, cursor:"default", onTap:undefined, link:false, inv:false, notInv:true, refs:null, subOnly:!!r.sub, ...r });
+    if(src==="invoices") return INVOICES.filter(i=>(this.state.chip==="all"||i.status===this.state.chip)&&hit(i.invoiceNo,i.customerName,i.doNo,i.companySOId)).map(i=>{ const p=pill(INV_SEM,i.status,INV_TABS.find(t=>t[0]===i.status)[1]); const bal=i.totalSen-i.paidAmount; const showBal=i.paidAmount>0&&bal>0; const overdue=i.status==="OVERDUE";
+      const dd0=Math.round((new Date(i.dueDate)-new Date(TODAY))/864e5); const done=i.status==="PAID"||i.status==="CANCELLED"; const pct=i.totalSen?Math.round(i.paidAmount/i.totalSen*100):0;
+      const countdown = done||i.status==="DRAFT" ? "" : dd0<0?`${-dd0} days overdue`:dd0===0?"Due today":dd0<=7?`In ${dd0} day${dd0===1?"":"s"}`:"";
+      const tone = !done&&dd0<0 ? ["#9A3A2D","#FCF3F0"] : !done&&i.status!=="DRAFT"&&dd0<=7 ? ["#9C6F1E","#FAF8F4"] : ["#6B5C32","#FAF8F4"];
+      const inv={ inv:true, notInv:false, refs:[["DO",i.doNo],["SO",i.companySOId]].filter(x=>x[1]).map(([k,v])=>({k,v})), subOnly:false,
+        hasPay:i.paidAmount>0&&bal>0, paid:money(i.paidAmount), payPct:pct+"%", payPctLabel:`${pct}% of ${money(i.totalSen)}`,
+        dueKey: i.status==="PAID"?"PAID IN FULL":"DUE", dueIcon: i.status==="PAID"?"CircleCheck":overdue||dd0<0&&!done?"CircleAlert":"Calendar", dueText: i.status==="PAID"?shortD((i.pays[i.pays.length-1]||{}).date||i.dueDate):shortD(i.dueDate), countdown, dueColor: i.status==="PAID"?"#4F7C3A":tone[0], dueBg: i.status==="PAID"?"#EEF3E4":tone[1],
+        amtKey: showBal?"BALANCE":"TOTAL", amt: money(showBal?bal:i.totalSen) };
+      return { ...p, ...inv, code:i.invoiceNo, party:i.customerName, sub:[i.doNo,i.companySOId].filter(Boolean).join(" · "), cols:metas3, role:"button", tab:"0", cursor:"pointer", link:true, onTap:()=>this.setState({openId:i.id, open:{}, allItems:false, info:false, history:false}),
+        metas:[{k:"INVOICE DATE",v:shortD(i.invoiceDate),align:"left",weight:600,color:"#1F1D1B"},{k:"DUE",v:shortD(i.dueDate),align:"left",weight:overdue?700:600,color:overdue?"#9A3A2D":"#1F1D1B"},{k:showBal?"BALANCE":"TOTAL",v:money(showBal?bal:i.totalSen),align:"right",weight:700,color:"#1F1D1B"}] }; });
+    if(src==="payments") return PAYMENTS.filter(r=>hit(r.no,r.party)).map(r=>plain({ code:r.no, status:"", party:r.party, sub:r.method, rail:"#4F7C3A", cols:metas2, metas:[{k:"DATE",v:fmtDate(r.date),align:"left",weight:600,color:"#1F1D1B"},{k:"AMOUNT",v:money(r.amountSen),align:"right",weight:700,color:"#1F1D1B"}] }));
+    if(src==="supplier") return SUPPLIER_PAY.filter(r=>hit(r.no,r.party)).map(r=>plain({ code:r.no, status:"", party:r.party, sub:"", rail:"#6B5C32", cols:metas2, metas:[{k:"DATE",v:fmtDate(r.date),align:"left",weight:600,color:"#1F1D1B"},{k:"AMOUNT",v:money(r.amountSen),align:"right",weight:700,color:"#1F1D1B"}] }));
+    if(src==="credit"||src==="debit") return (src==="credit"?CREDIT:DEBIT).filter(r=>hit(r.no,r.party,r.invoice)).map(r=>plain({ ...pill(NOTE_SEM,r.status), code:r.no, party:r.party, sub:`${r.invoice} · ${r.reason}`, cols:metas2, metas:[{k:"DATE",v:fmtDate(r.date),align:"left",weight:600,color:"#1F1D1B"},{k:"AMOUNT",v:(src==="credit"?"− ":"+ ")+money(r.amountSen),align:"right",weight:700,color:src==="credit"?"#9A3A2D":"#1F1D1B"}] }));
+    return EINV.filter(r=>hit(r.no,r.party)).map(r=>plain({ ...pill(EINV_SEM,r.status), code:r.no, party:r.party, sub:"LHDN MyInvois", cols:metas2, metas:[{k:"SUBMISSION",v:titleCase(r.status),align:"left",weight:600,color:"#1F1D1B"},{k:"AMOUNT",v:money(r.amountSen),align:"right",weight:700,color:"#1F1D1B"}] }));
+  }
+  detail(i){
+    const s=this.state, p=pill(INV_SEM,i.status,INV_TABS.find(t=>t[0]===i.status)[1]);
+    const bal=i.totalSen-i.paidAmount, overdue=i.status==="OVERDUE"&&i.dueDate<TODAY;
+    const daysOver=Math.round((new Date(TODAY)-new Date(i.dueDate))/864e5);
+    const FL=[["DRAFT","Draft"],["SENT","Sent"],["PAID","Paid"]];
+    const idxMap={DRAFT:0,SENT:1,PARTIAL_PAID:2,PAID:2};
+    const inFlow=i.status in idxMap, idx=idxMap[i.status];
+    const flow=FL.map(([k,l],n)=>{ const done=inFlow&&(n<idx||(n===2&&i.status==="PAID")), cur=inFlow&&n===idx&&!done, pend=!done&&!cur;
+      return { label:l, n:String(n+1), done, current:cur, pending:pend, cur:cur?"step":undefined, dotBg:done?"#4F7C3A":cur?"#6B5C32":"#FFFFFF", dotFg:pend?"#4D4630":"#FFFFFF", dotRing:cur?"0 0 0 4px rgba(201,169,97,.35)":pend?"inset 0 0 0 1.5px #D9D2C6":"none",
+        lineL:n===0?"transparent":(inFlow&&n<=idx?"#4F7C3A":"#E6E0D9"), lineR:n===2?"transparent":(inFlow&&n<idx?"#4F7C3A":"#E6E0D9"), weight:cur?700:600,
+        state: done?"Done":cur?(i.status==="PARTIAL_PAID"?"Partially paid":"Current"):"", stateColor: cur?"#6B5C32":"#4F7C3A" }; });
+    const flowNote = i.status==="OVERDUE"?`Overdue is a special status — the due date (${fmtDate(i.dueDate)}) has passed with a balance outstanding.`:i.status==="CANCELLED"?"Cancelled is a special status outside the Draft → Sent → Paid lifecycle.":"";
+    const shown=s.allItems?i.items:i.items.slice(0,2);
+    const items=shown.map((it,n)=>{ const k=i.id+n, open=!!s.open[k]; return { name:it.productName, sku:it.productCode, qty:it.quantity, total:money(it.lineTotalSen), specLine:[it.sizeLabel,it.fabricCode].filter(Boolean).join(" · "), open, ariaEx:open?"true":"false", rot:open?"rotate(180deg)":"none",
+      rows:[["SO line",it.so],["Size",it.sizeLabel],["Fabric",it.fabricCode],["Unit price",money(it.unitPriceSen)],["Line total",money(it.lineTotalSen)]].filter(r=>r[1]).map(([k,v])=>({k,v})), toggle:()=>this.setState(st=>({open:{...st.open,[k]:!st.open[k]}})) }; });
+    const CH={ linked:{bg:"#2F6E62",border:"none",label:"#2F6E62",doc:"#1F1D1B"}, current:{bg:"#6B5C32",border:"none",label:"#6B5C32",doc:"#1F1D1B"} };
+    const nodes=[ { label:"Sales Order", doc:i.companySOId, sub:"Opens Sales Order detail", state:"linked", link:true, tap:()=>this.go("Sales Order Detail.dc.html") },
+      { label:"Delivery Order", doc:i.doNo, sub:"Delivery order this invoice was raised from", state:"linked", link:true, tap:()=>this.showToast(`→ /m/delivery/${i.doNo} (out of scope)`) },
+      { label:"Sales Invoice", doc:i.invoiceNo, sub:"This invoice", state:"current", link:false, tap:null } ];
+    const chain=nodes.map((n,k)=>{ const c=CH[n.state]; return { ...n, isLinked:n.state==="linked", isCurrent:n.state==="current", dotBg:c.bg, dotBorder:c.border, labelColor:c.label, docColor:c.doc, line:k===nodes.length-1?"transparent":"#A9CCC3", aria:`${n.label}: ${n.doc}`, onTap:n.tap||undefined }; });
+    return { no:i.invoiceNo, customer:i.customerName, state:i.customerState, ...p, totalNum:num(i.totalSen), paid:money(i.paidAmount), balance:bal>0?money(bal):"RM 0.00",
+      balBg: bal>0?(overdue?"#F9E1DA":"#FAEFCB"):"#EEF3E4", balFg: bal>0?(overdue?"#9A3A2D":"#85600F"):"#3D6229",
+      invDate:fmtDate(i.invoiceDate), dueDate:fmtDate(i.dueDate), dueColor:overdue?"#9A3A2D":"#1F1D1B",
+      banner: overdue?`${daysOver} days past due · ${money(bal)} outstanding`:i.status==="CANCELLED"?"This invoice was cancelled.":"", bannerBg: overdue?"#F9E1DA":"#EEEBE6", bannerFg: overdue?"#9A3A2D":"#4B5260", bannerIcon: overdue?"CircleAlert":"Ban",
+      inFlow, flow, flowNote, items, itemsSummary:`${i.items.length} line${i.items.length===1?"":"s"} · ${i.items.reduce((a,x)=>a+x.quantity,0)} qty`,
+      moreItems: i.items.length>2?(s.allItems?"Show fewer items":`View all ${i.items.length} items`):"",
+      pays:i.pays.map(x=>({ method:METHOD[x.method][0], icon:METHOD[x.method][1], sub:`${fmtDate(x.date)} · ${x.reference}`, amount:money(x.amountSen) })), noPays:!i.pays.length, payCount:i.pays.length?String(i.pays.length):"",
+      chain, hasAdj:i.adj.length>0, adj:i.adj.map(a=>({ no:a.no, ...pill(NOTE_SEM,a.status), sub:`${a.type==="CN"?"Credit note":"Debit note"} · ${a.reason}`, amount:(a.type==="CN"?"− ":"+ ")+money(a.amountSen), color:a.type==="CN"?"#9A3A2D":"#1F1D1B" })),
+      info:[["Customer PO",i.customerPOId||"—"],["Company SO",i.companySOId],["DO No",i.doNo]].map(([k,v])=>({k,v})),
+      audit:AUDIT.map((a,n,arr)=>({ ...a, meta:`${a.at} · ${a.actor}`, fill:n===0?"#8B7A4E":"#FFFFFF", line:n===arr.length-1?"transparent":"#EDE7DD" })) };
+  }
+  renderVals(){
+    const s=this.state;
+    const rows=this.rowsFor(s.src);
+    const isInv=s.src==="invoices";
+    const sumSen = isInv?INVOICES.filter(i=>s.chip==="all"||i.status===s.chip).reduce((a,i)=>a+i.totalSen,0):0;
+    const label={invoices:"INVOICES",payments:"PAYMENTS",supplier:"SUPPLIER PAYMENTS",credit:"CREDIT NOTES",debit:"DEBIT NOTES",einv:"E-INVOICES"}[s.src];
+    const counts={}; INVOICES.forEach(i=>{counts[i.status]=(counts[i.status]||0)+1;});
+    const sel=INVOICES.find(i=>i.id===s.openId);
+    const mq=s.mq.trim().toLowerCase();
+    const moduleGroups=GROUPS.map(([title,items])=>{ const its=items.filter(i=>!mq||title.toLowerCase().includes(mq)||i[0].toLowerCase().includes(mq));
+      return { title, items:its.map(([l,icon,path],n)=>{ const cur=path==="/m/invoices"; const badge=path==="/m/mail-center"?"2":""; return { label:l, icon, current:cur?"page":undefined, bg:cur?"#FAF6EC":"transparent", bar:cur?"#C9A961":"transparent", iconBg:cur?"#6B5C32":"#F4EFE6", iconFg:cur?"#FFFFFF":"#6B5C32", weight:cur?700:500, color:cur?"#6B5C32":"#1F1D1B", badge, badgeAria:badge?`${badge} unread`:undefined, divider:n===0?"none":"1px solid #F2EEE6",
+        onTap:()=>{ this.setState({drawer:false}); if(cur) return; const map={"/m/sales":"Sales Orders.dc.html","/m/mail-center":"Mail Center.dc.html","/m/announcements":"Updates.dc.html?view=announcements","/m/products":"Products Hub.dc.html","/m/customers":"Customers v2.dc.html","/m/delivery":"Delivery.dc.html","/m/procurement":"Procurement.dc.html"}; if(map[path]) this.go(map[path]); else this.showToast(`${l} → ${path} (out of scope)`); } }; }) }; }).filter(g=>g.items.length);
+    return {
+      sources:SOURCES.map(([k,l,icon])=>{ const on=s.src===k; return { label:l, icon, on, bg:on?"#FFFFFF":"transparent", fg:on?"#1F1D1B":"#4D4630", weight:on?700:600, shadow:on?"0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)":"none", onTap:()=>this.setState({src:k, q:"", chip:"all"}) }; }),
+      q:s.q, hasQ:!!s.q, onQ:e=>this.setState({q:e.target.value}), clearQ:()=>this.setState({q:""}),
+      searchPh: isInv?"Search invoice, customer, DO, SO":"Filter by customer",
+      hasChips:isInv, chips:[["all","All",INVOICES.length]].concat(INV_TABS.map(([k,l])=>[k,l,counts[k]||0])).map(([k,l,c])=>{ const on=s.chip===k; const dot=k==="all"?null:HEX[INV_SEM[k]]; return { label:l, count:String(c), on, dot, bg:on?"#6B5C32":"#FFFFFF", fg:on?"#FFFFFF":"#3A352C", weight:on?700:600, shadow:on?"0 6px 14px -6px rgba(107,92,50,.6)":"0 1px 2px rgba(31,29,27,.06),0 4px 10px -6px rgba(31,29,27,.16)", onTap:()=>this.setState({chip:k}) }; }),
+      isInv, notInv:!isInv, sum:(()=>{ const base=INVOICES.filter(i=>s.chip==="all"||i.status===s.chip); const open=INVOICES.filter(i=>["SENT","PARTIAL_PAID","OVERDUE"].includes(i.status)); const od=INVOICES.filter(i=>i.status==="OVERDUE"); const on=s.chip==="OVERDUE";
+        return { title: s.chip==="all"?"ALL INVOICES":(INV_TABS.find(t=>t[0]===s.chip)||[,""])[1].toUpperCase(), count:`${base.length} invoice${base.length===1?"":"s"}`, total:(sumSen/100).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2}),
+          outstanding:money(open.reduce((a,i)=>a+i.totalSen-i.paidAmount,0)), overdueAmt:money(od.reduce((a,i)=>a+i.totalSen-i.paidAmount,0)), overdueN:`· ${od.length}`, overdueOn:on?"true":"false",
+          overdueBg:on?"#F9E1DA":"#FCF3F0", overdueRing:on?"inset 0 0 0 1.5px #9A3A2D":"none", onOverdue:()=>this.setState({chip:on?"all":"OVERDUE"}) }; })(),
+      countLabel:`${rows.length} ${label}`, totalKey:"Invoiced total", totalLabel: isInv?money(sumSen):"",
+      isAging:s.src==="aging", ag:(()=>{ const q=s.q.trim().toLowerCase(); const list=AGING.filter(r=>!q||r.customerName.toLowerCase().includes(q));
+        const tot={}; BUCKETS.forEach(([k])=>{ tot[k]=list.reduce((a,r)=>a+r[k],0); }); const total=list.reduce((a,r)=>a+r.total,0);
+        const segsOf=o=>BUCKETS.filter(([k])=>o[k]>0).map(([k,,c])=>({flex:String(o[k]),color:c}));
+        return { total:(total/100).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2}), count:`${list.length} customer${list.length===1?"":"s"}`,
+          segs:segsOf(tot), barAria:BUCKETS.map(([k,l])=>`${l} ${money(tot[k])}`).join(", "),
+          buckets:BUCKETS.map(([k,l,c],i)=>({label:l,color:c,divider:i?"1px solid #EDE7DD":"none",value:tot[k]>0?money(tot[k]):"–",pct:total&&tot[k]>0?`${Math.round(tot[k]/total*100)}%`:"",valColor:tot[k]>0?"#1F1D1B":"#6B6252"})),
+          listLabel:`${list.length} CUSTOMER${list.length===1?"":"S"}`, empty:!list.length, emptyText: q?"No customers match this filter.":"No outstanding invoices found.",
+          rows:list.map(r=>{ const worst=[...BUCKETS].reverse().find(([k])=>r[k]>0);
+            return { name:r.customerName, total:money(r.total), rail:worst?worst[2]:"#E6E0D9", segs:segsOf(r),
+              oldLabel: worst?(worst[0]==="current"?"Current (0-30)":`Oldest · ${worst[1]}`):"No balance", oldBg: worst?worst[3]:"#F0ECE9", oldFg: worst?(worst[0]==="days31_60"?"#85600F":worst[2]):"#4D4630",
+              onTap:()=>this.setState({agName:r.customerName}),
+              buckets:BUCKETS.filter(([k])=>r[k]>0).map(([k,l,c])=>({label:l,dot:c,value:money(r[k]),valColor:c})), emptyNote:(()=>{ const z=BUCKETS.filter(([k])=>!(r[k]>0)).map(([,l])=>l); return z.length?`Nothing in ${z.join(", ")}`:""; })(),
+              aria:`${r.customerName}, total outstanding ${money(r.total)}` }; }) }; })(),
+      agSheet:!!s.agName&&s.src==="aging", closeAg:()=>this.setState({agName:null}), stopAg:e=>e.stopPropagation(),
+      agd:(()=>{ const r=AGING.find(x=>x.customerName===s.agName); if(!r) return {name:"",totalNum:"",segs:[],buckets:[]};
+        return { name:r.customerName, totalNum:(r.total/100).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2}),
+          segs:BUCKETS.filter(([k])=>r[k]>0).map(([k,,c])=>({flex:String(r[k]),color:c})),
+          buckets:BUCKETS.map(([k,l,c],i)=>({label:l,color:c,divider:i?"1px solid #EDE7DD":"none",value:r[k]>0?money(r[k]):"–",pct:r.total&&r[k]>0?`${Math.round(r[k]/r.total*100)}%`:"",valColor:r[k]>0?"#1F1D1B":"#6B6252"})) }; })(),
+      rows, empty:!rows.length&&s.src!=="aging", emptyText: s.q?"No matches for your search.":"Nothing here yet.",
+      viewPdf:()=>this.showToast("Opens invoice PDF in a new tab (prototype)"), downloadPdf:()=>this.showToast(`Downloads ${sel?sel.invoiceNo:""}.pdf (prototype)`), detailOpen:!!sel, dv: sel?this.detail(sel):{}, closeDetail:()=>this.setState({openId:null}),
+      toggleAllItems:()=>this.setState(st=>({allItems:!st.allItems})),
+      infoOpen:s.info, infoAria:s.info?"true":"false", infoRot:s.info?"rotate(180deg)":"none", toggleInfo:()=>this.setState(st=>({info:!st.info})),
+      historyOpen:s.history, historyAria:s.history?"true":"false", historyRot:s.history?"rotate(180deg)":"none", toggleHistory:()=>this.setState(st=>({history:!st.history})),
+      tabs:TABS.map(([l,icon,to])=>({ label:l, icon, onTap:()=>to.endsWith(".html")?this.go(to):this.showToast(`${l} → ${to} (out of scope)`) })),
+      openDrawer:()=>this.setState({drawer:true}), closeDrawer:()=>this.setState({drawer:false, mq:""}),
+      drawerHidden: s.drawer?"false":"true", drawerPE: s.drawer?"auto":"none", drawerVis: s.drawer?"visible":"hidden",
+      drawerVisT: s.drawer?"visibility 0s":"visibility 0s linear 240ms", drawerOpacity: s.drawer?1:0, drawerX: s.drawer?"translateX(0)":"translateX(-100%)",
+      mq:s.mq, mqTrim:s.mq.trim(), onModuleSearch:e=>this.setState({mq:e.target.value}), moduleGroups, noModules:moduleGroups.length===0, noModuleQuery:!mq,
+      dark:!!s.dark, toggleTheme:()=>this.setState(st=>({dark:!st.dark})),
+      themeTileBg: s.dark?"#2A2722":"#FAEFCB", themeIcon: s.dark?"Moon":"Sun", themeIconColor: s.dark?"#D9BD7B":"#9C6F1E",
+      themeLabel: s.dark?"Dark mode":"Light mode", themeSub:`Tap to switch to ${s.dark?"light":"dark"}`, switchBg: s.dark?"#6B5C32":"#E2DDD8", knobLeft: s.dark?"21px":"3px",
+      signOut:()=>this.showToast("Sign out → /login (disabled in prototype)"),
+      toast:s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

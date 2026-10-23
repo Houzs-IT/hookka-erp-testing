@@ -1,6 +1,8 @@
 # Bug History
 > **Last verified: 2026-10-23**: newest entry BUG-2026-10-23-382 (branch `feat/2fa-login-code-step`, to `staging`).
 > **Last verified: 2026-10-22**: newest entry BUG-2026-10-22-381 (branch `feat/dashboard-feed-snapshot`, to `staging`; 347-380 are taken on `main`).
+> **Last verified: 2026-10-22**: newest entries BUG-2026-10-22-350 / -351 (round 5; 349's mobile-impact line updated) — open, code-reading findings, prod UNMEASURED.
+> **Last verified: 2026-10-22**: newest entries BUG-2026-10-22-347 / -348 / -349 (branch `design/mobile-invoicesv2`, to `staging`) — all open, code-inspection findings logged for backend review, nothing fixed, prod UNMEASURED.
 > **Last verified: 2026-10-21**: newest entry BUG-2026-10-21-346 (branch `design/mobile-products-v2`, to `staging`; committed `31afa056`; 344 and 345 are Procurement's, from `design/mobile-procurement`).
 > **Last verified: 2026-10-21**: newest entries BUG-2026-10-21-344 / -345 (branch `design/mobile-procurement`, to `staging`) — both 🔴 open, logged for backend review, nothing fixed.
 > **Last verified: 2026-10-19**: newest entry BUG-2026-10-19-336 (branch `fix/dashboard-period-keeps-scroll`, to `staging`).
@@ -255,6 +257,70 @@ Entries themselves stay newest-first.
 **Fix.** Both feeds now read through `withSnapshot` (`src/api/lib/snapshot.ts`) behind the KV copy, into a new `dashboard_feed_snapshot` table (runtime self-applied, migration 0217). The saved copy is reused until a source table changes, served stale while it refreshes in the background, and the KV key is cleared when the refresh lands. Keys carry the payload version and the day, because both payloads hold "today" figures; rows older than two days are pruned on each rebuild. A prototype payload with a failed section (`availability.*.live === false`) is not saved, through a new `shouldStore` option on `withSnapshot`. Past months (already frozen), `period=all` (own snapshot) and the compare view are unchanged. The first visitor of each day still waits once, as the day key is new.
 
 **Regression.** `tests/snapshot-swr.test.mjs` (`shouldStore` false is never written, true is).
+## BUG-2026-10-22-351 — Nothing advances an invoice to OVERDUE; desktop's Overdue KPI / chip count only manually-set rows `invoices` `docs-vs-code` 🟡
+
+🟡 **Open, not fixed.** Logged on branch `design/mobile-invoicesv2` (to `staging`) during the round-5 Overdue investigation. **Code-reading finding.** The owner's screenshot of `erp.hookka.com/invoices` (Super Admin, 2026-10-22) shows **Overdue 0** on both the KPI card and the status chip, with 237 Sent invoices — consistent with this reading; how many invoices are actually past their due date on prod is UNMEASURED.
+
+**What the code does.** `OVERDUE` is a persisted status, reachable only through the manual status transition (`INV_VALID_TRANSITIONS` in `src/api/routes/invoices.ts`: SENT / PARTIAL_PAID → OVERDUE). No route, cron or worker sets it (no `status = 'OVERDUE'` write in `src/api`). `src/pages/invoices/index.tsx` says OVERDUE is "advanced by the backend when dueDate passes" — it is not — and its Overdue KPI reads `/stats byStatus.OVERDUE`. The backend's own credit gate (`src/api/lib/customer-credit.ts`, PAYMENT_OVERDUE) judges overdue by DATE (invoice date + the customer's current term), not by status.
+
+**Effect.** Desktop's Overdue card and chip read 0 while invoices can be past due. Mobile Invoices v2's date-based **Past Due Outstanding** tile + filter (`isPastDue`: SENT / PARTIAL_PAID / OVERDUE, balance > 0, due date before today) catches them.
+
+**Fix (proposed, not done).** Owner decision: a daily backend job that advances past-due SENT / PARTIAL_PAID to OVERDUE (needs review), or define the UI's "Overdue" by date everywhere. Correct the desktop comment either way.
+
+---
+
+## BUG-2026-10-22-350 — `/api/auth/me/permissions` can disagree with the gate after a role edit (`users.roleId` never updated) `auth-rbac` 🟡
+
+🟡 **Open, not fixed — for backend review.** Logged on branch `design/mobile-invoicesv2` (to `staging`) during the round-5 AR Aging access investigation. **Code-reading finding only; how many accounts have drifted is UNMEASURED.**
+
+**What the code does.** The gate stamps `userRole` from `users.role` (`auth-middleware.ts` session join); `rbac.ts` and `customer-scope.ts` both decide on it. `/api/auth/me/permissions` (`auth.ts`) resolves `roles.name` via `users.roleId` FIRST and falls back to `users.role`. `roleId` was backfilled once from `users.role` by migration 0045; `PUT /api/users/:id` (`users.ts`) updates `role` and never `roleId`. An account that existed at 0045 and later changed role keeps the old `roleId`: a former ADMIN now `SALES` receives the `"*"` sentinel (every menu and button) while the gate scopes it as SALES; the reverse hides menus a real admin may use. The `auth.ts` comment "so the menu can never disagree with the gate" holds only while `roleId` matches.
+
+**Fix (proposed, not done).** Resolve `/me/permissions` from `users.role` (the gate's column), or update `roleId` with `role` in `users.ts` PUT plus a one-off resync. Security area — deep review.
+
+---
+
+## BUG-2026-10-22-349 — AR Aging (`GET /api/invoices/aging`) is customer-scoped only by name, through the response filter `auth-rbac` `invoices` 🟡
+
+🟡 **Open, not fixed — for backend review.** Logged on branch `design/mobile-invoicesv2` (to `staging`) by the mobile Invoices v2 two-tab audit; the owner asked for it to be documented, not changed. **Code-reading finding only: not run, no database measured, production exposure UNMEASURED.**
+
+**What the code does.** The handler (`src/api/routes/invoices.ts` `app.get("/aging")`) builds its SQL with no customer scope — unlike `GET /api/invoices` and `/stats`, which add `customerScopeSql`. Its rows are still narrowed for the scoped role (`SCOPED_ROLES = {"SALES"}`) by `customerScopeMiddleware` (`src/api/lib/customer-scope.ts`, registered on `/api/*` in `worker.ts`), which drops rows of customers assigned to another salesperson and fails closed (empty) when the owner lookup fails. Aging rows carry no `customerId`, so that filter can only match on **`customerName`** (upper-cased, against `customers.name`).
+
+**Residual risks (as read).**
+1. An invoice's `customerName` is a snapshot. If a customer was renamed after invoicing, its aging row carries the old name, does not match `customers.name`, and is **kept** for a salesperson who does not own that customer.
+2. The handler groups by name, so two customers with the same name merge into one row; if either is someone else's, the whole merged row is dropped (over-hiding, not a leak).
+3. A fail-closed lookup returns `{ success: true, data: [] }` — indistinguishable on the client from "no outstanding invoices".
+
+**Fix (proposed, not done).** Scope the aging SQL itself with `customerScopeSql(c, "customerId")`, as `/` and `/stats` do (and ideally return `customerId` per row).
+
+**Mobile impact (updated round 5, 2026-10-22).** `AR_AGING_LIVE` is gone; the tab follows one rule, `canUseArAging` in `src/pages/m/lib/invoices-mobile.ts`: `invoices:read` AND (the backend scopes `/aging` by customer id — `AGING_SERVER_SCOPED`, false until this fix is verified on prod — OR the `"*"` permission sentinel confirmed by `users.role` ∈ SUPER_ADMIN / ADMIN). Round 6 (owner-approved): `users.role` is read fresh from `GET /api/auth/me`, so the tab is live for SUPER_ADMIN / ADMIN (unscoped by this middleware) and hidden for every other role until this fix lands. `"*"` alone is not trusted: see BUG-2026-10-22-350. Desktop's Invoices › AR Aging tab already calls this endpoint.
+
+---
+
+## BUG-2026-10-22-348 — A second payment on a Partial Paid invoice is likely refused by the edit lock `invoices` `money` 🔴
+
+🔴 **Open, not fixed — for backend review.** Logged on branch `design/mobile-invoicesv2` (to `staging`) by the mobile Invoices v2 audit; the owner asked for it to be documented, not changed (decision D6). **Code-inspection finding only: not run, nothing measured on any database, production behaviour UNMEASURED.**
+
+**Symptom (expected from the code).** Recording a payment on an invoice that already has one (status PARTIAL_PAID) returns 403 "Cannot edit Invoice … — a payment has been recorded. Issue a credit note instead." — from desktop and phone alike, since both send the same body.
+
+**Root cause (as read).** `PUT /api/invoices/:id` computes `lockMsg = checkInvoiceLocked(...)` (locked once `paidAmount > 0` or status PAID, `src/api/lib/lock-helpers.ts` L204) and rejects with 403 when `lockMsg && !isStatusOnly`. `isStatusOnly` needs `body.status`; the payment body (`paidAmount`, `paymentMethod`, `paymentDate`, `paymentReference` — `src/pages/invoices/detail.tsx` `recordPayment`, `src/pages/m/config/forms.ts` `recordPaymentSpec`) carries no status, so it is not exempt. Receipts recorded through `/api/payments` (allocations) do not use this path.
+
+**Fix (proposed, not done).** Confirm on sandbox first. If it reproduces, exempt a pure payment body (paidAmount + payment fields only) from the edit lock, or route invoice-page payments through the receipts API.
+
+**Mobile impact.** `/m/invoices/:id` keeps the existing Record Payment form and API unchanged; a refused save surfaces the server's message in the form.
+
+---
+
+## BUG-2026-10-22-347 — Recording a payment skips the invoice status-transition check (Draft / Cancelled can become Paid) `invoices` `money` 🔴
+
+🔴 **Open, not fixed — for backend review.** Logged on branch `design/mobile-invoicesv2` (to `staging`); owner decision D6: document only. **Code-inspection finding only: not run, nothing measured on any database, production behaviour UNMEASURED** (whether any invoice was ever paid from Draft or Cancelled is not known).
+
+**Symptom (expected from the code).** A `PUT /api/invoices/:id` carrying `paidAmount` moves the invoice to PARTIAL_PAID or PAID whatever its current status — including DRAFT (never posted to the ledger) and CANCELLED.
+
+**Root cause (as read).** `src/api/routes/invoices.ts` validates `INV_VALID_TRANSITIONS` only for `body.status`. The payment branch (L2487–2503) then sets `nextStatus = "PAID" | "PARTIAL_PAID"` from the new paid amount without that check. Until 2026-10-21 the phone detail offered Record Payment on every status except PAID (desktop only on SENT / PARTIAL_PAID).
+
+**Fix (proposed, not done).** In the payment branch, refuse unless the current status is SENT / PARTIAL_PAID / OVERDUE (and run the same transition validation on the derived status).
+
+**Mobile change (done, frontend only).** Invoices v2 shows and runs Record Payment only for SENT / PARTIAL_PAID / OVERDUE with `invoices:update` (button and handler), and the old list's bulk "Mark Paid" is gone. That closes the phone's door; the API itself is still open to any caller.
 
 ---
 
