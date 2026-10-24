@@ -300,6 +300,11 @@ Owner asks (2026-10-19): days should show each day's performance, and on the mon
 
 
 
+## 2026-10-24 — 🔵 The Financial Dashboard's UI written up for another ERP, and three display faults it turned up (owner 「帮我把dashboard 的ui 写给我可以吗？我想要给别的erp 学习」, then 「可以，修」)
+
+1. ✅ The UI spec of `/finance-dashboard` as a Claude Docs document (the owner's private doc; not in the repo): the page, the header controls, the eight cards one by one, the visual spec, the data the page reads, the phone version, a build-and-check list — with screenshots of the real page on made-up figures (a local page; no company figures).
+2. 🔵 Branch `fix/dashboard-axes-tabs` (BUG-2026-10-24-391): Financial Ratios' axis read 0 at every tick (the money format), a seven-digit axis label lost its first digit, and Balance Sheet drew an empty tab track. Fixed: a ratio axis reads 40% / 1.5; every left value axis is as wide as its widest label (six-digit axes unchanged); no tab track without tabs. Checked locally on made-up figures.
+
 ## 2026-10-21 — ✅ Payment Vouchers: Print + files for several vouchers at once (owner, with a screenshot of two ticked vouchers: 「我发现当我多选print时 payment voucher 的 print + files 没有按钮，只能一张一张right click print + files」)
 
 1. ✅ Branch `feat/pv-batch-print-files`: the bar over the ticked rows gains **Print + files** beside Print / PDF — shown when at least one ticked row is a voucher with attachments. It makes ONE print job: every ticked row as Print prints it, and each voucher that has attachments is followed by them (Attachment 1 of n …). As for one voucher, an attachment that cannot be rendered stops the whole job; the message names the voucher and the file. The button reads Preparing… while the files are turned into pages. Checked locally (not shown for a voucher without files; one job with the voucher, its file and the next voucher in list order; a missing file refuses the job and names the voucher). Shipped in #1087; on prod (read-only, nothing printed): a voucher without files ticked alone shows only Print / PDF; ticking one with an attachment adds Print + files.
