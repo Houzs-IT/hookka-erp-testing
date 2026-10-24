@@ -497,9 +497,9 @@ function KTile({
           {loading ? (
             <Skeleton height={26} width={96} />
           ) : (
-            // Phone (owner 2026-10-23): two tiles a row left ~150px, and the
-            // 26px figure ran off the card ("RM 469,588…").
-            <p className="text-[26px] max-sm:text-[17px] font-[800] tracking-[-0.5px] text-[#1F1D1B] tabular-nums leading-none whitespace-nowrap">
+            // Phone / tablet (owner 2026-10-23, -24): the 26px figure ran off the card
+            // on narrow widths ("RM 469,588…"), so it scales with the window.
+            <p className="text-[clamp(17px,calc(1.6vw+6px),26px)] font-[800] tracking-[-0.5px] text-[#1F1D1B] tabular-nums leading-none whitespace-nowrap">
               {value}
             </p>
           )}
