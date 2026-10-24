@@ -48,7 +48,7 @@ import {
   salaryDeptSplit,
 } from "@/lib/finance-dashboard-calc";
 import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
-import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, type DashSpan } from "@/lib/finance-chart-look";
+import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 
 type Slice = {
@@ -319,6 +319,7 @@ function SalaryDeptCard({
     [data, base, depts, hidden],
   );
   if (!rowsData.length) return null;
+  const amtWidth = yAxisWidthFor(rowsData.flatMap((d) => [d.__cardamt__ as number | null, d.__cardfc__ as number | null]), rm);
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
@@ -334,7 +335,7 @@ function SalaryDeptCard({
             <ComposedChart data={rowsData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} {...chartProps}>
               <CartesianGrid {...gridProps} />
               <XAxis dataKey="label" {...xAxisProps} />
-              <YAxis yAxisId="amt" {...yAxisProps} tickFormatter={(v: number) => rm(v)} />
+              <YAxis yAxisId="amt" {...yAxisProps} width={amtWidth} tickFormatter={(v: number) => rm(v)} />
               {showDenominators && (
                 <YAxis yAxisId="unit" orientation="right" {...yAxisProps} tick={{ ...yAxisProps.tick, fill: "#6B7280" }}
                   tickFormatter={(v: number) => rm(v)} />
@@ -513,6 +514,7 @@ function ChartCard({
   bars,
   line,
   footer,
+  yFormat,
 }: {
   title: string;
   tabs: { key: string; label: string }[];
@@ -522,21 +524,30 @@ function ChartCard({
   bars: { key: string; name: string; color: string }[];
   line?: { key: string; name: string; color: string; dashed?: boolean; axis?: "left" | "right" };
   footer: React.ReactNode;
+  /** The left axis's labels — money (RM, no decimals) unless a card says
+   *  otherwise (Financial Ratios: a percentage or a multiple). */
+  yFormat?: (v: number) => string;
 }) {
   const { hover, chartProps } = useChartHover();
+  const fmtY = yFormat ?? ((v: number) => rm(v));
+  const leftKeys = [...bars.map((b) => b.key), ...(line && line.axis !== "right" ? [line.key] : [])];
+  const leftWidth = yAxisWidthFor(data.flatMap((d) => leftKeys.map((k) => d[k] as number | null)), fmtY);
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-[#1F1D1B] mr-2">{title}</h3>
-          <SegmentedSwitch tone="pill" label={title} options={tabs} value={active} onChange={onTab} />
+          {/* No tabs (Balance Sheet), no empty track (BUG-2026-10-24-391). */}
+          {tabs.length > 0 && (
+            <SegmentedSwitch tone="pill" label={title} options={tabs} value={active} onChange={onTab} />
+          )}
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} {...chartProps}>
               <CartesianGrid {...gridProps} />
               <XAxis dataKey="label" {...xAxisProps} />
-              <YAxis {...yAxisProps} tickFormatter={(v: number) => rm(v)} />
+              <YAxis {...yAxisProps} width={leftWidth} tickFormatter={fmtY} />
               {line?.axis === "right" && (
                 <YAxis yAxisId="right" orientation="right" {...yAxisProps} tick={{ ...yAxisProps.tick, fill: "#6B7280" }} />
               )}
@@ -886,6 +897,7 @@ export default function FinanceDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [shownRows, csCats, csLine, csMeasure, csHidden],
   );
+  const csAxisWidth = yAxisWidthFor(csData.flatMap((d) => [d.__sum__ as number, d.__fctotal__ as number | null]), (v) => rm(v));
   // The focus falls back to the first category until the operator picks one —
   // the trend read a blank key before this and drew a flat zero line.
   const csFocusEff = csFocus || csCats[0] || "";
@@ -1132,7 +1144,7 @@ export default function FinanceDashboardPage() {
                     <ComposedChart data={csData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} {...csHover.chartProps}>
                       <CartesianGrid {...gridProps} />
                       <XAxis dataKey="label" {...xAxisProps} />
-                      <YAxis {...yAxisProps} tickFormatter={(v: number) => rm(v)} />
+                      <YAxis {...yAxisProps} width={csAxisWidth} tickFormatter={(v: number) => rm(v)} />
                       <Tooltip cursor={false} content={<ChartTip shares stackTotal lineKeys={["__fctotal__"]} />} />
                       {csCats.map((cat, i) =>
                         csHidden.has(cat) ? null : (
@@ -1428,6 +1440,7 @@ export default function FinanceDashboardPage() {
             onTab={(k) => setRatioTab(k as typeof ratioTab)}
             data={ratioData}
             bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: CH.single }]}
+            yFormat={(v) => ratioTick(v, /Pct$/.test(ratioTab))}
             footer={
               <table data-fin-list data-fin-stick className="w-full">
                 <thead>{periodHead(ratioData.map((d) => d.label))}</thead>

@@ -38,6 +38,34 @@ export const HOVER_MS = 200;
 /** Forecast lines are dashed 6 / 4. */
 export const FORECAST_DASH = "6 4";
 
+/** The width a value axis needs for its widest label (BUG-2026-10-24-391: at
+ *  recharts' fixed 60 a seven-digit label such as 1,400,000 lost its first
+ *  digit). At 12px a tabular figure runs about 7.2, a comma or point 3.2, a
+ *  per cent sign 10; plus 13 for the tick and a gap. The axis rounds its top up to a
+ *  round step, so the widest label is taken a quarter above the largest value
+ *  (850,000 draws a 1,000,000 tick); never narrower than the old 60, so a
+ *  six-digit axis keeps its width. */
+export function yAxisWidthFor(values: readonly (number | null | undefined)[], fmt: (v: number) => string): number {
+  let hi = 0;
+  let lo = 0;
+  for (const v of values) {
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    if (v > hi) hi = v;
+    if (v < lo) lo = v;
+  }
+  const labelWidth = (s: string) => [...s].reduce((w, ch) => w + (ch === "," || ch === "." ? 3.2 : ch === "%" ? 10 : 7.2), 0);
+  const labels = [hi, hi * 1.25, ...(lo < 0 ? [lo, lo * 1.25] : [])].map(fmt);
+  return Math.max(60, Math.ceil(Math.max(...labels.map(labelWidth))) + 13);
+}
+
+/** A ratio axis's label: a percentage or a multiple as the value reads, never
+ *  the money format (BUG-2026-10-24-391: 39.05 % through the money format
+ *  printed 0). Up to two decimals, trailing zeros dropped. */
+export function ratioTick(v: number, pct: boolean): string {
+  const n = String(Math.round(v * 100) / 100);
+  return pct ? `${n}%` : n;
+}
+
 /** The first month the 6-month view may show (the owner's design: the rolling
  *  six start in July; when a new month arrives the oldest drops off). */
 export const DASH_FIRST_MONTH = "2026-07";
