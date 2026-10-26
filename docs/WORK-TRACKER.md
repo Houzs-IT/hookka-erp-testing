@@ -9,6 +9,7 @@ From HK-0113 (Lim Wei Siang, "Mail Center system go live"; example: send PO to s
 4. Verified locally against a mock API (the dev proxy points at PROD): compose opened with From `kiansin@hookka.com` (not the first listed `support@`), To / Subject / body filled, 38 KB PDF chip; Send posted a valid `%PDF-1.3 ... %%EOF` attachment, page stayed on the PO, "Last sent" + "Resend Email" appeared. typecheck:app clean; `npm test` 6827/6828 before the procurement.md anchor fix, the anchor test green after it.
 5. OPEN: which purchasing users hold a mailbox + `mail-center:create` on prod is UNMEASURED (the read-only query was not run). A user with no mailbox gets compose's "no mailbox" state and cannot send.
 6. OPEN: supplier replies reach the sender only if their address has a Cloudflare Email Routing rule (T-012 open item 2).
+7. Staging preview (claude-hk0113, 2026-10-26): PO-2610-056 composer pre-filled correctly (masked supplier address, HOUZS CENTURY letterhead from the supplier's Purchase Company, 5 KB PDF). Send with To changed to a Gmail returned 502: the MailSlurp free sandbox refuses ANY attachment (`W_400_SEND_EVALUATION_OPTIONS_UNSUPPORTED`). Clean failure: no Sent thread, `lastEmailedAt` stayed null. The attachment path can only be proven where Brevo sends (prod canary of the `-to-main` PR).
 > **Last verified: 2026-10-26**: IT Support zip attachments entry added (branch `feat/it-support-zip`, to `staging`); nothing else re-checked.
 
 ## IT Support: accept .zip attachments (feat/it-support-zip, 2026-10-26)
