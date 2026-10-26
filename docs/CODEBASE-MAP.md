@@ -1103,6 +1103,7 @@ that proves those locks can actually go red.
   - CategoryTabs (All/Primary/Notifications) + ViewSettingsMenu (density/pane/tabs gear) + SegButton — after the main export
   - Sidebar items (FolderItem/MailboxItem/DeptGroup/PersonItem) + LabelManagerDialog + colour swatches
 - `src/pages/mail-center/mail-prefs.ts` — localStorage view toggles (density / reading-pane / category-tabs) external store + `classifyCategory` sender heuristic (Primary vs Notifications). All client-side; no backend, no API change.
+- SUPPLIER PO MAIL (HK-0113) is a Mail Center compose, not an outbox notice: PO detail "Email to Supplier" builds the PO PDF (`generatePurchaseOrderPdf(..., { returnDoc: true })`), pre-fills `ComposeDialog` through its `prefill` prop (`src/lib/po-email-draft.ts`) and passes `stayOnSent`; after the send it calls `POST /api/purchase-orders/:id/mark-emailed` to stamp `lastEmailedAt`. DRAFT -> SUBMITTED no longer emails the supplier. `tests/po-email-draft.test.mjs`.
 
 **Gotchas**
 - customer-maintenance.ts is a SNAPSHOT mirror: copies EVERY master maintenance_config_history snapshot per customer and REFUSES to write if the master config is corrupt — don't bypass that guard or write per-customer config directly.

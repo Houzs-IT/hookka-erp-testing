@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-26**: branch `feat/hk0113-po-mail-center-to-main`, to `main` (HK-0113, PO email via Mail Center) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/m-dashboard-ops-day`, to `main` (phone dashboard Operations gets the Day view) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/hk0114-overdue-invoiced`, to `main` (HK-0114, Overdue POs counted billed POs) added below (its entry is the newest).
 > **Last verified: 2026-10-22**: branch `feat/hk0111-reverse-to-dispatched-to-main`, to `main` (HK-0111, Reverse to Dispatched) added below (its entry is the newest).
@@ -279,6 +280,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-26 — 🔵 HK-0113 PO "Email to Supplier" sends through Mail Center (branch `feat/hk0113-po-mail-center-to-main` → `main`; staging copy #1118)
+
+Lim (HK-0113, "Mail Center system go live"): departments should send through Mail Center, e.g. PO to supplier. The button used to queue a `noreply@hookka.com` notice with no PO attached; the mail never showed in Mail Center and a supplier reply went nowhere. Plan approved by Samuel 2026-10-26.
+
+1. 🔵 PO detail "Email to Supplier" builds the PO PDF (same letterhead as Download PDF) and opens `ComposeDialog` pre-filled (To supplier, Subject, body, `<poNo>.pdf`), From = the operator’s own mailbox; stays on the PO after the send. `ComposeDialog` gains `prefill` + `stayOnSent`; helper `src/lib/po-email-draft.ts` + `tests/po-email-draft.test.mjs`.
+2. 🔵 `POST /api/purchase-orders/:id/mark-emailed` stamps `lastEmailedAt` after the send; old `POST /:id/email` removed. DRAFT -> SUBMITTED no longer emails the supplier.
+3. Verified: local mock (valid PDF posted, page stayed, Last sent shown); staging preview pre-fill correct, but the MailSlurp free sandbox refuses every attachment (502), so the PDF send is checked on this PR’s canary.
+4. Canary-1119 (2026-10-26, PROD data): PO-000099 composer pre-filled correctly (From kiansin@hookka.com, real supplier To replaced by an internal Gmail, 6 KB PDF). Send returned 502 "No email provider configured": Pages Preview deployments carry no BREVO/RESEND key, so a canary cannot send mail at all. Clean failure: no Sent thread, `lastEmailedAt` stayed null. The PDF send can only be proven on erp.hookka.com after merge.
+5. OPEN: which purchasing users hold a mailbox + `mail-center:create` on prod is UNMEASURED; supplier replies need a Cloudflare Email Routing rule per address.
+
 ## 2026-10-26 — 🔵 Phone dashboard: Day view on Operations, as on the desktop (branch `fix/m-dashboard-ops-day` → `main`)
 
 Samuel (2026-10-26, phone photo of `/m` Dashboard › Operations, Period sheet showing only Month / Quarter / Year): the web dashboard has a date picker there, the phone does not. Cause: the desktop Day view on Operations (2026-10-19, #1015) left `/m` on the old rule — `dayTab = tab === "people"` in `DashboardScreen.tsx` (twice) and `Home.tsx`, so the chip hid Day and a picked day was dropped to its month. The phone Operations tab already renders the desktop `OperationsView` with `onPeriodChange`, so only the rule changes: Day shows on Operations, a picked day is kept (Department Revenue shows that day, a chart click picks one), and a non-quarter range still reads as its month outside Employees. Test: `tests/dashboard-ops-day-view.test.mjs`.
