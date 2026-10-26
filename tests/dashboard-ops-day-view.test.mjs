@@ -24,3 +24,15 @@ test("Operations keeps a picked day; other tabs outside Employees drop it", () =
   const ops = readFileSync("src/pages/dashboards/OperationsView.tsx", "utf8");
   assert.match(ops, /sections=\{\["dailyReport", "deptRevenue"\]\} onPeriodChange=\{onPeriodChange\}/);
 });
+
+test("the phone dashboard gives Operations the same Day view as the desktop", () => {
+  for (const file of ["src/pages/m/screens/dashboard/DashboardScreen.tsx", "src/pages/m/screens/Home.tsx"]) {
+    const src = readFileSync(file, "utf8");
+    assert.doesNotMatch(src, /const dayTab = tab === "people";/, file);
+    const rules = src.match(/const dayTab = tab === "people" \|\| tab === "operations";/g) ?? [];
+    const keeps = src.match(/rawPeriod\.day && !dayTab \? \{ \.\.\.rawPeriod, day: undefined \} : rawPeriod;/g) ?? [];
+    assert.ok(rules.length > 0, file);
+    assert.equal(keeps.length, rules.length, file);
+    assert.match(src, /allowDay=\{dayTab\}/, file);
+  }
+});
