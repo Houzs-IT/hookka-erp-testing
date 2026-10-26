@@ -16,8 +16,6 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { poLineUnit, rmUnitMap } from "../../lib/material-variants";
-import { supplierPoEmailTemplate } from "../lib/email";
-import { enqueueEmail } from "../lib/email-outbox";
 import { emitAudit } from "../lib/audit";
 import { availableQty as computeAvailableQty } from "../../lib/convert-chain";
 import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
@@ -1045,41 +1043,9 @@ app.put("/:id", async (c) => {
 
     await c.var.DB.batch(statements);
 
-    // Sprint 4: enqueue supplier notification on the DRAFT/etc → SUBMITTED
-    // transition. The cron drain (.github/workflows/process-email-outbox.yml)
-    // is what actually contacts Resend, so a Resend outage doesn't backpressure
-    // the PO submit. Failures (no email on file, INSERT failure) are logged
-    // only and never roll back the PO update.
-    if (body.status === "SUBMITTED" && existing.status !== "SUBMITTED") {
-      try {
-        const supplierRow = await c.var.DB.prepare(
-          "SELECT email FROM suppliers WHERE id = ? LIMIT 1",
-        )
-          .bind(merged.supplierId)
-          .first<{ email: string | null }>();
-        if (supplierRow?.email) {
-          const tpl = supplierPoEmailTemplate({
-            poNo: existing.poNo,
-            supplierName: merged.supplierName,
-          });
-          await enqueueEmail(c, {
-            to: supplierRow.email,
-            subject: tpl.subject,
-            html: tpl.html,
-            text: tpl.text,
-          });
-        } else {
-          console.log(
-            `[purchase-orders] PO ${existing.poNo}: skipped — supplier ${merged.supplierName} (${merged.supplierId}) has no email on file`,
-          );
-        }
-      } catch (err) {
-        console.warn(
-          "[purchase-orders] supplier notification failed",
-          err instanceof Error ? err.message : err,
-        );
-      }
-    }
+    // No supplier email on → SUBMITTED any more (HK-0113): the PO now goes out
+    // from the operator's own mailbox via Mail Center with the PDF attached,
+    // and a second, PDF-less noreply notice would only confuse the supplier.
 
     const updated = await fetchPOWithItems(c.var.DB, id);
     // PO create was audited but the edit path was not, even though this same
@@ -1160,70 +1126,33 @@ function ensurePendingMigrations(db: D1Database): Promise<void> {
   return pendingMigrations;
 }
 
-// POST /api/purchase-orders/:id/email — manual "Email to Supplier" send.
-// Reuses the same enqueueEmail flow as the auto-cascade on DRAFT→SUBMITTED
-// (line ~488 above). The cron drain (.github/workflows/process-email-outbox.yml)
-// is what actually contacts Resend, so this returns immediately on the
-// outbox INSERT — no Resend round-trip on the user's request thread.
-//
-// Visible on SUBMITTED+ statuses (gate enforced at the FE; backend is
-// permissive — even DRAFT can be emailed manually if a permission grant
-// reaches here).
-app.post("/:id/email", async (c) => {
+// POST /api/purchase-orders/:id/mark-emailed — stamps lastEmailedAt after the
+// PO detail page sent the PO through Mail Center (HK-0113). The mail itself
+// goes via POST /api/mail-center/compose from the operator's own mailbox;
+// this only records that it happened so "Last sent" shows on the PO.
+app.post("/:id/mark-emailed", async (c) => {
   const denied = await requirePermission(c, "purchase-orders", "update");
   if (denied) return denied;
   await ensurePendingMigrations(c.var.DB);
 
   const id = c.req.param("id");
-  const po = await c.var.DB
-    .prepare("SELECT * FROM purchase_orders WHERE id = ?")
-    .bind(id)
-    .first<PurchaseOrderRow>();
-  if (!po) {
-    return c.json({ success: false, error: "Purchase order not found" }, 404);
-  }
-
-  const supplierRow = await c.var.DB
-    .prepare("SELECT email FROM suppliers WHERE id = ? LIMIT 1")
-    .bind(po.supplierId)
-    .first<{ email: string | null }>();
-  if (!supplierRow?.email) {
-    return c.json(
-      {
-        success: false,
-        error: `Supplier ${po.supplierName ?? po.supplierId} has no email on file`,
-      },
-      400,
-    );
-  }
-
+  const now = new Date().toISOString();
   try {
-    const tpl = supplierPoEmailTemplate({
-      poNo: po.poNo,
-      supplierName: po.supplierName ?? "",
-    });
-    await enqueueEmail(c, {
-      to: supplierRow.email,
-      subject: tpl.subject,
-      html: tpl.html,
-      text: tpl.text,
-    });
-    const now = new Date().toISOString();
-    await c.var.DB
+    const res = await c.var.DB
       .prepare(
         "UPDATE purchase_orders SET lastEmailedAt = ?, updated_at = ? WHERE id = ?",
       )
       .bind(now, now, id)
       .run();
-    return c.json({
-      success: true,
-      data: { lastEmailedAt: now, to: supplierRow.email },
-    });
+    if (!res.meta?.changes) {
+      return c.json({ success: false, error: "Purchase order not found" }, 404);
+    }
+    return c.json({ success: true, data: { lastEmailedAt: now } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[POST /api/purchase-orders/:id/email] failed:", msg, err);
+    console.error("[POST /api/purchase-orders/:id/mark-emailed] failed:", msg, err);
     return c.json(
-      { success: false, error: msg || "Failed to enqueue email" },
+      { success: false, error: msg || "Failed to record the email" },
       500,
     );
   }
