@@ -168,6 +168,28 @@ function InvoiceDetailRoute() {
   );
 }
 
+// Customers v3 list + detail (Claude Design `Customers v3.dc.html`), code-split.
+const CustomersScreenLazy = lazy(() =>
+  import("./screens/customers/CustomersScreen").then((m) => ({ default: m.CustomersScreen })),
+);
+const CustomerDetailLazy = lazy(() =>
+  import("./screens/customers/CustomerDetailScreen").then((m) => ({ default: m.CustomerDetailScreen })),
+);
+function CustomersRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <CustomersScreenLazy />
+    </Suspense>
+  );
+}
+function CustomerDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <CustomerDetailLazy />
+    </Suspense>
+  );
+}
+
 function DashboardRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -204,6 +226,8 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // Claude Design `Invoices v2.dc.html`: six tabs (each gated on its API read
   // permission), status chips, summary, v2 invoice + record cards. Phone + tablet.
   invoices: InvoicesRoute,
+  // Claude Design `Customers v3.dc.html` (design-only handoff).
+  customers: CustomersRoute,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -223,6 +247,7 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   // Also the left pane of the tablet /:id/item/:itemId line route (see below);
   // that route's right pane stays LineItemDetailScreen.
   invoices: InvoiceDetailRoute,
+  customers: CustomerDetailRoute,
 };
 
 /** True on /m/<module>/<id>[/…] when that module has a detail screen, i.e. when the split view

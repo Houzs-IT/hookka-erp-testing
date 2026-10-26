@@ -3044,7 +3044,7 @@ export const mailConfig: ModuleConfig = {
 // contact + phone, code as the right-aligned trailing meta). Add-Hub +
 // Exports buttons from the design are deferred — they need an edit form +
 // statement-PDF endpoints respectively (TODO: wire when those land).
-const customerDetail: DetailConfig = {
+export const customerDetail: DetailConfig = {
   url: (id) => `/api/customers/${encodeURIComponent(id)}`,
   selectDoc: selectDocData,
   code: (d) => str(d, "code") || "—",
