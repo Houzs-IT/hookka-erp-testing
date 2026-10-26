@@ -284,7 +284,7 @@ Siti (office, HK-0114, screenshot of the Purchase Orders cards: 108 Overdue POs,
 
 1. 🔵 `GET /api/purchase-orders/stats` adds `deliveredInFull` per PO: every line's max(received, invoiced) ≥ ordered (`src/api/lib/po-delivered.ts`, buckets as the PI double-bill guard).
 2. 🔵 PO list `isOverdue` skips those POs, so the card and its click-filter agree.
-3. 🟡 Prod check after merge (read-only): the card should drop from 108 to about 13 (6 part-billed, 7 with no PI).
+3. 🔵 Canary-1113 (prod data, read-only): card 108 → 29 (5 orange · 24 red), click-filter lists the same 29. Left: 7 no PI, 11 billed short, 7 billed under a different material code, 4 legacy POs with blank-code lines. Prod check after merge still to do.
 
 ## 2026-10-22 — 🔵 HK-0111 Reverse a delivered DO to Dispatched, same DO number (branch `feat/hk0111-reverse-to-dispatched-to-main` → `main`; staging copy #1091)
 
