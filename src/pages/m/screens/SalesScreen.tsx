@@ -34,36 +34,36 @@
 //   • header "+" is back (round gradient) and the Sort + New SO row is gone;
 //   • the summary moves to the top as a gradient card (fixed taupe hex, so
 //     its white text stays readable in dark mode, where the logo tokens turn
-//     light gold), titled after the active chip, "By status" breakdown;
+//     light gold), titled after the active chip (superseded 2026-10-26/27 below);
 //   • search row = search + Scan PO only; Filter moves to a round
 //     button on a new "N ORDERS" row, with removable active-filter chips.
+//
+// Owner 2026-10-26/27, Sales Orders v3 (Claude Design `Sales Orders v3`, UI only):
+//   • order: header, search + Scan PO (ScanLine), status chips (with a status dot),
+//     white summary card (revenue + order count, no status-breakdown control), the
+//     sort/filter bar, cards;
+//   • card: icon tile, SO number + dot pill, 2-line customer, PO / Cust SO chips,
+//     Expected DD tag + countdown; no progress bar (the row has no such field).
 // ===========================================================================
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Search,
   Plus,
-  FileSearch,
-  ChevronRight,
-  ChevronDown,
+  ScanLine,
   X,
   ArrowDownUp,
   Calendar,
-  Package,
-  Wallet,
-  ShoppingCart,
   SearchX,
-  type LucideIcon,
 } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import {
-  MobileCard,
   MobileHeader,
   FormSheet,
   ResponsiveGrid,
   ScanPOSheet,
 } from "../components";
-import { M, M_ACCENT, SEMANTIC, titleCaseStatus, type SemanticStyle } from "../theme";
+import { M, M_ACCENT, SEMANTIC, titleCaseStatus } from "../theme";
 import { salesConfig } from "../config/modules";
 import { newSalesOrderSpec, type SOCreatePrefill } from "../config/forms";
 import { type FormSpec } from "../config/form-types";
@@ -80,37 +80,39 @@ import {
   activeFilterCount,
 } from "../config/helpers";
 import { useDebounced } from "../lib/use-debounced";
-import { CHIP_ROW, CHIP_ROW_CLASS, CHIP_COUNT, chip as chipStyle } from "../lib/control-styles";
+import { CHIP_ROW, CHIP_ROW_CLASS, CHIP_COUNT, chip as chipStyle, chipDot } from "../lib/control-styles";
 import { useResponsiveLayout } from "../lib/responsive-layout";
-import { activeFilterChips, soRefLine, soTotalQty } from "../lib/so-card";
+import { activeFilterChips, soCountdown, soRefChips, soShortDate, soStage, SO_STAGES } from "../lib/so-card";
 import { localToday } from "../lib/so-filter-presets";
+import { ListCardShell } from "../components/ListCardShell";
+import { CARD_LABEL } from "../lib/list-card-styles";
 import { SalesFilterSheet } from "./SalesFilterSheet";
 
-// Prototype shadows (Sales Orders.dc.html).
+// Sales Orders v3 shadows (Sales Orders v3.dc.html).
 const SHADOW_CONTROL = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
-const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 30px -14px rgba(31,29,27,.24)";
+const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)";
 const SHADOW_CHIP_ON = "0 4px 12px -6px rgba(107,92,50,.45)";
 const SHADOW_PRIMARY = "0 8px 18px -8px rgba(107,92,50,.65),inset 0 1px 0 rgba(255,255,255,.18)";
 const SHADOW_FILTER_ON = "0 8px 18px -8px rgba(107,92,50,.6)";
-const SHADOW_HERO = "0 16px 32px -18px rgba(107,92,50,.75),inset 0 1px 0 rgba(255,255,255,.14)";
-// Fixed light-theme taupe gradient (not M.logoFrom/To): in dark mode those
-// turn light gold and the hero's white text would lose contrast.
-const HERO_BG = "linear-gradient(140deg,#8B7A4E 0%,#6B5C32 62%)";
-// Prototype KPI columns; KPI_FIXED = the two 14px gaps + the 1px divider.
-const KPI_COLS = "minmax(0,1.4fr) 1px minmax(0,.9fr)";
-const KPI_FIXED = 29;
-// Repo label colour (v20 SoCard / DocCard).
-const LABEL = "#A89F8D";
 
-// Borderless tile pill backgrounds, keyed by the resolved SO_STATUS_COLOR hex
-// (prototype values). The text colour stays the semantic hex, as StatusPill.
-const PILL_TILE_BG: Record<string, string> = {
-  "#6B7280": "#EEEBE6", // NEUTRAL
-  "#3E6570": "#E0EDF0", // INFO
-  "#4F7C3A": "#EEF3E4", // SUCCESS
-  "#9C6F1E": "#FAEFCB", // WARNING
-  "#9A3A2D": "#F9E1DA", // DANGER
+// Status text/dot/icon colour, keyed by the resolved SO_STATUS_COLOR hex. The
+// semantic text vars are lifted in dark mode (theme-vars.css), so the pill and
+// icon tile stay readable on the dark card; the tint is a mix with transparent
+// for the same reason (a fixed light tint would glare on a dark surface).
+const STATUS_TEXT: Record<string, string> = {
+  "#6B7280": "var(--m-body)", // NEUTRAL
+  "#3E6570": "var(--m-text-status-info)", // INFO
+  "#4F7C3A": "var(--m-text-status-success)", // SUCCESS
+  "#9C6F1E": "var(--m-text-status-warning)", // WARNING
+  "#9A3A2D": "var(--m-text-status-danger)", // DANGER
 };
+function statusTint(hex: string): { bg: string; fg: string } {
+  const fg = STATUS_TEXT[hex] ?? hex;
+  return { fg, bg: `color-mix(in srgb, ${fg} 14%, transparent)` };
+}
+
+// EXPECTED DD box when a countdown label shows (0–7 days): amber, a visual cue only.
+const DATE_SOON = statusTint("#9C6F1E");
 
 type Sort = { key: string; dir: "asc" | "desc" } | null;
 
@@ -146,7 +148,6 @@ export function SalesScreen() {
   const [sort, setSort] = useState<Sort>(source.defaultSort ?? null);
   const [createSpec, setCreateSpec] = useState<FormSpec | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
-  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const allRows = useMemo(
     () => (data ? source.select(data) : []),
@@ -203,8 +204,10 @@ export function SalesScreen() {
       return next;
     });
 
+  const today = localToday();
   const cards = rows.map((r) => (
     <PhoneSoCard
+      today={today}
       key={str(r, "id", "companySO") || str(r, "companySO")}
       r={r}
       onClick={() => navigate(`/m/sales/${encodeURIComponent(str(r, "id", "companySO", "companySOId"))}`)}
@@ -221,18 +224,9 @@ export function SalesScreen() {
       />
 
       <>
-        {data ? (
-          <PhoneSummary
-            title={heroTitle}
-            rows={rows}
-            count={summary.count}
-            rev={summary.rev}
-            open={summaryOpen}
-            onToggle={() => setSummaryOpen((o) => !o)}
-          />
-        ) : null}
         <PhoneSearchRow q={q} setQ={setQ} onScan={() => setScanOpen(true)} />
         <PhoneChips chip={chip} setChip={pickChip} counts={chipCounts} />
+        {data ? <PhoneSummary title={heroTitle} count={summary.count} rev={summary.rev} /> : null}
         <PhoneListBar
           count={data ? rows.length : null}
           fCount={fCount}
@@ -283,8 +277,8 @@ export function SalesScreen() {
         filters={filters}
         chip={chip}
         chipKeys={CHIPS.map((c) => c.key).filter((k) => k !== "all")}
-        // Wider screens keep the Sort the tablet list always had.
-        withSort={tablet}
+        // The sort button opens this sheet at every width, so it always carries the Sort section.
+        withSort
         sort={sort}
         sortDefault={source.defaultSort ?? null}
         onApply={(nextFilters, nextChip, nextSort) => {
@@ -360,7 +354,7 @@ function PhoneSearchRow({
           minWidth: 0,
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 6,
           height: 44,
           padding: "0 4px 0 13px",
           boxSizing: "border-box",
@@ -426,13 +420,16 @@ function PhoneSearchRow({
             </span>
           </button>
         ) : null}
+        {/* Scan treatment shared with Invoices (parts.tsx SearchPill): hairline divider +
+            a 36x44 plain button, ScanLine 18/1.75 in M.ink. Opens the Scan-PO sheet. */}
+        <span aria-hidden="true" style={{ width: 1, height: 20, background: "var(--m-inv-line)", flexShrink: 0 }} />
         <button
           type="button"
           onClick={onScan}
           aria-label="Scan customer PO"
           title="Scan PO"
           style={{
-            width: 44,
+            width: 36,
             height: 44,
             flexShrink: 0,
             padding: 0,
@@ -441,24 +438,13 @@ function PhoneSearchRow({
             justifyContent: "center",
             background: "none",
             border: "none",
+            color: M.ink,
             cursor: "pointer",
             WebkitTapHighlightColor: "transparent",
+            position: "relative",
           }}
         >
-          <span
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 9,
-              backgroundColor: M_ACCENT.gold.bg,
-              color: M.taupe,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <FileSearch size={18} strokeWidth={1.75} />
-          </span>
+          <ScanLine size={18} strokeWidth={1.75} />
         </button>
       </label>
     </div>
@@ -482,6 +468,12 @@ function PhoneChips({
         const n = counts[c.key] ?? 0;
         return (
           <button key={c.key} type="button" onClick={() => setChip(c.key)} aria-pressed={on} style={chipStyle(on)}>
+            {c.key !== "all" ? (
+              <span
+                aria-hidden="true"
+                style={chipDot(statusTint(resolveStatus(c.key, STATUS_MAPS.so).style.hex).fg)}
+              />
+            ) : null}
             {c.label}
             {n > 0 ? <span style={CHIP_COUNT}>{n}</span> : null}
           </button>
@@ -493,271 +485,82 @@ function PhoneChips({
 
 function PhoneSummary({
   title,
-  rows,
   count,
   rev,
-  open,
-  onToggle,
 }: {
   title: string;
-  rows: Record<string, unknown>[];
   count: number;
   rev: number;
-  open: boolean;
-  onToggle: () => void;
 }) {
-  // One row per status present in the visible list, in SO lifecycle order;
-  // Cancelled is listed but its revenue is excluded (same rule as the total).
-  const breakdown = useMemo(() => {
-    const by = new Map<string, { n: number; rev: number }>();
-    for (const r of rows) {
-      const s = str(r, "status").toUpperCase();
-      const b = by.get(s) ?? { n: 0, rev: 0 };
-      b.n += 1;
-      b.rev += num(r, "totalSen");
-      by.set(s, b);
-    }
-    const order = Object.keys(STATUS_MAPS.so);
-    return [...by.entries()]
-      .sort(([a], [b]) => {
-        const ia = order.indexOf(a);
-        const ib = order.indexOf(b);
-        return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
-      })
-      .map(([key, b]) => ({ key, ...b }));
-  }, [rows]);
-
-  // Money is never ellipsised (owner 2026-10-15): when either value is wider
-  // than its 1.4fr / .9fr column, the two figures stack full-width instead.
-  // The value spans are inline-block + nowrap, so offsetWidth is their natural
-  // width whatever the current layout; re-checked on resize and value change.
-  const boxRef = useRef<HTMLDivElement>(null);
-  const revRef = useRef<HTMLSpanElement>(null);
-  const cntRef = useRef<HTMLSpanElement>(null);
-  const [stacked, setStacked] = useState(false);
-  useLayoutEffect(() => {
-    const box = boxRef.current;
-    if (!box) return;
-    const check = () => {
-      const avail = box.clientWidth - KPI_FIXED;
-      const revW = revRef.current?.offsetWidth ?? 0;
-      const cntW = cntRef.current?.offsetWidth ?? 0;
-      setStacked(revW > (avail * 1.4) / 2.3 || cntW > (avail * 0.9) / 2.3);
-    };
-    check();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(check);
-    ro.observe(box);
-    return () => ro.disconnect();
-  }, [rev, count]);
+  // Money is never ellipsised (owner 2026-10-15): the figure is nowrap and
+  // flex:none, and its row wraps rather than clips if a value is ever wider
+  // than the card. "RM" is split off only to render it as the small prefix.
+  // Revenue excludes Cancelled (summary memo in SalesScreen); the count does not.
+  const split = /^RM\s*(.*)$/.exec(money(rev));
+  const figure = split ? split[1] : money(rev);
 
   return (
-    <div style={{ padding: "6px 18px 0" }}>
+    <div style={{ padding: "14px 18px 6px" }}>
       <div
         role="status"
         style={{
           borderRadius: 20,
-          background: HERO_BG,
-          boxShadow: SHADOW_HERO,
-          color: "#fff",
+          backgroundColor: M.card,
+          boxShadow: SHADOW_CARD,
           overflow: "hidden",
         }}
       >
-        <div style={{ padding: "16px 16px 14px" }}>
-          <div
+        <div style={{ padding: "15px 16px 14px" }}>
+          <span
             style={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
+              gap: 7,
+              minWidth: 0,
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 1,
+              color: M.taupe,
+              whiteSpace: "nowrap",
             }}
           >
-            <SummaryLabel color="rgba(255,255,255,.88)">{title}</SummaryLabel>
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-label={open ? "Hide status breakdown" : "Show status breakdown"}
-              aria-expanded={open}
+            <span
+              aria-hidden="true"
+              style={{ width: 14, height: 3, flex: "none", borderRadius: 2, backgroundColor: M.gold }}
+            />
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{title}</span>
+          </span>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "baseline",
+              columnGap: 5,
+              marginTop: 8,
+              minWidth: 0,
+            }}
+          >
+            {split ? <span style={{ fontSize: 14, fontWeight: 600, color: M.ink }}>RM</span> : null}
+            <span
               style={{
                 flex: "none",
-                height: 44,
-                margin: "-12px -6px -12px 0",
-                padding: 0,
-                display: "flex",
-                alignItems: "center",
-                background: "none",
-                border: "none",
-                color: "#fff",
-                cursor: "pointer",
-                WebkitTapHighlightColor: "transparent",
+                fontSize: 27,
+                lineHeight: 1.1,
+                fontWeight: 700,
+                letterSpacing: "-0.6px",
+                color: M.raisin,
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
               }}
             >
-              <span
-                style={{
-                  height: 28,
-                  padding: "0 8px 0 10px",
-                  borderRadius: 999,
-                  backgroundColor: "rgba(255,255,255,.14)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                By status
-                <ChevronDown
-                  size={14}
-                  strokeWidth={2.2}
-                  style={{
-                    transform: open ? "rotate(180deg)" : "none",
-                    transition: "transform .18s ease",
-                  }}
-                />
-              </span>
-            </button>
+              {figure}
+            </span>
           </div>
-          <div
-            ref={boxRef}
-            style={{
-              display: "grid",
-              gridTemplateColumns: stacked ? "minmax(0,1fr)" : KPI_COLS,
-              gap: 14,
-              marginTop: 12,
-              alignItems: "stretch",
-            }}
-          >
-            <HeroFigure icon={Wallet} label="REVENUE" value={money(rev)} valueRef={revRef} />
-            <div style={{ backgroundColor: "rgba(255,255,255,.2)", height: stacked ? 1 : undefined }} />
-            <HeroFigure icon={ShoppingCart} label="TOTAL ORDERS" value={String(count)} valueRef={cntRef} />
+          <div style={{ fontSize: 12.5, color: M.ink, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+            {count} {count === 1 ? "order" : "orders"}
           </div>
         </div>
-        {open && breakdown.length > 0 ? (
-          <div
-            style={{
-              display: "grid",
-              gap: 9,
-              padding: "12px 16px 14px",
-              backgroundColor: "rgba(31,29,27,.14)",
-            }}
-          >
-            {breakdown.map((b) => (
-              <div
-                key={b.key}
-                style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    backgroundColor: "#fff",
-                    opacity: b.key === "CANCELLED" ? 0.45 : 1,
-                    flex: "none",
-                  }}
-                />
-                {/* Name wraps on narrow phones rather than truncating; the count and
-                    amount keep fixed right-aligned columns so the figures line up. */}
-                <span style={{ flex: 1, minWidth: 0, color: "#fff", overflowWrap: "anywhere" }}>
-                  {titleCaseStatus(b.key || "—")}
-                </span>
-                <span
-                  style={{
-                    width: 36,
-                    flex: "none",
-                    textAlign: "right",
-                    color: "rgba(255,255,255,.8)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {b.n}
-                </span>
-                <span
-                  style={{
-                    minWidth: 108,
-                    flex: "none",
-                    textAlign: "right",
-                    fontWeight: 600,
-                    color: "#fff",
-                    fontVariantNumeric: "tabular-nums",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {b.key === "CANCELLED" ? "excluded" : money(b.rev)}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
-    </div>
-  );
-}
-
-/** One hero figure: icon tile, value (repo 20/700), label below (repo 10/600). */
-function HeroFigure({
-  icon: Icon,
-  label,
-  value,
-  valueRef,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  valueRef: React.RefObject<HTMLSpanElement | null>;
-}) {
-  return (
-    <div style={{ minWidth: 0 }}>
-      <span
-        aria-hidden="true"
-        style={{
-          width: 30,
-          height: 30,
-          borderRadius: 9,
-          backgroundColor: "rgba(255,255,255,.16)",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Icon size={16} strokeWidth={1.9} color="#fff" />
-      </span>
-      <div style={{ marginTop: 10 }}>
-        <span
-          ref={valueRef}
-          style={{
-            display: "inline-block",
-            fontSize: 20,
-            fontWeight: 700,
-            lineHeight: 1.1,
-            letterSpacing: "-0.3px",
-            fontVariantNumeric: "tabular-nums",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {value}
-        </span>
-      </div>
-      <div style={{ marginTop: 4 }}>
-        <SummaryLabel color="rgba(255,255,255,.9)">{label}</SummaryLabel>
-      </div>
-    </div>
-  );
-}
-
-function SummaryLabel({ children, color }: { children: string; color: string }) {
-  return (
-    <div
-      style={{
-        fontSize: 10,
-        fontWeight: 600,
-        color,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
     </div>
   );
 }
@@ -832,7 +635,7 @@ function PhoneListBar({
             fontSize: 11,
             fontWeight: 700,
             letterSpacing: 1,
-            color: M.muted,
+            color: M.taupe,
             whiteSpace: "nowrap",
             fontVariantNumeric: "tabular-nums",
           }}
@@ -844,9 +647,9 @@ function PhoneListBar({
       <button
         type="button"
         onClick={onFilter}
-        aria-label={active ? `Filter orders, ${fCount} active` : "Filter orders"}
+        aria-label={active ? `Sort and filter orders, ${fCount} filters active` : "Sort and filter orders"}
         aria-haspopup="dialog"
-        title="Filter orders"
+        title="Sort and filter orders"
         style={{
           width: 44,
           height: 44,
@@ -979,25 +782,36 @@ function PhoneActiveFilters({
   );
 }
 
-// MobileCard is reused as-is; border, shadow, rail and padding go through its
-// `style` prop only, so no other module's card changes. The press scale sits
-// on a wrapper because MobileCard takes no pointer handlers.
+// Sales Orders v4 card (owner 2026-10-27): the SAME card as Invoices v2, through the
+// shared ListCardShell — rail, code + pill + chevron, customer, ref chips, a bar
+// slot, then the EXPECTED DD box and the AMOUNT box. The press scale and the
+// Cancelled dimming sit on a wrapper because the shell takes no pointer handlers.
+// Everything shown is a field the list row already carries. The stage bar is the
+// order's position in the status lifecycle (soStage), NOT production progress.
 function PhoneSoCard({
   r,
+  today,
   onClick,
 }: {
   r: Record<string, unknown>;
+  today: string;
   onClick: () => void;
 }) {
   const { pressed, handlers } = usePressed();
-  const code = str(r, "companySO", "companySOId") || "—";
+  const code = str(r, "companySO", "companySOId", "company_so", "company_so_id") || "—";
   const customer = str(r, "customerName") || "—";
-  const refLine = soRefLine(r);
+  const refs = soRefChips(r);
   const expected = dateOnly(r, "hookkaExpectedDD");
-  const qty = soTotalQty(r);
   const total = num(r, "totalSen");
-  const cancelled = str(r, "status") === "CANCELLED";
-  const status = resolveStatus(str(r, "status"), STATUS_MAPS.so);
+  const statusKey = str(r, "status");
+  const cancelled = statusKey === "CANCELLED";
+  const status = resolveStatus(statusKey, STATUS_MAPS.so);
+  const tint = statusTint(status.style.hex);
+  const cd = soCountdown(expected, statusKey, today);
+  const soon = cd.tone === "soon";
+  const stage = soStage(statusKey);
+  const label = titleCaseStatus(status.label);
+  const keyColor = soon ? DATE_SOON.fg : M.ink;
 
   return (
     <div
@@ -1005,177 +819,130 @@ function PhoneSoCard({
       style={{
         transform: pressed ? "scale(.985)" : "none",
         transition: "transform .12s ease",
+        opacity: cancelled ? 0.55 : 1,
       }}
     >
-      <MobileCard
-        onClick={onClick}
-        padded={false}
-        radius={16}
-        style={{
-          position: "relative",
-          overflow: "hidden",
-          border: "none",
-          padding: "14px 14px 14px 18px",
-          boxShadow: SHADOW_CARD,
-          opacity: cancelled ? 0.55 : 1,
+      <ListCardShell
+        rail={status.style.hex}
+        code={code}
+        codeStyle={{ flexShrink: 1, minWidth: 0, fontSize: 14, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis" }}
+        pill={<TilePill tint={tint} label={status.label} />}
+        party={customer}
+        partyGap={6}
+        refs={refs}
+        middle={
+          stage ? (
+            <div style={{ marginTop: 10 }}>
+              <div
+                aria-hidden="true"
+                style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 3 }}
+              >
+                {SO_STAGES.map((k, i) => (
+                  <span
+                    key={k}
+                    style={{
+                      height: 6,
+                      borderRadius: 999,
+                      background:
+                        i + 1 < stage.n
+                          ? `color-mix(in srgb, ${tint.fg} 45%, transparent)`
+                          : i + 1 === stage.n
+                            ? tint.fg
+                            : "var(--m-segment-track)",
+                    }}
+                  />
+                ))}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  marginTop: 5,
+                  fontSize: 11.5,
+                  color: M.ink,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                <span style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  Stage <span style={{ fontWeight: 700, color: tint.fg }}>{label}</span>
+                </span>
+                <span style={{ flex: "none", whiteSpace: "nowrap" }}>
+                  Stage {stage.n} of {stage.total}
+                </span>
+              </div>
+            </div>
+          ) : null
+        }
+        left={{
+          bg: soon ? DATE_SOON.bg : M.paper,
+          children: (
+            <>
+              <span
+                style={{
+                  ...CARD_LABEL,
+                  fontWeight: 700,
+                  color: keyColor,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                }}
+              >
+                <Calendar size={12} strokeWidth={2} aria-hidden="true" />
+                EXPECTED DD
+              </span>
+              <div
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  color: M.raisin,
+                  marginTop: 2,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {soShortDate(expected) || "—"}
+                {cd.text ? <span style={{ fontWeight: 600, color: keyColor }}> · {cd.text}</span> : null}
+              </div>
+            </>
+          ),
         }}
-      >
-        {/* Status rail — colour from the same map as the pill. */}
-        <span
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 3,
-            backgroundColor: status.style.hex,
-          }}
-        />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 12,
-              fontWeight: 700,
-              color: M.taupe,
-              fontVariantNumeric: "tabular-nums",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {code}
-          </span>
-          <TilePill style={status.style} label={status.label} />
-        </div>
-
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 8 }}>
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 15,
-              fontWeight: 700,
-              color: M.raisin,
-              letterSpacing: "-0.2px",
-              overflowWrap: "anywhere",
-            }}
-          >
-            {customer}
-          </span>
-          <ChevronRight
-            aria-hidden="true"
-            size={19}
-            strokeWidth={1.75}
-            color="#C4BDB2"
-            style={{ flexShrink: 0, marginTop: 1 }}
-          />
-        </div>
-
-        {refLine ? (
-          <div
-            style={{
-              fontSize: 12.5,
-              fontWeight: 500,
-              color: M.taupe,
-              marginTop: 2,
-              overflowWrap: "anywhere",
-            }}
-          >
-            {refLine}
-          </div>
-        ) : null}
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0,1fr) minmax(0,.7fr) auto",
-            columnGap: 10,
-            alignItems: "end",
-            marginTop: 12,
-            padding: "10px 12px",
-            backgroundColor: M.paper,
-            borderRadius: 12,
-          }}
-        >
-          <Metric icon={Calendar} label="EXPECTED DD" value={expected || "—"} />
-          <Metric icon={Package} label="TOTAL QTY" value={qty == null ? "—" : String(qty)} />
-          <Metric icon={Wallet} label="AMOUNT" value={money(total)} align="right" />
-        </div>
-      </MobileCard>
+        right={{ label: "AMOUNT", value: money(total) }}
+        ariaLabel={`${code}, ${customer}, ${label}, ${money(total)}`}
+        onOpen={onClick}
+      />
     </div>
   );
 }
 
-/** Borderless status pill (prototype "tile"); StatusPill's sm typography. */
-function TilePill({ style, label }: { style: SemanticStyle; label: string }) {
+/** Status pill: 6px dot in the status colour + label (v3). */
+function TilePill({ tint, label }: { tint: { bg: string; fg: string }; label: string }) {
   return (
     <span
       style={{
         flexShrink: 0,
+        height: 22,
         display: "inline-flex",
         alignItems: "center",
+        gap: 5,
+        padding: "0 9px",
         borderRadius: 9999,
-        padding: "1px 8px",
-        backgroundColor: PILL_TILE_BG[style.hex] ?? M.divider,
-        color: style.hex,
+        backgroundColor: tint.bg,
+        color: tint.fg,
         fontSize: 11,
-        fontWeight: 600,
-        lineHeight: 1.3,
+        fontWeight: 700,
         fontVariantNumeric: "tabular-nums",
         whiteSpace: "nowrap",
       }}
     >
+      <span
+        aria-hidden="true"
+        style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: tint.fg }}
+      />
       {titleCaseStatus(label)}
     </span>
-  );
-}
-
-function Metric({
-  icon: Icon,
-  label,
-  value,
-  align,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  align?: "right";
-}) {
-  return (
-    <div style={{ minWidth: 0, textAlign: align }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: align === "right" ? "flex-end" : undefined,
-          gap: 4,
-          fontSize: 10,
-          fontWeight: 600,
-          color: LABEL,
-          whiteSpace: "nowrap",
-        }}
-      >
-        <Icon size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-        {label}
-      </div>
-      <div
-        style={{
-          marginTop: 3,
-          fontSize: 13,
-          fontWeight: 600,
-          color: M.raisin,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {value}
-      </div>
-    </div>
   );
 }
 
@@ -1194,7 +961,7 @@ function Msg({
       style={{
         padding: icon ? "44px 18px" : "40px 18px",
         textAlign: "center",
-        color: M.muted,
+        color: M.body,
         fontSize: 14,
         display: "flex",
         flexDirection: "column",

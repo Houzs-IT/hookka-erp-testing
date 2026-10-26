@@ -1,5 +1,5 @@
 {
-  "_note": "sha256/16 of the server-rendered markup of the APPROVED phone Sales Order screens (fixture data, shell width 390/600), captured from upstream/staging c36fa4ddc BEFORE the Sales responsive migration. A phone-mode change must not alter these; if a phone change is intended, regenerate and have it reviewed. The 11 detail entries were regenerated on 2026-10-27 for the Sales Order Detail v4 visual redesign (intended) and are rendered under a frozen clock (GOLDEN_NOW in tests/_ssr-sales.mjs), because the overview shows a countdown to Hookka Expected DD.",
+  "_note": "sha256/16 of the server-rendered markup of the APPROVED phone Sales Order screens (fixture data, shell width 390/600), captured from upstream/staging c36fa4ddc BEFORE the Sales responsive migration. A phone-mode change must not alter these; if a phone change is intended, regenerate and have it reviewed. The three list entries were regenerated on 2026-10-26/27 for the Sales Orders v3 listing (intended) and are rendered under a frozen clock (GOLDEN_NOW in tests/_ssr-sales.mjs) because the cards show an Expected DD countdown; the detail entries are unchanged. The 11 detail entries were regenerated on 2026-10-27 for the Sales Order Detail v4 visual redesign (intended) and are also rendered under the frozen clock, because the overview shows a countdown to Hookka Expected DD.",
   "detail": {
     "detail-390-CANCELLED": "bf8a95cc4269cd8c",
     "detail-390-CONFIRMED": "fa7873de294f8415",
@@ -14,8 +14,8 @@
     "detail-600-CONFIRMED": "fa7873de294f8415"
   },
   "list": {
-    "list-390-empty": "72dc76ff2536f9f1",
-    "list-390": "3270621b6ee20ab2",
-    "list-600": "3270621b6ee20ab2"
+    "list-390-empty": "3849c59a0935971f",
+    "list-390": "81ee8b7d7e0e14b3",
+    "list-600": "81ee8b7d7e0e14b3"
   }
 }

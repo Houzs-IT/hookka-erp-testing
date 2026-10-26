@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React, { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve as resolvePath } from "node:path";
 import { renderScreen, listFixture } from "./_ssr-sales.mjs";
@@ -30,7 +31,7 @@ test("every width shows the phone list's controls and cards", async () => {
       assert.ok(t.includes(chip), `${width}: chip ${chip}`);
     }
     for (const name of ["Aurora Living Sdn Bhd", "Sample Customer Sdn Bhd", "Echo Residence"]) assert.ok(t.includes(name), `${width}: ${name}`);
-    assert.ok(t.includes("EXPECTED DD") && t.includes("TOTAL QTY") && t.includes("AMOUNT"), `${width}: card metrics`);
+    assert.ok(t.includes("AMOUNT") && t.includes("EXPECTED DD") && t.includes("RM"), `${width}: card amount + expected dd`);
   }
 });
 
@@ -47,7 +48,7 @@ test("a Cancelled card is still dimmed and rows keep their status colours at eve
   for (const width of [390, 1024]) {
     const html = await render({ width });
     assert.match(html, /opacity:0\.55/);
-    assert.match(html, /background-color:#4F7C3A/); // the Delivered rail
+    assert.match(html, /background:#4F7C3A/); // the Delivered rail (shared shell)
   }
 });
 
@@ -114,25 +115,42 @@ function sheet(props) {
   );
 }
 
-test("the phone sheet has no Sort section; wider screens add it with every column, both directions, and None", () => {
+test("without withSort the sheet has no Sort row; with it, a collapsed 'Sort by' row shows the current choice", () => {
   const phone = text(sheet({}));
   assert.ok(!phone.includes("Sort by"));
   const wide = text(sheet({ withSort: true, sort: { key: "expectedDD", dir: "asc" } }));
   assert.ok(wide.includes("Sort by"));
-  for (const col of salesConfig.sources[0].columns) {
-    assert.ok(wide.includes(`${col.label} ↑`) && wide.includes(`${col.label} ↓`), col.label);
+  // Collapsed by default: the subtitle is the current selection, the option rows are not rendered yet.
+  assert.ok(wide.includes("Expected DD · Soonest first"));
+  assert.ok(!wide.includes("Highest first"));
+  assert.ok(!wide.includes("All columns"));
+  const none = text(sheet({ withSort: true, sort: null }));
+  assert.ok(none.includes("None · list order"));
+  const other = text(sheet({ withSort: true, sort: { key: "state", dir: "desc" } }));
+  assert.ok(other.includes("State · Descending"), "a sort outside the seven is described by column + direction");
+});
+
+test("Sort by keeps every supported sort: the seven design options + 'All columns' (any column, both directions, none)", () => {
+  const src = readFileSync(new URL("../src/pages/m/screens/SalesFilterSheet.tsx", import.meta.url), "utf8");
+  const main = src.slice(src.indexOf("const MAIN_SORTS"), src.indexOf("const sameSort"));
+  for (const hint of ["Soonest first", "Latest first", "Newest first", "Highest first", "Lowest first", "Most first", "A – Z"]) {
+    assert.ok(main.includes(hint), hint);
   }
-  assert.ok(wide.includes("None"));
-  // The current sort is the one marked on.
-  const html = sheet({ withSort: true, sort: { key: "expectedDD", dir: "asc" } });
-  const on = [...html.matchAll(/aria-checked="true"[^>]*>(?:<[^>]+>)*([^<]*)/g)].map((m) => m[1]);
-  assert.ok(on.some((t) => t.includes("↑")), "an ascending choice is on");
+  assert.equal((main.match(/key: "/g) ?? []).length, 7);
+  const by = src.slice(src.indexOf("function SortBy"));
+  assert.ok(by.includes("All columns"));
+  assert.ok(by.includes("columns.map((c) =>"), "the picker lists every column");
+  assert.ok(by.includes("None (list order)"));
+  assert.ok(by.includes('"Ascending"') && by.includes('"Descending"'));
+  // Sort is a draft that applies with "Show N orders" (apply() hands it back with the filters).
+  assert.ok(src.includes("withSort ? draftSort : undefined"));
+  assert.ok(src.includes("setDraftSort(sortDefault)"));
 });
 
 test("the Sort section sits above the filters, and the phone sheet is otherwise identical", () => {
   const wide = text(sheet({ withSort: true, sort: null }));
   assert.ok(wide.indexOf("Sort by") < wide.indexOf("Expected DD"));
-  const strip = (s) => s.replace(/<section aria-label="Sort by">[\s\S]*?<\/section>/, "");
+  const strip = (s) => s.replace(/<section aria-label="Sort by">[\s\S]*?<\/section>/, "").split("Sort &amp; filter orders").join("Filter orders");
   // Remove the Sort section and the markup equals the phone sheet's.
   assert.equal(strip(sheet({ withSort: true, sort: null })), sheet({}));
 });

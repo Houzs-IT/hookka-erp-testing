@@ -65,8 +65,8 @@ test("Products, Sales Orders and Delivery read the shared styles", () => {
   // One chip row at every width (the old tablet row with its own 10px spacing is gone, 2026-10-23).
   assert.doesNotMatch(sales, /padding: "10px 18px 4px"/);
   assert.equal((sales.match(/chipStyle\(on\)/g) ?? []).length, 1);
-  // No status dots added to Sales (owner 2026-10-21).
-  assert.doesNotMatch(sales, /chipDot/);
+  // Status dots on the Sales chips (owner 2026-10-27, Sales Orders v3); "All" has none.
+  assert.match(fn(sales, "PhoneChips"), /c\.key !== "all"[\s\S]*chipDot\(/);
 
   assert.match(fn(delivery, "Chips"), /style=\{CHIP_ROW\}[\s\S]*chipDot\(sem\(dot\)\)[\s\S]*style=\{chipStyle\(on\)\}|style=\{CHIP_ROW\}[\s\S]*style=\{chipStyle\(on\)\}[\s\S]*chipDot\(sem\(dot\)\)/);
   assert.match(delivery, /<div style=\{SEGMENT_WRAP\}>\s*<SectionSwitch/);

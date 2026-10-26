@@ -13,12 +13,12 @@
 //   N = applyFilters over the real rows with the draft.
 // Filter only, as the prototype (owner 2026-10-15: the Sort | Filter switch
 // was removed). The list keeps its sort state and applySort untouched.
-// Wider screens (owner 2026-10-23) pass `withSort`, which adds a "Sort by" section at the
-// top, so the Sort the tablet list always had is not lost; the phone passes nothing and
-// its sheet is unchanged.
+// `withSort` (owner 2026-10-27: every width) adds a collapsed "Sort by" row at the top
+// — the design's 7 readable options plus "All columns" for every other supported sort.
+// The sort is a draft and applies together with the filters on "Show N orders".
 // ===========================================================================
 import { useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { Building2, Calendar, CalendarPlus, Check, ChevronDown, Package, Wallet, type LucideIcon } from "lucide-react";
 import { Sheet } from "../components";
 import { M, titleCaseStatus } from "../theme";
 import { type ActiveFilter, type ColumnDef } from "../config/types";
@@ -115,28 +115,7 @@ export function SalesFilterSheet({
   return (
     <Sheet open={open} onClose={onClose} title="Filter orders">
           <div style={{ display: "grid", gap: 22 }}>
-            {withSort ? (
-              <section aria-label="Sort by">
-                <Label>Sort by</Label>
-                <div role="radiogroup" aria-label="Sort by" style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
-                  {columns.flatMap((c) =>
-                    (["asc", "desc"] as const).map((dir) => (
-                      <Choice
-                        key={`${c.key}-${dir}`}
-                        on={draftSort?.key === c.key && draftSort.dir === dir}
-                        role="radio"
-                        onClick={() => setDraftSort({ key: c.key, dir })}
-                      >
-                        {c.label} {dir === "asc" ? "↑" : "↓"}
-                      </Choice>
-                    )),
-                  )}
-                  <Choice on={draftSort == null} role="radio" onClick={() => setDraftSort(null)}>
-                    None
-                  </Choice>
-                </div>
-              </section>
-            ) : null}
+            {withSort ? <SortBy columns={columns} sort={draftSort} onChange={setDraftSort} /> : null}
 
             {statusCol ? (
               <section aria-label="Status">
@@ -370,7 +349,7 @@ const btn: React.CSSProperties = {
   WebkitTapHighlightColor: "transparent",
 };
 
-/** Section label: the shared FilterSheet's 12/700, with an optional right hint. */
+/** Section heading as the Sales Orders design: 11/700, 1px tracking, taupe small caps, optional right hint. */
 function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <div
@@ -382,8 +361,8 @@ function Label({ children, hint }: { children: React.ReactNode; hint?: string })
         margin: "0 2px 10px",
       }}
     >
-      <span style={{ fontSize: 12, fontWeight: 700, color: M.raisin }}>{children}</span>
-      {hint ? <span style={{ fontSize: 12, color: M.muted }}>{hint}</span> : null}
+      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: M.taupe }}>{children}</span>
+      {hint ? <span style={{ fontSize: 11.5, color: M.ink }}>{hint}</span> : null}
     </div>
   );
 }
@@ -420,8 +399,8 @@ function Choice({
         borderRadius: 999,
         border: "none",
         backgroundColor: on ? M.taupe : M.card,
-        color: on ? M.paper : M.ink,
-        fontSize: 12,
+        color: on ? M.paper : "var(--m-chip-text)",
+        fontSize: 12.5,
         fontWeight: on ? 700 : 500,
         whiteSpace: "nowrap",
         boxShadow: on ? SHADOW_ON : SHADOW_OFF,
@@ -486,7 +465,7 @@ function Pair({ children, sep }: { children: [React.ReactNode, React.ReactNode];
       }}
     >
       {children[0]}
-      {sep ? <span style={{ fontSize: 12, color: M.muted }}>{sep}</span> : null}
+      {sep ? <span style={{ fontSize: 12, color: M.ink }}>{sep}</span> : null}
       {children[1]}
     </div>
   );
@@ -494,11 +473,13 @@ function Pair({ children, sep }: { children: [React.ReactNode, React.ReactNode];
 
 function Expander({
   label,
+  subtitle,
   count = 0,
   open,
   onToggle,
 }: {
   label: string;
+  subtitle?: string;
   count?: number;
   open: boolean;
   onToggle: () => void;
@@ -524,7 +505,10 @@ function Expander({
         WebkitTapHighlightColor: "transparent",
       }}
     >
-      <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: M.raisin }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0, padding: subtitle ? "8px 0" : 0 }}>
+        <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: M.raisin }}>{label}</span>
+        {subtitle ? <span style={{ display: "block", fontSize: 12, color: M.ink, marginTop: 1, overflowWrap: "anywhere" }}>{subtitle}</span> : null}
+      </span>
       {count ? (
         <span
           style={{
@@ -552,5 +536,186 @@ function Expander({
         style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .18s ease" }}
       />
     </button>
+  );
+}
+
+// ---- Sort by ------------------------------------------------------------------
+// Sales Orders design (`Sales Orders v3/v4.dc.html` SORT_LIST): seven readable
+// options, each with an icon, a label and a hint. Collapsed by default behind a
+// compact row whose subtitle is the current choice. Every other supported sort
+// (any column, either direction, or none) stays under "All columns". The choice is
+// a draft: it applies together with the filters on "Show N orders".
+
+type SortOpt = { key: string; dir: "asc" | "desc"; label: string; hint: string; icon: LucideIcon };
+
+const MAIN_SORTS: SortOpt[] = [
+  { key: "expectedDD", dir: "asc", label: "Expected DD", hint: "Soonest first", icon: Calendar },
+  { key: "expectedDD", dir: "desc", label: "Expected DD", hint: "Latest first", icon: Calendar },
+  { key: "orderDate", dir: "desc", label: "Order Date", hint: "Newest first", icon: CalendarPlus },
+  { key: "amount", dir: "desc", label: "Amount", hint: "Highest first", icon: Wallet },
+  { key: "amount", dir: "asc", label: "Amount", hint: "Lowest first", icon: Wallet },
+  { key: "qty", dir: "desc", label: "Total Qty", hint: "Most first", icon: Package },
+  { key: "customer", dir: "asc", label: "Customer", hint: "A – Z", icon: Building2 },
+];
+
+const sameSort = (a: Sort, b: { key: string; dir: "asc" | "desc" }) => !!a && a.key === b.key && a.dir === b.dir;
+
+function sortSubtitle(sort: Sort, columns: ColumnDef[]): string {
+  if (!sort) return "None · list order";
+  const main = MAIN_SORTS.find((o) => sameSort(sort, o));
+  if (main) return `${main.label} · ${main.hint}`;
+  const label = columns.find((c) => c.key === sort.key)?.label ?? sort.key;
+  return `${label} · ${sort.dir === "asc" ? "Ascending" : "Descending"}`;
+}
+
+function SortBy({
+  columns,
+  sort,
+  onChange,
+}: {
+  columns: ColumnDef[];
+  sort: Sort;
+  onChange: (s: Sort) => void;
+}) {
+  const options = MAIN_SORTS.filter((o) => columns.some((c) => c.key === o.key));
+  const [open, setOpen] = useState(false);
+  // A sort that is not one of the seven opens straight to "All columns".
+  const [all, setAll] = useState(() => sort != null && !options.some((o) => sameSort(sort, o)));
+
+  return (
+    <section aria-label="Sort by">
+      <Expander label="Sort by" subtitle={sortSubtitle(sort, columns)} open={open} onToggle={() => setOpen((o) => !o)} />
+      {open ? (
+        <div
+          style={{
+            marginTop: 10,
+            borderRadius: 14,
+            backgroundColor: M.card,
+            boxShadow: SHADOW_CONTROL,
+            overflow: "hidden",
+          }}
+        >
+          <div role="radiogroup" aria-label="Sort by">
+            {options.map((o, i) => {
+              const on = sameSort(sort, o);
+              const Icon = o.icon;
+              return (
+                <button
+                  key={`${o.key}-${o.dir}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onChange({ key: o.key, dir: o.dir })}
+                  style={{
+                    width: "100%",
+                    minHeight: 52,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "0 14px",
+                    border: "none",
+                    borderTop: i ? `1px solid ${M.divider}` : "none",
+                    backgroundColor: on ? M.paper : M.card,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    WebkitTapHighlightColor: "transparent",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      flex: "none",
+                      borderRadius: 10,
+                      backgroundColor: on ? "color-mix(in srgb, var(--m-taupe) 16%, transparent)" : M.divider,
+                      color: M.taupe,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Icon size={18} strokeWidth={1.75} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 14, fontWeight: on ? 700 : 500, color: M.raisin }}>{o.label}</span>
+                    <span style={{ display: "block", fontSize: 12, color: M.ink, marginTop: 1 }}>{o.hint}</span>
+                  </span>
+                  <Check aria-hidden="true" size={18} strokeWidth={2.2} color={M.taupe} style={{ flex: "none", opacity: on ? 1 : 0 }} />
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => setAll((a) => !a)}
+            aria-expanded={all}
+            style={{
+              width: "100%",
+              minHeight: 44,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "0 14px",
+              border: "none",
+              borderTop: `1px solid ${M.divider}`,
+              backgroundColor: M.card,
+              color: M.taupe,
+              fontSize: 13,
+              fontWeight: 600,
+              textAlign: "left",
+              cursor: "pointer",
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            <span style={{ flex: 1 }}>All columns</span>
+            <ChevronDown
+              size={16}
+              strokeWidth={2}
+              style={{ transform: all ? "rotate(180deg)" : "none", transition: "transform .18s ease" }}
+            />
+          </button>
+          {all ? (
+            <div style={{ display: "grid", gap: 10, padding: "4px 14px 14px" }}>
+              <select
+                aria-label="Sort column"
+                value={sort?.key ?? ""}
+                onChange={(e) => onChange(e.target.value ? { key: e.target.value, dir: sort?.dir ?? "asc" } : null)}
+                style={{
+                  width: "100%",
+                  height: 44,
+                  boxSizing: "border-box",
+                  padding: "0 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${M.hairline}`,
+                  backgroundColor: M.paper,
+                  color: M.raisin,
+                  fontSize: 16,
+                }}
+              >
+                <option value="">None (list order)</option>
+                {columns.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <div role="radiogroup" aria-label="Sort direction" style={{ display: "flex", gap: 7, opacity: sort ? 1 : 0.5 }}>
+                {(["asc", "desc"] as const).map((dir) => (
+                  <Choice
+                    key={dir}
+                    on={sort?.dir === dir}
+                    role="radio"
+                    onClick={() => sort && onChange({ key: sort.key, dir })}
+                  >
+                    {dir === "asc" ? "Ascending" : "Descending"}
+                  </Choice>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
