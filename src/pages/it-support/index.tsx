@@ -109,7 +109,7 @@ const TYPE_LABEL: Record<string, string> = { bug: "Something is not working", de
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const FILE_ACCEPT = "image/*,video/mp4,video/quicktime,application/pdf";
+const FILE_ACCEPT = "image/*,video/mp4,video/quicktime,application/pdf,.zip";
 const FORM_BUTTON = "h-auto rounded-lg px-5 py-2.5 text-sm font-medium";
 const FIELD =
   "w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm text-[#1F1D1B] placeholder:text-[#9CA3AF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]";
@@ -164,8 +164,13 @@ function checkFiles(files: File[]): string | null {
 }
 
 // The input's accept only limits the file browser; drop and paste come through here too.
+// A .zip goes by its name: browsers label it application/zip, application/x-zip-compressed or nothing.
 function acceptedType(f: File): boolean {
-  return f.type.startsWith("image/") || ["application/pdf", "video/mp4", "video/quicktime"].includes(f.type);
+  return (
+    f.type.startsWith("image/") ||
+    ["application/pdf", "video/mp4", "video/quicktime"].includes(f.type) ||
+    f.name.toLowerCase().endsWith(".zip")
+  );
 }
 
 function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
@@ -187,7 +192,7 @@ function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) 
     (incoming: File[]) => {
       const skipped: string[] = [];
       const ok = incoming.filter((f) => {
-        if (!acceptedType(f)) skipped.push(`${f.name} is not an image, PDF, MP4 or MOV`);
+        if (!acceptedType(f)) skipped.push(`${f.name} is not an image, PDF, MP4, MOV or ZIP`);
         else if (f.size > MAX_FILE_BYTES) skipped.push(`${f.name} is larger than 10 MB`);
         else return true;
         return false;
@@ -255,7 +260,7 @@ function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) 
         />
         <Upload className="h-5 w-5 text-[#6B5C32]" />
         <span className="font-medium text-[#1F1D1B]">Drop files here, click to browse, or paste a screenshot</span>
-        <span className="text-xs text-[#8A7F73]">Up to {MAX_FILES} files, 10 MB each: images, PDF, MP4 or MOV.</span>
+        <span className="text-xs text-[#8A7F73]">Up to {MAX_FILES} files, 10 MB each: images, PDF, MP4, MOV or ZIP.</span>
       </label>
 
       {note && <p className="text-sm text-amber-700" role="status">{note}</p>}
