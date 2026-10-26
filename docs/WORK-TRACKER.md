@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-26**: branch `fix/hk0114-overdue-invoiced`, to `main` (HK-0114, Overdue POs counted billed POs) added below (its entry is the newest).
 > **Last verified: 2026-10-22**: branch `feat/hk0111-reverse-to-dispatched-to-main`, to `main` (HK-0111, Reverse to Dispatched) added below (its entry is the newest).
 > **Last verified: 2026-10-21**: the owner's next replies logged (the estimate mark in the Chart of Accounts, the Trade Finance block folded into the aging list) and two new asks with their causes measured (a dragged table that stops short of its card, the report's missing right-hand line).
 > **Last verified: 2026-10-21**: the owner's replies to the six questions logged (AR Invoices, the one-door Creditor List and the Trade finance card agreed; director remuneration's estimate and the Trade Finance block answered back).
@@ -277,6 +278,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-26 — 🔵 HK-0114 Overdue POs: a PO billed in full is no longer overdue (branch `fix/hk0114-overdue-invoiced` → `main`)
+
+Siti (office, HK-0114, screenshot of the Purchase Orders cards: 108 Overdue POs, 11 orange · 97 red): why so many, and is this the list of purchase invoices that don't match the POs? Answer: no — the card is POs past Expected Date not received by GRN, and the office bills straight from the PO without a GRN. Measured on prod 2026-10-26 (read-only): 0 live GRNs ever; all 108 CONFIRMED; 101 carry a PI. Owner (Samuel) 2026-10-26: count PI-billed qty as delivered, bug fix to `main`. BUG-2026-10-26-392.
+
+1. 🔵 `GET /api/purchase-orders/stats` adds `deliveredInFull` per PO: every line's max(received, invoiced) ≥ ordered (`src/api/lib/po-delivered.ts`, buckets as the PI double-bill guard).
+2. 🔵 PO list `isOverdue` skips those POs, so the card and its click-filter agree.
+3. 🟡 Prod check after merge (read-only): the card should drop from 108 to about 13 (6 part-billed, 7 with no PI).
+
 ## 2026-10-22 — 🔵 HK-0111 Reverse a delivered DO to Dispatched, same DO number (branch `feat/hk0111-reverse-to-dispatched-to-main` → `main`; staging copy #1091)
 
 Siti (office, HK-0111): a DO is sometimes marked delivered while some items never reached the customer; she wants to take it back to Dispatch, remove the items not sent and issue the corrected DO under the same number. The customer has usually not paid by then (her answer 2026-10-22). Until now: void the invoice (API only) + cancel the DO + raise a new DO number. Owner (Samuel) 2026-10-22: straight to `main`.

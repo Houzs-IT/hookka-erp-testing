@@ -34,7 +34,7 @@ test("backend list supports opt-in pagination, full list when params omitted", (
 test("backend /stats returns whole-dataset header rows (no items), before /:id", () => {
   assert.match(route, /app\.get\("\/stats"/);
   // items-less map — rowToPO(p) with no items arg (cheap; widgets need none)
-  assert.match(route, /\.map\(\(p\) => rowToPO\(p\)\)/);
+  assert.match(route, /\.\.\.rowToPO\(p\),/);
   assert.ok(
     route.indexOf('app.get("/stats"') < route.indexOf('app.get("/:id"'),
     "/stats must be registered before /:id",
