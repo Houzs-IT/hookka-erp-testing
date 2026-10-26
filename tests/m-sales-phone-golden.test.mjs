@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { renderScreen, soFixture } from "./_ssr-sales.mjs";
+import { renderScreen, soFixture, withFrozenClock, GOLDEN_NOW } from "./_ssr-sales.mjs";
 
 const golden = JSON.parse(readFileSync(new URL("./fixtures/m-sales-phone-golden.json", import.meta.url), "utf8"));
 const fp = (html) => createHash("sha256").update(html).digest("hex").slice(0, 16);
@@ -35,7 +35,7 @@ const detailCases = {
 
 for (const [name, opts] of Object.entries(detailCases)) {
   test(`phone Sales Order detail is unchanged: ${name}`, async () => {
-    const html = await renderScreen(...DETAIL, opts);
+    const html = await withFrozenClock(GOLDEN_NOW, () => renderScreen(...DETAIL, opts));
     assert.equal(fp(html), golden.detail[name]);
   });
 }
@@ -48,7 +48,8 @@ const listCases = {
 
 for (const [name, opts] of Object.entries(listCases)) {
   test(`phone Sales Orders list is unchanged: ${name}`, async () => {
-    const html = await renderScreen(...LIST, { route: "/m/sales", routePath: "/m/sales", ...opts });
+    // Frozen clock: these screens show countdowns to Expected DD, which depend on today.
+    const html = await withFrozenClock(GOLDEN_NOW, () => renderScreen(...LIST, { route: "/m/sales", routePath: "/m/sales", ...opts }));
     assert.equal(fp(html), golden.list[name]);
   });
 }

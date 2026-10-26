@@ -1,6 +1,15 @@
 # Hookka ERP — Work Tracker
 > **Last verified: 2026-10-26**: mobile Warehouse v3 entry added (branch `design/mobile-warehouse`, UI-only PR to `staging`); nothing else re-checked.
 
+> **Last verified: 2026-10-27**: mobile Sales Order Detail v4 entry added (branch `design/mobile-salesorderv3`, UI only); nothing else re-checked.
+
+## Mobile Sales Order Detail v4 (design/mobile-salesorderv3, 2026-10-27)
+1. DONE (typecheck, lint, build and full suite green; NOT seen in a browser, login wall): the whole detail follows `Sales Order Detail v4.dc.html`: status pill / customer / state on the page, plain white overview (gold ORDER TOTAL dash, RM 30px, Customer DD / Hookka Expected DD / Delivery Hub), banners below it, Order progress (7-stage stepper via `soStage` + production tiles + delivery rows, DO links kept), Order items (count/qty summary, category tile + pill, Base price + surcharge rows), Related documents chain + grouped details, Additional information (notes + original Customer PO inside), History tabs, skeleton / error card.
+2. Hookka Expected DD countdown (display only): Due today / In N days, 0-7 days, Confirmed / In Production / Ready to Ship only; never "late", never on Customer DD.
+3. Header ⋯ "More actions" opens the "Sales order PDF" sheet: Download SO PDF = desktop `generateSOPdf` via `lib/so-pdf.ts`; Bill To from the existing GET /api/customers/:id, and a missing address asks before downloading. Phone PDF download is UNVERIFIED on a real device; whether every role can read /api/customers/:id is UNMEASURED.
+4. Deviations: "SO line" kept (design says "PO line"); DO sub-line says "Expected" (the field is the DO's Hookka expected DD); the design's lock notice is a prototype prop with no real source and is not shown.
+5. OPEN: 390px / tablet / dark-mode visual check.
+
 ## Mobile Warehouse v3 (design/mobile-warehouse, 2026-10-26)
 1. DONE (typecheck + lint clean; not yet seen in a browser — login wall): Racks tab, v3 tiles, rack sheet, ⋯ menu, History filters, Stock In/Out **UI**.
 2. NOT DONE BY DESIGN (owner 2026-10-26): Stock In/Out **writes**. The release is UI-only; the confirm button is disabled. Backend limitations (empty productCode on per-piece Stock Out, rack id vs name, non-atomic chains, WAREHOUSE role lacks production-orders:update) are in `docs/WAREHOUSE-STOCK-LIMITATIONS.md` for the backend team. No workarounds.

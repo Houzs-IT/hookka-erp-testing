@@ -91,10 +91,11 @@ test("item specs: chips from real fields, surcharges as facts, SO line ref", () 
   assert.equal(soLineRef("SO-2610-012", it), "SO-2610-012-04");
   assert.equal(soLineRef("", it), "");
   assert.deepEqual(specChips({}), []);
-  // No "PO line" label and no base-price arithmetic on the phone.
+  // No "PO line" label (the line ref is the SO's). Sales Order Detail v4 (2026-10-27) brings the
+  // Base price row back, from the real basePriceSen, above the surcharges.
   assert.doesNotMatch(PHONE, /"PO line"/);
   assert.match(PHONE, /"SO line"/);
-  assert.doesNotMatch(PHONE, /basePriceSen/);
+  assert.match(PHONE, /basePriceSen/);
 });
 
 test("hold / cancel banner uses the real fields", () => {
@@ -161,7 +162,8 @@ test("the detail file itself never mutates: requests live in the shared actions 
 });
 
 test("phone visual refinements (2026-10-16): no qty / line counters, honest missing values, borderless chips", () => {
-  assert.doesNotMatch(PHONE, /\} qty<|lines" \?|"line" : "lines"|· \{qty\} qty/);
+  // Sales Order Detail v4 (2026-10-27) adds the "N lines · N qty" summary back beside "Order items".
+  assert.ok(PHONE.includes("· {totalQty} qty"));
   assert.match(PHONE, /Qty \{num\(item, "quantity", "qty"\)\}/); // per-line qty stays
   assert.match(PHONE, /Not set/);
   assert.match(PHONE, /Not assigned/);

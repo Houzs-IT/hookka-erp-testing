@@ -96,3 +96,26 @@ export async function renderScreen(modulePath, exportName, { width = 390, fixtur
   if (pane) tree = h(PaneProvider, { value: resolveContainerLayout(pane.width, pane.kind) }, tree);
   return renderToStaticMarkup(h(ResponsiveLayoutProvider, { value: layout }, tree));
 }
+
+// The list shows a countdown to Expected DD, so its markup depends on "today". Golden
+// fingerprints must not drift with the calendar: render under a frozen local clock.
+export async function withFrozenClock(iso, fn) {
+  const RealDate = Date;
+  const fixed = new RealDate(iso).getTime();
+  class FrozenDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(fixed);
+      else super(...args);
+    }
+    static now() {
+      return fixed;
+    }
+  }
+  globalThis.Date = FrozenDate;
+  try {
+    return await fn();
+  } finally {
+    globalThis.Date = RealDate;
+  }
+}
+export const GOLDEN_NOW = "2026-10-26T12:00:00";

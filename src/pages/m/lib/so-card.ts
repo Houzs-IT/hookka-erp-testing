@@ -99,3 +99,79 @@ export function soRefLine(row: Row): string {
   const so = text(row, "customerSOId", "customer_so_id", "customerSO", "customer_so");
   return [po ? `PO ${po}` : "", so ? `Cust SO ${so}` : ""].filter(Boolean).join(" · ");
 }
+
+// ---------------------------------------------------------------------------
+// Sales Orders v3 card (owner 2026-10-26): reference chips and the Expected DD
+// countdown. Both come only from fields the list row already carries
+// (customerPO / customerSO, hookkaExpectedDD, status); nothing is stored or
+// invented. There is deliberately NO progress/stage derivation: the row has no
+// production-progress field.
+// ---------------------------------------------------------------------------
+
+/** "PO" / "Cust SO" chips; empty parts omitted (same sources as soRefLine). */
+export function soRefChips(row: Row): { k: string; v: string }[] {
+  const po = text(row, "customerPOId", "customer_po_id", "customerPO", "customer_po");
+  const so = text(row, "customerSOId", "customer_so_id", "customerSO", "customer_so");
+  const out: { k: string; v: string }[] = [];
+  if (po) out.push({ k: "PO", v: po });
+  if (so) out.push({ k: "Cust SO", v: so });
+  return out;
+}
+
+/**
+ * Only these statuses show a countdown (owner 2026-10-27): the order is committed
+ * and still on Hookka's floor. Draft, On Hold, Shipped, Delivered, Invoiced,
+ * Closed, Cancelled (and any unknown status) show none.
+ */
+const COUNTDOWN_STATUSES = new Set(["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP"]);
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-10-28" → "28 Oct"; "" when the date is blank or malformed. */
+export function soShortDate(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day ?? "");
+  if (!m) return "";
+  const mon = MONTHS[Number(m[2]) - 1];
+  return mon ? `${Number(m[3])} ${mon}` : "";
+}
+
+export type SoCountdownTone = "soon" | "normal";
+
+/**
+ * Display-only countdown to Expected DD (hookkaExpectedDD, our internal estimate),
+ * both dates "YYYY-MM-DD", whole days by UTC maths so DST never shifts a day.
+ *   today       → "Due today"
+ *   1–7 days    → "In 1 day" / "In N days"
+ *   anything else (past, >7 days, no date, other status) → "" (nothing shown).
+ * Tone "soon" (amber) exactly when a label shows. It never says "late": real
+ * lateness is judged against the customer delivery date elsewhere.
+ */
+export function soCountdown(
+  expected: string,
+  status: string,
+  today: string,
+): { text: string; tone: SoCountdownTone; days: number | null } {
+  const e = /^(\d{4})-(\d{2})-(\d{2})/.exec(expected ?? "");
+  const t = /^(\d{4})-(\d{2})-(\d{2})/.exec(today ?? "");
+  if (!e || !t) return { text: "", tone: "normal", days: null };
+  const utc = (m: RegExpExecArray) => Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const days = Math.round((utc(e) - utc(t)) / 864e5);
+  if (!COUNTDOWN_STATUSES.has(String(status).toUpperCase())) return { text: "", tone: "normal", days };
+  if (days === 0) return { text: "Due today", tone: "soon", days };
+  if (days >= 1 && days <= 7) return { text: `In ${days} ${days === 1 ? "day" : "days"}`, tone: "soon", days };
+  return { text: "", tone: "normal", days };
+}
+
+/**
+ * Lifecycle position for the card's stage bar (Sales Orders v4, owner 2026-10-27).
+ * The seven stages follow the server's VALID_TRANSITIONS order; CONFIRMED (a brief
+ * checkpoint), ON_HOLD, CANCELLED and anything unknown are outside them and get
+ * null, so the card hides the bar. This is the order's place in the status
+ * lifecycle, NOT production progress, and it never touches the status itself.
+ */
+export const SO_STAGES = ["DRAFT", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED", "CLOSED"] as const;
+
+export function soStage(status: string): { n: number; total: number } | null {
+  const i = SO_STAGES.indexOf(String(status).toUpperCase() as (typeof SO_STAGES)[number]);
+  return i < 0 ? null : { n: i + 1, total: SO_STAGES.length };
+}

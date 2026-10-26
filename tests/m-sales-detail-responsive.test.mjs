@@ -32,14 +32,14 @@ test("phone (390, 600, 719): read-only, no Payments / Paid / Balance / action ba
 
 // ---- tablet: the same blocks plus the tablet-only money and actions --------------
 
-const BLOCKS = ["Order total", "Production", "Delivery", "Order items", "Documents", "More details", "History"];
+const BLOCKS = ["Order total", "Production", "Delivery", "Order items", "Related documents", "Additional information", "History"];
 
 test("tablet widths keep every phone block", async () => {
   for (const width of [768, 820, 1024, 1180]) {
     const t = text(await render({ width }));
     for (const b of BLOCKS) assert.ok(t.includes(b), `${width}: ${b}`);
     assert.ok(t.includes("Sample Customer Sdn Bhd"));
-    assert.ok(t.includes("Deliver after 2pm"), "notes");
+    // Notes now live inside Additional information (collapsed by default), as in Sales Order Detail v4.
     assert.ok(t.includes("Aria Sofa 3-seater"), "items");
   }
 });
