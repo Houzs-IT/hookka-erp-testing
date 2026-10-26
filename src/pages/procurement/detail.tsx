@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, lazy, Suspense } from "react";
 import { AuditHistoryPanel } from "@/components/audit/AuditHistoryPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +32,11 @@ import {
 import { Link } from "react-router-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { ObjectPageHeader } from "@/components/ui/object-page-header";
+import { buildPoEmailDraft, type PoEmailDraft } from "@/lib/po-email-draft";
+
+const ComposeDialog = lazy(() =>
+  import("@/pages/mail-center/compose").then((m) => ({ default: m.ComposeDialog })),
+);
 
 // Status timeline steps
 const STATUS_STEPS = [
@@ -223,6 +228,7 @@ export default function PurchaseOrderDetailPage() {
 
   // ------- Email-PO state (3.1) -------
   const [emailing, setEmailing] = useState(false);
+  const [emailDraft, setEmailDraft] = useState<PoEmailDraft | null>(null);
 
   // GRN creation from a PO now routes to the full-page /procurement/grn/create
   // (with ?poId= pre-selecting this PO), so the inline modal that used to live
@@ -520,31 +526,47 @@ export default function PurchaseOrderDetailPage() {
     }
   };
 
-  // 3.1 — Manual "Email to Supplier" send. Hits the new
-  // POST /api/purchase-orders/:id/email endpoint, which enqueues to
-  // outbox_emails and stamps lastEmailedAt. The cron drain
-  // (.github/workflows/process-email-outbox.yml) is what actually contacts
-  // Resend, so a Resend outage doesn't delay the toast.
-  const sendEmail = async () => {
+  // HK-0113 — "Email to Supplier" goes out through Mail Center from the
+  // operator's own mailbox with the PO PDF attached, so it lands in their Sent
+  // folder and the supplier's reply threads back to them (the old noreply
+  // notice carried no PDF and a reply went nowhere).
+  const openEmail = async () => {
     if (!po) return;
     setEmailing(true);
     try {
-      const res = await fetch(`/api/purchase-orders/${po.id}/email`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const { generatePurchaseOrderPdf, letterheadForPurchaseOrg } = await import("@/lib/generate-purchase-order-pdf");
+      const sup = allSuppliers.find((s) => s.id === po.supplierId);
+      const purchaseOrgCode = sup?.purchaseOrgCode || "HOOKKA";
+      const lh = letterheadForPurchaseOrg(purchaseOrgCode, orgsResp?.organisations);
+      const doc = generatePurchaseOrderPdf({ ...po, purchaseOrgCode }, lh, { returnDoc: true });
+      if (!doc) throw new Error("Could not build the PO PDF");
+      const dataUri = doc.output("datauristring");
+      const draft = buildPoEmailDraft({
+        poNo: po.poNo,
+        supplierName: po.supplierName,
+        supplierEmail: sup?.email,
+        companyName: lh.name,
+        pdfBase64: dataUri.slice(dataUri.indexOf(",") + 1),
       });
-      const body = await res.json().catch(() => ({})) as { success?: boolean; error?: string };
-      if (!res.ok || !body.success) {
-        toast.error(body.error || `Failed to email (HTTP ${res.status})`);
+      if (!draft) {
+        toast.error(`Supplier ${po.supplierName} has no email on file`);
         return;
       }
-      invalidateCachePrefix("/api/purchase-orders");
-      fetchPO();
-      toast.success("Queued for delivery");
+      setEmailDraft(draft);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Network error sending email");
+      toast.error(err instanceof Error ? err.message : "Could not prepare the email");
     } finally {
       setEmailing(false);
+    }
+  };
+
+  const markEmailed = async () => {
+    if (!po) return;
+    try {
+      await fetch(`/api/purchase-orders/${po.id}/mark-emailed`, { method: "POST" });
+    } finally {
+      invalidateCachePrefix("/api/purchase-orders");
+      fetchPO();
     }
   };
 
@@ -655,6 +677,17 @@ export default function PurchaseOrderDetailPage() {
 
   return (
     <div className="space-y-6">
+      {emailDraft && (
+        <Suspense fallback={null}>
+          <ComposeDialog
+            open
+            onClose={() => setEmailDraft(null)}
+            prefill={emailDraft}
+            stayOnSent
+            onSent={markEmailed}
+          />
+        </Suspense>
+      )}
       {/* Header */}
       <ObjectPageHeader
         backTo="/procurement"
@@ -677,11 +710,11 @@ export default function PurchaseOrderDetailPage() {
                 )}
                 <Button
                   variant="outline"
-                  onClick={sendEmail}
+                  onClick={openEmail}
                   disabled={emailing}
                   title={po.lastEmailedAt ? "Resend PO to supplier" : "Email PO to supplier"}
                 >
-                  <Mail className="h-4 w-4" /> {po.lastEmailedAt ? (emailing ? "Resending…" : "Resend Email") : (emailing ? "Sending…" : "Email to Supplier")}
+                  <Mail className="h-4 w-4" /> {emailing ? "Preparing…" : po.lastEmailedAt ? "Resend Email" : "Email to Supplier"}
                 </Button>
               </div>
             )}

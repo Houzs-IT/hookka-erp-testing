@@ -40,7 +40,7 @@ import { parseAddressList, recipientsValid } from "@/api/lib/mail-threading";
 // One picked file held in memory for the compose POST. contentBase64 is the
 // RAW base64 (the `data:...;base64,` prefix is stripped on read) so it maps
 // 1:1 onto the backend EmailAttachment shape.
-type ComposeAttachment = {
+export type ComposeAttachment = {
   name: string;
   type: string;
   size: number; // decoded byte count (for the chip label + total cap)
@@ -92,6 +92,18 @@ export type ComposeDialogProps = {
   // Set by the Forward action: the thread this email quotes. Sent to the API
   // so the audit row reads "forward" and the new thread references the old.
   forwardOf?: string;
+  // Opened from another module (PO "Email to Supplier", HK-0113): the form
+  // starts filled, attachments included. A resumed draft wins over this.
+  prefill?: ComposePrefill | null;
+  // The embedder is not the inbox, so stay where the operator was after a send.
+  stayOnSent?: boolean;
+};
+
+export type ComposePrefill = {
+  to: string[];
+  subject: string;
+  body: string;
+  attachments?: ComposeAttachment[];
 };
 
 export function ComposeDialog({
@@ -100,6 +112,8 @@ export function ComposeDialog({
   onSent,
   initialDraft = null,
   forwardOf,
+  prefill = null,
+  stayOnSent = false,
 }: ComposeDialogProps) {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -172,23 +186,24 @@ export function ComposeDialog({
     if (open && !wasOpen.current) {
       const draftCc = parseAddressList(initialDraft?.cc ?? "");
       const draftBcc = parseAddressList(initialDraft?.bcc ?? "");
-      setTo(parseAddressList(initialDraft?.to ?? ""));
+      const seed = initialDraft ? null : prefill;
+      setTo(seed ? seed.to : parseAddressList(initialDraft?.to ?? ""));
       setCc(draftCc);
       setBcc(draftBcc);
       setShowCc(draftCc.length > 0);
       setShowBcc(draftBcc.length > 0);
-      setSubject(initialDraft?.subject ?? "");
-      setBody(initialDraft?.body ?? "");
+      setSubject(seed ? seed.subject : initialDraft?.subject ?? "");
+      setBody(seed ? seed.body : initialDraft?.body ?? "");
       setDraftId(initialDraft?.id ?? null);
       setAckRequired(false);
       setSending(false);
       // Attachments are never persisted in a draft (see mail-local.ts note),
       // so a freshly-opened dialog — even one resuming a draft — starts empty.
-      setFiles([]);
+      setFiles(seed?.attachments ?? []);
       setAttachError(null);
     }
     wasOpen.current = open;
-  }, [open, initialDraft]);
+  }, [open, initialDraft, prefill]);
 
   if (!open) return null;
 
@@ -379,7 +394,7 @@ export function ComposeDialog({
       onClose();
       if (payload.threadId) {
         onSent?.(payload.threadId);
-        navigate(`/mail-center/${payload.threadId}`);
+        if (!stayOnSent) navigate(`/mail-center/${payload.threadId}`);
       }
     } catch {
       toast.error("Failed to send email. Check your connection and try again.");
