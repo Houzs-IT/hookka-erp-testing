@@ -287,7 +287,8 @@ Lim (HK-0113, "Mail Center system go live"): departments should send through Mai
 1. 🔵 PO detail "Email to Supplier" builds the PO PDF (same letterhead as Download PDF) and opens `ComposeDialog` pre-filled (To supplier, Subject, body, `<poNo>.pdf`), From = the operator’s own mailbox; stays on the PO after the send. `ComposeDialog` gains `prefill` + `stayOnSent`; helper `src/lib/po-email-draft.ts` + `tests/po-email-draft.test.mjs`.
 2. 🔵 `POST /api/purchase-orders/:id/mark-emailed` stamps `lastEmailedAt` after the send; old `POST /:id/email` removed. DRAFT -> SUBMITTED no longer emails the supplier.
 3. Verified: local mock (valid PDF posted, page stayed, Last sent shown); staging preview pre-fill correct, but the MailSlurp free sandbox refuses every attachment (502), so the PDF send is checked on this PR’s canary.
-4. OPEN: which purchasing users hold a mailbox + `mail-center:create` on prod is UNMEASURED; supplier replies need a Cloudflare Email Routing rule per address.
+4. Canary-1119 (2026-10-26, PROD data): PO-000099 composer pre-filled correctly (From kiansin@hookka.com, real supplier To replaced by an internal Gmail, 6 KB PDF). Send returned 502 "No email provider configured": Pages Preview deployments carry no BREVO/RESEND key, so a canary cannot send mail at all. Clean failure: no Sent thread, `lastEmailedAt` stayed null. The PDF send can only be proven on erp.hookka.com after merge.
+5. OPEN: which purchasing users hold a mailbox + `mail-center:create` on prod is UNMEASURED; supplier replies need a Cloudflare Email Routing rule per address.
 
 ## 2026-10-26 — 🔵 Phone dashboard: Day view on Operations, as on the desktop (branch `fix/m-dashboard-ops-day` → `main`)
 
