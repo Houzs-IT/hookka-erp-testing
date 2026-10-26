@@ -21,6 +21,7 @@ import { enqueueEmail } from "../lib/email-outbox";
 import { emitAudit } from "../lib/audit";
 import { availableQty as computeAvailableQty } from "../../lib/convert-chain";
 import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
+import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 
 const app = new Hono<Env>();
 
@@ -450,7 +451,11 @@ app.get("/stats", async (c) => {
     )
     .bind(orgId)
     .all<PurchaseOrderRow>();
-  const rows = (pos.results ?? []).map((p) => rowToPO(p));
+  const delivered = await openPoIdsDeliveredInFull(c.var.DB, orgId);
+  const rows = (pos.results ?? []).map((p) => ({
+    ...rowToPO(p),
+    deliveredInFull: delivered.has(p.id),
+  }));
   return c.json({ success: true, data: rows, total: rows.length });
 });
 

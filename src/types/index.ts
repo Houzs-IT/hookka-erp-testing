@@ -630,6 +630,9 @@ export type PurchaseOrder = {
   // Client-side only: line items flattened for the PO list's global search
   // (src/lib/po-items-search.ts). Never sent by the API.
   itemsSearchText?: string;
+  // HK-0114 — /api/purchase-orders/stats only: every line covered by received
+  // or invoiced qty, so the Overdue POs widget skips it.
+  deliveredInFull?: boolean;
   createdAt: string;
   updatedAt: string;
 };

@@ -1389,14 +1389,22 @@ export default function ProcurementPage() {
   // and the filter pipeline so "click widget to filter" matches the widget
   // count exactly.
   const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
+  // HK-0114 — POs billed in full straight from the PO (no GRN) never leave
+  // CONFIRMED. /stats flags them; the list rows don't carry the flag, so the
+  // filter reads it from here by id.
+  const deliveredPoIds = useMemo(
+    () => new Set(poStatsRows.filter((po) => po.deliveredInFull).map((po) => po.id)),
+    [poStatsRows],
+  );
   const isOverdue = useCallback(
     (po: PurchaseOrder): boolean => {
       if (!po.expectedDate) return false;
       const exp = po.expectedDate.split("T")[0];
       if (exp >= todayStr) return false;
+      if (deliveredPoIds.has(po.id)) return false;
       return !["RECEIVED", "CLOSED", "CANCELLED"].includes(po.status);
     },
-    [todayStr],
+    [todayStr, deliveredPoIds],
   );
   const daysLate = useCallback(
     (po: PurchaseOrder): number => {
