@@ -1,4 +1,11 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-26**: mobile Warehouse v3 entry added (branch `design/mobile-warehouse`, UI-only PR to `staging`); nothing else re-checked.
+
+## Mobile Warehouse v3 (design/mobile-warehouse, 2026-10-26)
+1. DONE (typecheck + lint clean; not yet seen in a browser — login wall): Racks tab, v3 tiles, rack sheet, ⋯ menu, History filters, Stock In/Out **UI**.
+2. NOT DONE BY DESIGN (owner 2026-10-26): Stock In/Out **writes**. The release is UI-only; the confirm button is disabled. Backend limitations (empty productCode on per-piece Stock Out, rack id vs name, non-atomic chains, WAREHOUSE role lacks production-orders:update) are in `docs/WAREHOUSE-STOCK-LIMITATIONS.md` for the backend team. No workarounds.
+3. OPEN: 390px / dark-mode visual check; which roles hold warehouse:create without production-orders:update is UNMEASURED.
+
 > **Last verified: 2026-10-23**: 2FA entry gains item 4, the profile-menu set-up link (branch `feat/2fa-setup-button`, to `staging`); items 1-3 are merged to staging (PR #1102).
 > **Last verified: 2026-10-23**: branch `feat/2fa-login-code-step` (to `staging`, then `main`) added below (built, waiting on the staging PR; its entry is the newest).
 > **Last verified: 2026-10-23**: mobile Sales Orders responsive migration entry added (branch `feat/m-sales-responsive`, local commits only); nothing else re-checked.
