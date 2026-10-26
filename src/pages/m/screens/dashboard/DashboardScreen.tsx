@@ -40,14 +40,15 @@ export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
   // Newest day that carries data: the period sheet anchors its presets to it.
   const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
   const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, tab);
-  // Only Employees has a Day view (same rule as the desktop page): elsewhere a
-  // picked day, or a range that is not a calendar quarter, reads as its month.
-  const dayTab = tab === "people";
-  const period: Period = dayTab
+  // Day view on Employees and Operations (same rule as the desktop page):
+  // elsewhere a picked day reads as its month, and outside Employees a range
+  // that is not a calendar quarter reads as its month.
+  const dayTab = tab === "people" || tab === "operations";
+  const period: Period = tab === "people"
     ? rawPeriod
     : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
       ? { mode: "monthly", month: rawPeriod.month }
-      : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
+      : rawPeriod.day && !dayTab ? { ...rawPeriod, day: undefined } : rawPeriod;
   // "Today's problems" — the same four tiles as the desktop strip.
   const problems = useProblemTiles(tabs.map((t) => t.key));
   const blocked = !tabs.some((t) => t.key === tab);
@@ -128,12 +129,12 @@ export function DashboardScreen() {
   const landing = tabs[0]?.key ?? "sales";
   const { feed, months } = useDashboardFeed();
   const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, tab);
-  const dayTab = tab === "people";
-  const period: Period = dayTab
+  const dayTab = tab === "people" || tab === "operations";
+  const period: Period = tab === "people"
     ? rawPeriod
     : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
       ? { mode: "monthly", month: rawPeriod.month }
-      : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
+      : rawPeriod.day && !dayTab ? { ...rawPeriod, day: undefined } : rawPeriod;
   const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
 
   const openTab = useCallback(

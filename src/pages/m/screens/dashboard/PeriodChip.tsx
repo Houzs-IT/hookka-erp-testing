@@ -73,7 +73,7 @@ export function PeriodChip({
   /** Newest day that carries data - the presets anchor to it, not to the clock. */
   latestDay: string;
   onChange: (p: Period) => void;
-  /** false hides Day (only Employees has one — same as the desktop). */
+  /** false hides Day (only Employees and Operations have one — same as the desktop). */
   allowDay?: boolean;
 }) {
   const [open, setOpen] = useState(false);

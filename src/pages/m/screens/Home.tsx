@@ -61,16 +61,16 @@ export default function MobileHome() {
   const [searchOpen, setSearchOpen] = useState(false);
   const canDashboard = !permsLoading && isNavAllowed(DASHBOARD_NAV_HREF);
   // The period chip sits in the header (owner 2026-10-24: tidy the top); the
-  // same period rule as DashboardScreen — Day only on Employees.
+  // same period rule as DashboardScreen — Day on Employees and Operations.
   const { feed, months } = useDashboardFeed();
   const latestDay = (feed?.sales?.byDay ?? []).reduce((m, d) => (d.date > m ? d.date : m), "");
   const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, tab);
-  const dayTab = tab === "people";
-  const period: Period = dayTab
+  const dayTab = tab === "people" || tab === "operations";
+  const period: Period = tab === "people"
     ? rawPeriod
     : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
       ? { mode: "monthly", month: rawPeriod.month }
-      : rawPeriod.day ? { ...rawPeriod, day: undefined } : rawPeriod;
+      : rawPeriod.day && !dayTab ? { ...rawPeriod, day: undefined } : rawPeriod;
 
   return (
     <div style={{ paddingTop: "env(safe-area-inset-top)" }}>

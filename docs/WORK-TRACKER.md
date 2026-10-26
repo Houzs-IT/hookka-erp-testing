@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-26**: branch `fix/m-dashboard-ops-day`, to `main` (phone dashboard Operations gets the Day view) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/hk0114-overdue-invoiced`, to `main` (HK-0114, Overdue POs counted billed POs) added below (its entry is the newest).
 > **Last verified: 2026-10-22**: branch `feat/hk0111-reverse-to-dispatched-to-main`, to `main` (HK-0111, Reverse to Dispatched) added below (its entry is the newest).
 > **Last verified: 2026-10-21**: the owner's next replies logged (the estimate mark in the Chart of Accounts, the Trade Finance block folded into the aging list) and two new asks with their causes measured (a dragged table that stops short of its card, the report's missing right-hand line).
@@ -278,6 +279,10 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-26 — 🔵 Phone dashboard: Day view on Operations, as on the desktop (branch `fix/m-dashboard-ops-day` → `main`)
+
+Samuel (2026-10-26, phone photo of `/m` Dashboard › Operations, Period sheet showing only Month / Quarter / Year): the web dashboard has a date picker there, the phone does not. Cause: the desktop Day view on Operations (2026-10-19, #1015) left `/m` on the old rule — `dayTab = tab === "people"` in `DashboardScreen.tsx` (twice) and `Home.tsx`, so the chip hid Day and a picked day was dropped to its month. The phone Operations tab already renders the desktop `OperationsView` with `onPeriodChange`, so only the rule changes: Day shows on Operations, a picked day is kept (Department Revenue shows that day, a chart click picks one), and a non-quarter range still reads as its month outside Employees. Test: `tests/dashboard-ops-day-view.test.mjs`.
+
 ## 2026-10-26 — 🔵 HK-0114 Overdue POs: a PO billed in full is no longer overdue (branch `fix/hk0114-overdue-invoiced` → `main`)
 
 Siti (office, HK-0114, screenshot of the Purchase Orders cards: 108 Overdue POs, 11 orange · 97 red): why so many, and is this the list of purchase invoices that don't match the POs? Answer: no — the card is POs past Expected Date not received by GRN, and the office bills straight from the PO without a GRN. Measured on prod 2026-10-26 (read-only): 0 live GRNs ever; all 108 CONFIRMED; 101 carry a PI. Owner (Samuel) 2026-10-26: count PI-billed qty as delivered, bug fix to `main`. BUG-2026-10-26-392.
