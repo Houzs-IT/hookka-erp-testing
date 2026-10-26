@@ -21,7 +21,7 @@ import { enqueueEmail } from "../lib/email-outbox";
 import { emitAudit } from "../lib/audit";
 import { availableQty as computeAvailableQty } from "../../lib/convert-chain";
 import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
-import { poIdsDeliveredInFull, type PoInvoicedRow } from "../lib/po-delivered";
+import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 
 const app = new Hono<Env>();
 
@@ -458,56 +458,6 @@ app.get("/stats", async (c) => {
   }));
   return c.json({ success: true, data: rows, total: rows.length });
 });
-
-// HK-0114 — open POs whose every line is covered by received OR invoiced qty
-// (see po-delivered.ts). Only open POs are measured; the widget ignores the
-// terminal ones anyway. A failed invoiced read (column not self-applied yet on
-// a fresh database) degrades to the old receivedQty-only answer, not a 500.
-async function openPoIdsDeliveredInFull(db: D1Database, orgId: string): Promise<Set<string>> {
-  const itemsRes = await db
-    .prepare(
-      `SELECT poi.id, poi.purchaseOrderId AS "poId", poi.material_code AS "mc",
-              poi.quantity AS "qty", poi.receivedQty AS "recv"
-         FROM purchase_order_items poi
-         JOIN purchase_orders p ON p.id = poi.purchaseOrderId
-        WHERE p.orgId = ? AND p.status NOT IN ('RECEIVED','CLOSED','CANCELLED')`,
-    )
-    .bind(orgId)
-    .all<{ id: string | number; poId: string; mc: string | null; qty: number; recv: number | null }>();
-  let invoiced: PoInvoicedRow[] = [];
-  try {
-    // Same already-invoiced read as checkPoRemaining (purchase-invoices.ts),
-    // org-wide. DRAFT is left out: an unconfirmed bill is no proof of arrival.
-    const invRes = await db
-      .prepare(
-        `SELECT COALESCE(pii.po_id, pi.purchaseOrderId) AS "poId",
-                COALESCE(pii.po_item_id, gi.po_item_id) AS "poItemId",
-                pii.material_code AS "mc", COALESCE(SUM(pii.qty), 0) AS "qty"
-           FROM purchase_invoice_items pii
-           JOIN purchase_invoices pi ON pi.id = pii.pi_id
-           LEFT JOIN grn_items gi ON gi.id::text = pii.grn_item_id
-          WHERE pi.orgId = ? AND pi.status NOT IN ('CANCELLED','DRAFT')
-          GROUP BY COALESCE(pii.po_id, pi.purchaseOrderId), COALESCE(pii.po_item_id, gi.po_item_id), pii.material_code`,
-      )
-      .bind(orgId)
-      .all<{ poId: string | null; poItemId: string | null; mc: string | null; qty: number }>();
-    invoiced = (invRes.results ?? [])
-      .filter((r) => r.poId)
-      .map((r) => ({ poId: String(r.poId), poItemId: r.poItemId, materialCode: r.mc, qty: Number(r.qty) || 0 }));
-  } catch (err) {
-    console.warn("[purchase-orders/stats] invoiced-qty read failed; overdue uses receivedQty only", err);
-  }
-  return poIdsDeliveredInFull(
-    (itemsRes.results ?? []).map((r) => ({
-      id: r.id,
-      purchaseOrderId: String(r.poId),
-      materialCode: r.mc,
-      quantity: Number(r.qty) || 0,
-      receivedQty: Number(r.recv) || 0,
-    })),
-    invoiced,
-  );
-}
 
 // POST /api/purchase-orders — create PO + items atomically
 app.post("/", async (c) => {

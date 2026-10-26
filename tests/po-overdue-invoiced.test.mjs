@@ -70,9 +70,10 @@ test("an invoice for another PO, or a code not on this PO, does not cover it", (
 
 test("/stats flags deliveredInFull and the page's overdue check skips it", () => {
   const route = readFileSync(resolve(process.cwd(), "src/api/routes/purchase-orders.ts"), "utf8");
+  const lib = readFileSync(resolve(process.cwd(), "src/api/lib/po-delivered.ts"), "utf8");
   const page = readFileSync(resolve(process.cwd(), "src/pages/procurement/index.tsx"), "utf8");
   assert.match(route, /deliveredInFull: delivered\.has\(p\.id\)/);
-  assert.match(route, /pi\.status NOT IN \('CANCELLED','DRAFT'\)/);
+  assert.match(lib, /pi\.status NOT IN \('CANCELLED','DRAFT'\)/);
   const fn = page.slice(page.indexOf("const isOverdue = useCallback"), page.indexOf("const daysLate"));
   assert.match(fn, /deliveredPoIds\.has\(po\.id\)/);
 });
