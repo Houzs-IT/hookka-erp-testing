@@ -1,4 +1,11 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-26**: IT Support zip attachments entry added (branch `feat/it-support-zip`, to `staging`); nothing else re-checked.
+
+## IT Support: accept .zip attachments (feat/it-support-zip, 2026-10-26)
+From CONTS-0007 (Loo Wen Wei, Conts); Samuel asked for the same on every system.
+1. DONE: `src/pages/it-support/index.tsx` picker offers `.zip`; drop / paste take a file whose name ends in `.zip` (browsers label it `application/zip`, `application/x-zip-compressed` or nothing). Hint and "Not added" wording say ZIP. The API route only forwards files, so no server change here.
+2. DEPENDS ON: hub PR Houzs-IT/houzs-hub#42 deployed, else the hub refuses the zip with a 400.
+
 > **Last verified: 2026-10-26**: mobile Warehouse v3 entry added (branch `design/mobile-warehouse`, UI-only PR to `staging`); nothing else re-checked.
 
 ## Mobile Warehouse v3 (design/mobile-warehouse, 2026-10-26)
