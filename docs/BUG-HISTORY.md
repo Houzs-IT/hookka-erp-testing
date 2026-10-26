@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-10-26**: newest entry BUG-2026-10-26-393 (branch `fix/staging-password-from-secret`, to `staging`; 383-392 are taken on other branches).
 > **Last verified: 2026-10-23**: newest entry BUG-2026-10-23-382 (branch `feat/2fa-login-code-step`, to `staging`).
 > **Last verified: 2026-10-22**: newest entry BUG-2026-10-22-381 (branch `feat/dashboard-feed-snapshot`, to `staging`; 347-380 are taken on `main`).
 > **Last verified: 2026-10-22**: newest entries BUG-2026-10-22-350 / -351 (round 5; 349's mobile-impact line updated) — open, code-reading findings, prod UNMEASURED.
@@ -229,6 +230,20 @@ Entries themselves stay newest-first.
 - `auth-rbac` (3) — [BUG-2026-06-12-010](#bug-2026-06-12-010--any-admin-could-disable-or-delete-other-peoples-accounts-no-admin-tier-below-super-admin)
 - `scheduling` (2) — [BUG-2026-04-24-035](#bug-2026-04-24-035-fixschedule-lead-time-days-before-delivery-per-dept-parallel-not-serial)
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
+
+---
+
+## BUG-2026-10-26-393: Staging test password was written in the public source and printed in the job log `security` 🟡
+
+🟡 **Fixed on branch** (`fix/staging-password-from-secret` → `staging`). Found 2026-10-26. Which password staging accounts hold today is UNMEASURED (the last three syncs failed or were cancelled).
+
+**Symptom.** `scripts/sanitize-staging.mjs` sets every staging account to one shared password. It read `STAGING_TEST_PASSWORD` but fell back to a literal in the file, and the GitHub secret did not exist, so every sync used the literal. The repo is public, so anyone could read it and sign in to staging as any user. The script also printed the password in the sync log, which is public too.
+
+**Root cause.** The fallback was meant for local runs, but it hid the missing secret: the sync never failed, so nobody noticed the secret was never created.
+
+**Fix.** No fallback. The script stops with "STAGING_TEST_PASSWORD is not set. Refusing to run." before touching the database, and the log names the variable instead of the value. The secret is now set. The old value stays in git history, so it is treated as burned; staging accounts get the new password on the next sync.
+
+**Regression.** `tests/sync-staging-no-nightly-wipe.test.mjs`: "sanitiser takes the staging password from the environment only, and never logs it".
 
 ---
 

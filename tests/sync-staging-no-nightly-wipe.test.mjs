@@ -37,6 +37,14 @@ test("merge and sanitiser take the project refs from the environment, not source
   }
 });
 
+// BUG-2026-10-26-393: the staging password had a fallback in this public file
+// and was printed in the job log.
+test("sanitiser takes the staging password from the environment only, and never logs it", () => {
+  assert.doesNotMatch(sanitize, /STAGING_TEST_PASSWORD\s*(\|\||\?\?)\s*["'`][^"'`]/);
+  assert.match(sanitize, /if \(!STAGING_PASSWORD\) \{\s*console\.error\("STAGING_TEST_PASSWORD is not set\. Refusing to run\."\);\s*process\.exit\(1\);/);
+  assert.doesNotMatch(sanitize, /\$\{STAGING_PASSWORD\}/);
+});
+
 // The repo is public, so no tracked file may name a Supabase project. The refs
 // live in .env / GitHub secrets; this test only holds their SHA-256, so it can
 // spot one without publishing it. (prod, staging, sandbox, retired staging)

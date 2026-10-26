@@ -72,7 +72,11 @@ const PROD_REF = projectRef("prod");
 // The shared staging password. Staging is a test system; every user gets the
 // same known password so the team can log in as anyone to reproduce a report.
 // This is intentional and is the reason the scrub must never run on prod.
-const STAGING_PASSWORD = process.env.STAGING_TEST_PASSWORD || "Staging#2026";
+const STAGING_PASSWORD = (process.env.STAGING_TEST_PASSWORD ?? "").trim();
+if (!STAGING_PASSWORD) {
+  console.error("STAGING_TEST_PASSWORD is not set. Refusing to run.");
+  process.exit(1);
+}
 
 const url = process.env.STAGING_DATABASE_URL;
 if (!url) {
@@ -230,7 +234,7 @@ console.log("\n--- 2. users ---");
     if (c.has("must_change_password")) sets.push("must_change_password = false");
     await sql.unsafe(`UPDATE users SET ${sets.join(", ")}`);
   }
-  record("users", n, `password → "${STAGING_PASSWORD}", TOTP cleared, emails kept for login`);
+  record("users", n, "password → STAGING_TEST_PASSWORD, TOTP cleared, emails kept for login");
 }
 
 // ===========================================================================
