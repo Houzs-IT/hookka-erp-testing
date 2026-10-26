@@ -1,21 +1,21 @@
 {
-  "_note": "sha256/16 of the server-rendered markup of the APPROVED phone Sales Order screens (fixture data, shell width 390/600), captured from upstream/staging c36fa4ddc BEFORE the Sales responsive migration. A phone-mode change must not alter these; if a phone change is intended, regenerate and have it reviewed.",
+  "_note": "sha256/16 of the server-rendered markup of the APPROVED phone Sales Order screens (fixture data, shell width 390/600), captured from upstream/staging c36fa4ddc BEFORE the Sales responsive migration. A phone-mode change must not alter these; if a phone change is intended, regenerate and have it reviewed. The three list entries were regenerated on 2026-10-26/27 for the Sales Orders v3 listing (intended) and are rendered under a frozen clock (GOLDEN_NOW in tests/_ssr-sales.mjs) because the cards show an Expected DD countdown; the detail entries are unchanged. The 11 detail entries were regenerated on 2026-10-27 for the Sales Order Detail v4 visual redesign (intended) and are also rendered under the frozen clock, because the overview shows a countdown to Hookka Expected DD.",
   "detail": {
-    "detail-390-CANCELLED": "372f794fde0589b3",
-    "detail-390-CONFIRMED": "15e7df7fee04d1ee",
-    "detail-390-DELIVERED": "ade118a2aa11fad8",
-    "detail-390-DRAFT": "9d1a33f75fe5d3c7",
-    "detail-390-IN_PRODUCTION": "6198fe1d450a1bb7",
-    "detail-390-ON_HOLD": "9b6bce4c2145bd30",
-    "detail-390-READY_TO_SHIP": "77ef0e117b936abc",
-    "detail-390-longnotes": "877df8cddbf8f065",
-    "detail-390-noitems": "b21024f685f20545",
-    "detail-390-nonotes": "e826a284842aff38",
-    "detail-600-CONFIRMED": "15e7df7fee04d1ee"
+    "detail-390-CANCELLED": "bf8a95cc4269cd8c",
+    "detail-390-CONFIRMED": "fa7873de294f8415",
+    "detail-390-DELIVERED": "47a56f94f0ec8eb5",
+    "detail-390-DRAFT": "71570f403ec1e6ca",
+    "detail-390-IN_PRODUCTION": "37ced09e005f797a",
+    "detail-390-ON_HOLD": "baaeb5468557de88",
+    "detail-390-READY_TO_SHIP": "bf97002ec3aac956",
+    "detail-390-longnotes": "fa7873de294f8415",
+    "detail-390-noitems": "14aed4ea1bc678b9",
+    "detail-390-nonotes": "fa7873de294f8415",
+    "detail-600-CONFIRMED": "fa7873de294f8415"
   },
   "list": {
-    "list-390-empty": "72dc76ff2536f9f1",
-    "list-390": "3270621b6ee20ab2",
-    "list-600": "3270621b6ee20ab2"
+    "list-390-empty": "3849c59a0935971f",
+    "list-390": "81ee8b7d7e0e14b3",
+    "list-600": "81ee8b7d7e0e14b3"
   }
 }

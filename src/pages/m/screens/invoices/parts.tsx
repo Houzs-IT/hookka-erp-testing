@@ -7,9 +7,10 @@
 // owns type. Colours: M.* tokens + the --m-inv-* tokens in theme-vars.css
 // (light = the prototype's hex, dark = lifted for the dark card).
 // ===========================================================================
-import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
-import { Calendar, ChevronRight, CircleAlert, CircleCheck, ScanLine, Search, Wallet, X, type LucideIcon } from "lucide-react";
+import type { CSSProperties, ReactNode } from "react";
+import { Calendar, CircleAlert, CircleCheck, ScanLine, Search, Wallet, X, type LucideIcon } from "lucide-react";
 import { M } from "../../theme";
+import { ListCardShell } from "../../components/ListCardShell";
 import { money } from "../../config/helpers";
 import { fmtShort, s } from "../../lib/do-mobile";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
@@ -21,7 +22,6 @@ import {
 
 // Prototype shadows (Invoices v2.dc.html).
 const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)";
-const SHADOW_SELECTED = "0 0 0 2px var(--m-taupe), 0 12px 28px -16px rgba(31,29,27,.22)";
 
 const TONE_VAR: Record<InvTone, string> = {
   neutral: "neutral",
@@ -39,16 +39,6 @@ const LABEL: CSSProperties = { fontSize: 10, fontWeight: 600, letterSpacing: 0.5
 /** A tile label that may wrap to a second line (icon stays on the first). */
 const WRAP_LABEL: CSSProperties = { whiteSpace: "normal", lineHeight: 1.3, display: "flex", alignItems: "flex-start", gap: 6 };
 const SECTION_LABEL: CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe, whiteSpace: "nowrap" };
-
-function onKey(fn?: () => void) {
-  return (e: KeyboardEvent) => {
-    if (!fn) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      fn();
-    }
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Module tabs — underline tabs, sticky under the header (prototype).
@@ -253,80 +243,43 @@ export function InvoiceCard({
   }
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-current={current ? "true" : undefined}
-      aria-label={`${code}, ${party}, ${statusLabel(st)}`}
-      onClick={onOpen}
-      onKeyDown={onKey(onOpen)}
-      style={{
-        position: "relative", overflow: "hidden", minWidth: 0, background: M.card, borderRadius: 16, padding: "13px 14px 12px 17px",
-        cursor: "pointer", boxShadow: current ? SHADOW_SELECTED : SHADOW_CARD, WebkitTapHighlightColor: "transparent",
-      }}
-    >
-      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: toneHex(tone) }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 700, color: M.taupe, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{code}</span>
-        <InvPill tone={tone} label={statusLabel(st)} />
-        <span style={{ flex: 1 }} />
-        <ChevronRight size={18} strokeWidth={1.9} color="var(--m-inv-icon)" aria-hidden style={{ flexShrink: 0 }} />
-      </div>
-      <div
-        style={{
-          fontSize: 15, fontWeight: 700, color: M.raisin, marginTop: 5, lineHeight: 1.35, letterSpacing: "-0.2px",
-          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word",
-        }}
-      >
-        {party}
-      </div>
-      {refs.length ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
-          {refs.map((x) => (
-            <span
-              key={x.k}
-              style={{ height: 22, display: "inline-flex", alignItems: "center", gap: 4, padding: "0 8px", borderRadius: 7, background: "var(--m-inv-tile-bg)", fontSize: 11, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", maxWidth: "100%", overflow: "hidden" }}
+    <ListCardShell
+      rail={toneHex(tone)}
+      code={code}
+      pill={<InvPill tone={tone} label={statusLabel(st)} />}
+      party={party}
+      refs={refs}
+      middle={
+        pay ? (
+          <div style={{ marginTop: 10 }}>
+            <div
+              role="progressbar"
+              aria-label="Paid"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pay.pct}
+              style={{ height: 6, borderRadius: 999, background: "var(--m-segment-track)", overflow: "hidden" }}
             >
-              <span style={{ color: "var(--m-inv-ref-key)" }}>{x.k}</span>
-              <span style={{ fontWeight: 700, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis" }}>{x.v}</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {pay ? (
-        <div style={{ marginTop: 10 }}>
-          <div
-            role="progressbar"
-            aria-label="Paid"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={pay.pct}
-            style={{ height: 6, borderRadius: 999, background: "var(--m-segment-track)", overflow: "hidden" }}
-          >
-            <div style={{ width: `${pay.pct}%`, height: "100%", borderRadius: 999, background: "var(--m-inv-success)" }} />
+              <div style={{ width: `${pay.pct}%`, height: "100%", borderRadius: 999, background: "var(--m-inv-success)" }} />
+            </div>
+            {/* Wraps onto two lines when the amounts are long — never clipped (owner Q3). */}
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", columnGap: 8, rowGap: 2, marginTop: 5, fontSize: 11.5, color: M.ink, fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ whiteSpace: "nowrap" }}>
+                Paid <span style={{ fontWeight: 700, color: "var(--m-inv-success)" }}>{money(pay.paidSen)}</span>
+              </span>
+              <span style={{ whiteSpace: "nowrap" }}>
+                {pay.pct}% of {money(pay.totalSen)}
+              </span>
+            </div>
           </div>
-          {/* Wraps onto two lines when the amounts are long — never clipped (owner Q3). */}
-          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", columnGap: 8, rowGap: 2, marginTop: 5, fontSize: 11.5, color: M.ink, fontVariantNumeric: "tabular-nums" }}>
-            <span style={{ whiteSpace: "nowrap" }}>
-              Paid <span style={{ fontWeight: 700, color: "var(--m-inv-success)" }}>{money(pay.paidSen)}</span>
-            </span>
-            <span style={{ whiteSpace: "nowrap" }}>
-              {pay.pct}% of {money(pay.totalSen)}
-            </span>
-          </div>
-        </div>
-      ) : null}
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 8, marginTop: 10 }}>
-        <div style={{ flex: 1, minWidth: 0, padding: "7px 10px", borderRadius: 10, background: dueBg }}>
-          {dueKey}
-          {dueBody}
-        </div>
-        <div style={{ flex: "none", textAlign: "right", padding: "7px 10px", borderRadius: 10, background: "var(--m-inv-gold-box)" }}>
-          <div style={{ ...LABEL, fontWeight: 700, color: M.taupe }}>{amt.key}</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: M.raisin, marginTop: 2, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{money(amt.sen)}</div>
-        </div>
-      </div>
-    </div>
+        ) : null
+      }
+      left={{ bg: dueBg, children: <>{dueKey}{dueBody}</> }}
+      right={{ label: amt.key, value: money(amt.sen) }}
+      current={current}
+      ariaLabel={`${code}, ${party}, ${statusLabel(st)}`}
+      onOpen={onOpen}
+    />
   );
 }
 

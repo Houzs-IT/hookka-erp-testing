@@ -180,13 +180,14 @@ test("one SalesFilterSheet at every width; the shared FilterSheet itself is unch
   assert.match(shared, /<Sheet open=\{open\} onClose=\{onClose\} title="Filter & sort">/);
 });
 
-test("Filter orders sheet: no Sort | Filter switch; the Sort section only on wider screens; list sorting untouched", () => {
-  assert.ok(sheet.includes('<Sheet open={open} onClose={onClose} title="Filter orders">'));
+test("Sort & filter sheet: no Sort | Filter switch; the Sort section at every width (owner 2026-10-27); list sorting untouched", () => {
+  assert.ok(sheet.includes('title="Filter orders"')); // the approved design title
   assert.doesNotMatch(sheet, /SegmentedSwitch|onSort|TOP_SORTS|SortList/);
-  // The phone passes nothing sort-related; wider screens opt in with withSort.
-  assert.match(screen, /withSort=\{tablet\}/);
+  // The list bar button opens this sheet at every width, so the screen always opts in.
+  assert.match(screen, /\n\s*withSort\s*\n/);
+  assert.ok(!screen.includes("withSort={tablet}"));
   assert.match(sheet, /withSort = false,/);
-  assert.match(sheet, /\{withSort \? \(\s*<section aria-label="Sort by">/);
+  assert.ok(sheet.includes("{withSort ? <SortBy columns={columns} sort={draftSort} onChange={setDraftSort} /> : null}"));
   // The list still sorts exactly as before: same state, default and applySort.
   assert.ok(screen.includes("const [sort, setSort] = useState<Sort>(source.defaultSort ?? null);"));
   assert.ok(screen.includes("return applySort(filtered, source.columns, sort);"));
@@ -194,17 +195,14 @@ test("Filter orders sheet: no Sort | Filter switch; the Sort section only on wid
 
 // ── Summary card layout ────────────────────────────────────────────────────
 
-test("summary card: prototype columns, KPI line height 1.1, money never ellipsised", () => {
-  assert.match(screen, /const KPI_COLS = "minmax\(0,1\.4fr\) 1px minmax\(0,\.9fr\)";/);
-  const hero = screen.slice(screen.indexOf("function HeroFigure"), screen.indexOf("function SummaryLabel"));
-  assert.match(hero, /fontSize: 20,\s*fontWeight: 700,\s*lineHeight: 1\.1,\s*letterSpacing: "-0\.3px"/);
-  assert.doesNotMatch(hero, /textOverflow/);
-  assert.match(screen, /gridTemplateColumns: stacked \? "minmax\(0,1fr\)" : KPI_COLS/);
+// Sales Orders v3 (owner 2026-10-26): white summary card, one 27/700 revenue
+// figure (the two-column KPI layout and its stacking logic are gone).
+test("summary card: v3 revenue figure 27/700, money never ellipsised", () => {
+  assert.ok(!screen.includes("KPI_COLS"));
+  assert.ok(!screen.includes("function HeroFigure"));
+  const sum = screen.slice(screen.indexOf("function PhoneSummary"), screen.indexOf("/** Round gradient"));
+  assert.match(sum, /flex: "none",\s*fontSize: 27,\s*lineHeight: 1\.1,\s*fontWeight: 700,\s*letterSpacing: "-0\.6px"/);
+  const fig = sum.slice(sum.indexOf("fontSize: 27"), sum.indexOf("fontSize: 27") + 400);
+  assert.ok(!fig.includes("textOverflow"));
 });
 
-test("breakdown: fixed right-aligned count column, amounts never clipped, names wrap", () => {
-  const summary = screen.slice(screen.indexOf("function PhoneSummary"), screen.indexOf("function HeroFigure"));
-  assert.match(summary, /width: 36,\s*flex: "none",\s*textAlign: "right"/);
-  assert.match(summary, /minWidth: 108,\s*flex: "none",\s*textAlign: "right"/);
-  assert.doesNotMatch(summary, /textOverflow/);
-});
