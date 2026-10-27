@@ -30,7 +30,8 @@ import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { readCsrfCookie, CSRF_HEADER_NAME } from "@/lib/csrf";
 import { workerCoversDept } from "@/lib/worker";
-import { fetchVariantsConfig } from "@/lib/kv-config";
+import { fetchVariantsConfig, getVariantsConfigSync } from "@/lib/kv-config";
+import { componentBadgeLabel } from "@/lib/wip-types";
 import { legPacksSeparately, type LegHeightOption } from "@/lib/leg-packing";
 import { jcMinutesTotal } from "@/lib/job-card-minutes";
 
@@ -583,36 +584,6 @@ function pickRelevantUphCards(po: ProductionOrder): JobCard[] {
   const isBf = (po.itemCategory || "").toUpperCase() === "BEDFRAME";
   if (!isBf || !isHbOnlySpecial(po.specialOrder)) return uph;
   return uph.filter((j) => (j.wipType || "").toUpperCase() !== "DIVAN");
-}
-
-// Component-type badge label for a job-card sticker (HB / Divan / Base /
-// Armrest / Cushion / Leg), or null when the piece doesn't map to one of the
-// six (whole/full product, HEADREST, untyped/accessory). Derived from the
-// SAME normalized wipType the grid already produced (baserows-core.ts), with a
-// case-insensitive wipName fallback for legs / un-typed bedframe rows. Shared
-// by BOTH the printed 100×150mm Fab Cut/Sew sticker AND the on-screen QR
-// Stickers preview tile so the two never drift — see the print badge call site
-// in the large-sticker branch and renderLargeStickerTile.
-function componentBadgeLabel(s: { wipType?: string; wipName?: string }): string | null {
-  const wt = (s.wipType || "").toUpperCase();
-  const wn = (s.wipName || "").toUpperCase();
-  // Primary: the normalized wipType the grid already derived.
-  if (wt === "HB" || wt === "HEADBOARD") return "HB";
-  if (wt === "DIVAN") return "Divan";
-  if (wt === "BASE" || wt === "SOFA_BASE") return "Base";
-  if (wt === "ARMREST" || wt === "SOFA_ARMREST") return "Armrest";
-  if (wt === "CUSHION" || wt === "SOFA_CUSHION") return "Cushion";
-  if (wt === "LEG") return "Leg";
-  // Fallback: match the WIP description text (case-insensitive) for rows where
-  // wipType is blank or a leg piece.
-  if (/\bDIVAN\b/.test(wn)) return "Divan";
-  if (/HEADBOARD|\bHB\b/.test(wn)) return "HB";
-  if (/ARM\s?REST|ARMREST|\b(LEFT|RIGHT)\s+ARM\b/.test(wn)) return "Armrest";
-  if (/CUSHION/.test(wn)) return "Cushion";
-  if (/\bLEG\b/.test(wn)) return "Leg";
-  if (/\bBASE\b/.test(wn)) return "Base";
-  // No confident match → omit the badge.
-  return null;
 }
 
 // ----- main page -----
@@ -4988,7 +4959,7 @@ export default function ProductionPage({
                   printed sticker. */}
               <div className="text-right leading-tight flex flex-col items-end gap-[2px]">
                 {(() => {
-                  const label = componentBadgeLabel(s);
+                  const label = componentBadgeLabel(s, getVariantsConfigSync()?.wipTypes);
                   if (!label) return null;
                   return (
                     <div
@@ -9431,7 +9402,8 @@ export default function ProductionPage({
                               MAP that label (plus a case-insensitive wipName fallback
                               for legs / un-typed bedframe rows) to one of the six
                               human labels: HB / Divan / Base / Armrest / Cushion /
-                              Leg. A piece that maps to none of the six (whole/full
+                              Leg, or an extra WIP type's own name (Sandback,
+                              HK-0116). A piece that maps to none of them (whole/full
                               product, HEADREST, accessory) shows NO badge rather than
                               a wrong label. Boxed + large so it reads on a B/W print. */}
                           <div className="text-right leading-tight flex flex-col items-end gap-[1mm]">
@@ -9439,7 +9411,7 @@ export default function ProductionPage({
                               // Shared with the on-screen QR Stickers preview tile
                               // (renderLargeStickerTile) via componentBadgeLabel so
                               // the printout and the preview never drift.
-                              const label = componentBadgeLabel(s);
+                              const label = componentBadgeLabel(s, getVariantsConfigSync()?.wipTypes);
                               // No confident match → omit the badge.
                               if (!label) return null;
                               return (

@@ -50,3 +50,37 @@ export function wipTypeAllowed(code: string, category: string | undefined, saved
   const list = (saved as Record<string, unknown> | null | undefined)?.[code];
   return !Array.isArray(list) || list.includes(bomProductType(category));
 }
+
+// Component-type badge label for a job-card sticker (HB / Divan / Base /
+// Armrest / Cushion / Leg, or an extra type's own name such as Sandback), or
+// null when the piece doesn't map to one (whole/full product, HEADREST,
+// untyped/accessory). Reads the SAME normalized wipType the production grid
+// produced (baserows-core.ts), with a case-insensitive wipName fallback for
+// legs / un-typed bedframe rows. Shared by the printed 100x150mm Fab Cut/Sew
+// sticker AND the on-screen QR Stickers preview tile so the two never drift.
+// An extra type has to be named here or SB02's Sandback printed no badge at
+// all (HK-0116).
+export function componentBadgeLabel(
+  s: { wipType?: string; wipName?: string },
+  extraNames?: unknown,
+): string | null {
+  const wt = (s.wipType || "").toUpperCase();
+  const wn = (s.wipName || "").toUpperCase();
+  if (wt === "HB" || wt === "HEADBOARD") return "HB";
+  if (wt === "DIVAN") return "Divan";
+  if (wt === "BASE" || wt === "SOFA_BASE") return "Base";
+  if (wt === "ARMREST" || wt === "SOFA_ARMREST") return "Armrest";
+  if (wt === "CUSHION" || wt === "SOFA_CUSHION") return "Cushion";
+  if (wt === "LEG") return "Leg";
+  if (wt && !BUILT_IN_WIP_TYPES[wt]) {
+    const extra = buildWipTypes(extraNames)[wt];
+    if (extra) return extra.label;
+  }
+  if (/\bDIVAN\b/.test(wn)) return "Divan";
+  if (/HEADBOARD|\bHB\b/.test(wn)) return "HB";
+  if (/ARM\s?REST|ARMREST|\b(LEFT|RIGHT)\s+ARM\b/.test(wn)) return "Armrest";
+  if (/CUSHION/.test(wn)) return "Cushion";
+  if (/\bLEG\b/.test(wn)) return "Leg";
+  if (/\bBASE\b/.test(wn)) return "Base";
+  return null;
+}

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-27**: branch `fix/hk0116-sandback-sticker`, to `main` (HK-0116, Sandback Fab Sew sticker badge) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `feat/hk0113-po-mail-center-to-main`, to `main` (HK-0113, PO email via Mail Center) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/m-dashboard-ops-day`, to `main` (phone dashboard Operations gets the Day view) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/hk0114-overdue-invoiced`, to `main` (HK-0114, Overdue POs counted billed POs) added below (its entry is the newest).
@@ -280,6 +281,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-27 — 🔵 HK-0116 Fab Sew sticker prints SANDBACK for a Sandback piece (branch `fix/hk0116-sandback-sticker` → `main`)
+
+Violet (management, HK-0116, sticker of SO-2610-252-05): the SB02 Sandback sticker shows WIP `A01` and ARMREST bottom right. Measured on prod 2026-10-27 (read-only): the BOM is right today (`SANDBACK`); the five SB02 POs opened 12-14 Oct were exploded from an earlier armrest-typed BOM (`A01 {FABRIC}`), and POs from 19 Oct print no badge at all. Violet confirmed 2026-10-27 the badge should read SANDBACK. BUG-2026-10-27-394.
+
+1. 🔵 Sticker badge prints an extra WIP type's own name (Sandback), print and on-screen tile alike.
+2. ⏳ The five stale POs (SO-2610-194-08/09/10, SO-2610-252-04/05, all job cards WAITING): `scripts/fix-hk0116-sb02-armrest-jobcards.mjs` rewrites their 40 job cards in place to today's BOM (type / code / label / key / branch; ids, dates, status kept). Dry run, then `--execute`, by the owner.
+
 ## 2026-10-26 — 🔵 HK-0113 PO "Email to Supplier" sends through Mail Center (branch `feat/hk0113-po-mail-center-to-main` → `main`; staging copy #1118)
 
 Lim (HK-0113, "Mail Center system go live"): departments should send through Mail Center, e.g. PO to supplier. The button used to queue a `noreply@hookka.com` notice with no PO attached; the mail never showed in Mail Center and a supplier reply went nowhere. Plan approved by Samuel 2026-10-26.
