@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-27**: branch `feat/pi-auto-grn`, to `main` (purchase invoice confirm stocks in its matched PO lines) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `fix/hk0116-sandback-sticker`, to `main` (HK-0116, Sandback Fab Sew sticker badge) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `feat/hk0113-po-mail-center-to-main`, to `main` (HK-0113, PO email via Mail Center) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/m-dashboard-ops-day`, to `main` (phone dashboard Operations gets the Day view) added below (its entry is the newest).
@@ -281,6 +282,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-27 — 🔵 Confirmed purchase invoice stocks in its matched PO lines (branch `feat/pi-auto-grn` → `main`)
+
+Found on HK-0114 (2026-10-26, prod read-only): the office bills PI → From PO and never posts a GRN, so raw-material stock-in stopped after March (cost_ledger: 1 RM_RECEIPT since April) while production kept issuing (3,420 RM_ISSUE, RM 248,416). Samuel 2026-10-27: "po pi 如果scan了 match 了 就自动 stock in"; chose system GRN, match = PO line + material code + raw material, backfill as a dry run for the owner first.
+
+1. 🔵 PI create-as-CONFIRMED and PUT DRAFT → CONFIRMED call `autoReceivePiStock` (`src/api/lib/pi-auto-grn.ts`): one GRN `grn-pi-<piId>`, POSTED / ARRIVED, through the GRN's own `buildGRNStockStatements` + `buildPoReceiptStatements` (rm_batches, RM_RECEIPT, balanceQty, PO receivedQty → RECEIVED). Only the PO line's open qty is received. Skipped lines (no PO, PO not CONFIRMED / PARTIAL_RECEIVED, no code, code not on the PO, already received, not a raw material, non-stock, GRN-sourced) return in `stockIn.skipped`. A failure is logged and never fails the invoice save.
+2. 🔵 `GET /api/purchase-invoices/auto-grn-preview?from=YYYY-MM-DD`, read-only: what a backfill would receive, per material and per invoice, open qty shared across invoices oldest first.
+3. Not done: PI void does not undo the receipt (cancel the GRN; it refuses once stock is used); editing a CONFIRMED PI's qty does not re-sync the receipt; the April-October backfill runs only after the owner reads the preview.
+4. Tests: `tests/pi-auto-grn.test.mjs` (12).
+
 ## 2026-10-27 — 🔵 HK-0116 Fab Sew sticker prints SANDBACK for a Sandback piece (branch `fix/hk0116-sandback-sticker` → `main`)
 
 Violet (management, HK-0116, sticker of SO-2610-252-05): the SB02 Sandback sticker shows WIP `A01` and ARMREST bottom right. Measured on prod 2026-10-27 (read-only): the BOM is right today (`SANDBACK`); the five SB02 POs opened 12-14 Oct were exploded from an earlier armrest-typed BOM (`A01 {FABRIC}`), and POs from 19 Oct print no badge at all. Violet confirmed 2026-10-27 the badge should read SANDBACK. BUG-2026-10-27-394.

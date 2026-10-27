@@ -44,6 +44,7 @@ import { PI_STATUS_CHECK_SQL } from "../lib/ensure-partial-payment";
 import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
 import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
+import { autoReceivePiStock, previewPiAutoGrn } from "../lib/pi-auto-grn";
 
 // ---------------------------------------------------------------------------
 // Runtime schema self-apply — convert-chain columns (PO→GRN→PI). All
@@ -876,6 +877,19 @@ app.get("/", async (c) => {
 //     it downloaded the ENTIRE /api/grn list and matched client-side.
 // Same `Promise.all` + `linkedX` shape as sales-orders.ts GET /:id.
 // ---------------------------------------------------------------------------
+// GET /api/purchase-invoices/auto-grn-preview?from=YYYY-MM-DD — read-only:
+// what auto stock-in would receive for confirmed invoices since `from` that
+// have no receipt yet (the April-October 2026 gap, for the owner to approve).
+app.get("/auto-grn-preview", async (c) => {
+  const denied = await requirePermission(c, "purchase-invoices", "read");
+  if (denied) return denied;
+  const from = (c.req.query("from") ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    return c.json({ success: false, error: "from=YYYY-MM-DD is required" }, 400);
+  }
+  return c.json({ success: true, data: await previewPiAutoGrn(c.var.DB, getOrgId(c), from) });
+});
+
 app.get("/:id", async (c) => {
   const id = c.req.param("id");
   const db = c.var.DB;
@@ -1905,6 +1919,8 @@ app.post("/", idempotent(), async (c) => {
     ).catch(() => undefined);
   }
 
+  const stockIn = status === "CONFIRMED" ? await autoReceivePiStock(db, id) : undefined;
+
   await emitAudit(c, {
     resource: "purchase-invoices",
     resourceId: id,
@@ -1926,6 +1942,7 @@ app.post("/", idempotent(), async (c) => {
   return c.json({
     success: true,
     data: created ? { ...rowToPI(created), items } : null,
+    stockIn,
   });
 });
 
@@ -2810,6 +2827,11 @@ app.put("/:id", async (c) => {
     ).catch(() => undefined);
   }
 
+  const stockIn =
+    merged.status === "CONFIRMED" && existing.status !== "CONFIRMED"
+      ? await autoReceivePiStock(db, id)
+      : undefined;
+
   await emitAudit(c, {
     resource: "purchase-invoices",
     resourceId: id,
@@ -2831,6 +2853,7 @@ app.put("/:id", async (c) => {
   return c.json({
     success: true,
     data: updated ? { ...rowToPI(updated), items } : null,
+    stockIn,
   });
 });
 
