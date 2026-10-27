@@ -286,7 +286,7 @@ design/mobile-home-dashboard
 Violet (management, HK-0116, sticker of SO-2610-252-05): the SB02 Sandback sticker shows WIP `A01` and ARMREST bottom right. Measured on prod 2026-10-27 (read-only): the BOM is right today (`SANDBACK`); the five SB02 POs opened 12-14 Oct were exploded from an earlier armrest-typed BOM (`A01 {FABRIC}`), and POs from 19 Oct print no badge at all. Violet confirmed 2026-10-27 the badge should read SANDBACK. BUG-2026-10-27-394.
 
 1. 🔵 Sticker badge prints an extra WIP type's own name (Sandback), print and on-screen tile alike.
-2. ⏳ The five stale POs (SO-2610-194-08/09/10, SO-2610-252-04/05, all job cards WAITING) re-exploded from today's BOM: separate repair, dry-run first.
+2. ⏳ The five stale POs (SO-2610-194-08/09/10, SO-2610-252-04/05, all job cards WAITING): `scripts/fix-hk0116-sb02-armrest-jobcards.mjs` rewrites their 40 job cards in place to today's BOM (type / code / label / key / branch; ids, dates, status kept). Dry run, then `--execute`, by the owner.
 
 ## 2026-10-26 — 🔵 HK-0113 PO "Email to Supplier" sends through Mail Center (branch `feat/hk0113-po-mail-center-to-main` → `main`; staging copy #1118)
 
