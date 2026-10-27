@@ -609,6 +609,8 @@ async function collectPendingProposalCounts(
   db: DbLike,
 ): Promise<{ pendingByKind: Record<string, number>; pending: number }> {
   try {
+    // Clear stale rows first so the count never includes them (HK-0033 #2).
+    await expireStalePendingProposals(db, new Date().toISOString());
     const res = await db
       .prepare(
         `SELECT kind, COUNT(*) AS n FROM delivery_proposals
@@ -771,7 +773,7 @@ async function supersedePendingOfKinds(
  * (not deleted — the audit/history stays). Runs BEFORE regeneration each cycle.
  * Mirrors the production schedule-proposals expiry.
  */
-async function expireStalePendingProposals(
+export async function expireStalePendingProposals(
   db: DbLike,
   nowIso: string,
 ): Promise<number> {

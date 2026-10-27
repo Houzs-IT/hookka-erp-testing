@@ -34,6 +34,7 @@ import { emitAudit } from "../lib/audit";
 import {
   ensureDeliveryAgentTables,
   collectDeliveryBrief,
+  expireStalePendingProposals,
   generateDeliveryProposals,
   storeDeliveryBriefSnapshot,
   generateDeliveryFocus,
@@ -191,6 +192,11 @@ app.get("/proposals", async (c) => {
   await ensureDeliveryAgentTables(db);
   const status = (c.req.query("status") ?? "PENDING").toUpperCase();
   const kind = (c.req.query("kind") ?? "").toUpperCase();
+  // Stale PENDING rows were only cleared when the agent next regenerated, so a
+  // stopped/never-run cycle left months-old plans on screen (HK-0033 #2).
+  if (status === "PENDING") {
+    await expireStalePendingProposals(db, new Date().toISOString());
+  }
   const res = kind
     ? await db
         .prepare(

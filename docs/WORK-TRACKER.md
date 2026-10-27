@@ -6821,3 +6821,7 @@ Asks, in order:
 66. Phone Home: carry all the dashboards; drop Delivery / Receive / Staff quick actions; re-layout (owner 2026-10-24).
 67. Phone Home top tidied (period chip in header, compact New SO); Today's problems 2x2; Sales by Customer fits a phone (owner 2026-10-24).
 68. Command Center KPI figures scale with window width (tablet widths clipped them) (owner 2026-10-24).
+
+## 2026-10-27 — 🔵 Delivery Agent: stale pending proposals cleared on read (HK-0033 finding 2, branch `fix/hk0033-expire-stale-delivery-proposals` → `main`)
+
+1. 🔵 Proposals older than 1 day are marked EXPIRED when the Delivery tab list or the brief count is read, not only when the agent next regenerates.
