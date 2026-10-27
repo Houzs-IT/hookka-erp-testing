@@ -289,7 +289,7 @@ Found on HK-0114 (2026-10-26, prod read-only): the office bills PI → From PO a
 1. 🔵 PI create-as-CONFIRMED and PUT DRAFT → CONFIRMED call `autoReceivePiStock` (`src/api/lib/pi-auto-grn.ts`): one GRN `grn-pi-<piId>`, POSTED / ARRIVED, through the GRN's own `buildGRNStockStatements` + `buildPoReceiptStatements` (rm_batches, RM_RECEIPT, balanceQty, PO receivedQty → RECEIVED). Only the PO line's open qty is received. Skipped lines (no PO, PO not CONFIRMED / PARTIAL_RECEIVED, no code, code not on the PO, already received, not a raw material, non-stock, GRN-sourced) return in `stockIn.skipped`. A failure is logged and never fails the invoice save.
 2. 🔵 `GET /api/purchase-invoices/auto-grn-preview?from=YYYY-MM-DD`, read-only: what a backfill would receive, per material and per invoice, open qty shared across invoices oldest first.
 3. Not done: PI void does not undo the receipt (cancel the GRN; it refuses once stock is used); editing a CONFIRMED PI's qty does not re-sync the receipt; the April-October backfill runs only after the owner reads the preview.
-4. Tests: `tests/pi-auto-grn.test.mjs` (12).
+4. Tests: `tests/pi-auto-grn.test.mjs` (13).
 
 ## 2026-10-27 — 🔵 HK-0116 Fab Sew sticker prints SANDBACK for a Sandback piece (branch `fix/hk0116-sandback-sticker` → `main`)
 

@@ -94,7 +94,10 @@ export function planPiAutoGrn(
     if (!pl.poId) { skip("NO_PO"); continue; }
     const ofPo = poLines.filter((po) => po.poId === pl.poId);
     if (ofPo.length > 0 && !OPEN_PO.has(String(ofPo[0].poStatus).toUpperCase())) { skip("PO_NOT_OPEN"); continue; }
-    const code = norm(pl.materialCode);
+    // A blank code on the bill still matches when the line names its PO line;
+    // the code checked is then that PO line's own.
+    const own = pl.poItemId ? ofPo.find((po) => String(po.id) === String(pl.poItemId)) : undefined;
+    const code = norm(pl.materialCode) || norm(own?.materialCode);
     if (!code) { skip("NO_CODE"); continue; }
     const candidates = ofPo
       .filter((po) => norm(po.materialCode) === code)
@@ -131,39 +134,46 @@ type PiHeader = {
   status: string;
   supplierId: string | null;
   supplierName: string | null;
-  purchaseOrderId: string | null;
   invoiceDate: string | null;
-  purchase_org_code?: string | null;
-  purchaseOrgCode?: string | null;
+  orgCode: string | null;
 };
 
-async function loadPiForAutoGrn(db: D1Database, piId: string) {
-  const pi = await db
-    .prepare(
-      `SELECT id, piNo, status, supplierId, supplierName, purchaseOrderId, invoiceDate, purchase_org_code
-         FROM purchase_invoices WHERE id = ?`,
-    )
-    .bind(piId)
-    .first<PiHeader>();
-  if (!pi) return null;
-  const itemsRes = await db
-    .prepare(
-      `SELECT id, po_id, po_item_id, material_code, qty, unit_price_sen, line_type, grn_item_id
-         FROM purchase_invoice_items WHERE pi_id = ? ORDER BY created_at ASC, id ASC`,
-    )
-    .bind(piId)
-    .all<Record<string, unknown>>();
-  const piLines: AutoGrnPiLine[] = (itemsRes.results ?? []).map((r) => ({
+// Aliased columns throughout: the Postgres shim hands an unaliased snake_case
+// column back under its camelCase key, so `r.material_code` reads undefined.
+const PI_HEADER_SQL = `SELECT pi.id, pi.piNo AS "piNo", pi.status AS "status", pi.supplierId AS "supplierId",
+       pi.supplierName AS "supplierName", pi.invoiceDate AS "invoiceDate", pi.purchase_org_code AS "orgCode"
+  FROM purchase_invoices pi`;
+const PI_LINE_SQL = `SELECT pii.id, pii.pi_id AS "piId", COALESCE(pii.po_id, pi.purchaseOrderId) AS "poId",
+       pii.po_item_id AS "poItemId", pii.material_code AS "mc", pii.qty AS "qty",
+       pii.unit_price_sen AS "price", pii.line_type AS "lt", pii.grn_item_id AS "grnItem"
+  FROM purchase_invoice_items pii JOIN purchase_invoices pi ON pi.id = pii.pi_id`;
+
+type PiLineRow = {
+  id: string | number; piId: string; poId: string | null; poItemId: string | number | null; mc: string | null;
+  qty: number; price: number; lt: string | null; grnItem: string | number | null;
+};
+
+function toPiLine(r: PiLineRow): AutoGrnPiLine {
+  return {
     id: String(r.id),
-    poId: (r.po_id as string | null) || pi.purchaseOrderId || null,
-    poItemId: r.po_item_id == null ? null : String(r.po_item_id),
-    materialCode: (r.material_code as string | null) ?? null,
+    poId: r.poId ? String(r.poId) : null,
+    poItemId: r.poItemId == null || r.poItemId === "" ? null : String(r.poItemId),
+    materialCode: r.mc ?? null,
     qty: Number(r.qty) || 0,
-    unitPriceSen: Number(r.unit_price_sen) || 0,
-    lineType: (r.line_type as string | null) ?? "STOCKED",
-    grnItemId: r.grn_item_id == null || r.grn_item_id === "" ? null : String(r.grn_item_id),
-  }));
-  return { pi, piLines };
+    unitPriceSen: Number(r.price) || 0,
+    lineType: r.lt ?? "STOCKED",
+    grnItemId: r.grnItem == null || r.grnItem === "" ? null : String(r.grnItem),
+  };
+}
+
+async function loadPiForAutoGrn(db: D1Database, piId: string) {
+  const pi = await db.prepare(`${PI_HEADER_SQL} WHERE pi.id = ?`).bind(piId).first<PiHeader>();
+  if (!pi) return null;
+  const res = await db
+    .prepare(`${PI_LINE_SQL} WHERE pii.pi_id = ? ORDER BY pii.created_at ASC, pii.id ASC`)
+    .bind(piId)
+    .all<PiLineRow>();
+  return { pi, piLines: (res.results ?? []).map(toPiLine) };
 }
 
 async function loadPoLines(db: D1Database, poIds: string[]): Promise<AutoGrnPoLine[]> {
@@ -191,17 +201,29 @@ async function loadPoLines(db: D1Database, poIds: string[]): Promise<AutoGrnPoLi
   }));
 }
 
+type RmHit = { itemCode: string; description: string | null } | null;
+
 // Drops planned lines whose material is not a raw material, and hands the
 // stock writer a name its resolver will find ("itemCode - description").
-async function resolvePlannedRm(db: D1Database, planned: AutoGrnPlannedLine[], skipped: AutoGrnSkippedLine[]) {
+async function resolvePlannedRm(
+  db: D1Database,
+  planned: AutoGrnPlannedLine[],
+  skipped: AutoGrnSkippedLine[],
+  cache: Map<string, RmHit> = new Map(),
+) {
   const out: Array<AutoGrnPlannedLine & { stockName: string }> = [];
   for (const l of planned) {
-    const rm =
-      (await db
-        .prepare("SELECT id, itemCode, description FROM raw_materials WHERE itemCode = ? LIMIT 1")
-        .bind(l.materialCode)
-        .first<{ id: string; itemCode: string; description: string | null }>()) ??
-      (await resolveRmForGRNItem(db, l.materialCode, l.materialName));
+    const key = `${norm(l.materialCode)}|${l.materialName}`;
+    if (!cache.has(key)) {
+      const hit =
+        (await db
+          .prepare(`SELECT itemCode AS "itemCode", description AS "description" FROM raw_materials WHERE itemCode = ? LIMIT 1`)
+          .bind(l.materialCode)
+          .first<{ itemCode: string; description: string | null }>()) ??
+        (await resolveRmForGRNItem(db, l.materialCode, l.materialName));
+      cache.set(key, hit ? { itemCode: hit.itemCode, description: hit.description } : null);
+    }
+    const rm = cache.get(key);
     if (!rm) {
       skipped.push({ piLineId: l.piLineId, materialCode: l.materialCode, qty: l.qty, reason: "NOT_RAW_MATERIAL" });
       continue;
@@ -267,7 +289,7 @@ export async function autoReceivePiStock(db: D1Database, piId: string): Promise<
           "System (purchase invoice)",
           totalAmount,
           `Auto stock-in from purchase invoice ${pi.piNo ?? piId}`,
-          pi.purchaseOrgCode ?? pi.purchase_org_code ?? "HOOKKA",
+          pi.orgCode ?? "HOOKKA",
         ),
       ...lines.map((l) =>
         db
@@ -297,37 +319,45 @@ export async function autoReceivePiStock(db: D1Database, piId: string): Promise<
 
 // Read-only: what a backfill would receive for invoices since `from`, oldest
 // first, sharing PO open quantity across invoices the way a real run would.
+// Reads in bulk (headers, lines, PO lines) so six months of invoices fit in
+// one request.
 export async function previewPiAutoGrn(db: D1Database, orgId: string, from: string) {
   await ensureGrnMigrations(db);
-  const pis = (
-    await db
-      .prepare(
-        `SELECT pi.id FROM purchase_invoices pi
-          WHERE pi.orgId = ? AND pi.status IN ('CONFIRMED','PAID','PARTIAL_PAID') AND pi.invoiceDate >= ?
-            AND NOT EXISTS (SELECT 1 FROM grns g WHERE g.id = 'grn-pi-' || pi.id)
-          ORDER BY pi.invoiceDate ASC, pi.id ASC`,
-      )
+  const scope = `pi.orgId = ? AND pi.status IN ('CONFIRMED','PAID','PARTIAL_PAID') AND pi.invoiceDate >= ?
+    AND NOT EXISTS (SELECT 1 FROM grns g WHERE g.id = 'grn-pi-' || pi.id)`;
+  const heads =
+    (await db.prepare(`${PI_HEADER_SQL} WHERE ${scope} ORDER BY pi.invoiceDate ASC, pi.id ASC`).bind(orgId, from).all<PiHeader>())
+      .results ?? [];
+  const lineRows =
+    (await db
+      .prepare(`${PI_LINE_SQL} WHERE ${scope} ORDER BY pii.created_at ASC, pii.id ASC`)
       .bind(orgId, from)
-      .all<{ id: string }>()
-  ).results ?? [];
+      .all<PiLineRow>()).results ?? [];
+  const linesByPi = new Map<string, AutoGrnPiLine[]>();
+  for (const r of lineRows) {
+    const arr = linesByPi.get(String(r.piId)) ?? [];
+    arr.push(toPiLine(r));
+    linesByPi.set(String(r.piId), arr);
+  }
+  const allPoIds = [...new Set(lineRows.map((r) => r.poId).filter((x): x is string => !!x).map(String))];
+  const poByPo = new Map<string, AutoGrnPoLine[]>();
+  for (let i = 0; i < allPoIds.length; i += 200) {
+    for (const line of await loadPoLines(db, allPoIds.slice(i, i + 200))) {
+      const arr = poByPo.get(line.poId) ?? [];
+      arr.push(line);
+      poByPo.set(line.poId, arr);
+    }
+  }
   const open = new Map<string, number>();
-  const poCache = new Map<string, AutoGrnPoLine[]>();
+  const rmCache = new Map<string, RmHit>();
   const invoices: Array<{ piNo: string | null; invoiceDate: string | null; supplierName: string | null; received: number; skipped: number; valueSen: number }> = [];
   const byMaterial = new Map<string, { qty: number; valueSen: number }>();
   const skipReasons: Record<string, number> = {};
-  for (const { id } of pis) {
-    const loaded = await loadPiForAutoGrn(db, id);
-    if (!loaded) continue;
-    const poIds = [...new Set(loaded.piLines.map((l) => l.poId).filter((x): x is string => !!x))];
-    const missing = poIds.filter((p) => !poCache.has(p));
-    for (const line of await loadPoLines(db, missing)) {
-      const arr = poCache.get(line.poId) ?? [];
-      arr.push(line);
-      poCache.set(line.poId, arr);
-    }
-    for (const p of missing) if (!poCache.has(p)) poCache.set(p, []);
-    const plan = planPiAutoGrn(loaded.piLines, poIds.flatMap((p) => poCache.get(p) ?? []), open);
-    const lines = await resolvePlannedRm(db, plan.lines, plan.skipped);
+  for (const head of heads) {
+    const piLines = linesByPi.get(String(head.id)) ?? [];
+    const poIds = [...new Set(piLines.map((l) => l.poId).filter((x): x is string => !!x))];
+    const plan = planPiAutoGrn(piLines, poIds.flatMap((p) => poByPo.get(p) ?? []), open);
+    const lines = await resolvePlannedRm(db, plan.lines, plan.skipped, rmCache);
     for (const s of plan.skipped) skipReasons[s.reason] = (skipReasons[s.reason] ?? 0) + 1;
     let valueSen = 0;
     for (const l of lines) {
@@ -340,9 +370,9 @@ export async function previewPiAutoGrn(db: D1Database, orgId: string, from: stri
     }
     if (lines.length > 0 || plan.skipped.length > 0) {
       invoices.push({
-        piNo: loaded.pi.piNo,
-        invoiceDate: loaded.pi.invoiceDate,
-        supplierName: loaded.pi.supplierName,
+        piNo: head.piNo,
+        invoiceDate: head.invoiceDate,
+        supplierName: head.supplierName,
         received: lines.length,
         skipped: plan.skipped.length,
         valueSen: Math.round(valueSen),
@@ -351,7 +381,7 @@ export async function previewPiAutoGrn(db: D1Database, orgId: string, from: stri
   }
   return {
     from,
-    invoicesScanned: pis.length,
+    invoicesScanned: heads.length,
     invoicesWithStock: invoices.filter((i) => i.received > 0).length,
     linesReceived: invoices.reduce((s, i) => s + i.received, 0),
     valueRm: Math.round(invoices.reduce((s, i) => s + i.valueSen, 0)) / 100,

@@ -69,6 +69,12 @@ test("the PI's own PO line is filled first, then other lines of the same code", 
   assert.deepEqual(lines.map((l) => [l.poItemId, l.qty]), [["2", 5], ["1", 3]]);
 });
 
+test("a blank code on the bill matches through the PO line it names", () => {
+  const poLines = [po("1", "po1", "MDF-5", 5)];
+  assert.equal(planPiAutoGrn([pi("a", "po1", "", 5, { poItemId: "1" })], poLines).lines[0].qty, 5);
+  assert.equal(planPiAutoGrn([pi("a", "po1", "", 5, { poItemId: "9" })], poLines).skipped[0].reason, "NO_CODE");
+});
+
 test("a CLOSED or SUBMITTED PO is not received on", () => {
   for (const st of ["CLOSED", "SUBMITTED"]) {
     const { lines, skipped } = planPiAutoGrn([pi("a", "po1", "MDF-5", 5)], [po("1", "po1", "MDF-5", 5, 0, st)]);
