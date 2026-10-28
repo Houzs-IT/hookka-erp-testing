@@ -47,7 +47,7 @@ const app = new Hono<Env>();
 // ---------------------------------------------------------------------------
 let grnMigrationPromise: Promise<void> | null = null;
 
-function ensureGrnMigrations(db: D1Database): Promise<void> {
+export function ensureGrnMigrations(db: D1Database): Promise<void> {
   if (grnMigrationPromise) return grnMigrationPromise;
   grnMigrationPromise = (async () => {
     // A unit price is a RATE with four decimals of sen. Shared with the PO and
@@ -447,7 +447,7 @@ function genBatchId(grnId: string, lineIdx: number): string {
 // Generate next GRN number — scans existing numbers for the current YYMM
 // prefix and increments. Falls back to 001. Matches the in-memory
 // "GRN-YYMM-NNN" format.
-async function generateGrnNumber(db: D1Database): Promise<string> {
+export async function generateGrnNumber(db: D1Database): Promise<string> {
   const now = new Date();
   const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
   const prefix = `GRN-${yymm}-`;
@@ -479,7 +479,7 @@ async function fetchGRN(db: D1Database, id: string) {
 //   2. Map materialCode (= supplierSku) via supplier_material_bindings.
 //   3. Fall back to description match.
 // ---------------------------------------------------------------------------
-async function resolveRmForGRNItem(
+export async function resolveRmForGRNItem(
   db: D1Database,
   materialCode: string,
   materialName: string,
@@ -530,7 +530,7 @@ async function resolveRmForGRNItem(
 // (the batch id is the line's position in that order). Returned for the
 // caller's own batch, so the receipt and its stock land in one transaction
 // (T-006 R3). Idempotent on grn.id: nothing is built once a batch exists.
-async function buildGRNStockStatements(
+export async function buildGRNStockStatements(
   db: D1Database,
   grn: { id: string; grnNumber: string; receiveDate?: string | null },
   items: Array<{
@@ -844,7 +844,7 @@ function poCounterDecrement(
     .bind(qty, qty, poItemId);
 }
 
-function isPoOverReceiptRace(err: unknown): boolean {
+export function isPoOverReceiptRace(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.includes(PO_OVER_RECEIPT_MARKER);
 }
@@ -946,7 +946,7 @@ function poStatusStatements(
 // receipt may span several, and refreshing only the header PO would leave the
 // second at CONFIRMED with its goods in the building.
 // ---------------------------------------------------------------------------
-function buildPoReceiptStatements(
+export function buildPoReceiptStatements(
   db: D1Database,
   targets: Array<{ poId: string; poItemId: string; qty: number }>,
 ): D1PreparedStatement[] {
