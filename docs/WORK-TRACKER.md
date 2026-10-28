@@ -281,6 +281,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-28 — 🔵 HK-0118 follow-up: price edit on SV-2610-036 failed half-saved (branch `fix/hk0118-so-edit-fg-batches` → `main`)
+
+Siti (office): put the price on SV-2610-036, Save Changes said "Something went wrong". Measured on prod 2026-10-28 (read-only): the item write committed (RM 400.00), then the PO rebuild hit the `fg_batches` FK left by the 10-27 completion. BUG-2026-10-28-397.
+
+1. 🔵 PUT /api/sales-orders/:id: when the order's POs have fg_batches, a price / discount / delivery-date edit keeps production (no rebuild); a production edit gets a plain 409 before any write.
+2. ⏳ Siti to re-open SV-2610-036 and confirm the price shows RM 400.00 (no data fix needed).
+
 ## 2026-10-27 — 🔵 HK-0116 Fab Sew sticker prints SANDBACK for a Sandback piece (branch `fix/hk0116-sandback-sticker` → `main`)
 
 Violet (management, HK-0116, sticker of SO-2610-252-05): the SB02 Sandback sticker shows WIP `A01` and ARMREST bottom right. Measured on prod 2026-10-27 (read-only): the BOM is right today (`SANDBACK`); the five SB02 POs opened 12-14 Oct were exploded from an earlier armrest-typed BOM (`A01 {FABRIC}`), and POs from 19 Oct print no badge at all. Violet confirmed 2026-10-27 the badge should read SANDBACK. BUG-2026-10-27-394.
