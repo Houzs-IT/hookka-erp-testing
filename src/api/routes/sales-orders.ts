@@ -82,6 +82,7 @@ import { loadSpecialsConfig, loadHeightsConfig } from "../lib/specials-config";
 import { validateRepairScopeInput } from "../../lib/repair-scope";
 import { buildOrderFootprint } from "../lib/order-footprint";
 import { toIsoDate, normaliseBodyDates } from "../lib/iso-date";
+import { soProductionHeaderChanged, soProductionLinesChanged } from "../lib/so-production-fields";
 
 import {
   parseCustomSpecials,
@@ -3442,6 +3443,7 @@ app.put("/:id", async (c) => {
     // --- Replace items (if provided) ---
     let subtotalSen = existing.subtotalSen;
     let totalSen = existing.totalSen;
+    let productionLinesChanged = false;
 
     if (body.items) {
       const rawItems: Array<Record<string, unknown>> = body.items;
@@ -3831,6 +3833,8 @@ app.put("/:id", async (c) => {
 
       // NOTE (owner 2026-06-11): NO RM0 gate on edit either — by explicit request.
 
+      productionLinesChanged = soProductionLinesChanged(oldItems, newItems);
+
       subtotalSen = newItems.reduce((sum, i) => sum + i.lineTotalSen, 0);
       totalSen = subtotalSen;
 
@@ -3902,6 +3906,44 @@ app.put("/:id", async (c) => {
             ),
           );
         }
+      }
+    }
+
+    // HK-0118 — a PO that already produced finished goods holds fg_batches
+    // rows, which the rebuild below cannot delete (FK, and they are cost
+    // lots). An edit that leaves production untouched keeps the POs as they
+    // are; one that changes what was built is refused here, before anything
+    // is written, instead of failing half-saved on the rebuild.
+    let keepProduction = false;
+    if (body.items && !isStatusOnly && existing.status !== "DRAFT" && existing.status !== "PENDING") {
+      const fgBatch = await c.var.DB
+        .prepare(
+          `SELECT b.id FROM fg_batches b
+             JOIN production_orders po ON po.id = b.productionOrderId
+            WHERE po.salesOrderId = ?
+            LIMIT 1`,
+        )
+        .bind(id)
+        .first<{ id: string }>();
+      if (fgBatch) {
+        const headerChanged = soProductionHeaderChanged(existing, {
+          customerId,
+          customerState,
+          reference: merged.reference,
+          customerPOId: merged.customerPOId,
+          companySODate: merged.companySODate,
+        });
+        if (productionLinesChanged || headerChanged) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "This order already has finished goods from an earlier production run, so its products, quantities, sizes, fabrics, specials, notes and customer can't be changed. Price and discount changes still save.",
+            },
+            409,
+          );
+        }
+        keepProduction = true;
       }
     }
 
@@ -4241,6 +4283,7 @@ app.put("/:id", async (c) => {
     const itemsChanged = !!body.items;
     const shouldRebuild =
       itemsChanged &&
+      !keepProduction &&
       !isStatusOnly &&
       !isDraftToConfirmed &&
       existing.status !== "DRAFT" &&

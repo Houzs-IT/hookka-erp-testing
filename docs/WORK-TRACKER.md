@@ -290,6 +290,13 @@ Siti (office, HK-0119, screenshot of the Purchase Orders cards: 27 Overdue POs):
 2. 🔵 Overdue rule: code-less PO line buckets by material name; a code-less PI line falls back to it (`src/api/lib/po-delivered.ts`).
 3. ⏳ Canary check (prod data, read-only): card should drop 27 → 24. The office closes the short-billed ones itself.
 
+## 2026-10-28 — 🔵 HK-0118 follow-up: price edit on SV-2610-036 failed half-saved (branch `fix/hk0118-so-edit-fg-batches` → `main`)
+
+Siti (office): put the price on SV-2610-036, Save Changes said "Something went wrong". Measured on prod 2026-10-28 (read-only): the item write committed (RM 400.00), then the PO rebuild hit the `fg_batches` FK left by the 10-27 completion. BUG-2026-10-28-397.
+
+1. 🔵 PUT /api/sales-orders/:id: when the order's POs have fg_batches, a price / discount / delivery-date edit keeps production (no rebuild); a production edit gets a plain 409 before any write.
+2. ⏳ Siti to re-open SV-2610-036 and confirm the price shows RM 400.00 (no data fix needed).
+
 ## 2026-10-27 — 🔵 Confirmed purchase invoice stocks in its matched PO lines (branch `feat/pi-auto-grn` → `main`)
 
 Found on HK-0114 (2026-10-26, prod read-only): the office bills PI → From PO and never posts a GRN, so raw-material stock-in stopped after March (cost_ledger: 1 RM_RECEIPT since April) while production kept issuing (3,420 RM_ISSUE, RM 248,416). Samuel 2026-10-27: "po pi 如果scan了 match 了 就自动 stock in"; chose system GRN, match = PO line + material code + raw material, backfill as a dry run for the owner first.
