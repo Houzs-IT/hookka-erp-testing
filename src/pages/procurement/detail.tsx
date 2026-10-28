@@ -222,6 +222,8 @@ export default function PurchaseOrderDetailPage() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  // HK-0119 — same modal, but closes the PO short instead of cancelling it.
+  const [closeShort, setCloseShort] = useState(false);
 
   // ------- Delete-PO state (DRAFT-only physical delete) -------
   const [deleting, setDeleting] = useState(false);
@@ -467,23 +469,24 @@ export default function PurchaseOrderDetailPage() {
     }
     setCancelling(true);
     try {
+      const target = closeShort ? "CLOSED" : "CANCELLED";
       const today = new Date().toISOString().split("T")[0];
-      const annotation = `[CANCELLED ${today}: ${reason}]`;
+      const annotation = `[${target} ${today}: ${reason}]`;
       const newNotes = po.notes ? `${po.notes}\n${annotation}` : annotation;
       const res = await fetch(`/api/purchase-orders/${po.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "CANCELLED", notes: newNotes }),
+        body: JSON.stringify({ status: target, notes: newNotes }),
       });
       const body = await res.json().catch(() => ({})) as { success?: boolean; error?: string };
       if (!res.ok || !body.success) {
-        toast.error(body.error || `Failed to cancel (HTTP ${res.status})`);
+        toast.error(body.error || `Failed to ${closeShort ? "close" : "cancel"} (HTTP ${res.status})`);
         return;
       }
       invalidateCachePrefix("/api/purchase-orders");
       invalidateCachePrefix("/api/grn");
       fetchPO();
-      toast.success("Purchase order cancelled");
+      toast.success(closeShort ? "Purchase order closed" : "Purchase order cancelled");
       setShowCancelModal(false);
       setCancelReason("");
     } catch (err) {
@@ -622,6 +625,9 @@ export default function PurchaseOrderDetailPage() {
   // DRAFT keeps its existing one-click Cancel (no reason needed for a PO
   // that never left the office). RECEIVED / CLOSED / CANCELLED are terminal.
   const canCancelWithReason = ["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED"].includes(po.status);
+  // HK-0119 — short-close: the office bills from the PO without a GRN, so a
+  // PO the supplier under-delivered never reaches RECEIVED and its Close PO.
+  const canCloseShort = ["CONFIRMED", "PARTIAL_RECEIVED"].includes(po.status);
 
   // Determine available status advancement actions. 2.3 — Mark Received
   // only renders when a POSTED GRN exists for this PO; otherwise the
@@ -1202,7 +1208,7 @@ export default function PurchaseOrderDetailPage() {
           no SUBMITTED intermediate state — operator's flow skips it).
           Non-DRAFT POs get the relevant status-advance buttons + Cancel PO
           (status=CANCELLED, row preserved). */}
-      {!isCancelled && !editing && (statusActions.length > 0 || canCancelWithReason || showCreateGrnCta || canReceiveInline || isDraft) && (
+      {!isCancelled && !editing && (statusActions.length > 0 || canCancelWithReason || canCloseShort || showCreateGrnCta || canReceiveInline || isDraft) && (
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1245,11 +1251,19 @@ export default function PurchaseOrderDetailPage() {
                     <Trash2 className="h-4 w-4" /> {deleting ? "Deleting…" : "Delete PO"}
                   </Button>
                 )}
+                {canCloseShort && (
+                  <Button
+                    variant="outline"
+                    onClick={() => { setCloseShort(true); setShowCancelModal(true); }}
+                  >
+                    <Lock className="h-4 w-4" /> Close PO
+                  </Button>
+                )}
                 {canCancelWithReason && (
                   <Button
                     variant="outline"
                     className="text-red-600 border-red-200 hover:bg-red-50"
-                    onClick={() => setShowCancelModal(true)}
+                    onClick={() => { setCloseShort(false); setShowCancelModal(true); }}
                   >
                     Cancel PO
                   </Button>
@@ -1268,7 +1282,7 @@ export default function PurchaseOrderDetailPage() {
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
               <div>
-                <h2 className="text-lg font-semibold text-[#1F1D1B]">Cancel Purchase Order</h2>
+                <h2 className="text-lg font-semibold text-[#1F1D1B]">{closeShort ? "Close Purchase Order" : "Cancel Purchase Order"}</h2>
                 <p className="text-xs text-[#6B7280] mt-0.5">{po.poNo}</p>
               </div>
               <Button
@@ -1283,7 +1297,7 @@ export default function PurchaseOrderDetailPage() {
             <div className="p-5 space-y-3">
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1">
-                  Reason for cancellation <span className="text-[#9A3A2D]">*</span>
+                  {closeShort ? "Why is the rest not coming?" : "Reason for cancellation"} <span className="text-[#9A3A2D]">*</span>
                 </label>
                 <textarea
                   className="w-full min-h-[90px] rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/20 focus:border-[#6B5C32]"
@@ -1295,7 +1309,13 @@ export default function PurchaseOrderDetailPage() {
                   {cancelReason.trim().length}/10 minimum
                 </p>
               </div>
-              {po.status === "PARTIAL_RECEIVED" && (
+              {closeShort && (
+                <p className="text-xs text-[#6B7280]">
+                  Use this when the supplier delivered or billed less than ordered and nothing more is
+                  coming. The PO leaves Overdue POs; received stock, bills and payments stay as they are.
+                </p>
+              )}
+              {!closeShort && po.status === "PARTIAL_RECEIVED" && (
                 <div className="flex items-start gap-2 p-3 rounded border border-amber-200 bg-amber-50 text-xs text-amber-800">
                   <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                   <span>
@@ -1306,7 +1326,7 @@ export default function PurchaseOrderDetailPage() {
               )}
               <p className="text-xs text-[#6B7280]">
                 Reason will be appended to PO notes as a tagged
-                <code className="mx-1 px-1 py-0.5 rounded bg-[#FAF9F7] text-[#374151]">[CANCELLED YYYY-MM-DD: …]</code>
+                <code className="mx-1 px-1 py-0.5 rounded bg-[#FAF9F7] text-[#374151]">[{closeShort ? "CLOSED" : "CANCELLED"} YYYY-MM-DD: …]</code>
                 annotation.
               </p>
             </div>
@@ -1320,11 +1340,11 @@ export default function PurchaseOrderDetailPage() {
               </Button>
               <Button
                 variant="primary"
-                className="bg-[#9A3A2D] hover:bg-[#7A2E24]"
+                className={closeShort ? undefined : "bg-[#9A3A2D] hover:bg-[#7A2E24]"}
                 onClick={submitCancel}
                 disabled={cancelling || cancelReason.trim().length < 10}
               >
-                {cancelling ? "Cancelling…" : "Cancel PO"}
+                {cancelling ? (closeShort ? "Closing…" : "Cancelling…") : closeShort ? "Close PO" : "Cancel PO"}
               </Button>
             </div>
           </div>

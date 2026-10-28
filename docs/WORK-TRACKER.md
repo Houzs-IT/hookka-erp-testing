@@ -282,6 +282,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-28 — 🔵 HK-0119 Close a PO short; legacy code-less lines match their PI by name (branch `fix/hk0119-po-short-close` → `main`)
+
+Siti (office, HK-0119, screenshot of the Purchase Orders cards: 27 Overdue POs): some are already paid, can they come off? Measured on prod 2026-10-28 (read-only): 10 of the 27 carry a PAID PI but are billed short, under another code, or are legacy code-less lines. A CONFIRMED PO had no close path without a GRN. Samuel chose 2026-10-28: short-close + name match. BUG-2026-10-28-396.
+
+1. 🔵 PO detail **Close PO** on CONFIRMED / PARTIAL_RECEIVED, reason required, `[CLOSED YYYY-MM-DD: …]` note; backend allows the transition.
+2. 🔵 Overdue rule: code-less PO line buckets by material name; a code-less PI line falls back to it (`src/api/lib/po-delivered.ts`).
+3. ⏳ Canary check (prod data, read-only): card should drop 27 → 24. The office closes the short-billed ones itself.
+
 ## 2026-10-28 — 🔵 HK-0118 follow-up: price edit on SV-2610-036 failed half-saved (branch `fix/hk0118-so-edit-fg-batches` → `main`)
 
 Siti (office): put the price on SV-2610-036, Save Changes said "Something went wrong". Measured on prod 2026-10-28 (read-only): the item write committed (RM 400.00), then the PO rebuild hit the `fg_batches` FK left by the 10-27 completion. BUG-2026-10-28-397.

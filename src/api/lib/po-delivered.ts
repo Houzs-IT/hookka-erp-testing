@@ -9,11 +9,17 @@
 // Buckets follow checkPoRemaining in purchase-invoices.ts: the material code
 // when the PO line has one (two lines of one material share a bucket), else
 // the PO line's own id; an invoiced row matches by code first, PO line second.
+//
+// HK-0119 — legacy PO-0001xx lines carry no material code and their PI lines
+// carry neither a code nor a PO line, so neither key could match. A code-less
+// PO line now buckets by its material name instead, and a code-less invoiced
+// row that matched nothing else falls back to that name.
 
 export interface PoDeliveredItemRow {
   id: string | number;
   purchaseOrderId: string;
   materialCode: string | null;
+  materialName?: string | null;
   quantity: number;
   receivedQty: number;
 }
@@ -22,8 +28,11 @@ export interface PoInvoicedRow {
   poId: string;
   poItemId: string | null;
   materialCode: string | null;
+  materialName?: string | null;
   qty: number;
 }
+
+const nameKey = (n: string | null | undefined) => String(n ?? "").trim().toUpperCase();
 
 export function poIdsDeliveredInFull(
   items: PoDeliveredItemRow[],
@@ -32,19 +41,26 @@ export function poIdsDeliveredInFull(
   type Bucket = { ordered: number; received: number; invoiced: number };
   const perPo = new Map<
     string,
-    { buckets: Map<string, Bucket>; byItemId: Map<string, string>; byCode: Map<string, string> }
+    {
+      buckets: Map<string, Bucket>;
+      byItemId: Map<string, string>;
+      byCode: Map<string, string>;
+      byName: Map<string, string>;
+    }
   >();
   for (const it of items) {
     let po = perPo.get(it.purchaseOrderId);
     if (!po) {
-      po = { buckets: new Map(), byItemId: new Map(), byCode: new Map() };
+      po = { buckets: new Map(), byItemId: new Map(), byCode: new Map(), byName: new Map() };
       perPo.set(it.purchaseOrderId, po);
     }
     const itemId = String(it.id);
     const code = it.materialCode ? String(it.materialCode) : "";
-    const key = code ? `code:${code}` : `item:${itemId}`;
+    const name = code ? "" : nameKey(it.materialName);
+    const key = code ? `code:${code}` : name ? `name:${name}` : `item:${itemId}`;
     po.byItemId.set(itemId, key);
     if (code) po.byCode.set(code, key);
+    if (name) po.byName.set(name, key);
     const b = po.buckets.get(key) ?? { ordered: 0, received: 0, invoiced: 0 };
     b.ordered += Number(it.quantity) || 0;
     b.received += Number(it.receivedQty) || 0;
@@ -55,7 +71,8 @@ export function poIdsDeliveredInFull(
     if (!po) continue;
     const key =
       (row.materialCode ? po.byCode.get(String(row.materialCode)) : undefined) ??
-      (row.poItemId ? po.byItemId.get(String(row.poItemId)) : undefined);
+      (row.poItemId ? po.byItemId.get(String(row.poItemId)) : undefined) ??
+      (!row.materialCode && row.materialName ? po.byName.get(nameKey(row.materialName)) : undefined);
     if (!key) continue;
     po.buckets.get(key)!.invoiced += Number(row.qty) || 0;
   }
@@ -81,13 +98,13 @@ export async function openPoIdsDeliveredInFull(db: D1Database, orgId: string): P
   const itemsRes = await db
     .prepare(
       `SELECT poi.id, poi.purchaseOrderId AS "poId", poi.material_code AS "mc",
-              poi.quantity AS "qty", poi.receivedQty AS "recv"
+              poi.materialName AS "mn", poi.quantity AS "qty", poi.receivedQty AS "recv"
          FROM purchase_order_items poi
          JOIN purchase_orders p ON p.id = poi.purchaseOrderId
         WHERE p.orgId = ? AND p.status NOT IN ('RECEIVED','CLOSED','CANCELLED')`,
     )
     .bind(orgId)
-    .all<{ id: string | number; poId: string; mc: string | null; qty: number; recv: number | null }>();
+    .all<{ id: string | number; poId: string; mc: string | null; mn: string | null; qty: number; recv: number | null }>();
   let invoiced: PoInvoicedRow[] = [];
   try {
     // Same already-invoiced read as checkPoRemaining (purchase-invoices.ts),
@@ -96,18 +113,24 @@ export async function openPoIdsDeliveredInFull(db: D1Database, orgId: string): P
       .prepare(
         `SELECT COALESCE(pii.po_id, pi.purchaseOrderId) AS "poId",
                 COALESCE(pii.po_item_id, gi.po_item_id) AS "poItemId",
-                pii.material_code AS "mc", COALESCE(SUM(pii.qty), 0) AS "qty"
+                pii.material_code AS "mc", pii.materialName AS "mn", COALESCE(SUM(pii.qty), 0) AS "qty"
            FROM purchase_invoice_items pii
            JOIN purchase_invoices pi ON pi.id = pii.pi_id
            LEFT JOIN grn_items gi ON gi.id::text = pii.grn_item_id
           WHERE pi.orgId = ? AND pi.status NOT IN ('CANCELLED','DRAFT')
-          GROUP BY COALESCE(pii.po_id, pi.purchaseOrderId), COALESCE(pii.po_item_id, gi.po_item_id), pii.material_code`,
+          GROUP BY COALESCE(pii.po_id, pi.purchaseOrderId), COALESCE(pii.po_item_id, gi.po_item_id), pii.material_code, pii.materialName`,
       )
       .bind(orgId)
-      .all<{ poId: string | null; poItemId: string | null; mc: string | null; qty: number }>();
+      .all<{ poId: string | null; poItemId: string | null; mc: string | null; mn: string | null; qty: number }>();
     invoiced = (invRes.results ?? [])
       .filter((r) => r.poId)
-      .map((r) => ({ poId: String(r.poId), poItemId: r.poItemId, materialCode: r.mc, qty: Number(r.qty) || 0 }));
+      .map((r) => ({
+        poId: String(r.poId),
+        poItemId: r.poItemId,
+        materialCode: r.mc,
+        materialName: r.mn,
+        qty: Number(r.qty) || 0,
+      }));
   } catch (err) {
     console.warn("[purchase-orders/stats] invoiced-qty read failed; overdue uses receivedQty only", err);
   }
@@ -116,6 +139,7 @@ export async function openPoIdsDeliveredInFull(db: D1Database, orgId: string): P
       id: r.id,
       purchaseOrderId: String(r.poId),
       materialCode: r.mc,
+      materialName: r.mn,
       quantity: Number(r.qty) || 0,
       receivedQty: Number(r.recv) || 0,
     })),

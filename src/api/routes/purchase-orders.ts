@@ -90,12 +90,14 @@ type PurchaseOrderItemRow = {
 // previous backend transition map ended at RECEIVED with no further
 // allowed states, so clicking Close PO returned 400 (the audit caught
 // this as a FE/BE drift). CLOSED is terminal: nothing more flows from
-// it. CANCELLED is also terminal.
+// it. CANCELLED is also terminal. HK-0119: CONFIRMED / PARTIAL_RECEIVED →
+// CLOSED is the short-close for a PO the supplier under-delivered — the office
+// bills from the PO without a GRN, so those POs never reach RECEIVED.
 const VALID_TRANSITIONS: Record<string, string[]> = {
   DRAFT: ["SUBMITTED", "CANCELLED"],
   SUBMITTED: ["CONFIRMED", "CANCELLED"],
-  CONFIRMED: ["PARTIAL_RECEIVED", "RECEIVED", "CANCELLED"],
-  PARTIAL_RECEIVED: ["RECEIVED", "CANCELLED"],
+  CONFIRMED: ["PARTIAL_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED"],
+  PARTIAL_RECEIVED: ["RECEIVED", "CLOSED", "CANCELLED"],
   RECEIVED: ["CLOSED"],
   CLOSED: [],
   CANCELLED: [],
