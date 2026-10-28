@@ -1487,8 +1487,9 @@ applies the same discipline to the receipt → purchase-order-line link.
 * a **display truncation that admits it** — `accounting.ts:11043` prints `"Cash +2"`, so the
   reader can see something was dropped;
 * a **deliberate one, labelled as deliberate** — `priceForItem`'s maps in `do-value.ts` are
-  first-one-wins on purpose, because for a PRICE LOOKUP any matching line's value will do.
-  Its identity twin next door counts instead, and both say so in comments. If that annotation
+  first-one-wins on purpose, because for a PRICE LOOKUP any matching line's value will do
+  **as long as those lines agree on price** — where they do not, `byPiece` answers first
+  (row 17). Its identity twin next door counts instead, and both say so in comments. If that annotation
   disappears, the next reader "fixes" the wrong one.
 
 The dangerous shape is a fallback to `[0]`, **or a match on a NON-UNIQUE key**, deciding
@@ -1512,6 +1513,7 @@ IDENTITY or MONEY.
 | 14 | `accounting.ts:11043` (`others[0]` + `"+N"`), `delivery-orders.ts:2274` (error text) | display only, and the truncation is visible | ✅ benign |
 | 15 | grep false positives — `web-push.ts:107` (`pub[0] !== 0x04`, a byte), `do-component-breakdown.ts:102` (`a[0]`/`b[0]`, Map-entry tuples in a comparator), `sales/index.tsx:250-251` (`_flStatus[0]`, "any filter active?") | nothing | ✅ not this class |
 | 16 | the phone's Finance Dashboard — `rows[rows.length - 1]` read as "the latest month" | `src/pages/m/screens/finance/DashScreen.tsx` (#944) | the LAST-one-wins twin: `/api/accounting/dashboard` appends the months ahead that carry only a forecast, so the last row is never the running month; the screen showed "—", charted future months and gave a month with no books | ✅ 2026-10-17 (-308) — `dashAnchorIndex` picks the latest row with actuals; `tests/m-dashboard-anchor-month.test.mjs` |
+| 17 | `do-value.ts` `priceForItem` — `byFull` first-one-wins when two SO lines share product + size + fabric at DIFFERENT prices | the unit price every delivered piece is **invoiced** at | ✅ 2026-10-28 (BUG-2026-10-28-398, HK-0120) — tier 0 `byPiece` replays the builder's per-piece PO counter, only for contested keys and only when the replayed line carries the PO's own key; `tests/do-value-piece-price.test.mjs` |
 
 **Enforced by** `tests/first-one-wins-refusal.test.mjs` — 8 behavioural assertions driving
 the pure resolver with adversarial fixtures (two orders with the SAME line count, so a

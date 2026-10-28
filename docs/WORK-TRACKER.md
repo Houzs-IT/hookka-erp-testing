@@ -282,6 +282,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-28 — 🔵 HK-0120 Invoice prices each piece from its own SO line when lines share a key (branch `fix/hk0120-dup-line-invoice-price` → `main`)
+
+Siti (office, HK-0120): SV-2610-035 is RM 1,950 but INV-2610-103 is RM 2,160. Measured on prod 2026-10-28 (read-only): six SERVICE CHARGE lines share product / size / fabric, and `priceForItem`'s first-one-wins map billed all 8 pieces at line 1's RM 270. 10 orders have the shape, 9 invoiced. BUG-2026-10-28-398.
+
+1. 🔵 `do-value.ts` tier 0 `byPiece`: replay the builder's per-piece PO counter, only where the full key is contested and the replayed line carries the same key.
+2. ⏳ Siti corrects INV-2610-103 with Edit prices (unpaid). INV-2610-066 (SO-2610-133, unpaid) and the 7 paid invoices left for Finance.
+
 ## 2026-10-28 — 🔵 HK-0119 Close a PO short; legacy code-less lines match their PI by name (branch `fix/hk0119-po-short-close` → `main`)
 
 Siti (office, HK-0119, screenshot of the Purchase Orders cards: 27 Overdue POs): some are already paid, can they come off? Measured on prod 2026-10-28 (read-only): 10 of the 27 carry a PAID PI but are billed short, under another code, or are legacy code-less lines. A CONFIRMED PO had no close path without a GRN. Samuel chose 2026-10-28: short-close + name match. BUG-2026-10-28-396.

@@ -9,6 +9,8 @@
 // when a product appears on more than one SO line.
 //
 // Resolution order per item (first hit wins):
+//   0. PO's piece slot → SO line, only where tier 1's key is CONTESTED
+//      (two SO lines share it at different prices; HK-0120)
 //   1. PO's (salesOrderId, productCode, sizeCode, fabricCode) → SO line
 //   2. PO's (salesOrderId, productCode) → SO line   (size/fabric drift)
 //   3. (anySO, productCode) → SO line                (legacy / no PO)
@@ -30,12 +32,17 @@ export type SoLinePriceIndex = {
   byFull: Map<string, number>; // `${soId}|${code}|${size}|${fab}` → unitPriceSen
   byCode: Map<string, number>; // `${soId}|${code}` → unitPriceSen
   byAnyCode: Map<string, number>; // `${code}` → unitPriceSen (last resort)
+  // poId → unitPriceSen, ONLY for POs whose full key is contested. Optional
+  // because admin.ts's repair sweep builds its own index to reproduce what
+  // past invoices were priced at, and those were priced without it.
+  byPiece?: Map<string, number>;
   // IDENTITY, built from the same two reads as the prices above so an invoice
   // line can record WHICH sales-order line it bills (BUG-2026-08-13-096) at
   // zero extra query cost.
   //
   // ⚠ It is NOT the price maps' twin. Those are first-one-wins by design — for
-  // a price, any matching line's value will do. This one COUNTS claimants and
+  // a price, any matching line's value will do when the lines agree; where they
+  // disagree, `byPiece` answers first. This one COUNTS claimants and
   // resolves only unique keys, because a wrong identity makes a bad audit look
   // authoritative. Same rows, opposite tie-breaking, on purpose. See
   // invoice-so-item-link.ts.
@@ -60,6 +67,8 @@ export function priceForItem(
   productCode: string | null | undefined,
 ): number {
   const code = productCode ?? "";
+  const piece = productionOrderId ? idx.byPiece?.get(productionOrderId) : undefined;
+  if (piece != null) return piece;
   const po = productionOrderId ? idx.poById.get(productionOrderId) : undefined;
   const soId = po?.salesOrderId || fallbackSoId || "";
   if (po && soId) {
@@ -77,6 +86,71 @@ export function priceForItem(
   return idx.byAnyCode.get(code) ?? 0;
 }
 
+export type PieceSoItem = {
+  salesOrderId: string | null;
+  productCode: string | null;
+  sizeCode: string | null;
+  fabricCode: string | null;
+  unitPriceSen: number;
+  lineNo: number | null;
+  quantity: number | null;
+  itemCategory: string | null;
+};
+export type PiecePo = PoSpec & { id: string; lineNo: number | null };
+
+// HK-0120: SV-2610-035 has six SERVICE CHARGE lines (same code, size, fabric)
+// at six prices; tier 1's first-one-wins billed all eight pieces at line 1's
+// RM270. A PO's `lineNo` is the builder's per-PIECE counter
+// (production-builder.ts `poSequence`: lines in lineNo order, one PO per unit,
+// one per SOFA line), NOT the SO line number — so replay that counter to find
+// the line each piece came from. Used only when the replayed line carries the
+// PO's own key; anything else falls through to the tiers below unchanged.
+export function buildPiecePrices(
+  pos: PiecePo[],
+  items: PieceSoItem[],
+): Map<string, number> {
+  const fullKey = (so: string, c: string | null, s: string | null, f: string | null) =>
+    `${so}|${c ?? ""}|${s ?? ""}|${f ?? ""}`;
+  const pricesByKey = new Map<string, Set<number>>();
+  const itemsBySo = new Map<string, PieceSoItem[]>();
+  for (const si of items) {
+    const so = si.salesOrderId ?? "";
+    const fk = fullKey(so, si.productCode, si.sizeCode, si.fabricCode);
+    const set = pricesByKey.get(fk) ?? new Set<number>();
+    set.add(si.unitPriceSen || 0);
+    pricesByKey.set(fk, set);
+    const list = itemsBySo.get(so) ?? [];
+    list.push(si);
+    itemsBySo.set(so, list);
+  }
+  const slotsBySo = new Map<string, PieceSoItem[]>();
+  const slotsFor = (so: string): PieceSoItem[] => {
+    let slots = slotsBySo.get(so);
+    if (slots) return slots;
+    slots = [];
+    const sorted = [...(itemsBySo.get(so) ?? [])].sort(
+      (a, b) => (a.lineNo ?? 0) - (b.lineNo ?? 0),
+    );
+    for (const si of sorted) {
+      const pieces =
+        (si.itemCategory ?? "BEDFRAME") === "SOFA" ? 1 : Math.max(1, si.quantity || 1);
+      for (let i = 0; i < pieces; i++) slots.push(si);
+    }
+    slotsBySo.set(so, slots);
+    return slots;
+  };
+  const out = new Map<string, number>();
+  for (const p of pos) {
+    const fk = fullKey(p.salesOrderId, p.productCode, p.sizeCode, p.fabricCode);
+    if ((pricesByKey.get(fk)?.size ?? 0) < 2 || !p.lineNo) continue;
+    const si = slotsFor(p.salesOrderId)[p.lineNo - 1];
+    if (!si) continue;
+    if (fullKey(si.salesOrderId ?? "", si.productCode, si.sizeCode, si.fabricCode) !== fk) continue;
+    out.set(p.id, si.unitPriceSen || 0);
+  }
+  return out;
+}
+
 // Whole-org price index (2 bulk reads, no N+1) — scopes SO items via their
 // SO so it is correct whether or not sales_order_items carries orgId.
 export async function loadSoLinePriceIndex(
@@ -86,7 +160,7 @@ export async function loadSoLinePriceIndex(
   const [poRes, siRes] = await Promise.all([
     db
       .prepare(
-        "SELECT id, salesOrderId, productCode, sizeCode, fabricCode FROM production_orders WHERE orgId = ?",
+        "SELECT id, salesOrderId, productCode, sizeCode, fabricCode, lineNo FROM production_orders WHERE orgId = ?",
       )
       .bind(orgId)
       .all<{
@@ -95,12 +169,15 @@ export async function loadSoLinePriceIndex(
         productCode: string | null;
         sizeCode: string | null;
         fabricCode: string | null;
+        lineNo?: number | null;
+        line_no?: number | null;
       }>(),
     db
       .prepare(
         `SELECT si.id AS id, si.salesOrderId AS salesOrderId, si.productCode AS productCode,
                 si.sizeCode AS sizeCode, si.fabricCode AS fabricCode,
-                si.unitPriceSen AS unitPriceSen
+                si.unitPriceSen AS unitPriceSen, si.lineNo AS lineNo,
+                si.quantity AS quantity, si.itemCategory AS itemCategory
            FROM sales_order_items si
            JOIN sales_orders s ON s.id = si.salesOrderId
           WHERE s.orgId = ?`,
@@ -113,6 +190,11 @@ export async function loadSoLinePriceIndex(
         sizeCode: string | null;
         fabricCode: string | null;
         unitPriceSen: number;
+        lineNo?: number | null;
+        line_no?: number | null;
+        quantity: number | null;
+        itemCategory?: string | null;
+        item_category?: string | null;
       }>(),
   ]);
   const poById = new Map<
@@ -145,11 +227,24 @@ export async function loadSoLinePriceIndex(
     if (!byCode.has(ck)) byCode.set(ck, up);
     if (code && !byAnyCode.has(code)) byAnyCode.set(code, up);
   }
+  const byPiece = buildPiecePrices(
+    (poRes.results ?? []).map((p) => ({
+      ...poById.get(p.id)!,
+      id: p.id,
+      lineNo: Number(p.lineNo ?? p.line_no) || null,
+    })),
+    (siRes.results ?? []).map((si) => ({
+      ...si,
+      lineNo: Number(si.lineNo ?? si.line_no) || null,
+      itemCategory: si.itemCategory ?? si.item_category ?? null,
+    })),
+  );
   return {
     poById,
     byFull,
     byCode,
     byAnyCode,
+    byPiece,
     soItemIdentity: buildSoItemIdentity(siRes.results ?? []),
   };
 }
