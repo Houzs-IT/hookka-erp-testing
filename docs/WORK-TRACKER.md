@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-27**: branch `feat/pi-auto-grn`, to `main` (purchase invoice confirm stocks in its matched PO lines) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `fix/hk0116-sandback-sticker`, to `main` (HK-0116, Sandback Fab Sew sticker badge) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `feat/hk0113-po-mail-center-to-main`, to `main` (HK-0113, PO email via Mail Center) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `fix/m-dashboard-ops-day`, to `main` (phone dashboard Operations gets the Day view) added below (its entry is the newest).
@@ -287,6 +288,17 @@ Siti (office): put the price on SV-2610-036, Save Changes said "Something went w
 
 1. 🔵 PUT /api/sales-orders/:id: when the order's POs have fg_batches, a price / discount / delivery-date edit keeps production (no rebuild); a production edit gets a plain 409 before any write.
 2. ⏳ Siti to re-open SV-2610-036 and confirm the price shows RM 400.00 (no data fix needed).
+
+## 2026-10-27 — 🔵 Confirmed purchase invoice stocks in its matched PO lines (branch `feat/pi-auto-grn` → `main`)
+
+Found on HK-0114 (2026-10-26, prod read-only): the office bills PI → From PO and never posts a GRN, so raw-material stock-in stopped after March (cost_ledger: 1 RM_RECEIPT since April) while production kept issuing (3,420 RM_ISSUE, RM 248,416). Samuel 2026-10-27: "po pi 如果scan了 match 了 就自动 stock in"; chose system GRN, match = PO line + material code + raw material, backfill as a dry run for the owner first.
+
+1. 🔵 PI create-as-CONFIRMED and PUT DRAFT → CONFIRMED call `autoReceivePiStock` (`src/api/lib/pi-auto-grn.ts`): one GRN `grn-pi-<piId>`, POSTED / ARRIVED, through the GRN's own `buildGRNStockStatements` + `buildPoReceiptStatements` (rm_batches, RM_RECEIPT, balanceQty, PO receivedQty → RECEIVED). Only the PO line's open qty is received. Skipped lines (no PO, PO not CONFIRMED / PARTIAL_RECEIVED, no code, code not on the PO, already received, not a raw material, non-stock, GRN-sourced) return in `stockIn.skipped`. A failure is logged and never fails the invoice save.
+2. 🔵 `GET /api/purchase-invoices/auto-grn-preview?from=YYYY-MM-DD`, read-only: what a backfill would receive, per material and per invoice, open qty shared across invoices oldest first.
+3. Not done: PI void does not undo the receipt (cancel the GRN; it refuses once stock is used); editing a CONFIRMED PI's qty does not re-sync the receipt; the April-October backfill runs only after the owner reads the preview.
+4. Tests: `tests/pi-auto-grn.test.mjs` (13).
+5. Canary-1123 preview, PROD data, read-only, 2026-10-28 (`from=2026-04-01`, 2.1 s): 617 live PIs scanned, 179 would stock in, 569 lines, 134 materials, RM 337,661 (Jun 38k, Jul 71k, Aug 48k, Sep 88k, Oct 92k; Apr-May none tied to a PO). Skipped lines: 808 no PO, 36 on a CLOSED PO, 23 code not on the PO, 12 already received, 6 no code, 4 non-stock. Top: 9MM 4' X 8' 1,718 (RM 47,889), NLY-D35-3" 308 (RM 29,555), 6MM MDF/B 1,016 (RM 25,300). The first canary read showed every line NO_CODE: unaliased snake_case columns come back under camelCase keys from the Postgres shim; fixed in a54d85140.
+6. Staging preview `claude-piautogrn` (staging DB), 2026-10-28: PI-2610-001 (NLY SDN BHD, PO-2609-048, 2 lines) DRAFT -> CONFIRMED. PUT 200 returned `stockIn` with GRN-2610-022 (`grn-pi-pi-8679e237`), 0 skipped. Read back: GRN POSTED / ARRIVED / PASSED, receive date 2026-10-08 (the invoice date), 2 rm_batches + 2 RM_RECEIPT at the invoice prices (78.10, 93.72), NLY-D35-2.5" 98 -> 106, NLY-D35-3" 242 -> 249, PO-2609-048 CONFIRMED -> RECEIVED (8/8, 7/7). The preview first returned 500 on staging because the route skipped `ensurePiMigrations`; fixed.
 
 ## 2026-10-27 — 🔵 HK-0116 Fab Sew sticker prints SANDBACK for a Sandback piece (branch `fix/hk0116-sandback-sticker` → `main`)
 
