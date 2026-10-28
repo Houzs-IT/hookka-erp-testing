@@ -78,8 +78,8 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `LineItemCard` | `src/pages/sales/create.tsx:3037` | Per-line item editor |
 | `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:338` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1732` | SO create + combo pass + snapshot invalidation |
-| `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3119` | SO edit + re-run combo pass |
-| `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2517` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
+| `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3127` | SO edit + re-run combo pass |
+| `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2525` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
 | `createProductionOrdersForSO` | `sales-orders/_helpers.ts:591` | One production_orders row per SO item |
 | `cascadeSOStatusToPOs` | `sales-orders/_helpers.ts:788` | Propagate SO status change to POs/JCs |
 | `rowToSO` / `rowToSOList` | `sales-orders/_helpers.ts:243 / 307` | Row → API shape (dual-keyed) |
