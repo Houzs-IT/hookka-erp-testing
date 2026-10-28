@@ -887,6 +887,7 @@ app.get("/auto-grn-preview", async (c) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
     return c.json({ success: false, error: "from=YYYY-MM-DD is required" }, 400);
   }
+  await ensurePiMigrations(c.var.DB);
   return c.json({ success: true, data: await previewPiAutoGrn(c.var.DB, getOrgId(c), from) });
 });
 
