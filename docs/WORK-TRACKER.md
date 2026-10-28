@@ -290,6 +290,7 @@ Found on HK-0114 (2026-10-26, prod read-only): the office bills PI → From PO a
 2. 🔵 `GET /api/purchase-invoices/auto-grn-preview?from=YYYY-MM-DD`, read-only: what a backfill would receive, per material and per invoice, open qty shared across invoices oldest first.
 3. Not done: PI void does not undo the receipt (cancel the GRN; it refuses once stock is used); editing a CONFIRMED PI's qty does not re-sync the receipt; the April-October backfill runs only after the owner reads the preview.
 4. Tests: `tests/pi-auto-grn.test.mjs` (13).
+5. Canary-1123 preview, PROD data, read-only, 2026-10-28 (`from=2026-04-01`, 2.1 s): 617 live PIs scanned, 179 would stock in, 569 lines, 134 materials, RM 337,661 (Jun 38k, Jul 71k, Aug 48k, Sep 88k, Oct 92k; Apr-May none tied to a PO). Skipped lines: 808 no PO, 36 on a CLOSED PO, 23 code not on the PO, 12 already received, 6 no code, 4 non-stock. Top: 9MM 4' X 8' 1,718 (RM 47,889), NLY-D35-3" 308 (RM 29,555), 6MM MDF/B 1,016 (RM 25,300). The first canary read showed every line NO_CODE: unaliased snake_case columns come back under camelCase keys from the Postgres shim; fixed in a54d85140.
 
 ## 2026-10-27 — 🔵 HK-0116 Fab Sew sticker prints SANDBACK for a Sandback piece (branch `fix/hk0116-sandback-sticker` → `main`)
 
