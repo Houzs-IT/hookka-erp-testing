@@ -80,6 +80,20 @@ import { availableQty } from "../../../lib/convert-chain";
 import { returnableByLine } from "../../../lib/delivery-return-qty";
 import { loadReturnedQtyByPo } from "../../lib/delivery-return-create";
 
+// HK-0118: creating a single-SO DO stamps its number on the SO
+// (hookkaDeliveryOrder). Deleting that DRAFT DO hands the stamp back to the
+// SO's newest remaining live DO, or blanks it — only while the SO still carries
+// the deleted DO's number, so a later DO's stamp is never clobbered.
+// Binds: salesOrderId, deleted DO id, now, salesOrderId, deleted doNo.
+export const SO_DO_STAMP_HANDBACK_SQL = `UPDATE sales_orders
+    SET hookkaDeliveryOrder = COALESCE((
+          SELECT d.doNo FROM delivery_orders d
+           WHERE d.salesOrderId = ? AND d.id <> ? AND d.status <> 'CANCELLED'
+           ORDER BY d.created_at DESC LIMIT 1
+        ), ''),
+        updated_at = ?
+  WHERE id = ? AND hookkaDeliveryOrder = ?`;
+
 // Status transitions allowed by the mock-data impl. Preserved here so the
 // frontend sees identical error messages.
 // CANCELLED (2026-08-07). A delivery order past DRAFT used to be IMMORTAL:

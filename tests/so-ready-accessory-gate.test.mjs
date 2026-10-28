@@ -161,3 +161,37 @@ test("CO twin: same gate for consignment orders", async () => {
   await cascadeUpholsteryToCO(fakeDb(done), "po-pillow");
   assert.equal(done.orders[0].status, "READY_TO_SHIP");
 });
+
+// HK-0118: SV-2610-036 was four SERVICE CHARGE POs (FAB_CUT → FAB_SEW →
+// PACKING, no UPHOLSTERY card on the whole SO). Completing them flipped the SO
+// to READY_TO_SHIP; un-completing them left it there, because the cascade
+// returned early whenever the SO had no UPHOLSTERY card at all.
+function noUphScenario(key, orderStatus, poStatus) {
+  return {
+    orders: [{ id: "o-1", status: orderStatus }],
+    pos: [1, 2].map((n) => ({
+      id: `po-${n}`, poNo: `SV-1-0${n}`, [key]: "o-1", itemCategory: "ACCESSORY", status: poStatus, stockedIn: 0,
+    })),
+    jcs: [],
+  };
+}
+
+test("HK-0118: an SO with no UPHOLSTERY card drops back to IN_PRODUCTION once its POs are un-completed", async () => {
+  const s = noUphScenario("salesOrderId", "READY_TO_SHIP", "PENDING");
+  await cascadeUpholsteryToSO(fakeDb(s), "po-1");
+  assert.equal(s.orders[0].status, "IN_PRODUCTION");
+
+  const done = noUphScenario("salesOrderId", "READY_TO_SHIP", "COMPLETED");
+  await cascadeUpholsteryToSO(fakeDb(done), "po-1");
+  assert.equal(done.orders[0].status, "READY_TO_SHIP");
+
+  const inProd = noUphScenario("salesOrderId", "IN_PRODUCTION", "COMPLETED");
+  await cascadeUpholsteryToSO(fakeDb(inProd), "po-1");
+  assert.equal(inProd.orders[0].status, "IN_PRODUCTION", "forward stays with cascadePoCompletionToSO");
+});
+
+test("HK-0118: CO twin drops back the same way", async () => {
+  const c = noUphScenario("consignmentOrderId", "READY_TO_SHIP", "PENDING");
+  await cascadeUpholsteryToCO(fakeDb(c), "po-1");
+  assert.equal(c.orders[0].status, "IN_PRODUCTION");
+});

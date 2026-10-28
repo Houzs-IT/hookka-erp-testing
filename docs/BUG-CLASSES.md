@@ -12,6 +12,8 @@
 
 > **Last verified: 2026-10-17**: branch `fix/ap-invoices-cancelled-outstanding`, to `main`, adds **C15 row 46** (AP Invoices counted cancelled documents as outstanding, BUG-2026-10-17-306). Nothing else re-checked.
 
+> **Last verified: 2026-10-28**: branch `fix/hk0118-draft-do-delete-so-stamp`, to `main`, adds **C28 row 5** (no-UPHOLSTERY order never rolled back from READY_TO_SHIP, BUG-2026-10-28-395). Nothing else re-checked.
+
 > **Last verified: 2026-10-16**: branch `feat/finance-v2-reports-4`, to `main`, adds **C15 row 45** (the P&L statement's FY-to-date % divided by the period's net sales, BUG-2026-10-16-305). Nothing else re-checked.
 
 > **Last verified: 2026-10-16**: branch `fix/po-edit-save-rowid`, to `main`, **adds C30, SQLite-only SQL reaching Postgres** (BUG-2026-10-16-300). Nothing else re-checked.
@@ -1777,6 +1779,7 @@ order-level cascades use `siblingUphGateDone` in `production-orders/_helpers.ts`
 | 2 | Consignment "ready to ship" list — completed pillows missing | ✅ 2026-07-01 (BUG-2026-07-01-004) |
 | 3 | `cascadeUpholsteryToSO` / `ToCO` / `cascadeUpholsteryRollbackToSO` — SO flipped to READY_TO_SHIP on the sofa's upholstery while its pillows were on Fab Sew | ✅ 2026-10-01 on branch `fix/dev08-accessory-so-ready` (BUG-2026-10-01-241), not deployed |
 | 4 | `poInPlanning` (`src/lib/delivery-pipeline.ts`) — an in-production pillow does not preview in the Delivery Planning tab | ⬜ left by BUG-2026-06-20-001 as lower impact; changes what the Delivery page lists, so it needs the owner's call |
+| 5 | `cascadeUpholsteryToSO` / `ToCO` returned early on an order with no UPHOLSTERY card at all, so un-completing a service / all-accessory order left it READY_TO_SHIP (SV-2610-036) | ✅ 2026-10-28 on branch `fix/hk0118-draft-do-delete-so-stamp` (BUG-2026-10-28-395), not deployed |
 
 Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return true` left in
 `_helpers.ts`; every cascade goes through `siblingUphGateDone`).

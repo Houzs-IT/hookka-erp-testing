@@ -3674,7 +3674,12 @@ export async function cascadeUpholsteryToSO(
     .bind(...sibIds)
     .all<JobCardRow>();
   const uphJcs = uphRes.results ?? [];
-  if (uphJcs.length === 0) return;
+  // HK-0118: an SO with no UPHOLSTERY card anywhere (service charge,
+  // accessories) reaches READY_TO_SHIP through cascadePoCompletionToSO, so the
+  // forward half is not needed here. The rollback half is: un-completing its
+  // cards must still drop the SO back, or it stays READY_TO_SHIP with nothing
+  // finished.
+  if (uphJcs.length === 0 && so.status !== "READY_TO_SHIP") return;
 
   // HB-only sibling POs: drop their DIVAN UPHOLSTERY JCs so the readiness
   // check doesn't wait for divan pieces the customer never ordered. See
@@ -3776,7 +3781,8 @@ export async function cascadeUpholsteryToCO(
     .bind(...sibIds)
     .all<JobCardRow>();
   const uphJcs = uphRes.results ?? [];
-  if (uphJcs.length === 0) return;
+  // HK-0118: see the SO twin.
+  if (uphJcs.length === 0 && co.status !== "READY_TO_SHIP") return;
 
   // HB-only sibling POs: drop their DIVAN UPHOLSTERY JCs (see SO twin above
   // for full rationale).

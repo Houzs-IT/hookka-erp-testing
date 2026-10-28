@@ -6833,3 +6833,9 @@ Asks, in order:
 ## 2026-10-27 — 🔵 Delivery Agent: stale pending proposals cleared on read (HK-0033 finding 2, branch `fix/hk0033-expire-stale-delivery-proposals` → `main`)
 
 1. 🔵 Proposals older than 1 day are marked EXPIRED when the Delivery tab list or the brief count is read, not only when the agent next regenerates.
+
+## 2026-10-28 — 🟡 Deleted DRAFT DO clears the SO's DO number; no-UPHOLSTERY order rolls back from READY_TO_SHIP (HK-0118, branch `fix/hk0118-draft-do-delete-so-stamp` → `main`)
+
+1. 🟡 `DELETE /api/delivery-orders/:id` hands `hookkaDeliveryOrder` back to the SO's newest remaining live DO, or blanks it (BUG-2026-10-28-395).
+2. 🟡 `cascadeUpholsteryToSO` / `ToCO` drop an order with no UPHOLSTERY card back to IN_PRODUCTION when its POs are un-completed (C28 row 5).
+3. 🟡 `scripts/fix-hk0118-sv-2610-036.mjs` repairs SV-2610-036 (DO number blanked, back to IN_PRODUCTION).

@@ -87,6 +87,7 @@ import {
   queueDoCustomerNotice,
   applyDeliveryOrderUpdate,
   buildDoUndeliverStatements,
+  SO_DO_STAMP_HANDBACK_SQL,
 } from "./delivery-orders/_helpers";
 import type {
   DeliveryOrderRow,
@@ -3277,10 +3278,15 @@ app.delete("/:id", async (c) => {
 
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare(
-    "SELECT id, status FROM delivery_orders WHERE id = ?",
+    "SELECT id, status, doNo, salesOrderId FROM delivery_orders WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; status: string }>();
+    .first<{
+      id: string;
+      status: string;
+      doNo: string | null;
+      salesOrderId: string | null;
+    }>();
   if (!existing) {
     return c.json({ success: false, error: "Delivery order not found" }, 404);
   }
@@ -3293,12 +3299,24 @@ app.delete("/:id", async (c) => {
       400,
     );
   }
-  await c.var.DB.batch([
+  const statements = [
     c.var.DB.prepare(
       "DELETE FROM delivery_order_items WHERE deliveryOrderId = ?",
     ).bind(id),
     c.var.DB.prepare("DELETE FROM delivery_orders WHERE id = ?").bind(id),
-  ]);
+  ];
+  if (existing.salesOrderId && existing.doNo) {
+    statements.push(
+      c.var.DB.prepare(SO_DO_STAMP_HANDBACK_SQL).bind(
+        existing.salesOrderId,
+        id,
+        new Date().toISOString(),
+        existing.salesOrderId,
+        existing.doNo,
+      ),
+    );
+  }
+  await c.var.DB.batch(statements);
 
   // Audit emit (P3.4) — DO deletion. before-snapshot captures the status so
   // we know what was destroyed.
@@ -3306,7 +3324,11 @@ app.delete("/:id", async (c) => {
     resource: "delivery-orders",
     resourceId: id,
     action: "delete",
-    before: { status: existing.status },
+    before: {
+      status: existing.status,
+      doNo: existing.doNo,
+      salesOrderId: existing.salesOrderId,
+    },
   });
 
   return c.json({ success: true });
