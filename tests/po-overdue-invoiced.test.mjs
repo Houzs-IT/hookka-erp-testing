@@ -68,6 +68,31 @@ test("an invoice for another PO, or a code not on this PO, does not cover it", (
   assert.equal(poIdsDeliveredInFull(items, [inv("po-h", null, "RM-9", 5)]).has("po-h"), false);
 });
 
+// HK-0119 — PO-000107 shape: the legacy line has no material code, the PI line
+// has neither a code nor a PO line, only the same material name.
+const named = (id, po, name, qty) => ({ ...item(id, po, null, qty), materialName: name });
+const invNamed = (po, name, qty, code = null) => ({ ...inv(po, null, code, qty), materialName: name });
+
+test("a code-less line matches a code-less invoice row by material name", () => {
+  const items = [named(1, "po-i", "18MM 4' X 8' MR AA PLYWOOD", 10), item(2, "po-i", "6MM MDF/B", 50)];
+  const out = poIdsDeliveredInFull(items, [
+    invNamed("po-i", " 18mm 4' x 8' mr aa plywood ", 10),
+    inv("po-i", null, "6MM MDF/B", 52),
+  ]);
+  assert.equal(out.has("po-i"), true);
+});
+
+test("name fallback: short billing stays open, and a coded invoice row never matches by name", () => {
+  const items = [named(1, "po-j", "GREEN SPONGE", 20)];
+  assert.equal(poIdsDeliveredInFull(items, [invNamed("po-j", "GREEN SPONGE", 19)]).has("po-j"), false);
+  assert.equal(poIdsDeliveredInFull(items, [invNamed("po-j", "GREEN SPONGE", 20, "D30-3\"")]).has("po-j"), false);
+});
+
+test("two code-less lines of one name share a bucket", () => {
+  const items = [named(1, "po-k", "WHITE SPONGE", 15), named(2, "po-k", "WHITE SPONGE", 25)];
+  assert.equal(poIdsDeliveredInFull(items, [invNamed("po-k", "WHITE SPONGE", 40)]).has("po-k"), true);
+});
+
 test("/stats flags deliveredInFull and the page's overdue check skips it", () => {
   const route = readFileSync(resolve(process.cwd(), "src/api/routes/purchase-orders.ts"), "utf8");
   const lib = readFileSync(resolve(process.cwd(), "src/api/lib/po-delivered.ts"), "utf8");
