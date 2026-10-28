@@ -4440,110 +4440,14 @@ app.put("/:id", async (c) => {
       existing.status !== "CANCELLED";
 
     if (recascadeApplicable) {
-      try {
-        type PoLite = {
-          id: string;
-          itemCategory: string;
-        };
-        type JcLite = {
-          id: string;
-          productionOrderId: string;
-          departmentCode: string | null;
-          completedDate: string | null;
-        };
-        const [posRes, jcsRes, leadTimes, hookkaDDBuffer, leadTimeSettings] =
-          await Promise.all([
-            c.var.DB
-              .prepare(
-                `SELECT id, itemCategory FROM production_orders WHERE salesOrderId = ?`,
-              )
-              .bind(id)
-              .all<PoLite>(),
-            c.var.DB
-              .prepare(
-                `SELECT jc.id, jc.productionOrderId, jc.departmentCode, jc.completedDate
-                   FROM job_cards jc
-                   JOIN production_orders po ON po.id = jc.productionOrderId
-                  WHERE po.salesOrderId = ?`,
-              )
-              .bind(id)
-              .all<JcLite>(),
-            loadLeadTimes(c.var.DB),
-            loadHookkaDDBuffer(c.var.DB),
-            loadLeadTimeSettings(c.var.DB),
-          ]);
-        // Auto-schedule OFF => header-date change still moves PO targetEndDate
-        // (the delivery anchor) but must NOT overwrite job_card dueDates, so
-        // any dates staff entered manually are preserved.
-        const autoSchedule = leadTimeSettings.autoScheduleEnabled;
-        const pos = posRes.results ?? [];
-        const jcs = jcsRes.results ?? [];
-        const anchorByPoId = new Map<string, string>();
-        const updateStmts: D1PreparedStatement[] = [];
-
-        for (const po of pos) {
-          const category = po.itemCategory || "BEDFRAME";
-          const buf = hookkaDDBufferFor(hookkaDDBuffer, category);
-          // Same anchor formula as production-builder.ts:488-494.
-          // explicit hookkaExpectedDD wins; else customerDD minus buffer.
-          const anchor = hookkaDDAfter
-            ? hookkaDDAfter
-            : customerDDAfter
-              ? addDays(customerDDAfter, -buf)
-              : "";
-          if (!anchor) continue;
-          anchorByPoId.set(po.id, anchor);
-          updateStmts.push(
-            c.var.DB
-              .prepare(
-                `UPDATE production_orders SET targetEndDate = ?, updated_at = ? WHERE id = ?`,
-              )
-              .bind(anchor, now, po.id),
-          );
-        }
-
-        const poCategoryById = new Map<string, string>();
-        for (const po of pos) poCategoryById.set(po.id, po.itemCategory || "BEDFRAME");
-
-        // Auto-schedule OFF => leave every JC dueDate untouched (manual entry).
-        for (const jc of autoSchedule ? jcs : []) {
-          // Skip work that's already done — re-dating completed JCs is wrong.
-          if (jc.completedDate && jc.completedDate !== "") continue;
-          const anchor = anchorByPoId.get(jc.productionOrderId);
-          if (!anchor) continue;
-          const category = poCategoryById.get(jc.productionOrderId) || "BEDFRAME";
-          const deptCode = jc.departmentCode || "";
-          if (!deptCode) continue;
-          const leadDays = leadDaysFor(leadTimes, category, deptCode);
-          const newDueDate = addDays(anchor, -leadDays);
-          updateStmts.push(
-            c.var.DB
-              .prepare(
-                // SENT-LOCK (owner 2026-08-03): re-deriving due dates from a
-                // changed SO date must not touch cards already sent to the
-                // floor — those dates are committed to the departments.
-                `UPDATE job_cards SET dueDate = ?, updated_at = ?
-                  WHERE id = ? AND (distributedAt IS NULL OR distributedAt = '')`,
-              )
-              .bind(newDueDate, now, jc.id),
-          );
-        }
-
-        if (updateStmts.length > 0) {
-          await c.var.DB.batch(updateStmts);
-          console.log(
-            `[so-PUT ${id}] header-date re-cascade: ${pos.length} PO targetEndDate + ${updateStmts.length - pos.length} JC dueDate updated (new customerDD=${customerDDAfter} hookkaExpectedDD=${hookkaDDAfter})`,
-          );
-        }
-      } catch (err) {
-        // Best-effort — header save already committed, the cascade is a
-        // follow-up convenience. Surface in logs so we can chase any
-        // patterns of failure, but don't fail the PUT.
-        console.warn(
-          `[so-PUT ${id}] header-date re-cascade failed:`,
-          err instanceof Error ? err.message : err,
-        );
-      }
+      await redateProductionFromSODates(
+        c.var.DB,
+        id,
+        customerDDAfter,
+        hookkaDDAfter,
+        now,
+        "so-PUT",
+      );
     }
 
     const updated = await fetchSOWithItems(c.var.DB, id);
@@ -5692,6 +5596,252 @@ app.patch("/:id/customer", async (c) => {
     console.error("[PATCH /api/sales-orders/:id/customer] failed:", msg, err);
     return c.json(
       { success: false, error: msg || "Internal error updating customer" },
+      500,
+    );
+  }
+});
+
+// In-place re-date of an SO's production orders + job cards after its header
+// dates change (BUG-2026-05-09-004). Shared by PUT /:id and PATCH /:id/dates.
+// Best-effort: the caller has already committed the SO row.
+async function redateProductionFromSODates(
+  db: D1Database,
+  soId: string,
+  customerDDAfter: string,
+  hookkaDDAfter: string,
+  now: string,
+  tag: string,
+): Promise<{ productionOrders: number; jobCards: number } | null> {
+  try {
+    type PoLite = {
+      id: string;
+      itemCategory: string;
+    };
+    type JcLite = {
+      id: string;
+      productionOrderId: string;
+      departmentCode: string | null;
+      completedDate: string | null;
+    };
+    const [posRes, jcsRes, leadTimes, hookkaDDBuffer, leadTimeSettings] =
+      await Promise.all([
+        db
+          .prepare(
+            `SELECT id, itemCategory FROM production_orders WHERE salesOrderId = ?`,
+          )
+          .bind(soId)
+          .all<PoLite>(),
+        db
+          .prepare(
+            `SELECT jc.id, jc.productionOrderId, jc.departmentCode, jc.completedDate
+               FROM job_cards jc
+               JOIN production_orders po ON po.id = jc.productionOrderId
+              WHERE po.salesOrderId = ?`,
+          )
+          .bind(soId)
+          .all<JcLite>(),
+        loadLeadTimes(db),
+        loadHookkaDDBuffer(db),
+        loadLeadTimeSettings(db),
+      ]);
+    // Auto-schedule OFF => header-date change still moves PO targetEndDate
+    // (the delivery anchor) but must NOT overwrite job_card dueDates, so
+    // any dates staff entered manually are preserved.
+    const autoSchedule = leadTimeSettings.autoScheduleEnabled;
+    const pos = posRes.results ?? [];
+    const jcs = jcsRes.results ?? [];
+    const anchorByPoId = new Map<string, string>();
+    const updateStmts: D1PreparedStatement[] = [];
+
+    for (const po of pos) {
+      const category = po.itemCategory || "BEDFRAME";
+      const buf = hookkaDDBufferFor(hookkaDDBuffer, category);
+      // Same anchor formula as production-builder.ts:488-494.
+      // explicit hookkaExpectedDD wins; else customerDD minus buffer.
+      const anchor = hookkaDDAfter
+        ? hookkaDDAfter
+        : customerDDAfter
+          ? addDays(customerDDAfter, -buf)
+          : "";
+      if (!anchor) continue;
+      anchorByPoId.set(po.id, anchor);
+      updateStmts.push(
+        db
+          .prepare(
+            `UPDATE production_orders SET targetEndDate = ?, updated_at = ? WHERE id = ?`,
+          )
+          .bind(anchor, now, po.id),
+      );
+    }
+
+    const poCategoryById = new Map<string, string>();
+    for (const po of pos) poCategoryById.set(po.id, po.itemCategory || "BEDFRAME");
+
+    // Auto-schedule OFF => leave every JC dueDate untouched (manual entry).
+    for (const jc of autoSchedule ? jcs : []) {
+      // Skip work that's already done — re-dating completed JCs is wrong.
+      if (jc.completedDate && jc.completedDate !== "") continue;
+      const anchor = anchorByPoId.get(jc.productionOrderId);
+      if (!anchor) continue;
+      const category = poCategoryById.get(jc.productionOrderId) || "BEDFRAME";
+      const deptCode = jc.departmentCode || "";
+      if (!deptCode) continue;
+      const leadDays = leadDaysFor(leadTimes, category, deptCode);
+      const newDueDate = addDays(anchor, -leadDays);
+      updateStmts.push(
+        db
+          .prepare(
+            // SENT-LOCK (owner 2026-08-03): re-deriving due dates from a
+            // changed SO date must not touch cards already sent to the
+            // floor — those dates are committed to the departments.
+            `UPDATE job_cards SET dueDate = ?, updated_at = ?
+              WHERE id = ? AND (distributedAt IS NULL OR distributedAt = '')`,
+          )
+          .bind(newDueDate, now, jc.id),
+      );
+    }
+
+    if (updateStmts.length > 0) {
+      await db.batch(updateStmts);
+      console.log(
+        `[${tag} ${soId}] header-date re-cascade: ${pos.length} PO targetEndDate + ${updateStmts.length - pos.length} JC dueDate updated (new customerDD=${customerDDAfter} hookkaExpectedDD=${hookkaDDAfter})`,
+      );
+    }
+    return {
+      productionOrders: anchorByPoId.size,
+      jobCards: updateStmts.length - anchorByPoId.size,
+    };
+  } catch (err) {
+    console.warn(
+      `[${tag} ${soId}] header-date re-cascade failed:`,
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/sales-orders/:id/dates — change Customer DD / Hookka Expected DD
+// without the full edit (HK-0121). PUT refuses header edits once a PO is
+// COMPLETED or a job card has started, but a customer moving the delivery
+// date is routine at any stage. Frozen from DELIVERED on: customerDeliveryDate
+// is what on-time delivery is scored against (on-time-delivery.ts).
+//
+// Body: { customerDeliveryDate?: string, hookkaExpectedDD?: string }
+// ---------------------------------------------------------------------------
+const SO_DATES_FROZEN_STATUSES = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED"]);
+
+app.patch("/:id/dates", async (c) => {
+  const denied = await requirePermission(c, "sales-orders", "update");
+  if (denied) return denied;
+  if (isCustomerScoped(c)) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
+  const id = c.req.param("id");
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const fields = (["customerDeliveryDate", "hookkaExpectedDD"] as const).filter(
+      (f) => f in body,
+    );
+    if (fields.length === 0) {
+      return c.json({ success: false, error: "No date to change" }, 400);
+    }
+    for (const f of fields) {
+      if (body[f] === null) body[f] = "";
+      if (typeof body[f] !== "string") {
+        return c.json({ success: false, error: `${f} must be a date string` }, 400);
+      }
+    }
+    const dateErr = normaliseBodyDates(body, [...fields]);
+    if (dateErr) return c.json({ success: false, error: dateErr }, 400);
+    if (fields.includes("customerDeliveryDate") && !String(body.customerDeliveryDate).trim()) {
+      return c.json({ success: false, error: "Customer DD cannot be blank" }, 400);
+    }
+
+    const so = await c.var.DB
+      .prepare("SELECT * FROM sales_orders WHERE id = ?")
+      .bind(id)
+      .first<SalesOrderRow>();
+    if (!so) {
+      return c.json({ success: false, error: "Sales order not found" }, 404);
+    }
+    if (SO_DATES_FROZEN_STATUSES.has(so.status)) {
+      return c.json(
+        {
+          success: false,
+          error: `This order is ${so.status} — delivery dates can no longer be changed.`,
+        },
+        409,
+      );
+    }
+
+    const customerDDBefore = (so.customerDeliveryDate ?? "").slice(0, 10);
+    const hookkaDDBefore = (so.hookkaExpectedDD ?? "").slice(0, 10);
+    const customerDDAfter = fields.includes("customerDeliveryDate")
+      ? String(body.customerDeliveryDate).trim()
+      : customerDDBefore;
+    const hookkaDDAfter = fields.includes("hookkaExpectedDD")
+      ? String(body.hookkaExpectedDD).trim()
+      : hookkaDDBefore;
+    if (customerDDAfter === customerDDBefore && hookkaDDAfter === hookkaDDBefore) {
+      return c.json({ success: true, data: rowToSO(so, []), cascade: null });
+    }
+
+    const now = new Date().toISOString();
+    await c.var.DB
+      .prepare(
+        `UPDATE sales_orders
+            SET customerDeliveryDate = ?, hookkaExpectedDD = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(customerDDAfter, hookkaDDAfter, now, so.id)
+      .run();
+
+    const cascade =
+      so.status === "DRAFT" || so.status === "PENDING"
+        ? null
+        : await redateProductionFromSODates(
+            c.var.DB,
+            so.id,
+            customerDDAfter,
+            hookkaDDAfter,
+            now,
+            "so-PATCH-dates",
+          );
+
+    try {
+      const orgId = getOrgId(c);
+      await invalidateHubChangeSnapshots(c.var.DB, orgId, "sales");
+      await bumpPoListCacheVersion(c, orgId);
+    } catch (err) {
+      console.warn(
+        "[PATCH /api/sales-orders/:id/dates] cache invalidation failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    await emitAudit(c, {
+      resource: "sales-orders",
+      resourceId: so.id,
+      action: "dates-change",
+      before: { customerDeliveryDate: customerDDBefore, hookkaExpectedDD: hookkaDDBefore },
+      after: { customerDeliveryDate: customerDDAfter, hookkaExpectedDD: hookkaDDAfter },
+    });
+
+    const updated = await c.var.DB
+      .prepare("SELECT * FROM sales_orders WHERE id = ?")
+      .bind(so.id)
+      .first<SalesOrderRow>();
+    return c.json({
+      success: true,
+      data: updated ? rowToSO(updated, []) : null,
+      cascade,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[PATCH /api/sales-orders/:id/dates] failed:", msg, err);
+    return c.json(
+      { success: false, error: msg || "Internal error updating dates" },
       500,
     );
   }

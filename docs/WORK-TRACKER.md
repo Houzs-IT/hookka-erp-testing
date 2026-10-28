@@ -282,6 +282,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-28 — 🔵 HK-0121 SO detail: pencil on Customer DD + Hookka Expected DD (branch `fix/hk0121-so-dd-pencil` → `main`)
+
+Siti (office, HK-0121): wants a pencil like Customer's to change both dates anytime. Today they only change through the full PUT, which refuses once a PO is COMPLETED or a job card has started.
+
+1. 🔵 `PATCH /api/sales-orders/:id/dates` + `DatesEditModal`. Frozen from DELIVERED / INVOICED / CLOSED / CANCELLED (Customer DD is the on-time delivery base). PO targetEndDate / JC dueDate re-dated by the PUT's own logic, now shared as `redateProductionFromSODates`. Audit action `dates-change`.
+2. ⏳ Siti tries Save on the canary.
+
 ## 2026-10-28 — 🔵 HK-0120 Invoice prices each piece from its own SO line when lines share a key (branch `fix/hk0120-dup-line-invoice-price` → `main`)
 
 Siti (office, HK-0120): SV-2610-035 is RM 1,950 but INV-2610-103 is RM 2,160. Measured on prod 2026-10-28 (read-only): six SERVICE CHARGE lines share product / size / fabric, and `priceForItem`'s first-one-wins map billed all 8 pieces at line 1's RM 270. 10 orders have the shape, 9 invoiced. BUG-2026-10-28-398.

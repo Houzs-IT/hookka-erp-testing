@@ -21,6 +21,7 @@ import {
 import { CreateServiceCaseModal } from "@/pages/service-cases";
 import { HubEditModal } from "@/components/orders/HubEditModal";
 import { CustomerEditModal } from "@/components/orders/CustomerEditModal";
+import { DatesEditModal } from "@/components/orders/DatesEditModal";
 // generateSOPdf is dynamic-imported at the click handler so the 1MB jspdf
 // vendor chunk only ships when the user actually prints.
 import { DocumentChainMap } from "@/components/ui/document-chain-map";
@@ -542,6 +543,13 @@ export default function SalesOrderDetailPage() {
       ),
     [orderResp],
   );
+  // Delivery-date pencil (HK-0121) — must match PATCH /:id/dates.
+  const [datesModalOpen, setDatesModalOpen] = useState(false);
+  const datesLockReason =
+    order && ["DELIVERED", "INVOICED", "CLOSED", "CANCELLED"].includes(order.status)
+      ? `Dates locked: order already ${order.status}.`
+      : "";
+
   const customerLockReason = shippedDo
     ? `Customer locked: DO ${shippedDo.doNo} already ${shippedDo.status}.`
     : issuedInvoice
@@ -1420,6 +1428,27 @@ export default function SalesOrderDetailPage() {
         }}
       />
 
+      {datesModalOpen && (
+        <DatesEditModal
+          open={datesModalOpen}
+          endpoint={`/api/sales-orders/${order.id}/dates`}
+          currentCustomerDD={order.customerDeliveryDate}
+          currentHookkaDD={order.hookkaExpectedDD}
+          onClose={() => setDatesModalOpen(false)}
+          onSaved={(cascade) => {
+            setDatesModalOpen(false);
+            let msg = "Delivery dates updated.";
+            if (cascade && (cascade.productionOrders > 0 || cascade.jobCards > 0)) {
+              msg += ` Re-dated ${cascade.productionOrders} production order${cascade.productionOrders === 1 ? "" : "s"} and ${cascade.jobCards} job card${cascade.jobCards === 1 ? "" : "s"}.`;
+            }
+            toast.success(msg);
+            invalidateCachePrefix("/api/sales-orders");
+            invalidateCachePrefix("/api/production-orders");
+            fetchOrder();
+          }}
+        />
+      )}
+
       <HubEditModal
         open={hubModalOpen}
         endpoint={`/api/sales-orders/${order.id}/hub`}
@@ -1556,8 +1585,36 @@ export default function SalesOrderDetailPage() {
               <div><p className="text-xs text-[#9CA3AF]">Customer SO</p><p className="font-medium doc-number">{order.customerSOId || "-"}</p></div>
               <div><p className="text-xs text-[#9CA3AF]">Reference</p><p className="font-medium">{order.reference || "-"}</p></div>
               <div><p className="text-xs text-[#9CA3AF]">Company SO Date</p><p className="font-medium">{formatDate(order.companySODate)}</p></div>
-              <div><p className="text-xs text-[#9CA3AF]">Customer DD</p><p className="font-medium">{order.customerDeliveryDate ? formatDate(order.customerDeliveryDate) : "-"}</p></div>
-              <div><p className="text-xs text-[#9CA3AF]">Hookka Expected DD</p><p className="font-medium">{order.hookkaExpectedDD ? formatDate(order.hookkaExpectedDD) : "-"}</p></div>
+              <div>
+                <p className="text-xs text-[#9CA3AF]">Customer DD</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{order.customerDeliveryDate ? formatDate(order.customerDeliveryDate) : "-"}</p>
+                  <button
+                    type="button"
+                    onClick={() => setDatesModalOpen(true)}
+                    disabled={!!datesLockReason}
+                    title={datesLockReason || "Change delivery dates"}
+                    className="text-[#9CA3AF] hover:text-[#6B5C32] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-[#9CA3AF]">Hookka Expected DD</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{order.hookkaExpectedDD ? formatDate(order.hookkaExpectedDD) : "-"}</p>
+                  <button
+                    type="button"
+                    onClick={() => setDatesModalOpen(true)}
+                    disabled={!!datesLockReason}
+                    title={datesLockReason || "Change delivery dates"}
+                    className="text-[#9CA3AF] hover:text-[#6B5C32] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
               <div><p className="text-xs text-[#9CA3AF]">Delivery Order</p><p className="font-medium doc-number">{order.hookkaDeliveryOrder || "-"}</p></div>
             </div>
             {order.notes && (
