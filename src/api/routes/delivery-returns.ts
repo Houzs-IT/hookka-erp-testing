@@ -11,7 +11,7 @@
 // later phases. Deploy does NOT replay migration files, so the tables are
 // self-applied at runtime (see 0207_delivery_returns.sql for the record copy).
 // ---------------------------------------------------------------------------
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { idempotent } from "../lib/idempotency";
@@ -448,6 +448,35 @@ export async function buildUndoReturnToStockStatements(
   return { ok: true, statements, undoneCogsSen: fg.undoneCogsSen };
 }
 
+// Status flip that fails loudly: the UPDATE only matches the status the caller
+// read, and the trailing check raises (division by zero) when it matched
+// nothing, so a batch holding stock changes rolls back instead of committing
+// next to a return that someone else already resolved.
+const STATUS_RACE_ERROR = "This return was changed by someone else just now. Reload and check.";
+function flipStatus(db: D1Database, sql: string, binds: unknown[], id: string, to: string, now: string) {
+  return [
+    db.prepare(sql).bind(...binds),
+    db
+      .prepare(
+        `SELECT 1 / CASE WHEN EXISTS (
+           SELECT 1 FROM delivery_returns WHERE id = ? AND status = ? AND updated_at = ?
+         ) THEN 1 ELSE 0 END AS "flipped"`,
+      )
+      .bind(id, to, now),
+  ];
+}
+async function runFlip(c: Context<Env>, statements: D1PreparedStatement[]) {
+  try {
+    await c.var.DB.batch(statements);
+    return null;
+  } catch (err) {
+    if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
+      return c.json({ success: false, error: STATUS_RACE_ERROR }, 409);
+    }
+    throw err;
+  }
+}
+
 app.post("/:id/return-to-stock", async (c) => {
   const denied = await requirePermission(c, "delivery-returns", "update");
   if (denied) return denied;
@@ -481,12 +510,18 @@ app.post("/:id/return-to-stock", async (c) => {
     now,
   );
   statements.push(
-    c.var.DB.prepare(
-      `UPDATE delivery_returns SET status='RETURNED_TO_STOCK', returned_at=?, updated_at=? WHERE id=?`,
-    ).bind(now, now, id),
+    ...flipStatus(
+      c.var.DB,
+      `UPDATE delivery_returns SET status='RETURNED_TO_STOCK', returned_at=?, updated_at=? WHERE id=? AND status='OPEN'`,
+      [now, now, id],
+      id,
+      "RETURNED_TO_STOCK",
+      now,
+    ),
   );
 
-  await c.var.DB.batch(statements);
+  const lost = await runFlip(c, statements);
+  if (lost) return lost;
   return c.json({ success: true, reversedCogsSen });
 });
 
@@ -531,23 +566,29 @@ app.post("/:id/set-outcome", async (c) => {
     statements.push(...rts.statements);
   }
   statements.push(
-    c.var.DB.prepare(
+    ...flipStatus(
+      c.var.DB,
       `UPDATE delivery_returns
           SET return_type=?, status=?, service_case_id=?, service_order_id=?, credit_note_id=?,
               returned_at=COALESCE(?, returned_at), updated_at=?
-        WHERE id=?`,
-    ).bind(
-      type,
-      status,
-      String(body.serviceCaseId ?? ""),
-      String(body.serviceOrderId ?? ""),
-      String(body.creditNoteId ?? ""),
-      type === "PURE_RETURN" ? now : null,
-      now,
+        WHERE id=? AND status='OPEN'`,
+      [
+        type,
+        status,
+        String(body.serviceCaseId ?? ""),
+        String(body.serviceOrderId ?? ""),
+        String(body.creditNoteId ?? ""),
+        type === "PURE_RETURN" ? now : null,
+        now,
+        id,
+      ],
       id,
+      status,
+      now,
     ),
   );
-  await c.var.DB.batch(statements);
+  const lost = await runFlip(c, statements);
+  if (lost) return lost;
   return c.json({ success: true });
 });
 
@@ -558,12 +599,27 @@ app.post("/:id/mark-redelivered", async (c) => {
   await ensureDeliveryReturnTables(c.var.DB);
   const id = c.req.param("id");
   const now = new Date().toISOString();
-  await c.var.DB
-    .prepare(
-      `UPDATE delivery_returns SET status='REDELIVERED', updated_at=? WHERE id=?`,
-    )
-    .bind(now, id)
-    .run();
+  const h = await c.var.DB
+    .prepare(`SELECT status FROM delivery_returns WHERE id = ?`)
+    .bind(id)
+    .first<{ status: string }>();
+  if (!h) return c.json({ success: false, error: "Not found" }, 404);
+  // Only a repair that was handed to service can come back as re-delivered.
+  if (h.status !== "SERVICE_SPAWNED") {
+    return c.json({ success: false, error: `Cannot mark a ${h.status} return as re-delivered` }, 409);
+  }
+  const lost = await runFlip(
+    c,
+    flipStatus(
+      c.var.DB,
+      `UPDATE delivery_returns SET status='REDELIVERED', updated_at=? WHERE id=? AND status='SERVICE_SPAWNED'`,
+      [now, id],
+      id,
+      "REDELIVERED",
+      now,
+    ),
+  );
+  if (lost) return lost;
   return c.json({ success: true });
 });
 
@@ -608,11 +664,18 @@ app.post("/:id/cancel", async (c) => {
     }
     return c.json({ success: true, undoneCogsSen: undo.undoneCogsSen });
   }
-  await c.var.DB
-    .prepare(
-      `UPDATE delivery_returns SET status='CANCELLED', updated_at=? WHERE id=?`,
-    )
-    .bind(new Date().toISOString(), id)
-    .run();
+  const now = new Date().toISOString();
+  const lost = await runFlip(
+    c,
+    flipStatus(
+      c.var.DB,
+      `UPDATE delivery_returns SET status='CANCELLED', updated_at=? WHERE id=? AND status=?`,
+      [now, id, h.status],
+      id,
+      "CANCELLED",
+      now,
+    ),
+  );
+  if (lost) return lost;
   return c.json({ success: true });
 });

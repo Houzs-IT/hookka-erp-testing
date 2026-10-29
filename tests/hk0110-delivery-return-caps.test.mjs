@@ -293,3 +293,26 @@ test("the driver QR flow does not drop a refused delivery return silently", () =
   const qr = read("src/api/routes/public-do-qr.ts");
   assert.match(qr, /const dr = await createDeliveryReturnRecord\(c\.var\.DB, orgId, \{[\s\S]*?\}\);\n\s*if \(!dr\.ok\) throw new Error\(dr\.error\);[^\n]*\n\s*\}\n\s*\} catch \(drErr\) \{\n\s*console\.warn\(/);
 });
+
+// ===========================================================================
+// Status flips are guarded: restock + cancel at once on the same OPEN return
+// must not leave a CANCELLED return whose stock was credited.
+// ===========================================================================
+test("every status UPDATE carries the from-status, and a lost flip rolls the batch back with 409", () => {
+  const api = read("src/api/routes/delivery-returns.ts");
+  assert.match(api, /status='RETURNED_TO_STOCK', returned_at=\?, updated_at=\? WHERE id=\? AND status='OPEN'/);
+  assert.match(api, /credit_note_id=\?,\s+returned_at=COALESCE\(\?, returned_at\), updated_at=\?\s+WHERE id=\? AND status='OPEN'/);
+  assert.match(api, /status='CANCELLED', updated_at=\? WHERE id=\? AND status=\?/);
+  assert.match(api, /status='REDELIVERED', updated_at=\? WHERE id=\? AND status='SERVICE_SPAWNED'/);
+  // the check statement raises when the UPDATE matched nothing, inside the same batch
+  assert.match(api, /SELECT 1 \/ CASE WHEN EXISTS \(\s+SELECT 1 FROM delivery_returns WHERE id = \? AND status = \? AND updated_at = \?\s+\) THEN 1 ELSE 0 END AS "flipped"/);
+  assert.match(api, /division by zero[\s\S]*?\{ success: false, error: STATUS_RACE_ERROR \}, 409/);
+  const rts = api.slice(api.indexOf('app.post("/:id/return-to-stock"'), api.indexOf('app.post("/:id/set-outcome"'));
+  assert.match(rts, /\.\.\.flipStatus\([\s\S]*?\);\s+const lost = await runFlip\(c, statements\)/);
+});
+
+test("mark-redelivered is allowed only from SERVICE_SPAWNED", () => {
+  const api = read("src/api/routes/delivery-returns.ts");
+  const mr = api.slice(api.indexOf('app.post("/:id/mark-redelivered"'), api.indexOf('app.post("/:id/cancel"'));
+  assert.match(mr, /if \(h\.status !== "SERVICE_SPAWNED"\) \{[\s\S]*?, 409\)/);
+});

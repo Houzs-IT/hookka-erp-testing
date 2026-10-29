@@ -3202,7 +3202,45 @@ export async function createDeliveryOrderForPOs(
     // also the invoice boundary). See the PUT handler "Phase-4 stamp on
     // dispatch" block.
 
-    await c.var.DB.batch(statements);
+    // Race backstop for validateDoComposition's read-then-write check: lock
+    // each production order (released at COMMIT, sorted so two creates can't
+    // deadlock), then raise if another live DO already holds any of them.
+    const lockPoIds = [
+      ...new Set(items.map((i) => i.productionOrderId).filter((x): x is string => !!x)),
+    ].sort();
+    if (lockPoIds.length > 0) {
+      statements.unshift(
+        ...lockPoIds.map((poId) =>
+          c.var.DB.prepare(
+            `SELECT pg_advisory_xact_lock(hashtext('do_po:' || ?)::bigint)`,
+          ).bind(poId),
+        ),
+        c.var.DB.prepare(
+          `SELECT 1 / CASE WHEN EXISTS (
+             SELECT 1 FROM delivery_order_items di
+               JOIN delivery_orders d ON d.id = di.deliveryOrderId
+              WHERE di.productionOrderId IN (${lockPoIds.map(() => "?").join(",")})
+                AND d.status != 'CANCELLED' AND d.id != ?
+           ) THEN 0 ELSE 1 END AS "poFree"`,
+        ).bind(...lockPoIds, id),
+      );
+    }
+    try {
+      await c.var.DB.batch(statements);
+    } catch (err) {
+      if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
+        return {
+          ok: false,
+          status: 409,
+          body: {
+            success: false,
+            error:
+              "These production orders are already on a delivery order: another delivery order was created at the same time. Remove them from the selection.",
+          },
+        };
+      }
+      throw err;
+    }
 
     // The row is committed from here on — let multi-DO callers track it for
     // rollback even if the re-read or audit emit below throws.

@@ -174,3 +174,24 @@ test("a line naming a PO outside the selected set is refused", async () => {
   assert.equal(out.status, 400);
   assert.equal(wroteDo(log), false);
 });
+
+// Race: two creates with different idempotency keys both pass the pre-check
+// (nothing committed yet). The save batch itself must lock each PO and raise
+// when another live DO holds it, and the raise must come back as the same 409.
+test("save batch locks each PO then raises if another live DO holds it; a lost race is a 409", async () => {
+  const { c, log } = fakeCtx();
+  const batches = [];
+  c.var.DB.batch = async (stmts) => {
+    batches.push(stmts.map((s) => s.sql));
+    throw new Error("division by zero");
+  };
+  // pre-check sees nothing (race), so po-2 reaches the save
+  const out = await createDeliveryOrderForPOs(c, { salesOrderId: "so-1", productionOrderIds: ["po-2"] });
+  const sqls = batches[0];
+  assert.match(sqls[0], /^SELECT pg_advisory_xact_lock\(hashtext\('do_po:' \|\| \?\)::bigint\)$/);
+  const guard = sqls.findIndex((s) => /^SELECT 1 \/ CASE WHEN EXISTS \(.*delivery_order_items di JOIN delivery_orders d.*d\.status != 'CANCELLED' AND d\.id != \?/.test(s));
+  assert.ok(guard > 0, "guard follows the lock");
+  assert.equal(out.ok, false);
+  assert.equal(out.status, 409);
+  assert.match(String(out.body.error), /already on a delivery order/);
+});
