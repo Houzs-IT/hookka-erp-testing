@@ -624,8 +624,8 @@ app.post("/extract", async (c) => {
     try {
       await (c.var.DB as unknown as DBLike)
         .prepare(
-          `INSERT INTO po_scan_samples (id, customerHint, poIdentifier, rawExtracted, correctedJson, createdBy)
-           VALUES (?, ?, ?, ?, NULL, ?)`,
+          `INSERT INTO po_scan_samples (id, customerHint, poIdentifier, rawExtracted, correctedJson, createdBy, orgId)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`,
         )
         .bind(
           sampleId,
@@ -633,6 +633,7 @@ app.post("/extract", async (c) => {
           null,
           JSON.stringify({ error: engineResult.error }),
           createdBy,
+          orgId,
         )
         .run();
     } catch (e) {
@@ -694,8 +695,8 @@ app.post("/extract", async (c) => {
     try {
       await (c.var.DB as unknown as DBLike)
         .prepare(
-          `INSERT INTO po_scan_samples (id, customerHint, poIdentifier, rawExtracted, correctedJson, createdBy)
-           VALUES (?, ?, ?, ?, NULL, ?)`,
+          `INSERT INTO po_scan_samples (id, customerHint, poIdentifier, rawExtracted, correctedJson, createdBy, orgId)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`,
         )
         .bind(
           sampleId,
@@ -703,6 +704,7 @@ app.post("/extract", async (c) => {
           po.customerPO ?? null,
           rawExtracted,
           createdBy,
+          orgId,
         )
         .run();
     } catch (e) {
@@ -794,13 +796,13 @@ app.post("/samples/:id/confirm", async (c) => {
   const result = pickedHint
     ? await (c.var.DB as unknown as DBLike)
         .prepare(
-          "UPDATE po_scan_samples SET correctedJson = ?, isGold = ?, customerHint = ? WHERE id = ?",
+          "UPDATE po_scan_samples SET correctedJson = ?, isGold = ?, customerHint = ? WHERE id = ? AND orgId = ?",
         )
-        .bind(payload, goldFlag, pickedHint, id)
+        .bind(payload, goldFlag, pickedHint, id, getOrgId(c))
         .run()
     : await (c.var.DB as unknown as DBLike)
-        .prepare("UPDATE po_scan_samples SET correctedJson = ?, isGold = ? WHERE id = ?")
-        .bind(payload, goldFlag, id)
+        .prepare("UPDATE po_scan_samples SET correctedJson = ?, isGold = ? WHERE id = ? AND orgId = ?")
+        .bind(payload, goldFlag, id, getOrgId(c))
         .run();
 
   if (!result.success || result.meta.changes === 0) {
@@ -812,8 +814,8 @@ app.post("/samples/:id/confirm", async (c) => {
 
   // HK-0005: keep the mistake, not only the corrected answer.
   const rawRow = await (c.var.DB as unknown as DBLike)
-    .prepare("SELECT rawExtracted FROM po_scan_samples WHERE id = ?")
-    .bind(id)
+    .prepare("SELECT rawExtracted FROM po_scan_samples WHERE id = ? AND orgId = ?")
+    .bind(id, getOrgId(c))
     .first<{ rawExtracted: string | null }>()
     .catch(() => null);
   await learnFromConfirm(c.var.DB as never, {
@@ -822,6 +824,7 @@ app.post("/samples/:id/confirm", async (c) => {
     scopeId: pickedCustomerId,
     raw: rawRow?.rawExtracted,
     corrected,
+    sampleId: id,
   });
 
   let distillQueued = false;

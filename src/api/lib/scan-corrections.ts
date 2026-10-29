@@ -43,8 +43,9 @@ function rawDocFor(kind: ScanKind, raw: unknown, corrected: unknown): Rec {
   return docs.find((d) => want && correctionKey(d.docNo) === want) ?? docs[0];
 }
 
-/** Field-level mistakes between a raw extraction and what the operator filed. */
-export function diffCorrections(kind: ScanKind, raw: unknown, corrected: unknown): FieldCorrection[] {
+// Every (field, raw, final) triple of the aligned lines; [] when the operator
+// restructured the doc.
+function linePairs(kind: ScanKind, raw: unknown, corrected: unknown): FieldCorrection[] {
   const { lines, fields } = SHAPE[kind];
   const rl = arr(rawDocFor(kind, raw, corrected)[lines]);
   const cl = arr(rec(corrected)[lines]);
@@ -58,11 +59,35 @@ export function diffCorrections(kind: ScanKind, raw: unknown, corrected: unknown
       const rawValue = String(rl[i][field] ?? "").trim();
       const correctedValue = String(cl[i][field] ?? "").trim();
       if (!rawValue || !correctedValue) continue;
-      if (correctionKey(rawValue) === correctionKey(correctedValue)) continue;
       out.push({ field, rawValue, correctedValue });
     }
   }
   return out;
+}
+const unchanged = (c: FieldCorrection) => correctionKey(c.rawValue) === correctionKey(c.correctedValue);
+const pairKey = (c: FieldCorrection) => correctionMapKey(c.field, c.rawValue);
+
+/**
+ * Field-level mistakes between a raw extraction and what the operator filed.
+ * One entry per (field, raw): two lines with the same misread are ONE decision.
+ */
+export function diffCorrections(kind: ScanKind, raw: unknown, corrected: unknown): FieldCorrection[] {
+  const byKey = new Map<string, FieldCorrection>();
+  for (const c of linePairs(kind, raw, corrected)) if (!unchanged(c)) byKey.set(pairKey(c), c);
+  return [...byKey.values()];
+}
+
+/**
+ * (field, raw) values the operator left as OCR read them. If a learned pair
+ * replayed over one of these, filing the raw value back means "unlearn it".
+ * A raw that is also corrected elsewhere in the same doc is not a revert.
+ */
+export function diffReverts(kind: ScanKind, raw: unknown, corrected: unknown): FieldCorrection[] {
+  const pairs = linePairs(kind, raw, corrected);
+  const changed = new Set(pairs.filter((c) => !unchanged(c)).map(pairKey));
+  const byKey = new Map<string, FieldCorrection>();
+  for (const c of pairs) if (unchanged(c) && !changed.has(pairKey(c))) byKey.set(pairKey(c), c);
+  return [...byKey.values()];
 }
 
 /** Replay learned pairs onto one extracted document, in place. Returns count. */
@@ -110,9 +135,13 @@ export async function ensureScanCorrectionsTable(db: Db): Promise<void> {
          corrected_value TEXT NOT NULL,
          hits            INTEGER NOT NULL DEFAULT 1,
          created_at      TEXT NOT NULL,
-         last_seen_at    TEXT NOT NULL
+         last_seen_at    TEXT NOT NULL,
+         last_sample_id  TEXT
        )`,
     )
+    .run();
+  await db
+    .prepare("ALTER TABLE scan_field_corrections ADD COLUMN IF NOT EXISTS last_sample_id TEXT")
     .run();
   await db
     .prepare(
@@ -123,31 +152,49 @@ export async function ensureScanCorrectionsTable(db: Db): Promise<void> {
   ensured = true;
 }
 
-/** Upsert; the newest human decision for a (scope, field, raw) wins. Never throws. */
+/**
+ * Upsert; the newest human decision for a (scope, field, raw) wins. A sample
+ * counts once (a retried confirm is one decision). `reverts` retire an existing
+ * pair (hits=0, so it stops replaying). Never throws.
+ */
 export async function recordCorrections(
   db: Db,
-  o: { orgId: string; kind: ScanKind; scopeId: string; corrections: FieldCorrection[] },
+  o: {
+    orgId: string; kind: ScanKind; scopeId: string; corrections: FieldCorrection[];
+    reverts?: FieldCorrection[]; sampleId?: string | null;
+  },
 ): Promise<number> {
-  if (!o.scopeId || o.corrections.length === 0) return 0;
+  if (!o.scopeId || (o.corrections.length === 0 && !o.reverts?.length)) return 0;
   const now = new Date().toISOString();
   let n = 0;
   try {
     await ensureScanCorrectionsTable(db);
+    for (const c of o.reverts ?? []) {
+      await db
+        .prepare(
+          `UPDATE scan_field_corrections SET hits = 0, corrected_value = raw_value
+            WHERE org_id = ? AND kind = ? AND scope_id = ? AND field = ? AND raw_norm = ? AND hits > 0`,
+        )
+        .bind(o.orgId, o.kind, o.scopeId, c.field, correctionKey(c.rawValue))
+        .run();
+    }
     for (const c of o.corrections) {
       await db
         .prepare(
           `INSERT INTO scan_field_corrections
-             (id, org_id, kind, scope_id, field, raw_norm, raw_value, corrected_value, hits, created_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+             (id, org_id, kind, scope_id, field, raw_norm, raw_value, corrected_value, hits, created_at, last_seen_at, last_sample_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
            ON CONFLICT (org_id, kind, scope_id, field, raw_norm) DO UPDATE SET
              corrected_value = EXCLUDED.corrected_value,
              raw_value       = EXCLUDED.raw_value,
-             hits            = scan_field_corrections.hits + 1,
+             hits            = CASE WHEN scan_field_corrections.last_sample_id = EXCLUDED.last_sample_id
+                               THEN scan_field_corrections.hits ELSE scan_field_corrections.hits + 1 END,
+             last_sample_id  = EXCLUDED.last_sample_id,
              last_seen_at    = EXCLUDED.last_seen_at`,
         )
         .bind(
           `sfc-${crypto.randomUUID().slice(0, 12)}`, o.orgId, o.kind, o.scopeId, c.field,
-          correctionKey(c.rawValue), c.rawValue, c.correctedValue, now, now,
+          correctionKey(c.rawValue), c.rawValue, c.correctedValue, now, now, o.sampleId ?? null,
         )
         .run();
       n++;
@@ -192,7 +239,7 @@ export async function loadCorrections(
  */
 export async function learnFromConfirm(
   db: Db,
-  o: { orgId: string; kind: ScanKind; scopeId: unknown; raw: unknown; corrected: unknown },
+  o: { orgId: string; kind: ScanKind; scopeId: unknown; raw: unknown; corrected: unknown; sampleId?: string | null },
 ): Promise<number> {
   if (typeof o.scopeId !== "string" || !o.scopeId) return 0;
   try {
@@ -207,6 +254,8 @@ export async function learnFromConfirm(
     return await recordCorrections(db, {
       orgId: o.orgId, kind: o.kind, scopeId: o.scopeId,
       corrections: diffCorrections(o.kind, raw, o.corrected),
+      reverts: diffReverts(o.kind, raw, o.corrected),
+      sampleId: o.sampleId,
     });
   } catch (e) {
     console.warn("[scan-corrections] learn failed:", (e as Error).message);
