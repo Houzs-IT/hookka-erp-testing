@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-28** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-10-29** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -67,8 +67,8 @@ offsets pointing past the end of their own file.
 | `/api/product-configs` | `src/api/routes/product-configs.ts` | `GET /` <sub>:75</sub> | gated |
 | `/api/workers` | `src/api/routes/workers.ts` | `GET /` <sub>:258</sub><br>`POST /` <sub>:284</sub><br>`GET /:id` <sub>:461</sub><br>`PUT /:id` <sub>:476</sub><br>`DELETE /:id` <sub>:878</sub><br>`POST /:id/set-pin` <sub>:993</sub><br>`POST /bulk-generate-pins` <sub>:1069</sub><br>`GET /:id/salary-history` <sub>:1180</sub><br>`POST /:id/salary-history` <sub>:1201</sub><br>`GET /salary/effective` <sub>:1242</sub><br>`DELETE /:id/salary-history/:rowId` <sub>:1297</sub> | gated |
 | `/api/worker-auth` | `src/api/routes/worker-auth.ts` | `POST /login` <sub>:124</sub><br>`POST /reset-pin` <sub>:241</sub><br>`POST /logout` <sub>:297</sub><br>`GET /me` <sub>:312</sub> | **public** (PUBLIC_PREFIXES) |
-| `/api/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:491</sub><br>`GET /:id/acks` <sub>:535</sub><br>`POST /` <sub>:603</sub><br>`PATCH /:id` <sub>:803</sub><br>`POST /:id/remind` <sub>:956</sub><br>`DELETE /:id` <sub>:1020</sub> | gated |
-| `/api/worker/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:1165</sub><br>`POST /:id/ack` <sub>:1261</sub> | **public** (PUBLIC_PREFIXES) |
+| `/api/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:492</sub><br>`GET /:id/acks` <sub>:536</sub><br>`POST /` <sub>:604</sub><br>`PATCH /:id` <sub>:804</sub><br>`POST /:id/remind` <sub>:957</sub><br>`DELETE /:id` <sub>:1021</sub> | gated |
+| `/api/worker/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:1166</sub><br>`POST /:id/ack` <sub>:1262</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/worker` | `src/api/routes/worker.ts` | `GET /ann-files/:id/download` <sub>:436</sub><br>`GET /today` <sub>:491</sub><br>`GET /wip-times` <sub>:656</sub><br>`GET /current-dept` <sub>:706</sub><br>`GET /scan-lookup` <sub>:732</sub><br>`GET /racks` <sub>:945</sub><br>`POST /packing-rack` <sub>:970</sub><br>`POST /clock` <sub>:1183</sub><br>`POST /dept-scan` <sub>:1440</sub><br>`GET /history` <sub>:1507</sub><br>`GET /payslips` <sub>:2090</sub><br>`GET /penalties` <sub>:2531</sub><br>`GET /payslip/:period` <sub>:2671</sub><br>`GET /leaves` <sub>:2781</sub><br>`POST /leaves` <sub>:2873</sub><br>`POST /issues` <sub>:2939</sub><br>`GET /issues` <sub>:2973</sub><br>`GET /qc-today` <sub>:3069</sub><br>`POST /qc/:id/complete` <sub>:3151</sub><br>`PATCH /profile` <sub>:3237</sub><br>`GET /nonprod-departments` <sub>:3393</sub><br>`GET /production-departments` <sub>:3422</sub><br>`GET /nonprod-requests` <sub>:3446</sub><br>`POST /nonprod-requests` <sub>:3473</sub><br>`GET /team-stats` <sub>:3589</sub><br>`GET /department-performance` <sub>:3895</sub><br>`POST /rack-bulk-stock-in` <sub>:4405</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/departments` | `src/api/routes/departments.ts` | `GET /` <sub>:217</sub><br>`POST /` <sub>:233</sub><br>`PUT /:id` <sub>:338</sub><br>`DELETE /:id` <sub>:457</sub> | gated |
 | `/api/customer-hubs` | `src/api/routes/customer-hubs.ts` | `GET /` <sub>:58</sub> | gated |
