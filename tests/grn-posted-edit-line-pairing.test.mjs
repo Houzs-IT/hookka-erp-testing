@@ -41,10 +41,10 @@ function makeDb() {
     }
     // Guarded line write: [expectedAccepted, newAccepted, newReceived, id]; it
     // raises (like the CAST marker in Postgres) when the stored qty moved.
-    const m = sql.match(/^UPDATE grn_items SET acceptedQty = CASE WHEN COALESCE\(acceptedQty, 0\) = \?/i);
+    const m = sql.match(/^UPDATE grn_items SET acceptedQty = CASE WHEN ABS\(COALESCE\(acceptedQty, 0\) - \?\) < 0\.000001/i);
     if (m) {
       const row = t.grn_items.find((r) => String(r.id) === String(b[3]));
-      if (row && (Number(row.acceptedQty) || 0) !== b[0]) throw new Error("grn_line_race:" + row.id);
+      if (row && Math.abs((Number(row.acceptedQty) || 0) - b[0]) >= 0.000001) throw new Error("grn_line_race:" + row.id);
       if (row) Object.assign(row, { acceptedQty: b[1], receivedQty: b[2] });
     }
   }
@@ -180,4 +180,9 @@ test("POSTED GRN edit refuses (409) when another save changed the line since it 
   });
   assert.equal(res.status, 409, await res.clone().text());
   assert.equal(db.t.grn_items[1].acceptedQty, 7);
+});
+
+test("line race guard compares with a tolerance (float4 quantities do not false-409)", async () => {
+  const src = (await import("node:fs")).readFileSync(resolve(process.cwd(), "src/api/routes/grn.ts"), "utf8");
+  assert.match(src.replace(/\s+/g, " "), /WHEN ABS\(COALESCE\(acceptedQty, 0\) - \?\) < 0\.000001 THEN \?/);
 });

@@ -893,7 +893,7 @@ function grnLineQtyGuardedUpdate(
     .prepare(
       `UPDATE grn_items
           SET acceptedQty = CASE
-                WHEN COALESCE(acceptedQty, 0) = ? THEN ?
+                WHEN ABS(COALESCE(acceptedQty, 0) - ?) < 0.000001 THEN ?
                 ELSE CAST('${GRN_LINE_RACE_MARKER}:' || id AS DOUBLE PRECISION)
               END,
               receivedQty = ?
