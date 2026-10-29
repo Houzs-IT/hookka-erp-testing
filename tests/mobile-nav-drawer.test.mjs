@@ -156,8 +156,10 @@ test("phone header geometry is shared: one 44px leading slot, fixed 52px row, of
   // Home on phones: no second safe-area pad on top of the header's.
   assert.match(home, /paddingTop: mode === "phone" \? 0 : "env\(safe-area-inset-top\)"/);
   // Custom detail screens use the shared header (back arrow) on phones.
-  for (const f of ["SalesDetailScreen", "ProductionDetailScreen", "MailCenterScreen"]) {
+  for (const f of ["SalesDetailScreen", "MailCenterScreen"]) {
     const src = read(`screens/${f}.tsx`);
     assert.match(src, /phone \? \(?\s*<MobileHeader[\s\S]*?onBack=\{\(\) => navigate\(-1\)\}/, f);
   }
+  // Production Orders v3 renders the shared header (PO number + back) at every width.
+  assert.match(read("screens/ProductionDetailScreen.tsx"), /<MobileHeader title=\{poNo\} onBack=\{\(\) => navigate\(-1\)\} \/>/);
 });

@@ -224,6 +224,7 @@ body:not([data-theme]) {
   --m-inv-note-bg: #FAF8F4;      /* lifecycle off-flow note */
   --m-inv-body: #3A352C;
   --m-inv-paid-label: #3D6229;   /* "Amount paid" tile label */
+  --m-po-done: #2D5A54;         /* Production Orders v3: Done stage (teal) */
   /* Opt-in glass header (MobileHeader glass) + the row stuck under it. */
   --m-header-glass: rgba(250, 248, 244, 0.92);
 }
@@ -319,6 +320,7 @@ body[data-theme="dark"] {
   --m-inv-note-bg: #211F1C;
   --m-inv-body: #D4C9A8;
   --m-inv-paid-label: #8FBE78;
+  --m-po-done: #7FB5A8;
   --m-header-glass: rgba(26, 24, 22, 0.92);
 }
 

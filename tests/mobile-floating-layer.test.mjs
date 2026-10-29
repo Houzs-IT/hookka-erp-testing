@@ -133,9 +133,10 @@ test("screens keep no more fixed-position layers than the known full-screen ones
     .filter((f) => /position:\s*"fixed"/.test(readFileSync(f, "utf8")))
     .map((f) => f.replace(/\\/g, "/").replace(/^.*\/screens\//, ""))
     .sort();
-  // Intentional full-screen layers (a dialog and a desk-handoff sheet). A new
-  // toast, bar or banner must use ResponsiveActionDock, not a fixed offset.
-  assert.deepEqual(found, ["ProductionDetailScreen.tsx", "procurement/parts.tsx"]);
+  // Intentional full-screen layer (a dialog). Production Orders v3 moved its
+  // desk-handoff sheet onto the shared Sheet. A new toast, bar or banner must use
+  // ResponsiveActionDock, not a fixed offset.
+  assert.deepEqual(found, ["procurement/parts.tsx"]);
 });
 
 test("screens do not size floating content from the viewport", () => {
