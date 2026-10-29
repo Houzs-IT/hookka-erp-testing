@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-26** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-10-29** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -184,7 +184,7 @@ offsets pointing past the end of their own file.
 | `/api/planning` | `src/api/routes/schedule-proposals.ts` | `POST /proposals/generate` <sub>:99</sub><br>`GET /proposals` <sub>:125</sub><br>`POST /proposals/approve` <sub>:162</sub><br>`POST /proposals/reject` <sub>:184</sub> | gated |
 | `/api/delivery-agent` | `src/api/routes/delivery-agent.ts` | `GET /brief.json` <sub>:144</sub><br>`POST /proposals/generate` <sub>:165</sub><br>`GET /proposals` <sub>:186</sub><br>`POST /proposals/approve` <sub>:260</sub><br>`POST /proposals/reject` <sub>:273</sub><br>`POST /run` <sub>:457</sub><br>`GET /truck-capacity-analysis` <sub>:556</sub> | gated |
 | `/api/internal/delivery-agent` | `src/api/routes/delivery-agent.ts` | `POST /run-trigger` <sub>:512</sub> | **public** (PUBLIC_PREFIXES) |
-| `/api/internal/agents` | `src/api/routes/agent-heartbeat.ts` | `POST /run-generate` <sub>:54</sub><br>`POST /heartbeat` <sub>:79</sub> | **public** (PUBLIC_PREFIXES) |
+| `/api/internal/agents` | `src/api/routes/agent-heartbeat.ts` | `POST /run-generate` <sub>:55</sub><br>`POST /heartbeat` <sub>:80</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/scan-po` | `src/api/routes/scan-po.ts` | `GET /catalog` <sub>:504</sub><br>`POST /extract` <sub>:543</sub><br>`POST /samples/:id/confirm` <sub>:730</sub><br>`GET /samples/by-po/:poIdentifier` <sub>:879</sub><br>`PATCH /samples/by-po/:poIdentifier` <sub>:936</sub><br>`GET /customer-rules/:customerId` <sub>:978</sub><br>`PUT /customer-rules/:customerId` <sub>:1009</sub><br>`POST /customer-rules/:customerId/distill` <sub>:1065</sub> | gated |
 | `/api/scan-supplier` | `src/api/routes/scan-supplier.ts` | `POST /extract` <sub>:37</sub><br>`POST /samples/:id/confirm` <sub>:128</sub> | gated |
 | `/api/party-aliases` | `src/api/routes/party-aliases.ts` | `GET /` <sub>:50</sub><br>`GET /list` <sub>:69</sub><br>`POST /` <sub>:93</sub><br>`DELETE /` <sub>:134</sub> | gated |

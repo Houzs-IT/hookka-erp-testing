@@ -161,7 +161,7 @@ export async function* streamMessages(
       "content-type": "application/json",
     },
     body: JSON.stringify({ ...body, stream: true }),
-  });
+  }, "assistant");
 
   if (!res.ok || !res.body) {
     const errText = await res.text().catch(() => "");
