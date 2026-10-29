@@ -161,9 +161,9 @@ function makeDb() {
       return;
     }
     // grn_items accepted/received rewrite on a POSTED edit
-    m = sql.match(/^UPDATE grn_items SET acceptedQty = \?, receivedQty = \? WHERE id = \?/i);
+    m = sql.match(/^UPDATE grn_items SET acceptedQty = CASE WHEN ABS\(COALESCE\(acceptedQty, 0\) - \?\) < 0\.000001 THEN \? ELSE .* END, receivedQty = \? WHERE id = \?/i);
     if (m) {
-      const [acc, rec, id] = binds;
+      const [, acc, rec, id] = binds;
       const gi = tables.grn_items.find((r) => String(r.id) === String(id));
       if (gi) {
         gi.acceptedQty = Number(acc);

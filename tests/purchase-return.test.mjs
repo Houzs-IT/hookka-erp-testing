@@ -225,3 +225,10 @@ test("issue-DN route + UI action exist, RBAC-gated", () => {
   assert.match(page, /\/api\/purchase-returns\/\$\{r\.id\}\/issue-dn/);
   assert.match(page, /Issue Debit Note/);
 });
+
+test("a GRN return is capped at the unbilled part (accepted - invoiced), counting GRN-only returns", () => {
+  const f = flat(CREATE);
+  assert.match(f, /SELECT acceptedQty - COALESCE\(invoiced_qty, 0\) AS cap FROM grn_items WHERE id = \?/);
+  assert.match(f, /COALESCE\(purchase_invoice_id, ''\) = ''\)/);
+  assert.match(f, /return billed goods from the invoice/);
+});

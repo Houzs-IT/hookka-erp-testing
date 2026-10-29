@@ -309,10 +309,10 @@ function makeDb() {
       return [...byLine].map(([grnItemId, qty]) => ({ grnItemId, qty }));
     }
     // HK-0096 — return caps: the source line's qty, and what was already returned.
-    if (/SELECT acceptedQty AS cap FROM grn_items WHERE id = \?/i.test(sql)) {
+    if (/SELECT acceptedQty - COALESCE\(invoiced_qty, 0\) AS cap FROM grn_items WHERE id = \?/i.test(sql)) {
       return tables.grn_items
         .filter((r) => String(r.id) === String(binds[0]))
-        .map((r) => ({ cap: getCol(r, "acceptedQty") }));
+        .map((r) => ({ cap: (Number(getCol(r, "acceptedQty")) || 0) - (Number(r.invoiced_qty) || 0) }));
     }
     if (/SELECT qty AS cap FROM purchase_invoice_items WHERE id = \?/i.test(sql)) {
       return tables.purchase_invoice_items
