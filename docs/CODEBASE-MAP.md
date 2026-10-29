@@ -2488,8 +2488,8 @@ and gets it right — cite it in the fix.
 **All eight routers are LIVE** (mounted in `src/api/worker.ts`). Every mount below sits
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:921`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
-`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:974`),
-`tenantMiddleware` (`src/api/worker.ts:981`) and `apiRateLimit` (`src/api/worker.ts:996`)
+`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:994`),
+`tenantMiddleware` (`src/api/worker.ts:1001`) and `apiRateLimit` (`src/api/worker.ts:1016`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 
@@ -2515,6 +2515,8 @@ translation) goes through `claudeFetch` in `src/api/lib/claude-fetch.ts`. On Pag
 the `CLAUDE_FORWARDER` service binding to `claude-forwarder-worker/`, a Worker pinned to
 Singapore, because Anthropic refuses requests from some Cloudflare regions (BUG-2026-10-13-284).
 Do not add a new direct `fetch("https://api.anthropic.com/...")`. Guard `tests/claude-fetch.test.mjs`.
+
+Each call names its feature (`claudeFetch(init, "scan_po")`); `src/api/lib/ai-usage.ts` logs it to `ai_usage_events` (runtime self-apply) through a per-request scope set in the DB middleware in `src/api/worker.ts`. The agent heartbeat sends the last 7 UTC days, priced per feature, to the IT Hub (`POST /api/v1/sys/ai-usage`, `IT_HUB_URL` + `IT_HUB_API_KEY`) once a UTC day after 02:00, tracked in `kv_config['ai_usage_hub_sent']`. Guard `tests/ai-usage.test.mjs`.
 
 ---
 
