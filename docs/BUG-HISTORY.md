@@ -178,20 +178,6 @@ Entries themselves stay newest-first.
 
 ---
 
-## BUG-2026-10-29-373 — A learned scan correction could never be unlearned, and one decision could teach one `ocr` `scan-learning` 🟡
-
-🟡 **Fixed on branch** (`fix/scan-learning-and-originals`, not merged). Follow-up to HK-0005 / PR #881.
-
-**Symptom.** After two confirms of 1003-(K) filed as 1003-(Q) (a substitute, not a misread), every later correct 1003-(K) was replaced by (Q) and typing (K) back changed nothing. Separately, two lines with the same misread, or a rejected create followed by a retry, each added a hit, so one decision reached the replay threshold of 2.
-
-**Root cause.** `diffCorrections` skipped fields where raw equals corrected, so a revert recorded nothing and `hits` stayed 2. Each changed line was upserted on its own, and confirm fires on every create attempt. The PO confirm update and raw lookup also lacked `orgId`.
-
-**Fix.** `src/api/lib/scan-corrections.ts`: `diffReverts` finds fields filed back as OCR read them and `recordCorrections` retires the pair (`hits = 0`); `diffCorrections` returns one entry per (field, raw); new column `last_sample_id` (added by `ensureScanCorrectionsTable`) so a sample adds at most one hit. `src/api/routes/scan-po.ts`: confirm update and raw lookup scoped by `orgId`; new sample rows now carry `orgId` (also `scan-engine.ts`).
-
-**Not changed.** Direct extract doors still store no original bytes: the sample tables have no file-key column, adding one is a schema decision.
-
-**Regression.** `tests/scan-corrections.test.mjs`.
-
 ## BUG-2026-10-20-372 — A retried DO / GRN / PI create, CN convert or return create could make a second document `procurement` `delivery` `idempotency` 🟡
 
 🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). T-006 R10, ported from staging.
