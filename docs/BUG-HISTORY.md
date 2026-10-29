@@ -178,6 +178,20 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-10-29-394 — Hookka AI and the agents' AI focus failed: their Sonnet 4.5 model is no longer served `assistant` `agents` 🟡
+
+🟡 **Fixed on branch** (`fix/sonnet-4-5-retired`, to `main`).
+
+**Symptom.** Hookka AI answered every question with `Anthropic API 404 ... not_found_error ... model: claude-sonnet-4-5-20250929` (seen on production 2026-10-29). The agents' AI focus paragraph used the same model; `askAgentBrain` returns null on an error, so it failed silently.
+
+**Root cause.** `assistant.ts` `MODEL` and `agent-brain.ts` `AGENT_BRAIN_MODEL` were pinned to `claude-sonnet-4-5-20250929`, which the Anthropic organisation the key belongs to no longer serves. Every other call site was already on `claude-sonnet-4-6` or Haiku 4.5.
+
+**Fix.** Both now use `claude-sonnet-4-6`. No request field changes: neither call sends thinking, temperature or an assistant prefill that 4.6 would refuse.
+
+**Regression.** `tests/no-retired-models.test.mjs`.
+
+---
+
 ## BUG-2026-10-20-372 — A retried DO / GRN / PI create, CN convert or return create could make a second document `procurement` `delivery` `idempotency` 🟡
 
 🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). T-006 R10, ported from staging.

@@ -59,9 +59,9 @@ import {
 
 const app = new Hono<Env>();
 
-// Most-recent Sonnet. If a newer one is pinned elsewhere in the codebase,
-// switching here is a one-line edit.
-const MODEL = "claude-sonnet-4-5-20250929";
+// Same Sonnet as the scanners. claude-sonnet-4-5-20250929 is no longer served
+// (Anthropic 404 not_found_error, BUG-2026-10-29-394).
+const MODEL = "claude-sonnet-4-6";
 
 const MAX_ITERATIONS = 8;
 const MAX_MESSAGES_BYTES = 200_000;
