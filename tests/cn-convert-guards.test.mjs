@@ -166,3 +166,21 @@ test("/return on an invoiced CN is refused (409), nothing written", async () => 
   assert.equal(res.status, 409, await res.text());
   assert.equal(batches.length, 0);
 });
+
+test("every line returned (note still PARTIALLY_SOLD) -> 409, no empty invoice", async () => {
+  const { res, batches } = await convert({
+    items: [{ id: "ci-1", productCode: "P1", productName: "P1", quantity: 2, unitPrice: 0, status: "RETURNED", productionOrderId: "po-1" }],
+  });
+  assert.equal(res.status, 409, await res.text());
+  assert.equal(batches.length, 0);
+});
+
+test("CO price 0 falls back to the CN item's own unitPrice", async () => {
+  const { res, batches } = await convert({
+    items: [{ id: "ci-1", productCode: "P1", productName: "P1", quantity: 2, unitPrice: 150, status: "AT_BRANCH", productionOrderId: "po-1" }],
+    coItems: [{ consignmentOrderId: "co-1", productCode: "P1", unitPriceSen: 0 }],
+  });
+  assert.equal(res.status, 201, await res.text());
+  assert.equal(invItems(batches[0])[0].args[7], 150);
+  assert.equal(bump(batches[0]).args[0], 300);
+});

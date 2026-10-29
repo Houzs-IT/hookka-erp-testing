@@ -1539,6 +1539,15 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
       };
     });
 
+    // Every line returned across separate /return calls leaves the note PARTIALLY_SOLD
+    // with nothing to bill; an empty invoice would still set convertedInvoiceId.
+    if (invoiceItems.length === 0) {
+      return c.json(
+        { success: false, error: `Consignment note ${cn.noteNumber} has nothing left to invoice` },
+        409,
+      );
+    }
+
     const subtotalSen = invoiceItems.reduce((s, i) => s + i.totalSen, 0);
     const totalSen = subtotalSen;
 
