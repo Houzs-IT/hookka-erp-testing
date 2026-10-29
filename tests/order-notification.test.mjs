@@ -215,6 +215,27 @@ test("POST: same orders + priority twice in a day is 409, one push total", async
   assert.equal(pushQueries.length, 1);
 });
 
+test("dedupe day is the Malaysia day (UTC+8), not the UTC date", () => {
+  const day = (iso) => lib.mytDayStartIso(new Date(iso));
+  // 07:00 and 09:00 MYT on 29 Oct straddle UTC midnight: same day.
+  assert.equal(day("2026-10-28T23:00:00Z"), "2026-10-28T16:00:00.000Z");
+  assert.equal(day("2026-10-29T01:00:00Z"), "2026-10-28T16:00:00.000Z");
+  // 23:30 MYT on 28 Oct and 07:00 MYT on 29 Oct share a UTC date: different days.
+  assert.equal(day("2026-10-28T15:30:00Z"), "2026-10-27T16:00:00.000Z");
+});
+
+test("POST: a send at 23:30 MYT does not block the same orders at 07:00 MYT next day", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-28T23:00:00Z") });
+  const { db, inserts } = makeDb([{
+    id: "ann-prev", org_id: "hookka", priority: "OVERDUE", order_id: "po-1",
+    created_at: "2026-10-28T15:30:00.000Z",
+  }]);
+  const app = await adminApp(db, "post-myt-day");
+  const res = await post(app, { priority: "OVERDUE", orderIds: ["po-1"] });
+  assert.equal(res.status, 201);
+  assert.equal(inserts.length, 1);
+});
+
 test("POST: a role without announcements:create gets 403 and nothing is written", async () => {
   const { db, inserts, pushQueries } = makeDb();
   const app = await adminApp(db, "post-denied", "READ_ONLY");

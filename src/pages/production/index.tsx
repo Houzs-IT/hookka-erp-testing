@@ -7394,6 +7394,13 @@ export default function ProductionPage({
             Create Stock PO
           </Button>
           <Button variant="outline" onClick={() => navigate("/planning?tab=tracker")}>Master Tracker</Button>
+          {/* Always visible on Overview (HK-0025: the only other entry is the yellow
+              "N selected" bar, which Violet never saw). Disabled until orders are ticked. */}
+          {canSendNotice && activeTab === "ALL" && (<span title={selectedOverviewOrders.length === 0 ? "Tick one or more orders first" : undefined}>
+            <Button variant="outline" disabled={selectedOverviewOrders.length === 0} onClick={() => setOverviewNotifyOpen(true)}>
+              Send Notification
+            </Button></span>
+          )}
           {/* Print Schedule mode picker. Detailed = one row per PO/JC
               (handlePrintSchedule). Total Listing = rows merged by
               model+spec for the floor (handlePrintTotalListing). Both

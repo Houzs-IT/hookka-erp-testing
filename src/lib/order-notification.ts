@@ -51,6 +51,17 @@ function titleCase(s: string): string {
     .join(" ");
 }
 
+/**
+ * Start of today in Malaysia (UTC+8, no DST) as a UTC ISO instant - the
+ * "already sent today" cutoff. A UTC date would split 07:00 / 09:00 MYT into
+ * two days and merge 23:30 with the next 07:00.
+ */
+export function mytDayStartIso(now: Date = new Date()): string {
+  const d = new Date(now.getTime() + 8 * 3_600_000);
+  d.setUTCHours(0, 0, 0, 0);
+  return new Date(d.getTime() - 8 * 3_600_000).toISOString();
+}
+
 /** Hard cap per notice - enforced by POST /api/announcements, mirrored in the dialog. */
 export const MAX_NOTICE_ORDERS = 10;
 

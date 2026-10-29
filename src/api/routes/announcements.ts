@@ -40,6 +40,7 @@ import { sendPushToSubscribers } from "./push";
 import {
   MAX_NOTICE_ORDERS,
   buildOrderNotice,
+  mytDayStartIso,
   orderNoticeCategory,
   readOrderPriority,
   type OrderPriority,
@@ -664,14 +665,14 @@ admin.post("/", async (c) => {
     text = built.body;
     orderNo = orders.map((r) => r.poNo).join(", ");
     orderId = ids.slice().sort().join(",");
-    // Dedupe: the same orders + priority already sent today (UTC) -> 409, so a
+    // Dedupe: the same orders + priority already sent today (Malaysia day) -> 409, so a
     // retry / double click never re-alerts the floor.
     const dup = await c.var.DB.prepare(
       `SELECT id FROM announcements
         WHERE org_id = ? AND priority = ? AND order_id = ? AND created_at >= ?
         LIMIT 1`,
     )
-      .bind(orgId, priority, orderId, new Date().toISOString().slice(0, 10))
+      .bind(orgId, priority, orderId, mytDayStartIso())
       .first<{ id: string }>();
     if (dup) {
       return c.json(
