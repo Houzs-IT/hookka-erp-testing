@@ -42,7 +42,12 @@ import {
 import { aggregateRacksFromPackingCards } from "../../lib/rack-format";
 import { nextInvoiceNo } from "./invoices";
 import { getOrgId, withOrgScope } from "../lib/tenant";
-import { loadCnValueMap, loadCnCustomerRefMap } from "../lib/cn-value";
+import {
+  loadCnValueMap,
+  loadCnCustomerRefMap,
+  loadCoLinePriceIndex,
+  priceForCnItem,
+} from "../lib/cn-value";
 import { emitAudit } from "../lib/audit";
 import { requirePermission } from "../lib/rbac";
 import { idempotent } from "../lib/idempotency";
@@ -1097,6 +1102,10 @@ app.post("/", async (c) => {
 // row for that item and log a warning. The user's task spec calls this
 // out explicitly ("legacy CN whose source PO is deleted").
 // ---------------------------------------------------------------------------
+// Raised (via a failing CAST) by the row-locked guards in /return and
+// /convert-to-invoice when the CN was converted or changed after it was read.
+const CN_CONVERT_CONFLICT = "CN_CONVERT_CONFLICT";
+
 app.post("/:id/return", async (c) => {
   const denied = await requirePermission(c, "consignment-notes", "create");
   if (denied) return denied;
@@ -1129,6 +1138,17 @@ app.post("/:id/return", async (c) => {
     ]);
     if (!cn) {
       return c.json({ success: false, error: "Consignment note not found" }, 404);
+    }
+    // Converted goods are invoiced: a return here would leave the invoice
+    // billing them. Void the invoice first (it releases the CN), or credit it.
+    if (cn.convertedInvoiceId) {
+      return c.json(
+        {
+          success: false,
+          error: `Consignment note ${cn.noteNumber} is invoiced (${cn.convertedInvoiceId}). Void the invoice or issue a credit note instead.`,
+        },
+        409,
+      );
     }
     const cnItems = itemsRes.results ?? [];
     const itemById = new Map(cnItems.map((it) => [it.id, it]));
@@ -1171,7 +1191,14 @@ app.post("/:id/return", async (c) => {
     }
 
     const now = new Date().toISOString();
-    const statements: D1PreparedStatement[] = [];
+    // Row-locked: a convert committed since the read above aborts the return.
+    const statements: D1PreparedStatement[] = [
+      c.var.DB.prepare(
+        `SELECT CASE WHEN convertedInvoiceId IS NULL THEN 1
+                     ELSE CAST('${CN_CONVERT_CONFLICT} ' || id AS INTEGER) END AS ok
+           FROM consignment_notes WHERE id = ? FOR UPDATE`,
+      ).bind(id),
+    ];
 
     // ----------- consignment_items updates -----------
     // Track post-update qty for each touched item so we can recompute
@@ -1343,23 +1370,8 @@ app.post("/:id/return", async (c) => {
       ).bind(nextStatus, nextTotalValue, dispatchedAt, id),
     );
 
-    // CO-parity gap (2026-05-04): if the CN had previously been
-    // converted to an invoice (convertedInvoiceId set), the
-    // outstandingSen bump from /convert-to-invoice needs to be reversed
-    // by the difference between the original totalValue and the post-
-    // return totalValue. Otherwise A/R stays inflated by the value of
-    // returned items.
-    if (cn.convertedInvoiceId && cn.totalValue > nextTotalValue) {
-      const refundSen = cn.totalValue - nextTotalValue;
-      statements.push(
-        c.var.DB.prepare(
-          // No updated_at: `customers` has no such column (HK-0109).
-          `UPDATE customers
-              SET outstandingSen = GREATEST(0, COALESCE(outstandingSen, 0) - ?)
-            WHERE id = ?`,
-        ).bind(refundSen, cn.customerId),
-      );
-    }
+    // No A/R adjustment here: a converted CN is refused above, so the
+    // goods returned were never billed.
 
     await c.var.DB.batch(statements);
 
@@ -1415,6 +1427,12 @@ app.post("/:id/return", async (c) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[POST /api/consignment-notes/:id/return] failed:", msg);
+    if (msg.includes(CN_CONVERT_CONFLICT)) {
+      return c.json(
+        { success: false, error: "Consignment note was invoiced by another request. Reload and try again." },
+        409,
+      );
+    }
     return c.json({ success: false, error: msg || "Invalid request body" }, 400);
   }
 });
@@ -1485,28 +1503,30 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
         409,
       );
     }
-
-    // Pull unit prices from the parent CO's items (best-effort fallback).
-    // CN items often store unitPrice=0 because pricing lives on the CO line.
-    let priceByCode = new Map<string, number>();
-    if (cn.consignmentOrderId) {
-      const coItemsRes = await c.var.DB.prepare(
-        "SELECT productCode, unitPriceSen FROM consignment_order_items WHERE consignmentOrderId = ?",
-      )
-        .bind(cn.consignmentOrderId)
-        .all<{ productCode: string | null; unitPriceSen: number | null }>();
-      priceByCode = new Map(
-        (coItemsRes.results ?? [])
-          .filter((r) => r.productCode)
-          .map((r) => [r.productCode as string, Number(r.unitPriceSen) || 0]),
+    // A returned note has nothing left to sell; a closed one is finished.
+    if (cn.status === "RETURNED" || cn.status === "CLOSED") {
+      return c.json(
+        {
+          success: false,
+          error: `Consignment note ${cn.noteNumber} is ${cn.status} and cannot be converted to an invoice`,
+        },
+        409,
       );
     }
 
-    const invoiceItems = cnItems.map((it) => {
+    // CN items often store unitPrice=0 because pricing lives on the CO line.
+    // Same per-item CO resolution as the CN list value (cn-value.ts), so a
+    // CN spanning several COs prices each line from its own CO.
+    const priceIdx = await loadCoLinePriceIndex(c.var.DB, getOrgId(c));
+
+    // A fully returned line is RETURNED with its qty kept; a partial return
+    // already lowered the qty. Either way only what is still out is billed.
+    const invoiceItems = cnItems.filter((it) => it.status !== "RETURNED").map((it) => {
       // Price preference: CO item > CN item > 0.
-      const fromCo = it.productCode ? priceByCode.get(it.productCode) : undefined;
       const unitPriceSen =
-        fromCo !== undefined ? fromCo : Number(it.unitPrice) || 0;
+        priceForCnItem(priceIdx, it.productionOrderId, cn.consignmentOrderId, it.productCode) ||
+        Number(it.unitPrice) ||
+        0;
       return {
         id: `invi-${crypto.randomUUID().slice(0, 8)}`,
         productCode: it.productCode ?? "",
@@ -1518,6 +1538,15 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
         totalSen: unitPriceSen * it.quantity,
       };
     });
+
+    // Every line returned across separate /return calls leaves the note PARTIALLY_SOLD
+    // with nothing to bill; an empty invoice would still set convertedInvoiceId.
+    if (invoiceItems.length === 0) {
+      return c.json(
+        { success: false, error: `Consignment note ${cn.noteNumber} has nothing left to invoice` },
+        409,
+      );
+    }
 
     const subtotalSen = invoiceItems.reduce((s, i) => s + i.totalSen, 0);
     const totalSen = subtotalSen;
@@ -1593,6 +1622,16 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
     );
 
     const statements: D1PreparedStatement[] = [
+      // Row-locked re-check: the read above is no lock, so two converts
+      // racing past it would each mint an invoice and bump A/R, and a
+      // /return landing in between would leave returned goods billed.
+      // CAST of non-numeric text aborts the whole batch (same trick as
+      // buildInvoiceDeathCnReleaseStatements' guard).
+      c.var.DB.prepare(
+        `SELECT CASE WHEN convertedInvoiceId IS NULL AND status IS NOT DISTINCT FROM ? THEN 1
+                     ELSE CAST('${CN_CONVERT_CONFLICT} ' || id AS INTEGER) END AS ok
+           FROM consignment_notes WHERE id = ? FOR UPDATE`,
+      ).bind(cn.status ?? null, id),
       c.var.DB.prepare(
         `INSERT INTO invoices (
            id, invoiceNo, deliveryOrderId, doNo, salesOrderId, companySOId,
@@ -1749,6 +1788,15 @@ app.post("/:id/convert-to-invoice", idempotent(), async (c) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[POST /api/consignment-notes/:id/convert-to-invoice] failed:", msg);
+    if (msg.includes(CN_CONVERT_CONFLICT)) {
+      return c.json(
+        {
+          success: false,
+          error: "Consignment note was converted or changed by another request. Reload and try again.",
+        },
+        409,
+      );
+    }
     return c.json({ success: false, error: msg || "Invalid request body" }, 400);
   }
 });

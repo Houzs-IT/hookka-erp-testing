@@ -2872,6 +2872,8 @@ export default function ConsignmentNotePage() {
       {
         label: "Transfer to Sales Invoice",
         icon: <FileText className="h-3.5 w-3.5" />,
+        // Backend refuses these (409); RETURNED shows as Delivered, so use raw.
+        disabled: row.rawStatus === "RETURNED" || row.rawStatus === "CLOSED",
         action: () => setTransferSIRow(row),
       },
       {
