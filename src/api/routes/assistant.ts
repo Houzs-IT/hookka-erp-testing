@@ -60,7 +60,7 @@ import {
 const app = new Hono<Env>();
 
 // Same Sonnet as the scanners. claude-sonnet-4-5-20250929 is no longer served
-// (Anthropic 404 not_found_error, BUG-2026-10-29-394).
+// (Anthropic 404 not_found_error, BUG-2026-10-29-418).
 const MODEL = "claude-sonnet-4-6";
 
 const MAX_ITERATIONS = 8;

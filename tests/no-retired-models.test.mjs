@@ -1,4 +1,4 @@
-// no-retired-models.test.mjs — BUG-2026-10-29-394. Hookka AI and the agents'
+// no-retired-models.test.mjs — BUG-2026-10-29-418. Hookka AI and the agents'
 // AI focus were pinned to claude-sonnet-4-5-20250929 after Anthropic stopped
 // serving it, so every call came back 404 not_found_error. No call site may
 // name that model again.

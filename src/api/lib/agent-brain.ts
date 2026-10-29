@@ -25,7 +25,7 @@ import { claudeFetch } from "./claude-fetch";
 
 const ANTHROPIC_VERSION = "2023-06-01";
 /** Same model as the in-app assistant — one model, one bill, one behaviour. */
-// claude-sonnet-4-5-20250929 is no longer served (BUG-2026-10-29-394).
+// claude-sonnet-4-5-20250929 is no longer served (BUG-2026-10-29-418).
 export const AGENT_BRAIN_MODEL = "claude-sonnet-4-6";
 
 export interface AgentBrainUsageSink {
