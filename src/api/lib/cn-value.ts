@@ -6,10 +6,9 @@
 // figure and is unreliable: CN items are routinely created with
 // unitPrice = 0 because the real pricing lives on the CONSIGNMENT ORDER
 // line (consignment_order_items.unitPriceSen, migration 0064). The
-// convert-to-invoice route already resolves CN line prices the same way
-// (consignment-notes.ts: SELECT productCode, unitPriceSen FROM
-// consignment_order_items WHERE consignmentOrderId = ? then match by
-// productCode). This module factors that resolution into a bulk, per-CN
+// convert-to-invoice route prices invoice lines with the same index
+// (loadCoLinePriceIndex + priceForCnItem), so the list value and the
+// invoice agree. This module also builds a bulk, per-CN
 // value map so the CN list row can carry a `valueSen` exactly like the DO
 // list row does (delivery-orders.ts → loadDoValueMap).
 //
