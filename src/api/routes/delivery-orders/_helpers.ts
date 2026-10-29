@@ -3235,7 +3235,7 @@ export async function createDeliveryOrderForPOs(
           body: {
             success: false,
             error:
-              "These production orders are already on a delivery order (a PO can only be delivered once): another delivery order was created at the same time. Remove them from the selection.",
+              "These production orders are already on a delivery order: another delivery order was created at the same time. Remove them from the selection.",
           },
         };
       }
