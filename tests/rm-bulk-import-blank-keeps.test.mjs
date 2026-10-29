@@ -113,3 +113,15 @@ test('exports write a never-priced SKU as a blank cell, not 0 (round-trip safe)'
     assert.doesNotMatch(src, /costPriceSen: \(p\.costPriceSen \?\? 0\) \/ 100/, p);
   }
 });
+
+test('blank Active cell is absent, not false (dialog), so it neither inactivates nor changes status', () => {
+  const dlg = readFileSync(new URL('../src/components/ui/batch-import-dialog.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(dlg, /col\.type === "boolean" \? false : undefined/);
+  // Update: absent isActive keeps stored status.
+  assert.equal(mergeRmBulkUpdate({ ...prior, status: 'ACTIVE' }, { itemCode: 'X', isActive: undefined }).status, 'ACTIVE');
+});
+
+test('same code twice in one sheet: each update is stored back so the next row merges against it', () => {
+  const src = readFileSync(new URL('../src/api/routes/raw-materials.ts', import.meta.url), 'utf8');
+  assert.match(src, /idToStored\.set\(existingId, merged!\)/);
+});

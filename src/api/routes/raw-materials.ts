@@ -499,7 +499,7 @@ app.put("/:id", async (c) => {
     }
   }
   if (uomChanged) {
-    const lockMsg = await checkRawMaterialUomLocked(c.var.DB, existing);
+    const lockMsg = await checkRawMaterialUomLocked(c.var.DB, { ...existing, orgId: getOrgId(c) });
     if (lockMsg) return c.json(lockedResponse(lockMsg), 409);
   }
 
@@ -817,6 +817,7 @@ app.post("/bulk-import", async (c) => {
         id: existingId,
         itemCode: priorCode ?? itemCode,
         balanceQty: prior?.balanceQty ?? 0,
+        orgId,
       });
       if (lockMsg) {
         rejected.push({ row: rowIdx + 1, reason: lockMsg });
@@ -882,6 +883,8 @@ app.post("/bulk-import", async (c) => {
       codeToGroup.set(itemCode, itemGroup);
       idToCode.set(existingId, itemCode);
       idToUnit.set(existingId, { baseUOM, balanceQty: prior?.balanceQty ?? 0 });
+      // A later row for the same code merges against this row, not the original.
+      idToStored.set(existingId, merged!);
       updated++;
     } else {
       // INSERT — balanceQty defaults to 0; the sheet's Total Bal. Qty is ignored.

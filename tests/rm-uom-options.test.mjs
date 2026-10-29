@@ -107,7 +107,9 @@ test("route wiring: create / edit / import all enforce the rules", () => {
   assert.match(post, /isUomAllowed\(baseUOM, units\)/);
   // The unit list is the same for every category: no item group in the check.
   assert.doesNotMatch(src, /isUomAllowed\([^)]*[iI]temGroup/);
-  assert.match(put, /checkRawMaterialUomLocked\(c\.var\.DB, existing\)/);
+  assert.match(put, /checkRawMaterialUomLocked\(c\.var\.DB, \{ \.\.\.existing, orgId: getOrgId\(c\) \}\)/);
+  // The open-PO count is scoped to the caller's org.
+  assert.match(locks.__src ?? read("src/api/lib/lock-helpers.ts"), /po\.orgId = \?/);
   // The PUT checks run before the UPDATE is built.
   assert.ok(put.indexOf("checkRawMaterialUomLocked") < put.indexOf("UPDATE raw_materials SET"));
   assert.match(bulk, /checkRawMaterialUomLocked/);
