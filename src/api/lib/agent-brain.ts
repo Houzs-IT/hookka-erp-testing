@@ -62,7 +62,7 @@ export async function askAgentBrain(
         system: opts.system,
         messages: [{ role: "user", content: JSON.stringify(opts.payload) }],
       }),
-    });
+    }, "agent_brain");
     if (!res.ok) {
       console.warn(`[agent-brain] Anthropic ${res.status}`);
       return null;

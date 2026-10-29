@@ -3,6 +3,11 @@
 // user's ISP routes to. When the CLAUDE_FORWARDER service binding is present
 // the call is made by claude-forwarder-worker, which is pinned to Singapore.
 // Without the binding (tests, local dev) it calls Anthropic directly.
+//
+// `feature` names the caller in ai_usage_events (lib/ai-usage.ts), which is
+// how the IT Hub splits Hookka's AI cost by module. Keep the names stable.
+
+import { recordAiCall } from "./ai-usage";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -13,6 +18,8 @@ export function setClaudeForwarder(f: Fetcher | undefined): void {
   forwarder = f;
 }
 
-export function claudeFetch(init: RequestInit): Promise<Response> {
-  return forwarder ? forwarder.fetch(ANTHROPIC_URL, init) : fetch(ANTHROPIC_URL, init);
+export async function claudeFetch(init: RequestInit, feature: string): Promise<Response> {
+  const res = await (forwarder ? forwarder.fetch(ANTHROPIC_URL, init) : fetch(ANTHROPIC_URL, init));
+  recordAiCall(feature, init, res);
+  return res;
 }

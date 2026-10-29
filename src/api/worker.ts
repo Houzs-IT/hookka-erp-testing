@@ -359,7 +359,17 @@ app.use("/api/*", async (c, next) => {
   const adapter = new SupabaseAdapter(getSql(url)) as unknown as D1Database;
   const timer = c.get("dbTimer"); // set by timingMiddleware
   c.set("DB", instrumentD1(adapter, new URL(c.req.url).pathname, timer, c.env));
-  await next();
+  // Claude calls made while handling this request (or in its waitUntil work) are
+  // logged to ai_usage_events through this scope; see lib/ai-usage.ts.
+  const { aiUsageScope } = await import("./lib/ai-usage");
+  let waitUntil: ((p: Promise<unknown>) => void) | null = null;
+  try {
+    const ctx = c.executionCtx;
+    waitUntil = (p) => ctx.waitUntil(p);
+  } catch {
+    /* no ExecutionContext (tests): the write is not kept alive past the request */
+  }
+  await aiUsageScope.run({ db: c.var.DB, waitUntil }, next);
 });
 
 // ---------------------------------------------------------------------------
