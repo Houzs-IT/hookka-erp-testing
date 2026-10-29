@@ -978,7 +978,7 @@ async function runSupplierExtract(
           },
         ],
       }),
-    });
+    }, "scan_supplier_do");
 
     const bodyText = await resp.text();
     if (!resp.ok) {
@@ -1209,7 +1209,7 @@ async function runPoExtract(
           },
         ],
       }),
-    });
+    }, "scan_po");
 
     step(`ai headers status=${resp.status} encoding=${resp.headers.get("content-encoding")} length=${resp.headers.get("content-length")}`);
     const bodyText = await resp.text();
@@ -1419,7 +1419,7 @@ export async function detectSupplierDocBoundaries(
           },
         ],
       }),
-    });
+    }, "scan_doc_boundary");
     const bodyText = await resp.text();
     if (!resp.ok) {
       return {

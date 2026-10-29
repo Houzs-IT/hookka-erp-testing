@@ -234,7 +234,7 @@ export async function distillCustomerRules(
           },
         ],
       }),
-    });
+    }, "scan_distill_customer");
 
     const bodyText = await resp.text();
     if (!resp.ok) {
@@ -522,7 +522,7 @@ export async function distillSupplierRules(
         system: SUPPLIER_DISTILL_META_PROMPT,
         messages: [{ role: "user", content: [{ type: "text", text: userPayload }] }],
       }),
-    });
+    }, "scan_distill_supplier");
 
     const bodyText = await resp.text();
     if (!resp.ok) {

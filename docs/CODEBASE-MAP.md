@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-10-29 on branch `feat/ai-usage-to-hub-main` (to `main`)**: the Claude-calls note in the Scanning/OCR/AI fragment (feature names + `ai-usage.ts` + the daily IT Hub send), read from `src/api/lib/claude-fetch.ts`, `ai-usage.ts`, the eight call sites and `src/api/routes/agent-heartbeat.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-21 on branch `feat/bs-parent-accounts` (to `main`)**: the Balance Sheet's parent accounts — `src/lib/bs-groups.ts` (`groupBsEntries`), `BalanceSheetTab` (`renderBSSection`, levels, `buildExport`) in `src/pages/accounting/index.tsx`, `plBalanceSheetResponse` (parentCode / parentName) and `REPORT_SNAPSHOT_V` in `src/api/routes/accounting.ts`, the PDF row kind `group` in `src/lib/export-report.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-21 on branch `feat/tf-draw-detail-look` (to `main`)**: Creditor Aging's opened drawdown — `TfDrawDetail` / `DueDateBox` / `TfRepaidRows` / `TfRepaidDraw` in `src/pages/accounting/tabs/TradeFinanceBlock.tsx`, `tfRepaid` in `APTab` (`src/pages/accounting/index.tsx`). Nothing else re-checked.
 > **Last verified: 2026-10-20 on branch `claude/t006-pi-caps-main-096a64` (to `main`)**: the convert-chain PO-ceiling line (T-006 R5 / R8 / R9: `po_item_id` buckets, `chk_grn_items_invoiced_qty`, the line-poId create guard) and the `checkPoRemaining` anchor. Nothing else re-checked.
@@ -2488,8 +2489,8 @@ and gets it right — cite it in the fix.
 **All eight routers are LIVE** (mounted in `src/api/worker.ts`). Every mount below sits
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:921`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
-`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:974`),
-`tenantMiddleware` (`src/api/worker.ts:981`) and `apiRateLimit` (`src/api/worker.ts:996`)
+`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:994`),
+`tenantMiddleware` (`src/api/worker.ts:1001`) and `apiRateLimit` (`src/api/worker.ts:1016`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 
@@ -2515,6 +2516,8 @@ translation) goes through `claudeFetch` in `src/api/lib/claude-fetch.ts`. On Pag
 the `CLAUDE_FORWARDER` service binding to `claude-forwarder-worker/`, a Worker pinned to
 Singapore, because Anthropic refuses requests from some Cloudflare regions (BUG-2026-10-13-284).
 Do not add a new direct `fetch("https://api.anthropic.com/...")`. Guard `tests/claude-fetch.test.mjs`.
+
+Each call names its feature (`claudeFetch(init, "scan_po")`); `src/api/lib/ai-usage.ts` logs it to `ai_usage_events` (runtime self-apply) through a per-request scope set in the DB middleware in `src/api/worker.ts`. The agent heartbeat sends the last 7 UTC days, priced per feature, to the IT Hub (`POST /api/v1/sys/ai-usage`, `IT_HUB_URL` + `IT_HUB_API_KEY`) once a UTC day after 02:00, tracked in `kv_config['ai_usage_hub_sent']`. Guard `tests/ai-usage.test.mjs`.
 
 ---
 

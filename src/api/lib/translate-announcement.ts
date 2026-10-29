@@ -168,7 +168,7 @@ export async function translateAnnouncement(args: {
           },
         ],
       }),
-    });
+    }, "announcement_translate");
 
     if (!resp.ok) return null;
     const bodyText = await resp.text();
