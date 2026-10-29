@@ -144,7 +144,7 @@ test('a blank optional cell in BatchImportDialog is omitted, not coerced to 0/""
   const src = readFileSync('src/components/ui/batch-import-dialog.tsx', 'utf8');
   assert.match(
     src,
-    /values\[col\.key\] = col\.type === "boolean" \? false : undefined;/,
+    /values\[col\.key\] = undefined;/,
     'R5: empty optional number must become undefined (omitted from JSON), not 0',
   );
 });
