@@ -118,6 +118,43 @@ test("GRN PUT (DRAFT) keeps each line's own PO link", async () => {
   );
 });
 
+test("GRN PUT (DRAFT): a sent line id that is no longer stored is a 409, a blank id is 'missing'", async () => {
+  const db = makeDb();
+  db.t.grns.push({ id: "grn-1", grnNumber: "GRN-1", poId: "po-1", status: "DRAFT", qcStatus: "PENDING", totalAmount: 0, notes: "" });
+  db.t.grn_items.push({
+    id: 7, grnId: "grn-1", poItemIndex: 0, po_id: "po-2", po_item_id: "poi-2a", materialCode: "A",
+    materialName: "A", orderedQty: 10, receivedQty: 5, acceptedQty: 5, rejectedQty: 0, rejectionReason: null, unitPrice: 100,
+  });
+  const root = mount(grnApp, db);
+  // Another user's save replaced the lines: id 3 is gone.
+  let res = await put(root, "/grn-1", { items: [{ id: 3, materialCode: "A", materialName: "A", acceptedQty: 4 }] });
+  assert.equal(res.status, 409, await res.clone().text());
+  assert.equal(db.t.grn_items[0].po_id, "po-2");
+  // Blank id = no id: position match while the count is unchanged.
+  res = await put(root, "/grn-1", { items: [{ id: "", materialCode: "A", materialName: "A", acceptedQty: 4 }] });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal(db.t.grn_items[0].po_id, "po-2");
+});
+
+test("GRN PUT (DRAFT): no ids and a changed line count does not match PO links by position", async () => {
+  const db = makeDb();
+  db.t.grns.push({ id: "grn-1", grnNumber: "GRN-1", poId: "po-1", status: "DRAFT", qcStatus: "PENDING", totalAmount: 0, notes: "" });
+  db.t.grn_items.push({
+    id: 7, grnId: "grn-1", poItemIndex: 0, po_id: "po-2", po_item_id: "poi-2a", materialCode: "A",
+    materialName: "A", orderedQty: 10, receivedQty: 5, acceptedQty: 5, rejectedQty: 0, rejectionReason: null, unitPrice: 100,
+  });
+  const root = mount(grnApp, db);
+  // A new line is inserted first: new line 0 is not old line 0.
+  const res = await put(root, "/grn-1", {
+    items: [
+      { materialCode: "N", materialName: "N", acceptedQty: 1 },
+      { materialCode: "A", materialName: "A", acceptedQty: 5 },
+    ],
+  });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.notEqual(db.t.grn_items.find((l) => l.materialCode === "N")?.po_id, "po-2");
+});
+
 test("PI PUT keeps each line's own PO when the body omits poId", async () => {
   const db = makeDb();
   db.t.purchase_invoices.push({ id: "pi-1", piNo: "PI-1", purchaseOrderId: "po-1", status: "DRAFT", currency: "MYR", amountSen: 0 });

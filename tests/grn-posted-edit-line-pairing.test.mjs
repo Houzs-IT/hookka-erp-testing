@@ -39,10 +39,13 @@ function makeDb() {
       if (row) row.receivedQty += po[1] === "+" ? b[0] : -b[0];
       return;
     }
-    const m = sql.match(/^UPDATE grn_items SET acceptedQty = \?, receivedQty = \? WHERE id = \?/i);
+    // Guarded line write: [expectedAccepted, newAccepted, newReceived, id]; it
+    // raises (like the CAST marker in Postgres) when the stored qty moved.
+    const m = sql.match(/^UPDATE grn_items SET acceptedQty = CASE WHEN COALESCE\(acceptedQty, 0\) = \?/i);
     if (m) {
-      const row = t.grn_items.find((r) => String(r.id) === String(b[2]));
-      if (row) Object.assign(row, { acceptedQty: b[0], receivedQty: b[1] });
+      const row = t.grn_items.find((r) => String(r.id) === String(b[3]));
+      if (row && (Number(row.acceptedQty) || 0) !== b[0]) throw new Error("grn_line_race:" + row.id);
+      if (row) Object.assign(row, { acceptedQty: b[1], receivedQty: b[2] });
     }
   }
   function query(sql, b) {
@@ -154,4 +157,27 @@ test("POSTED GRN edit moves the line's own PO line, not the header PO's", async 
     db.t.purchase_order_items.map((r) => [r.id, r.receivedQty]),
     [["poi-1a", 5], ["poi-2a", 7]],
   );
+});
+
+test("POSTED GRN edit refuses (409) when another save changed the line since it was read", async () => {
+  const db = seed();
+  // Simulate edit B committing between this request's read and its write: the
+  // read sees 5, the stored value is already 7 when the guarded UPDATE runs.
+  const realPrepare = db.prepare;
+  db.prepare = (raw) => {
+    const s = realPrepare(raw);
+    if (/UPDATE grn_items\s+SET acceptedQty = CASE/i.test(raw)) {
+      const run = s.run;
+      s.run = async () => ((db.t.grn_items[1].acceptedQty = 7), run());
+    }
+    return s;
+  };
+  const res = await put(mount(db), {
+    items: [
+      { id: 2, materialCode: "B", acceptedQty: 3 },
+      { id: 1, materialCode: "A", acceptedQty: 5 },
+    ],
+  });
+  assert.equal(res.status, 409, await res.clone().text());
+  assert.equal(db.t.grn_items[1].acceptedQty, 7);
 });

@@ -468,7 +468,9 @@ export async function issuePurchaseReturnDebitNote(
 
 // HK-0096 — a return can never send back more than came in. Cumulative across
 // every return already raised on the same source line:
-//   • per GRN line : all returns on it (from the GRN or from a PI) <= accepted
+//   • per GRN line : returns made from the GRN <= its UNBILLED part (accepted -
+//                    invoiced); billed goods go back from the invoice, else
+//                    loadGrnReturnedBeforeBilling would shrink what the PI may bill
 //   • per PI line  : all returns on it <= the qty that invoice line billed
 // Lines with no source id (a free-typed line) have nothing to cap against.
 // Returns the error text, or null when every line fits.
@@ -487,16 +489,16 @@ export async function checkPurchaseReturnQty(
     }
     return m;
   };
-  const checks: Array<[Map<string, { qty: number; name: string }>, string, string, string]> = [
-    [sum("grnItemId"), "SELECT acceptedQty AS cap FROM grn_items WHERE id = ?", "grn_item_id", "received"],
-    [sum("purchaseInvoiceItemId"), "SELECT qty AS cap FROM purchase_invoice_items WHERE id = ?", "purchase_invoice_item_id", "invoiced"],
+  const checks: Array<[Map<string, { qty: number; name: string }>, string, string, string, string]> = [
+    [sum("grnItemId"), "SELECT acceptedQty - COALESCE(invoiced_qty, 0) AS cap FROM grn_items WHERE id = ?", "grn_item_id", "received and not yet billed (return billed goods from the invoice)", " AND purchase_return_id IN (SELECT id FROM purchase_returns WHERE COALESCE(purchase_invoice_id, '') = '')"],
+    [sum("purchaseInvoiceItemId"), "SELECT qty AS cap FROM purchase_invoice_items WHERE id = ?", "purchase_invoice_item_id", "invoiced", ""],
   ];
-  for (const [want, capSql, col, label] of checks) {
+  for (const [want, capSql, col, label, priorFilter] of checks) {
     for (const [id, { qty, name }] of want) {
       const src = await db.prepare(capSql).bind(id).first<{ cap: number | null }>();
       if (!src) continue; // unknown source line — nothing to cap against
       const prior = await db
-        .prepare(`SELECT COALESCE(SUM(quantity), 0) AS qty FROM purchase_return_items WHERE ${col} = ?`)
+        .prepare(`SELECT COALESCE(SUM(quantity), 0) AS qty FROM purchase_return_items WHERE ${col} = ?${priorFilter}`)
         .bind(id)
         .first<{ qty: number | null }>();
       const cap = Number(src.cap) || 0;

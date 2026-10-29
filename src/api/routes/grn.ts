@@ -757,19 +757,20 @@ async function buildPostedGRNStockAdjustment(
       .bind(batchId)
       .first<{ id: string; originalQty?: number | null; remainingQty?: number | null }>();
     if (batch) {
-      // Clamp in JS, NOT SQL: Postgres has no 2-arg scalar MAX (that is
-      // GREATEST), and translateSql does not convert SQLite's `MAX(a, b)` — a
-      // negative delta hit "function max(integer, double precision) does not
-      // exist" on prod. The batch is already loaded above, so compute the
-      // clamped (≥ 0) values here and write literals (works on both dialects).
-      const newOriginal = Math.max(0, (Number(batch.originalQty) || 0) + delta);
-      const newRemaining = Math.max(0, (Number(batch.remainingQty) || 0) + delta);
+      // Add the delta in SQL against the row as it stands at commit time, so a
+      // consumption or edit committed after the SELECT above is not overwritten.
+      // Clamp with CASE, NOT a 2-arg MAX: Postgres has no scalar MAX (that is
+      // GREATEST) and translateSql does not convert it — a negative delta hit
+      // "function max(integer, double precision) does not exist" on prod.
       statements.push(
         db
           .prepare(
-            `UPDATE rm_batches SET originalQty = ?, remainingQty = ? WHERE id = ?`,
+            `UPDATE rm_batches
+                SET originalQty = CASE WHEN originalQty + ? > 0 THEN originalQty + ? ELSE 0 END,
+                    remainingQty = CASE WHEN remainingQty + ? > 0 THEN remainingQty + ? ELSE 0 END
+              WHERE id = ?`,
           )
-          .bind(newOriginal, newRemaining, batchId),
+          .bind(delta, delta, delta, delta, batchId),
       );
     } else if (delta > 0) {
       statements.push(
@@ -869,6 +870,36 @@ function grnStatusGuard(db: D1Database, grnId: string, expected: string): D1Prep
         WHERE id = ?`,
     )
     .bind(expected, grnId);
+}
+
+// Same marker trick for a received GRN's qty correction: the stock / cost / PO
+// delta is computed from the acceptedQty this request read, so the line write
+// raises if another save changed it since. Without it two edits at once (10 →
+// 12 and 10 → 15) both commit, the line ends 15 but stock moves +7.
+const GRN_LINE_RACE_MARKER = "grn_line_race";
+const GRN_LINE_RACE_ERROR =
+  "This GRN line was just changed by another save. Nothing was saved — reload and try again.";
+const GRN_LINES_MISMATCH_ERROR =
+  "The lines sent don't match this GRN's lines. Reload the receipt and try again.";
+
+function grnLineQtyGuardedUpdate(
+  db: D1Database,
+  lineId: unknown,
+  expectedAccepted: number,
+  newAccepted: number,
+  newReceived: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE grn_items
+          SET acceptedQty = CASE
+                WHEN COALESCE(acceptedQty, 0) = ? THEN ?
+                ELSE CAST('${GRN_LINE_RACE_MARKER}:' || id AS DOUBLE PRECISION)
+              END,
+              receivedQty = ?
+        WHERE id = ?`,
+    )
+    .bind(expectedAccepted, newAccepted, newReceived, lineId);
 }
 
 // PO status from the counters as they stand when these statements run — so,
@@ -2055,13 +2086,7 @@ app.put("/:id", async (c) => {
               ? existingItems.find((ex) => String(ex.id) === String(r.id))
               : getOrder[j];
           if (!row || incomingByRow.has(row)) {
-            return c.json(
-              {
-                success: false,
-                error: "The lines sent don't match this GRN's lines. Reload the receipt and try again.",
-              },
-              409,
-            );
+            return c.json({ success: false, error: GRN_LINES_MISMATCH_ERROR }, 409);
           }
           incomingByRow.set(row, r);
         }
@@ -2106,13 +2131,7 @@ app.put("/:id", async (c) => {
           // Keep received coherent with the corrected accepted qty:
           // received = accepted + rejected (the rejected count is preserved).
           const newReceived = newAccepted + (Number(ex.rejectedQty) || 0);
-          statements.push(
-            c.var.DB
-              .prepare(
-                "UPDATE grn_items SET acceptedQty = ?, receivedQty = ? WHERE id = ?",
-              )
-              .bind(newAccepted, newReceived, ex.id),
-          );
+          statements.push(grnLineQtyGuardedUpdate(c.var.DB, ex.id, oldAccepted, newAccepted, newReceived));
           if (delta !== 0) {
             lineDeltas.push({
               lineIdx: i,
@@ -2191,11 +2210,23 @@ app.put("/:id", async (c) => {
             .bind(id)
             .all<GRNItemRow & GrnLinePoRef>()
         ).results ?? []).sort((a, b) => (a.poItemIndex ?? 0) - (b.poItemIndex ?? 0));
+        const hasId = (item: Record<string, unknown>) =>
+          item.id != null && String(item.id).trim() !== "";
+        // A sent id that is no longer stored means another save replaced the
+        // lines (DELETE+INSERT gives new ids) — the line's PO link is unknown,
+        // and posting would charge it to the header PO. Same 409 as the
+        // received path.
+        if (rawItems.some((item) => hasId(item) && !oldLines.some((l) => String(l.id) === String(item.id)))) {
+          return c.json({ success: false, error: GRN_LINES_MISMATCH_ERROR }, 409);
+        }
         const newItems = rawItems.map((item, i) => {
-          const old =
-            item.id != null
-              ? oldLines.find((l) => String(l.id) === String(item.id))
-              : oldLines[i];
+          // Position match only while the line count is unchanged — after an
+          // add/remove, line i is not the old line i.
+          const old = hasId(item)
+            ? oldLines.find((l) => String(l.id) === String(item.id))
+            : rawItems.length === oldLines.length
+              ? oldLines[i]
+              : undefined;
           const bodyItem = item.poItemId != null && String(item.poItemId).trim() !== "";
           return {
             poId: bodyItem
@@ -2321,6 +2352,9 @@ app.put("/:id", async (c) => {
       }
       if (String(e instanceof Error ? e.message : e).includes(GRN_STATUS_RACE_MARKER)) {
         return c.json({ success: false, error: GRN_STATUS_RACE_ERROR }, 409);
+      }
+      if (String(e instanceof Error ? e.message : e).includes(GRN_LINE_RACE_MARKER)) {
+        return c.json({ success: false, error: GRN_LINE_RACE_ERROR }, 409);
       }
       throw e;
     }
