@@ -367,7 +367,7 @@ export async function checkRawMaterialDeleteLocked(
  */
 export async function checkRawMaterialUomLocked(
   db: D1Database,
-  rm: { id: string; itemCode: string; balanceQty: number | null },
+  rm: { id: string; itemCode: string; balanceQty: number | null; orgId: string },
 ): Promise<string | null> {
   const parts: string[] = [];
   const bal = Number(rm.balanceQty) || 0;
@@ -378,11 +378,11 @@ export async function checkRawMaterialUomLocked(
          (SELECT COUNT(*) FROM rm_batches WHERE rmId = ? AND remainingQty > 0) AS batches,
          (SELECT COUNT(*) FROM purchase_order_items poi
             JOIN purchase_orders po ON po.id = poi.purchaseOrderId
-           WHERE po.status NOT IN ('RECEIVED', 'CLOSED', 'CANCELLED')
+           WHERE po.orgId = ? AND po.status NOT IN ('RECEIVED', 'CLOSED', 'CANCELLED')
              AND COALESCE(NULLIF(TRIM(poi.material_code), ''),
                           TRIM(SPLIT_PART(poi.materialName, ' - ', 1))) = ?) AS pos`,
     )
-    .bind(rm.id, rm.itemCode)
+    .bind(rm.id, rm.orgId, rm.itemCode)
     // Lowercase single-word aliases: Postgres folds unquoted aliases, and
     // COUNT(*) can arrive as a string (bigint).
     .first<{ batches: number | string; pos: number | string }>();

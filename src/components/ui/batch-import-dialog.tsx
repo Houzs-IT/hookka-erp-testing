@@ -288,7 +288,8 @@ export const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
           if (!str) {
             // Blank optional cell stays absent (not defaulted to 0/"") so
             // JSON.stringify omits it and a server merge doesn't overwrite.
-            values[col.key] = col.type === "boolean" ? false : undefined;
+            // A blank boolean is absent too (it used to become false = INACTIVE).
+            values[col.key] = undefined;
             continue;
           }
 
