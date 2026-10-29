@@ -177,6 +177,7 @@ app.post("/samples/:id/confirm", async (c) => {
     kind: "supplier",
     scopeId: srow?.supplierId,
     raw: srow?.rawJson,
+    sampleId: id,
     corrected: (() => {
       try {
         return JSON.parse(correctedJson);

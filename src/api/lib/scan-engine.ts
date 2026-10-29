@@ -1283,8 +1283,8 @@ async function runPoExtract(
     try {
       await db
         .prepare(
-          `INSERT INTO po_scan_samples (id, customerHint, poIdentifier, rawExtracted, correctedJson, createdBy)
-           VALUES (?, ?, ?, ?, NULL, ?)`,
+          `INSERT INTO po_scan_samples (id, customerHint, poIdentifier, rawExtracted, correctedJson, createdBy, orgId)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`,
         )
         .bind(
           sampleId,
@@ -1292,6 +1292,7 @@ async function runPoExtract(
           null,
           parsed ? JSON.stringify(parsed) : JSON.stringify({ error: errorMsg, claudeText }),
           opts.createdBy ?? null,
+          orgId,
         )
         .run();
     } catch (e) {
