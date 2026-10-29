@@ -109,10 +109,12 @@ test("label maps: every dept picker lists FIBRE", () => {
     "src/pages/m/config/forms.ts",
     "src/pages/m/config/modules.ts",
     "src/pages/m/screens/Home.tsx",
-    "src/pages/m/screens/ProductionScreen.tsx",
-    "src/pages/m/screens/ProductionDetailScreen.tsx",
   ];
   for (const f of files) assert.ok(read(f).includes("FIBRE"), `${f} missing FIBRE`);
+  // Production Orders v3: the /m list + detail take the department list from the desktop
+  // DEPARTMENTS constant (via lib/production-ui.ts) instead of keeping their own copy.
+  assert.ok(read("src/pages/production/utils.ts").includes('code: "FIBRE"'), "desktop DEPARTMENTS lists FIBRE");
+  assert.match(read("src/pages/m/lib/production-ui.ts"), /import \{ DEPARTMENTS \} from "@\/pages\/production\/utils"/);
   const bom = read("src/pages/bom.tsx");
   assert.ok(bom.includes('"FOAM", "FIBRE", "FRAMING", "WEBBING", "UPHOLSTERY", "PACKING"]'), "BOM DEPT_ORDER");
   assert.match(bom, /FIBRE: "Fibre",/);
