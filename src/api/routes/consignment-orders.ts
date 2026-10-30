@@ -49,7 +49,6 @@ import {
 import { bumpPoListCacheVersion } from "../lib/po-list-cache";
 import { ensureCoStatusChangesTable } from "./production-orders/_helpers";
 import {
-  consumeEditLockOverrideToken,
   createEditLockOverride,
   lookupActorDisplayName,
   MIN_OVERRIDE_REASON_LEN,
@@ -1257,71 +1256,43 @@ app.get("/:id/edit-eligibility", async (c) => {
     });
   }
 
-  // IN_PRODUCTION — pull earliest completed + earliest scheduled JC dueDate.
-  const [completedRes, earliestDueRes] = await Promise.all([
-    c.var.DB
-      .prepare(
-        `SELECT jc.departmentName, jc.departmentCode, jc.completedDate
-           FROM job_cards jc
-           JOIN production_orders po ON po.id = jc.productionOrderId
-          WHERE po.consignmentOrderId = ?
-            AND jc.completedDate IS NOT NULL
-            AND jc.completedDate <> ''
-          ORDER BY jc.completedDate ASC
-          LIMIT 1`,
-      )
-      .bind(id)
-      .first<{
-        departmentName: string | null;
-        departmentCode: string | null;
-        completedDate: string | null;
-      }>(),
-    c.var.DB
-      .prepare(
-        `SELECT jc.dueDate
-           FROM job_cards jc
-           JOIN production_orders po ON po.id = jc.productionOrderId
-          WHERE po.consignmentOrderId = ?
-            AND jc.dueDate IS NOT NULL
-            AND jc.dueDate <> ''
-          ORDER BY jc.dueDate ASC
-          LIMIT 1`,
-      )
-      .bind(id)
-      .first<{ dueDate: string | null }>(),
-  ]);
+  // IN_PRODUCTION — Option D, same as the SO endpoint: editable only while
+  // every JC under the CO's POs is still WAITING or CANCELLED (HK-0123).
+  const productionStartedRes = await c.var.DB
+    .prepare(
+      `SELECT jc.departmentName, jc.departmentCode, jc.status, jc.completedDate
+         FROM job_cards jc
+         JOIN production_orders po ON po.id = jc.productionOrderId
+        WHERE po.consignmentOrderId = ?
+          AND jc.status NOT IN ('WAITING', 'CANCELLED')
+        ORDER BY jc.sequence ASC, jc.id ASC
+        LIMIT 1`,
+    )
+    .bind(id)
+    .first<{
+      departmentName: string | null;
+      departmentCode: string | null;
+      status: string | null;
+      completedDate: string | null;
+    }>();
 
-  // Rule 2: any dept stamped a completion → fully locked.
-  if (completedRes && completedRes.completedDate) {
+  if (productionStartedRes && productionStartedRes.status) {
     return c.json({
       success: true,
       editable: false,
-      reason: "dept_completed",
+      reason: "production_started",
       status: co.status,
-      completedDept: completedRes.departmentName || completedRes.departmentCode || "A department",
-      completedAt: completedRes.completedDate,
+      startedDept:
+        productionStartedRes.departmentName ||
+        productionStartedRes.departmentCode ||
+        "A department",
+      startedDeptCode: productionStartedRes.departmentCode || "",
+      jcStatus: productionStartedRes.status,
+      completedAt: productionStartedRes.completedDate || null,
     });
   }
 
-  // Rule 3: earliest JC dueDate > today + 2 days.
-  const earliestDue = earliestDueRes?.dueDate?.slice(0, 10) ?? "";
-  if (earliestDue.length === 10) {
-    const cutoff = new Date();
-    cutoff.setUTCDate(cutoff.getUTCDate() + 2);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
-    if (earliestDue <= cutoffStr) {
-      return c.json({
-        success: true,
-        editable: false,
-        reason: "production_window",
-        status: co.status,
-        earliestJcDueDate: earliestDue,
-        cutoffDate: cutoffStr,
-      });
-    }
-  }
-
-  // IN_PRODUCTION, no JC done, first step > 2 days away — editable.
+  // IN_PRODUCTION + every JC still WAITING/CANCELLED — editable.
   return c.json({
     success: true,
     editable: true,
@@ -1868,111 +1839,53 @@ app.put("/:id", async (c) => {
 
       // ---------------------------------------------------------------
       // Edit-eligibility re-check (defense-in-depth, mirrors the GET
-      // /:id/edit-eligibility logic). Same model as sales-orders.ts:
-      // Rule 2 (dept_completed) is hard — override cannot bypass; Rule
-      // 3 (production_window) is bypassable via a one-shot
-      // overrideToken minted by SUPER_ADMIN/ADMIN. See SO PUT block
-      // for the full rationale comment.
+      // /:id/edit-eligibility logic). Same Option D rule as the SO PUT
+      // (sales-orders.ts): structural edits are allowed while every JC under
+      // the CO is still WAITING (or CANCELLED); once any JC has moved on, a
+      // teardown+rebuild would orphan that work, so the CO is hard-locked.
+      // The CO side kept the older 2-day due-date soft lock after
+      // the SO dropped it, and applied it to CONFIRMED orders the GET called
+      // editable, so no one could reach the override (HK-0123).
       // ---------------------------------------------------------------
       if (
         existing.status === "IN_PRODUCTION" ||
         existing.status === "CONFIRMED"
       ) {
-        const [completedRes, earliestDueRes] = await Promise.all([
-          c.var.DB
-            .prepare(
-              `SELECT jc.completedDate, jc.departmentName, jc.departmentCode
-                 FROM job_cards jc
-                 JOIN production_orders po ON po.id = jc.productionOrderId
-                WHERE po.consignmentOrderId = ?
-                  AND jc.completedDate IS NOT NULL
-                  AND jc.completedDate <> ''
-                LIMIT 1`,
-            )
-            .bind(id)
-            .first<{
-              completedDate: string | null;
-              departmentName: string | null;
-              departmentCode: string | null;
-            }>(),
-          c.var.DB
-            .prepare(
-              `SELECT jc.dueDate
-                 FROM job_cards jc
-                 JOIN production_orders po ON po.id = jc.productionOrderId
-                WHERE po.consignmentOrderId = ?
-                  AND jc.dueDate IS NOT NULL
-                  AND jc.dueDate <> ''
-                ORDER BY jc.dueDate ASC
-                LIMIT 1`,
-            )
-            .bind(id)
-            .first<{ dueDate: string | null }>(),
-        ]);
+        const productionStartedRes = await c.var.DB
+          .prepare(
+            `SELECT jc.status, jc.departmentName, jc.departmentCode, jc.completedDate
+               FROM job_cards jc
+               JOIN production_orders po ON po.id = jc.productionOrderId
+              WHERE po.consignmentOrderId = ?
+                AND jc.status NOT IN ('WAITING', 'CANCELLED')
+              ORDER BY jc.sequence ASC, jc.id ASC
+              LIMIT 1`,
+          )
+          .bind(id)
+          .first<{
+            status: string | null;
+            departmentName: string | null;
+            departmentCode: string | null;
+            completedDate: string | null;
+          }>();
 
-        if (completedRes && completedRes.completedDate) {
+        if (productionStartedRes && productionStartedRes.status) {
           const dept =
-            completedRes.departmentName ||
-            completedRes.departmentCode ||
+            productionStartedRes.departmentName ||
+            productionStartedRes.departmentCode ||
             "A department";
           return c.json(
             {
               success: false,
-              error: `Cannot edit — ${dept} has completed work on this order. Editing items would orphan finished WIP.`,
-              reason: "dept_completed",
+              error: `Cannot edit — ${dept} has started production (job card status: ${productionStartedRes.status}). Editing items would orphan in-flight work.`,
+              reason: "production_started",
+              startedDept: dept,
+              startedDeptCode: productionStartedRes.departmentCode || "",
+              jcStatus: productionStartedRes.status,
+              completedAt: productionStartedRes.completedDate || null,
             },
             403,
           );
-        }
-
-        const earliestDue = earliestDueRes?.dueDate?.slice(0, 10) ?? "";
-        if (earliestDue.length === 10) {
-          const cutoff = new Date();
-          cutoff.setUTCDate(cutoff.getUTCDate() + 2);
-          const cutoffStr = cutoff.toISOString().slice(0, 10);
-          if (earliestDue <= cutoffStr) {
-            const overrideToken =
-              typeof body.overrideToken === "string"
-                ? body.overrideToken
-                : "";
-            if (!overrideToken) {
-              return c.json(
-                {
-                  success: false,
-                  error: `Cannot edit — first production step is due ${earliestDue} (within the 2-day cutoff ${cutoffStr}). An ADMIN override is required.`,
-                  reason: "production_window",
-                  earliestJcDueDate: earliestDue,
-                  cutoffDate: cutoffStr,
-                },
-                403,
-              );
-            }
-            const consumed = await consumeEditLockOverrideToken(
-              c.var.DB,
-              overrideToken,
-              "CO",
-              id,
-            );
-            if (!consumed.ok) {
-              const detail =
-                consumed.reason === "expired"
-                  ? "Override token has expired (60 min TTL). Request a new override."
-                  : consumed.reason === "already_used"
-                    ? "Override token has already been used. Request a new override."
-                    : consumed.reason === "wrong_order"
-                      ? "Override token does not match this order."
-                      : "Override token not found.";
-              return c.json(
-                {
-                  success: false,
-                  error: detail,
-                  reason: "override_invalid",
-                },
-                403,
-              );
-            }
-            // Token consumed — fall through to the normal PUT flow.
-          }
         }
       }
     }
