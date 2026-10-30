@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-29** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-10-30** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -152,7 +152,7 @@ offsets pointing past the end of their own file.
 | `/api/consignments` | `src/api/routes/consignments.ts` | `GET /` <sub>:40</sub><br>`POST /` <sub>:100</sub><br>`GET /:id` <sub>:328</sub><br>`PUT /:id` <sub>:356</sub><br>`DELETE /:id` <sub>:527</sub> | gated |
 | `/api/consignment-notes` | `src/api/routes/consignment-notes.ts` | `GET /` <sub>:81</sub><br>`GET /linked-po-ids` <sub>:203</sub><br>`GET /ready-planning` <sub>:242</sub><br>`GET /stats` <sub>:479</sub><br>`GET /:id/print-extras` <sub>:571</sub><br>`POST /` <sub>:830</sub><br>`POST /:id/return` <sub>:1109</sub><br>`POST /:id/convert-to-invoice` <sub>:1464</sub><br>`POST /:id/notify-customer` <sub>:1851</sub><br>`PATCH /` <sub>:2140</sub><br>`PUT /:id` <sub>:2196</sub> | gated |
 | `/api/cn-packing-lists` | `src/api/routes/cn-packing-lists.ts` | `GET /` <sub>:382</sub><br>`GET /:id` <sub>:426</sub><br>`POST /` <sub>:663</sub><br>`DELETE /:id` <sub>:696</sub> | gated |
-| `/api/consignment-orders` | `src/api/routes/consignment-orders.ts` | `GET /` <sub>:544</sub><br>`POST /` <sub>:653</sub><br>`GET /stats` <sub>:1046</sub><br>`GET /status-changes` <sub>:1136</sub><br>`GET /:id/edit-eligibility` <sub>:1210</sub><br>`POST /:id/override-edit-lock` <sub>:1334</sub><br>`GET /:id` <sub>:1505</sub><br>`POST /:id/confirm` <sub>:1703</sub><br>`PUT /:id` <sub>:1820</sub><br>`POST /:id/cancel` <sub>:2493</sub><br>`PATCH /:id/hub` <sub>:2636</sub><br>`DELETE /:id` <sub>:2971</sub> | gated |
+| `/api/consignment-orders` | `src/api/routes/consignment-orders.ts` | `GET /` <sub>:553</sub><br>`POST /` <sub>:664</sub><br>`GET /stats` <sub>:1059</sub><br>`GET /status-changes` <sub>:1149</sub><br>`GET /:id/edit-eligibility` <sub>:1223</sub><br>`POST /:id/override-edit-lock` <sub>:1347</sub><br>`GET /:id` <sub>:1518</sub><br>`POST /:id/confirm` <sub>:1716</sub><br>`PUT /:id` <sub>:1833</sub><br>`POST /:id/cancel` <sub>:2508</sub><br>`PATCH /:id/hub` <sub>:2651</sub><br>`DELETE /:id` <sub>:2986</sub> | gated |
 | `/api/stock-adjustments` | `src/api/routes/stock-adjustments.ts` | `GET /` <sub>:152</sub><br>`POST /` <sub>:209</sub> | gated |
 | `/api/drivers` | `src/api/routes/drivers.ts` | `GET /` <sub>:72</sub><br>`POST /` <sub>:143</sub><br>`GET /:id` <sub>:199</sub><br>`PUT /:id` <sub>:211</sub><br>`DELETE /:id` <sub>:300</sub> | gated |
 | `/api/three-pl-vehicles` | `src/api/routes/three-pl-vehicles.ts` | `GET /collisions` <sub>:165</sub><br>`GET /` <sub>:195</sub><br>`POST /` <sub>:211</sub><br>`GET /:id` <sub>:305</sub><br>`PUT /:id` <sub>:320</sub><br>`DELETE /:id` <sub>:428</sub> | gated |
