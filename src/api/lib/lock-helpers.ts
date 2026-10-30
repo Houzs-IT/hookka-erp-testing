@@ -54,15 +54,15 @@ export async function checkSalesOrderLocked(
 /**
  * Consignment Order lock — TWO triggers:
  *   1. Any of its production orders has reached COMPLETED.
- *   2. A Consignment Note has been created against the parent customer
+ *   2. A Consignment Note has been created against THIS CO
  *      (parallel to "DO created → SO locks" on the SO side; CN is the
  *      shipment doc for CO).
  *
- * NOTE: The CN check below uses the legacy `consignment_notes` table by
- * customerId because there is no consignment_notes.consignmentOrderId FK
- * yet (PR 5 will add it when the proper CN shipment shape lands). For
- * now the customerId proxy is conservative — it locks the CO if ANY CN
- * exists for the same customer, which is the safer error.
+ * The CN check keys on consignment_notes.consignmentOrderId (mig 0066).
+ * It used to key on customerId, from before that column existed, so one CN
+ * for Houzs Century locked every later Houzs Century CO (HK-0123:
+ * CO-2610-022 refused because of CGN-2610-001, which belongs to
+ * CO-2610-002).
  */
 export async function checkConsignmentOrderLocked(
   db: D1Database,
@@ -80,11 +80,10 @@ export async function checkConsignmentOrderLocked(
     return `Cannot edit Consignment Order — Production Order ${poRow.poNo} is already COMPLETED. Cancel the production order first to unlock the CO.`;
   }
 
-  // 2. CN exists check (proxy via customerId until PR 5 adds the FK).
+  // 2. CN exists check.
   const cnRow = await db
     .prepare(
-      `SELECT noteNumber FROM consignment_notes WHERE customerId IN
-         (SELECT customerId FROM consignment_orders WHERE id = ?) LIMIT 1`,
+      `SELECT noteNumber FROM consignment_notes WHERE consignmentOrderId = ? LIMIT 1`,
     )
     .bind(consignmentOrderId)
     .first<{ noteNumber: string }>();
@@ -129,13 +128,11 @@ export async function checkProductionOrderLocked(
       return `Cannot edit Production Order — Delivery Order ${doRow.doNo} already exists for the parent Sales Order. Delete or cancel the DO first to unlock the PO.`;
     }
   }
-  // Check consignment_notes for the CO side (legacy table for now —
-  // will be repurposed as the proper CN shipment table in PR 5).
+  // Check consignment_notes for the CO side.
   if (po.consignmentOrderId) {
     const cnRow = await db
       .prepare(
-        `SELECT noteNumber FROM consignment_notes WHERE customerId IN
-           (SELECT customerId FROM consignment_orders WHERE id = ?) LIMIT 1`,
+        `SELECT noteNumber FROM consignment_notes WHERE consignmentOrderId = ? LIMIT 1`,
       )
       .bind(po.consignmentOrderId)
       .first<{ noteNumber: string }>();

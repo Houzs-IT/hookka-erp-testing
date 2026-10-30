@@ -48,6 +48,8 @@ type SofaModule = {
   basePriceSen: number;
 };
 
+type CustomSpecial = { description: string; surchargeSen: number };
+
 type LineItem = {
   // Client-only stable id for React keys. Stripped before POST. Sprint 7.
   _uid: string;
@@ -72,6 +74,7 @@ type LineItem = {
   specialOrders: string[]; // array of codes
   specialOrderPriceSen: number;
   specialOrder: string; // comma-joined text for submission
+  customSpecials: CustomSpecial[]; // free-text per-line specials (HK-0123)
   notes: string;
   // Per-line discount (migration 0179). In sen; 0 = no discount.
   discountSen: number;
@@ -92,7 +95,7 @@ const makeEmptyLine = (): LineItem => ({
   quantity: 1, basePriceSen: 0, seatHeight: "", selectedModules: [],
   gapInches: null, divanHeightInches: null, divanPriceSen: 0,
   legHeightInches: null, legPriceSen: 0, totalHeightPriceSen: 0,
-  specialOrders: [], specialOrderPriceSen: 0, specialOrder: "", notes: "",
+  specialOrders: [], specialOrderPriceSen: 0, specialOrder: "", customSpecials: [], notes: "",
   discountSen: 0,
   price1Sen: null, seatHeightPrices: [],
 });
@@ -379,7 +382,8 @@ function CreateConsignmentOrderPage() {
               ...it,
               _uid: crypto.randomUUID(),
               seatHeight: it.seatHeight || "",
-              specialOrders: it.specialOrders || (it.specialOrder ? it.specialOrder.split(/[;,]/).map((s: string) => s.trim()).filter(Boolean) : []),
+              specialOrders: it.specialOrders || (it.specialOrder ? it.specialOrder.split(/[;,]/).map((s: string) => s.trim()).filter((s: string) => s && !/^OTHER\s*:/i.test(s)) : []),
+              customSpecials: Array.isArray(it.customSpecials) ? it.customSpecials : [],
             }));
             setItems(migrated);
           }
@@ -659,20 +663,43 @@ function CreateConsignmentOrderPage() {
       ? current.filter(c => c !== code)
       : [...current, code];
 
-    // Shared rule (BUG-2026-09-23): config-only options priced, owner's combo.
-    const cfgSpecials = maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"];
-    const surcharge = calcSpecialsSurchargeSen(next, cfgSpecials);
-
-    // Persist as semicolon-separated canonical names; each token is guaranteed
-    // to come from the config dropdown, so no free text leaks into specialOrder.
-    const label = next.map(c => specialNameForCode(c, cfgSpecials) || c).join("; ");
     const patch = {
       specialOrders: next,
-      specialOrder: label,
-      specialOrderPriceSen: surcharge,
+      specialOrder: buildSpecialOrderText(next, item.customSpecials, isSofa),
+      specialOrderPriceSen: calcSpecialSurcharge(next, item.customSpecials, isSofa),
     };
     // Sofa sibling modules share the same special-order selection — per the
     // "variants cascade from first item" rule. Non-sofa lines edit in isolation.
+    if (isSofa) {
+      propagateSofaVariant(idx, patch);
+    } else {
+      updateItem(idx, patch);
+    }
+  };
+
+  // Semicolon-separated canonical names from the config dropdown, then one
+  // "OTHER: <desc>" token per free-text custom special (same as sales/create.tsx).
+  const buildSpecialOrderText = (codes: string[], customs: CustomSpecial[], isSofa: boolean): string => {
+    const cfgSpecials = maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"];
+    return [
+      ...codes.map(c => specialNameForCode(c, cfgSpecials) || c),
+      ...customs.map(c => c.description.trim()).filter(Boolean).map(d => `OTHER: ${d}`),
+    ].join("; ");
+  };
+
+  // Shared rule (BUG-2026-09-23): config-only options priced, owner's combo.
+  const calcSpecialSurcharge = (codes: string[], customs: CustomSpecial[], isSofa: boolean): number =>
+    calcSpecialsSurchargeSen(codes, maintenanceConfig?.[isSofa ? "sofaSpecials" : "specials"]) +
+    customs.reduce((s, c) => s + (Number.isFinite(c.surchargeSen) && c.surchargeSen > 0 ? Math.round(c.surchargeSen) : 0), 0);
+
+  const setCustomSpecials = (idx: number, customs: CustomSpecial[]) => {
+    const item = items[idx];
+    const isSofa = item?.itemCategory === "SOFA";
+    const patch = {
+      customSpecials: customs,
+      specialOrder: buildSpecialOrderText(item.specialOrders, customs, isSofa),
+      specialOrderPriceSen: calcSpecialSurcharge(item.specialOrders, customs, isSofa),
+    };
     if (isSofa) {
       propagateSofaVariant(idx, patch);
     } else {
@@ -1075,6 +1102,7 @@ function CreateConsignmentOrderPage() {
               onSelectLeg={selectLeg}
               onSelectSeatHeight={selectSeatHeight}
               onToggleSpecialOrder={toggleSpecialOrder}
+              onSetCustomSpecials={setCustomSpecials}
               onAddSofaModules={addSofaModules}
               onUpdate={updateItem}
               onRemove={removeItem}
@@ -1105,6 +1133,7 @@ type LineItemCardProps = {
   onSelectLeg: (idx: number, v: string) => void;
   onSelectSeatHeight: (idx: number, v: string) => void;
   onToggleSpecialOrder: (idx: number, code: string) => void;
+  onSetCustomSpecials: (idx: number, customs: CustomSpecial[]) => void;
   onAddSofaModules: (idx: number, moduleProductIds: string[]) => void;
   onUpdate: (idx: number, u: Partial<LineItem>) => void;
   onRemove: (idx: number) => void;
@@ -1119,7 +1148,7 @@ function LineItemCard({
   item, idx, products, fabrics,
   onSelectProduct, onSelectFabric,
   onSelectGap, onSelectDivan, onSelectLeg, onSelectSeatHeight,
-  onToggleSpecialOrder, onAddSofaModules, onUpdate, onRemove, canRemove,
+  onToggleSpecialOrder, onSetCustomSpecials, onAddSofaModules, onUpdate, onRemove, canRemove,
   getUnitPrice, getLineTotal, getTotalHeight, maintenanceConfig,
 }: LineItemCardProps) {
   const [showSpecialOrders, setShowSpecialOrders] = useState(false);
@@ -1606,6 +1635,61 @@ function LineItemCard({
             })}
           </div>
         )}
+
+        {/* Other (custom): free-text specials, as on Sales Order (HK-0123). */}
+        <div className="mt-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-medium text-[#374151]">
+              Other (custom)
+              {item.customSpecials.length > 0 && (
+                <span className="text-[#9CA3AF] font-normal ml-1">
+                  ({item.customSpecials.length})
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onSetCustomSpecials(idx, [...item.customSpecials, { description: "", surchargeSen: 0 }])}
+              className="text-xs font-medium text-[#6B5C32] hover:text-[#4A3F22] transition-colors flex items-center gap-1"
+            >
+              <Plus className="h-3 w-3" />
+              Add custom
+            </button>
+          </div>
+          {item.customSpecials.length > 0 && (
+            <div className="space-y-1.5">
+              {item.customSpecials.map((cs, csIdx) => (
+                <div
+                  key={csIdx}
+                  className="flex items-center gap-2 rounded-md border border-[#E2DDD8] bg-[#FAF9F7] p-2"
+                >
+                  <Input
+                    value={cs.description}
+                    onChange={(e) => onSetCustomSpecials(idx, item.customSpecials.map((c, i) => (i === csIdx ? { ...c, description: e.target.value } : c)))}
+                    placeholder="e.g. Custom Foam Density 35D"
+                    className="h-8 flex-1 text-sm"
+                  />
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-[#9CA3AF]">RM</span>
+                    <MoneyInput
+                      value={cs.surchargeSen / 100}
+                      onChange={(rm) => onSetCustomSpecials(idx, item.customSpecials.map((c, i) => (i === csIdx ? { ...c, surchargeSen: Math.round((rm ?? 0) * 100) } : c)))}
+                      className="h-8 w-24 text-sm"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onSetCustomSpecials(idx, item.customSpecials.filter((_, i) => i !== csIdx))}
+                    className="p-1 rounded text-[#9CA3AF] hover:text-[#B91C1C] hover:bg-[#FEE2E2] transition-colors"
+                    aria-label="Remove custom special"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       )}
 
