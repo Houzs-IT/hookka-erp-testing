@@ -1,5 +1,18 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, nothing committed); nothing else re-checked.
 > **Last verified: 2026-10-26**: IT Support zip attachments entry added (branch `feat/it-support-zip`, to `staging`); nothing else re-checked.
+
+## Mobile Planning v2 (design/mobile-planning, 2026-10-30)
+Design: `Planning v2.dc.html` + CHANGES.md §1-7 (owner handoff). Frontend only: no backend, DB, scheduler, desktop or permission change. Owner approved decisions D1-D8 on 2026-10-30.
+1. Schedule tab: dept chips, week card, Mon-Sat tiles, Unscheduled, lane/order cards from `GET /api/planning/schedule/:dept` (scheduler-assigned day, never lead times). Foam Cutting + Fibre reuse the desktop's static empty snapshots (D1).
+2. Safe PO navigation (D2): Fab Cut / Fab Sew by exact `companySOId-NN` label; other depts only when SO + lane + dept (+ wipLabel) leaves ONE order; otherwise the card is not tappable and dept due / PO no. show "-".
+3. No On Hold pill on Schedule (D3: the API excludes ON_HOLD orders by design).
+4. Capacity + Loading sheet: the desktop maths ported to `src/pages/m/lib/planning-capacity.ts` with parity tests (D5). Same three requests as desktop; no `/api/workers`.
+5. Tracker (D6), Lead Times + Proposals (view only, D4), both reports via `window.open` (D7), More sheet, all loading / empty / error / no-permission states.
+6. Shared edits kept to two lines each: `MobileLayout.tsx` (CUSTOM_L1 `planning`) and `nav.ts` (`navGate: "/planning"`). Existing `planningConfig` left in `modules.ts`.
+7. DONE (owner approved D1-D8; nothing committed): all of items 1-6 are built. `npx tsc -p tsconfig.app.json --noEmit` exit 0, eslint clean on the new + edited files, `tests/m-planning.test.mjs` (23 tests: desktop-parity capacity / loading / tracker, schedule parsing, safe order matching, lead times) + every `tests/m-*` / `tests/mobile-*` test green. Seen in a browser at 390 / 820 / 1180 px, light + dark, against FAKE in-page API data (no login possible; nothing reached staging or production): switch, dept chips, week + day tiles, Unscheduled, cards, tap-to-order, Capacity scopes + help + dept cards, Loading sheet (category, past / future bars, job tap), Tracker (search, chips, Late), Lead Times, Proposals, More menu, report URLs, no-permission, error + retry, empty and loading states.
+8. Deviations from the HTML (all owner-approved): repo bottom bar (not the prototype's 5 tabs); no On Hold pill (API excludes held orders); Lead Times shows no actor and derives "from → to"; Total lead time = sum of department days (the lead-times library's definition), buffer shown separately; SO-level schedule cards show the SO id and "-" for PO no. / dept due when not uniquely matched; Completed orders absent from the Tracker (desktop request excludes them); capacity period is client-side; the schedule card has a Cut / SO ref chip.
+9. OPEN: live-data behaviour is UNMEASURED (how often SO-level schedule rows map to more than one order; whether any ON_HOLD orders exist; PWA `window.open` of the reports keeps the session). Salespeople get customer-scoped production orders, so Capacity / Tracker show partial numbers for them exactly like desktop.
 
 ## IT Support: accept .zip attachments (feat/it-support-zip, 2026-10-26)
 From CONTS-0007 (Loo Wen Wei, Conts); Samuel asked for the same on every system.

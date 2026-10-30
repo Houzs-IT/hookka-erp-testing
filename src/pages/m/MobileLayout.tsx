@@ -120,6 +120,20 @@ function DeliveryDetailRoute() {
   );
 }
 
+// Planning v2 (Claude Design `Planning v2.dc.html`, 2026-10-30), code-split like
+// Delivery: Schedule · Capacity · Tracker plus the view-only Lead Times and
+// Proposals screens.
+const PlanningScreenLazy = lazy(() =>
+  import("./screens/planning/PlanningScreen").then((m) => ({ default: m.PlanningScreen })),
+);
+function PlanningRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <PlanningScreenLazy />
+    </Suspense>
+  );
+}
+
 // Procurement core (Orders · Receipts · Invoices) from Claude Design
 // `Procurement.dc.html` (2026-10-21), code-split like Delivery. The detail keeps
 // the old id-prefix dispatch (po- / grn- / pi-), so every /m/procurement/:id
@@ -214,6 +228,9 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // design v12) — the generic list flattens that signal. Detail route stays
   // generic via productionConfig.detail.
   production: ProductionScreen,
+  // Claude Design `Planning v2.dc.html`: Schedule · Capacity · Tracker + view-only
+  // Lead Times / Proposals, phone and tablet. No L2 (a card opens /m/production/:id).
+  planning: PlanningRoute,
   // SKU Master | Catalog hub (Products Hub v2) on phone AND tablet; in the
   // tablet split pane it renders one column beside /m/products/:id.
   products: ProductsScreen,
