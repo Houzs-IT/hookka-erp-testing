@@ -32,6 +32,11 @@ import {
   seatHeightOf,
 } from "../lib/sofa-combo-pass";
 import { checkConsignmentOrderLocked, lockedResponse } from "../lib/lock-helpers";
+import {
+  parseCustomSpecials,
+  sanitizeCustomSpecials,
+  serializeCustomSpecials,
+} from "./sales-orders/_helpers";
 import { emitAudit, buildAuditStatement } from "../lib/audit";
 import { requirePermission } from "../lib/rbac";
 import { customerScopeSql } from "../lib/customer-scope";
@@ -184,6 +189,9 @@ export type ConsignmentOrderItemRow = {
   legPriceSen: number;
   specialOrder: string | null;
   specialOrderPriceSen: number;
+  // Free-text "Other (custom)" specials, JSON like sales_order_items (HK-0123).
+  customSpecials?: string | null;
+  custom_specials?: string | null;
   // The FIFTH price component (migration 0209 created
   // `consignment_order_items.total_height_price_sen`; it is present in prod).
   // The CO create screen has always computed, displayed and POSTed a
@@ -334,6 +342,7 @@ function rowToItem(it: ConsignmentOrderItemRow) {
     // line's OWN stored value instead of re-deriving it on load, and so the
     // CO PDF prints the T.Height it was charged.
     totalHeightPriceSen: totalHeightSenOf(it),
+    customSpecials: parseCustomSpecials(it.customSpecials ?? it.custom_specials ?? null),
     basePriceSen: it.basePriceSen,
     unitPriceSen: it.unitPriceSen,
     // Per-line discount (migration 0179). Default 0 for rows predating the column.
@@ -637,6 +646,8 @@ function ensureDiscountColumn(db: D1Database): Promise<void> {
         // both the POST and the PUT. Migration files are inert on deploy here;
         // this line is the thing that actually creates the column in prod.
         "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS pre_hold_status TEXT",
+        // HK-0123 "Other (custom)" specials — written by the POST and PUT.
+        "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS custom_specials TEXT",
       ];
       await runSelfApply(db, "consignment-orders", stmts);
     })().catch((err) => {
@@ -889,6 +900,7 @@ app.post("/", async (c) => {
           legPriceSen: legPrice,
           specialOrder: (it.specialOrder as string) ?? null,
           specialOrderPriceSen: specialPrice,
+          customSpecials: serializeCustomSpecials(sanitizeCustomSpecials(it.customSpecials)),
           totalHeightPriceSen: totalHeightPrice,
           basePriceSen: basePrice,
           unitPriceSen: unitPrice,
@@ -946,9 +958,9 @@ app.post("/", async (c) => {
           `INSERT INTO consignment_order_items (id, consignmentOrderId, lineNo, lineSuffix,
              productId, productCode, productName, itemCategory, sizeCode, sizeLabel,
              fabricCode, quantity, gapInches, divanHeightInches, divanPriceSen,
-             legHeightInches, legPriceSen, specialOrder, specialOrderPriceSen,
+             legHeightInches, legPriceSen, specialOrder, specialOrderPriceSen, customSpecials,
              totalHeightPriceSen, basePriceSen, unitPriceSen, discountSen, lineTotalSen, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           it.id,
           it.consignmentOrderId,
@@ -969,6 +981,7 @@ app.post("/", async (c) => {
           it.legPriceSen,
           it.specialOrder,
           it.specialOrderPriceSen,
+          it.customSpecials,
           it.totalHeightPriceSen,
           it.basePriceSen,
           it.unitPriceSen,
@@ -2271,6 +2284,7 @@ app.put("/:id", async (c) => {
             legPriceSen: legPrice,
             specialOrder: (it.specialOrder as string) ?? null,
             specialOrderPriceSen: specialPrice,
+            customSpecials: serializeCustomSpecials(sanitizeCustomSpecials(it.customSpecials)),
             totalHeightPriceSen: totalHeightPrice,
             basePriceSen: basePrice,
             unitPriceSen: unitPrice,
@@ -2290,9 +2304,9 @@ app.put("/:id", async (c) => {
             `INSERT INTO consignment_order_items (id, consignmentOrderId, lineNo, lineSuffix,
                productId, productCode, productName, itemCategory, sizeCode, sizeLabel,
                fabricCode, quantity, gapInches, divanHeightInches, divanPriceSen,
-               legHeightInches, legPriceSen, specialOrder, specialOrderPriceSen,
+               legHeightInches, legPriceSen, specialOrder, specialOrderPriceSen, customSpecials,
                totalHeightPriceSen, basePriceSen, unitPriceSen, discountSen, lineTotalSen, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).bind(
             r.id,
             r.consignmentOrderId,
@@ -2313,6 +2327,7 @@ app.put("/:id", async (c) => {
             r.legPriceSen,
             r.specialOrder,
             r.specialOrderPriceSen,
+            r.customSpecials,
             r.totalHeightPriceSen,
             r.basePriceSen,
             r.unitPriceSen,

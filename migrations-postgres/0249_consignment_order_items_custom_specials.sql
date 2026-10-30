@@ -1,0 +1,12 @@
+-- 0249_consignment_order_items_custom_specials.sql
+--
+-- HK-0123: "Other (custom)" free-text specials on Consignment Order lines,
+-- same shape as sales_order_items.custom_specials (JSON array of
+-- { description, surchargeSen }). The surcharge itself is already folded into
+-- special_order_price_sen and the descriptions into special_order as
+-- "OTHER: <desc>" tokens; this column only lets the edit screen give each
+-- entry back with its own price.
+--
+-- THIS FILE IS A RECORD, NOT THE MECHANISM: the runtime self-apply in
+-- ensureDiscountColumn (src/api/routes/consignment-orders.ts) creates it.
+ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS custom_specials TEXT;

@@ -282,6 +282,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-10-30 — 🔵 HK-0123 CO edit locked by another CO's CN; "Other (custom)" on CO lines (branch `fix/hk0123-co-cn-lock-custom` → `main`)
+
+Siti (office, HK-0123): CO-2610-022 (Houzs Century, CONFIRMED) refused edit with "Consignment Note CGN-2610-001 already exists". That CN belongs to CO-2610-002; CO-2610-022 has none. Also asked for SO's "Add custom" on CO lines.
+
+1. 🔵 CN lock keys on `consignment_notes.consignmentOrderId` (mig 0066, every prod CN has it: 30/30) instead of the customer. Same for the PO-side check.
+2. 🔵 `consignment_order_items.custom_specials` (self-applied in `ensureDiscountColumn`, record 0249); CO create + edit get the SO "Other (custom)" block.
+3. ⏳ Siti checks CO-2610-022 on the canary.
+
 ## 2026-10-28 — 🔵 HK-0121 SO detail: pencil on Customer DD + Hookka Expected DD (branch `fix/hk0121-so-dd-pencil` → `main`)
 
 Siti (office, HK-0121): wants a pencil like Customer's to change both dates anytime. Today they only change through the full PUT, which refuses once a PO is COMPLETED or a job card has started.
