@@ -288,7 +288,8 @@ Siti (office, HK-0123): CO-2610-022 (Houzs Century, CONFIRMED) refused edit with
 
 1. 🔵 CN lock keys on `consignment_notes.consignmentOrderId` (mig 0066, every prod CN has it: 30/30) instead of the customer. Same for the PO-side check.
 2. 🔵 `consignment_order_items.custom_specials` (self-applied in `ensureDiscountColumn`, record 0249); CO create + edit get the SO "Other (custom)" block.
-3. ⏳ Siti checks CO-2610-022 on the canary.
+3. 🔵 Canary: lock banner gone, but Save hit "first production step is due 2026-10-31 ... ADMIN override is required". The CO PUT still had the 2-day due-date lock SO dropped on 2026-05-06, and applied it to CONFIRMED orders the eligibility GET calls editable, so no Override button ever showed. CO PUT + edit-eligibility now use SO's Option D: editable while every job card is WAITING / CANCELLED, `production_started` once one moves (CO-2610-022: 63/63 WAITING).
+4. ⏳ Siti saves CO-2610-022 on the canary.
 
 ## 2026-10-28 — 🔵 HK-0121 SO detail: pencil on Customer DD + Hookka Expected DD (branch `fix/hk0121-so-dd-pencil` → `main`)
 
