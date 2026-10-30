@@ -89,8 +89,8 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `resolveLineBasePriceSen` | `src/api/lib/sofa-combo-pass.ts:76` | Resolve a line's base price (sen) |
 | `applySofaCombos` | `src/api/lib/sofa-combo.ts:209` | Pure combo matcher/renegotiator |
 | `findComboSubset` | `src/api/lib/sofa-combo.ts:98` | Subset-match lines against a combo rule (module-private) |
-| `app.post("/")` (CO create) | `src/api/routes/consignment-orders.ts:653` | Consignment Order create |
-| `app.get("/status-changes")` (CO) | `src/api/routes/consignment-orders.ts:1136` | co_status_changes read |
+| `app.post("/")` (CO create) | `src/api/routes/consignment-orders.ts:664` | Consignment Order create |
+| `app.get("/status-changes")` (CO) | `src/api/routes/consignment-orders.ts:1149` | co_status_changes read |
 | `ConsignmentNotePage` | `src/pages/consignment/note.tsx:454` | CN workspace, all 3 tabs inline |
 
 ## Gotchas
@@ -108,7 +108,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 - **Add a field to the SO** → column self-apply in `ensurePendingMigrations` (`sales-orders/_helpers.ts:1298`); persist in `app.post("/")` (`sales-orders.ts:1732`) and `app.put("/:id")` (`:3880`); surface in `rowToSO` (`_helpers.ts:243`) / `rowToSOList` (`:307`); render in `create.tsx:213` and `detail.tsx:338`. New column = snake_case (+ rename-map if camelCase).
 - **Change the status cascade** → edit `cascadeSOStatusToPOs` (`sales-orders/_helpers.ts:788`) and the confirm handler (`sales-orders.ts:2517`); keep the `so_status_changes` autoActions JSON write in sync.
 - **Adjust sofa-combo pricing** → change the engine in `applySofaCombos` (`sofa-combo.ts:209`) / `findComboSubset` (`:98`); never touch the frontend. Rule data via `sofa-combos.ts` + grid `maintenance/sofa-combos.tsx:370`. Verify with `tests/sofa-combo.test.mjs`.
-- **Touch consignment flow** → CO in `consignment-orders.ts` (create `:653`, confirm `:1700`, edit `:1817`, cancel `:2487`, hub `:2630`); CN dispatch/delivered in `consignment-notes.ts`.
+- **Touch consignment flow** → CO in `consignment-orders.ts` (create `:664`, confirm `:1716`, edit `:1833`, cancel `:2508`, hub `:2651`); CN dispatch/delivered in `consignment-notes.ts`.
 
 ## Related modules
 [[procurement]] [[delivery]] [[production]] [[accounting]]
