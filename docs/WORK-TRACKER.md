@@ -1,5 +1,16 @@
 # Hookka ERP — Work Tracker
-> **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, nothing committed); nothing else re-checked.
+> **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+> **Last verified: 2026-10-26**: HK-0113 PO email via Mail Center entry added (branch `feat/hk0113-po-mail-center`, to `staging`); nothing else re-checked.
+
+## HK-0113: PO "Email to Supplier" sends through Mail Center (feat/hk0113-po-mail-center, 2026-10-26)
+From HK-0113 (Lim Wei Siang, "Mail Center system go live"; example: send PO to supplier). Plan approved by Samuel 2026-10-26.
+1. DONE: PO detail "Email to Supplier" opens Mail Center compose, prefilled: To = supplier email, Subject, body, `<poNo>.pdf` (same letterhead as Download PDF). From = the user's own mailbox. Stays on the PO page after send. `ComposeDialog` gains `prefill` + `stayOnSent`; helper `src/lib/po-email-draft.ts` + `tests/po-email-draft.test.mjs`.
+2. DONE: `POST /api/purchase-orders/:id/mark-emailed` stamps `lastEmailedAt` after a successful compose send; old `POST /:id/email` (noreply notice, no PDF) removed.
+3. DONE: DRAFT -> SUBMITTED no longer auto-emails a noreply notice (the supplier would get two mails).
+4. Verified locally against a mock API (the dev proxy points at PROD): compose opened with From `kiansin@hookka.com` (not the first listed `support@`), To / Subject / body filled, 38 KB PDF chip; Send posted a valid `%PDF-1.3 ... %%EOF` attachment, page stayed on the PO, "Last sent" + "Resend Email" appeared. typecheck:app clean; `npm test` 6827/6828 before the procurement.md anchor fix, the anchor test green after it.
+5. OPEN: which purchasing users hold a mailbox + `mail-center:create` on prod is UNMEASURED (the read-only query was not run). A user with no mailbox gets compose's "no mailbox" state and cannot send.
+6. OPEN: supplier replies reach the sender only if their address has a Cloudflare Email Routing rule (T-012 open item 2).
+7. Staging preview (claude-hk0113, 2026-10-26): PO-2610-056 composer pre-filled correctly (masked supplier address, HOUZS CENTURY letterhead from the supplier's Purchase Company, 5 KB PDF). Send with To changed to a Gmail returned 502: the MailSlurp free sandbox refuses ANY attachment (`W_400_SEND_EVALUATION_OPTIONS_UNSUPPORTED`). Clean failure: no Sent thread, `lastEmailedAt` stayed null. The attachment path can only be proven where Brevo sends (prod canary of the `-to-main` PR).
 > **Last verified: 2026-10-26**: IT Support zip attachments entry added (branch `feat/it-support-zip`, to `staging`); nothing else re-checked.
 
 ## Mobile Planning v2 (design/mobile-planning, 2026-10-30)

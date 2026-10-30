@@ -978,7 +978,7 @@ async function runSupplierExtract(
           },
         ],
       }),
-    });
+    }, "scan_supplier_do");
 
     const bodyText = await resp.text();
     if (!resp.ok) {
@@ -1204,7 +1204,7 @@ async function runPoExtract(
           },
         ],
       }),
-    });
+    }, "scan_po");
 
     const bodyText = await resp.text();
     if (!resp.ok) {
@@ -1407,7 +1407,7 @@ export async function detectSupplierDocBoundaries(
           },
         ],
       }),
-    });
+    }, "scan_doc_boundary");
     const bodyText = await resp.text();
     if (!resp.ok) {
       return {

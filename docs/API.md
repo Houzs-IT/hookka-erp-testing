@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-23** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-10-29** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -81,7 +81,7 @@ offsets pointing past the end of their own file.
 | `/api/organisations` | `src/api/routes/organisations.ts` | `GET /` <sub>:363</sub><br>`POST /` <sub>:419</sub><br>`PATCH /:id` <sub>:513</sub><br>`DELETE /:id` <sub>:621</sub><br>`PUT /` <sub>:648</sub> | gated |
 | `/api/sales-orders` | `src/api/routes/sales-orders.ts` | `GET /` <sub>:175</sub><br>`POST /check-customer-pos` <sub>:781</sub><br>`POST /backfill-hub-by-state` <sub>:843</sub><br>`GET /status-changes` <sub>:976</sub><br>`GET /stats` <sub>:1008</sub><br>`GET /delivery-progress` <sub>:1152</sub><br>`GET /missing-original` <sub>:1228</sub><br>`GET /late-to-customer` <sub>:1309</sub><br>`GET /empty-wip` <sub>:1331</sub><br>`GET /repair-components` <sub>:1359</sub><br>`GET /:id/edit-eligibility` <sub>:1444</sub><br>`POST /:id/override-edit-lock` <sub>:1558</sub><br>`POST /` <sub>:1772</sub><br>`POST /:id/confirm` <sub>:2561</sub><br>`GET /:ref/footprint` <sub>:2988</sub><br>`GET /:id` <sub>:2995</sub><br>`PUT /:id` <sub>:3242</sub><br>`PATCH /:id/hub` <sub>:4680</sub><br>`PATCH /:id/customer` <sub>:5371</sub><br>`DELETE /:id` <sub>:5776</sub><br>`POST /copy-for-service-order` <sub>:5882</sub><br>`POST /batch-company` <sub>:6264</sub> | gated |
 | `/api/stock-allocations` | `src/api/routes/stock-allocations.ts` | `GET /availability` <sub>:57</sub><br>`GET /` <sub>:80</sub><br>`POST /` <sub>:99</sub><br>`POST /release` <sub>:240</sub> | gated |
-| `/api/purchase-orders` | `src/api/routes/purchase-orders.ts` | `GET /` <sub>:347</sub><br>`GET /stats` <sub>:443</sub><br>`POST /` <sub>:458</sub><br>`GET /:id` <sub>:730</sub><br>`PUT /:id` <sub>:789</sub><br>`POST /:id/email` <sub>:1172</sub><br>`DELETE /:id` <sub>:1233</sub> | gated |
+| `/api/purchase-orders` | `src/api/routes/purchase-orders.ts` | `GET /` <sub>:345</sub><br>`GET /stats` <sub>:441</sub><br>`POST /` <sub>:456</sub><br>`GET /:id` <sub>:728</sub><br>`PUT /:id` <sub>:787</sub><br>`POST /:id/mark-emailed` <sub>:1133</sub><br>`DELETE /:id` <sub>:1162</sub> | gated |
 | `/api/purchase-invoices` | `src/api/routes/purchase-invoices.ts` | `GET /` <sub>:821</sub><br>`GET /:id` <sub>:874</sub><br>`POST /` <sub>:1396</sub><br>`POST /repair-gl-visibility` <sub>:2240</sub><br>`POST /backfill-gl-postings` <sub>:2286</sub><br>`PUT /:id` <sub>:2305</sub><br>`DELETE /:id` <sub>:3077</sub><br>`POST /:id/void` <sub>:3225</sub><br>`POST /:id/unvoid` <sub>:3344</sub><br>`POST /:id/resync-gl` <sub>:3467</sub> | gated |
 | `/api/credit-notes` | `src/api/routes/credit-notes.ts` | `GET /` <sub>:203</sub><br>`GET /from-returns` <sub>:227</sub><br>`POST /` <sub>:318</sub><br>`GET /:id` <sub>:591</sub><br>`PUT /:id` <sub>:614</sub><br>`POST /:id/unpost` <sub>:800</sub> | gated |
 | `/api/debit-notes` | `src/api/routes/debit-notes.ts` | `GET /` <sub>:125</sub><br>`POST /` <sub>:140</sub><br>`GET /:id` <sub>:285</sub><br>`PUT /:id` <sub>:305</sub><br>`POST /:id/unpost` <sub>:494</sub> | gated |
@@ -184,7 +184,7 @@ offsets pointing past the end of their own file.
 | `/api/planning` | `src/api/routes/schedule-proposals.ts` | `POST /proposals/generate` <sub>:99</sub><br>`GET /proposals` <sub>:125</sub><br>`POST /proposals/approve` <sub>:162</sub><br>`POST /proposals/reject` <sub>:184</sub> | gated |
 | `/api/delivery-agent` | `src/api/routes/delivery-agent.ts` | `GET /brief.json` <sub>:144</sub><br>`POST /proposals/generate` <sub>:165</sub><br>`GET /proposals` <sub>:186</sub><br>`POST /proposals/approve` <sub>:260</sub><br>`POST /proposals/reject` <sub>:273</sub><br>`POST /run` <sub>:457</sub><br>`GET /truck-capacity-analysis` <sub>:556</sub> | gated |
 | `/api/internal/delivery-agent` | `src/api/routes/delivery-agent.ts` | `POST /run-trigger` <sub>:512</sub> | **public** (PUBLIC_PREFIXES) |
-| `/api/internal/agents` | `src/api/routes/agent-heartbeat.ts` | `POST /run-generate` <sub>:54</sub><br>`POST /heartbeat` <sub>:79</sub> | **public** (PUBLIC_PREFIXES) |
+| `/api/internal/agents` | `src/api/routes/agent-heartbeat.ts` | `POST /run-generate` <sub>:55</sub><br>`POST /heartbeat` <sub>:80</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/scan-po` | `src/api/routes/scan-po.ts` | `GET /catalog` <sub>:504</sub><br>`POST /extract` <sub>:543</sub><br>`POST /samples/:id/confirm` <sub>:730</sub><br>`GET /samples/by-po/:poIdentifier` <sub>:879</sub><br>`PATCH /samples/by-po/:poIdentifier` <sub>:936</sub><br>`GET /customer-rules/:customerId` <sub>:978</sub><br>`PUT /customer-rules/:customerId` <sub>:1009</sub><br>`POST /customer-rules/:customerId/distill` <sub>:1065</sub> | gated |
 | `/api/scan-supplier` | `src/api/routes/scan-supplier.ts` | `POST /extract` <sub>:37</sub><br>`POST /samples/:id/confirm` <sub>:128</sub> | gated |
 | `/api/party-aliases` | `src/api/routes/party-aliases.ts` | `GET /` <sub>:50</sub><br>`GET /list` <sub>:69</sub><br>`POST /` <sub>:93</sub><br>`DELETE /` <sub>:134</sub> | gated |

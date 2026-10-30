@@ -36,6 +36,7 @@ import { decideAgentRuns } from "../lib/agent-scheduler";
 import { generateProposals, applyPendingProposals } from "../lib/schedule-proposals";
 import { autoApplyConfigProposals } from "../lib/agent-learning";
 import { runDeliveryAgent, constantTimeEqual } from "./delivery-agent";
+import { sendAiUsageToHubIfDue } from "../lib/ai-usage";
 
 const app = new Hono<Env>();
 export default app;
@@ -88,6 +89,11 @@ app.post("/heartbeat", async (c) => {
   }
 
   const db = c.var.DB;
+  // The daily AI cost summary for the IT Hub. Not an agent, so the kill switch
+  // does not stop it; it sends at most once a UTC day (lib/ai-usage.ts).
+  c.executionCtx.waitUntil(
+    sendAiUsageToHubIfDue(db, c.env, new Date()).catch((err) => console.error("[ai-usage-hub] send failed:", err)),
+  );
   if (await isKillSwitchOn(db)) {
     return c.json({ ok: true, ran: [], skipped: [{ task: "ALL", reason: "kill switch" }] });
   }
