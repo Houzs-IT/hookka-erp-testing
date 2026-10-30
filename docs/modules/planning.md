@@ -1,5 +1,7 @@
 # Planning — Module Guide
 
+> **Last verified: 2026-10-30** (branch `design/mobile-planning`): the **Mobile (/m/planning)** section at the end only, read from `src/pages/m/screens/planning/*`, `src/pages/m/lib/planning-*.ts` and the desktop sources they port. Nothing else re-checked.
+
 > **Last verified: 2026-10-08** (branch `feat/plant-load-14d`): `ROLLING_WINDOW_DAYS` is now 14; the `PlanningPage`, `TABS`, `ScheduleProposalsTab` and `DrilldownModal` anchors re-derived. Nothing else re-checked.
 
 > **Last verified: 2026-10-01** (branch `feat/dev08-pillow-follows-sofa`): the engine anchors (`computeChainWithAssignments`, `GET /schedule/:dept`, `computeChain`, `scheduleCutting` / `runCutting`) re-derived and the DEV-08 pillow gotcha added. Nothing else re-checked.
@@ -94,6 +96,12 @@ Owns production **planning, scheduling, MRP and lead times** — the read-mostly
 - **Add a proposal field / rule** → change `generateProposals` (`lib/schedule-proposals.ts:161`); it must stay read-only. Only extend the writer inside `POST /proposals/approve` (`schedule-proposals.ts:158`). Tables self-apply in `ensureProposalTables` (`:34`).
 - **Add a Planning tab** → add to `TABS` (`index.tsx:198`) + a `{activeTab === "x" && (...)}` block; back it with a thin `app.get` in `planning-schedule.ts` calling a `src/api/lib` helper.
 - **Touch MRP** → run/read handlers in `mrp.ts` (run `POST /:536`, reads `:397/:458/:479`); page `mrp.tsx`.
+
+## Mobile (/m/planning) — Planning v2
+Design: Claude Design `Planning v2.dc.html` + CHANGES.md §1-7. Frontend only; no API, scheduler or permission change. Route: `CUSTOM_L1.planning` in `src/pages/m/MobileLayout.tsx`; the More row is gated by `navGate: "/planning"`.
+- **Screens** `src/pages/m/screens/planning/`: `PlanningScreen` (header, 3-view switch `?tab=`, ⋯ sheet, `?screen=lead-times|proposals`), `ScheduleTab`, `CapacityTab` + `LoadingSheet`, `TrackerTab`, `LeadTimesScreen`, `ProposalsScreen`, `MoreSheet`.
+- **Rules (pure, tested in `tests/m-planning.test.mjs`)**: `lib/planning-capacity.ts` ports the desktop capacity / loading maths (there is no capacity API); `lib/planning-schedule.ts` parses the `GET /schedule/:dept` snapshot (day = scheduler separator, rows before the first one = Unscheduled) and decides which production order a job may open; `lib/planning-tracker.ts` ports the Master Tracker rules; `lib/planning-leadtimes.ts` builds the view-only Lead Times model; `lib/planning-data.ts` holds the reads.
+- **Gotchas**: the schedule sheets carry NO production-order id. Fabric Cutting / Sewing rows carry `companySOId-NN` (exact match, must be ONE order); every other department is one row per SO + lane, so a card is tappable only when SO + lane + dept (+ WIP label) leaves ONE order, and dept due / PO no. show "—" otherwise. Foam Cutting and Fibre have no `/schedule/:dept` slug on the API (`DEPT_SLUGS`); mobile, like desktop, shows the bundled EMPTY snapshots. ON_HOLD / CANCELLED orders are excluded by the schedule API on purpose, so the Schedule tab never shows an On Hold job. Lead-time history has no actor and stores only the new value (the "from → to" is derived). The two reports (`/api/reports/schedule`, `/overdue`) and Proposals need `production-orders:read`; the Lead Times and Schedule GETs have no route check. SALES gets customer-scoped production orders, so Capacity / Tracker are partial for them, same as desktop.
 
 ## Related modules
 [[production]] [[sales]] [[procurement]] [[inventory]] [[delivery]]
