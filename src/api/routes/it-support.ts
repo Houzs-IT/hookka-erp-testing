@@ -33,7 +33,9 @@ const TICKET_STATUSES = new Set([
 ]);
 // What the browser may set on a new ticket. Every reporter_* field, user_agent
 // and app_version are filled in here from the session and the request.
-const TICKET_FIELDS = ["title", "description", "type", "priority", "occurred_at", "page_url"] as const;
+// `module` is the sidebar group the request is about (lib/it-support-module.ts);
+// the hub's Reports group requests by it.
+const TICKET_FIELDS = ["title", "description", "type", "priority", "occurred_at", "page_url", "module"] as const;
 
 const ctxGet = (c: Context<Env>, k: string): string =>
   (c as unknown as { get: (k: string) => string | undefined }).get(k) ?? "";

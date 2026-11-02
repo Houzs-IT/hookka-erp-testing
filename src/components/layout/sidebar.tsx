@@ -74,7 +74,9 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const navigationGroups: NavGroup[] = [
+// Exported for IT Support, which names a request's module after these groups.
+// eslint-disable-next-line react-refresh/only-export-components -- plain data; IT Support reads the group names, and moving it would churn every nav edit
+export const navigationGroups: NavGroup[] = [
   {
     label: "OVERVIEW",
     items: [

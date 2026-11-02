@@ -153,6 +153,7 @@ test("report an issue: reporter fields come from the users table, not the form",
   form.set("type", "bug");
   form.set("priority", "high");
   form.set("page_url", "https://erp.hookka.com/sales");
+  form.set("module", " Sales & Customers ");
   form.set("reporter_name", "The Boss");
   form.set("reporter_email", "boss@hookka.test");
   form.set("reporter_department", "Board");
@@ -174,6 +175,7 @@ test("report an issue: reporter fields come from the users table, not the form",
   assert.equal(sent.get("title"), "Sales order page is blank");
   assert.equal(sent.get("priority"), "high");
   assert.equal(sent.get("page_url"), "https://erp.hookka.com/sales");
+  assert.equal(sent.get("module"), "Sales & Customers");
   assert.equal(sent.get("reporter_name"), "Aina");
   assert.equal(sent.get("reporter_email"), "aina@hookka.test");
   assert.equal(sent.get("reporter_department"), "Sales");
