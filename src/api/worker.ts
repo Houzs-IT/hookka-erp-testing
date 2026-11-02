@@ -482,6 +482,11 @@ app.post("/api/internal/warm-lists", async (c) => {
   if (!(await constantTimeEqual(given, expected))) {
     return c.json({ ok: false, error: "forbidden" }, 403);
   }
+  // The health report for the IT Hub rides this 5-minute tick (lib/hub-health.ts).
+  const { sendHealthReport } = await import("./lib/hub-health");
+  c.executionCtx.waitUntil(
+    sendHealthReport(c.var.DB, c.env).catch((err) => console.error("[hub-health] send failed:", err)),
+  );
   const t0 = Date.now();
   const { DEFAULT_ORG_ID } = await import("./lib/tenant");
   const out: Record<string, unknown> = {};

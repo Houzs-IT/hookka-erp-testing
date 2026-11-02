@@ -181,6 +181,37 @@ export function recordAiCall(feature: string, init: RequestInit, res: Response):
   if (scope.waitUntil) scope.waitUntil(task);
 }
 
+/** Record a call that got no answer at all (no connection, timed out). Never throws. */
+export function recordAiCallNotReached(feature: string, init: RequestInit): void {
+  const scope = aiUsageScope.getStore();
+  if (!scope) return;
+  const task = writeRow(scope.db, feature, modelOf(init.body), 0, "").catch((err) =>
+    console.warn("[ai-usage] record failed:", err),
+  );
+  if (scope.waitUntil) scope.waitUntil(task);
+}
+
+export interface RecentAiCall {
+  feature: string;
+  model: string;
+  ok: number;
+  http_status: number | null;
+  created_at: string;
+}
+
+/** Newest first, for the health report (lib/hub-health.ts). */
+export async function recentAiCalls(db: D1Database, sinceIso: string, limit: number): Promise<RecentAiCall[]> {
+  await ensureAiUsageTable(db);
+  const res = await db
+    .prepare(
+      `SELECT feature, model, ok, http_status, created_at FROM ai_usage_events
+        WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`,
+    )
+    .bind(sinceIso, limit)
+    .all<RecentAiCall>();
+  return res.results ?? [];
+}
+
 // ── Daily summary to the IT Hub ──────────────────────────────────────────────
 
 const DAYS = 7;
