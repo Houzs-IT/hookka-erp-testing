@@ -130,7 +130,11 @@ export const PAYMENT_STATUS_MAP: StyleMap = {
   // Procurement / GRN / 3-way (spec): Draft/Awaiting/Partial/Received/Matched/Mismatch.
   DRAFT: NEUTRAL,
   AWAITING: NEUTRAL,
+  PARTIAL_RECEIVED: WARNING,
   RECEIVED: SUCCESS,
+  // MRP requirement state.
+  SHORTAGE: DANGER,
+  LOW: WARNING,
   MATCHED: SUCCESS,
   MISMATCH: DANGER,
   // Generic active/closed.

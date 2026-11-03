@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-03**: branch `feat/hk0125-mobile-polish`, to `main` (HK-0125, phone SO / DO / PO / GRN / Employees) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `feat/pi-auto-grn`, to `main` (purchase invoice confirm stocks in its matched PO lines) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `fix/hk0116-sandback-sticker`, to `main` (HK-0116, Sandback Fab Sew sticker badge) added below (its entry is the newest).
 > **Last verified: 2026-10-26**: branch `feat/hk0113-po-mail-center-to-main`, to `main` (HK-0113, PO email via Mail Center) added below (its entry is the newest).
@@ -282,6 +283,17 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-11-03 — 🔵 HK-0125 Phone UI: SO production progress, DO dates + PDF, PO outstanding / to order, GRN dates, Employees overview (branch `feat/hk0125-mobile-polish` → `main`)
+
+Lim Wei Siang (management, HK-0125) wants the phone to answer five things.
+
+1. 🔵 SO: a Production Progress card per production order (departments done / not done with each one's due date, now-at, est. complete = latest open job-card due date, red when a due date has passed). `GET /api/sales-orders/:id` `linkedPOs[].stages` (one row per department, done when every job card is COMPLETED / TRANSFERRED).
+2. 🔵 DO: Pick up by (planned `deliveryDate`, with days left / late) / Picked up / Delivered / Signed by / Lorry on the card and detail; Print opens the desktop DO PDF (`generateDOPdf` + print-extras + QR) instead of the "use the desktop" note.
+3. 🔵 Procurement: Outstanding / To Issue / All POs tabs (real PO statuses; the list said AWAITING / PARTIAL / MATCHED, which PO rows never carry), To Order tab = latest MRP run's shortages with Order by; search finds a PO by item code / name / supplier SKU; filters say Supplier / ETA; PO detail shows received / ordered per line and its Goods Receipts.
+4. 🔵 GRN list read `grnNo` / `receivedDate` but rows carry `grnNumber` / `receiveDate`, so the number and received date were blank; fixed, labels Received. PI statuses are DRAFT / CONFIRMED / PAID / CANCELLED.
+5. 🔵 Employees: Overview tab = the dashboard's Employees view (same component, same figures); Efficiency ranked #1..n; Dept Labor one row per department; Payroll read `netPaySen` / this month (always RM0 / empty) — now the latest payroll run with gross / net / cost-to-company by department.
+6. ⏳ Wei Siang checks on the canary.
+
 ## 2026-11-03 — 🔵 HK-0127 Daily Report "SO Without Invoice" 611, really 0 (branch `fix/hk0127-so-no-invoice-consolidated-do` → `main`)
 
 Violet (management, HK-0127): why are so many SOs without invoice? The tile has read 611 since 2026-10-29 (613 from 10-19, 142 before).

@@ -33,7 +33,10 @@ import {
   num,
   dateOnly,
   money,
+  shortDate,
 } from "../config/helpers";
+import { todayYmdMY } from "@/lib/utils";
+import { PRODUCTION_DEPTS } from "../config/departments";
 
 type RawRow = Record<string, unknown>;
 type Envelope = { success?: boolean; data?: RawRow } & Record<string, unknown>;
@@ -304,6 +307,19 @@ export function SalesDetailScreen() {
           )}
         </Card>
 
+        {pos.length > 0 ? (
+          <Card title="Production Progress" count={`${pos.length} order${pos.length === 1 ? "" : "s"}`}>
+            {pos.map((p, i) => (
+              <ProductionProgressRow
+                key={str(p, "id") || i}
+                po={p}
+                first={i === 0}
+                onOpen={() => navigate(`/m/production/${encodeURIComponent(str(p, "id"))}`)}
+              />
+            ))}
+          </Card>
+        ) : null}
+
         {/* Payments */}
         <Card title="Payments" count={String(payments.length)}>
           {payments.length === 0 ? (
@@ -497,6 +513,119 @@ function Card({ title, count, children }: { title: string; count?: string; child
       {children}
     </div>
   );
+}
+
+// One linked production order: which departments are done, which are still
+// open (with their due dates), and when the last open one is due.
+function ProductionProgressRow({ po, first, onOpen }: { po: RawRow; first: boolean; onOpen: () => void }) {
+  const today = todayYmdMY();
+  const stages = arr(po.stages)
+    .map((s) => ({
+      code: str(s, "departmentCode"),
+      done: s.done === true,
+      due: dateOnly(s, "dueDate"),
+      completed: dateOnly(s, "completedDate"),
+    }))
+    .sort((a, b) => deptIndex(a.code) - deptIndex(b.code));
+  const open = stages.filter((s) => !s.done);
+  const doneCount = stages.length - open.length;
+  const status = str(po, "status");
+  const finished = status === "COMPLETED" || (stages.length > 0 && open.length === 0);
+  const eta = open.reduce((m, s) => (s.due > m ? s.due : m), "");
+  const late = open.some((s) => s.due && s.due < today);
+  const current = deptLabel(str(po, "currentDepartment"));
+  const finishedOn = dateOnly(po, "completedDate") || stages.reduce((m, s) => (s.completed > m ? s.completed : m), "");
+  const pct = stages.length ? Math.round((doneCount / stages.length) * 100) : num(po, "progress");
+
+  return (
+    <button
+      onClick={onOpen}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "12px 15px",
+        borderTop: first ? "none" : `1px solid ${M.divider}`,
+        background: "none",
+        border: "none",
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: M.taupe, fontVariantNumeric: "tabular-nums" }}>
+            {str(po, "poNo") || "—"} ›
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 2 }}>
+            {str(po, "productName", "productCode") || "—"}
+            <span style={{ fontWeight: 500, color: M.muted }}> ×{num(po, "quantity")}</span>
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flex: "none" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", color: M.faint }}>
+            {finished ? "Completed" : "Est. complete"}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: finished ? "#4F7C3A" : late ? "#9A3A2D" : M.ink, marginTop: 2 }}>
+            {finished ? shortDate(finishedOn) || "Done" : shortDate(eta) || "—"}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ height: 6, borderRadius: 3, background: "#EAE3D6", marginTop: 9, overflow: "hidden" }}>
+        <div style={{ width: `${Math.max(0, Math.min(100, pct))}%`, height: "100%", background: finished ? "#4F7C3A" : M.taupe }} />
+      </div>
+      <div style={{ fontSize: 11, color: M.muted, marginTop: 6 }}>
+        {finished
+          ? stages.length ? `All ${stages.length} departments done` : "Production completed"
+          : `${doneCount} of ${stages.length} departments done${current ? ` · now at ${current}` : ""}${late ? " · behind schedule" : ""}`}
+      </div>
+
+      {open.length > 0 ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", color: M.faint, marginBottom: 5 }}>
+            Not done yet
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {open.map((s) => {
+              const overdue = !!s.due && s.due < today;
+              return (
+                <span
+                  key={s.code}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    color: overdue ? "#9A3A2D" : M.ink,
+                    background: overdue ? "#F7E6E2" : M.paper,
+                    border: `1px solid ${overdue ? "#E7C2BA" : M.border}`,
+                    borderRadius: 6,
+                    padding: "3px 7px",
+                  }}
+                >
+                  {deptLabel(s.code)}
+                  {s.due ? <span style={{ fontWeight: 500, color: overdue ? "#9A3A2D" : M.muted }}> · due {shortDate(s.due)}</span> : null}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {doneCount > 0 && !finished ? (
+        <div style={{ fontSize: 10.5, color: M.faint, marginTop: 7 }}>
+          Done: {stages.filter((s) => s.done).map((s) => deptLabel(s.code)).join(", ")}
+        </div>
+      ) : null}
+    </button>
+  );
+}
+
+function deptIndex(code: string): number {
+  const i = PRODUCTION_DEPTS.findIndex((d) => d.code === code);
+  return i < 0 ? 99 : i;
+}
+
+function deptLabel(code: string): string {
+  return PRODUCTION_DEPTS.find((d) => d.code === code)?.label || code;
 }
 
 function LinkedRow({ label, code, onClick }: { label: string; code: string; onClick: () => void }) {

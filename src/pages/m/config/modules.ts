@@ -22,6 +22,10 @@ import {
 } from "./types";
 import { logHoursSpec, hubFormSpec, addAffectedProductSpec } from "./forms";
 import { normalizeStoredPcbStatus, pcbHasFigure } from "@/lib/pcb";
+import { todayYmdMY } from "@/lib/utils";
+import { createElement, lazy, Suspense } from "react";
+import { latestPayslips, PAYSLIPS_URL } from "./payroll";
+import { EmployeesPayrollPanel } from "../screens/EmployeesPayrollPanel";
 import {
   type DetailConfig,
   type FlowStep,
@@ -67,6 +71,31 @@ const fld = (
   value: (d: RawRow) => string,
   full = false,
 ): FieldDef => ({ label, value, full });
+
+/** "FAB_CUT" -> "Fab Cut". */
+function titleWords(code: string): string {
+  return code
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/** Whole days from today (MYT) to a YYYY-MM-DD date; null when there is no date. */
+function daysFromToday(ymd: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(ymd)) return null;
+  const t = Date.parse(todayYmdMY());
+  const d = Date.parse(ymd.slice(0, 10));
+  return Number.isFinite(d) ? Math.round((d - t) / 86_400_000) : null;
+}
+
+/** "12 Nov (in 3 days)" / "12 Nov (today)" / "12 Nov (2 days late)". */
+function dateWithCountdown(ymd: string): string {
+  const n = daysFromToday(ymd);
+  if (n == null) return "";
+  const rel = n === 0 ? "today" : n > 0 ? `in ${n} day${n === 1 ? "" : "s"}` : `${-n} day${n === -1 ? "" : "s"} late`;
+  return `${shortDate(ymd)} (${rel})`;
+}
 
 /** Build flow steps from an UPPER_SNAKE enum list (Title Case labels). */
 function flowSteps(keys: string[]): FlowStep[] {
@@ -478,13 +507,23 @@ const deliveryOrdersSource: DataSource = {
   toVM: (r): RowVM => {
     const hub = str(r, "hubName", "hubShortName");
     const veh = str(r, "vehicleNo", "driverName", "providerName");
+    // Not yet out of the door → the planned pick-up date (the desktop's
+    // "Dispatch Date (planned)"); out → when it left; delivered → when it landed.
+    const picked = dateOnly(r, "dispatchedAt", "dispatchDate");
+    const delivered = dateOnly(r, "deliveredAt");
+    const when = delivered
+      ? { label: "Delivered", value: shortDate(delivered) }
+      : picked
+        ? { label: "Picked up", value: shortDate(picked) }
+        : { label: "Pick up by", value: dateWithCountdown(dateOnly(r, "deliveryDate")) || "—" };
     return {
       id: str(r, "id", "doNo"),
       code: str(r, "doNo") || "—",
       title: str(r, "customerName") || "—",
       items: [hub, veh].filter(Boolean).join(" · ") || undefined,
       metas: [
-        { label: "Dispatch", value: shortDate(dateOnly(r, "dispatchDate", "deliveryDate")) || "—" },
+        when,
+        { label: "Expected DD", value: shortDate(dateOnly(r, "hookkaExpectedDD", "deliveryDate")) || "—" },
         { label: "SO", value: str(r, "companySO", "companySOId") || "—" },
       ],
       status: resolveStatus(str(r, "status"), STATUS_MAPS.delivery),
@@ -652,7 +691,14 @@ const deliveryDetail: DetailConfig = {
     fld("Customer PO", (d) => str(d, "customerPOId", "customerPO")),
     fld("Customer SO", (d) => str(d, "customerSO", "customerSOId")),
     fld("State", (d) => str(d, "hubState", "customerState")),
-    fld("Expected DD", (d) => dateOnly(d, "deliveryDate", "hookkaExpectedDD")),
+    fld("Expected DD", (d) => dateOnly(d, "hookkaExpectedDD", "deliveryDate")),
+    fld("Pick up by", (d) =>
+      dateOnly(d, "dispatchedAt") ? shortDate(dateOnly(d, "deliveryDate")) : dateWithCountdown(dateOnly(d, "deliveryDate"))),
+    fld("Picked up", (d) => dateOnly(d, "dispatchedAt")),
+    fld("Delivered", (d) => dateOnly(d, "deliveredAt")),
+    fld("Signed by", (d) =>
+      [str(d, "signedByWorkerName"), dateOnly(d, "signedAt")].filter(Boolean).join(" · ")),
+    fld("Lorry", (d) => str(d, "lorryName")),
     fld("Driver", (d) => str(d, "driverName")),
     fld("Vehicle", (d) => str(d, "vehicleNo", "vehicleType")),
     fld("Contact", (d) => str(d, "contactPerson")),
@@ -694,6 +740,24 @@ const deliveryDetail: DetailConfig = {
   primaryCta: (d) => {
     const s = str(d, "status");
     return s === "DELIVERED" || s === "INVOICED" ? undefined : "Mark Delivered";
+  },
+  // The desktop's per-row "Print DO": print-extras (best-effort) + the delivery
+  // status QR, then the same generateDOPdf, opened to read on the phone.
+  print: async (d, id) => {
+    let extras: import("@/lib/generate-do-pdf").DOPrintExtras = {};
+    try {
+      const r = await fetch(`/api/delivery-orders/${encodeURIComponent(id)}/print-extras`);
+      const j = (await r.json()) as { success?: boolean; data?: import("@/lib/generate-do-pdf").DOPrintExtras };
+      if (j?.success && j.data) extras = j.data;
+    } catch {
+      /* the PDF still renders without extras */
+    }
+    const [{ fetchDoQrDataUrl }, { generateDOPdf }] = await Promise.all([
+      import("@/lib/do-qr"),
+      import("@/lib/generate-do-pdf"),
+    ]);
+    extras.qrDataUrl = await fetchDoQrDataUrl("DO", id);
+    generateDOPdf(d as unknown as import("@/types").DeliveryOrder, extras, "view");
   },
   attachmentsResource: (id) => ({ type: "DO", id }),
   auditResource: () => "delivery-orders",
@@ -975,61 +1039,136 @@ export const invoicesConfig: ModuleConfig = {
 // PROCUREMENT — Purchase Orders / Goods Receipt / Purchase Invoice / Maintenance.
 // Maintenance has no list endpoint → reuse suppliers (the page is supplier mgmt).
 // ---------------------------------------------------------------------------
+// Still owed by the supplier: issued to them and not fully received.
+const PO_OUTSTANDING = ["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED"];
+const PO_STATUSES = ["DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CANCELLED"];
+
+function poLines(r: RawRow): RawRow[] {
+  return Array.isArray(r.items) ? (r.items as RawRow[]) : [];
+}
+
+/** Lines still to come in, "Foam 40D ×12, Pine 2x2 ×400" (remaining qty). */
+function summariseOutstanding(r: RawRow, limit = 60): string {
+  const parts: string[] = [];
+  for (const it of poLines(r)) {
+    const left = num(it, "availableQty") || Math.max(0, num(it, "quantity") - num(it, "receivedQty"));
+    if (left <= 0) continue;
+    parts.push(`${str(it, "materialName", "materialCode") || "Item"} ×${left}`);
+    if (parts.join(", ").length > limit) break;
+  }
+  const joined = parts.join(", ");
+  return joined.length > limit ? joined.slice(0, limit - 1) + "…" : joined;
+}
+
 const poSource: DataSource = {
   url: "/api/purchase-orders",
   select: selectData,
-  // dc13 (line ~1753): code · supplier · items summary · [ETA · Amount]
-  toVM: (r): RowVM => ({
-    id: str(r, "id", "poNo"),
-    code: str(r, "poNo") || "—",
-    title: str(r, "supplierName") || "—",
-    items: summariseItems(r),
-    metas: [
-      { label: "ETA", value: shortDate(dateOnly(r, "expectedDate")) || "—" },
-      { label: "Amount", value: money(num(r, "totalSen")) },
-    ],
-    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
-  }),
+  // code · supplier · items (outstanding lines while owed) · [Issued · ETA / Received · Amount]
+  toVM: (r): RowVM => {
+    const status = str(r, "status");
+    const owed = PO_OUTSTANDING.includes(status);
+    const eta = dateOnly(r, "expectedDate");
+    const received = dateOnly(r, "receivedDate");
+    return {
+      id: str(r, "id", "poNo"),
+      code: str(r, "poNo") || "—",
+      title: str(r, "supplierName") || "—",
+      items: (owed ? summariseOutstanding(r) : "") || summariseItems(r),
+      metas: [
+        { label: "Issued", value: status === "DRAFT" ? "Not yet" : shortDate(dateOnly(r, "orderDate")) || "—" },
+        status === "RECEIVED" && received
+          ? { label: "Received", value: shortDate(received) }
+          : { label: "ETA", value: (owed ? dateWithCountdown(eta) : shortDate(eta)) || "—" },
+        { label: "Amount", value: money(num(r, "totalSen")) },
+      ],
+      status: resolveStatus(status, PAYMENT_STATUS_MAP),
+    };
+  },
   columns: [
-    textCol("poNo", "Reference", (r) => str(r, "poNo")),
-    textCol("supplier", "Customer", (r) => str(r, "supplierName")),
-    dateCol("orderDate", "Order Date", (r) => dateOnly(r, "orderDate")),
-    dateCol("expectedDate", "Expected DD", (r) => dateOnly(r, "expectedDate")),
-    numCol("items", "Items", (r) => (Array.isArray(r.items) ? (r.items as unknown[]).length : 0)),
+    textCol("poNo", "PO No.", (r) => str(r, "poNo")),
+    textCol("supplier", "Supplier", (r) => str(r, "supplierName")),
+    // Searched too: a PO stays findable by what it bought (code / name / supplier SKU).
+    textCol("items", "Item", (r) =>
+      poLines(r).map((it) => [str(it, "materialCode"), str(it, "materialName"), str(it, "supplierSKU")].join(" ")).join(" ")),
+    dateCol("orderDate", "Issued", (r) => dateOnly(r, "orderDate")),
+    dateCol("expectedDate", "ETA", (r) => dateOnly(r, "expectedDate")),
+    numCol("lines", "Lines", (r) => poLines(r).length),
     numCol("amount", "Amount", (r) => num(r, "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "AWAITING", "PARTIAL", "RECEIVED", "MATCHED", "CANCELLED"]),
+    enumCol("status", "Status", (r) => str(r, "status"), PO_STATUSES),
   ],
   defaultSort: { key: "orderDate", dir: "desc" },
-  subTabs: [{ key: "po", label: "Purchase Orders", match: () => true }],
+  subTabs: [
+    { key: "outstanding", label: "Outstanding", match: (r) => PO_OUTSTANDING.includes(str(r, "status")) },
+    { key: "to_issue", label: "To Issue", match: (r) => str(r, "status") === "DRAFT" },
+    { key: "po", label: "All POs", match: () => true },
+  ],
 };
 
-const grnSource: DataSource = {
-  url: "/api/grn",
-  select: selectData,
-  // dc13 (line ~1756): code · supplier · "PO-... · full/partial" · [Date · Lines]
+// When to issue a PO: the latest MRP run's shortages with their Order By date
+// (need date − supplier lead time), the desktop Planning > MRP figures.
+const mrpToOrderSource: DataSource = {
+  url: "/api/mrp",
+  select: (resp) => {
+    const reqs = (resp as { data?: { requirements?: unknown[] } | null } | null)?.data?.requirements;
+    return Array.isArray(reqs) ? (reqs as RawRow[]).filter((r) => num(r, "netRequired") > 0) : [];
+  },
   toVM: (r): RowVM => {
-    const items = Array.isArray(r.items) ? (r.items as RawRow[]) : [];
-    const matched = items.filter((i) => num(i, "receivedQty") > 0).length;
-    const total = items.length;
-    const sub = str(r, "poRef", "poNo");
+    const unit = str(r, "unit");
+    const lead = r.leadTimeDays == null ? "" : `${num(r, "leadTimeDays")}d lead`;
     return {
-      id: str(r, "id", "grnNo"),
-      code: str(r, "grnNo") || "—",
-      title: str(r, "supplierName") || "—",
-      items: sub ? `${sub} · ${matched === total ? "full" : "partial"}` : undefined,
+      id: str(r, "id") || str(r, "materialCode"),
+      code: str(r, "materialCode") || "—",
+      title: str(r, "materialName") || str(r, "materialCode") || "—",
+      items: [str(r, "preferredSupplierName") || "No main supplier", lead].filter(Boolean).join(" · "),
       metas: [
-        { label: "Date", value: shortDate(dateOnly(r, "receivedDate", "createdAt")) || "—" },
-        { label: "Lines", value: total === matched ? `${total}` : `${matched}/${total}` },
+        { label: "Order by", value: dateWithCountdown(dateOnly(r, "suggestedOrderDate")) || "No lead time" },
+        { label: "Short", value: `${num(r, "netRequired")}${unit ? ` ${unit}` : ""}` },
+        { label: "Suggest", value: num(r, "suggestedPOQty") > 0 ? String(num(r, "suggestedPOQty")) : "—" },
       ],
       status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
     };
   },
   columns: [
-    textCol("grnNo", "Reference", (r) => str(r, "grnNo")),
-    textCol("poRef", "Customer PO", (r) => str(r, "poRef", "poNo")),
-    textCol("supplier", "Customer", (r) => str(r, "supplierName")),
-    dateCol("receivedDate", "Order Date", (r) => dateOnly(r, "receivedDate", "createdAt")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "PARTIAL", "RECEIVED", "MATCHED", "MISMATCH"]),
+    textCol("material", "Item", (r) => `${str(r, "materialCode")} ${str(r, "materialName")}`),
+    textCol("supplier", "Supplier", (r) => str(r, "preferredSupplierName")),
+    dateCol("orderBy", "Order by", (r) => dateOnly(r, "suggestedOrderDate")),
+    numCol("short", "Short", (r) => num(r, "netRequired")),
+  ],
+  defaultSort: { key: "orderBy", dir: "asc" },
+  subTabs: [{ key: "to_order", label: "To Order", match: () => true }],
+};
+
+const GRN_STATUSES = ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"];
+
+const grnSource: DataSource = {
+  url: "/api/grn",
+  select: selectData,
+  // code · supplier · "PO-... · full/partial" · [Received · Lines]
+  toVM: (r): RowVM => {
+    const items = Array.isArray(r.items) ? (r.items as RawRow[]) : [];
+    const short = items.filter((i) => num(i, "receivedQty") < num(i, "orderedQty")).length;
+    const sub = str(r, "poNumber", "poRef", "poNo");
+    return {
+      id: str(r, "id", "grnNumber"),
+      code: str(r, "grnNumber", "grnNo") || "—",
+      title: str(r, "supplierName") || "—",
+      items: sub ? `${sub} · ${short === 0 ? "full" : "partial"}` : undefined,
+      metas: [
+        { label: "Received", value: shortDate(dateOnly(r, "receiveDate", "receivedDate")) || "—" },
+        { label: "By", value: str(r, "receivedBy") || "—" },
+        { label: "Lines", value: short === 0 ? `${items.length}` : `${items.length - short}/${items.length}` },
+      ],
+      status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+    };
+  },
+  columns: [
+    textCol("grnNo", "GRN No.", (r) => str(r, "grnNumber", "grnNo")),
+    textCol("poRef", "PO No.", (r) => str(r, "poNumber", "poRef", "poNo")),
+    textCol("supplier", "Supplier", (r) => str(r, "supplierName")),
+    textCol("items", "Item", (r) =>
+      (Array.isArray(r.items) ? (r.items as RawRow[]) : []).map((it) => `${str(it, "materialCode")} ${str(it, "materialName")}`).join(" ")),
+    dateCol("receivedDate", "Received", (r) => dateOnly(r, "receiveDate", "receivedDate")),
+    enumCol("status", "Status", (r) => str(r, "status"), GRN_STATUSES),
   ],
   defaultSort: { key: "receivedDate", dir: "desc" },
   subTabs: [{ key: "grn", label: "Goods Receipt", match: () => true }],
@@ -1038,19 +1177,17 @@ const grnSource: DataSource = {
 const piSource: DataSource = {
   url: "/api/purchase-invoices",
   select: selectData,
-  // dc13 (line ~1758): code · supplier · "GRN-... · matched" · [Due · Amount]
+  // code · supplier · "PO-... · GRN linked" · [Invoice · Due · Amount]
   toVM: (r): RowVM => {
-    const grn = str(r, "grnRef", "grnNo");
-    const status = str(r, "status").toUpperCase();
-    const sub = grn
-      ? `${grn} · ${status === "MISMATCH" ? "mismatch" : "matched"}`
-      : str(r, "poRef", "poNo") || undefined;
+    const po = str(r, "poRef", "poNo");
+    const sub = [po, str(r, "grnId") ? "GRN linked" : ""].filter(Boolean).join(" · ");
     return {
       id: str(r, "id", "piNo"),
       code: str(r, "piNo") || "—",
       title: str(r, "supplier", "supplierName") || "—",
-      items: sub,
+      items: sub || undefined,
       metas: [
+        { label: "Invoice", value: shortDate(dateOnly(r, "invoiceDate")) || "—" },
         { label: "Due", value: shortDate(dateOnly(r, "dueDate")) || "—" },
         { label: "Amount", value: money(num(r, "amountSen", "totalSen")) },
       ],
@@ -1058,13 +1195,14 @@ const piSource: DataSource = {
     };
   },
   columns: [
-    textCol("piNo", "Reference", (r) => str(r, "piNo")),
-    textCol("poRef", "Customer PO", (r) => str(r, "poRef", "poNo")),
-    textCol("supplier", "Customer", (r) => str(r, "supplier", "supplierName")),
-    dateCol("invoiceDate", "Order Date", (r) => dateOnly(r, "invoiceDate")),
-    dateCol("dueDate", "Expected DD", (r) => dateOnly(r, "dueDate")),
+    textCol("piNo", "PI No.", (r) => str(r, "piNo")),
+    textCol("poRef", "PO No.", (r) => str(r, "poRef", "poNo")),
+    textCol("supplier", "Supplier", (r) => str(r, "supplier", "supplierName")),
+    textCol("supplierInvoiceNo", "Supplier Invoice", (r) => str(r, "supplierInvoiceNo")),
+    dateCol("invoiceDate", "Invoice Date", (r) => dateOnly(r, "invoiceDate")),
+    dateCol("dueDate", "Due Date", (r) => dateOnly(r, "dueDate")),
     numCol("amount", "Amount", (r) => num(r, "amountSen", "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "PARTIAL", "PAID", "UNPAID", "OVERDUE"]),
+    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "CONFIRMED", "PAID", "CANCELLED"]),
   ],
   defaultSort: { key: "invoiceDate", dir: "desc" },
   subTabs: [{ key: "pi", label: "Purchase Invoice", match: () => true }],
@@ -1104,17 +1242,64 @@ const poDetail: DetailConfig = {
   title: (d) => str(d, "supplierName") || "—",
   status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
   flow: {
-    steps: flowSteps(["DRAFT", "AWAITING", "PARTIAL", "RECEIVED", "MATCHED"]),
+    steps: flowSteps(PO_STATUSES.filter((k) => k !== "CANCELLED")),
     current: (d) => str(d, "status"),
   },
   fields: [
     fld("Supplier", (d) => str(d, "supplierName")),
-    fld("Order Date", (d) => dateOnly(d, "orderDate")),
-    fld("Expected DD", (d) => dateOnly(d, "expectedDate")),
+    fld("Issued", (d) => (str(d, "status") === "DRAFT" ? "Not issued yet" : dateOnly(d, "orderDate"))),
+    fld("ETA", (d) =>
+      PO_OUTSTANDING.includes(str(d, "status")) ? dateWithCountdown(dateOnly(d, "expectedDate")) : dateOnly(d, "expectedDate")),
+    fld("Received", (d) => dateOnly(d, "receivedDate")),
+    fld("Outstanding", (d) => {
+      const lines = poLines(d);
+      const open = lines.filter((it) => num(it, "quantity") - num(it, "receivedQty") > 0).length;
+      return lines.length ? (open ? `${open} of ${lines.length} lines` : "None") : "";
+    }),
     fld("Amount", (d) => money(num(d, "totalSen"))),
     fld("Notes", (d) => str(d, "notes"), true),
   ],
-  lineItems: (d) => itemsOf(d, "items"),
+  // Ordered vs received per line, so "what is still owed" reads off the PO.
+  lineItems: (d) =>
+    poLines(d).map((it, i): LineItemVM => {
+      const qty = num(it, "quantity");
+      const got = num(it, "receivedQty");
+      const unit = str(it, "unit");
+      const left = Math.max(0, qty - got);
+      return {
+        id: str(it, "id") || String(i),
+        title: str(it, "materialName", "materialCode") || "—",
+        subLine: [str(it, "materialCode"), left > 0 ? `${left}${unit ? ` ${unit}` : ""} to come` : "fully received"]
+          .filter(Boolean)
+          .join(" · "),
+        meta1: { label: "Received", value: `${got}/${qty}` },
+        meta2: { label: "Amount", value: money(num(it, "totalSen")) },
+      };
+    }),
+  extraFetches: {
+    a: { key: "grns", url: (id) => `/api/grn?poId=${encodeURIComponent(id)}` },
+  },
+  subDocLists: (_d, _resp, extras) => {
+    const grns = selectData(extras?.grns).filter((g) => str(g, "status") !== "CANCELLED");
+    return [
+      {
+        title: "Goods Receipts",
+        emptyText: "Nothing received yet",
+        rows: grns.map((g) => {
+          const lines = Array.isArray(g.items) ? (g.items as RawRow[]) : [];
+          return {
+            id: str(g, "id"),
+            title: str(g, "grnNumber") || "—",
+            subLine: [`${lines.length} line${lines.length === 1 ? "" : "s"}`, str(g, "receivedBy")].filter(Boolean).join(" · "),
+            trailing: shortDate(dateOnly(g, "receiveDate")) || undefined,
+            status: resolveStatus(str(g, "status"), PAYMENT_STATUS_MAP),
+            icon: "arrow-down" as const,
+            href: str(g, "id") ? `/m/procurement/${encodeURIComponent(str(g, "id"))}` : undefined,
+          };
+        }),
+      },
+    ];
+  },
   // Supplier cross-link (design procurement detail links the Supplier). PO GET
   // returns supplierId. (The design's Goods-Receipt link is NOT backable — the
   // PO GET attaches no receipts array — so it is intentionally omitted.)
@@ -1174,9 +1359,9 @@ const grnDetail: DetailConfig = {
     current: (d) => str(d, "status"),
   },
   fields: [
-    fld("Customer PO", (d) => str(d, "poNumber", "poRef", "poNo")),
+    fld("PO No.", (d) => str(d, "poNumber", "poRef", "poNo")),
     fld("Supplier", (d) => str(d, "supplierName")),
-    fld("Order Date", (d) => dateOnly(d, "receiveDate", "receivedDate")),
+    fld("Received", (d) => dateOnly(d, "receiveDate", "receivedDate")),
     fld("Received By", (d) => str(d, "receivedBy")),
     fld("QC Status", (d) => str(d, "qcStatus")),
     fld("Notes", (d) => str(d, "notes"), true),
@@ -1208,15 +1393,16 @@ const piDetail: DetailConfig = {
   title: (d) => str(d, "supplier", "supplierName") || "—",
   status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
   flow: {
-    steps: flowSteps(["DRAFT", "UNPAID", "PARTIAL", "PAID"]),
+    steps: flowSteps(["DRAFT", "CONFIRMED", "PAID"]),
     current: (d) => str(d, "status"),
   },
   fields: [
-    fld("Customer PO", (d) => str(d, "poRef", "poNo")),
+    fld("PO No.", (d) => str(d, "poRef", "poNo")),
     fld("Supplier", (d) => str(d, "supplier", "supplierName")),
     fld("Supplier Invoice", (d) => str(d, "supplierInvoiceNo")),
-    fld("Order Date", (d) => dateOnly(d, "invoiceDate")),
-    fld("Expected DD", (d) => dateOnly(d, "dueDate")),
+    fld("Supplier DO", (d) => str(d, "supplierDoNo")),
+    fld("Invoice Date", (d) => dateOnly(d, "invoiceDate")),
+    fld("Due Date", (d) => dateOnly(d, "dueDate")),
     fld("Amount", (d) => money(num(d, "amountSen", "totalSen"))),
     fld("Outstanding", (d) =>
       money(num(d, "amountSen", "totalSen") - num(d, "paidAmountSen"))),
@@ -1265,6 +1451,10 @@ const procurementDetail: DetailConfig = {
   url: (id) => pickProcurementDetail(id).url(id),
   selectDoc: (resp, id) => pickProcurementDetail(id).selectDoc(resp, id),
   resolve: (_doc, id) => pickProcurementDetail(id),
+  // Pre-fetch slots come from this dispatcher, so route them by id too.
+  extraFetches: {
+    a: { key: "grns", url: (id) => pickProcurementDetail(id).extraFetches?.a?.url(id) ?? null },
+  },
   code: (d) => str(d, "poNo", "grnNumber", "piNo") || "—",
   title: (d) => str(d, "supplierName", "supplier") || "—",
   fields: [],
@@ -1279,7 +1469,7 @@ export const procurementConfig: ModuleConfig = {
       ? `/m/procurement/${encodeURIComponent(vm.id)}`
       : null,
   detail: procurementDetail,
-  sources: [poSource, grnSource, piSource, maintenanceSource],
+  sources: [poSource, mrpToOrderSource, grnSource, piSource, maintenanceSource],
 };
 
 // ---------------------------------------------------------------------------
@@ -2292,28 +2482,47 @@ const deptLaborSource: DataSource = {
   })(),
   // Response wraps the rows under `buckets` (the route shape):
   // { success, buckets: [{departmentCode, category, hours}] }.
+  // Folded to one row per department (the buckets are dept × category), with
+  // the category split on the card and the department's share of all hours.
   select: (resp) => {
     if (!resp || typeof resp !== "object") return [];
     const o = resp as { buckets?: unknown; data?: { buckets?: unknown } };
     const buckets = (o.buckets ?? o.data?.buckets) as unknown;
-    return Array.isArray(buckets) ? (buckets as RawRow[]) : [];
+    if (!Array.isArray(buckets)) return [];
+    const byDept = new Map<string, { departmentCode: string; hours: number; byCategory: Record<string, number> }>();
+    for (const b of buckets as RawRow[]) {
+      const dept = str(b, "departmentCode") || "UNASSIGNED";
+      const e = byDept.get(dept) ?? { departmentCode: dept, hours: 0, byCategory: {} };
+      const h = num(b, "hours");
+      e.hours += h;
+      const cat = str(b, "category") || "OTHER";
+      e.byCategory[cat] = (e.byCategory[cat] ?? 0) + h;
+      byDept.set(dept, e);
+    }
+    const total = [...byDept.values()].reduce((t, e) => t + e.hours, 0);
+    return [...byDept.values()].map((e) => ({ ...e, sharePct: total > 0 ? (e.hours / total) * 100 : 0 }));
   },
   toVM: (r): RowVM => {
     const hrs = num(r, "hours");
     const dept = str(r, "departmentCode") || "—";
-    const cat = str(r, "category");
+    const cats = Object.entries((r.byCategory ?? {}) as Record<string, number>)
+      .sort((a, b) => b[1] - a[1])
+      .map(([c, h]) => `${titleWords(c)} ${h.toFixed(0)}h`)
+      .join(" · ");
     return {
-      id: `${dept}-${cat || "all"}`,
+      id: dept,
       code: dept,
-      title: cat || dept,
-      subLine: cat ? dept : undefined,
-      meta1: { label: "Hours", value: `${hrs.toFixed(1)}h` },
+      title: titleWords(dept),
+      items: cats || undefined,
+      metas: [
+        { label: "Hours", value: `${hrs.toFixed(1)}h` },
+        { label: "Share", value: `${num(r, "sharePct").toFixed(0)}%` },
+      ],
     };
   },
   columns: [
-    textCol("dept", "Reference", (r) => str(r, "departmentCode")),
-    textCol("category", "State", (r) => str(r, "category")),
-    numCol("hours", "Qty", (r) => num(r, "hours")),
+    textCol("dept", "Department", (r) => str(r, "departmentCode")),
+    numCol("hours", "Hours", (r) => num(r, "hours")),
   ],
   defaultSort: { key: "hours", dir: "desc" },
   subTabs: [{ key: "deptlabor", label: "Dept Labor", match: () => true }],
@@ -2403,16 +2612,21 @@ const laborRevenueSource: DataSource = {
 // efficiencyPct, jobsCompleted, productionMinutes }. Sorted by efficiency desc.
 const efficiencySource: DataSource = {
   url: "/api/reports/efficiency.json",
+  // Ranked once here so a row keeps its place in the ranking under a filter.
   select: (resp) => {
     const w = (resp as { data?: { workers?: unknown[] } } | null)?.data?.workers;
-    return Array.isArray(w) ? (w as RawRow[]) : [];
+    if (!Array.isArray(w)) return [];
+    return (w as RawRow[])
+      .slice()
+      .sort((a, b) => num(b, "efficiencyPct") - num(a, "efficiencyPct"))
+      .map((r, i) => ({ ...r, rank: i + 1 }));
   },
   toVM: (r): RowVM => {
     const eff = num(r, "efficiencyPct");
     const prod = num(r, "productionMinutes");
     return {
       id: str(r, "workerId", "empNo") || str(r, "name"),
-      code: str(r, "empNo") || str(r, "departmentName") || "—",
+      code: [`#${num(r, "rank")}`, str(r, "empNo")].filter(Boolean).join(" · "),
       title: str(r, "name") || "—",
       items: str(r, "departmentName") || undefined,
       metas: [
@@ -2433,9 +2647,10 @@ const efficiencySource: DataSource = {
     };
   },
   columns: [
-    textCol("name", "Customer", (r) => str(r, "name")),
-    textCol("dept", "State", (r) => str(r, "departmentName")),
-    numCol("efficiency", "Amount", (r) => num(r, "efficiencyPct")),
+    textCol("name", "Employee", (r) => str(r, "name")),
+    textCol("dept", "Department", (r) => str(r, "departmentName")),
+    numCol("efficiency", "Efficiency %", (r) => num(r, "efficiencyPct")),
+    numCol("rank", "Rank", (r) => num(r, "rank")),
   ],
   defaultSort: { key: "efficiency", dir: "desc" },
   subTabs: [{ key: "efficiency", label: "Efficiency", match: () => true }],
@@ -2488,19 +2703,25 @@ const deptPerfSource: DataSource = {
 };
 
 const payrollSource: DataSource = {
-  url: `/api/payslips?period=${thisPeriod()}`,
-  select: selectData,
+  url: PAYSLIPS_URL,
+  select: (resp) => latestPayslips(selectData(resp)).rows,
   toVM: (r): RowVM => ({
     id: str(r, "id", "payslipNo"),
-    code: str(r, "period", "periodLabel") || thisPeriod(),
+    code: [str(r, "period"), str(r, "employeeNo")].filter(Boolean).join(" · ") || "—",
     title: str(r, "employeeName", "workerName", "name") || "—",
-    subLine: str(r, "departmentName", "departmentCode") || undefined,
-    meta1: { label: "Amount", value: money(num(r, "netPaySen", "netSen", "grossSen")) },
+    items: str(r, "departmentCode") || undefined,
+    metas: [
+      { label: "Gross", value: money(num(r, "grossPay")) },
+      { label: "Net pay", value: money(num(r, "netPay")) },
+      { label: "OT", value: money(num(r, "totalOT")) },
+    ],
+    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
   }),
   columns: [
-    textCol("name", "Customer", (r) => str(r, "employeeName", "workerName", "name")),
-    textCol("dept", "State", (r) => str(r, "departmentName", "departmentCode")),
-    numCol("net", "Amount", (r) => num(r, "netPaySen", "netSen", "grossSen")),
+    textCol("name", "Employee", (r) => str(r, "employeeName", "workerName", "name")),
+    textCol("dept", "Department", (r) => str(r, "departmentCode")),
+    numCol("gross", "Gross", (r) => num(r, "grossPay")),
+    numCol("net", "Net pay", (r) => num(r, "netPay")),
   ],
   defaultSort: { key: "name", dir: "asc" },
   subTabs: [{ key: "payroll", label: "Payroll", match: () => true }],
@@ -2663,6 +2884,19 @@ function monthTitle(): string {
   return now.toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
+// Overview: the dashboard's Employees tab (department labour, efficiency, labour
+// cost, salary). Panel-only; its url is the dashboard feed the panel reads, so
+// the list engine's fetch and the panel share one cached request.
+const employeesOverviewSource: DataSource = {
+  url: "/api/dashboard/prototype",
+  select: () => [],
+  toVM: (r): RowVM => ({ id: str(r, "id"), code: "", title: "" }),
+  columns: [],
+  subTabs: [{ key: "overview", label: "Overview", match: () => true, panelOnly: true }],
+};
+
+const EmployeesOverviewPanel = lazy(() => import("../screens/EmployeesOverviewPanel"));
+
 export const employeesConfig: ModuleConfig = {
   slug: "employees",
   title: "Employees",
@@ -2686,7 +2920,14 @@ export const employeesConfig: ModuleConfig = {
   // Tab order matches the .dc.html employees tab-bar exactly (owner: .dc.html为准):
   // Working Hours · Attendance · Labor Cost · Efficiency · Dept Labor ·
   // Employee Perf · Dept Perf · Payroll · Employee Master.
+  topPanel: (tab) =>
+    tab === "overview"
+      ? createElement(Suspense, { fallback: null }, createElement(EmployeesOverviewPanel))
+      : tab === "payroll"
+        ? createElement(EmployeesPayrollPanel)
+        : null,
   sources: [
+    employeesOverviewSource,
     workingHoursSource,
     attendanceSource,
     laborRevenueSource,
