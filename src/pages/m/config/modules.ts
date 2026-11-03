@@ -1041,7 +1041,9 @@ export const invoicesConfig: ModuleConfig = {
 // ---------------------------------------------------------------------------
 // Still owed by the supplier: issued to them and not fully received.
 const PO_OUTSTANDING = ["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED"];
-const PO_STATUSES = ["DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CANCELLED"];
+// CLOSED = short-closed / done (most finished prod POs end here, not RECEIVED).
+const PO_STATUSES = ["DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED"];
+const PI_STATUSES = ["DRAFT", "CONFIRMED", "PARTIAL_PAID", "PAID", "CANCELLED"];
 
 function poLines(r: RawRow): RawRow[] {
   return Array.isArray(r.items) ? (r.items as RawRow[]) : [];
@@ -1076,7 +1078,7 @@ const poSource: DataSource = {
       items: (owed ? summariseOutstanding(r) : "") || summariseItems(r),
       metas: [
         { label: "Issued", value: status === "DRAFT" ? "Not yet" : shortDate(dateOnly(r, "orderDate")) || "—" },
-        status === "RECEIVED" && received
+        (status === "RECEIVED" || status === "CLOSED") && received
           ? { label: "Received", value: shortDate(received) }
           : { label: "ETA", value: (owed ? dateWithCountdown(eta) : shortDate(eta)) || "—" },
         { label: "Amount", value: money(num(r, "totalSen")) },
@@ -1102,40 +1104,6 @@ const poSource: DataSource = {
     { key: "to_issue", label: "To Issue", match: (r) => str(r, "status") === "DRAFT" },
     { key: "po", label: "All POs", match: () => true },
   ],
-};
-
-// When to issue a PO: the latest MRP run's shortages with their Order By date
-// (need date − supplier lead time), the desktop Planning > MRP figures.
-const mrpToOrderSource: DataSource = {
-  url: "/api/mrp",
-  select: (resp) => {
-    const reqs = (resp as { data?: { requirements?: unknown[] } | null } | null)?.data?.requirements;
-    return Array.isArray(reqs) ? (reqs as RawRow[]).filter((r) => num(r, "netRequired") > 0) : [];
-  },
-  toVM: (r): RowVM => {
-    const unit = str(r, "unit");
-    const lead = r.leadTimeDays == null ? "" : `${num(r, "leadTimeDays")}d lead`;
-    return {
-      id: str(r, "id") || str(r, "materialCode"),
-      code: str(r, "materialCode") || "—",
-      title: str(r, "materialName") || str(r, "materialCode") || "—",
-      items: [str(r, "preferredSupplierName") || "No main supplier", lead].filter(Boolean).join(" · "),
-      metas: [
-        { label: "Order by", value: dateWithCountdown(dateOnly(r, "suggestedOrderDate")) || "No lead time" },
-        { label: "Short", value: `${num(r, "netRequired")}${unit ? ` ${unit}` : ""}` },
-        { label: "Suggest", value: num(r, "suggestedPOQty") > 0 ? String(num(r, "suggestedPOQty")) : "—" },
-      ],
-      status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
-    };
-  },
-  columns: [
-    textCol("material", "Item", (r) => `${str(r, "materialCode")} ${str(r, "materialName")}`),
-    textCol("supplier", "Supplier", (r) => str(r, "preferredSupplierName")),
-    dateCol("orderBy", "Order by", (r) => dateOnly(r, "suggestedOrderDate")),
-    numCol("short", "Short", (r) => num(r, "netRequired")),
-  ],
-  defaultSort: { key: "orderBy", dir: "asc" },
-  subTabs: [{ key: "to_order", label: "To Order", match: () => true }],
 };
 
 const GRN_STATUSES = ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"];
@@ -1202,7 +1170,7 @@ const piSource: DataSource = {
     dateCol("invoiceDate", "Invoice Date", (r) => dateOnly(r, "invoiceDate")),
     dateCol("dueDate", "Due Date", (r) => dateOnly(r, "dueDate")),
     numCol("amount", "Amount", (r) => num(r, "amountSen", "totalSen")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["DRAFT", "CONFIRMED", "PAID", "CANCELLED"]),
+    enumCol("status", "Status", (r) => str(r, "status"), PI_STATUSES),
   ],
   defaultSort: { key: "invoiceDate", dir: "desc" },
   subTabs: [{ key: "pi", label: "Purchase Invoice", match: () => true }],
@@ -1276,15 +1244,38 @@ const poDetail: DetailConfig = {
         meta2: { label: "Amount", value: money(num(it, "totalSen")) },
       };
     }),
+  // Goods arriving is mostly booked through the supplier's invoice (PI, with
+  // the supplier DO no.), rarely a GRN, so the PO lists both. The PI list has
+  // no PO filter; this is the same cached list the Purchase Invoice tab reads.
   extraFetches: {
     a: { key: "grns", url: (id) => `/api/grn?poId=${encodeURIComponent(id)}` },
+    b: { key: "pis", url: () => "/api/purchase-invoices" },
   },
-  subDocLists: (_d, _resp, extras) => {
+  subDocLists: (d, _resp, extras) => {
+    const poId = str(d, "id");
+    const pis = selectData(extras?.pis).filter(
+      (p) => str(p, "purchaseOrderId") === poId && str(p, "status") !== "CANCELLED",
+    );
     const grns = selectData(extras?.grns).filter((g) => str(g, "status") !== "CANCELLED");
     return [
       {
+        title: "Supplier Invoices",
+        emptyText: "No supplier invoice yet",
+        rows: pis.map((p) => ({
+          id: str(p, "id"),
+          title: str(p, "piNo") || "—",
+          subLine: [str(p, "supplierDoNo") ? `Supplier DO ${str(p, "supplierDoNo")}` : "", money(num(p, "amountSen"))]
+            .filter(Boolean)
+            .join(" · "),
+          trailing: shortDate(dateOnly(p, "invoiceDate")) || undefined,
+          status: resolveStatus(str(p, "status"), PAYMENT_STATUS_MAP),
+          icon: "file-text" as const,
+          href: str(p, "id") ? `/m/procurement/${encodeURIComponent(str(p, "id"))}` : undefined,
+        })),
+      },
+      {
         title: "Goods Receipts",
-        emptyText: "Nothing received yet",
+        emptyText: "No goods receipt",
         rows: grns.map((g) => {
           const lines = Array.isArray(g.items) ? (g.items as RawRow[]) : [];
           return {
@@ -1454,6 +1445,7 @@ const procurementDetail: DetailConfig = {
   // Pre-fetch slots come from this dispatcher, so route them by id too.
   extraFetches: {
     a: { key: "grns", url: (id) => pickProcurementDetail(id).extraFetches?.a?.url(id) ?? null },
+    b: { key: "pis", url: (id) => pickProcurementDetail(id).extraFetches?.b?.url(id) ?? null },
   },
   code: (d) => str(d, "poNo", "grnNumber", "piNo") || "—",
   title: (d) => str(d, "supplierName", "supplier") || "—",
@@ -1469,7 +1461,7 @@ export const procurementConfig: ModuleConfig = {
       ? `/m/procurement/${encodeURIComponent(vm.id)}`
       : null,
   detail: procurementDetail,
-  sources: [poSource, mrpToOrderSource, grnSource, piSource, maintenanceSource],
+  sources: [poSource, grnSource, piSource, maintenanceSource],
 };
 
 // ---------------------------------------------------------------------------
