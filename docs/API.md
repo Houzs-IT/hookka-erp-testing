@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-10-29** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-03** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -20,7 +20,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   `tenantMiddleware`, `apiRateLimit`. Route-level permissions come from
   `src/api/lib/rbac.ts` / `role-policy.ts` and are **not** shown here — a mount
   marked "gated" still enforces its own permission checks.
-- **Public surface at generation time** — PUBLIC_PATHS: `/api/auth/login`, `/api/auth/logout`, `/api/auth/accept-invite`, `/api/auth/forgot-password`, `/api/auth/reset-password`, `/api/auth/totp/login-verify`, `/api/health`, `/api/fe-rum/event`, `/api/sheets-sync/apps-script-webhook`.
+- **Public surface at generation time** — PUBLIC_PATHS: `/api/auth/login`, `/api/auth/logout`, `/api/auth/accept-invite`, `/api/auth/forgot-password`, `/api/auth/reset-password`, `/api/auth/totp/login-verify`, `/api/connect/verify-login`, `/api/health`, `/api/fe-rum/event`, `/api/sheets-sync/apps-script-webhook`.
   PUBLIC_PREFIXES: `/api/worker-auth/`, `/api/worker/`, `/api/auth/invite/`, `/api/auth/oauth/`, `/api/internal/reports/`, `/api/internal/delivery-agent/`, `/api/internal/agents/`, `/api/public/do-qr/`, `/api/public/rack-qr/`, `/api/public/rack-write/`, `/api/public/survey/`.
   Plus these individual paths, opened by regex allow-lists in `isPublicPath()`
   (each handler re-checks a worker token / dept restriction itself):
@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 147 mounts, 145 route files in
-`src/api/routes/`, 1054 top-level handler registrations discovered.
+**Counts at generation time:** 148 mounts, 146 route files in
+`src/api/routes/`, 1055 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -138,6 +138,7 @@ offsets pointing past the end of their own file.
 | `/api/dashboard/finance` | `src/api/routes/dashboard-finance.ts` | `GET /` <sub>:42</sub><br>`PUT /valuation` <sub>:110</sub> | gated |
 | `/api/kpi` | `src/api/routes/kpi.ts` | `GET /me` <sub>:331</sub><br>`GET /users/:id` <sub>:340</sub><br>`GET /payout/:id` <sub>:355</sub><br>`PUT /payout/:id` <sub>:362</sub><br>`PUT /checklist/:kpiKey` <sub>:433</sub><br>`GET /checklist/:kpiKey` <sub>:494</sub><br>`POST /survey/:kpiKey` <sub>:516</sub><br>`POST /survey/:kpiKey/link` <sub>:573</sub><br>`PUT /rating/:kpiKey` <sub>:640</sub><br>`GET /survey/:kpiKey` <sub>:693</sub><br>`GET /library` <sub>:714</sub><br>`PUT /rules/:kpiKey` <sub>:772</sub><br>`GET /people` <sub>:815</sub><br>`GET /catalog` <sub>:864</sub><br>`GET /assignments/:id` <sub>:878</sub><br>`PUT /assignments/:id` <sub>:891</sub><br>`PUT /kpi/:kpiKey/assignees` <sub>:954</sub> | gated |
 | `/api/it-support` | `src/api/routes/it-support.ts` | `GET /tickets` <sub>:128</sub><br>`GET /unread-count` <sub>:137</sub><br>`GET /tickets/:code` <sub>:144</sub><br>`POST /tickets` <sub>:153</sub><br>`POST /tickets/:code/replies` <sub>:174</sub><br>`POST /tickets/:code/confirm` <sub>:193</sub><br>`GET /attachments/:id` <sub>:202</sub> | gated |
+| `/api/connect` | `src/api/routes/connect-login.ts` | `POST /verify-login` <sub>:52</sub> | gated (some paths public) |
 | `/api/mdm` | `src/api/routes/mdm.ts` | `GET /review-queue` <sub>:89</sub><br>`POST /review-queue/:id/dismiss` <sub>:198</sub><br>`POST /review-queue/:id/merge` <sub>:212</sub><br>`POST /detection/run` <sub>:232</sub> | gated |
 | `/api/files` | `src/api/routes/files.ts` | `POST /` <sub>:377</sub><br>`GET /` <sub>:406</sub><br>`PATCH /:id/cover` <sub>:437</sub><br>`GET /:id` <sub>:461</sub><br>`GET /:id/download` <sub>:483</sub><br>`GET /:id/stream` <sub>:526</sub><br>`DELETE /:id` <sub>:570</sub> | gated |
 | `/api/sheets-sync` | `src/api/routes/sheets-sync.ts` | `POST /apps-script-webhook` <sub>:66</sub><br>`POST /backfill` <sub>:332</sub> | gated (some paths public) |
