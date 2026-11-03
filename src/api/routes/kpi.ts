@@ -262,7 +262,7 @@ async function buildCard(c: Context<Env>, userId: string, role: string, period: 
             ? await manualRating(c, period, userId, def.key)
             : await computeMetric(c, def.key, period, a.scope, def);
     const att =
-      m.actual === null ? null : attainment(def, Number(a.target), m.actual, m.earlyPct, m.urgentOnTimePct);
+      m.actual === null ? null : attainment(def, Number(a.target), m.actual, m.earlyPct, m.urgentOnTimePct, m.counts?.late);
     lines.push({
       key: def.key, label: def.label, detail: def.detail,
       scoring: def.scoring, formula: def.formula, checklistItems: def.checklistItems,
@@ -276,7 +276,7 @@ async function buildCard(c: Context<Env>, userId: string, role: string, period: 
       points: att === null ? null : Math.round((att / 100) * Number(a.weight) * 10) / 10,
       evidence: m.detail, sampleSize: m.sampleSize, daily: m.daily,
       scoreParts: def.curve === "PENALTY_PER_PCT" && m.actual !== null
-        ? penaltyParts(def, m.actual, m.earlyPct, m.urgentOnTimePct)
+        ? penaltyParts(def, m.actual, m.earlyPct, m.urgentOnTimePct, m.counts?.late)
         : undefined,
       breakdown: m.counts && m.actual !== null
         ? deliveryBreakdown(def, m.actual, m.earlyPct, m.urgentOnTimePct, m.counts)

@@ -44,7 +44,7 @@ type Line = {
   actual: number | null; attainment: number | null; points: number | null;
   evidence: string;
   daily?: Array<{ date: string; pct: number }>;
-  scoreParts?: { late: number; early: number; urgent: number };
+  scoreParts?: { late: number; early: number; urgent: number; lateOrders: number };
   breakdown?: string[];
 };
 type CardData = {
@@ -1229,7 +1229,7 @@ export default function KpiPage() {
                               <li>
                                 Score for this KPI:{" "}
                                 {l.scoreParts && (
-                                  <>late {l.scoreParts.late} + early bonus {l.scoreParts.early} + urgent {l.scoreParts.urgent}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent > 100 && " (capped)"} ={" "}</>
+                                  <>late {l.scoreParts.late} + early bonus {l.scoreParts.early} + urgent {l.scoreParts.urgent} − late orders {-l.scoreParts.lateOrders}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent + l.scoreParts.lateOrders > 100 && " (capped)"} ={" "}</>
                                 )}
                                 <b>{l.attainment}</b> out of 100
                               </li>

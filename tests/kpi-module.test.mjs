@@ -120,6 +120,14 @@ test("late deliveries cost points, early ones win some back, never past 100", ()
     "a KPI with no editable rules ignores them");
 });
 
+test("each late order scores a negative point (HK-0129)", () => {
+  const d = kpiByKey("customer_delivery_date");
+  assert.equal(attainment(d, 0, 3, 0, null, 3), 67, "70 late points − 3 late orders");
+  assert.equal(attainment(d, 0, 0, 0, null, 0), 100, "no late orders, no penalty");
+  assert.equal(attainment(d, 0, 17.5, 0, null, 7), -7, "past 10% late the late points are 0, the late orders still count");
+  assert.equal(penaltyParts(d, 3, 0, null, 3).lateOrders, -3);
+});
+
 test("the delivery result lists each part with its orders, % and points", () => {
   const d = kpiByKey("customer_delivery_date");
   const n = { late: 86, early: 193, judged: 292, urgentOnTime: 2, urgentJudged: 21 };
@@ -127,6 +135,7 @@ test("the delivery result lists each part with its orders, % and points", () => 
     "Late: 86 of 292 orders = 29.5% late → 0 points (100 − 29.5 × 10 = -195, never below 0)",
     "Early: 193 of 292 orders = 66.1% early → +5 points (6 full 10% step(s) × +1 = +6, capped at +5)",
     "Urgent: 2 of 21 urgent orders on time or early = 9.5% → +5 points (5 + 0 full 10% step(s) × 5 = 5)",
+    "Late orders: 86 × −1 → -86 points",
   ]);
   assert.equal(deliveryBreakdown(d, 3, 25, 100, n)[0].endsWith("→ 70 points (100 − 3 × 10 = 70)"), true);
   assert.equal(deliveryBreakdown(d, 3, 25, 100, n)[2].endsWith("→ +60 points (100% → 60)"), true);
@@ -156,7 +165,7 @@ test("urgent orders earn their own points on the on-time-or-early share", () => 
   assert.equal(deliveryBreakdown(e, 18.4, 80.1, 50, { late: 1, early: 1, judged: 1, urgentOnTime: 1, urgentJudged: 2 })[2],
     "Urgent: 1 of 2 urgent orders on time or early = 50% → +20 points (0 + 2 full 20% step(s) × 10 = 20)");
   // Aug card: 18.4% late → 0, 80.1% early → +5, 90% urgent → +50.
-  assert.deepEqual(penaltyParts(d, 18.4, 80.1, 90), { late: 0, early: 5, urgent: 50 });
+  assert.deepEqual(penaltyParts(d, 18.4, 80.1, 90), { late: 0, early: 5, urgent: 50, lateOrders: 0 });
   assert.equal(attainment(d, 0, 18.4, 80.1, 90), 55);
   assert.equal(attainment(d, 0, 18.4, 80.1, null), 5, "no urgent orders add nothing");
   assert.equal(attainment(d, 0, 2, 0, 100), 100, "capped at 100");
