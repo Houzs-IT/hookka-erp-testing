@@ -292,7 +292,8 @@ Lim Wei Siang (management, HK-0125) wants the phone to answer five things.
 3. 🔵 Procurement: Outstanding / To Issue / All POs tabs (real PO statuses; the list said AWAITING / PARTIAL / MATCHED, which PO rows never carry), no MRP-based To Order tab: prod's latest MRP run is 2026-08-28 with 0 requirements, so it would always be empty; search finds a PO by item code / name / supplier SKU; filters say Supplier / ETA; PO detail shows received / ordered per line, its supplier invoices (invoice date + supplier DO no., how prod books arrivals: 240 of 683 PIs carry a PO, only 37 GRNs exist, all June imports) and its GRNs. Prod PO statuses are CONFIRMED / CLOSED / CANCELLED (CLOSED added to the list).
 4. 🔵 GRN list read `grnNo` / `receivedDate` but rows carry `grnNumber` / `receiveDate`, so the number and received date were blank; fixed, labels Received. PI statuses are DRAFT / CONFIRMED / PARTIAL_PAID / PAID / CANCELLED.
 5. 🔵 Employees: Overview tab = the dashboard's Employees view (same component, same figures); Efficiency ranked #1..n; Dept Labor one row per department; Payroll read `netPaySen` / this month (always RM0 / empty) — now the latest payroll run with gross / net / cost-to-company by department.
-6. ⏳ Wei Siang checks on the canary.
+6. 🔵 A closed / received PO no longer shows "Outstanding n of n" or "to come" per line: prod closes POs off the supplier invoice without booking `receivedQty` (PO-2609-038: CLOSED, PI-2609-102 paid, every line 0 received).
+7. ⏳ Wei Siang checks on his phone.
 
 ## 2026-11-03 — 🔵 HK-0127 Daily Report "SO Without Invoice" 611, really 0 (branch `fix/hk0127-so-no-invoice-consolidated-do` → `main`)
 
