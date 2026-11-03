@@ -26,7 +26,6 @@ import { ToastProvider } from "@/components/ui/toast";
 import { BottomTabBar, LeftRail, MobileHeader, NavDrawer } from "./components";
 import { NavDrawerProvider } from "./lib/nav-drawer";
 import { M, M_FONT, M_MAX_WIDTH } from "./theme";
-import MobileHome from "./screens/Home";
 import MobileMore from "./screens/More";
 import { ComingSoon } from "./screens/ComingSoon";
 import { ModuleListScreen } from "./screens/ModuleListScreen";
@@ -64,10 +63,13 @@ import {
 } from "./lib/responsive-layout";
 import "./theme-vars.css";
 
-// The dashboard screen is code-split: it is the only /m screen that needs
-// recharts, and most phone sessions never open it.
-const DashboardScreen = lazy(() =>
-  import("./screens/dashboard/DashboardScreen").then((m) => ({ default: m.DashboardScreen })),
+// The Home dashboard (Home v10) is code-split; its Sales view draws the charts.
+const HomeDashboard = lazy(() =>
+  import("./screens/dashboard/HomeDashboard").then((m) => ({ default: m.HomeDashboard })),
+);
+// Old /m/dashboard[/:tab] links redirect to /m?view=<tab>, period parameters kept.
+const LegacyDashboardRedirect = lazy(() =>
+  import("./screens/dashboard/HomeDashboard").then((m) => ({ default: m.LegacyDashboardRedirect })),
 );
 // The Finance app (finance v2 mobile) is code-split too: its report screens
 // pull in recharts and most phone sessions never open them.
@@ -204,10 +206,10 @@ function CustomerDetailRoute() {
   );
 }
 
-function DashboardRoute() {
+function DashboardRoute({ legacy = false }: { legacy?: boolean }) {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
-      <DashboardScreen />
+      {legacy ? <LegacyDashboardRedirect /> : <HomeDashboard />}
     </Suspense>
   );
 }
@@ -424,13 +426,12 @@ export default function MobileLayout() {
           }}
         >
           <Routes>
-          <Route path="/" element={<MobileHome />} />
+          <Route path="/" element={<DashboardRoute />} />
           <Route path="/more" element={<MobileMore />} />
 
-          {/* Dashboard (lazy: pulls in recharts). Tab in the path, period in
-              the query string — see screens/dashboard/DashboardScreen.tsx. */}
-          <Route path="dashboard" element={<DashboardRoute />} />
-          <Route path="dashboard/:tab" element={<DashboardRoute />} />
+          {/* Old dashboard links: the view moves into ?view=, everything else is kept. */}
+          <Route path="dashboard" element={<DashboardRoute legacy />} />
+          <Route path="dashboard/:tab" element={<DashboardRoute legacy />} />
           <Route path="it-support" element={<ItSupportRoute />} />
           {/* Updates: Notifications | Announcements (?view=). Not a module
               config, so it sits beside the module routes, not inside them. */}
@@ -497,7 +498,7 @@ export default function MobileLayout() {
           })}
 
           {/* Unknown /m/* → Home. */}
-          <Route path="*" element={<MobileHome />} />
+          <Route path="*" element={<DashboardRoute />} />
           </Routes>
         </div>
         {layout.hasBottomNavigation ? <BottomTabBar /> : null}

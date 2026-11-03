@@ -26,7 +26,8 @@
 // Cache backing is localStorage (src/lib/cached-fetch.ts) so the warm-up
 // PERSISTS across the next reload too.
 // ============================================================================
-import { cachedFetchJson } from "@/lib/cached-fetch";
+import { cachedFetchJson, peekCache } from "@/lib/cached-fetch";
+import { hasPermissionIn } from "@/lib/use-permission";
 
 /** How many Orders-due cards the /m Home renders (sent to the server as ?top=). */
 export const ORDERS_DUE_TOP = 6;
@@ -59,19 +60,29 @@ function buildEndpoints(): string[] {
   // Current "YYYY-MM" — the Home's default Command Center period.
   const ym = new Date().toISOString().slice(0, 7);
   return [
-    // ---- Home first paint ONLY — the cheap cards the dashboard renders
-    // immediately (the heavy Pending-Delivery / analytics fetches are already
-    // idle-gated inside Home.tsx behind `pdEnabled`, so we deliberately do NOT
-    // preload them here either). ----
-    "/api/sales-orders/stats", // Outstanding KPI + Order Pipeline
-    `/api/dashboard/overview?period=${ym}`, // Sales / Invoices KPIs + analytics
-    // Orders-due card ONLY — six rows, seven fields. It used to be the BARE
-    // "/api/sales-orders" (2.16 MB decoded / 1,342 rows on prod), and the
-    // "+ Daily Report chips" half of that old comment was already stale: the
-    // chips read /api/reports/compliance.json (owner tally audit 2026-07-11).
-    ORDERS_DUE_URL,
-    STOCK_ALERTS_URL, // Stock alerts (raw materials only — see the constant)
+    // ---- Home v10 first paint: the two feeds its Sales view opens on (the month
+    // list + problem tiles, and the month's totals). Orders-due and Stock alerts
+    // belonged to the old Home presentation and are no longer drawn on /m. ----
+    "/api/dashboard/prototype",
+    `/api/dashboard/overview?period=${ym}`,
   ];
+}
+
+/**
+ * The Home dashboard is warmed only for a user the CACHED permission set already
+ * says may open it (dashboard nav gate + sales read, or a tab list with sales).
+ * First visit (nothing cached) warms nothing: the dashboard fetches for itself
+ * once permissions load. This keeps a user with no dashboard access from having
+ * company-wide figures pulled into their browser cache by a warm-up that has not
+ * asked the permission question yet.
+ */
+function mayWarmDashboard(): boolean {
+  const p = peekCache<{ permissions?: string[]; navHidden?: string[]; dashboardTabs?: string[] | null }>("/api/auth/me/permissions");
+  if (!p) return false;
+  const gate = "/dashboard-experimental";
+  if ((p.navHidden ?? []).some((h) => gate === h || gate.startsWith(`${h}/`))) return false;
+  if (p.dashboardTabs) return p.dashboardTabs.includes("sales");
+  return hasPermissionIn(new Set(p.permissions ?? []), "sales-orders", "read");
 }
 
 /** True only on the Home route (basename is /m, Home = the index "/"). */
@@ -100,7 +111,7 @@ function isHomeLanding(): boolean {
  * within a frame of mount, so the deferred fetches still race the board.)
  */
 export function preloadMobileCritical(): void {
-  if (!isHomeLanding()) return;
+  if (!isHomeLanding() || !mayWarmDashboard()) return;
   for (const url of buildEndpoints()) {
     // Best-effort background warm-up; a failed one just falls back to an
     // on-demand fetch on first navigation.
