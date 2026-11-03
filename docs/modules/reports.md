@@ -43,7 +43,7 @@ Two unrelated report worlds share the name **Reports**:
 - Reports hub tabs own no tables — they read `/api/sales-orders`, `/api/invoices`, `/api/production-orders`, `/api/products`, `/api/purchase-orders`, `/api/workers` and aggregate client-side.
 
 ## Core flows
-1. **Daily Report (compliance)** — `GET /compliance.json` `reports.ts:620` → `buildComplianceCached` (`:672`, SWR snapshot cache, serve-stale + background refresh) → `collectComplianceData` (`compliance-report.ts:1398`) returns `ComplianceData` (`:360`: grouped exception rows + counts). `daily-report.tsx:1009` renders it.
+1. **Daily Report (compliance)** — `GET /compliance.json` `reports.ts:620` → `buildComplianceCached` (`:672`, SWR snapshot cache, serve-stale + background refresh) → `collectComplianceData` (`compliance-report.ts:1412`) returns `ComplianceData` (`:360`: grouped exception rows + counts). `daily-report.tsx:1009` renders it.
 2. **Emailed report dispatch** — cron `POST /api/internal/reports/{efficiency,schedule,overdue,brief}-trigger` (`reports.ts:866/872/878/884`) → `cronGate` (`:836`, `authCron` shared-secret + skip Sun/PH) → `dispatchReport` (`:783`) resolves date + `resolveRecipients` (`:183`) → `runAndSendReport` (`:994`) collects data, renders HTML+text, `sendMail`.
 3. **Manual send-now** — UI buttons hit `POST /efficiency/send` (`:374`), `/schedule/send` (`:875`), `/overdue/send` (`:880`), `/brief/send` (`:532`); all funnel into the same `dispatchReport` path but bypass the cron working-day gate.
 4. **Production Brief** — `brief-trigger` (`:854`) is Agent-Console-gated (`isAgentPaused("PRODUCTION")`) and wrapped in `recordAgentRun` for token accounting; LLM budget via `llmKeyIfBudgetAllows`.
@@ -59,7 +59,7 @@ Two unrelated report worlds share the name **Reports**:
 | `ForecastPage` | `src/pages/analytics/forecast.tsx:50` | Forecast vs historical-sales view |
 | `GET /compliance.json` | `src/api/routes/reports.ts:620` | Daily Report JSON (cached) |
 | `buildComplianceCached` | `reports.ts:672` | SWR snapshot wrapper (serve-stale) |
-| `collectComplianceData` | `src/api/lib/compliance-report.ts:1398` | Daily Report exception engine |
+| `collectComplianceData` | `src/api/lib/compliance-report.ts:1412` | Daily Report exception engine |
 | `dispatchReport` | `reports.ts:783` | Shared send path (cron + Agent Console + manual) |
 | `resolveRecipients` | `reports.ts:183` | kv_config → SUPER_ADMIN fallback |
 | `cronGate` / `runAndSendReport` | `reports.ts:836 / 994` | Working-day gate · collect+render+send |
