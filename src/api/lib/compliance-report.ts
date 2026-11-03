@@ -718,7 +718,15 @@ async function checkSoNoInvoice(
     const soNos = sos
       .map((s) => s.companySOId)
       .filter((x): x is string => !isEmpty(x));
-    const doIdToSoId = new Map<string, string>(); // doId → owning soId
+    // A consolidated DO carries several SOs, so one DO maps to a SET of SOs.
+    // A plain doId → soId map kept only the last SO written and flagged every
+    // other SO on an invoiced DO (HK-0127, BUG-2026-11-03-419: 611 shown, 0 real).
+    const doIdToSoIds = new Map<string, Set<string>>();
+    const linkDo = (doId: string, soId: string) => {
+      const set = doIdToSoIds.get(doId);
+      if (set) set.add(soId);
+      else doIdToSoIds.set(doId, new Set([soId]));
+    };
     const deliveredAtBySoId = new Map<string, string>(); // soId → latest deliveredAt
     const noteDelivered = (soId: string, deliveredAt: string | null) => {
       if (isEmpty(deliveredAt)) return;
@@ -740,15 +748,18 @@ async function checkSoNoInvoice(
         .all<{ id: string; salesOrderId: string | null; deliveredAt: string | null }>();
       for (const x of r.results ?? []) {
         if (x.salesOrderId) {
-          doIdToSoId.set(x.id, x.salesOrderId);
+          linkDo(x.id, x.salesOrderId);
           noteDelivered(x.salesOrderId, x.deliveredAt);
         }
       }
     }
     if (soNos.length > 0) {
-      const soIdByNo = new Map<string, string>();
+      // Two SO rows can share a number (tracker migration: SO-2512-368,
+      // SO-2603-157), and DO items only carry the number, so link both.
+      const soIdsByNo = new Map<string, string[]>();
       for (const s of sos) {
-        if (!isEmpty(s.companySOId)) soIdByNo.set(s.companySOId!, s.id);
+        if (isEmpty(s.companySOId)) continue;
+        soIdsByNo.set(s.companySOId!, [...(soIdsByNo.get(s.companySOId!) ?? []), s.id]);
       }
       const ph = soNos.map(() => "?").join(",");
       const r = await db
@@ -762,13 +773,15 @@ async function checkSoNoInvoice(
         .bind(...soNos)
         .all<{ deliveryOrderId: string | null; salesOrderNo: string | null }>();
       for (const x of r.results ?? []) {
-        const owningSo = x.salesOrderNo ? soIdByNo.get(x.salesOrderNo) : undefined;
-        if (x.deliveryOrderId && owningSo) doIdToSoId.set(x.deliveryOrderId, owningSo);
+        if (!x.deliveryOrderId) continue;
+        for (const soId of soIdsByNo.get(x.salesOrderNo ?? "") ?? []) {
+          linkDo(x.deliveryOrderId, soId);
+        }
       }
     }
 
-    // Pull invoices on those DOs and mark their owning SOs as invoiced.
-    const allDoIds = [...doIdToSoId.keys()];
+    // Pull invoices on those DOs and mark every SO on them as invoiced.
+    const allDoIds = [...doIdToSoIds.keys()];
     if (allDoIds.length > 0) {
       const ph = allDoIds.map(() => "?").join(",");
       const r = await db
@@ -781,17 +794,17 @@ async function checkSoNoInvoice(
         .bind(...allDoIds)
         .all<{ deliveryOrderId: string | null }>();
       for (const x of r.results ?? []) {
-        const owningSo = x.deliveryOrderId ? doIdToSoId.get(x.deliveryOrderId) : undefined;
-        if (owningSo) invoicedSoIds.add(owningSo);
+        for (const soId of doIdToSoIds.get(x.deliveryOrderId ?? "") ?? []) {
+          invoicedSoIds.add(soId);
+        }
       }
     }
 
     // Backfill deliveredAt for consolidated DOs (linked via items, so their
     // deliveredAt wasn't read in the salesOrderId query above).
-    const doIdsNeedingDelivered = allDoIds.filter((doId) => {
-      const soId = doIdToSoId.get(doId);
-      return soId !== undefined && !deliveredAtBySoId.has(soId);
-    });
+    const doIdsNeedingDelivered = allDoIds.filter((doId) =>
+      [...(doIdToSoIds.get(doId) ?? [])].some((soId) => !deliveredAtBySoId.has(soId)),
+    );
     if (doIdsNeedingDelivered.length > 0) {
       const ph = doIdsNeedingDelivered.map(() => "?").join(",");
       const r = await db
@@ -804,8 +817,9 @@ async function checkSoNoInvoice(
         .bind(...doIdsNeedingDelivered)
         .all<{ id: string; deliveredAt: string | null }>();
       for (const x of r.results ?? []) {
-        const owningSo = doIdToSoId.get(x.id);
-        if (owningSo) noteDelivered(owningSo, x.deliveredAt);
+        for (const soId of doIdToSoIds.get(x.id) ?? []) {
+          noteDelivered(soId, x.deliveredAt);
+        }
       }
     }
 

@@ -282,6 +282,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-11-03 — 🔵 HK-0127 Daily Report "SO Without Invoice" 611, really 0 (branch `fix/hk0127-so-no-invoice-consolidated-do` → `main`)
+
+Violet (management, HK-0127): why are so many SOs without invoice? The tile has read 611 since 2026-10-29 (613 from 10-19, 142 before).
+
+1. 🔵 BUG-2026-11-03-419: `checkSoNoInvoice` mapped each DO to one SO, so a consolidated DO's invoice cleared only the last SO written. Now DO → set of SOs, and an SO number reaches every SO row holding it (SO-2512-368 / SO-2603-157 are two rows each). Prod replay (read-only): old logic 611, fixed 0. 206 prod DOs carry more than one SO.
+2. ⏳ Violet confirms the tile on prod after deploy.
+
 ## 2026-10-30 — 🔵 HK-0123 CO edit locked by another CO's CN; "Other (custom)" on CO lines (branch `fix/hk0123-co-cn-lock-custom` → `main`)
 
 Siti (office, HK-0123): CO-2610-022 (Houzs Century, CONFIRMED) refused edit with "Consignment Note CGN-2610-001 already exists". That CN belongs to CO-2610-002; CO-2610-022 has none. Also asked for SO's "Add custom" on CO lines.
