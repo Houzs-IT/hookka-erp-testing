@@ -1219,7 +1219,10 @@ const poDetail: DetailConfig = {
     fld("ETA", (d) =>
       PO_OUTSTANDING.includes(str(d, "status")) ? dateWithCountdown(dateOnly(d, "expectedDate")) : dateOnly(d, "expectedDate")),
     fld("Received", (d) => dateOnly(d, "receivedDate")),
+    // Only while the PO is still owed: prod closes POs off the supplier
+    // invoice without booking receivedQty, so a closed PO reads 0 received.
     fld("Outstanding", (d) => {
+      if (!PO_OUTSTANDING.includes(str(d, "status"))) return "";
       const lines = poLines(d);
       const open = lines.filter((it) => num(it, "quantity") - num(it, "receivedQty") > 0).length;
       return lines.length ? (open ? `${open} of ${lines.length} lines` : "None") : "";
@@ -1228,8 +1231,9 @@ const poDetail: DetailConfig = {
     fld("Notes", (d) => str(d, "notes"), true),
   ],
   // Ordered vs received per line, so "what is still owed" reads off the PO.
-  lineItems: (d) =>
-    poLines(d).map((it, i): LineItemVM => {
+  lineItems: (d) => {
+    const owed = PO_OUTSTANDING.includes(str(d, "status"));
+    return poLines(d).map((it, i): LineItemVM => {
       const qty = num(it, "quantity");
       const got = num(it, "receivedQty");
       const unit = str(it, "unit");
@@ -1237,13 +1241,14 @@ const poDetail: DetailConfig = {
       return {
         id: str(it, "id") || String(i),
         title: str(it, "materialName", "materialCode") || "—",
-        subLine: [str(it, "materialCode"), left > 0 ? `${left}${unit ? ` ${unit}` : ""} to come` : "fully received"]
+        subLine: [str(it, "materialCode"), !owed ? "" : left > 0 ? `${left}${unit ? ` ${unit}` : ""} to come` : "fully received"]
           .filter(Boolean)
           .join(" · "),
-        meta1: { label: "Received", value: `${got}/${qty}` },
+        meta1: owed ? { label: "Received", value: `${got}/${qty}` } : { label: "Qty", value: qty },
         meta2: { label: "Amount", value: money(num(it, "totalSen")) },
       };
-    }),
+    });
+  },
   // Goods arriving is mostly booked through the supplier's invoice (PI, with
   // the supplier DO no.), rarely a GRN, so the PO lists both. The PI list has
   // no PO filter; this is the same cached list the Purchase Invoice tab reads.
