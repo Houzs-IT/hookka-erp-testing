@@ -219,6 +219,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
   const resolved = findSourceForTab(config.sources, activeTab);
   const source = resolved?.source ?? config.sources[0];
   const tab = resolved?.tab ?? source.subTabs[0];
+  const panelOnly = !!tab?.panelOnly;
 
   const { data, loading, error } = useCachedJson<unknown>(source.url);
 
@@ -386,6 +387,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
           #E2DDD8) + a square sliders button that dots when filters are active.
           gap 7px + 40px buttons so the row fits in 380px even on Sales (which
           has the most buttons: Search + ScanQR + ScanPO + Filter + Select). */}
+      {panelOnly ? null : (
       <div style={{ display: "flex", gap: 7, padding: "12px 18px 6px", minWidth: 0 }}>
         <div
           style={{
@@ -512,6 +514,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
           <ListChecks size={19} strokeWidth={1.75} />
         </button>
       </div>
+      )}
 
       {/* Optional bespoke panel above the list (e.g. Employees → Pending
           requests on the Attendance tab). */}
@@ -520,6 +523,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
       ) : null}
 
       {/* List — card per document (design source: card-based list). */}
+      {panelOnly ? null : (
       <div
         style={{
           padding: "6px 18px 0",
@@ -623,6 +627,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
           </button>
         ) : null}
       </div>
+      )}
 
       <div style={{ height: 12 }} />
 

@@ -215,7 +215,7 @@ test("no user-facing dept label map still spells FOAM as bare \"Foam\"", () => {
     "src/pages/service-cases/detail.tsx",
     "src/pages/m/config/forms.ts",
     "src/pages/m/screens/ProductionScreen.tsx",
-    "src/pages/m/screens/ProductionDetailScreen.tsx",
+    "src/pages/m/config/departments.ts",
     "src/lib/repair-scope.ts",
   ];
   // Matches: FOAM: "Foam"  |  code: "FOAM", label: "Foam"  |  { name: "Foam", code: "FOAM" }

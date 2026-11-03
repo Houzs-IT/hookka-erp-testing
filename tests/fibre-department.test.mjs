@@ -109,7 +109,7 @@ test("label maps: every dept picker lists FIBRE", () => {
     "src/pages/m/config/forms.ts",
     "src/pages/m/config/modules.ts",
     "src/pages/m/screens/ProductionScreen.tsx",
-    "src/pages/m/screens/ProductionDetailScreen.tsx",
+    "src/pages/m/config/departments.ts",
   ];
   for (const f of files) assert.ok(read(f).includes("FIBRE"), `${f} missing FIBRE`);
   const bom = read("src/pages/bom.tsx");

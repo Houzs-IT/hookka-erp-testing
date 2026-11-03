@@ -330,6 +330,16 @@ function Inner({
       });
   };
 
+  const onPrint = () => {
+    if (!eff.print || !doc) {
+      setSheet("print");
+      return;
+    }
+    void eff.print(doc, id).catch(() =>
+      setToast({ kind: "err", text: "Couldn’t build the PDF. Try again." }),
+    );
+  };
+
   // ---- Primary CTA → a real action for the wired doc types. ----
   // Announcements: "Mark as Read" → office-side PATCH (sets isActive/visible
   //   state is server-managed; the office detail acknowledges by toggling the
@@ -1124,7 +1134,7 @@ function Inner({
               ? { label: "Sign", onClick: onSign }
               : undefined
           }
-          onPrint={() => setSheet("print")}
+          onPrint={onPrint}
           onEdit={onEdit}
           onCta={runCta}
         />

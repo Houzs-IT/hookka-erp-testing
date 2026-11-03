@@ -2886,7 +2886,7 @@ app.get("/:id", async (c) => {
       .first<{ id: string }>();
     if (byNo?.id) id = byNo.id;
   }
-  const [so, itemsRes, statusRes, overridesRes, posRes, completedByRes] = await Promise.all([
+  const [so, itemsRes, statusRes, overridesRes, posRes, completedByRes, stagesRes] = await Promise.all([
     c.var.DB.prepare("SELECT * FROM sales_orders WHERE id = ?")
       .bind(id)
       .first<SalesOrderRow>(),
@@ -2944,6 +2944,23 @@ app.get("/:id", async (c) => {
     )
       .bind(id)
       .all<{ productionOrderId: string; names1: string | null; names2: string | null }>(),
+    // Per-department job-card state for each linked PO, so the phone SO detail
+    // can say which departments are still open and when each is due (HK-0125).
+    c.var.DB.prepare(
+      `SELECT jc.productionOrderId, jc.departmentCode, jc.status, jc.dueDate, jc.completedDate
+         FROM job_cards jc
+         JOIN production_orders po ON po.id = jc.productionOrderId
+        WHERE po.salesOrderId = ?
+          AND jc.status <> 'CANCELLED'`,
+    )
+      .bind(id)
+      .all<{
+        productionOrderId: string;
+        departmentCode: string | null;
+        status: string | null;
+        dueDate: string | null;
+        completedDate: string | null;
+      }>(),
   ]);
   if (!so) {
     return c.json({ success: false, error: "Order not found" }, 404);
@@ -3094,6 +3111,28 @@ app.get("/:id", async (c) => {
     if (parts.length) completedByMap.set(cb.productionOrderId, parts.join(", "));
   }
 
+  // poId → one entry per department. A department can carry several job cards
+  // (one per WIP); it is done only when every one of them is.
+  type Stage = { departmentCode: string; done: boolean; dueDate: string | null; completedDate: string | null };
+  const stagesByPo = new Map<string, Map<string, Stage>>();
+  for (const jc of stagesRes.results ?? []) {
+    const dept = jc.departmentCode ?? "";
+    if (!dept) continue;
+    const done = jc.status === "COMPLETED" || jc.status === "TRANSFERRED";
+    let byDept = stagesByPo.get(jc.productionOrderId);
+    if (!byDept) stagesByPo.set(jc.productionOrderId, (byDept = new Map()));
+    const s = byDept.get(dept);
+    const due = jc.dueDate || null;
+    const fin = jc.completedDate || null;
+    if (!s) {
+      byDept.set(dept, { departmentCode: dept, done, dueDate: due, completedDate: done ? fin : null });
+      continue;
+    }
+    if (!done) s.done = false;
+    if (due && (!s.dueDate || due > s.dueDate)) s.dueDate = due;
+    if (done && fin && (!s.completedDate || fin > s.completedDate)) s.completedDate = fin;
+  }
+
   return c.json({
     success: true,
     data: rowToSO(so, itemsRes.results ?? []),
@@ -3112,6 +3151,7 @@ app.get("/:id", async (c) => {
       completedBy: completedByMap.get(p.id) ?? null,
       deliveryDoNo: poDeliveryMap.get(p.id)?.doNo ?? "",
       deliveryStatus: poDeliveryMap.get(p.id)?.status ?? "",
+      stages: [...(stagesByPo.get(p.id)?.values() ?? [])],
     })),
     statusHistory: (statusRes.results ?? []).map(rowToStatusChange),
     priceOverrides: (overridesRes.results ?? []).map(rowToPriceOverride),

@@ -76,6 +76,8 @@ export type SubTabDef = {
   label: string;
   /** Return true to KEEP the row under this tab. "All" tabs return true. */
   match: (row: RawRow) => boolean;
+  /** The tab is only the module's topPanel: no search bar, no list. */
+  panelOnly?: boolean;
 };
 
 /**
@@ -374,6 +376,11 @@ export type DetailConfig = {
   lineItems?: (doc: RawRow) => LineItemVM[];
   /** Map the response (doc + envelope extras) → related documents. */
   relatedDocs?: (doc: RawRow, resp: unknown) => RelatedDocVM[];
+  /**
+   * Builds and opens the document's PDF (the same generator the desktop prints
+   * with). When absent, the bottom-bar Print shows the "use the desktop" note.
+   */
+  print?: (doc: RawRow, id: string) => Promise<void>;
   /** Label for the bottom-bar primary CTA (e.g. "Confirm"). Defaults none. */
   primaryCta?: (doc: RawRow) => string | undefined;
   /**

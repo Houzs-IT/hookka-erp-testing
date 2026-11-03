@@ -18,24 +18,12 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { StatusPill } from "../components";
 import { M } from "../theme";
 import { resolveStatus, STATUS_MAPS, str, num, dateOnly } from "../config/helpers";
+import { PRODUCTION_DEPTS } from "../config/departments";
 
 type RawRow = Record<string, unknown>;
 type Envelope = { success?: boolean; data?: RawRow };
 type AuditResp = { data?: RawRow[] };
 
-// Real 8-department pipeline (v20 stepper, real depts).
-const DEPTS: { code: string; label: string }[] = [
-  { code: "FAB_CUT", label: "Fab Cut" },
-  { code: "FAB_SEW", label: "Fab Sew" },
-  { code: "FOAM_CUTTING", label: "Foam Cutting" },
-  { code: "FOAM", label: "Foam Bonding" },
-  { code: "FIBRE", label: "Fibre" },
-  { code: "WOOD_CUT", label: "Wood Cut" },
-  { code: "FRAMING", label: "Framing" },
-  { code: "WEBBING", label: "Webbing" },
-  { code: "UPHOLSTERY", label: "Upholstery" },
-  { code: "PACKING", label: "Packing" },
-];
 
 function arr(v: unknown): RawRow[] {
   return Array.isArray(v) ? (v as RawRow[]) : [];
@@ -58,15 +46,15 @@ export function ProductionDetailScreen() {
 
   const status = str(doc, "status");
   const pill = resolveStatus(status, STATUS_MAPS.production);
-  const si = DEPTS.findIndex((d) => d.code === str(doc, "currentDepartment"));
+  const si = PRODUCTION_DEPTS.findIndex((d) => d.code === str(doc, "currentDepartment"));
   const audit = arr(auditRaw?.data);
   // Real per-department job cards (GET /api/production-orders/:id → jobCards[]):
   // departmentCode · status · completedDate · dueDate · pic1Name/pic2Name. The
   // stepper only lights from the currentDepartment scalar; this surfaces the
   // real "who + when" per stage the design shows (no fabricated timeline).
   const jobCards = arr(doc.jobCards).slice().sort((a, b) => {
-    const ai = DEPTS.findIndex((d) => d.code === str(a, "departmentCode"));
-    const bi = DEPTS.findIndex((d) => d.code === str(b, "departmentCode"));
+    const ai = PRODUCTION_DEPTS.findIndex((d) => d.code === str(a, "departmentCode"));
+    const bi = PRODUCTION_DEPTS.findIndex((d) => d.code === str(b, "departmentCode"));
     return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
   });
   const soId = str(doc, "salesOrderId");
@@ -126,7 +114,7 @@ export function ProductionDetailScreen() {
           }}
         >
           <div style={{ display: "flex", alignItems: "flex-start" }}>
-            {DEPTS.map((d, i) => {
+            {PRODUCTION_DEPTS.map((d, i) => {
               const done = si >= 0 && i < si;
               const active = i === si;
               return (
@@ -177,7 +165,7 @@ export function ProductionDetailScreen() {
             <div style={{ padding: "4px 15px 8px" }}>
               {jobCards.map((jc, i) => {
                 const deptCode = str(jc, "departmentCode");
-                const label = DEPTS.find((d) => d.code === deptCode)?.label || deptCode || "Stage";
+                const label = PRODUCTION_DEPTS.find((d) => d.code === deptCode)?.label || deptCode || "Stage";
                 const st = str(jc, "status") || "—";
                 const done = /COMPLET|DONE/i.test(st);
                 const completed = dateOnly(jc, "completedDate");
