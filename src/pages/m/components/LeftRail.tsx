@@ -15,7 +15,6 @@
 import { type LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
-  FlaskConical,
   ShoppingCart,
   Truck,
   Wallet,
@@ -40,7 +39,6 @@ import { useMobileThemeMode } from "../lib/theme-mode";
 import { getCurrentUser, clearAuth } from "@/lib/auth";
 import { setPreferDesktop } from "@/lib/prefer-desktop";
 import { usePermissions } from "@/lib/use-permission";
-import { DASHBOARD_NAV_HREF } from "../screens/dashboard/dashboard-m-lib";
 import { FINANCE_NAV_GATES } from "../finance-menu";
 
 type RailEntry =
@@ -51,7 +49,6 @@ type RailEntry =
 // dc12 Fold railDefs — same order + section labels.
 const ENTRIES: RailEntry[] = [
   { kind: "section", label: "Workspace" },
-  { kind: "item", key: "dashboard-prototype", label: "Dashboard Prototype", icon: FlaskConical, path: "/m/dashboard", navGate: DASHBOARD_NAV_HREF },
   { kind: "item", key: "home", label: "Dashboard", icon: LayoutDashboard, path: "/m" },
   { kind: "section", label: "Sales & Customers" },
   { kind: "item", key: "sales", label: "Sales Orders", icon: ShoppingCart, path: "/m/sales" },
