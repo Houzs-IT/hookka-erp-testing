@@ -1712,6 +1712,7 @@ app.post("/", async (c) => {
     // uses; delivery-orders already imports nextInvoiceNo from here).
     const { ensureDeliveryIncompleteColumn, fireCustomerNoticeBestEffort } =
       await import("./delivery-orders");
+    const { reclaimVoidedInvoiceNo } = await import("./delivery-orders");
     await ensureDeliveryIncompleteColumn(c.var.DB);
     const doRow = await c.var.DB.prepare(
       `SELECT id, doNo, salesOrderId, companySOId, customerId, customerName,
@@ -1887,9 +1888,14 @@ app.post("/", async (c) => {
     // month (src/lib/terms.ts). Enforced server-side, not client-supplied.
     const dueDate = nextMonthDueDate(invoiceDate);
     const id = genInvoiceId();
-    const invoiceNo = body.invoiceNo || (await nextInvoiceNo(c.var.DB));
+    const reclaimed = body.invoiceNo
+      ? null
+      : await reclaimVoidedInvoiceNo(c.var.DB, doRow, now);
+    const invoiceNo =
+      body.invoiceNo || reclaimed?.invoiceNo || (await nextInvoiceNo(c.var.DB));
 
     const statements: D1PreparedStatement[] = [
+      ...(reclaimed ? [reclaimed.release] : []),
       c.var.DB.prepare(
         // PR 5 — INSERT also captures customerAddress / attention /
         // customerPhone / customerPOId from the DO. These columns were
