@@ -152,6 +152,11 @@ export type Env = {
     // The hub sends this as x-it-hub-secret when it pushes a ticket event to
     // /api/it-support/hub-events (>= 16 chars). Unset: that endpoint answers 503.
     IT_HUB_WEBHOOK_SECRET?: string;
+    // Houzs Connect (the company chat) sends this as a Bearer token to
+    // /api/connect/verify-login when Hookka staff sign in there; the same value
+    // is HOOKKA_LOGIN_KEY on the houzs-connect Worker (`wrangler pages secret
+    // put`). Unset: that endpoint answers 503.
+    CONNECT_LOGIN_KEY?: string;
   };
   // Per-request variables.  DB is the Supabase-backed D1-compat adapter
   // installed by the middleware below; typed as D1Database so existing route
@@ -1157,6 +1162,7 @@ import dashboardPrototype from "./routes/dashboard-prototype";
 import dashboardFinance from "./routes/dashboard-finance";
 import kpi from "./routes/kpi";
 import itSupport from "./routes/it-support";
+import connectLogin from "./routes/connect-login";
 // Phase C #4 quick-win — MDM duplicate-detection review queue.
 import mdm from "./routes/mdm";
 // Phase B.4 — file_assets storage (Supabase Storage-backed; was R2 before
@@ -1403,6 +1409,8 @@ app.route("/api/kpi", kpi);
 // IT Support: a proxy to the Houzs IT Hub. Self-scoped like /api/kpi/me (the
 // reporter is the session's user), so signed in is the only gate.
 app.route("/api/it-support", itSupport);
+// Houzs Connect checking a Hookka account (routes/connect-login.ts).
+app.route("/api/connect", connectLogin);
 // Phase C #4 quick-win — MDM duplicate-detection review queue. Routes
 // scoped by orgId via getOrgId(c); detection-pass endpoint is admin-only
 // in spirit (gated by the existing auth middleware until role-aware
