@@ -78,9 +78,9 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `LineItemCard` | `src/pages/sales/create.tsx:3037` | Per-line item editor |
 | `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:338` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1732` | SO create + combo pass + snapshot invalidation |
-| `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3127` | SO edit + re-run combo pass |
+| `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3167` | SO edit + re-run combo pass |
 | `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2525` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
-| `app.patch("/:id/dates")` | `src/api/routes/sales-orders.ts:5734` | Customer DD / Hookka Expected DD pencil (HK-0121); bypasses the PUT production lock, frozen from DELIVERED; re-dates POs/JCs via `redateProductionFromSODates` (`:5607`) |
+| `app.patch("/:id/dates")` | `src/api/routes/sales-orders.ts:5774` | Customer DD / Hookka Expected DD pencil (HK-0121); bypasses the PUT production lock, frozen from DELIVERED; re-dates POs/JCs via `redateProductionFromSODates` (`:5647`) |
 | `createProductionOrdersForSO` | `sales-orders/_helpers.ts:591` | One production_orders row per SO item |
 | `cascadeSOStatusToPOs` | `sales-orders/_helpers.ts:788` | Propagate SO status change to POs/JCs |
 | `rowToSO` / `rowToSOList` | `sales-orders/_helpers.ts:243 / 307` | Row → API shape (dual-keyed) |
