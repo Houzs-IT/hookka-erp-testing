@@ -1792,6 +1792,9 @@ export async function reclaimVoidedInvoiceNo(
   };
 }
 
+// 200 rows x 12 binds, far under Postgres's 65535-parameter cap.
+const INVOICE_ITEM_ROWS_PER_INSERT = 200;
+
 export async function buildDoDeliveredSoAndInvoice(
   db: D1Database,
   doRow: DoForDeliveredCascade,
@@ -2036,7 +2039,9 @@ export async function buildDoDeliveredSoAndInvoice(
     if (reclaimed) statements.push(reclaimed.release);
     invoiceStmtIdx = statements.length;
     statements.push(rebuildInvoiceInsert(invoiceNo));
-    for (const item of invItems) {
+    // Multi-row (HK-0128): one INSERT per line was a round-trip per line.
+    for (let i = 0; i < invItems.length; i += INVOICE_ITEM_ROWS_PER_INSERT) {
+      const chunk = invItems.slice(i, i + INVOICE_ITEM_ROWS_PER_INSERT);
       statements.push(
         db
           .prepare(
@@ -2044,29 +2049,31 @@ export async function buildDoDeliveredSoAndInvoice(
                id, invoiceId, productCode, productName, sizeLabel, fabricCode,
                quantity, unitPriceSen, totalSen, production_order_id,
                delivery_order_item_id, so_item_id
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${", (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)".repeat(chunk.length - 1)}`,
           )
           .bind(
-            item.id,
-            invId,
-            item.productCode,
-            item.productName,
-            item.sizeLabel,
-            item.fabricCode,
-            item.quantity,
-            item.unitPriceSen,
-            item.totalSen,
-            // BUG-2026-07-17-001 — keep the DO's per-line link so the printout
-            // never has to guess the customer PO by product code again.
-            item.productionOrderId,
-            // The convert-chain link: which DO line this bill drew from. An
-            // invoice whose lines carry this can be partially voided and
-            // re-issued; one without it reads as a legacy whole-document bill
-            // and locks the DO to itself (do-partial-invoice.ts).
-            item.deliveryOrderItemId,
-            // BUG-2026-08-13-096 — the link an SO↔invoice audit reads. null
-            // when the SO line could not be identified UNIQUELY; never a guess.
-            item.soItemId,
+            ...chunk.flatMap((item) => [
+              item.id,
+              invId,
+              item.productCode,
+              item.productName,
+              item.sizeLabel,
+              item.fabricCode,
+              item.quantity,
+              item.unitPriceSen,
+              item.totalSen,
+              // BUG-2026-07-17-001 — keep the DO's per-line link so the printout
+              // never has to guess the customer PO by product code again.
+              item.productionOrderId,
+              // The convert-chain link: which DO line this bill drew from. An
+              // invoice whose lines carry this can be partially voided and
+              // re-issued; one without it reads as a legacy whole-document bill
+              // and locks the DO to itself (do-partial-invoice.ts).
+              item.deliveryOrderItemId,
+              // BUG-2026-08-13-096 — the link an SO↔invoice audit reads. null
+              // when the SO line could not be identified UNIQUELY; never a guess.
+              item.soItemId,
+            ]),
           ),
       );
     }

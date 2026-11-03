@@ -49,6 +49,9 @@ export type FGDeliveredShortage = {
   shortageQty: number;
 };
 
+// Rows per multi-row statement (at most 9 binds per row here).
+const MULTI_ROW_CHUNK = 200;
+
 function genLedgerId(prefix: string): string {
   return `cl-${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -138,6 +141,17 @@ export async function consumeFGBatchesForDO(
   let totalCogsSen = 0;
   const shortages: FGDeliveredShortage[] = [];
 
+  // One product lookup and one batch read per product, and the batches'
+  // remaining qty tracked here. The writes only land in the caller's batch, so
+  // re-reading per line handed every line of a same-product DO the same oldest
+  // batch (HK-0128: 100 x SQUARE PILLOW RDM would have taken one 1-unit batch
+  // to -99), and 200 sequential reads + 200 writes pushed the request past the
+  // browser's 30 s API timeout.
+  const productIdByCode = new Map<string, string | null>();
+  const batchesByProduct = new Map<string, FgBatchRow[]>();
+  const takeByBatch = new Map<string, number>();
+  const ledgerRows: unknown[][] = [];
+
   for (const item of items) {
     const need = Number(item.quantity) || 0;
     if (need <= 0) continue;
@@ -154,27 +168,35 @@ export async function consumeFGBatchesForDO(
     // `products` has no such column → "column product_code does not
     // exist", failing every DO → DELIVERED cascade. Mirrors the
     // working sibling query in lib/fg-completion.ts:77.
-    const product = await db
-      .prepare("SELECT id FROM products WHERE code = ? LIMIT 1")
-      .bind(productCode)
-      .first<{ id: string }>();
-    if (!product) {
+    if (!productIdByCode.has(productCode)) {
+      const product = await db
+        .prepare("SELECT id FROM products WHERE code = ? LIMIT 1")
+        .bind(productCode)
+        .first<{ id: string }>();
+      productIdByCode.set(productCode, product?.id ?? null);
+    }
+    const productId = productIdByCode.get(productCode);
+    if (!productId) {
       shortages.push({ itemId: item.id, productCode, shortageQty: need });
       continue;
     }
 
     // FIFO — oldest completedDate first, then oldest id as tiebreaker.
-    const batchesRes = await db
-      .prepare(
-        `SELECT id, productId, productionOrderId, completedDate, originalQty,
-                remainingQty, unitCostSen
-           FROM fg_batches
-          WHERE productId = ? AND remainingQty > 0
-          ORDER BY completedDate ASC, id ASC`,
-      )
-      .bind(product.id)
-      .all<FgBatchRow>();
-    const batches = batchesRes.results ?? [];
+    let batches = batchesByProduct.get(productId);
+    if (!batches) {
+      const batchesRes = await db
+        .prepare(
+          `SELECT id, productId, productionOrderId, completedDate, originalQty,
+                  remainingQty, unitCostSen
+             FROM fg_batches
+            WHERE productId = ? AND remainingQty > 0
+            ORDER BY completedDate ASC, id ASC`,
+        )
+        .bind(productId)
+        .all<FgBatchRow>();
+      batches = (batchesRes.results ?? []).map((b) => ({ ...b }));
+      batchesByProduct.set(productId, batches);
+    }
 
     let remaining = need;
     for (const batch of batches) {
@@ -184,32 +206,19 @@ export async function consumeFGBatchesForDO(
       const sliceCostSen = batch.unitCostSen * take;
       totalCogsSen += sliceCostSen;
       remaining -= take;
-
-      statements.push(
-        db
-          .prepare(
-            "UPDATE fg_batches SET remainingQty = remainingQty - ? WHERE id = ?",
-          )
-          .bind(take, batch.id),
-        db
-          .prepare(
-            `INSERT INTO cost_ledger
-               (id, date, type, itemType, itemId, batchId, qty, direction,
-                unitCostSen, totalCostSen, refType, refId, notes)
-             VALUES (?, ?, 'FG_DELIVERED', 'FG', ?, ?, ?, 'OUT', ?, ?, 'DELIVERY_ORDER', ?, ?)`,
-          )
-          .bind(
-            genLedgerId("fgd"),
-            deliveredAtIso,
-            batch.productId,
-            batch.id,
-            take,
-            batch.unitCostSen,
-            sliceCostSen,
-            doId,
-            `FG delivered for ${doNo} (${productCode})`,
-          ),
-      );
+      batch.remainingQty -= take;
+      takeByBatch.set(batch.id, (takeByBatch.get(batch.id) ?? 0) + take);
+      ledgerRows.push([
+        genLedgerId("fgd"),
+        deliveredAtIso,
+        batch.productId,
+        batch.id,
+        take,
+        batch.unitCostSen,
+        sliceCostSen,
+        doId,
+        `FG delivered for ${doNo} (${productCode})`,
+      ]);
     }
 
     if (remaining > 0) {
@@ -221,8 +230,37 @@ export async function consumeFGBatchesForDO(
     }
   }
 
+  const takes = [...takeByBatch];
+  for (let i = 0; i < takes.length; i += MULTI_ROW_CHUNK) {
+    const chunk = takes.slice(i, i + MULTI_ROW_CHUNK);
+    statements.push(
+      db
+        .prepare(
+          `UPDATE fg_batches SET remainingQty = remainingQty - v.take_qty
+             FROM (VALUES ${chunk.map(() => "(CAST(? AS TEXT), CAST(? AS INTEGER))").join(", ")})
+                  AS v(batch_id, take_qty)
+            WHERE fg_batches.id = v.batch_id`,
+        )
+        .bind(...chunk.flat()),
+    );
+  }
+  for (let i = 0; i < ledgerRows.length; i += MULTI_ROW_CHUNK) {
+    const chunk = ledgerRows.slice(i, i + MULTI_ROW_CHUNK);
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO cost_ledger
+             (id, date, type, itemType, itemId, batchId, qty, direction,
+              unitCostSen, totalCostSen, refType, refId, notes)
+           VALUES ${chunk.map(() => "(?, ?, 'FG_DELIVERED', 'FG', ?, ?, ?, 'OUT', ?, ?, 'DELIVERY_ORDER', ?, ?)").join(", ")}`,
+        )
+        .bind(...chunk.flat()),
+    );
+  }
+
   return { skipped: false, statements, totalCogsSen, shortages };
 }
+
 
 // ---------------------------------------------------------------------------
 // REVERSE — when goods come back on a Delivery Return, undo the COGS + FG

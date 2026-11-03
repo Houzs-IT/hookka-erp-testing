@@ -272,13 +272,40 @@ export function buildFgStockEventStatements(
 ): D1PreparedStatement[] {
   const actor = evt.actor ?? SYSTEM_ACTOR;
   const skipNoOp = evt.skipNoOp !== false;
-  const out: D1PreparedStatement[] = [];
+  const rows: unknown[][] = [];
   for (const u of units) {
     const from = u.status ?? null;
     if (skipNoOp && from === evt.toStatus) continue;
     const delta = balanceDelta(from, evt.toStatus);
     const id = evt.onceKey ? `fge-${evt.onceKey}-${u.id}` : genEventId();
-    const conflict = evt.onceKey ? " ON CONFLICT (id) DO NOTHING" : "";
+    rows.push([
+      id,
+      u.id,
+      eventTypeFor(delta),
+      delta,
+      from,
+      evt.toStatus,
+      evt.doc.docType,
+      evt.doc.docId ?? null,
+      evt.doc.docNo ?? null,
+      u.productCode ?? null,
+      u.batchId ?? null,
+      evt.occurredAt,
+      actor.type,
+      actor.id ?? null,
+      actor.name ?? null,
+      evt.reverses?.docType ?? null,
+      evt.reverses?.docId ?? null,
+      evt.note ?? null,
+      evt.occurredAt,
+    ]);
+  }
+  // Multi-row: a 100-unit DO used to send 100 INSERTs one round-trip each
+  // (HK-0128).
+  const conflict = evt.onceKey ? " ON CONFLICT (id) DO NOTHING" : "";
+  const out: D1PreparedStatement[] = [];
+  for (let i = 0; i < rows.length; i += EVENT_ROWS_PER_INSERT) {
+    const chunk = rows.slice(i, i + EVENT_ROWS_PER_INSERT);
     out.push(
       db
         .prepare(
@@ -287,33 +314,16 @@ export function buildFgStockEventStatements(
               doc_type, doc_id, doc_no, product_code, batch_id,
               occurred_at, actor_type, actor_id, actor_name,
               reverses_doc_type, reverses_doc_id, note, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${conflict}`,
+           VALUES ${chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}${conflict}`,
         )
-        .bind(
-          id,
-          u.id,
-          eventTypeFor(delta),
-          delta,
-          from,
-          evt.toStatus,
-          evt.doc.docType,
-          evt.doc.docId ?? null,
-          evt.doc.docNo ?? null,
-          u.productCode ?? null,
-          u.batchId ?? null,
-          evt.occurredAt,
-          actor.type,
-          actor.id ?? null,
-          actor.name ?? null,
-          evt.reverses?.docType ?? null,
-          evt.reverses?.docId ?? null,
-          evt.note ?? null,
-          evt.occurredAt,
-        ),
+        .bind(...chunk.flat()),
     );
   }
   return out;
 }
+
+// 200 rows x 19 binds = 3800, far under Postgres's 65535-parameter cap.
+const EVENT_ROWS_PER_INSERT = 200;
 
 // ---------------------------------------------------------------------------
 // recordFgStockEvents — the convenience wrapper for the writers that do NOT

@@ -283,6 +283,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-11-03 — 🔵 HK-0128 DO-2610-119 cannot be marked delivered (branch `fix/hk0128-big-do-deliver` → `main`)
+
+Siti (office, HK-0128): only this DO cannot be marked delivered.
+
+1. 🔵 BUG-2026-11-03-421: 100 lines, one statement per line in the DELIVERED cascade (511 in the batch); past the browser's 30 s API timeout the request is aborted and rolls back (13 tries in FE RUM). Now multi-row / set-based: 32 reads + 16 statements, prod replay rolled back.
+2. 🔵 Same-product lines all consumed the same oldest `fg_batches` row; FIFO now walks the batches. 608 prod batches already negative, not repaired here.
+3. ⏳ Siti marks DO-2610-119 delivered after deploy.
+
 ## 2026-11-03 — 🔵 HK-0125 Phone UI: SO production progress, DO dates + PDF, PO outstanding / to order, GRN dates, Employees overview (branch `feat/hk0125-mobile-polish` → `main`)
 
 Lim Wei Siang (management, HK-0125) wants the phone to answer five things.

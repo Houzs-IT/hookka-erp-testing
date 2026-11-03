@@ -162,6 +162,12 @@ const sqlOf = (stmts) => stmts.map((s) => s.sql);
 
 // ── Wall 1: the status machine had no CANCELLED target at all ───────────────
 
+// fg_stock_events INSERTs are multi-row (HK-0128): one 19-bind row per unit.
+const eventInserts = (stmts) =>
+  stmts
+    .filter((s) => /INSERT INTO fg_stock_events/.test(s.sql))
+    .flatMap((s) => Array.from({ length: s.args.length / 19 }, (_, i) => ({ sql: s.sql, args: s.args.slice(i * 19, i * 19 + 19) })));
+
 test("CANCELLED is reachable from every live status", () => {
   for (const from of ["DRAFT", "LOADED", "IN_TRANSIT", "DELIVERED", "INVOICED"]) {
     assert.ok(
@@ -227,7 +233,7 @@ test("the FG stock ledger gets a counter-row per unit, and history is not edited
   // and the return of the goods is a second row pointing back at it. Anything
   // else and a cancelled delivery would erase the evidence that it happened.
   const r = await buildDoCancelReleaseStatements(fakeDb(delivered()), cancelArgs, NOW);
-  const events = r.statements.filter((s) => /INSERT INTO fg_stock_events/.test(s.sql));
+  const events = eventInserts(r.statements);
   assert.equal(events.length, 2, "one per unit the DO claimed");
   for (const e of events) {
     assert.equal(e.args[2], "IN");
