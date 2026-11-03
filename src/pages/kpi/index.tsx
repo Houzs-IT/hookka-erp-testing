@@ -1589,7 +1589,7 @@ function DeliveryRulesEditor({ item }: { item: LibItem }) {
     <div className="mt-2 rounded-lg border border-[#E2DDD8] bg-white p-3 space-y-2">
       <p className="text-[11.5px] font-semibold text-[#1F1D1B]">Scoring rules (applies to everyone)</p>
       <p className="text-[11.5px] text-[#3A3733] leading-loose">
-        Lose{num("penaltyPerPct", "Points lost per 1% late")}points for every 1% of orders shipped late.
+        Lose{num("penaltyPerPct", "Points lost per 1% late")}points for every 1% of orders shipped late, even below 0.
       </p>
       <p className="text-[11.5px] text-[#3A3733] leading-loose">
         Win back{num("earlyBonusPerStep", "Bonus points per step")}point(s) for every
