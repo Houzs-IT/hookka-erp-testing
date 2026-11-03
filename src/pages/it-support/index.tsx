@@ -30,6 +30,11 @@ import { useToast } from "@/components/ui/toast";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { useInterval } from "@/lib/scheduler";
 import { cn, formatDateTime } from "@/lib/utils";
+import { navigationGroups } from "@/components/layout/sidebar";
+import { itModuleIndex } from "@/lib/it-support-module";
+
+// Built once: the sidebar does not change while the app runs.
+const MODULES = itModuleIndex(navigationGroups);
 
 type Status =
   | "open" | "in_progress" | "on_hold" | "testing" | "waiting_reporter" | "resolved" | "closed" | "rejected";
@@ -324,6 +329,8 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
   const [description, setDescription] = useState("");
   const [type, setType] = useState("bug");
   const [priority, setPriority] = useState("medium");
+  // Picked from the page they came from; they can change it or leave "Not sure".
+  const [module, setModule] = useState(() => (fromUrl ? MODULES.moduleFor(fromUrl) : ""));
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -341,6 +348,7 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
     form.set("priority", priority);
     form.set("occurred_at", new Date().toISOString());
     if (fromUrl) form.set("page_url", fromUrl);
+    if (module) form.set("module", module);
     for (const f of files) form.append("files", f, f.name);
     const res = await api<{ code: string }>("/tickets", { method: "POST", body: form });
     setSaving(false);
@@ -370,6 +378,12 @@ function NewTicket({ fromUrl, onDone, onCancel }: { fromUrl: string; onDone: (co
             </select>
           </FormField>
         </div>
+        <FormField label="Which part of the system">
+          <select className={cn(FIELD, "h-10")} value={module} onChange={(e) => setModule(e.target.value)}>
+            <option value="">Not sure</option>
+            {MODULES.options.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </FormField>
         <FormField label="Screenshots">
           <FilePicker files={files} onChange={setFiles} />
         </FormField>
