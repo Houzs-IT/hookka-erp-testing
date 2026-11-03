@@ -290,7 +290,6 @@ export function buildDrawdownStatements(
   if (byLine.size === 0) return { ok: true, statements: [] };
 
   const lineById = new Map(st.lines.map((l) => [l.id, l]));
-  const statements: D1PreparedStatement[] = [];
   for (const [doItemId, want] of byLine) {
     const line = lineById.get(doItemId);
     if (!line) {
@@ -306,12 +305,21 @@ export function buildDrawdownStatements(
         error: `Line "${label}": requested ${want} exceeds the ${line.remainingQty} still un-invoiced (delivered ${line.quantity}, already billed ${line.invoicedQty}). Bill at most ${line.remainingQty}.`,
       };
     }
+  }
+  // Set-based (HK-0128): one UPDATE per line was a round-trip per line.
+  const pairs = [...byLine];
+  const statements: D1PreparedStatement[] = [];
+  for (let i = 0; i < pairs.length; i += 200) {
+    const chunk = pairs.slice(i, i + 200);
     statements.push(
       db
         .prepare(
-          "UPDATE delivery_order_items SET invoiced_qty = invoiced_qty + ? WHERE id = ?",
+          `UPDATE delivery_order_items SET invoiced_qty = invoiced_qty + v.add_qty
+             FROM (VALUES ${chunk.map(() => "(CAST(? AS TEXT), CAST(? AS INTEGER))").join(", ")})
+                  AS v(item_id, add_qty)
+            WHERE delivery_order_items.id = v.item_id`,
         )
-        .bind(want, doItemId),
+        .bind(...chunk.flatMap(([doItemId, want]) => [doItemId, want])),
     );
   }
   return { ok: true, statements };

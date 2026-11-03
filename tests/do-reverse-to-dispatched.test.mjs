@@ -140,13 +140,19 @@ const sqlOf = (stmts) => stmts.map((s) => s.sql);
 
 // ── The un-delivery itself ─────────────────────────────────────────────────
 
+// fg_stock_events INSERTs are multi-row (HK-0128): one 19-bind row per unit.
+const eventInserts = (stmts) =>
+  stmts
+    .filter((s) => /INSERT INTO fg_stock_events/.test(s.sql))
+    .flatMap((s) => Array.from({ length: s.args.length / 19 }, (_, i) => ({ sql: s.sql, args: s.args.slice(i * 19, i * 19 + 19) })));
+
 test("fg_units go DELIVERED → LOADED and stay on the DO — the goods did leave", async () => {
   const r = await buildDoUndeliverStatements(fakeDb(invoiced()), doArgs, ["inv-1"], ACTOR, NOW);
   const stmt = r.statements.find((s) => /UPDATE fg_units/.test(s.sql));
   assert.match(stmt.sql, /status = 'LOADED', deliveredAt = NULL/);
   assert.match(stmt.sql, /WHERE doId = \? AND status = 'DELIVERED'/);
   assert.doesNotMatch(stmt.sql, /doId = NULL/, "dispatch stands; only cancel releases the units");
-  const events = r.statements.filter((s) => /INSERT INTO fg_stock_events/.test(s.sql));
+  const events = eventInserts(r.statements);
   assert.equal(events.length, 2, "one append-only event per unit");
 });
 

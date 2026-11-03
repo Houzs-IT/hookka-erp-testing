@@ -150,6 +150,12 @@ function apply(b, statements) {
       di.invoiced_qty += st.args[0];
       continue;
     }
+    if (/^UPDATE delivery_order_items SET invoiced_qty = invoiced_qty \+ v\.add_qty\b/.test(st.sql)) {
+      for (let i = 0; i < st.args.length; i += 2) {
+        b.doItems.find((d) => d.id === st.args[i]).invoiced_qty += st.args[i + 1];
+      }
+      continue;
+    }
     m = /^UPDATE delivery_order_items SET invoiced_qty = invoiced_qty - \? WHERE id = \?$/.exec(st.sql);
     if (m) {
       const di = b.doItems.find((d) => d.id === st.args[1]);

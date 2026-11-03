@@ -75,9 +75,14 @@ function fakeDb({ tables = {} } = {}) {
   return db;
 }
 
+// fg_stock_events INSERTs are multi-row (HK-0128): one 19-bind row per unit.
+const eventInserts = (stmts) =>
+  stmts
+    .filter((s) => /INSERT INTO fg_stock_events/.test(s.sql))
+    .flatMap((s) => Array.from({ length: s.args.length / 19 }, (_, i) => ({ sql: s.sql, args: s.args.slice(i * 19, i * 19 + 19) })));
+
 const eventRows = (db) =>
-  db.written
-    .filter((w) => /INSERT INTO fg_stock_events/.test(w.sql))
+  eventInserts(db.written)
     .map((w) => ({
       id: w.args[0],
       fgUnitId: w.args[1],
@@ -207,7 +212,7 @@ test("producing a piece writes exactly one IN event naming its production order"
   const ids = new Set(events.map((e) => e.id));
   assert.equal(ids.size, 2);
   assert.equal(
-    db.written.filter((w) => /INSERT INTO fg_stock_events/.test(w.sql) && /ON CONFLICT \(id\) DO NOTHING/.test(w.sql))
+    eventInserts(db.written.filter((w) => /ON CONFLICT \(id\) DO NOTHING/.test(w.sql)))
       .length,
     2,
     "the production IN must be idempotent on replay",
@@ -323,7 +328,7 @@ test("cancelling a delivery order writes a counter-row and never touches the ori
   assert.equal(res.ok, true);
 
   const sqls = res.statements.map((s) => s.sql);
-  const inserts = res.statements.filter((s) => /INSERT INTO fg_stock_events/.test(s.sql));
+  const inserts = eventInserts(res.statements);
   assert.equal(inserts.length, 2, "one counter-row per unit the cancel hands back");
   for (const s of inserts) {
     const a = s.args;
