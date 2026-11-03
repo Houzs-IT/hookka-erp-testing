@@ -282,6 +282,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## 2026-11-03 — 🔵 HK-0126 Re-billing a reversed DO keeps its invoice number (branch `fix/hk0126-reuse-invoice-no` → `main`)
+
+Siti (office, HK-0126): DO-2610-124 was billed INV-2610-084, reversed to dispatched (voids the invoice), edited and delivered again; the re-bill came out INV-2611-013. She wants the same invoice number when the DO number stays the same.
+
+1. 🔵 `reclaimVoidedInvoiceNo` (delivery-orders/_helpers.ts): when a DO has no live invoice and its newest invoice is CANCELLED, for the same customer, with no e-invoice row, the re-bill takes that number and the voided row moves to `<no>-V<n>` in the same batch (the unique index is on every row). Used by the auto-invoice on DELIVERED and the manual POST /api/invoices.
+2. ⏳ Siti re-bills a reversed DO on the canary.
+
 ## 2026-10-30 — 🔵 HK-0123 CO edit locked by another CO's CN; "Other (custom)" on CO lines (branch `fix/hk0123-co-cn-lock-custom` → `main`)
 
 Siti (office, HK-0123): CO-2610-022 (Houzs Century, CONFIRMED) refused edit with "Consignment Note CGN-2610-001 already exists". That CN belongs to CO-2610-002; CO-2610-022 has none. Also asked for SO's "Add custom" on CO lines.

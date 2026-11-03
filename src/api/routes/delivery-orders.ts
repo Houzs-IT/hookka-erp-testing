@@ -112,6 +112,7 @@ export {
   // module via the existing call-time `import("./delivery-orders")` cycle-break.
   buildInvoiceDeathReleaseStatements,
   resolveSalesOrderDoIds,
+  reclaimVoidedInvoiceNo,
 } from "./delivery-orders/_helpers";
 
 const app = new Hono<Env>();

@@ -1745,6 +1745,53 @@ export async function computeDoInvoiceLines(
   return { invItems, computedTotal, draws: drawsOut };
 }
 
+// HK-0126 — a DO reversed (Reverse to Dispatched voids its invoice), edited
+// and delivered again is billed under the number its voided invoice carried,
+// so the customer keeps one invoice number per DO. The voided row moves to
+// <no>-V<n> to free the unique number; nextAfter() parses that back to the
+// same sequence, so later numbering is unaffected. Only when the DO has no
+// live invoice, the void was for the same customer (a customer move, as in
+// HK-0117, must get a fresh number) and that number never went to LHDN.
+export async function reclaimVoidedInvoiceNo(
+  db: D1Database,
+  doRow: { id: string; customerId: string },
+  now: string,
+): Promise<{ invoiceNo: string; release: D1PreparedStatement } | null> {
+  const invs =
+    (
+      await db
+        .prepare(
+          `SELECT id, invoiceNo, customerId, status FROM invoices
+            WHERE deliveryOrderId = ? ORDER BY updated_at DESC`,
+        )
+        .bind(doRow.id)
+        .all<{ id: string; invoiceNo: string; customerId: string; status: string }>()
+    ).results ?? [];
+  if (invs.some((v) => v.status !== "CANCELLED")) return null;
+  const voided = invs[0];
+  if (!voided || voided.customerId !== doRow.customerId) return null;
+  if (/-V\d+$/.test(voided.invoiceNo)) return null;
+  try {
+    const einv = await db
+      .prepare("SELECT id FROM e_invoices WHERE invoiceId = ? LIMIT 1")
+      .bind(voided.id)
+      .first();
+    if (einv) return null;
+  } catch {
+    /* e_invoices table not present — nothing was submitted */
+  }
+  const prior = await db
+    .prepare("SELECT COUNT(*) AS c FROM invoices WHERE invoiceNo LIKE ?")
+    .bind(`${voided.invoiceNo}-V%`)
+    .first<{ c: number }>();
+  return {
+    invoiceNo: voided.invoiceNo,
+    release: db
+      .prepare("UPDATE invoices SET invoiceNo = ?, updated_at = ? WHERE id = ?")
+      .bind(`${voided.invoiceNo}-V${Number(prior?.c ?? 0) + 1}`, now, voided.id),
+  };
+}
+
 export async function buildDoDeliveredSoAndInvoice(
   db: D1Database,
   doRow: DoForDeliveredCascade,
@@ -1892,7 +1939,8 @@ export async function buildDoDeliveredSoAndInvoice(
     }
 
     const invId = genInvoiceId();
-    const invoiceNo = await nextInvoiceNo(db);
+    const reclaimed = await reclaimVoidedInvoiceNo(db, doRow, now);
+    const invoiceNo = reclaimed?.invoiceNo ?? (await nextInvoiceNo(db));
     // Invoice date = the DISPATCH date (when goods physically left), not the
     // sign-off date and not "today" (Wei Siang 2026-06-03). deliveredAt is
     // often back-filled late at sign-off and would bunch revenue into the
@@ -1985,6 +2033,7 @@ export async function buildDoDeliveredSoAndInvoice(
           now,
           now,
         );
+    if (reclaimed) statements.push(reclaimed.release);
     invoiceStmtIdx = statements.length;
     statements.push(rebuildInvoiceInsert(invoiceNo));
     for (const item of invItems) {
