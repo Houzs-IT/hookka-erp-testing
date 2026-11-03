@@ -1229,7 +1229,7 @@ export default function KpiPage() {
                               <li>
                                 Score for this KPI:{" "}
                                 {l.scoreParts && (
-                                  <>late {l.scoreParts.late} + early bonus {l.scoreParts.early} + urgent {l.scoreParts.urgent}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent > 100 && " (capped)"} ={" "}</>
+                                  <>late {l.scoreParts.late} + early bonus {l.scoreParts.early} + urgent {l.scoreParts.urgent}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent > 100 && " (capped)"}{l.scoreParts.late + l.scoreParts.early + l.scoreParts.urgent < 0 && " (never below 0)"} ={" "}</>
                                 )}
                                 <b>{l.attainment}</b> out of 100
                               </li>

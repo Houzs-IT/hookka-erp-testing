@@ -310,7 +310,7 @@ function deliveryText(
   return {
     detail: `Every 1% of orders delivered late costs ${per} points`,
     formula:
-      `100 − (late % × ${per}), can go below 0, + early bonus + urgent points, capped at 100.` +
+      `100 − (late % × ${per}), can go below 0, + early bonus + urgent points, kept between 0 and 100.` +
       (zeroAt !== null ? ` ${zeroAt}% late scores 0 before the bonuses; worse than that is negative and eats into them.` : ""),
     measurement: [
       "Take the date promised to the customer on the sales order. Our own internal estimate is never used.",
@@ -325,7 +325,7 @@ function deliveryText(
         ? `Early bonus, added after the late points (even below 0): ${earlyRows.join(" · ")}.`
         : "Delivering early earns nothing extra.",
       `Urgent points, for the share of urgent orders delivered on time or early: ${urgentRows.join(" · ")}. A month with no urgent orders adds nothing.`,
-      "Score = late points + early bonus + urgent points. It never goes above 100, and can go below 0.",
+      "Score = late points + early bonus + urgent points. It never goes above 100 or below 0.",
       "That score is then multiplied by whatever weight this KPI was assigned.",
     ],
   };
@@ -666,7 +666,8 @@ export function kpisForRole(role: string): KpiDef[] {
 /**
  * PENALTY_PER_PCT's three parts, so the card can show the sum it scored.
  * The late part has no floor: 23.1% late at 5 per 1% is -15.5, and the
- * bonuses are added to that (HK-0129, replacing owner 2026-10-08's 0 floor).
+ * bonuses are added to that; only the total stops at 0 (HK-0129, Violet
+ * 2026-11-03, replacing owner 2026-10-08's floor on the late part).
  */
 export function penaltyParts(
   def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus" | UrgentRule>>,
@@ -729,8 +730,7 @@ export function deliveryBreakdown(
  *
  * Capped because an uncapped ratio lets one runaway metric paper over a
  * failure elsewhere — 300% on the easy one would cancel 0% on the hard one.
- * Floored at 0 so a bad month cannot produce negative points, except
- * PENALTY_PER_PCT, whose late part is meant to go negative (HK-0129).
+ * Floored at 0 so a bad month cannot produce negative points.
  */
 export function attainment(
   def: Pick<KpiDef, "direction"> &
@@ -764,7 +764,7 @@ export function attainment(
   // lifts the score past 100.
   if (def.curve === "PENALTY_PER_PCT") {
     const p = penaltyParts(def, actual, earlyPct, urgentOnTimePct);
-    return Math.min(100, Math.round((p.late + p.early + p.urgent) * 10) / 10);
+    return Math.max(0, Math.min(100, Math.round((p.late + p.early + p.urgent) * 10) / 10));
   }
   // Same shape, but the actual is a COUNT (document-days late) rather than a
   // percentage, so nothing is normalised by a denominator first.
