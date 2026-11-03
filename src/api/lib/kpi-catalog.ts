@@ -160,8 +160,8 @@ export interface KpiDef {
    * PENALTY_PER_PCT only — the early-delivery bonus. Every `earlyStepPct` of
    * orders delivered before the promised date earns `earlyBonusPerStep` points,
    * up to `earlyMaxBonus`. The bonus only wins back late points: the score
-   * never goes above 100 (owner 2026-10-05). Late points stop at 0 before the
-   * bonus is added (owner 2026-10-08).
+   * never goes above 100 (owner 2026-10-05). Late points keep falling below 0
+   * and the bonus is added on top (HK-0129, Violet 2026-11-03).
    */
   earlyStepPct?: number;
   earlyBonusPerStep?: number;
@@ -288,7 +288,8 @@ function deliveryText(
   const lateRows: string[] = [];
   if (zeroAt !== null) {
     for (let i = 0; i < zeroAt; i++) lateRows.push(`${i}% → ${Math.round((100 - i * per) * 10) / 10}`);
-    lateRows.push(`${zeroAt}% or worse → 0`);
+    const worse = Math.round((zeroAt + 10) * 10) / 10;
+    lateRows.push(`${zeroAt}% → 0`, `worse goes below 0, e.g. ${worse}% → ${Math.round((100 - worse * per) * 10) / 10}`);
   }
   const earlyRows: string[] = [];
   if (step > 0 && bonus > 0 && max > 0) {
@@ -309,8 +310,8 @@ function deliveryText(
   return {
     detail: `Every 1% of orders delivered late costs ${per} points`,
     formula:
-      `100 − (late % × ${per}), never below 0, + early bonus + urgent points, capped at 100.` +
-      (zeroAt !== null ? ` ${zeroAt}% late or worse scores 0 before the bonuses, and the bonuses still count.` : ""),
+      `100 − (late % × ${per}), can go below 0, + early bonus + urgent points, capped at 100.` +
+      (zeroAt !== null ? ` ${zeroAt}% late scores 0 before the bonuses; worse than that is negative and eats into them.` : ""),
     measurement: [
       "Take the date promised to the customer on the sales order. Our own internal estimate is never used.",
       "Find the date the goods were DELIVERED, on the Malaysia calendar. An order sent in several deliveries is judged on its LAST one, because the customer has their order only when the last piece arrives.",
@@ -321,10 +322,10 @@ function deliveryText(
         ? `Late points, starting at 100 and losing ${per} per 1% late: ${lateRows.join(" · ")}.`
         : "Late orders cost no points.",
       earlyRows.length
-        ? `Early bonus, added after the late points (even at 0): ${earlyRows.join(" · ")}.`
+        ? `Early bonus, added after the late points (even below 0): ${earlyRows.join(" · ")}.`
         : "Delivering early earns nothing extra.",
       `Urgent points, for the share of urgent orders delivered on time or early: ${urgentRows.join(" · ")}. A month with no urgent orders adds nothing.`,
-      "Score = late points + early bonus + urgent points. It never goes above 100.",
+      "Score = late points + early bonus + urgent points. It never goes above 100, and can go below 0.",
       "That score is then multiplied by whatever weight this KPI was assigned.",
     ],
   };
@@ -664,8 +665,8 @@ export function kpisForRole(role: string): KpiDef[] {
 
 /**
  * PENALTY_PER_PCT's three parts, so the card can show the sum it scored.
- * The late part stops at 0 before the bonuses are added, so 10.5% late with
- * a full bonus scores the bonus, not 0 (owner 2026-10-08).
+ * The late part has no floor: 23.1% late at 5 per 1% is -15.5, and the
+ * bonuses are added to that (HK-0129, replacing owner 2026-10-08's 0 floor).
  */
 export function penaltyParts(
   def: Partial<Pick<KpiDef, "penaltyPerPct" | "earlyStepPct" | "earlyBonusPerStep" | "earlyMaxBonus" | UrgentRule>>,
@@ -677,7 +678,7 @@ export function penaltyParts(
   const step = Number(def.earlyStepPct) || 0;
   const early = Number(earlyPct) || 0;
   return {
-    late: Math.round(Math.max(0, 100 - actual * per) * 10) / 10,
+    late: Math.round((100 - actual * per) * 10) / 10,
     early:
       step > 0 && early > 0
         ? Math.min(
@@ -704,13 +705,12 @@ export function deliveryBreakdown(
   const per = Number.isFinite(Number(def.penaltyPerPct)) ? Number(def.penaltyPerPct) : 10;
   const step = Number(def.earlyStepPct) || 0;
   const bonus = Number(def.earlyBonusPerStep) || 0;
-  const raw = Math.round((100 - actual * per) * 10) / 10;
   const steps = step > 0 ? Math.floor((Number(earlyPct) || 0) / step + 1e-9) : 0;
   const u = urgentRule(def);
   const uSteps = urgentOnTimePct == null ? 0 : urgentSteps(urgentOnTimePct, u.step);
   return [
     `Late: ${n.late} of ${n.judged} orders = ${actual}% late → ${p.late} points` +
-      ` (100 − ${actual} × ${per} = ${raw}${raw < 0 ? ", never below 0" : ""})`,
+      ` (100 − ${actual} × ${per} = ${p.late})`,
     `Early: ${n.early} of ${n.judged} orders = ${earlyPct ?? 0}% early → +${p.early} points` +
       (step > 0 && bonus > 0
         ? ` (${steps} full ${step}% step(s) × +${bonus} = +${steps * bonus}${steps * bonus > p.early ? `, capped at +${p.early}` : ""})`
@@ -729,7 +729,8 @@ export function deliveryBreakdown(
  *
  * Capped because an uncapped ratio lets one runaway metric paper over a
  * failure elsewhere — 300% on the easy one would cancel 0% on the hard one.
- * Floored at 0 so a bad month cannot produce negative points.
+ * Floored at 0 so a bad month cannot produce negative points, except
+ * PENALTY_PER_PCT, whose late part is meant to go negative (HK-0129).
  */
 export function attainment(
   def: Pick<KpiDef, "direction"> &

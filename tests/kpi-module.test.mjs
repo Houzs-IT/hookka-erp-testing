@@ -100,10 +100,10 @@ test("late deliveries cost points, early ones win some back, never past 100", ()
   assert.equal(attainment(d, 0, 3, 30), 73);
   assert.equal(attainment(d, 0, 3, 39.9), 73, "steps round down");
   assert.equal(attainment(d, 0, 5, 60), 55, "the bonus stops at its maximum");
-  assert.equal(attainment(d, 0, 17.5, 0), 0);
-  // Owner 2026-10-08: late points stop at 0, then the bonus is added on top.
-  assert.equal(attainment(d, 0, 10.5, 87.1), 5, "no negative late points eating the bonus");
-  assert.equal(attainment(d, 0, 30, 20), 2);
+  assert.equal(attainment(d, 0, 17.5, 0), -75);
+  // HK-0129 (Violet 2026-11-03): late points go below 0 and eat into the bonus.
+  assert.equal(attainment(d, 0, 10.5, 87.1), 0, "-5 late + 5 early");
+  assert.equal(attainment(d, 0, 30, 20), -198);
   assert.equal(attainment(d, 0, 2), 80, "no early figure is no bonus");
 
   // Saved company rules replace the numbers AND the wording the card shows.
@@ -114,7 +114,7 @@ test("late deliveries cost points, early ones win some back, never past 100", ()
   assert.match(r.detail, /costs 5 points/);
   assert.match(r.formula, /× 5/);
   assert.ok(r.measurement.some((m) => m.includes("under 20% → 0 · 20% → +2 · 40% or more → +4")));
-  assert.ok(r.measurement.some((m) => m.includes("0% → 100 · 1% → 95") && m.includes("19% → 5 · 20% or worse → 0")));
+  assert.ok(r.measurement.some((m) => m.includes("0% → 100 · 1% → 95") && m.includes("19% → 5 · 20% → 0 · worse goes below 0, e.g. 30% → -50")));
   assert.equal(d.penaltyPerPct, 10, "the catalogue entry itself is not mutated");
   assert.equal(withRules(kpiByKey("setup_completeness"), { penaltyPerPct: 5 }).penaltyPerPct, undefined,
     "a KPI with no editable rules ignores them");
@@ -124,7 +124,7 @@ test("the delivery result lists each part with its orders, % and points", () => 
   const d = kpiByKey("customer_delivery_date");
   const n = { late: 86, early: 193, judged: 292, urgentOnTime: 2, urgentJudged: 21 };
   assert.deepEqual(deliveryBreakdown(d, 29.5, 66.1, 9.5, n), [
-    "Late: 86 of 292 orders = 29.5% late → 0 points (100 − 29.5 × 10 = -195, never below 0)",
+    "Late: 86 of 292 orders = 29.5% late → -195 points (100 − 29.5 × 10 = -195)",
     "Early: 193 of 292 orders = 66.1% early → +5 points (6 full 10% step(s) × +1 = +6, capped at +5)",
     "Urgent: 2 of 21 urgent orders on time or early = 9.5% → +5 points (5 + 0 full 10% step(s) × 5 = 5)",
   ]);
@@ -151,21 +151,21 @@ test("urgent orders earn their own points on the on-time-or-early share", () => 
   assert.equal(urgentPoints(e, 39.9), 10);
   assert.equal(urgentPoints(e, 80), 40);
   assert.equal(urgentPoints(e, 100), 50);
-  assert.equal(attainment(e, 0, 18.4, 80.1, 80), 45, "0 late + 5 early + 40 urgent");
+  assert.equal(attainment(e, 0, 18.4, 80.1, 80), -39, "-84 late + 5 early + 40 urgent");
   assert.ok(e.measurement.some((m) => m.includes("0% → 0 · 20% → 10 · 40% → 20 · 60% → 30 · 80% → 40 · 100% → 50")));
   assert.equal(deliveryBreakdown(e, 18.4, 80.1, 50, { late: 1, early: 1, judged: 1, urgentOnTime: 1, urgentJudged: 2 })[2],
     "Urgent: 1 of 2 urgent orders on time or early = 50% → +20 points (0 + 2 full 20% step(s) × 10 = 20)");
-  // Aug card: 18.4% late → 0, 80.1% early → +5, 90% urgent → +50.
-  assert.deepEqual(penaltyParts(d, 18.4, 80.1, 90), { late: 0, early: 5, urgent: 50 });
-  assert.equal(attainment(d, 0, 18.4, 80.1, 90), 55);
-  assert.equal(attainment(d, 0, 18.4, 80.1, null), 5, "no urgent orders add nothing");
+  // Aug card: 18.4% late → -84, 80.1% early → +5, 90% urgent → +50.
+  assert.deepEqual(penaltyParts(d, 18.4, 80.1, 90), { late: -84, early: 5, urgent: 50 });
+  assert.equal(attainment(d, 0, 18.4, 80.1, 90), -29);
+  assert.equal(attainment(d, 0, 18.4, 80.1, null), -79, "no urgent orders add nothing");
   assert.equal(attainment(d, 0, 2, 0, 100), 100, "capped at 100");
 
   const r = withRules(d, { urgentDays: 3, urgentLatePct: 25 });
   assert.equal(r.urgentLatePct, undefined, "a saved old rule is ignored");
   assert.ok(r.measurement.some((m) => /within 3 days .* left out of the late % and early %/.test(m)));
   assert.ok(r.measurement.some((m) => m.includes("0% → 5 · 10% → 10") && m.includes("90% → 50 · 100% → 60")));
-  assert.ok(r.measurement.some((m) => m.includes("0% → 100 · 1% → 90") && m.includes("9% → 10 · 10% or worse → 0")));
+  assert.ok(r.measurement.some((m) => m.includes("0% → 100 · 1% → 90") && m.includes("9% → 10 · 10% → 0 · worse goes below 0, e.g. 20% → -100")));
   assert.ok(r.measurement.some((m) => m.includes("under 10% → 0 · 10% → +1") && m.includes("50% or more → +5")));
 
   const metrics = readFileSync(resolve(process.cwd(), "src/api/lib/kpi-metrics.ts"), "utf8");
@@ -381,7 +381,7 @@ test("late delivery is scored per percentage point, not per order", async () => 
   assert.equal(attainment(d, 0, 1), 90);
   assert.equal(attainment(d, 0, 5), 50);
   assert.equal(attainment(d, 0, 10), 0);
-  assert.equal(attainment(d, 0, 25), 0, "worse than 10% cannot go negative");
+  assert.equal(attainment(d, 0, 25), -150, "worse than 10% goes negative (HK-0129)");
 });
 
 test("the survey scores five 1–5 answers out of 100", async () => {
