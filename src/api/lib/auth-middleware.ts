@@ -39,6 +39,9 @@ export const PUBLIC_PATHS = [
   // possession of the password (got back { totpRequired: true, userId }) and
   // must now prove possession of the second factor. No bearer yet.
   "/api/auth/totp/login-verify",
+  // Houzs Connect checking a Hookka account, server to server. The handler
+  // checks Connect's own key (CONNECT_LOGIN_KEY) before anything else.
+  "/api/connect/verify-login",
   // Note: /api/auth/totp/setup-start, /setup-confirm and /dismiss-prompt
   // are NOT public — they require an active dashboard session (the caller
   // is already logged in). They flow through the normal cookie/bearer

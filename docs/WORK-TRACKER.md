@@ -2,6 +2,12 @@
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
 > **Last verified: 2026-10-26**: HK-0113 PO email via Mail Center entry added (branch `feat/hk0113-po-mail-center`, to `staging`); nothing else re-checked.
 
+## CONNECT-0003: Hookka accounts sign in to Houzs Connect (feat/connect-login, 2026-11-03)
+From CONNECT-0003 (Lim Wei Siang, Houzs Connect): staff of every system sign in to Connect with their own account.
+1. DONE: `POST /api/connect/verify-login` (`src/api/routes/connect-login.ts`, mounted at `/api/connect`, public path in `auth-middleware.ts`). Server to server only: Connect sends `Authorization: Bearer <CONNECT_LOGIN_KEY>`; unset key answers 503, a wrong one 401. `{ email, password }` gives `{ ok, user }` or, for a TOTP-enrolled user, `{ twoStep, challenge }` (`<userId>~<pendingToken>`, the same pending-2FA token as `/api/auth/totp/login-verify`); `{ challenge, code }` takes a TOTP or recovery code. Same login throttle, disabled-account check and audit rows (`connect-login` resource). No Hookka session is issued.
+2. DONE: `npx tsc -p tsconfig.app.json --noEmit` exit 0; docs checks + check-secrets OK. Exercised only through a local stand-in that answers the same contract (Connect side); this route itself has NOT run against a database yet.
+3. OPEN: set secret `CONNECT_LOGIN_KEY` on the Hookka Pages project (staging first) and the same value as `HOOKKA_LOGIN_KEY` on the houzs-connect Worker, then sign in to Connect staging with a Hookka staging account, with and without TOTP.
+
 ## HK-0113: PO "Email to Supplier" sends through Mail Center (feat/hk0113-po-mail-center, 2026-10-26)
 From HK-0113 (Lim Wei Siang, "Mail Center system go live"; example: send PO to supplier). Plan approved by Samuel 2026-10-26.
 1. DONE: PO detail "Email to Supplier" opens Mail Center compose, prefilled: To = supplier email, Subject, body, `<poNo>.pdf` (same letterhead as Download PDF). From = the user's own mailbox. Stays on the PO page after send. `ComposeDialog` gains `prefill` + `stayOnSent`; helper `src/lib/po-email-draft.ts` + `tests/po-email-draft.test.mjs`.
