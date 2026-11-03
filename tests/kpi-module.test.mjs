@@ -100,10 +100,11 @@ test("late deliveries cost points, early ones win some back, never past 100", ()
   assert.equal(attainment(d, 0, 3, 30), 73);
   assert.equal(attainment(d, 0, 3, 39.9), 73, "steps round down");
   assert.equal(attainment(d, 0, 5, 60), 55, "the bonus stops at its maximum");
-  assert.equal(attainment(d, 0, 17.5, 0), -75);
+  assert.equal(attainment(d, 0, 17.5, 0), 0, "-75 late, but the total never goes below 0");
   // HK-0129 (Violet 2026-11-03): late points go below 0 and eat into the bonus.
   assert.equal(attainment(d, 0, 10.5, 87.1), 0, "-5 late + 5 early");
-  assert.equal(attainment(d, 0, 30, 20), -198);
+  assert.equal(attainment(d, 0, 12, 60, 90), 35, "-20 late + 5 early + 50 urgent");
+  assert.equal(attainment(d, 0, 30, 20), 0);
   assert.equal(attainment(d, 0, 2), 80, "no early figure is no bonus");
 
   // Saved company rules replace the numbers AND the wording the card shows.
@@ -151,14 +152,14 @@ test("urgent orders earn their own points on the on-time-or-early share", () => 
   assert.equal(urgentPoints(e, 39.9), 10);
   assert.equal(urgentPoints(e, 80), 40);
   assert.equal(urgentPoints(e, 100), 50);
-  assert.equal(attainment(e, 0, 18.4, 80.1, 80), -39, "-84 late + 5 early + 40 urgent");
+  assert.equal(attainment(e, 0, 18.4, 80.1, 80), 0, "-84 late + 5 early + 40 urgent, never below 0");
   assert.ok(e.measurement.some((m) => m.includes("0% → 0 · 20% → 10 · 40% → 20 · 60% → 30 · 80% → 40 · 100% → 50")));
   assert.equal(deliveryBreakdown(e, 18.4, 80.1, 50, { late: 1, early: 1, judged: 1, urgentOnTime: 1, urgentJudged: 2 })[2],
     "Urgent: 1 of 2 urgent orders on time or early = 50% → +20 points (0 + 2 full 20% step(s) × 10 = 20)");
   // Aug card: 18.4% late → -84, 80.1% early → +5, 90% urgent → +50.
   assert.deepEqual(penaltyParts(d, 18.4, 80.1, 90), { late: -84, early: 5, urgent: 50 });
-  assert.equal(attainment(d, 0, 18.4, 80.1, 90), -29);
-  assert.equal(attainment(d, 0, 18.4, 80.1, null), -79, "no urgent orders add nothing");
+  assert.equal(attainment(d, 0, 18.4, 80.1, 90), 0);
+  assert.equal(attainment(d, 0, 4, 80.1, null), 65, "no urgent orders add nothing");
   assert.equal(attainment(d, 0, 2, 0, 100), 100, "capped at 100");
 
   const r = withRules(d, { urgentDays: 3, urgentLatePct: 25 });
@@ -381,7 +382,7 @@ test("late delivery is scored per percentage point, not per order", async () => 
   assert.equal(attainment(d, 0, 1), 90);
   assert.equal(attainment(d, 0, 5), 50);
   assert.equal(attainment(d, 0, 10), 0);
-  assert.equal(attainment(d, 0, 25), -150, "worse than 10% goes negative (HK-0129)");
+  assert.equal(attainment(d, 0, 25), 0, "worse than 10% cannot go negative");
 });
 
 test("the survey scores five 1–5 answers out of 100", async () => {
