@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, todayYmdMY } from "@/lib/utils";
-import { parseRateLines, priceListText } from "@/lib/outsource-piece";
+import { parseRateLines, pieceItemCode, priceListText } from "@/lib/outsource-piece";
 import { useDebounced } from "@/pages/m/lib/use-debounced";
 
 type OutsourceWorker = {
@@ -38,6 +38,7 @@ type ImportRow = {
   customerPoId: string;
   productCode: string;
   itemCode: string;
+  parts: { itemCode: string; rateSen: number | null }[];
   missing: string[];
   quantity: number;
   completedDate: string;
@@ -56,6 +57,7 @@ type PieceRecord = {
   salesOrderNo: string;
   customerPoId: string;
   productCode: string;
+  itemCode: string;
   quantity: number;
   rateSen: number;
   amountSen: number;
@@ -82,13 +84,17 @@ function monthBounds(period: string): { from: string; to: string } {
 }
 
 async function send(url: string, method: string, body?: unknown): Promise<{ ok: boolean; data: Record<string, unknown> }> {
-  const res = await fetch(url, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  return { ok: res.ok && data.success !== false, data };
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { ok: res.ok && data.success !== false, data };
+  } catch {
+    return { ok: false, data: { error: "No reply from the server. Check the list, then try again." } };
+  }
 }
 
 export function OutsourcePieceTab({ workers }: { workers: OutsourceWorker[] }) {
@@ -307,6 +313,8 @@ function ImportPanel({ workerId, period, canEdit }: { workerId: string; period: 
       return next;
     });
   const totalSen = rows.reduce((s, r) => s + (selected.has(r.id) ? r.amountSen ?? 0 : 0), 0);
+  const unpriced = rows.filter((r) => r.rateSen === null && !r.importedTo);
+  const missingItems = [...new Set(unpriced.flatMap((r) => r.missing))].sort();
 
   const doImport = async () => {
     setBusy(true);
@@ -350,6 +358,12 @@ function ImportPanel({ workerId, period, canEdit }: { workerId: string; period: 
           onChange={(e) => setQ(e.target.value)}
         />
       </div>
+      {unpriced.length > 0 && (
+        <p className="flex items-start gap-2 rounded-md bg-[#FBF1DC] px-3 py-2 text-sm text-[#9C6F1E]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {unpriced.length} of {rows.length} orders cannot be selected until Piece Rates has a rate for: {missingItems.join(", ")}
+        </p>
+      )}
       <div className="overflow-x-auto rounded-md border border-[#E2DDD8]">
         <table className="w-full">
           <thead className="bg-[#F7F5F2]">
@@ -379,7 +393,14 @@ function ImportPanel({ workerId, period, canEdit }: { workerId: string; period: 
                 </td>
                 <td className={TD}>{r.poNo}</td>
                 <td className={TD}>{r.customerPoId || "-"}</td>
-                <td className={TD}>{r.productCode}</td>
+                <td className={TD}>
+                  {r.productCode}
+                  {r.itemCode !== pieceItemCode(r.productCode) && (
+                    <div className="text-xs text-[#6B7280]">
+                      {r.parts.map((p) => `${p.itemCode} ${p.rateSen === null ? "no rate" : formatCurrency(p.rateSen)}`).join(" + ")}
+                    </div>
+                  )}
+                </td>
                 <td className={TD}>{r.completedDate || "-"}</td>
                 <td className={`${TD} text-right`}>{r.quantity}</td>
                 <td className={`${TD} text-right`}>{r.rateSen === null ? "-" : formatCurrency(r.rateSen)}</td>
@@ -498,7 +519,12 @@ function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {
                 <tr key={r.id} className="border-t border-[#E2DDD8]">
                   <td className={TD}>{r.poNo}</td>
                   <td className={TD}>{r.customerPoId || "-"}</td>
-                  <td className={TD}>{r.productCode}</td>
+                  <td className={TD}>
+                    {r.productCode}
+                    {r.itemCode !== pieceItemCode(r.productCode) && (
+                      <div className="text-xs text-[#6B7280]">{r.itemCode}</div>
+                    )}
+                  </td>
                   <td className={`${TD} text-right`}>{r.quantity}</td>
                   <td className={`${TD} text-right`}>{formatCurrency(r.rateSen)}</td>
                   <td className={`${TD} text-right`}>{formatCurrency(r.amountSen)}</td>
