@@ -508,9 +508,11 @@ export const KPI_CATALOG: KpiDef[] = [
     unit: "%",
     scoring: "AUTO",
     curve: "EFFICIENCY_BANDS",
-    efficiencyFloorPct: 80,
-    efficiencyFloorScore: 60,
-    efficiencyZeroPct: 75,
+    // HK-0131, Violet 2026-11-04: 1% = 1 score. All three at 0 makes the bands
+    // one straight line; production_efficiency keeps the owner's floor.
+    efficiencyFloorPct: 0,
+    efficiencyFloorScore: 0,
+    efficiencyZeroPct: 0,
     purpose:
       "A department lead answers for how well their people's paid hours turn into finished work. This is the number they already watch on Dashboard Experimental, so the score never comes as a surprise.",
     definition:
@@ -520,10 +522,10 @@ export const KPI_CATALOG: KpiDef[] = [
       "Production time: each completed or transferred job card in the month, valued at its standard time and shared between the people on it.",
       "Clocked time: hours those workers logged against production departments that day. Days with no clocked hours are left out.",
       "Efficiency % = production time ÷ clocked time × 100, over the whole month.",
-      "Scored like Production time efficiency: 100% or better scores the full 100, 80% is the floor and scores 60, and 75% or under scores 0.",
+      "The score is the efficiency itself: 1% is 1 point, so 50% scores 50 and 79% scores 79. 100% or better scores the full 100.",
     ],
     formula:
-      "100% → 100 pts · 90% → 80 · 80% → 60 (the floor) · 78% → 36 · 75% or below → 0",
+      "1% = 1 pt · 50% → 50 · 79% → 79 · 90% → 90 · 100% or above → 100",
     defaultTarget: 100,
     defaultWeight: 30,
     available: true,
