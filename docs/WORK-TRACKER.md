@@ -6943,3 +6943,4 @@ Asks, in order:
 73. Service: Overdue cases by stage board, SLA view (owner 2026-11-04).
 74. Service stage targets set from history (p75 of closed cases), owner delegated the numbers (2026-11-04).
 75. QA role (Zamri) sees the dashboard Service tab only; SLA board served from the backend so it needs no delivery-orders access (owner 2026-11-04).
+76. Issues by category: only categories the period has; a pick from another month no longer leaves an empty list (owner 2026-11-04).
