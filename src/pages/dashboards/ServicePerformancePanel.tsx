@@ -11,7 +11,7 @@ import { DashModal } from "./DashModal";
 import { ServiceCaseNo } from "./ServiceCaseLink";
 import { useServiceCaseLinks } from "./use-service-case-links";
 import {
-  byPrevention, avgClose, daysToClose, openedVsClosed, agingSplit, preventionNotDone, causeLabel,
+  NONE_KEY, avgClose, byCause, causeKeys, causeLabel, daysToClose, openedVsClosed, agingSplit, preventionLabel, preventionNotDone,
   type IssueCase,
 } from "../../api/lib/service-issue-stats";
 
@@ -34,6 +34,8 @@ export type ServicePerformanceSlice = { overdueAfterDays: number; cases: Service
 const TOOLTIP = { background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 };
 const CHART_WRAP = "select-none [&_*]:outline-none [&_.recharts-wrapper]:outline-none";
 const OPEN = new Set(["OPEN", "IN_PROGRESS"]);
+// `issue` is on the feed but not on IssueCase.
+const issueOf = (c: object) => (c as { issue?: string }).issue ?? "";
 const th = "px-4 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap";
 
 function delta(cur: number | null, prev: number | null, lowerIsBetter: boolean) {
@@ -116,8 +118,18 @@ export function ServicePerformancePanel({
   );
   const aging = useMemo(() => agingSplit(open, threshold), [open, threshold]);
   const agingMax = Math.max(1, ...aging.map((a) => a.count));
-  const prevention = useMemo(() => byPrevention(openedInFocus), [openedInFocus]);
+  const causes = useMemo(() => byCause(openedInFocus), [openedInFocus]);
+  const unanalysed = causes.find((r) => r.key === NONE_KEY)?.count ?? 0;
   const notDone = useMemo(() => preventionNotDone(openedInFocus), [openedInFocus]);
+  // The category picked in Issues by category; none = prevention still to do.
+  const [cause, setCause] = useState<string | null>(null);
+  const caseList = useMemo(() => {
+    if (!cause) return notDone;
+    return openedInFocus
+      .filter((c) => c.status !== "CANCELLED" && causeKeys(c).includes(cause))
+      .map((c) => ({ ...c, daysOpen: OPEN.has(c.status) ? c.ageDays ?? null : daysToClose(c) }))
+      .sort((a, b) => (b.daysOpen ?? 0) - (a.daysOpen ?? 0));
+  }, [cause, notDone, openedInFocus]);
 
   const pick = (e: { activeLabel?: unknown } | null) => {
     const hit = flow.find((d) => d.date === e?.activeLabel);
@@ -185,7 +197,66 @@ export function ServicePerformancePanel({
         );
       })()}
 
-      {/* Issues by category sits right under the numbers (owner 2026-10-17). */}
+      {/* Issues by category and Prevention are one card, right under the
+          numbers (owner 2026-10-17, 2026-11-04): click a category and its cases
+          list below, with the customer, the issue and the prevention. */}
+      <Card>
+        <CardHeader className="pb-1">
+          <CardTitle>Issues by category ({fmtN(openedInFocus.length)} cases)</CardTitle>
+          <p className="text-xs text-[#6B7280] max-w-4xl">
+            Cases logged in {win}; a case with several categories counts once under each, so rows can add up to more than the total. Avg close = average days from logged to closed, closed cases only. Click a category to list its cases below.
+          </p>
+          {openedInFocus.length > 0 && (
+            <p className="text-xs font-semibold" style={{ color: unanalysed ? AMBER : GREEN }}>
+              {unanalysed
+                ? `${fmtN(unanalysed)} of ${fmtN(openedInFocus.length)} cases (${Math.round((unanalysed / openedInFocus.length) * 100)}%) have no root cause recorded yet.`
+                : "Every case in this period has a root cause recorded."}
+            </p>
+          )}
+        </CardHeader>
+        <CardContent>
+          <TallyList rows={causes} total={openedInFocus.length} selected={cause} onPick={(k) => setCause((c) => (c === k ? null : k))} empty="No service cases in this period." />
+        </CardContent>
+        <CardContent className="p-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
+              {cause ? `${causes.find((r) => r.key === cause)?.label ?? cause} · ${fmtN(caseList.length)} cases` : `Prevention not yet done · ${fmtN(caseList.length)} cases, oldest first`}
+            </p>
+            {cause && <button type="button" onClick={() => setCause(null)} className="rounded-md bg-[#F5F2ED] px-2.5 py-1 text-xs font-medium text-[#5A5550] hover:bg-[#EAE5DC]">Clear</button>}
+          </div>
+          <div className="overflow-x-auto" style={{ maxHeight: 420, overflowY: "auto" }}>
+            <table className="w-full text-[12.5px] max-md:min-w-[700px]">
+              <thead>
+                <tr className="*:sticky *:top-0 *:z-10 *:bg-white *:shadow-[inset_0_1px_0_#E2DDD8,inset_0_-1px_0_#E2DDD8]">
+                  <th className={`${th} text-left`}>Case</th><th className={`${th} text-left`}>Customer</th><th className={`${th} text-left`}>Issue</th>
+                  <th className={`${th} text-left`}>Root cause</th><th className={`${th} text-left`}>Prevention</th>
+                  <th className={`${th} text-right`}>Days open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {caseList.map((c) => (
+                  <tr key={c.id} {...rowProps(c.id, "border-b border-[#E2DDD8]")}>
+                    <td className="px-4 py-2.5 font-mono whitespace-nowrap"><ServiceCaseNo id={c.id} caseNo={c.caseNo ?? c.id} canOpen={canOpen} /></td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">{c.customer ?? "—"}</td>
+                    <td className="px-4 py-2.5 max-w-[300px] truncate text-[#6B7280]" title={issueOf(c)}>{issueOf(c) || "—"}</td>
+                    <td className="px-4 py-2.5" style={{ color: c.causes?.length ? "#1F1D1B" : AMBER }}>
+                      {c.causes?.length ? c.causes.map(causeLabel).join(", ") : "Not yet analysed"}
+                    </td>
+                    <td className="px-4 py-2.5 max-w-[260px]" style={{ color: TEAL }}>
+                      {c.prevention ? preventionLabel(c.prevention) : "None recorded"}
+                      {c.preventionOwner ? ` · ${c.preventionOwner}` : ""}
+                      {c.preventionAction && <span className="block truncate text-[11px] text-[#6B7280]" title={c.preventionAction}>{c.preventionAction}</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono">{c.daysOpen ?? "—"}</td>
+                  </tr>
+                ))}
+                {caseList.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-[#6B7280]">{cause ? "No cases in this category." : "No cases with outstanding prevention in this period."}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
       {afterKpis}
 
       {/* The two charts share a row (less scrolling on layer 1). */}
@@ -306,49 +377,6 @@ export function ServicePerformancePanel({
 
       </div>
 
-      <Card>
-        <CardHeader className="pb-1">
-          <CardTitle>Prevention</CardTitle>
-          <p className="text-xs text-[#6B7280] max-w-3xl">
-            Cases logged in {win}. Below: prevention not yet done (Planned, In progress, or none recorded on a case that has a root cause or is closed),
-            oldest first. Days open = age while open, else days to close. Cancelled cases are left out. No prevention due date is recorded on service cases,
-            so overdue-prevention cannot be shown.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <TallyList rows={prevention} total={openedInFocus.length} empty="No service cases in this period." />
-        </CardContent>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12.5px] max-md:min-w-[560px]">
-              <thead>
-                <tr className="border-t border-b border-[#E2DDD8]">
-                  <th className={`${th} text-left`}>Case</th><th className={`${th} text-left`}>Customer</th>
-                  <th className={`${th} text-left`}>Root cause</th><th className={`${th} text-left`}>Prevention</th>
-                  <th className={`${th} text-right`}>Days open</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notDone.map((c) => (
-                  <tr key={c.id} {...rowProps(c.id, "border-b border-[#E2DDD8]")}>
-                    <td className="px-4 py-2.5 font-mono"><ServiceCaseNo id={c.id} caseNo={c.caseNo ?? c.id} canOpen={canOpen} /></td>
-                    <td className="px-4 py-2.5">{c.customer ?? "—"}</td>
-                    <td className="px-4 py-2.5" style={{ color: c.causes?.length ? "#1F1D1B" : AMBER }}>
-                      {c.causes?.length ? c.causes.map(causeLabel).join(", ") : "Not yet analysed"}
-                    </td>
-                    <td className="px-4 py-2.5" style={{ color: TEAL }} title={c.preventionAction || undefined}>
-                      {c.prevention === "IN_PROGRESS" ? "In progress" : c.prevention === "PENDING" ? "Planned" : "None recorded"}
-                      {c.preventionOwner ? ` · ${c.preventionOwner}` : ""}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono">{c.daysOpen ?? "—"}</td>
-                  </tr>
-                ))}
-                {notDone.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-[#6B7280]">No cases with outstanding prevention in this period.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
     </>
   );
 }

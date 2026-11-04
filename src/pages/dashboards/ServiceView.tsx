@@ -11,6 +11,7 @@ import { ServiceApprovalsPanel } from "./ServiceApprovalsPanel";
 import { DefectRateCard } from "./DefectRateCard";
 import { ServiceIssuesPanel } from "./ServiceIssuesPanel";
 import { ServicePerformancePanel } from "./ServicePerformancePanel";
+import { ServiceSlaBoard } from "./ServiceSlaBoard";
 import { ServiceCaseNo, OpenServiceCasesLink } from "./ServiceCaseLink";
 import { useServiceCaseLinks } from "./use-service-case-links";
 import { byCause, causeKeys, causeLabel } from "../../api/lib/service-issue-stats";
@@ -65,8 +66,8 @@ function StatusPill({ status }: { status: string }) {
 const APPROVAL_STYLE: Record<string, string> = { PENDING: "#9C6F1E", APPROVED: "#4F7C3A", REJECTED: "#9A3A2D" };
 
 export function ServiceView({
-  period, sub, onPeriodChange, onSubChange,
-}: { period: Period; sub: ServiceSub; onPeriodChange: (p: Period) => void; onSubChange: (s: ServiceSub) => void }) {
+  period, sub, onPeriodChange,
+}: { period: Period; sub: ServiceSub; onPeriodChange: (p: Period) => void }) {
   const { data, loading, error } = useCachedJson<Feed>("/api/dashboard/prototype");
   const [search, setSearch] = useState("");
   // Root-cause key clicked on Top issues; narrows the Report's case list only.
@@ -149,12 +150,9 @@ export function ServiceView({
             onPeriodChange={onPeriodChange}
             afterKpis={
               <>
-                <ServiceIssuesPanel
-                  cases={logged}
-                  period={period}
-                  onPickCause={(k) => { setCauseFilter(k); onSubChange("overview"); document.getElementById("svc-cases")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-                />
+                <ServiceSlaBoard target={threshold} />
                 <DefectRateCard cases={cases} shipped={slice?.shipped} period={period} />
+                <ServiceIssuesPanel cases={logged} period={period} />
               </>
             }
           />

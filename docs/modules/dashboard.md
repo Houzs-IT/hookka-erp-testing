@@ -86,6 +86,9 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 
 - **Working day for production averages** (2026-10-20): a day any department produced something. Department Revenue's Avg / day and the Daily production revenue card both use it, so their averages match; a weekly view (quarter / year) counts Mon–Sat days elapsed.
 
+- **Service report layout** (2026-11-04): Issues by category + Prevention are one card (`ServicePerformancePanel`); click a category to list its cases. `ServiceSlaBoard` places open cases on the Case Pipeline with `computeCasePipeline` (same as the Service Cases list) and uses ONE target, the service overdue setting, for time in the current stage: Hookka has no per-stage targets. So its overdue count can differ from the "Overdue now" tile, which is case age.
+- **Defect rate** defaults to "Our defects": cases whose causes are all Transport / Customer are left out (`NOT_OUR_FAULT_CAUSES`); "All cases" shows everything.
+
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:81`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
 - **Add a chart** → put the recharts component in `charts.tsx` and lazy-import it (keep recharts out of `index.tsx`); pass computed data + colors as props (parent owns the numbers).

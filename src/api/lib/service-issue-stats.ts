@@ -58,7 +58,7 @@ const OPEN = new Set(["OPEN", "IN_PROGRESS"]);
 // ROOT_CAUSE_LABELS), so the dashboard names a cause the way it was recorded.
 const CAUSE_LABEL: Record<string, string> = {
   PRODUCTION: "Production / workmanship", DESIGN: "Design / R&D", MATERIAL: "Material / supplier",
-  PROCESS: "Process / SOP gap", CUSTOMER: "Customer (not our fault)", TRANSPORT: "Transport / 3PL",
+  PROCESS: "Make wrong item", CUSTOMER: "Customer (not our fault)", TRANSPORT: "Transport / 3PL",
   SALES: "Sales / order-taking error", PICKING: "Picking / packing error", OTHER: "Other",
 };
 const UNIT_LABEL: Record<string, string> = {
@@ -375,6 +375,9 @@ export function productCategoriesOf(
   return [...out];
 }
 
+/** Transport and customer causes are not the factory's defects (owner 2026-11-04). */
+export const NOT_OUR_FAULT_CAUSES = ["TRANSPORT", "CUSTOMER"] as const;
+
 /**
  * Defect rate per category for a set of months: cases logged ÷ units shipped.
  * A case counts once under each category of its affected products; a case with
@@ -384,15 +387,19 @@ export function productCategoriesOf(
  * drops out rather than landing in "not specified".
  */
 export function defectRates(
-  cases: readonly { createdDate: string; productCategories?: string[] | null }[],
+  cases: readonly { createdDate: string; productCategories?: string[] | null; causes?: string[] | null }[],
   shipped: readonly { ym: string; category: string; units: number }[],
   months: readonly string[],
+  // Root causes that are not the factory's doing. A case whose causes are ALL
+  // in here is left out; one with any other cause (or none yet) still counts.
+  notOurs: readonly string[] = [],
 ): { category: string; cases: number; units: number; rate: number | null }[] {
   const inM = (d: string) => months.includes(d.slice(0, 7));
   const cats = ["BEDFRAME", "SOFA"];
   const caseN = new Map<string, number>();
   for (const c of cases) {
     if (!inM(c.createdDate)) continue;
+    if (c.causes?.length && c.causes.every((k) => notOurs.includes(k))) continue;
     const all = c.productCategories ?? [];
     const counted = all.filter((k) => cats.includes(k));
     if (all.length && !counted.length) continue; // accessory only

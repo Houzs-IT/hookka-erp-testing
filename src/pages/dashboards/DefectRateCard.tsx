@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { defectRates } from "../../api/lib/service-issue-stats";
+import { NOT_OUR_FAULT_CAUSES, defectRates } from "../../api/lib/service-issue-stats";
 import { monthsOf } from "./use-production-revenue";
 import { useSeriesToggle } from "./use-series-toggle";
 import { CC_AXIS_LINE, CC_TICK, fmtN, monthLabel, shiftMonth, ymd, type Period } from "./dashboard-shared-lib";
@@ -16,7 +16,7 @@ import { CC_AXIS_LINE, CC_TICK, fmtN, monthLabel, shiftMonth, ymd, type Period }
 // is "Not specified" and has no rate. Read off the service slice of the feed
 // (`shipped`, `cases[].productCategories`).
 // ---------------------------------------------------------------------------
-type Case = { createdDate: string; productCategories?: string[] | null };
+type Case = { createdDate: string; productCategories?: string[] | null; causes?: string[] | null };
 type Shipped = { ym: string; category: string; units: number };
 
 const NAME: Record<string, string> = { BEDFRAME: "Bedframe", SOFA: "Sofa", ACCESSORY: "Accessory", UNSPECIFIED: "Not specified (no product on the case)" };
@@ -25,7 +25,11 @@ export function DefectRateCard({ cases, shipped, period }: { cases: Case[]; ship
   const t = useSeriesToggle();
   const today = ymd(new Date());
   const months = useMemo(() => monthsOf(period, today), [period, today]);
-  const rows = useMemo(() => defectRates(cases, shipped ?? [], months), [cases, shipped, months]);
+  // Default = our defects (owner 2026-11-04): Transport / 3PL and Customer cases
+  // are not the factory's. "All cases" is one click away.
+  const [oursOnly, setOursOnly] = useState(true);
+  const notOurs = useMemo(() => (oursOnly ? [...NOT_OUR_FAULT_CAUSES] : []), [oursOnly]);
+  const rows = useMemo(() => defectRates(cases, shipped ?? [], months, notOurs), [cases, shipped, months, notOurs]);
   const total = useMemo(() => {
     const named = rows.filter((r) => r.category !== "UNSPECIFIED");
     const units = named.reduce((a, r) => a + r.units, 0);
@@ -35,19 +39,34 @@ export function DefectRateCard({ cases, shipped, period }: { cases: Case[]; ship
   const trend = useMemo(() => {
     const last = months[months.length - 1] ?? today.slice(0, 7);
     return Array.from({ length: 6 }, (_, i) => shiftMonth(last, i - 5)).map((m) => {
-      const r = defectRates(cases, shipped ?? [], [m]);
+      const r = defectRates(cases, shipped ?? [], [m], notOurs);
       const units = r.filter((x) => x.category !== "UNSPECIFIED").reduce((a, x) => a + x.units, 0);
       const n = r.reduce((a, x) => a + x.cases, 0);
       return { m: monthLabel(m).slice(0, 3), Cases: n, "Units shipped": units, "Defect rate %": units > 0 ? Math.round((n / units) * 1000) / 10 : null };
     });
-  }, [cases, shipped, months, today]);
+  }, [cases, shipped, months, today, notOurs]);
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle>Defect rate · cases per unit shipped</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>Defect rate · cases per unit shipped</CardTitle>
+          <div role="group" aria-label="Which cases count" className="flex gap-0.5 rounded-lg border border-[#E2DDD8] bg-[#F7F5F3] p-0.5">
+            {([[true, "Our defects"], [false, "All cases"]] as const).map(([v, label]) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={oursOnly === v}
+                onClick={() => setOursOnly(v)}
+                className={`rounded-md border px-3 py-1 text-xs font-medium ${oursOnly === v ? "border-[#6B5C32] bg-white text-[#1F1D1B] shadow-sm" : "border-transparent text-[#6B7280]"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="mt-0.5 text-xs text-[#9CA3AF]">
-          Service cases logged ÷ units delivered in the period, bedframe and sofa · units = finished-goods units scanned delivered (bedframe per unit, sofa per set; accessories not counted)
+          Service cases logged ÷ units delivered in the period, bedframe and sofa · units = finished-goods units scanned delivered (bedframe per unit, sofa per set; accessories not counted){oursOnly ? " · Transport / 3PL and Customer (not our fault) cases left out" : ""}
         </p>
       </CardHeader>
       <CardContent>

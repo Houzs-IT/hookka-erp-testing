@@ -1086,7 +1086,7 @@ function CreateServiceOrderModal({
                 <option value="PRODUCTION">Production / workmanship</option>
                 <option value="DESIGN">Design / R&amp;D</option>
                 <option value="MATERIAL">Material / supplier</option>
-                <option value="PROCESS">Process / SOP gap</option>
+                <option value="PROCESS">Make wrong item</option>
                 <option value="CUSTOMER">Customer (not our fault)</option>
                 <option value="TRANSPORT">Transport / 3PL</option>
                 <option value="OTHER">Other</option>

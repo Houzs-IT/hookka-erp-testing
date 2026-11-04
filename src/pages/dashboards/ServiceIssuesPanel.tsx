@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { TAUPE, AMBER, GREEN, CHART_GOLD, fmtN, type Period } from "./dashboard-shared-lib";
+import { TAUPE, AMBER, CHART_GOLD, fmtN, type Period } from "./dashboard-shared-lib";
 import {
-  NONE_KEY, byCause, topProducts, rootCauseGrid, dayBuckets, monthBuckets, type IssueCase, type TallyRow,
+  NONE_KEY, topProducts, rootCauseGrid, dayBuckets, monthBuckets, type IssueCase, type TallyRow,
 } from "../../api/lib/service-issue-stats";
 
 // "Top issues" sub-tab of the Service tab: which category / root cause /
@@ -12,8 +12,8 @@ import {
 // "not yet analysed".
 
 export function TallyList({
-  rows, total, onPick, empty,
-}: { rows: TallyRow[]; total: number; onPick?: (key: string) => void; empty: string }) {
+  rows, total, onPick, empty, selected,
+}: { rows: TallyRow[]; total: number; onPick?: (key: string) => void; empty: string; selected?: string | null }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
   if (total === 0) return <div className="py-6 text-center text-xs text-[#6B7280]">{empty}</div>;
   return (
@@ -30,7 +30,7 @@ export function TallyList({
             key={r.key}
             role={onPick ? "button" : undefined}
             onClick={onPick ? () => onPick(r.key) : undefined}
-            className={`max-md:min-w-[440px] grid grid-cols-[minmax(110px,1.2fr)_2fr_44px_50px_44px_60px] gap-2 items-center px-1 py-1.5 max-md:py-2.5 border-t border-[#E2DDD8] text-[12.5px] ${onPick ? "cursor-pointer hover:bg-[#F7F5F3]" : ""}`}
+            className={`max-md:min-w-[440px] grid grid-cols-[minmax(110px,1.2fr)_2fr_44px_50px_44px_60px] gap-2 items-center px-1 py-1.5 max-md:py-2.5 border-t border-[#E2DDD8] text-[12.5px] ${onPick ? "cursor-pointer hover:bg-[#F7F5F3]" : ""} ${selected === r.key ? "bg-[#F5F2ED]" : ""}`}
           >
             <span className="truncate font-medium" style={{ color: none ? AMBER : "#1F1D1B" }}>{r.label}</span>
             <span className="h-3 rounded-sm bg-[#F0ECE9]">
@@ -95,36 +95,13 @@ function RootCauseHeatmap({ cases, period }: { cases: IssueCase[]; period: Perio
 }
 
 export function ServiceIssuesPanel({
-  cases, period, onPickCause, causeOnly,
-}: { cases: IssueCase[]; period: Period; onPickCause: (key: string) => void; causeOnly?: boolean }) {
-  const causes = useMemo(() => byCause(cases), [cases]);
+  cases, period, causeOnly,
+}: { cases: IssueCase[]; period: Period; causeOnly?: boolean }) {
   const products = useMemo(() => topProducts(cases, 10), [cases]);
-  const unanalysed = causes.find((r) => r.key === NONE_KEY)?.count ?? 0;
   const maxProd = Math.max(1, ...products.map((p) => p.count));
 
   return (
     <div className="space-y-4 max-md:space-y-3">
-      <Card>
-        <CardHeader className="pb-1">
-          <CardTitle>Issues by category ({fmtN(cases.length)} cases)</CardTitle>
-          <p className="text-xs text-[#6B7280]">
-            The Category column of the Service Cases list. Cases logged in the selected period; a case with several categories
-            counts once under each, so rows can add up to more than the total. Avg close = average days from logged to closed,
-            closed cases only. Click a row to list those cases.
-          </p>
-          {cases.length > 0 && (
-            <p className="text-xs font-semibold" style={{ color: unanalysed ? AMBER : GREEN }}>
-              {unanalysed
-                ? `${fmtN(unanalysed)} of ${fmtN(cases.length)} cases (${Math.round((unanalysed / cases.length) * 100)}%) have no root cause recorded yet.`
-                : "Every case in this period has a root cause recorded."}
-            </p>
-          )}
-        </CardHeader>
-        <CardContent>
-          <TallyList rows={causes} total={cases.length} onPick={onPickCause} empty="No service cases in this period." />
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader className="pb-1">
           <CardTitle>Root cause — {period.mode === "ytd" ? "by month" : "by day"}</CardTitle>
