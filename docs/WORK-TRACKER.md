@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-04**: branch `fix/hk0130-rate-save`, to `main` (HK-0130 rate save and order breakdown) added under the HK-0130 entry; nothing else re-checked.
 > **Last verified: 2026-11-04**: branch `feat/hk0130-outsource-to-main`, to `main` (HK-0130 outsource piece-rate wages) added below; nothing else re-checked.
 > **Last verified: 2026-11-03**: branch `feat/hk0125-mobile-polish`, to `main` (HK-0125, phone SO / DO / PO / GRN / Employees) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `feat/pi-auto-grn`, to `main` (purchase invoice confirm stocks in its matched PO lines) added below (its entry is the newest).
@@ -294,6 +295,7 @@ From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Cherry-pick
 6. NOT VERIFIED: the Upload Excel button with a real file in a browser, and the payslip PDF line.
 7. OPEN (Violet): 5531 L + 2A is 58.90 by her list, 57.64 in her sheet. PO-2610-100 has two 1NA in the system. Do bedframes always go home as HB and divan together? Is the Fab Sew job card scanned for work done at home?
 8. OPEN (owner): do piece wages count for EPF / SOCSO / EIS / PCB (now no)?
+9. DONE (`fix/hk0130-rate-save`): `PUT /rates` was one upsert per row, so Violet's 240-line list hit the 30 s browser timeout on prod at row 198 and left 22 rows unsaved (fe-api RUM: status 0, 30004 ms). It is now one statement. The Import panel shows the HB and divan parts of a rate, names the unpriced items above the table, and shows the department finish date.
 
 ## 2026-11-03 — 🔵 HK-0128 DO-2610-119 cannot be marked delivered (branch `fix/hk0128-big-do-deliver` → `main`)
 
