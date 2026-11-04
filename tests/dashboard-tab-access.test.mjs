@@ -16,6 +16,7 @@ import serviceCases from '../src/api/routes/service-cases.ts';
 import workers from '../src/api/routes/workers.ts';
 import salesOrders from '../src/api/routes/sales-orders.ts';
 import dashboardFinance from '../src/api/routes/dashboard-finance.ts';
+import dashboardOverview from '../src/api/routes/dashboard-overview.ts';
 import auth from '../src/api/routes/auth.ts';
 import {
   dashboardTabsForRole, dashboardReadsForRole, withDashboardAccess, DASHBOARD_TAB_READS,
@@ -80,6 +81,7 @@ function appFor(role) {
   });
   app.route('/api/dashboard/prototype', prototype);
   app.route('/api/dashboard/finance', dashboardFinance);
+  app.route('/api/dashboard/overview', dashboardOverview);
   app.route('/api/delivery-orders', deliveryOrders);
   app.route('/api/service-cases', serviceCases);
   app.route('/api/workers', workers);
@@ -227,4 +229,31 @@ test('/me/permissions keeps existing viewers exactly as they were', async () => 
   const wh = await get('WAREHOUSE', '/api/auth/me/permissions');
   assert.ok(!wh.body.permissions.includes('dashboard-experimental:read'));
   assert.ok(wh.body.navHidden.includes('/dashboard-experimental'));
+});
+
+// ---- the overview feed (HK-0132) ----------------------------------------
+// /api/dashboard/overview used to check nothing but the tenant, so any login
+// could read company revenue and purchase prices the page itself hides.
+
+const OVERVIEW_TAB_PATHS = ['/api/dashboard/overview?period=all', '/api/dashboard/overview/revenue-split?period=all'];
+const OVERVIEW_COMPARE_PATHS = ['/api/dashboard/overview/fabric-cost-compare', '/api/dashboard/overview/purchasing-compare'];
+
+test('roles without the dashboard cannot read the overview feed', async () => {
+  for (const role of ['QA', 'SALES', 'HR', 'R_AND_D', 'WAREHOUSE']) {
+    for (const path of [...OVERVIEW_TAB_PATHS, ...OVERVIEW_COMPARE_PATHS]) {
+      assert.equal((await get(role, path)).status, 403, `${role} ${path}`);
+    }
+  }
+});
+
+test('dashboard viewers read the overview feed; PRODUCTION only what its tabs draw on', async () => {
+  for (const path of [...OVERVIEW_TAB_PATHS, ...OVERVIEW_COMPARE_PATHS]) {
+    assert.notEqual((await get('FINANCE', path)).status, 403, `FINANCE ${path}`);
+  }
+  for (const path of OVERVIEW_TAB_PATHS) {
+    assert.notEqual((await get('PRODUCTION', path)).status, 403, `PRODUCTION ${path}`);
+  }
+  for (const path of OVERVIEW_COMPARE_PATHS) {
+    assert.equal((await get('PRODUCTION', path)).status, 403, `PRODUCTION ${path}`);
+  }
 });
