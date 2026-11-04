@@ -21,7 +21,7 @@ import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { freshAll, freshFirst, loadLockedPayrollPeriods } from "../lib/worker-penalties";
 import { ensureOutsourcePieceTables, findPieceDrift } from "../lib/outsource-piece";
-import { pieceAmountSen, pieceItemCode } from "../../lib/outsource-piece";
+import { orderRate, pieceAmountSen, pieceItemCode, pieceItemsForOrder } from "../../lib/outsource-piece";
 
 const app = new Hono<Env>();
 const RES = "payroll";
@@ -49,6 +49,25 @@ async function loadRateMap(c: Context<Env>, workerId: string): Promise<Map<strin
     c.var.DB.prepare("SELECT item_code, rate_sen FROM outsource_piece_rates WHERE worker_id = ?").bind(workerId),
   );
   return new Map(rows.map((r) => [s(r.itemCode, r.item_code), Number(r.rateSen ?? r.rate_sen) || 0]));
+}
+
+/** Fab Sew WIP labels per order: the price list is a sewing list. */
+async function loadSewLabels(c: Context<Env>, orderIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (orderIds.length === 0) return out;
+  const placeholders = orderIds.map(() => "?").join(",");
+  const rows = await freshAll<Record<string, unknown>>(
+    c.var.DB,
+    c.var.DB.prepare(
+      `SELECT production_order_id, wip_label FROM job_cards
+        WHERE department_code = 'FAB_SEW' AND production_order_id IN (${placeholders})`,
+    ).bind(...orderIds),
+  );
+  for (const r of rows) {
+    const id = s(r.productionOrderId, r.production_order_id);
+    out.set(id, [...(out.get(id) ?? []), s(r.wipLabel, r.wip_label)]);
+  }
+  return out;
 }
 
 app.get("/rates", async (c) => {
@@ -160,11 +179,12 @@ app.get("/importable", async (c) => {
     ).bind(...binds),
   );
   const rateMap = await loadRateMap(c, workerId);
+  const sewLabels = await loadSewLabels(c, rows.map((o) => s(o.id)));
   const data = rows.map((o) => {
     const productCode = s(o.productCode, o.product_code);
-    const itemCode = pieceItemCode(productCode);
+    const items = pieceItemsForOrder(productCode, sewLabels.get(s(o.id)) ?? []);
     const quantity = Number(o.quantity) || 0;
-    const rateSen = rateMap.get(itemCode) ?? null;
+    const { rateSen, missing } = orderRate(items, rateMap);
     return {
       id: s(o.id),
       poNo: s(o.poNo, o.po_no),
@@ -173,7 +193,8 @@ app.get("/importable", async (c) => {
       customerName: s(o.customerName, o.customer_name),
       productCode,
       productName: s(o.productName, o.product_name),
-      itemCode,
+      itemCode: items.join(" + "),
+      missing,
       quantity,
       completedDate: s(o.completedDate, o.completed_date).slice(0, 10),
       rateSen,
@@ -218,24 +239,23 @@ app.post("/import", async (c) => {
   // All or nothing: a partial import would leave the office unable to tell
   // which orders in their selection were paid.
   const rateMap = await loadRateMap(c, worker.id);
-  const missing = [
-    ...new Set(
-      orders
-        .map((o) => pieceItemCode(s(o.productCode, o.product_code)))
-        .filter((code) => !rateMap.has(code)),
-    ),
-  ];
+  const sewLabels = await loadSewLabels(c, ids);
+  const priced = orders.map((o) => {
+    const items = pieceItemsForOrder(s(o.productCode, o.product_code), sewLabels.get(s(o.id)) ?? []);
+    return { order: o, items, ...orderRate(items, rateMap) };
+  });
+  const missing = [...new Set(priced.flatMap((p) => p.missing))];
   if (missing.length > 0) {
     return c.json({ success: false, error: `No rate set for ${worker.name}: ${missing.join(", ")}`, missing }, 400);
   }
 
   const userId = ctxGet(c, "userId");
   let imported = 0;
-  for (const o of orders) {
+  for (const { order: o, items, rateSen: orderRateSen } of priced) {
     const productCode = s(o.productCode, o.product_code);
-    const itemCode = pieceItemCode(productCode);
+    const itemCode = items.join(" + ");
     const quantity = Number(o.quantity) || 0;
-    const rateSen = rateMap.get(itemCode) as number;
+    const rateSen = orderRateSen as number;
     const id = `opc-${crypto.randomUUID().slice(0, 8)}`;
     await c.var.DB.prepare(
       `INSERT INTO outsource_piece_records

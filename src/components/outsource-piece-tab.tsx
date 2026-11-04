@@ -7,8 +7,8 @@
 //
 // Kept out of employees.tsx on purpose — that file is past 11k lines.
 // ---------------------------------------------------------------------------
-import { useMemo, useState } from "react";
-import { AlertTriangle, Download, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, Download, Trash2, Upload } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { useToast } from "@/components/ui/toast";
@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCurrency, todayYmdMY } from "@/lib/utils";
-import { parseRateLines } from "@/lib/outsource-piece";
+import { parseRateLines, priceListText } from "@/lib/outsource-piece";
 import { useDebounced } from "@/pages/m/lib/use-debounced";
 
 type OutsourceWorker = {
@@ -38,6 +38,7 @@ type ImportRow = {
   customerPoId: string;
   productCode: string;
   itemCode: string;
+  missing: string[];
   quantity: number;
   completedDate: string;
   rateSen: number | null;
@@ -154,11 +155,27 @@ function RatesPanel({ workerId, canEdit }: { workerId: string; canEdit: boolean 
   const { confirm, confirmDialog } = useConfirm();
   const [paste, setPaste] = useState("");
   const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const url = workerId ? `/api/outsource-piece/rates?workerId=${encodeURIComponent(workerId)}` : null;
   const { data: resp, refresh } = useCachedJson<{ data?: Rate[] }>(url);
   const rates = resp?.data ?? [];
 
   if (!workerId) return <p className="text-sm text-[#6B7280]">Select a worker to see their rates.</p>;
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true });
+      const text = priceListText(rows);
+      if (!text) toast.error("No prices found in this file");
+      setPaste(text);
+    } catch {
+      toast.error("Could not read this file");
+    }
+    if (fileRef.current) fileRef.current.value = "";
+  };
 
   const save = async () => {
     const { rates: parsed, errors } = parseRateLines(paste);
@@ -191,7 +208,7 @@ function RatesPanel({ workerId, canEdit }: { workerId: string; canEdit: boolean 
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <div className="overflow-x-auto rounded-md border border-[#E2DDD8]">
+      <div className="max-h-[28rem] overflow-auto rounded-md border border-[#E2DDD8]">
         <table className="w-full">
           <thead className="bg-[#F7F5F2]">
             <tr>
@@ -235,11 +252,26 @@ function RatesPanel({ workerId, canEdit }: { workerId: string; canEdit: boolean 
             onChange={(e) => setPaste(e.target.value)}
           />
           <p className="text-xs text-[#6B7280]">
-            Paste the two columns from Excel. One rate covers both sides, LHF and RHF.
+            Upload this worker's Excel price list, or paste two columns. One rate covers both sides, LHF and RHF.
+            Check the list, then save.
           </p>
-          <Button variant="primary" disabled={busy || !paste.trim()} onClick={save}>
-            Save Rates
-          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            aria-label="Price list file"
+            onChange={(e) => upload(e.target.files?.[0])}
+          />
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => fileRef.current?.click()}>
+              <Upload className="mr-1 h-4 w-4" />
+              Upload Excel
+            </Button>
+            <Button variant="primary" disabled={busy || !paste.trim()} onClick={save}>
+              Save Rates
+            </Button>
+          </div>
         </div>
       )}
       {confirmDialog}
@@ -252,7 +284,7 @@ function ImportPanel({ workerId, period, canEdit }: { workerId: string; period: 
   const bounds = monthBounds(period);
   const [from, setFrom] = useState(bounds.from);
   const [to, setTo] = useState(bounds.to);
-  const [department, setDepartment] = useState("");
+  const [department, setDepartment] = useState("FAB_SEW");
   const [q, setQ] = useState("");
   const debouncedQ = useDebounced(q, 300);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -353,7 +385,7 @@ function ImportPanel({ workerId, period, canEdit }: { workerId: string; period: 
                 <td className={`${TD} text-right`}>{r.rateSen === null ? "-" : formatCurrency(r.rateSen)}</td>
                 <td className={`${TD} text-right`}>{r.amountSen === null ? "-" : formatCurrency(r.amountSen)}</td>
                 <td className={`${TD} text-xs text-[#6B7280]`}>
-                  {r.importedTo ? `Imported to ${r.importedTo} (${r.importedPeriod})` : r.rateSen === null ? `No rate for ${r.itemCode}` : ""}
+                  {r.importedTo ? `Imported to ${r.importedTo} (${r.importedPeriod})` : r.rateSen === null ? `No rate for ${r.missing.join(", ")}` : ""}
                 </td>
               </tr>
             ))}

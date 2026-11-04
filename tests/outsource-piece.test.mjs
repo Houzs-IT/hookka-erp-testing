@@ -22,6 +22,31 @@ test("both sides of a module share one rate key", () => {
   assert.equal(P.pieceItemCode("5530-1NA"), "5530-1NA");
 });
 
+test("a sofa is priced by its module, a bedframe by headboard plus divan", () => {
+  const sofa = ["5535-2A(LHF) -Base 30 BROWNIE-07", "5535 -Left Arm BROWNIE-07"];
+  assert.deepEqual(P.pieceItemsForOrder("5535-2A(LHF)", sofa), ["5535-2A"]);
+  const bed = ['2003-(K) -HB 20" CX1211-11', '8" Divan- 6FT CX1211-11'];
+  assert.deepEqual(P.pieceItemsForOrder("2003-(K)", bed), ["2003-(K)-HB", "DIVAN-6FT"]);
+  assert.deepEqual(P.pieceItemsForOrder("5530-1A(LHF)", []), ["5530-1A"]);
+});
+
+test("an order with one unpriced item has no rate", () => {
+  const rates = new Map([["2003-(K)-HB", 1354], ["DIVAN-6FT", 253]]);
+  assert.deepEqual(P.orderRate(["2003-(K)-HB", "DIVAN-6FT"], rates), { rateSen: 1607, missing: [] });
+  assert.deepEqual(P.orderRate(["2003-(K)-HB", "DIVAN-5FT"], rates), { rateSen: null, missing: ["DIVAN-5FT"] });
+});
+
+test("uploaded price list: first column, last number, rounded like Excel", () => {
+  const text = P.priceListText([
+    ["WIP", "BOM Min Minutes", null, null, null, null, 9.5, "/hr"],
+    ["1003-(K) -HB", 95, 9.5, 85.5, 1.425, 13.5375],
+    ["5530-L ", 205, 41, 164, 2.7333, 25.966666666666665],
+    ["Divan- 6FT", 8, null, 8, 0.1333, 2.533333333333333],
+  ]);
+  assert.equal(text, "1003-(K) -HB\t13.54\n5530-L\t25.97\nDivan- 6FT\t2.53");
+  assert.deepEqual(P.parseRateLines(text).errors, []);
+});
+
 test("a set is the sum of its modules, in whole sen", () => {
   const set = P.pieceAmountSen(1, 3167) + P.pieceAmountSen(1, 2597);
   assert.equal(set, 5764);
