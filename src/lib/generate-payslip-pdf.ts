@@ -96,6 +96,8 @@ export type PayslipDocData = PayslipDetail & {
   /** Salary advance already handed to the worker during the period, in sen.
    *  Recovered AFTER the statutory block — it never touches gross or EPF. */
   advanceDeductionSen?: number;
+  /** Outsource piece wages, in sen. Part of `allowances`, shown on its own line. */
+  pieceWagesSen?: number;
   advanceDays?: Array<{ date: string; amountSen: number; note?: string }>;
 };
 
@@ -244,10 +246,18 @@ export function generatePayslipHTML(
     ${chips(otDays.map((d) => `${dayChipLabel(d.date)} — ${d.hours} h`), "ot")}
   </div>`);
 
-  if ((payslip.allowances || 0) > 0) {
+  const pieceSen = Number(payslip.pieceWagesSen) || 0;
+  const allowanceOnlySen = (payslip.allowances || 0) - pieceSen;
+  if (pieceSen > 0) {
+    earningRows.push(`<tr>
+      <td>Piece wages</td>
+      <td class="num">${money(pieceSen)}</td>
+    </tr>`);
+  }
+  if (allowanceOnlySen > 0) {
     earningRows.push(`<tr>
       <td>${L("Allowance", "pay.efficiencyAllowance")}</td>
-      <td class="num">${money(payslip.allowances)}</td>
+      <td class="num">${money(allowanceOnlySen)}</td>
     </tr>`);
   }
 

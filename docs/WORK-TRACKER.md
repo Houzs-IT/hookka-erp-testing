@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-04**: branch `feat/hk0130-outsource-to-main`, to `main` (HK-0130 outsource piece-rate wages) added below; nothing else re-checked.
 > **Last verified: 2026-11-03**: branch `feat/hk0125-mobile-polish`, to `main` (HK-0125, phone SO / DO / PO / GRN / Employees) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `feat/pi-auto-grn`, to `main` (purchase invoice confirm stocks in its matched PO lines) added below (its entry is the newest).
 > **Last verified: 2026-10-27**: branch `fix/hk0116-sandback-sticker`, to `main` (HK-0116, Sandback Fab Sew sticker badge) added below (its entry is the newest).
@@ -283,6 +284,17 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-to-main, 2026-11-04)
+From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Cherry-picked from staging PRs #1156 and #1158. Violet confirmed piece rate is commission for work taken home, on a separate account per person, so it does not stack on normal pay.
+1. DONE: Employees > Outsource tab (`src/components/outsource-piece-tab.tsx`): per-worker rates (Excel upload or paste), Import from Production, Wages & Report with CSV.
+2. DONE: `/api/outsource-piece` (`src/api/routes/outsource-piece.ts`), gated on `payroll`. Tables `outsource_piece_rates` / `outsource_piece_records` plus `payslips.piece_wages_sen`, self-applied by `ensureOutsourcePieceTables`.
+3. DONE: wages reach gross through `allowances_sen`, after `calcStatutory`. `PUT /api/payslips` refuses approval while slips disagree with the imported wages.
+4. DONE: a sofa is one rate per module; a bedframe is `<product>-HB` plus `Divan-<size>`, read from its FAB_SEW job card labels. Order quantity multiplies the rate, never `wipQty`.
+5. VERIFIED: routes and payslip generate / regenerate / approve on a throwaway local Postgres. On staging: the tab in the full Employees page, import, duplicate block, CSV with BOM, payroll estimate, remove. Violet's real file through the parser: 240 rows, 0 errors.
+6. NOT VERIFIED: the Upload Excel button with a real file in a browser, and the payslip PDF line.
+7. OPEN (Violet): 5531 L + 2A is 58.90 by her list, 57.64 in her sheet. PO-2610-100 has two 1NA in the system. Do bedframes always go home as HB and divan together? Is the Fab Sew job card scanned for work done at home?
+8. OPEN (owner): do piece wages count for EPF / SOCSO / EIS / PCB (now no)?
+
 ## 2026-11-03 — 🔵 HK-0128 DO-2610-119 cannot be marked delivered (branch `fix/hk0128-big-do-deliver` → `main`)
 
 Siti (office, HK-0128): only this DO cannot be marked delivered.

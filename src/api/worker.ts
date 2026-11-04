@@ -1165,6 +1165,7 @@ import workingHourEntries from "./routes/working-hour-entries";
 import payrollHourDeductions from "./routes/payroll-hour-deductions";
 import employeeAdvances from "./routes/employee-advances";
 import workerPenalties from "./routes/worker-penalties";
+import outsourcePiece from "./routes/outsource-piece";
 import cashFlow from "./routes/cash-flow";
 import consignments from "./routes/consignments";
 import consignmentNotes from "./routes/consignment-notes";
@@ -1418,6 +1419,8 @@ app.route("/api/employee-advances", employeeAdvances);
 // DEV-22 worker penalties — approved ones come off net pay in their payroll
 // month; see src/api/lib/worker-penalties.ts.
 app.route("/api/worker-penalties", workerPenalties);
+// HK-0130 piece-rate wages for outsourced workers; see src/api/lib/outsource-piece.ts.
+app.route("/api/outsource-piece", outsourcePiece);
 app.route("/api/cash-flow", cashFlow);
 app.route("/api/consignments", consignments);
 app.route("/api/consignment-notes", consignmentNotes);
