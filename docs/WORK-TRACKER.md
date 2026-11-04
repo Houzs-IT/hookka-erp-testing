@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-04**: branch `fix/hk0130-rate-save-staging`, to `staging` (HK-0130 rate save and order breakdown) added under the HK-0130 entry; nothing else re-checked.
 > **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
@@ -13,6 +14,7 @@ From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Built to `s
 6. OPEN (Violet): is `PO-2610-001` the customer PO (it is not `production_orders.poNo`; UNMEASURED)? Her `5531 L + 2A = 57.64` row uses 5530 rates.
 8. DONE (branch `feat/hk0130-price-list`): Violet's sewing price list uploads per worker (first column item, last number price). It prices per Fab Sew WIP, so a bedframe order is paid `<product>-HB` plus `Divan-<size>`, read from its FAB_SEW job card labels; a sofa stays one rate per module. Order quantity multiplies the rate, never `wipQty`: her 5FT / 6FT divan price already covers both pieces. Her real file: 240 rows read, 0 errors.
 7. OPEN (owner): do piece wages count for EPF / SOCSO / EIS / PCB (now no; a worker with SOCSO / EIS on and RM0 basic is still charged)? Day rate plus piece wages both pay, with a warning. One order can go to one worker only.
+9. DONE (`fix/hk0130-rate-save-staging`): `PUT /rates` was one upsert per row, so Violet's 240-line list hit the 30 s browser timeout on prod at row 198 and left 22 rows unsaved (fe-api RUM: status 0, 30004 ms). It is now one statement. The Import panel shows the HB and divan parts of a rate, names the unpriced items above the table, and shows the department finish date. Violet 11-04: HB and divan are sewn as a set, so one person is paid for both.
 
 ## Mobile Home v10 dashboard (design/mobile-dashboard-homeV10, 2026-11-02)
 Design: `Home v10.dc.html` + CHANGES.md (owner handoff). Frontend only: no backend, DB, desktop dashboard or permission change. Owner approved the plan incl. D1-D4 on 2026-11-02.
