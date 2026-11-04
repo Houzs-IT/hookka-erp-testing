@@ -432,6 +432,19 @@ test("production efficiency: 100% is full marks, 80% is the floor, 75% is nothin
   }
 });
 
+test("department efficiency: the score is the efficiency, 1% = 1 point", () => {
+  // HK-0131, Violet 2026-11-04: "1% = 1score, 50% = 50score, 79%=79score".
+  const d = kpiByKey("department_efficiency");
+  assert.equal(d.curve, "EFFICIENCY_BANDS");
+  for (const pct of [0, 1, 50, 75, 78, 79, 80, 90, 99.5]) {
+    assert.equal(attainment(d, 100, pct), pct);
+  }
+  assert.equal(attainment(d, 100, 100), 100);
+  assert.equal(attainment(d, 100, 120), 100, "no bonus above standard");
+  assert.equal(attainment(d, 100, -5), 0);
+  assert.equal(attainment(d, 95, 90), 90, "the assigned target does not move the score");
+});
+
 test("pending time-adjustment requests are a daily-report exception", () => {
   // Owner 2026-08-07: "either reject or approve 而不是 hanging 在那边."
   const src = readFileSync(resolve(process.cwd(), "src/api/lib/compliance-report.ts"), "utf8");
