@@ -463,6 +463,8 @@ export const AGENTS_BY_ROLE: Record<string, string[]> = {
 // ---------------------------------------------------------------------------
 export const DASHBOARD_TABS_BY_ROLE: Record<string, string[]> = {
   PRODUCTION: ["sales", "operations", "people", "service"],
+  // Owner 2026-11-04: Zamri (QA) sees the Service dashboard and no other.
+  QA: ["service"],
 };
 
 /**

@@ -50,11 +50,12 @@
 // completions before 2026-08-14, so any "units produced" series built from it
 // would read as a factory that made nothing for three months.
 // ---------------------------------------------------------------------------
+import { loadServiceSla } from "../lib/dashboard-service-sla";
 import { liveOpenPunchRows } from "../lib/punch-autofill";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
-import { requirePermission, hasPermission, dashboardReadsFor } from "../lib/rbac";
+import { requireReadOrDashboardTab, requirePermission, hasPermission, dashboardReadsFor } from "../lib/rbac";
 import { buildServiceSlice } from "../lib/dashboard-service-slice";
 import { isCustomerScoped } from "../lib/customer-scope";
 import { collectOnTimeDelivery, EMPTY_ON_TIME } from "../lib/on-time-delivery";
@@ -311,6 +312,16 @@ async function section<T>(
 // and column type; both collapse to YYYY-MM-DD here so the day key is one
 // thing everywhere downstream.
 
+// GET /api/dashboard/prototype/service-sla — the Service tab's Overdue cases by
+// stage board. Readable by whoever may open that tab; a customer-scoped role
+// sees no service section, so it gets no board either.
+app.get("/service-sla", async (c) => {
+  const denied = await requireReadOrDashboardTab(c, "service-cases", "service");
+  if (denied) return denied;
+  if (isCustomerScoped(c)) return c.json({ success: true, data: [] });
+  return c.json({ success: true, data: await loadServiceSla(c.var.DB, Date.now()) });
+});
+
 app.get("/", async (c) => {
   // sales-orders:read remains the front-door gate — Sales Orders is the tab
   // that opens by default and every viewer of this dashboard needs it. Now
@@ -324,15 +335,16 @@ app.get("/", async (c) => {
   // A TAB-RESTRICTED role (DASHBOARD_TABS_BY_ROLE in role-policy.ts, e.g.
   // PRODUCTION) is decided by its tab map instead: it receives exactly the
   // sections its tabs draw on, whatever its module grants say, and nothing
-  // else. Its front door opens only if one of its tabs reads Sales.
+  // else, Sales included: a role without the Sales tab gets `sales: null`.
   const tabReads = dashboardReadsFor(c);
   const canRead = (resource: string) =>
     tabReads ? Promise.resolve(tabReads.has(resource)) : hasPermission(c, resource, "read");
 
-  if (!tabReads?.has("sales-orders")) {
+  if (!tabReads) {
     const denied = await requirePermission(c, "sales-orders", "read");
     if (denied) return denied;
   }
+  const canSales = tabReads ? tabReads.has("sales-orders") : true;
 
   const [canDelivery, canPurchase, canInventory, canWorkers, canProduction] = await Promise.all([
     canRead("delivery-orders"),
@@ -1926,6 +1938,7 @@ app.get("/", async (c) => {
   // vs "query broke."
   const payload = {
     ...rawPayload,
+    sales: canSales ? rawPayload.sales : null,
     delivery: canDelivery ? rawPayload.delivery : null,
     purchase: canPurchase ? rawPayload.purchase : null,
     inventory: canInventory ? rawPayload.inventory : null,
