@@ -118,11 +118,15 @@ export function ServicePerformancePanel({
   );
   const aging = useMemo(() => agingSplit(open, threshold), [open, threshold]);
   const agingMax = Math.max(1, ...aging.map((a) => a.count));
-  const causes = useMemo(() => byCause(openedInFocus), [openedInFocus]);
+  // Only the categories this period actually has (owner 2026-11-04: "有的时候才
+  // 显示出来"); tally always carries a "Not yet analysed" row, even at 0.
+  const causes = useMemo(() => byCause(openedInFocus).filter((r) => r.count > 0), [openedInFocus]);
   const unanalysed = causes.find((r) => r.key === NONE_KEY)?.count ?? 0;
   const notDone = useMemo(() => preventionNotDone(openedInFocus), [openedInFocus]);
   // The category picked in Issues by category; none = prevention still to do.
-  const [cause, setCause] = useState<string | null>(null);
+  // A pick from another period that has no such cases here counts as no pick.
+  const [pickedCause, setCause] = useState<string | null>(null);
+  const cause = pickedCause && causes.some((r) => r.key === pickedCause) ? pickedCause : null;
   const caseList = useMemo(() => {
     if (!cause) return notDone;
     return openedInFocus
@@ -215,7 +219,7 @@ export function ServicePerformancePanel({
           )}
         </CardHeader>
         <CardContent>
-          <TallyList rows={causes} total={openedInFocus.length} selected={cause} onPick={(k) => setCause((c) => (c === k ? null : k))} empty="No service cases in this period." />
+          <TallyList rows={causes} total={openedInFocus.length} selected={cause} onPick={(k) => setCause(k === cause ? null : k)} empty="No service cases in this period." />
         </CardContent>
         <CardContent className="p-0">
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-2">
