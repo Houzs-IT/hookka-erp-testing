@@ -86,7 +86,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 
 - **Working day for production averages** (2026-10-20): a day any department produced something. Department Revenue's Avg / day and the Daily production revenue card both use it, so their averages match; a weekly view (quarter / year) counts Mon–Sat days elapsed.
 
-- **Service report layout** (2026-11-04): Issues by category + Prevention are one card (`ServicePerformancePanel`); click a category to list its cases. `ServiceSlaBoard` places open cases on the Case Pipeline with `computeCasePipeline` (same as the Service Cases list) and uses ONE target, the service overdue setting, for time in the current stage: Hookka has no per-stage targets. So its overdue count can differ from the "Overdue now" tile, which is case age.
+- **Service report layout** (2026-11-04): Issues by category + Prevention are one card (`ServicePerformancePanel`); click a category to list its cases. `ServiceSlaBoard` places open cases on the Case Pipeline with `computeCasePipeline` (same as the Service Cases list) with one target per stage (`STAGE_TARGET_DAYS`, 75th percentile of 124 closed cases, measured 2026-11-04, table in the file). Its overdue count differs from the "Overdue now" tile on purpose: the tile is case age past the overdue setting, the board is time in the current stage past that stage's target.
 - **Defect rate** defaults to "Our defects": cases whose causes are all Transport / Customer are left out (`NOT_OUR_FAULT_CAUSES`); "All cases" shows everything.
 
 ## Common tasks (mini-playbook)

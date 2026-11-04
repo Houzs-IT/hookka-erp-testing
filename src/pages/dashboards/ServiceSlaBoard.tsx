@@ -11,9 +11,20 @@ import { useServiceCaseLinks } from "./use-service-case-links";
 // 处理完、已经 overdue 咗好耐"). Every open case, placed on the Case Pipeline by
 // the same computeCasePipeline as the Service Cases list, so a stage here is the
 // stage there. Tab = open cases at that stage, red badge = how many are past
-// target, most overdue first. Hookka has one target, not one per stage: the
-// service overdue setting (`target`) applies to the time in the current stage.
-// A live backlog: the period picker does not filter it.
+// target, most overdue first. A live backlog: the period picker does not filter it.
+//
+// Targets (owner 2026-11-04: "根据之前的数据来 set"): measured on prod 2026-11-04
+// from the 124 closed cases, days from entering a stage to entering the next.
+// Each target is the 75th percentile rounded up, so 3 in 4 past cases met it.
+//   stage               cases  median  p75   p90   target
+//   Opened               124     0.0   0.0   3.1     1 (floor: a day to pick it up)
+//   Investigating         61     0.0   3.1  10.2     4
+//   Service Order         59     2.7  10.0  16.1    10
+//   Repair in progress    70     4.0   8.0  15.0     8
+//   Repair done           55     3.1   5.1   9.1     6
+//   Delivery arranged     22     1.3   2.8   5.0     3
+//   Delivered             21     3.8   6.0  11.9     6
+// Later stages rest on few cases: re-measure once there is more history.
 // ---------------------------------------------------------------------------
 type Case = {
   id: string;
@@ -30,10 +41,19 @@ type Do = CasePipelineInput["dos"][number];
 type Po = CasePipelineInput["pos"][number];
 
 const STAGES = CASE_PIPELINE_STEPS.filter((s) => s !== "Closed");
+const STAGE_TARGET_DAYS: Record<string, number> = {
+  Opened: 1,
+  Investigating: 4,
+  "Service Order": 10,
+  "Repair in progress": 8,
+  "Repair done": 6,
+  "Delivery arranged": 3,
+  Delivered: 6,
+};
 const ALL = "All";
 const CHUNK = 100;
 
-export function ServiceSlaBoard({ target }: { target: number }) {
+export function ServiceSlaBoard() {
   const { canOpen, rowProps } = useServiceCaseLinks();
   const { data: caseResp } = useCachedJson<{ data?: Case[] }>("/api/service-cases");
   const { data: doResp } = useCachedJson<{ data?: Do[] }>("/api/delivery-orders");
@@ -76,9 +96,11 @@ export function ServiceSlaBoard({ target }: { target: number }) {
           svOrderIds,
         });
         const inStage = caseStageDays(pipe.enteredAt, null, nowMs);
+        const target = STAGE_TARGET_DAYS[pipe.label] ?? 0;
         return {
           ...c,
           stage: pipe.label as string,
+          target,
           since: (pipe.enteredAt ?? "").slice(0, 10),
           inStage,
           overdue: Math.max(0, inStage - target),
@@ -86,7 +108,7 @@ export function ServiceSlaBoard({ target }: { target: number }) {
         };
       })
       .sort((a, b) => b.overdue - a.overdue || b.age - a.age);
-  }, [open, doResp, pos, nowMs, target]);
+  }, [open, doResp, pos, nowMs]);
 
   const [tab, setTab] = useState<string>(ALL);
   const tabs = useMemo(
@@ -104,7 +126,7 @@ export function ServiceSlaBoard({ target }: { target: number }) {
       <CardHeader className="pb-2">
         <CardTitle>Overdue cases by stage</CardTitle>
         <p className="text-xs text-[#6B7280]">
-          Open cases whose current stage has run past {target} days · tab = open cases at the stage, red = how many are overdue · most overdue first · live, whatever the period
+          Open cases whose current stage has run past its target · targets = what 3 in 4 past cases met · tab = open cases at the stage, red = how many are overdue · most overdue first · live, whatever the period
         </p>
       </CardHeader>
       <CardContent className="space-y-3 p-0">
@@ -141,7 +163,7 @@ export function ServiceSlaBoard({ target }: { target: number }) {
                   <td className="px-3 py-2 max-w-[300px] truncate text-[#6B7280]" title={r.issueDescription}>{r.issueDescription || "—"}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{r.stage}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-[#6B7280]">{r.since || "—"}</td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap text-[#6B7280]">{target} days</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-[#6B7280]">{r.target} day{r.target === 1 ? "" : "s"}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.inStage}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${r.overdue > 0 ? "font-semibold text-[#9A3A2D]" : "text-[#9CA3AF]"}`}>{r.overdue || "—"}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.age} days</td>

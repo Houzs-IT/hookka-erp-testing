@@ -150,7 +150,7 @@ export function ServiceView({
             onPeriodChange={onPeriodChange}
             afterKpis={
               <>
-                <ServiceSlaBoard target={threshold} />
+                <ServiceSlaBoard />
                 <DefectRateCard cases={cases} shipped={slice?.shipped} period={period} />
                 <ServiceIssuesPanel cases={logged} period={period} />
               </>

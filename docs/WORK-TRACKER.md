@@ -6929,3 +6929,4 @@ Asks, in order:
 71. Service case photos open in-page; the new-tab link did nothing for base64 images (owner 2026-11-04).
 72. Defect rate: "Our defects" (no Transport / Customer) default, "All cases" toggle (owner 2026-11-04).
 73. Service: Overdue cases by stage board, SLA view (owner 2026-11-04).
+74. Service stage targets set from history (p75 of closed cases), owner delegated the numbers (2026-11-04).
