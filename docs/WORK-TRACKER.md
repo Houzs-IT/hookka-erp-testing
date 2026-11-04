@@ -1,6 +1,17 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+
+## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-piece-rate, 2026-11-04)
+From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Built to `staging`; Violet has not confirmed the open items below.
+1. DONE: Employees > Outsource tab (`src/components/outsource-piece-tab.tsx`): per-worker rates (Excel paste, one rate covers LHF and RHF), Import from Production, Wages & Report with CSV.
+2. DONE: `/api/outsource-piece` (`src/api/routes/outsource-piece.ts`), gated on `payroll`. Tables `outsource_piece_rates` / `outsource_piece_records` plus `payslips.piece_wages_sen`, self-applied by `ensureOutsourcePieceTables`.
+3. DONE: wages reach gross through `allowances_sen`, after `calcStatutory`. `PUT /api/payslips` refuses approval while slips disagree with the imported wages.
+4. VERIFIED: routes and payslip generate / regenerate / approve on a throwaway local Postgres built from `migrations-postgres/`. The tab was driven in a browser alone, against that database.
+5. NOT VERIFIED: the tab inside the full Employees page, the Payroll tab, the payslip PDF line, the CSV download, and anything on staging or prod data.
+6. OPEN (Violet): is `PO-2610-001` the customer PO (it is not `production_orders.poNo`; UNMEASURED)? Her `5531 L + 2A = 57.64` row uses 5530 rates.
+7. OPEN (owner): do piece wages count for EPF / SOCSO / EIS / PCB (now no; a worker with SOCSO / EIS on and RM0 basic is still charged)? Day rate plus piece wages both pay, with a warning. One order can go to one worker only.
 
 ## Mobile Home v10 dashboard (design/mobile-dashboard-homeV10, 2026-11-02)
 Design: `Home v10.dc.html` + CHANGES.md (owner handoff). Frontend only: no backend, DB, desktop dashboard or permission change. Owner approved the plan incl. D1-D4 on 2026-11-02.
