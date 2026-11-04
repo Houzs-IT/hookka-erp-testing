@@ -154,10 +154,12 @@ export default function DashboardPrototypePage() {
   // feed had finished — ~6s). The tabs' own useCachedJson join these in-flight
   // requests, so nothing is fetched twice.
   const widgetKey = widgetPeriod(effectivePeriod);
+  const hasCommandCenter = visibleTabs.some((t) => t.key === "sales" || t.key === "operations");
   useEffect(() => {
+    if (!hasCommandCenter) return;
     void cachedFetchJson(`/api/dashboard/overview?period=${widgetKey}`);
     void cachedFetchJson(`/api/dashboard/overview/revenue-split?period=${widgetKey}`);
-  }, [widgetKey]);
+  }, [widgetKey, hasCommandCenter]);
 
   // A "Today's problems" tile opens its tab and scrolls to the list behind the
   // number (owner 2026-10-17: "我在上面点一下的时候，它就会跳下来"). The list

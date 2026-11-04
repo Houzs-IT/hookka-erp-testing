@@ -108,6 +108,13 @@ test('PRODUCTION is limited to Sales, Operations, Employees and Service', () => 
   }
 });
 
+test('QA is limited to the Service tab and reads only service cases', () => {
+  assert.deepEqual(dashboardTabsForRole('QA'), ['service']);
+  assert.deepEqual([...dashboardReadsForRole('QA')], ['service-cases']);
+  assert.ok(withDashboardAccess([], 'QA').includes('dashboard-experimental:read'));
+  assert.equal(withDashboardAccess([], 'QA').includes('dashboard:read'), false);
+});
+
 test('the tabs read exactly their own feed sections, never finance or overview', () => {
   assert.deepEqual(
     [...dashboardReadsForRole('PRODUCTION')].sort(),

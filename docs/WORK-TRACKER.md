@@ -6942,3 +6942,4 @@ Asks, in order:
 72. Defect rate: "Our defects" (no Transport / Customer) default, "All cases" toggle (owner 2026-11-04).
 73. Service: Overdue cases by stage board, SLA view (owner 2026-11-04).
 74. Service stage targets set from history (p75 of closed cases), owner delegated the numbers (2026-11-04).
+75. QA role (Zamri) sees the dashboard Service tab only; SLA board served from the backend so it needs no delivery-orders access (owner 2026-11-04).
