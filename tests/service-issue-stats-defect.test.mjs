@@ -33,3 +33,16 @@ test("defectRates: accessories are left out of cases and units (owner 2026-10-18
   const r = defectRates(cases, shipped, ["2026-10"]);
   assert.deepEqual(r.map((x) => [x.category, x.cases, x.units]), [["SOFA", 1, 10]]);
 });
+
+test("defectRates: a case that is only Transport / Customer is not ours; a mixed one still counts", () => {
+  const cases = [
+    { createdDate: "2026-10-01", productCategories: ["SOFA"], causes: ["TRANSPORT"] },
+    { createdDate: "2026-10-02", productCategories: ["SOFA"], causes: ["CUSTOMER", "TRANSPORT"] },
+    { createdDate: "2026-10-03", productCategories: ["SOFA"], causes: ["CUSTOMER", "PRODUCTION"] },
+    { createdDate: "2026-10-04", productCategories: ["SOFA"], causes: [] },
+  ];
+  const shipped = [{ ym: "2026-10", category: "SOFA", units: 100 }];
+  const n = (notOurs) => defectRates(cases, shipped, ["2026-10"], notOurs).find((r) => r.category === "SOFA").cases;
+  assert.equal(n(), 4);
+  assert.equal(n(["TRANSPORT", "CUSTOMER"]), 2);
+});

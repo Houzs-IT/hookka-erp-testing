@@ -6924,3 +6924,9 @@ Asks, in order:
 1. 🟡 `DELETE /api/delivery-orders/:id` hands `hookkaDeliveryOrder` back to the SO's newest remaining live DO, or blanks it (BUG-2026-10-28-395).
 2. 🟡 `cascadeUpholsteryToSO` / `ToCO` drop an order with no UPHOLSTERY card back to IN_PRODUCTION when its POs are un-completed (C28 row 5).
 3. 🟡 `scripts/fix-hk0118-sv-2610-036.mjs` repairs SV-2610-036 (DO number blanked, back to IN_PRODUCTION).
+69. Service: Issues by category + Prevention one card, click a category to list its cases (owner 2026-11-04).
+70. Root cause category "Process / SOP gap" renamed "Make wrong item" (label only, key PROCESS unchanged) (owner 2026-11-04).
+71. Service case photos open in-page; the new-tab link did nothing for base64 images (owner 2026-11-04).
+72. Defect rate: "Our defects" (no Transport / Customer) default, "All cases" toggle (owner 2026-11-04).
+73. Service: Overdue cases by stage board, SLA view (owner 2026-11-04).
+74. Service stage targets set from history (p75 of closed cases), owner delegated the numbers (2026-11-04).

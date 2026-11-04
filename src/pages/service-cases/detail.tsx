@@ -66,7 +66,7 @@ const ROOT_CAUSE_LABELS: Record<string, string> = {
   PRODUCTION: "Production / workmanship",
   DESIGN: "Design / R&D",
   MATERIAL: "Material / supplier",
-  PROCESS: "Process / SOP gap",
+  PROCESS: "Make wrong item",
   CUSTOMER: "Customer (not our fault)",
   TRANSPORT: "Transport / 3PL",
   SALES: "Sales / order-taking error",
@@ -2803,6 +2803,7 @@ function PhotosPanel({
   editing: boolean;
   onSaved: () => void;
 }) {
+  const [viewing, setViewing] = useState<number | null>(null);
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const [saving, setSaving] = useState(false);
@@ -2904,13 +2905,16 @@ function PhotosPanel({
           <div className="flex flex-wrap gap-2">
             {caseDetail.issuePhotos.map((p, i) => (
               <div key={i} className="relative group">
-                <a href={p} target="_blank" rel="noopener noreferrer">
+                {/* Photos are stored as base64 data URLs, and Chrome refuses to
+                    open those from a link in a new tab, so the click did nothing
+                    (owner 2026-11-04). They open in this page instead. */}
+                <button type="button" onClick={() => setViewing(i)} className="block cursor-zoom-in" title="Open photo">
                   <img
                     src={p}
                     alt={`Photo ${i + 1}`}
                     className="h-24 w-24 rounded border border-[#E2DDD8] object-cover hover:border-[#6B5C32]"
                   />
-                </a>
+                </button>
                 {editing && (
                   <button
                     type="button"
@@ -2928,6 +2932,31 @@ function PhotosPanel({
         )}
       </CardContent>
     </Card>
+    {viewing != null && caseDetail.issuePhotos[viewing] && (
+      <div
+        role="dialog"
+        aria-label={`Photo ${viewing + 1} of ${caseDetail.issuePhotos.length}`}
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+        onClick={() => setViewing(null)}
+      >
+        <img
+          src={caseDetail.issuePhotos[viewing]}
+          alt={`Photo ${viewing + 1}`}
+          className="max-h-full max-w-full rounded object-contain"
+          onClick={(e) => e.stopPropagation()}
+        />
+        <button type="button" aria-label="Close" onClick={() => setViewing(null)} className="absolute right-4 top-4 rounded-full bg-white p-2 text-[#1F1D1B]">
+          <X className="h-5 w-5" />
+        </button>
+        {caseDetail.issuePhotos.length > 1 && (
+          <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-full bg-white px-3 py-1.5 text-sm text-[#1F1D1B]" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="px-2 font-semibold" onClick={() => setViewing((viewing + caseDetail.issuePhotos.length - 1) % caseDetail.issuePhotos.length)}>‹ Prev</button>
+            <span className="tabular-nums">{viewing + 1} / {caseDetail.issuePhotos.length}</span>
+            <button type="button" className="px-2 font-semibold" onClick={() => setViewing((viewing + 1) % caseDetail.issuePhotos.length)}>Next ›</button>
+          </div>
+        )}
+      </div>
+    )}
     {confirmDialog}
     </>
   );

@@ -56,7 +56,7 @@ export function ServiceTab({ period, setPeriod }: DashboardTabProps) {
   return (
     <>
       <MSubPills subs={subs} active={sub} onChange={setSub} />
-      <Surface><ServiceView period={period} sub={sub as ServiceSub} onPeriodChange={setPeriod} onSubChange={(k) => setSub(k)} /></Surface>
+      <Surface><ServiceView period={period} sub={sub as ServiceSub} onPeriodChange={setPeriod} /></Surface>
     </>
   );
 }

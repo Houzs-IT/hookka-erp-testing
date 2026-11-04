@@ -23,7 +23,7 @@ const RC_LABELS: Record<string, string> = {
   PRODUCTION: "Production / workmanship",
   DESIGN: "Design / R&D",
   MATERIAL: "Material / supplier",
-  PROCESS: "Process / SOP gap",
+  PROCESS: "Make wrong item",
   CUSTOMER: "Customer (not our fault)",
   TRANSPORT: "Transport / 3PL",
   SALES: "Sales / order-taking error",

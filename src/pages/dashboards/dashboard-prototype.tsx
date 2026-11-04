@@ -258,7 +258,7 @@ export default function DashboardPrototypePage() {
       )}
       {view === "operations" && <OperationsView period={effectivePeriod} sub={sub as OpsSub} onPeriodChange={setPeriod} />}
       {view === "people" && <EmployeesDashboard period={effectivePeriod} />}
-      {view === "service" && <ServiceView period={effectivePeriod} sub={sub as ServiceSub} onPeriodChange={setPeriod} onSubChange={(x) => setSub(x)} />}
+      {view === "service" && <ServiceView period={effectivePeriod} sub={sub as ServiceSub} onPeriodChange={setPeriod} />}
       {view === "finance" && <FinanceView period={effectivePeriod} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} />}
       {view === "ocr" && <OcrView period={effectivePeriod} />}
     </div>

@@ -108,7 +108,7 @@ legacy path) plus component-level picks on `affectedProducts[].components`, all 
 | `CasePipeline` | `src/pages/service-cases/detail.tsx:965` | Auto-computed display-only progress stepper |
 | `RootCausePanel` | `src/pages/service-cases/detail.tsx:1052` | Multi root-cause editor (manual Add/Save; verifiedSave ref impl) |
 | `StockTopUpPanel` | `src/pages/service-cases/detail.tsx:2448` | Records `SERVICE_REPLACEMENT` stock adjustments vs the case |
-| `SpawnServiceOrderModal` | `src/pages/service-cases/detail.tsx:3096` | Spawns a SV order (`isServiceOrder`+`caseId`) under the case |
+| `SpawnServiceOrderModal` | `src/pages/service-cases/detail.tsx:3126` | Spawns a SV order (`isServiceOrder`+`caseId`) under the case |
 | `ServiceOrdersListPage` | `src/pages/service-orders/index.tsx:119` | Plural SV-order list |
 | `CreateServiceOrderModal` | `src/pages/service-orders/index.tsx:314` | Create a plural SV order |
 | `ServiceOrderDetailPage` | `src/pages/service-orders/detail.tsx:129` | Plural SV-order detail (returns, repair scope) |
