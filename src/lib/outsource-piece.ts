@@ -15,9 +15,54 @@ export function pieceItemCode(productCode: string): string {
     .replace(/\((LHF|RHF|L|R)\)$/, "");
 }
 
+/**
+ * The price-list items one production order is paid by. A sofa is priced per
+ * module, so its product code is the item. A bedframe is priced per sewn WIP:
+ * the list has "1013-(Q) -HB" and "Divan- 5FT", and no row for "1013-(Q)".
+ */
+export function pieceItemsForOrder(productCode: string, sewWipLabels: readonly string[]): string[] {
+  const code = pieceItemCode(productCode);
+  const items = new Set<string>();
+  for (const label of sewWipLabels) {
+    if (/ -HB\b/.test(label)) items.add(`${code}-HB`);
+    const divan = /Divan-\s*(\S+)/.exec(label);
+    if (divan) items.add(pieceItemCode(`Divan-${divan[1]}`));
+  }
+  return items.size > 0 ? [...items] : [code];
+}
+
+/** One unit's rate: every item must be priced, or the order has no rate. */
+export function orderRate(
+  items: readonly string[],
+  rates: ReadonlyMap<string, number>,
+): { rateSen: number | null; missing: string[] } {
+  const missing = items.filter((item) => !rates.has(item));
+  if (missing.length > 0) return { rateSen: null, missing };
+  return { rateSen: items.reduce((sum, item) => sum + (rates.get(item) as number), 0), missing };
+}
+
 /** Both integers, so no rounding can happen here. */
 export function pieceAmountSen(quantity: number, rateSen: number): number {
   return quantity * rateSen;
+}
+
+/**
+ * An uploaded price list as text for the rate box, so it is read and checked
+ * like a paste. Item is the first column, price the last number on the row:
+ * Violet's sheet carries minutes and working columns before the price. The
+ * price rounds like Excel shows it (13.5375 -> 13.54); toFixed alone gives 13.53.
+ */
+export function priceListText(rows: readonly (readonly unknown[])[]): string {
+  const lines: string[] = [];
+  rows.forEach((row, i) => {
+    if (i === 0 && typeof row[1] !== "number") return;
+    const item = String(row[0] ?? "").trim();
+    const numbers = row.slice(1).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (!item || numbers.length === 0) return;
+    const sen = Math.round(Number((numbers[numbers.length - 1] * 100).toFixed(6)));
+    lines.push(`${item}\t${(sen / 100).toFixed(2)}`);
+  });
+  return lines.join("\n");
 }
 
 export type ParsedRate = { itemCode: string; rateSen: number };

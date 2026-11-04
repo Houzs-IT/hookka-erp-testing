@@ -11,6 +11,7 @@ From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Built to `s
 4. VERIFIED: routes and payslip generate / regenerate / approve on a throwaway local Postgres built from `migrations-postgres/`. The tab was driven in a browser alone, against that database.
 5. NOT VERIFIED: the tab inside the full Employees page, the Payroll tab, the payslip PDF line, the CSV download, and anything on staging or prod data.
 6. OPEN (Violet): is `PO-2610-001` the customer PO (it is not `production_orders.poNo`; UNMEASURED)? Her `5531 L + 2A = 57.64` row uses 5530 rates.
+8. DONE (branch `feat/hk0130-price-list`): Violet's sewing price list uploads per worker (first column item, last number price). It prices per Fab Sew WIP, so a bedframe order is paid `<product>-HB` plus `Divan-<size>`, read from its FAB_SEW job card labels; a sofa stays one rate per module. Order quantity multiplies the rate, never `wipQty`: her 5FT / 6FT divan price already covers both pieces. Her real file: 240 rows read, 0 errors.
 7. OPEN (owner): do piece wages count for EPF / SOCSO / EIS / PCB (now no; a worker with SOCSO / EIS on and RM0 basic is still charged)? Day rate plus piece wages both pay, with a warning. One order can go to one worker only.
 
 ## Mobile Home v10 dashboard (design/mobile-dashboard-homeV10, 2026-11-02)
