@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 146 mounts, 144 route files in
-`src/api/routes/`, 1060 top-level handler registrations discovered.
+**Counts at generation time:** 147 mounts, 145 route files in
+`src/api/routes/`, 1067 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -148,6 +148,7 @@ offsets pointing past the end of their own file.
 | `/api/payroll-hour-deductions` | `src/api/routes/payroll-hour-deductions.ts` | `GET /` <sub>:64</sub><br>`POST /` <sub>:85</sub><br>`POST /auto-from-punch` <sub>:149</sub><br>`POST /settle-period` <sub>:211</sub><br>`DELETE /:id` <sub>:402</sub> | gated |
 | `/api/employee-advances` | `src/api/routes/employee-advances.ts` | `GET /` <sub>:67</sub><br>`GET /payout-listing` <sub>:105</sub><br>`POST /` <sub>:176</sub><br>`PUT /:id` <sub>:244</sub><br>`DELETE /:id` <sub>:305</sub> | gated |
 | `/api/worker-penalties` | `src/api/routes/worker-penalties.ts` | `GET /` <sub>:253</sub><br>`GET /order-lookup` <sub>:311</sub><br>`GET /order-lookup/:id` <sub>:357</sub><br>`GET /:id` <sub>:431</sub><br>`POST /` <sub>:444</sub><br>`PUT /:id` <sub>:500</sub><br>`DELETE /:id` <sub>:544</sub><br>`POST /:id/submit` <sub>:561</sub><br>`POST /:id/approve` <sub>:585</sub><br>`POST /:id/reject` <sub>:622</sub><br>`POST /:id/revoke` <sub>:653</sub> | gated |
+| `/api/outsource-piece` | `src/api/routes/outsource-piece.ts` | `GET /rates` <sub>:73</sub><br>`PUT /rates` <sub>:92</sub><br>`DELETE /rates/:id` <sub>:125</sub><br>`GET /importable` <sub>:136</sub><br>`POST /import` <sub>:209</sub><br>`GET /records` <sub>:283</sub><br>`DELETE /records/:id` <sub>:318</sub> | gated |
 | `/api/cash-flow` | `src/api/routes/cash-flow.ts` | `GET /` <sub>:153</sub><br>`POST /` <sub>:251</sub> | gated |
 | `/api/consignments` | `src/api/routes/consignments.ts` | `GET /` <sub>:40</sub><br>`POST /` <sub>:100</sub><br>`GET /:id` <sub>:328</sub><br>`PUT /:id` <sub>:356</sub><br>`DELETE /:id` <sub>:527</sub> | gated |
 | `/api/consignment-notes` | `src/api/routes/consignment-notes.ts` | `GET /` <sub>:81</sub><br>`GET /linked-po-ids` <sub>:203</sub><br>`GET /ready-planning` <sub>:242</sub><br>`GET /stats` <sub>:479</sub><br>`GET /:id/print-extras` <sub>:571</sub><br>`POST /` <sub>:830</sub><br>`POST /:id/return` <sub>:1109</sub><br>`POST /:id/convert-to-invoice` <sub>:1464</sub><br>`POST /:id/notify-customer` <sub>:1851</sub><br>`PATCH /` <sub>:2140</sub><br>`PUT /:id` <sub>:2196</sub> | gated |
@@ -169,7 +170,7 @@ offsets pointing past the end of their own file.
 | `/api/notifications` | `src/api/routes/notifications.ts` | `GET /` <sub>:71</sub><br>`PUT /` <sub>:101</sub> | gated |
 | `/api/payroll` | `src/api/routes/payroll.ts` | `GET /` <sub>:78</sub><br>`POST /` <sub>:125</sub><br>`PUT /` <sub>:145</sub> | gated |
 | `/api/pay-rules` | `src/api/routes/pay-rules.ts` | `GET /` <sub>:48</sub><br>`POST /` <sub>:64</sub><br>`DELETE /:id` <sub>:107</sub> | gated |
-| `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:603</sub><br>`GET /projected` <sub>:738</sub><br>`POST /` <sub>:1036</sub><br>`PUT /` <sub>:1503</sub><br>`GET /:id` <sub>:1576</sub> | gated |
+| `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:613</sub><br>`GET /projected` <sub>:748</sub><br>`POST /` <sub>:1049</sub><br>`PUT /` <sub>:1523</sub><br>`GET /:id` <sub>:1612</sub> | gated |
 | `/api/production-leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/sync-jobcards-from-bom` | `src/api/routes/jobcard-sync.ts` | `POST /` <sub>:214</sub><br>`POST /fill-zero-minutes` <sub>:404</sub> | gated |
