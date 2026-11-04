@@ -889,6 +889,17 @@ export type PiEditLine = {
   discountSen: number;
   lineType: string;
   grnItemId: string | null;
+  /** Line notes round-trip untouched: a PUT replaces every line, so an omitted field would erase it. */
+  notes?: string | null;
+  /**
+   * The PO this line is billed against, echoed back untouched. The PUT already stores a line's own `poId` (and otherwise
+   * falls back to the HEADER PO), so a client that cannot send it moves every line of a multi-PO invoice onto the header
+   * PO. The GET does not return it yet (proposed backend change, docs/WORK-TRACKER.md item 21), so today this is empty
+   * and nothing changes; the moment the GET returns it, an edit keeps each line where it was.
+   */
+  poId?: string | null;
+  /** The stored line this is; sent back so the server keeps its id and its PO / GRN link. Null on a line added in the sheet. */
+  id?: string | null;
 };
 export function piEditLines(p: RawRow): PiEditLine[] {
   return rows(p.items).map((it) => ({
@@ -902,6 +913,9 @@ export function piEditLines(p: RawRow): PiEditLine[] {
     discountSen: n(it, "discountSen"),
     lineType: s(it, "lineType") || "STOCKED",
     grnItemId: it.grnItemId == null ? null : String(it.grnItemId),
+    notes: it.notes == null ? null : String(it.notes),
+    poId: it.poId == null || String(it.poId).trim() === "" ? null : String(it.poId).trim(),
+    id: it.id == null || String(it.id).trim() === "" ? null : String(it.id).trim(),
   }));
 }
 /** PurchaseInvoiceDetail.tsx handleSaveEdit checks. */
@@ -945,6 +959,11 @@ export function piEditBody(
       discountSen: discounts[i],
       lineType: l.lineType,
       grnItemId: l.grnItemId,
+      notes: l.notes ?? null,
+      // only when the GET told us: an invented null would be read as "the header PO" and move the line
+      ...(l.poId ? { poId: l.poId } : {}),
+      // the line's own id: the server pairs lines by id and keeps the id and the links; a new line has none
+      ...(l.id ? { id: l.id } : {}),
     })),
   };
 }

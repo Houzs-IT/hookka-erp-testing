@@ -31,6 +31,7 @@ import { emitAudit } from "../lib/audit";
 import { learnSupplierBindings } from "../lib/supplier-binding-learn";
 import { availableQty as computeAvailableQty, clampDecrement } from "../../lib/convert-chain";
 import { loadGrnReturnedQty } from "../lib/purchase-return-create";
+import { alignCommittedLines, planGrnDraftLines, validateClaimedLinks, type PoItemRow, type PoRow } from "../lib/grn-line-edit";
 import {
   checkGrnLineQtyEdit,
   isGrnFullyLockedByDownstreamPi,
@@ -283,6 +284,8 @@ type GRNItemRow = {
   invoiced_qty?: number | null;
   poItemId?: string | null;
   po_item_id?: string | null;
+  poId?: string | null;
+  po_id?: string | null;
   // Not a column — attached by attachReturnedQty (BUG-2026-09-24-206).
   returnedQty?: number;
 };
@@ -343,6 +346,11 @@ function rowToItem(r: GRNItemRow) {
   return {
     id: r.id,
     poItemIndex: r.poItemIndex ?? 0,
+    // Which PO line this line draws down (multi-PO receipts). Returned so a
+    // client can show it and send the line's id back on edit; the server keeps
+    // the stored value, a client cannot change it here.
+    poId: ((r.poId ?? r.po_id) ?? "") || null,
+    poItemId: ((r.poItemId ?? r.po_item_id) ?? "") || null,
     materialCode: r.materialCode ?? "",
     materialName: r.materialName ?? "",
     // Supplier SKU is filled by fillGrnSupplierSku after the GRN is built (it
@@ -2097,6 +2105,8 @@ app.put("/:id", async (c) => {
 
   // Ensure arrival-pipeline columns exist before any UPDATE
   await ensureGrnMigrations(c.var.DB);
+  // The draft line edit reads / keeps grn_items.po_id + po_item_id.
+  await ensureGrnItemPoRef(c.var.DB);
 
   const id = c.req.param("id");
   try {
@@ -2234,8 +2244,12 @@ app.put("/:id", async (c) => {
             409,
           );
         }
-        const rawItems: Array<Record<string, unknown>> = body.items;
-        if (rawItems.length !== existingItems.length) {
+        // Pair each stored line with its incoming line BY ID when the client
+        // sent ids (the desktop / mobile now do), so a re-ordered list can't
+        // move a quantity onto the wrong line; a client that sends none keeps
+        // the old positional pairing.
+        const aligned = alignCommittedLines(existingItems, body.items);
+        if (!aligned.ok) {
           return c.json(
             {
               success: false,
@@ -2245,6 +2259,7 @@ app.put("/:id", async (c) => {
             409,
           );
         }
+        const rawItems: Array<Record<string, unknown>> = aligned.items;
 
         const lineDeltas: Array<{
           lineIdx: number;
@@ -2337,10 +2352,56 @@ app.put("/:id", async (c) => {
           editedPoId = poDelta.poId;
         }
       } else {
-        // ── Pre-commit (DRAFT) replace-items — unchanged behaviour ──────────
+        // ── Pre-commit (DRAFT) line edit ────────────────────────────────────
+        // A line is identified by its row id (see lib/grn-line-edit): a kept
+        // line is UPDATED in place, so its id, its PO link (po_id /
+        // po_item_id) and what a purchase invoice has billed against it all
+        // survive; a line the client no longer sends is deleted; a line with
+        // no id is new. This used to delete every line and re-insert the
+        // columns the form knew about — which erased each line's PO link.
         const rawItems: Array<Record<string, unknown>> = body.items;
-        const newItems = rawItems.map((item) => ({
-          poItemIndex: Number(item.poItemIndex) || 0,
+        const storedRes = await c.var.DB
+          .prepare("SELECT * FROM grn_items WHERE grnId = ? ORDER BY id ASC")
+          .bind(id)
+          .all<GRNItemRow & { poId?: string | null; po_id?: string | null }>();
+        const plan = planGrnDraftLines(storedRes.results ?? [], rawItems);
+        if (!plan.ok) {
+          return c.json({ success: false, error: plan.error }, plan.status);
+        }
+
+        // Links on NEW lines must name this supplier's purchase order and a
+        // line that belongs to it. Kept lines keep their stored links, so
+        // they need no lookup.
+        const claimedPoIds = [...new Set(plan.lines.filter((l) => l.claimed && l.poId).map((l) => l.poId as string))];
+        const claimedItemIds = [...new Set(plan.lines.filter((l) => l.claimed && l.poItemId).map((l) => l.poItemId as string))];
+        const poMap = new Map<string, PoRow>();
+        const poItemMap = new Map<string, PoItemRow>();
+        if (claimedItemIds.length > 0) {
+          const r = await c.var.DB
+            .prepare(`SELECT id, purchaseOrderId FROM purchase_order_items WHERE id IN (${claimedItemIds.map(() => "?").join(",")})`)
+            .bind(...claimedItemIds)
+            .all<PoItemRow>();
+          for (const row of r.results ?? []) {
+            poItemMap.set(String(row.id), { id: String(row.id), purchaseOrderId: String(row.purchaseOrderId) });
+            if (!claimedPoIds.includes(String(row.purchaseOrderId))) claimedPoIds.push(String(row.purchaseOrderId));
+          }
+        }
+        if (claimedPoIds.length > 0) {
+          const r = await c.var.DB
+            .prepare(`SELECT id, supplierId FROM purchase_orders WHERE id IN (${claimedPoIds.map(() => "?").join(",")})`)
+            .bind(...claimedPoIds)
+            .all<PoRow>();
+          for (const row of r.results ?? []) poMap.set(String(row.id), { id: String(row.id), supplierId: row.supplierId });
+        }
+        const resolved: Array<{ poId: string | null; poItemId: string | null }> = [];
+        for (const l of plan.lines) {
+          if (!l.claimed) { resolved.push({ poId: l.poId, poItemId: l.poItemId }); continue; }
+          const v = validateClaimedLinks(l, existing.supplierId ?? null, poMap, poItemMap);
+          if (!v.ok) return c.json({ success: false, error: v.error }, v.status);
+          resolved.push({ poId: v.poId, poItemId: v.poItemId });
+        }
+
+        const fieldsOf = (item: Record<string, unknown>) => ({
           materialCode: (item.materialCode as string) ?? "",
           materialName: (item.materialName as string) ?? "",
           orderedQty: Number(item.orderedQty) || 0,
@@ -2349,40 +2410,39 @@ app.put("/:id", async (c) => {
           rejectedQty: Number(item.rejectedQty) || 0,
           rejectionReason: (item.rejectionReason as string | null) ?? null,
           unitPrice: Number(item.unitPrice) || 0,
-        }));
-        totalAmount = newItems.reduce(
-          (sum, i) => sum + i.acceptedQty * i.unitPrice,
-          0,
-        );
-        replacedDraftLines = newItems.map((i) => ({
-          poItemIndex: i.poItemIndex,
-          acceptedQty: i.acceptedQty,
-          receivedQty: i.receivedQty,
-        }));
-        statements.push(
-          c.var.DB.prepare("DELETE FROM grn_items WHERE grnId = ?").bind(id),
-        );
-        for (const item of newItems) {
-          statements.push(
-            c.var.DB.prepare(
-              `INSERT INTO grn_items (grnId, poItemIndex, materialCode, materialName,
-                 orderedQty, receivedQty, acceptedQty, rejectedQty,
-                 rejectionReason, unitPrice)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            ).bind(
-              id,
-              item.poItemIndex,
-              item.materialCode,
-              item.materialName,
-              item.orderedQty,
-              item.receivedQty,
-              item.acceptedQty,
-              item.rejectedQty,
-              item.rejectionReason,
-              item.unitPrice,
-            ),
-          );
+        });
+        const storedById = new Map((storedRes.results ?? []).map((r) => [String(r.id), r]));
+        const finalLines: GrnLinePoRef[] = [];
+        totalAmount = 0;
+        for (const removedId of plan.removeIds) {
+          statements.push(c.var.DB.prepare("DELETE FROM grn_items WHERE id = ? AND grnId = ?").bind(removedId, id));
         }
+        plan.lines.forEach((l, i) => {
+          const f = fieldsOf(l.incoming);
+          totalAmount += f.acceptedQty * f.unitPrice;
+          if (l.id) {
+            const stored = storedById.get(l.id) as GRNItemRow;
+            statements.push(
+              c.var.DB.prepare(
+                `UPDATE grn_items SET materialCode = ?, materialName = ?, orderedQty = ?, receivedQty = ?,
+                   acceptedQty = ?, rejectedQty = ?, rejectionReason = ?, unitPrice = ?
+                 WHERE id = ? AND grnId = ?`,
+              ).bind(f.materialCode, f.materialName, f.orderedQty, f.receivedQty, f.acceptedQty, f.rejectedQty, f.rejectionReason, f.unitPrice, l.id, id),
+            );
+            finalLines.push({ poItemIndex: stored.poItemIndex ?? null, acceptedQty: f.acceptedQty, receivedQty: f.receivedQty, poId: resolved[i].poId, poItemId: resolved[i].poItemId });
+          } else {
+            const idx = Number(l.incoming.poItemIndex) || 0;
+            statements.push(
+              c.var.DB.prepare(
+                `INSERT INTO grn_items (grnId, poItemIndex, po_id, po_item_id, materialCode, materialName,
+                   orderedQty, receivedQty, acceptedQty, rejectedQty, rejectionReason, unitPrice)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              ).bind(id, idx, resolved[i].poId, resolved[i].poItemId, f.materialCode, f.materialName, f.orderedQty, f.receivedQty, f.acceptedQty, f.rejectedQty, f.rejectionReason, f.unitPrice),
+            );
+            finalLines.push({ poItemIndex: idx, acceptedQty: f.acceptedQty, receivedQty: f.receivedQty, poId: resolved[i].poId, poItemId: resolved[i].poItemId });
+          }
+        });
+        replacedDraftLines = finalLines;
       }
     }
 

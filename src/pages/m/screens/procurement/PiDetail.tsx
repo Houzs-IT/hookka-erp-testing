@@ -9,9 +9,9 @@
 //   Cancelled  Restore (back to the status before the void)
 // Void / Restore only for FINANCE / SUPER_ADMIN / ADMIN (server requireFinance).
 // ===========================================================================
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Ban, Banknote, CircleCheck, Download, Files, Package, Pencil, RotateCcw, Trash2, Wallet, type LucideIcon } from "lucide-react";
+import { Ban, Banknote, CircleCheck, Download, Files, FileText, Package, Pencil, RotateCcw, Trash2, Wallet, type LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { getCurrentUser } from "@/lib/auth";
@@ -29,6 +29,7 @@ import { BottomDock, ConfirmLines, FieldLabel, PrimaryButton, SheetFooter, Sheet
 import { DL, INPUT, SHADOW_SECTION, T } from "../delivery/ui-tokens";
 import { useConfirmSheet, useMobileToast } from "../delivery/ui-hooks";
 import { downloadPiPdf, putPi, refreshProcurementCaches, send } from "./actions";
+import { attachOnceReturningId, linkSourceDocument, listRecordFiles } from "../scan/attach-once";
 import { Banner, ChainRow, DetailColumn, Fact, FlagPill, InfoRows, KvSection, LineCard, MenuGroup, MenuRow, OffFlow, SectionTitle, Timeline, TilePill, TotalBlock, type ChainNode } from "./parts";
 import { DetailFrame } from "./ProcurementDetailScreen";
 import { PiEditForm } from "./PiForm";
@@ -57,6 +58,9 @@ export function PiDetail({ id }: { id: string }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [editing, setEditing] = useState<RawRow | null>(null);
+  const [attached, setAttached] = useState<{ id: string; filename?: string }[] | null>(null);
+  const [docsTick, setDocsTick] = useState(0);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const open = (docId: string) => navigate({ pathname: `/m/procurement/${encodeURIComponent(docId)}`, search: location.search });
 
   const done = (msg: string) => {
@@ -124,6 +128,54 @@ export function PiDetail({ id }: { id: string }) {
       setBusy(false);
       return r.ok ? done(`${no} restored`) : toast.show(r.error, "error");
     }
+  };
+
+  // Documents on the invoice: the source file linked at create (sourceDocumentFileId) PLUS anything attached afterwards through the
+  // generic file API (resourceType PI - what the scan follow-up step and "Add document" use). Deduplicated by file id.
+  useEffect(() => {
+    let live = true;
+    void listRecordFiles("PI", id).then((rows) => { if (live) setAttached(rows); });
+    return () => { live = false; };
+  }, [id, docsTick]);
+  const srcId = p ? s(p, "sourceDocumentFileId") : "";
+  const docs: { id: string; label: string; extra: boolean }[] = [
+    ...(srcId ? [{ id: srcId, label: "Source document", extra: false }] : []),
+    ...(attached ?? []).filter((f) => f.id !== srcId).map((f) => ({ id: f.id, label: f.filename || "Attached document", extra: true })),
+  ];
+  const docsLoaded = attached !== null;
+  // Attaching writes a file and touches the invoice evidence: both permissions, and never on a cancelled invoice.
+  const canAttach = !!p && normalizePiStatus(s(p, "status")) !== "CANCELLED" && hasPermission("files", "create") && hasPermission("purchase-invoices", "update");
+  const addDocument = async (f: File | undefined) => {
+    if (!f || !p || busy) return;
+    setBusy(true);
+    const fid = await attachOnceReturningId({ kind: "file", file: f }, "PI", id, f.name);
+    if (!fid) { setBusy(false); return toast.show("The document could not be attached. Try again.", "error"); }
+    // No source document yet: this one becomes it, so the desktop shows it too. Linking the same file twice is a no-op, so a retry is safe.
+    let linkedMsg = "Document attached";
+    if (!srcId) {
+      const l = await linkSourceDocument(id, fid);
+      if (!l.ok) { setBusy(false); setDocsTick((t) => t + 1); return toast.show(`Attached, but it could not be set as the source document (${l.error}). Choose the same file again to retry.`, "error"); }
+      linkedMsg = "Document attached as the source";
+      refresh();
+    }
+    setBusy(false);
+    setDocsTick((t) => t + 1);
+    toast.show(linkedMsg, "success");
+  };
+  // An attached file made the invoice's source. Replacing an existing source is only ever done from here, after a confirmation.
+  const makeSource = async (fileId: string, name: string) => {
+    if (busy) return;
+    if (srcId) {
+      const ok = await confirmSheet.confirm({ title: "Replace the source document?", sub: name, lines: [{ icon: "warning", text: "This invoice already has a source document. The desktop will show this file as the source instead. The old file stays attached." }], confirmLabel: "Replace" });
+      if (!ok) return;
+    }
+    setBusy(true);
+    const l = await linkSourceDocument(id, fileId, !!srcId);
+    setBusy(false);
+    if (!l.ok) return toast.show(l.error, "error");
+    refresh();
+    setDocsTick((t) => t + 1);
+    toast.show("Source document updated", "success");
   };
 
   const raw = p ? s(p, "status") : "";
@@ -222,6 +274,27 @@ export function PiDetail({ id }: { id: string }) {
                   </ol>
                 );
               })()}
+            </Surface>
+
+            <Surface ariaLabel="Documents" style={{ marginTop: 16, padding: "12px 14px" }} radius={16}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <FileText size={16} strokeWidth={1.9} color={M.taupe} aria-hidden />
+                <span style={{ flex: 1, ...T.cardTitle, color: M.raisin }}>Documents</span>
+                {canAttach ? (
+                  <button type="button" onClick={() => fileRef.current?.click()} disabled={busy} style={{ height: 32, padding: "0 12px", border: `1px solid ${M.border}`, borderRadius: 10, background: M.card, color: M.raisin, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Add document</button>
+                ) : null}
+              </div>
+              <input ref={fileRef} type="file" accept="image/*,application/pdf" hidden onChange={(e) => { void addDocument(e.target.files?.[0]); e.target.value = ""; }} />
+              {docs.length === 0 ? <div style={{ ...T.meta, color: M.muted, marginTop: 8 }}>{docsLoaded ? "No document attached." : "Loading documents…"}</div> : null}
+              {docs.map((d) => (
+                <a key={d.id} href={`/api/files/${encodeURIComponent(d.id)}/download?inline=1`} target="_blank" rel="noreferrer" aria-label={`View ${d.label}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${DL.track}`, marginTop: 8, color: M.raisin, textDecoration: "none" }}>
+                  <span style={{ flex: 1, minWidth: 0, ...T.cardTitle, overflowWrap: "anywhere" }}>{d.label}</span>
+                  <span style={{ ...T.meta, color: M.taupe }}>View</span>
+                </a>
+              ))}
+              {canAttach ? docs.filter((d) => d.extra).map((d) => (
+                <button key={`mk-${d.id}`} type="button" onClick={() => void makeSource(d.id, d.label)} disabled={busy} aria-label={`${srcId ? "Replace the source with" : "Make source"} ${d.label}`} style={{ marginTop: 6, height: 32, padding: "0 12px", border: `1px solid ${M.border}`, borderRadius: 10, background: M.card, color: M.raisin, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{srcId ? `Use ${d.label} as the source` : `Make ${d.label} the source`}</button>
+              )) : null}
             </Surface>
 
             <InfoRows

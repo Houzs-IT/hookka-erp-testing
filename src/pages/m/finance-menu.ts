@@ -5,9 +5,9 @@
 // deep link without permission shows "No access" and the API still denies).
 // ---------------------------------------------------------------------------
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Landmark, LayoutGrid, TrendingUp, ArrowDownUp, Scale, HandCoins, Receipt } from "lucide-react";
+import { BarChart3, Landmark, LayoutGrid, TrendingUp, ArrowDownUp, Scale, HandCoins, Receipt, WalletCards } from "lucide-react";
 
-export type FinanceScreen = "dashboard" | "cash" | "overview" | "pl" | "cashflow" | "bs" | "debtors" | "creditors";
+export type FinanceScreen = "dashboard" | "cash" | "overview" | "pl" | "cashflow" | "bs" | "debtors" | "creditors" | "vouchers";
 
 export type FinanceRow = { screen: FinanceScreen; label: string; icon: LucideIcon; navGate: string };
 
@@ -34,6 +34,11 @@ export const FINANCE_MENU: { title: string; rows: FinanceRow[] }[] = [
       { screen: "debtors", label: "Debtor Aging", icon: HandCoins, navGate: "/accounting?tab=ar" },
       { screen: "creditors", label: "Creditor Aging", icon: Receipt, navGate: "/accounting?tab=ap" },
     ],
+  },
+  {
+    // The one screen that is not read-only: scan a bill into a draft voucher and walk it along the approval steps.
+    title: "Payments",
+    rows: [{ screen: "vouchers", label: "Payment Vouchers", icon: WalletCards, navGate: "/accounting?tab=payments" }],
   },
 ];
 

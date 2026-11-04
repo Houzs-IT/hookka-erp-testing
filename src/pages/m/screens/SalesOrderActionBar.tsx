@@ -1,30 +1,23 @@
-// SalesOrderActionBar — the Sales Order status actions on wider screens, in the phone
-// design language (the Delivery detail's bottom bar and buttons). What each status
-// offers is data (lib/so-actions.ts); every button calls the handler the legacy tablet
-// screen used (lib/use-so-actions.ts), so requests and texts are unchanged.
+// SalesOrderActionBar — the Sales Order status actions at EVERY width (phone, fold, tablet), in the
+// phone design language (the Delivery detail's bottom bar and buttons). What each status offers, and
+// to whom, is data (lib/so-actions.ts: the desktop rules + the user's permissions); every button calls
+// a handler from lib/use-so-actions.ts. The phone's bar sits above the tab bar, like the Delivery one.
 import { type ReactNode } from "react";
 import { M } from "../theme";
 import { useResponsiveLayout } from "../lib/responsive-layout";
-import { SO_ACTION_LABEL, soActionPlan, type SoActionKind } from "../lib/so-actions";
+import { SO_ACTION_LABEL, type SoActionKind, type SoActionPlan } from "../lib/so-actions";
 import { BottomDock, PrimaryButton, SecondaryButton } from "./delivery/ui";
 import { SHADOW_CONTROL, sem } from "./delivery/ui-tokens";
 
-type Handlers = {
-  onEditDraft: () => void;
-  onConfirm: () => void;
-  onUndoCancel: () => void;
-  onIssueDo: () => void;
-  onEdit: () => void;
-  onCancel: () => void;
-  onBack: () => void;
-};
+export type SoHandlers = Record<SoActionKind, () => void>;
 
-function DangerButton({ children, onClick, disabled }: { children: ReactNode; onClick: () => void; disabled?: boolean }) {
+function DangerButton({ children, onClick, disabled, title }: { children: ReactNode; onClick: () => void; disabled?: boolean; title?: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       style={{
         flex: 1, minWidth: 0, height: 50, borderRadius: 14, border: "none", background: M.card, color: sem("danger"),
         fontFamily: "inherit", fontSize: "var(--m-type-button-size)", fontWeight: 700, cursor: disabled ? "default" : "pointer",
@@ -37,31 +30,24 @@ function DangerButton({ children, onClick, disabled }: { children: ReactNode; on
   );
 }
 
-export function SalesOrderActionBar({ status, busy, ...on }: { status: string; busy: boolean } & Handlers) {
+/** Renders nothing for a status with no action and nothing to say. */
+export function SalesOrderActionBar({ plan, busy, on }: { plan: SoActionPlan; busy: boolean; on: SoHandlers }) {
   const layout = useResponsiveLayout();
-  const plan = soActionPlan(status);
-
-  const handler: Record<SoActionKind, () => void> = {
-    "edit-draft": on.onEditDraft,
-    confirm: on.onConfirm,
-    "undo-cancel": on.onUndoCancel,
-    "issue-do": on.onIssueDo,
-    edit: on.onEdit,
-    cancel: on.onCancel,
-    back: on.onBack,
-  };
+  if (plan.rows.length === 0 && !plan.note) return null;
 
   const button = (kind: SoActionKind, primary: boolean) => {
     const label = SO_ACTION_LABEL[kind];
-    // Back and Edit never wait on a request; the rest are disabled while one is running.
-    const disabled = busy && kind !== "back" && kind !== "edit" && kind !== "edit-draft" && kind !== "issue-do";
-    if (kind === "cancel") return <DangerButton key={kind} onClick={handler[kind]} disabled={disabled}>{label}</DangerButton>;
-    if (primary) return <PrimaryButton key={kind} onClick={handler[kind]} disabled={disabled}>{label}</PrimaryButton>;
-    return <SecondaryButton key={kind} onClick={handler[kind]} disabled={disabled}>{label}</SecondaryButton>;
+    const why = plan.disabled?.[kind];
+    // Edit and the override only open a sheet; every other action is a request, so it waits for the one in flight.
+    const sheetOnly = kind === "edit" || kind === "edit-draft" || kind === "override-edit" || kind === "issue-do" || kind === "hold" || kind === "generate-invoice" || kind === "service-case";
+    const disabled = !!why || (busy && !sheetOnly);
+    if (kind === "cancel" || kind === "delete-draft") return <DangerButton key={kind} onClick={on[kind]} disabled={disabled} title={why}>{label}</DangerButton>;
+    if (primary) return <PrimaryButton key={kind} onClick={on[kind]} disabled={disabled}>{label}</PrimaryButton>;
+    return <SecondaryButton key={kind} onClick={on[kind]} disabled={disabled}>{label}</SecondaryButton>;
   };
 
   // Primary = the forward action of the status; the rest are secondary.
-  const primaryKinds = new Set<SoActionKind>(["confirm", "undo-cancel", "issue-do"]);
+  const primaryKinds = new Set<SoActionKind>(["confirm", "undo-cancel", "issue-do", "resume", "generate-invoice"]);
 
   return (
     <BottomDock variant="detail" scope={layout.canSplitDetail ? "detail" : "content"}>

@@ -29,7 +29,7 @@
 // Order: header → overview → payments → notes → progress (production + delivery) →
 // items → documents / more details / history (collapsed).
 // ===========================================================================
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowRight,
@@ -61,11 +61,17 @@ import {
 } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { useContainerLayout, useResponsiveLayout } from "../lib/responsive-layout";
-import { useSalesOrderActions } from "../lib/use-so-actions";
+import { getCurrentUser } from "@/lib/auth";
+import { usePermissions } from "@/lib/use-permission";
+import { useSalesOrderActions, type SoInfo } from "../lib/use-so-actions";
+import { soActionPlan, soEditLocks, type SoEligibility } from "../lib/so-actions";
+import { CustomerChangeSheet, HubChangeSheet, ServiceCaseSheet } from "./so/so-change-sheets";
 import { hasBalanceDue, soFinancials, type SoFinancials } from "../lib/so-financials";
-import { useMobileToast } from "./delivery/ui-hooks";
+import { useConfirmSheet, useMobileToast } from "./delivery/ui-hooks";
 import { SalesOrderActionBar } from "./SalesOrderActionBar";
-import { FormSheet, MobileHeader, MobileCard, Sheet } from "../components";
+import { HoldSheet, InfoSheet, OverrideSheet } from "./so/so-action-sheets";
+import { SoEditSheet } from "./so/SoEditSheet";
+import { MobileHeader, MobileCard, Sheet } from "../components";
 import { HeaderMore } from "./procurement/parts";
 import { soCountdown, soStage } from "../lib/so-card";
 import { localToday } from "../lib/so-filter-presets";
@@ -95,6 +101,11 @@ import {
 
 type RawRow = Record<string, unknown>;
 type Envelope = { success?: boolean; data?: RawRow } & Record<string, unknown>;
+
+/** The signed-in user's role, upper-cased; empty when no session is stored (server render, tests). */
+const userRole = (): string => {
+  try { return (getCurrentUser()?.role || "").toUpperCase(); } catch { return ""; }
+};
 type ListResp = { data?: RawRow[] };
 
 // Prototype surface: borderless card with a soft two-layer shadow.
@@ -241,7 +252,23 @@ export function SalesOrderDetail() {
   const container = useContainerLayout();
   const twoColumns = wide && container.width >= SO_TWO_COLUMN_MIN_WIDTH;
   const toast = useMobileToast();
-  const actions = useSalesOrderActions({ url, id, doc, notify: (text, tone) => toast.show(text, tone) });
+  const confirmSheet = useConfirmSheet();
+  const [info, setInfo] = useState<SoInfo | null>(null);
+  const { hasPermission } = usePermissions();
+  // Edit lock / cancel lock verdict (desktop reads the same endpoint). Only in-flight orders need it.
+  const liveStatus = doc ? str(doc, "status") : "";
+  const eligibility = useCachedJson<NonNullable<SoEligibility>>(docId && (liveStatus === "CONFIRMED" || liveStatus === "IN_PRODUCTION") ? `${url}/edit-eligibility` : null);
+  const actions = useSalesOrderActions({
+    url,
+    id,
+    doc,
+    notify: (text, tone) => toast.show(text, tone),
+    ask: confirmSheet.confirm,
+    info: setInfo,
+    goDelivery: () => navigate("/m/delivery"),
+    goInvoices: () => navigate("/m/invoices"),
+    afterDelete: () => navigate("/m/sales", { replace: true }),
+  });
 
   const header = (title: string) => <MobileHeader title={title} onBack={() => navigate(-1)} />;
 
@@ -302,6 +329,9 @@ export function SalesOrderDetail() {
   const pos = rows(env.linkedPOs);
   const dos = rows(env.linkedDOs);
   const invoices = rows(env.linkedInvoices);
+  // Change customer / hub: open until goods leave the warehouse (the customer also until an invoice is issued) — the desktop rule.
+  const locks = soEditLocks(dos, invoices);
+  const canChangeParty = hasPermission("sales-orders", "update");
   // Paid / Balance exist only on wider screens: the phone detail stays read-only and money-light.
   const payments = wide ? rows(env.linkedPayments) : [];
   const financials = soFinancials(num(doc, "totalSen"), payments);
@@ -402,6 +432,15 @@ export function SalesOrderDetail() {
                   span
                 />
               </div>
+              {canChangeParty ? (
+                <div style={{ display: "grid", gap: 8, marginTop: 14 }} aria-label="Change customer or hub">
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" onClick={() => actions.setCustomerOpen(true)} disabled={!!locks.customer} aria-label="Change customer" style={changeBtn(!!locks.customer)}>Change customer</button>
+                    <button type="button" onClick={() => actions.setHubOpen(true)} disabled={!!locks.hub} aria-label="Change delivery hub" style={changeBtn(!!locks.hub)}>Change hub</button>
+                  </div>
+                  {locks.customer || locks.hub ? <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.4 }}>{[locks.customer, locks.hub].filter(Boolean).join(" ")}</div> : <div style={{ fontSize: 11.5, color: M.muted }}>Editable until goods leave the warehouse (the customer also until an invoice is issued).</div>}
+                </div>
+              ) : null}
             </Surface>
             {banner ? (
               <div
@@ -1139,6 +1178,22 @@ export function SalesOrderDetail() {
     </>
   );
 
+  // What this user may do with this order now: the desktop status rules x their permissions (lib/so-actions.ts).
+  const plan = soActionPlan(status, {
+    can: {
+      confirm: hasPermission("sales-orders", "confirm"),
+      update: hasPermission("sales-orders", "update"),
+      issueDo: hasPermission("delivery-orders", "create"),
+      invoice: hasPermission("invoices", "create"),
+      serviceCase: hasPermission("service-cases", "create"),
+      del: hasPermission("sales-orders", "delete"),
+    },
+    locked: !!(data as Record<string, unknown> | null)?.lockReason,
+    eligibility: eligibility.data ?? null,
+    isAdmin: ["ADMIN", "SUPER_ADMIN"].includes(userRole()),
+  });
+  const hasBar = plan.rows.length > 0 || !!plan.note;
+
   return (
     <>
       <MobileHeader
@@ -1146,34 +1201,68 @@ export function SalesOrderDetail() {
         onBack={() => navigate(-1)}
         trailing={<HeaderMore label="More actions" onClick={() => setMoreOpen(true)} />}
       />
-      <div style={{ padding: wide ? "14px 16px 108px" : "14px 16px 28px" }}>
+      <div style={{ padding: hasBar ? (wide ? "14px 16px 108px" : "14px 16px 224px") : wide ? "14px 16px 108px" : "14px 16px 28px" }}>
         {headerBlock}
         {sections}
       </div>
-      {wide ? (
-        <>
-          <SalesOrderActionBar
-            status={status}
-            busy={actions.busy}
-            onEditDraft={actions.openEdit}
-            onConfirm={actions.onConfirm}
-            onUndoCancel={actions.onUndoCancel}
-            onIssueDo={actions.openIssueDo}
-            onEdit={actions.openEdit}
-            onCancel={actions.onCancel}
-            onBack={() => navigate(-1)}
-          />
-          <FormSheet
-            open={actions.editSpec != null}
-            onClose={() => actions.setEditSpec(null)}
-            spec={actions.editSpec}
-            onSaved={(to) => {
-              actions.setEditSpec(null);
-              actions.reload();
-              if (to) navigate(to);
-            }}
-          />
-        </>
+      <SalesOrderActionBar
+        plan={plan}
+        busy={actions.busy}
+        on={{
+          "edit-draft": actions.openEdit,
+          edit: actions.openEdit,
+          "override-edit": () => actions.setOverrideOpen(true),
+          confirm: actions.onConfirm,
+          hold: () => actions.setHoldOpen(true),
+          resume: actions.onResume,
+          cancel: actions.onCancel,
+          "undo-cancel": actions.onUndoCancel,
+          "issue-do": actions.openIssueDo,
+          "generate-invoice": actions.openGenerateInvoice,
+          "service-case": () => actions.setCaseOpen(true),
+          "delete-draft": actions.onDelete,
+        }}
+      />
+      <ServiceCaseSheet
+        open={actions.caseOpen}
+        orderId={docId}
+        companySO={companySOId}
+        items={items}
+        onClose={() => actions.setCaseOpen(false)}
+        onCreated={(caseId) => { actions.setCaseOpen(false); toast.show("Service case opened", "success"); navigate(`/m/servicecases/${encodeURIComponent(caseId)}`); }}
+      />
+      <CustomerChangeSheet
+        open={actions.customerOpen}
+        orderId={docId}
+        currentCustomerId={str(doc, "customerId")}
+        onClose={() => actions.setCustomerOpen(false)}
+        onSaved={(msg) => { actions.setCustomerOpen(false); actions.reload(); toast.show(msg, "success"); }}
+      />
+      <HubChangeSheet
+        open={actions.hubOpen}
+        orderId={docId}
+        customerId={str(doc, "customerId")}
+        currentHubId={str(doc, "hubId")}
+        onClose={() => actions.setHubOpen(false)}
+        onSaved={(msg, warnings) => { actions.setHubOpen(false); actions.reload(); toast.show(msg, "success"); for (const w of warnings) toast.show(w, "error"); }}
+      />
+      {confirmSheet.node}
+      <InfoSheet info={info} onClose={() => setInfo(null)} />
+      <HoldSheet open={actions.holdOpen} busy={actions.busy} onClose={() => actions.setHoldOpen(false)} onSubmit={(r) => void actions.submitHold(r)} />
+      <OverrideSheet open={actions.overrideOpen} busy={actions.busy} onClose={() => actions.setOverrideOpen(false)} onSubmit={actions.submitOverride} />
+      {actions.editOpen && doc ? (
+        <SoEditSheet
+          doc={doc}
+          id={docId}
+          overrideToken={actions.overrideToken}
+          onClose={() => { actions.setEditOpen(false); actions.setOverrideToken(null); }}
+          onSaved={() => {
+            actions.setEditOpen(false);
+            actions.setOverrideToken(null);
+            actions.reload();
+            toast.show("Order saved", "success");
+          }}
+        />
       ) : null}
       {toast.node}
 
@@ -1256,6 +1345,12 @@ export function SalesOrderDetail() {
 function poHex(status: string): string {
   return resolveStatus(status, STATUS_MAPS.production).style.hex;
 }
+
+/** The two small "Change …" buttons under the order overview. */
+const changeBtn = (disabled: boolean): CSSProperties => ({
+  flex: 1, minWidth: 0, height: 40, borderRadius: 12, border: `1px solid ${M.border}`, background: M.card, color: M.raisin, fontFamily: "inherit",
+  fontSize: 13, fontWeight: 700, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1, WebkitTapHighlightColor: "transparent",
+});
 
 function Surface({
   children,

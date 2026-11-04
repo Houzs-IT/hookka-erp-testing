@@ -40,6 +40,7 @@ import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
 import { loadGrnReturnedQty, loadPoReturnedQty } from "../lib/purchase-return-create";
 import grnApp from "./grn";
+import { planPiLines, validateNewPiLinks, type GrnItemRow, type PoRow } from "../lib/pi-line-edit";
 
 // ---------------------------------------------------------------------------
 // Runtime schema self-apply — convert-chain columns (PO→GRN→PI). All
@@ -311,6 +312,8 @@ export type PurchaseInvoiceItem = {
   lineType: PurchaseInvoiceItemLineType;
   notes: string | null;
   grnItemId: string | null;
+  /** The purchase order this line is billed against (null = the invoice's header PO, or none). Read back so an edit can keep it. */
+  poId: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -339,6 +342,8 @@ type PurchaseInvoiceItemRow = {
   notes: string | null;
   grn_item_id?: string | null;
   grnItemId?: string | null;
+  po_id?: string | null;
+  poId?: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -449,6 +454,7 @@ function rowToItem(r: PurchaseInvoiceItemRow): PurchaseInvoiceItem {
     lineType: VALID_LINE_TYPES.includes(lineType) ? lineType : "OTHER",
     notes: r.notes ?? null,
     grnItemId: r.grnItemId ?? r.grn_item_id ?? null,
+    poId: ((r.poId ?? r.po_id) ?? "") || null,
     created_at: r.created_at ?? null,
     updated_at: r.updated_at ?? null,
   };
@@ -2360,6 +2366,8 @@ app.put("/:id", async (c) => {
   // If items[] is given, validate and use it to recompute amountSen.
   // If items[] is omitted, leave existing items + amountSen logic untouched.
   let normalizedItems: ReturnType<typeof normalizeItems> | null = null;
+  // created_at of each kept line, so a re-save keeps the order the lines were first written in.
+  let keptCreatedAt: (string | null)[] = [];
   if (body.items !== undefined) {
     // Line-item edits are allowed while DRAFT or CONFIRMED (owner ruling
     // 2026-06-22 / re-confirmed 2026-06-29 — "editable, with stock/ledger
@@ -2397,6 +2405,60 @@ app.put("/:id", async (c) => {
     if (!normalizedItems.ok) {
       return c.json({ success: false, error: normalizedItems.error }, 400);
     }
+    // Which stored line is each edited line? By its id (see lib/pi-line-edit.ts): a kept line keeps its id, its PO and its
+    // goods-receipt link, a changed link is refused, a new line's links are validated, and an id-less line that could be
+    // several stored lines is refused instead of guessed. Done BEFORE the ceiling checks so they see the real links.
+    const storedLines = await db
+      .prepare("SELECT * FROM purchase_invoice_items WHERE pi_id = ? ORDER BY created_at ASC, id ASC")
+      .bind(id)
+      .all<Record<string, unknown>>();
+    const linePlan = planPiLines(
+      (storedLines.results ?? []) as never,
+      body.items as never,
+      (existing as unknown as { purchaseOrderId?: string | null }).purchaseOrderId ?? null,
+    );
+    if (!linePlan.ok) {
+      return c.json({ success: false, error: linePlan.error }, linePlan.status);
+    }
+    const claimedPos = [...new Set(linePlan.lines.filter((l) => l.claimed && l.poId).map((l) => l.poId as string))];
+    const claimedGrnItems = [...new Set(linePlan.lines.filter((l) => l.claimed && l.grnItemId).map((l) => l.grnItemId as string))];
+    const poMap = new Map<string, PoRow>();
+    const grnItemMap = new Map<string, GrnItemRow>();
+    if (claimedPos.length) {
+      const r = await db
+        .prepare(`SELECT id, supplierId FROM purchase_orders WHERE id IN (${claimedPos.map(() => "?").join(",")})`)
+        .bind(...claimedPos)
+        .all<PoRow>();
+      for (const row of r.results ?? []) poMap.set(String(row.id), { id: String(row.id), supplierId: row.supplierId });
+    }
+    if (claimedGrnItems.length) {
+      const r = await db
+        .prepare(`SELECT id, grnId FROM grn_items WHERE id IN (${claimedGrnItems.map(() => "?").join(",")})`)
+        .bind(...claimedGrnItems)
+        .all<GrnItemRow>();
+      for (const row of r.results ?? []) grnItemMap.set(String(row.id), { id: String(row.id), grnId: row.grnId });
+    }
+    for (let i = 0; i < linePlan.lines.length; i++) {
+      if (!linePlan.lines[i].claimed) continue;
+      const v = validateNewPiLinks(
+        linePlan.lines[i],
+        {
+          supplierId: (existing as unknown as { supplierId?: string | null }).supplierId ?? null,
+          grnId: (existing as unknown as { grnId?: string | null; grn_id?: string | null }).grnId ?? (existing as unknown as { grn_id?: string | null }).grn_id ?? null,
+        },
+        poMap,
+        grnItemMap,
+        i,
+      );
+      if (!v.ok) return c.json({ success: false, error: v.error }, v.status);
+    }
+    normalizedItems.rows.forEach((r, i) => {
+      const pl = linePlan.lines[i];
+      if (pl.id) r.id = pl.id; // stable line id across saves
+      r.poId = pl.poId;
+      r.grnItemId = pl.grnItemId;
+    });
+    keptCreatedAt = linePlan.lines.map((l) => l.createdAt);
     // GRN-sourced lines drive grn_items.invoiced_qty. When this PI is being
     // re-lined, the OLD consumption is decremented (buildGrnRestoreStatements)
     // and the NEW lines re-increment. Before we commit, verify the NEW qty per
@@ -2590,7 +2652,7 @@ app.put("/:id", async (c) => {
     statements.push(
       db.prepare("DELETE FROM purchase_invoice_items WHERE pi_id = ?").bind(id),
     );
-    for (const r of normalizedItems.rows) {
+    for (const [lineIdx, r] of normalizedItems.rows.entries()) {
       statements.push(
         db
           .prepare(
@@ -2619,7 +2681,7 @@ app.put("/:id", async (c) => {
             r.poId ??
               (existing as unknown as { purchaseOrderId?: string | null }).purchaseOrderId ??
               null,
-            now,
+            keptCreatedAt[lineIdx] ?? now,
             null,
           ),
       );
@@ -3074,6 +3136,59 @@ app.put("/:id", async (c) => {
 // runs in the SAME batch as the row delete (atomic) and is computed BEFORE
 // the delete, since the FK cascade is about to remove the lines it reads.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// POST /api/purchase-invoices/:id/source-document — link a file as this invoice's SOURCE document AFTER it was created.
+// `sourceDocumentFileId` used to be settable only by the create, so an invoice made without its scan (or whose upload failed)
+// could never show it on the desktop's "View source document". The file is uploaded first through the generic file API
+// (resourceType "PI", resourceId = this invoice); this call links it.
+//   · permission purchase-invoices:update; allowed on any status except CANCELLED (evidence, not a money edit);
+//   · the file must exist IN THIS ORGANISATION and be attached to THIS invoice (resourceType PI, resourceId = :id);
+//   · linking the file that is already the source is a no-op (safe to retry); replacing a DIFFERENT source needs
+//     `replace: true` (an explicit action), otherwise 409.
+// ---------------------------------------------------------------------------
+app.post("/:id/source-document", async (c) => {
+  const denied = await requirePermission(c, "purchase-invoices", "update");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const id = c.req.param("id");
+  await ensurePiMigrations(db);
+  const body = (await c.req.json().catch(() => ({}))) as { fileId?: unknown; replace?: unknown };
+  const fileId = String(body.fileId ?? "").trim();
+  if (!fileId) return c.json({ success: false, error: "fileId is required" }, 400);
+  const pi = await db.prepare("SELECT * FROM purchase_invoices WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  if (!pi) return c.json({ success: false, error: "PI not found" }, 404);
+  if (String(pi.status ?? "").toUpperCase() === "CANCELLED") {
+    return c.json({ success: false, error: "A cancelled invoice takes no new source document." }, 409);
+  }
+  const file = await db
+    .prepare("SELECT id, resourceType, resourceId FROM file_assets WHERE id = ? AND orgId = ?")
+    .bind(fileId, getOrgId(c))
+    .first<Record<string, unknown>>();
+  if (!file) return c.json({ success: false, error: "File not found" }, 404);
+  const fileType = String(file.resourceType ?? file.resource_type ?? "");
+  const fileOwner = String(file.resourceId ?? file.resource_id ?? "");
+  if (fileType !== "PI" || fileOwner !== id) {
+    return c.json({ success: false, error: "That file is not attached to this invoice." }, 400);
+  }
+  const current = String(pi.sourceDocumentFileId ?? pi.source_document_file_id ?? "").trim();
+  if (current === fileId) return c.json({ success: true, data: { sourceDocumentFileId: fileId, unchanged: true } });
+  if (current && body.replace !== true) {
+    return c.json({ success: false, error: "This invoice already has a source document. Replacing it needs an explicit confirmation." }, 409);
+  }
+  await db
+    .prepare("UPDATE purchase_invoices SET source_document_file_id = ?, updated_at = ? WHERE id = ?")
+    .bind(fileId, new Date().toISOString(), id)
+    .run();
+  await emitAudit(c, {
+    resource: "purchase-invoices",
+    resourceId: id,
+    action: current ? "replace-source-document" : "link-source-document",
+    before: { sourceDocumentFileId: current || null },
+    after: { sourceDocumentFileId: fileId },
+  });
+  return c.json({ success: true, data: { sourceDocumentFileId: fileId, unchanged: false } });
+});
+
 app.delete("/:id", async (c) => {
   const denied = await requirePermission(c, "purchase-invoices", "delete");
   if (denied) return denied;

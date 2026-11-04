@@ -64,6 +64,10 @@ type DraftLine = {
   // restores the old consumption then re-increments off this id). Dropping it
   // would silently free the GRN line's invoiced qty on every edit.
   grnItemId: string | null;
+  // The stored line this draft line IS, and the PO it is billed against. Sent back on save so the server keeps
+  // the line's id and its PO / GRN link (a line without them was re-created on the header PO). Null on a new line.
+  id?: string | null;
+  poId?: string | null;
 };
 
 // Status lifecycle (post-simplification, owner 2026-06-29):
@@ -105,6 +109,7 @@ type PurchaseInvoiceItem = {
   lineType: LineType;
   notes: string | null;
   grnItemId?: string | number | null;
+  poId?: string | null;
 };
 
 // Linked documents, returned by GET /api/purchase-invoices/:id alongside the
@@ -192,6 +197,8 @@ export default function PurchaseInvoiceDetailPage() {
   // Purchase Company letterhead — print the PI under the supplier's buying
   // company (HOOKKA / OHANA / any sister co in the registry) while the
   // accounting entity stays HOOKKA ("borrow the letterhead"). Lightweight JSON.
+  // Files attached to this invoice through the generic file API (the phone's "Add document" and the scan follow-up use it).
+  const { data: attachedResp } = useCachedJson<{ success?: boolean; data?: Array<{ id: string; filename?: string }> }>(id ? `/api/files?resourceType=PI&resourceId=${encodeURIComponent(id)}` : null);
   const { data: supResp } = useCachedJson<{ data?: Array<{ id: string; purchaseOrgCode?: string; address?: string; contactPerson?: string; phone?: string; email?: string }> }>("/api/suppliers");
   const { data: orgsResp } = useCachedJson<{ organisations?: Array<{ code?: string; name?: string; regNo?: string; tin?: string; address?: string; phone?: string; email?: string }> }>("/api/organisations");
 
@@ -427,6 +434,8 @@ export default function PurchaseInvoiceDetailPage() {
         taxRm: (Number(it.taxSen || 0) / 100).toFixed(2),
         lineType: it.lineType,
         grnItemId: it.grnItemId == null ? null : String(it.grnItemId),
+        id: it.id == null ? null : String(it.id),
+        poId: it.poId || null,
       })),
     );
     setDirty(false);
@@ -538,6 +547,9 @@ export default function PurchaseInvoiceDetailPage() {
         lineType: l.lineType,
         // Preserve the GRN-source link so the backend keeps invoiced_qty in sync.
         grnItemId: l.grnItemId,
+        // The line's own id and PO: the server pairs lines by id and keeps their links (a new line has neither).
+        ...(l.id ? { id: l.id } : {}),
+        ...(l.poId ? { poId: l.poId } : {}),
       }));
       const res = await fetch(`/api/purchase-invoices/${pi.id}`, {
         method: "PUT",
@@ -789,6 +801,20 @@ export default function PurchaseInvoiceDetailPage() {
               <div className="pt-3 border-t border-[#E2DDD8]">
                 <p className="text-xs font-medium text-[#6B7280] mb-1">Remarks</p>
                 <p className="text-sm text-[#4B5563] whitespace-pre-wrap">{pi.remarks}</p>
+              </div>
+            )}
+
+            {(pi.sourceDocumentFileId || (attachedResp?.data ?? []).length > 0) && (
+              <div className="pt-3 border-t border-[#E2DDD8] space-y-1" data-testid="pi-documents">
+                <p className="text-xs font-medium text-[#6B7280] mb-1">Documents</p>
+                {[
+                  ...(pi.sourceDocumentFileId ? [{ id: pi.sourceDocumentFileId as string, label: "Source document" }] : []),
+                  ...(attachedResp?.data ?? []).filter((f) => f.id !== pi.sourceDocumentFileId).map((f) => ({ id: f.id, label: f.filename || "Attached document" })),
+                ].map((d) => (
+                  <a key={d.id} href={`/api/files/${encodeURIComponent(d.id)}/download?inline=1`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-sm text-[#6B5C32] hover:underline">
+                    <FileText className="h-3.5 w-3.5" /> {d.label}
+                  </a>
+                ))}
               </div>
             )}
 

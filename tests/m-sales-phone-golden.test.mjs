@@ -1,5 +1,8 @@
-// The approved 390px phone Sales Order screens must not change while the tablet
-// layouts are migrated. This server-renders the ENTRY screens in phone mode with
+// The 390px phone Sales Order screens must not change by accident. (Re-captured 2026-11-04: Mr Lim
+// required the desktop status actions on the phone, so the detail now carries the action bar / permission
+// note; the nine detail fingerprints that include it were regenerated on purpose. The list fingerprints
+// and the two detail cases with no action — READY_TO_SHIP and DELIVERED without permissions — are untouched.)
+// The approved layout must not change while the tablet layouts are migrated. This server-renders the ENTRY screens in phone mode with
 // fixture data and compares the markup fingerprint with the one captured from
 // upstream/staging before the migration (tests/fixtures/m-sales-phone-golden.json).
 // Fixture data only: it proves the phone DOM + inline styles are byte-identical for

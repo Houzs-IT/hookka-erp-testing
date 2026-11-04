@@ -422,6 +422,9 @@ export default function GRNDetailPage() {
       // through verbatim (the backend only moves accepted/received on a POSTED
       // GRN and ignores structural changes).
       const payloadItems = items.map((it, i) => ({
+        // The line's own id: the server pairs by id, not by position, and keeps
+        // the line's PO link (a draft's lines used to be re-created without it).
+        id: it.id,
         poItemIndex: it.poItemIndex,
         materialCode: it.materialCode,
         materialName: it.materialName,

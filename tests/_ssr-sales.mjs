@@ -79,12 +79,14 @@ export function listFixture(over = {}) {
 }
 
 /** Render a screen at a given SHELL width (390 phone, 768 / 1024 / 1180 tablet), optionally inside a split pane. */
-export async function renderScreen(modulePath, exportName, { width = 390, fixture = soFixture(), list = listFixture(), pane, route = "/m/sales/so-0001", routePath = "/m/sales/:id", contentWidth } = {}) {
+export async function renderScreen(modulePath, exportName, { width = 390, fixture = soFixture(), list = listFixture(), pane, route = "/m/sales/so-0001", routePath = "/m/sales/:id", contentWidth, permissions } = {}) {
   globalThis.__CACHED_FIXTURES__ = {
     "/api/sales-orders": list,
     "/api/sales-orders/": fixture,
     "/api/audit-events": { data: [] },
     "/api/files": { data: [] },
+    // Only when a test names the user's permissions; otherwise the screen sees no permission set, as before.
+    ...(permissions ? { "/api/auth/me/permissions": { permissions, navHidden: [], dashboardTabs: null } } : {}),
   };
   const mod = await import(pathToFileURL(resolvePath(process.cwd(), modulePath)).href);
   const layout = resolveResponsiveLayout(width, contentWidth);
