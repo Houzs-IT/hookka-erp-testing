@@ -39,6 +39,7 @@ import { printReport, type PrintColumn, type PrintCard, type PrintSection } from
 import { normalizePaymentMethod, paymentDestinationLabel } from "@/lib/payment-method";
 import { EmployeeDrawer, type EmployeeDraft } from "@/components/employee-drawer";
 import { WorkerPenaltyTab } from "@/components/worker-penalty-tab";
+import { OutsourcePieceTab } from "@/components/outsource-piece-tab";
 import { DepartmentMultiSelect } from "@/components/department-multi-select";
 import { POSITIONS, categoryOptions, positionHasCategory } from "@/lib/employee-options";
 import { asArray } from "@/lib/safe-json";
@@ -226,6 +227,7 @@ type PayslipData = {
   /** Approved worker penalties (DEV-22) recovered in this payslip, in sen.
    *  Same rule as the advance: ALREADY subtracted from netPay by the backend. */
   penaltyDeductionSen?: number;
+  pieceWagesSen?: number;
 };
 
 /** The slice of a worker penalty (DEV-22) the Payroll tab reads. */
@@ -11444,7 +11446,7 @@ function AdvancesTab({ workers }: { workers: Worker[] }) {
 
 // ========== MAIN PAGE ==========
 
-type TabKey = "working-hours" | "attendance" | "labor-cost" | "employee-master" | "efficiency" | "department-labor" | "detail" | "department-performance" | "payroll" | "advances" | "penalties" | "leave";
+type TabKey = "working-hours" | "attendance" | "labor-cost" | "employee-master" | "efficiency" | "department-labor" | "detail" | "department-performance" | "payroll" | "advances" | "penalties" | "outsource" | "leave";
 
 // Labor Cost tab is wedged between Working Hours and Payroll per spec — the
 // flow goes "what hours did people work" → "what did those hours cost vs the
@@ -11503,6 +11505,11 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
     key: "penalties",
     label: "Worker Penalty",
     icon: <AlertTriangle className="h-4 w-4" />,
+  },
+  {
+    key: "outsource",
+    label: "Outsource",
+    icon: <Users className="h-4 w-4" />,
   },
   // Wei Siang 2026-05-10: Leave Management hidden until rollout.
   // {
@@ -12150,6 +12157,9 @@ export default function EmployeesPage() {
 
       {activeTab === "penalties" && (
         <WorkerPenaltyTab workers={workers} />
+      )}
+      {activeTab === "outsource" && (
+        <OutsourcePieceTab workers={workers} />
       )}
 
       {activeTab === "leave" && (

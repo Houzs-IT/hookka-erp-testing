@@ -2135,6 +2135,7 @@
   "payslips": [
     "absence_deduction_sen",
     "advance_deduction_sen",
+    "piece_wages_sen",
     "absent_days",
     "allowances_sen",
     "bank_account",
