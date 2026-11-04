@@ -98,26 +98,31 @@ app.put("/rates", async (c) => {
   if (!worker) return c.json({ success: false, error: "Select an active outsourced worker" }, 400);
   const rates = Array.isArray(body.rates) ? (body.rates as Array<Record<string, unknown>>) : [];
   if (rates.length === 0) return c.json({ success: false, error: "No rates to save" }, 400);
-  const parsed: { itemCode: string; rateSen: number }[] = [];
+  const byCode = new Map<string, number>();
   for (const r of rates) {
     const itemCode = pieceItemCode(s(r.itemCode));
     const rateSen = Number(r.rateSen);
     if (!itemCode || !Number.isInteger(rateSen) || rateSen <= 0) {
       return c.json({ success: false, error: `Invalid rate for ${itemCode || "an item"}` }, 400);
     }
-    parsed.push({ itemCode, rateSen });
+    byCode.set(itemCode, rateSen);
   }
-  const userId = ctxGet(c, "userId");
-  for (const r of parsed) {
-    await c.var.DB.prepare(
-      `INSERT INTO outsource_piece_rates (id, worker_id, item_code, rate_sen, org_id, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (worker_id, item_code)
-       DO UPDATE SET rate_sen = EXCLUDED.rate_sen, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+  const parsed = [...byCode].map(([itemCode, rateSen]) => ({ itemCode, rateSen }));
+  const userId = ctxGet(c, "userId") || null;
+  const orgId = getOrgId(c);
+  // One statement, because a row-by-row save of a 240-line list ran past the
+  // browser's 30 s timeout and left the list half saved. Duplicate codes in one
+  // statement are a Postgres error, hence byCode.
+  await c.var.DB.prepare(
+    `INSERT INTO outsource_piece_rates (id, worker_id, item_code, rate_sen, org_id, updated_by)
+     VALUES ${parsed.map(() => "(?, ?, ?, ?, ?, ?)").join(", ")}
+     ON CONFLICT (worker_id, item_code)
+     DO UPDATE SET rate_sen = EXCLUDED.rate_sen, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+  )
+    .bind(
+      ...parsed.flatMap((r) => [`opr-${crypto.randomUUID().slice(0, 8)}`, worker.id, r.itemCode, r.rateSen, orgId, userId]),
     )
-      .bind(`opr-${crypto.randomUUID().slice(0, 8)}`, worker.id, r.itemCode, r.rateSen, getOrgId(c), userId || null)
-      .run();
-  }
+    .run();
   await emitAudit(c, { resource: RES, resourceId: worker.id, action: "update", after: { pieceRates: parsed } });
   return c.json({ success: true, saved: parsed.length });
 });
@@ -146,7 +151,12 @@ app.get("/importable", async (c) => {
     return c.json({ success: false, error: "From and To dates are required" }, 400);
   }
   const toEnd = `${to}T23:59:59.999Z`;
-  const binds: string[] = [getOrgId(c)];
+  const binds: string[] = department ? [department, getOrgId(c)] : [getOrgId(c)];
+  const finishedDate = department
+    ? `(SELECT MAX(jc.completed_date) FROM job_cards jc
+         WHERE jc.production_order_id = po.id AND jc.department_code = ?
+           AND jc.status IN ('COMPLETED', 'TRANSFERRED'))`
+    : "po.completed_date";
   let finished: string;
   if (department) {
     finished = `EXISTS (SELECT 1 FROM job_cards jc
@@ -169,12 +179,12 @@ app.get("/importable", async (c) => {
     c.var.DB,
     c.var.DB.prepare(
       `SELECT po.id, po.po_no, po.sales_order_no, po.customer_po_id, po.customer_name, po.product_code,
-              po.product_name, po.quantity, po.completed_date,
+              po.product_name, po.quantity, ${finishedDate} AS finished_date,
               r.worker_name AS imported_to, r.payroll_period AS imported_period
          FROM production_orders po
          LEFT JOIN outsource_piece_records r ON r.production_order_id = po.id
         WHERE po.org_id = ? AND ${finished} ${search}
-        ORDER BY po.completed_date DESC NULLS LAST, po.po_no DESC
+        ORDER BY finished_date DESC NULLS LAST, po.po_no DESC
         LIMIT 300`,
     ).bind(...binds),
   );
@@ -194,9 +204,10 @@ app.get("/importable", async (c) => {
       productCode,
       productName: s(o.productName, o.product_name),
       itemCode: items.join(" + "),
+      parts: items.map((item) => ({ itemCode: item, rateSen: rateMap.get(item) ?? null })),
       missing,
       quantity,
-      completedDate: s(o.completedDate, o.completed_date).slice(0, 10),
+      completedDate: s(o.finishedDate, o.finished_date).slice(0, 10),
       rateSen,
       amountSen: rateSen === null ? null : pieceAmountSen(quantity, rateSen),
       importedTo: s(o.importedTo, o.imported_to),
