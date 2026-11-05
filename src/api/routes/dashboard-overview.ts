@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import { parseDashPeriod } from "../lib/dash-period";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
+import { requirePermission, requireReadOrDashboardTab } from "../lib/rbac";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
 import { loadSoLinePriceIndex, priceForItem } from "../lib/do-value";
 import {
@@ -96,6 +97,11 @@ function fmtISO(d: Date): string {
 }
 
 app.get("/", async (c) => {
+  // getOrgId is tenancy, not access: this feed is company revenue, top sellers
+  // and plant load, which the owner opened to dashboard viewers only (2026-08-05).
+  // A tab-restricted role (PRODUCTION) reads it for its Sales tab cards.
+  const denied = await requireReadOrDashboardTab(c, "dashboard", "sales");
+  if (denied) return denied;
   const orgId = getOrgId(c);
   const { cached, invalidate } = await import("../lib/kv-cache");
 
@@ -2478,6 +2484,8 @@ app.get("/", async (c) => {
 //   - price trend: invoice price per metre for the top fabrics by invoiced metres.
 // Invoices are the only current price source: receipts into stock stop in 2026-03.
 app.get("/fabric-cost-compare", async (c) => {
+  const denied = await requirePermission(c, "dashboard", "read");
+  if (denied) return denied;
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const data = await cached(c, `dashboard:fabric-compare:${orgId}:v2`, 60, async () => {
@@ -2631,6 +2639,8 @@ app.get("/fabric-cost-compare", async (c) => {
 // Raw rows: text and numeric columns come back as strings or null.
 type PurchasingCompareRow = Record<string, string | null>;
 app.get("/purchasing-compare", async (c) => {
+  const denied = await requirePermission(c, "dashboard", "read");
+  if (denied) return denied;
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const data = await cached(c, `dashboard:purchasing-compare:${orgId}:v1`, 60, async () => {
@@ -2725,6 +2735,8 @@ app.get("/purchasing-compare", async (c) => {
 // Revenue chart.
 // ---------------------------------------------------------------------------
 app.get("/revenue-split", async (c) => {
+  const denied = await requireReadOrDashboardTab(c, "dashboard", "operations");
+  if (denied) return denied;
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const period = parseDashPeriod(c.req.query("period") ?? "all").key;

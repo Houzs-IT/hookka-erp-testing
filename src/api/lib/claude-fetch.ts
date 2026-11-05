@@ -7,7 +7,7 @@
 // `feature` names the caller in ai_usage_events (lib/ai-usage.ts), which is
 // how the IT Hub splits Hookka's AI cost by module. Keep the names stable.
 
-import { recordAiCall } from "./ai-usage";
+import { recordAiCall, recordAiCallNotReached } from "./ai-usage";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -19,7 +19,13 @@ export function setClaudeForwarder(f: Fetcher | undefined): void {
 }
 
 export async function claudeFetch(init: RequestInit, feature: string): Promise<Response> {
-  const res = await (forwarder ? forwarder.fetch(ANTHROPIC_URL, init) : fetch(ANTHROPIC_URL, init));
+  let res: Response;
+  try {
+    res = await (forwarder ? forwarder.fetch(ANTHROPIC_URL, init) : fetch(ANTHROPIC_URL, init));
+  } catch (err) {
+    recordAiCallNotReached(feature, init);
+    throw err;
+  }
   recordAiCall(feature, init, res);
   return res;
 }

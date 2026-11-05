@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-11-04** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-05** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -20,7 +20,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   `tenantMiddleware`, `apiRateLimit`. Route-level permissions come from
   `src/api/lib/rbac.ts` / `role-policy.ts` and are **not** shown here — a mount
   marked "gated" still enforces its own permission checks.
-- **Public surface at generation time** — PUBLIC_PATHS: `/api/auth/login`, `/api/auth/logout`, `/api/auth/accept-invite`, `/api/auth/forgot-password`, `/api/auth/reset-password`, `/api/auth/totp/login-verify`, `/api/health`, `/api/fe-rum/event`, `/api/sheets-sync/apps-script-webhook`.
+- **Public surface at generation time** — PUBLIC_PATHS: `/api/auth/login`, `/api/auth/logout`, `/api/auth/accept-invite`, `/api/auth/forgot-password`, `/api/auth/reset-password`, `/api/auth/totp/login-verify`, `/api/connect/verify-login`, `/api/health`, `/api/fe-rum/event`, `/api/sheets-sync/apps-script-webhook`.
   PUBLIC_PREFIXES: `/api/worker-auth/`, `/api/worker/`, `/api/auth/invite/`, `/api/auth/oauth/`, `/api/internal/reports/`, `/api/internal/delivery-agent/`, `/api/internal/agents/`, `/api/public/do-qr/`, `/api/public/rack-qr/`, `/api/public/rack-write/`, `/api/public/survey/`.
   Plus these individual paths, opened by regex allow-lists in `isPublicPath()`
   (each handler re-checks a worker token / dept restriction itself):
@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 147 mounts, 145 route files in
-`src/api/routes/`, 1055 top-level handler registrations discovered.
+**Counts at generation time:** 149 mounts, 147 route files in
+`src/api/routes/`, 1063 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -133,11 +133,12 @@ offsets pointing past the end of their own file.
 | `/api/fe-rum` | `src/api/routes/fe-rum.ts` | `POST /event` <sub>:126</sub> | gated (some paths public) |
 | `/api/job-cards` | `src/api/routes/job-cards.ts` | `GET /` <sub>:100</sub><br>`GET /summary` <sub>:261</sub><br>`GET /:id/events` <sub>:430</sub><br>`GET /duedate-original-backup` <sub>:536</sub><br>`GET /completion-pic-original-backup` <sub>:688</sub> | gated |
 | `/api/audit-events` | `src/api/routes/audit-events.ts` | `GET /` <sub>:49</sub> | gated |
-| `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:98</sub><br>`GET /fabric-cost-compare` <sub>:2480</sub><br>`GET /purchasing-compare` <sub>:2633</sub><br>`GET /revenue-split` <sub>:2727</sub> | gated |
+| `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:99</sub><br>`GET /fabric-cost-compare` <sub>:2486</sub><br>`GET /purchasing-compare` <sub>:2641</sub><br>`GET /revenue-split` <sub>:2737</sub> | gated |
 | `/api/dashboard/prototype` | `src/api/routes/dashboard-prototype.ts` | `GET /` <sub>:313</sub> | gated |
 | `/api/dashboard/finance` | `src/api/routes/dashboard-finance.ts` | `GET /` <sub>:42</sub><br>`PUT /valuation` <sub>:110</sub> | gated |
 | `/api/kpi` | `src/api/routes/kpi.ts` | `GET /me` <sub>:331</sub><br>`GET /users/:id` <sub>:340</sub><br>`GET /payout/:id` <sub>:355</sub><br>`PUT /payout/:id` <sub>:362</sub><br>`PUT /checklist/:kpiKey` <sub>:433</sub><br>`GET /checklist/:kpiKey` <sub>:494</sub><br>`POST /survey/:kpiKey` <sub>:516</sub><br>`POST /survey/:kpiKey/link` <sub>:573</sub><br>`PUT /rating/:kpiKey` <sub>:640</sub><br>`GET /survey/:kpiKey` <sub>:693</sub><br>`GET /library` <sub>:714</sub><br>`PUT /rules/:kpiKey` <sub>:772</sub><br>`GET /people` <sub>:815</sub><br>`GET /catalog` <sub>:864</sub><br>`GET /assignments/:id` <sub>:878</sub><br>`PUT /assignments/:id` <sub>:891</sub><br>`PUT /kpi/:kpiKey/assignees` <sub>:954</sub> | gated |
 | `/api/it-support` | `src/api/routes/it-support.ts` | `GET /tickets` <sub>:128</sub><br>`GET /unread-count` <sub>:137</sub><br>`GET /tickets/:code` <sub>:144</sub><br>`POST /tickets` <sub>:153</sub><br>`POST /tickets/:code/replies` <sub>:174</sub><br>`POST /tickets/:code/confirm` <sub>:193</sub><br>`GET /attachments/:id` <sub>:202</sub> | gated |
+| `/api/connect` | `src/api/routes/connect-login.ts` | `POST /verify-login` <sub>:52</sub> | gated (some paths public) |
 | `/api/mdm` | `src/api/routes/mdm.ts` | `GET /review-queue` <sub>:89</sub><br>`POST /review-queue/:id/dismiss` <sub>:198</sub><br>`POST /review-queue/:id/merge` <sub>:212</sub><br>`POST /detection/run` <sub>:232</sub> | gated |
 | `/api/files` | `src/api/routes/files.ts` | `POST /` <sub>:377</sub><br>`GET /` <sub>:406</sub><br>`PATCH /:id/cover` <sub>:437</sub><br>`GET /:id` <sub>:461</sub><br>`GET /:id/download` <sub>:483</sub><br>`GET /:id/stream` <sub>:526</sub><br>`DELETE /:id` <sub>:570</sub> | gated |
 | `/api/sheets-sync` | `src/api/routes/sheets-sync.ts` | `POST /apps-script-webhook` <sub>:66</sub><br>`POST /backfill` <sub>:332</sub> | gated (some paths public) |
@@ -147,6 +148,7 @@ offsets pointing past the end of their own file.
 | `/api/payroll-hour-deductions` | `src/api/routes/payroll-hour-deductions.ts` | `GET /` <sub>:64</sub><br>`POST /` <sub>:85</sub><br>`POST /auto-from-punch` <sub>:149</sub><br>`POST /settle-period` <sub>:211</sub><br>`DELETE /:id` <sub>:402</sub> | gated |
 | `/api/employee-advances` | `src/api/routes/employee-advances.ts` | `GET /` <sub>:67</sub><br>`GET /payout-listing` <sub>:105</sub><br>`POST /` <sub>:176</sub><br>`PUT /:id` <sub>:244</sub><br>`DELETE /:id` <sub>:305</sub> | gated |
 | `/api/worker-penalties` | `src/api/routes/worker-penalties.ts` | `GET /` <sub>:253</sub><br>`GET /order-lookup` <sub>:311</sub><br>`GET /order-lookup/:id` <sub>:357</sub><br>`GET /:id` <sub>:431</sub><br>`POST /` <sub>:444</sub><br>`PUT /:id` <sub>:500</sub><br>`DELETE /:id` <sub>:544</sub><br>`POST /:id/submit` <sub>:561</sub><br>`POST /:id/approve` <sub>:585</sub><br>`POST /:id/reject` <sub>:622</sub><br>`POST /:id/revoke` <sub>:653</sub> | gated |
+| `/api/outsource-piece` | `src/api/routes/outsource-piece.ts` | `GET /rates` <sub>:73</sub><br>`PUT /rates` <sub>:92</sub><br>`DELETE /rates/:id` <sub>:130</sub><br>`GET /importable` <sub>:141</sub><br>`POST /import` <sub>:220</sub><br>`GET /records` <sub>:294</sub><br>`DELETE /records/:id` <sub>:329</sub> | gated |
 | `/api/cash-flow` | `src/api/routes/cash-flow.ts` | `GET /` <sub>:153</sub><br>`POST /` <sub>:251</sub> | gated |
 | `/api/consignments` | `src/api/routes/consignments.ts` | `GET /` <sub>:40</sub><br>`POST /` <sub>:100</sub><br>`GET /:id` <sub>:328</sub><br>`PUT /:id` <sub>:356</sub><br>`DELETE /:id` <sub>:527</sub> | gated |
 | `/api/consignment-notes` | `src/api/routes/consignment-notes.ts` | `GET /` <sub>:76</sub><br>`GET /linked-po-ids` <sub>:198</sub><br>`GET /ready-planning` <sub>:237</sub><br>`GET /stats` <sub>:474</sub><br>`GET /:id/print-extras` <sub>:566</sub><br>`POST /` <sub>:825</sub><br>`POST /:id/return` <sub>:1100</sub><br>`POST /:id/convert-to-invoice` <sub>:1447</sub><br>`POST /:id/notify-customer` <sub>:1811</sub><br>`PATCH /` <sub>:2100</sub><br>`PUT /:id` <sub>:2156</sub> | gated |
@@ -168,7 +170,7 @@ offsets pointing past the end of their own file.
 | `/api/notifications` | `src/api/routes/notifications.ts` | `GET /` <sub>:71</sub><br>`PUT /` <sub>:101</sub> | gated |
 | `/api/payroll` | `src/api/routes/payroll.ts` | `GET /` <sub>:78</sub><br>`POST /` <sub>:125</sub><br>`PUT /` <sub>:145</sub> | gated |
 | `/api/pay-rules` | `src/api/routes/pay-rules.ts` | `GET /` <sub>:48</sub><br>`POST /` <sub>:64</sub><br>`DELETE /:id` <sub>:107</sub> | gated |
-| `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:603</sub><br>`GET /projected` <sub>:738</sub><br>`POST /` <sub>:1036</sub><br>`PUT /` <sub>:1503</sub><br>`GET /:id` <sub>:1576</sub> | gated |
+| `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:613</sub><br>`GET /projected` <sub>:748</sub><br>`POST /` <sub>:1049</sub><br>`PUT /` <sub>:1523</sub><br>`GET /:id` <sub>:1612</sub> | gated |
 | `/api/production-leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/sync-jobcards-from-bom` | `src/api/routes/jobcard-sync.ts` | `POST /` <sub>:218</sub><br>`POST /fill-zero-minutes` <sub>:408</sub> | gated |

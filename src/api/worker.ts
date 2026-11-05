@@ -152,6 +152,11 @@ export type Env = {
     // The hub sends this as x-it-hub-secret when it pushes a ticket event to
     // /api/it-support/hub-events (>= 16 chars). Unset: that endpoint answers 503.
     IT_HUB_WEBHOOK_SECRET?: string;
+    // Houzs Connect (the company chat) sends this as a Bearer token to
+    // /api/connect/verify-login when Hookka staff sign in there; the same value
+    // is HOOKKA_LOGIN_KEY on the houzs-connect Worker (`wrangler pages secret
+    // put`). Unset: that endpoint answers 503.
+    CONNECT_LOGIN_KEY?: string;
   };
   // Per-request variables.  DB is the Supabase-backed D1-compat adapter
   // installed by the middleware below; typed as D1Database so existing route
@@ -482,6 +487,11 @@ app.post("/api/internal/warm-lists", async (c) => {
   if (!(await constantTimeEqual(given, expected))) {
     return c.json({ ok: false, error: "forbidden" }, 403);
   }
+  // The health report for the IT Hub rides this 5-minute tick (lib/hub-health.ts).
+  const { sendHealthReport } = await import("./lib/hub-health");
+  c.executionCtx.waitUntil(
+    sendHealthReport(c.var.DB, c.env).catch((err) => console.error("[hub-health] send failed:", err)),
+  );
   const t0 = Date.now();
   const { DEFAULT_ORG_ID } = await import("./lib/tenant");
   const out: Record<string, unknown> = {};
@@ -1152,6 +1162,7 @@ import dashboardPrototype from "./routes/dashboard-prototype";
 import dashboardFinance from "./routes/dashboard-finance";
 import kpi from "./routes/kpi";
 import itSupport from "./routes/it-support";
+import connectLogin from "./routes/connect-login";
 // Phase C #4 quick-win — MDM duplicate-detection review queue.
 import mdm from "./routes/mdm";
 // Phase B.4 — file_assets storage (Supabase Storage-backed; was R2 before
@@ -1177,6 +1188,7 @@ import workingHourEntries from "./routes/working-hour-entries";
 import payrollHourDeductions from "./routes/payroll-hour-deductions";
 import employeeAdvances from "./routes/employee-advances";
 import workerPenalties from "./routes/worker-penalties";
+import outsourcePiece from "./routes/outsource-piece";
 import cashFlow from "./routes/cash-flow";
 import consignments from "./routes/consignments";
 import consignmentNotes from "./routes/consignment-notes";
@@ -1398,6 +1410,8 @@ app.route("/api/kpi", kpi);
 // IT Support: a proxy to the Houzs IT Hub. Self-scoped like /api/kpi/me (the
 // reporter is the session's user), so signed in is the only gate.
 app.route("/api/it-support", itSupport);
+// Houzs Connect checking a Hookka account (routes/connect-login.ts).
+app.route("/api/connect", connectLogin);
 // Phase C #4 quick-win — MDM duplicate-detection review queue. Routes
 // scoped by orgId via getOrgId(c); detection-pass endpoint is admin-only
 // in spirit (gated by the existing auth middleware until role-aware
@@ -1427,6 +1441,8 @@ app.route("/api/employee-advances", employeeAdvances);
 // DEV-22 worker penalties — approved ones come off net pay in their payroll
 // month; see src/api/lib/worker-penalties.ts.
 app.route("/api/worker-penalties", workerPenalties);
+// HK-0130 piece-rate wages for outsourced workers; see src/api/lib/outsource-piece.ts.
+app.route("/api/outsource-piece", outsourcePiece);
 app.route("/api/cash-flow", cashFlow);
 app.route("/api/consignments", consignments);
 app.route("/api/consignment-notes", consignmentNotes);

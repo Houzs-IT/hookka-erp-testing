@@ -41,6 +41,11 @@ const EXPECTED_PATHS = [
   "/api/auth/reset-password",
   // Phase C.6 — TOTP step-2 of password login (no bearer yet).
   "/api/auth/totp/login-verify",
+  // 2026-11-03 (CONNECT-0003) — Houzs Connect checks a Hookka account server to
+  // server. No session by design; the handler refuses anything without the
+  // CONNECT_LOGIN_KEY Bearer (unset 503, wrong 401) before reading a user, and
+  // keeps the login throttle. See routes/connect-login.ts.
+  "/api/connect/verify-login",
   "/api/health",
   // Front-End RUM telemetry sink (2026-05-28). Beacons fire even when the
   // session is expired/unresolved, so gating produced 401 floods and dropped

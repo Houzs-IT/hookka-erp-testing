@@ -75,6 +75,12 @@ import {
   findPenaltyDrift,
   postPenaltiesForPeriod,
 } from "../lib/worker-penalties";
+import {
+  ensureOutsourcePieceTables,
+  loadPeriodPieceSen,
+  linkPieceRecordsToPayslip,
+  findPieceDrift,
+} from "../lib/outsource-piece";
 
 // Data-entry grace before an unrecorded working day is treated as a confirmed
 // absence. Spec (Wei Siang, 2026-06-02): the office keys Working Hours a few
@@ -178,6 +184,9 @@ type PayslipRow = {
   // for the same reason as the advance column.
   penaltyDeductionSen?: number | null;
   penalty_deduction_sen?: number | null;
+  // How much of allowancesSen is outsource piece wages (HK-0130).
+  pieceWagesSen?: number | null;
+  piece_wages_sen?: number | null;
   bankAccount: string;
   paymentMethod: string | null;
   bankName: string | null;
@@ -231,6 +240,7 @@ function rowToPayslip(r: PayslipRow) {
       Number(r.advanceDeductionSen ?? r.advance_deduction_sen ?? 0) || 0,
     penaltyDeductionSen:
       Number(r.penaltyDeductionSen ?? r.penalty_deduction_sen ?? 0) || 0,
+    pieceWagesSen: Number(r.pieceWagesSen ?? r.piece_wages_sen ?? 0) || 0,
     bankAccount: r.bankAccount,
     paymentMethod: normalizePaymentMethod(r.paymentMethod),
     bankName: r.bankName ?? "",
@@ -837,6 +847,7 @@ app.get("/projected", async (c) => {
   const advancesByWorker = await loadPeriodAdvances(c.var.DB, period);
   // Approved penalties for the month — same helper as generation.
   const penaltySenByWorker = await loadPeriodPenaltySen(c.var.DB, period);
+  const pieceSenByWorker = await loadPeriodPieceSen(c.var.DB, period);
 
   // Month-cumulative efficiency per worker (job_cards production minutes ÷
   // production-dept working hours) — drives the efficiency allowance below.
@@ -934,7 +945,8 @@ app.get("/projected", async (c) => {
       workingDays: worker.workingDaysPerMonth,
       absentDays: labor.payroll.absentDays,
     });
-    const allowances = efficiencyAllowance + leadershipAllowance;
+    const pieceSen = pieceSenByWorker.get(worker.id) ?? 0;
+    const allowances = efficiencyAllowance + leadershipAllowance + pieceSen;
     const ytd = ytdPcbInputs.get(worker.id) ?? NO_YTD;
     const stat = calcStatutory(
       effectiveSalarySen,
@@ -1008,6 +1020,7 @@ app.get("/projected", async (c) => {
       netPay: netPayAfterAdvanceAndPenaltySen(grossPay, totalDeductions, advanceSen, penaltySen),
       advanceDeductionSen: advanceSen,
       penaltyDeductionSen: penaltySen,
+      pieceWagesSen: pieceSen,
       bankAccount: worker.bankAccount ?? "",
       paymentMethod: normalizePaymentMethod(worker.paymentMethod),
       bankName: worker.bankName ?? "",
@@ -1044,6 +1057,7 @@ app.post("/", async (c) => {
   await ensurePaymentColumns(c.var.DB);
   await ensureAdvanceTables(c.var.DB);
   await ensureWorkerPenaltyTables(c.var.DB);
+  await ensureOutsourcePieceTables(c.var.DB);
   // Same reason: the INSERT below binds payslips.pcb_status, and the worker
   // SELECT reads the three tax-profile columns. Migration 0229 is inert until
   // this runs.
@@ -1232,6 +1246,7 @@ app.post("/", async (c) => {
     // estimate the screen was showing a moment earlier.
     const advancesByWorker = await loadPeriodAdvances(c.var.DB, period);
     const penaltySenByWorker = await loadPeriodPenaltySen(c.var.DB, period);
+    const pieceSenByWorker = await loadPeriodPieceSen(c.var.DB, period);
 
     // Month-cumulative efficiency per worker — the basis for the efficiency
     // allowance written into each generated payslip's allowancesSen.
@@ -1325,7 +1340,8 @@ app.post("/", async (c) => {
         workingDays: worker.workingDaysPerMonth,
         absentDays: labor.payroll.absentDays,
       });
-      const allowances = efficiencyAllowance + leadershipAllowance;
+      const pieceSen = pieceSenByWorker.get(worker.id) ?? 0;
+      const allowances = efficiencyAllowance + leadershipAllowance + pieceSen;
       // Statutory deductions computed on the month's effective monthly salary
       // (= the worker's salary, day-weighted if it changed mid-month).
       const ytd = ytdPcbInputs.get(worker.id) ?? NO_YTD;
@@ -1402,7 +1418,7 @@ app.post("/", async (c) => {
            allowancesSen, grossPaySen, epfEmployeeSen, epfEmployerSen,
            socsoEmployeeSen, socsoEmployerSen, eisEmployeeSen, eisEmployerSen, pcbSen,
            pcb_status,
-           totalDeductionsSen, netPaySen, advance_deduction_sen, penalty_deduction_sen,
+           totalDeductionsSen, netPaySen, advance_deduction_sen, penalty_deduction_sen, piece_wages_sen,
            bankAccount, paymentMethod, bankName, status
          ) VALUES (
            ?, ?, ?, ?, ?, ?,
@@ -1412,7 +1428,7 @@ app.post("/", async (c) => {
            ?, ?, ?, ?,
            ?, ?, ?, ?, ?,
            ?,
-           ?, ?, ?, ?,
+           ?, ?, ?, ?, ?,
            ?, ?, ?, 'DRAFT'
          )`,
       )
@@ -1451,6 +1467,7 @@ app.post("/", async (c) => {
           netPay,
           advanceSen,
           penaltySen,
+          pieceSen,
           bankAccount,
           paymentMethod,
           bankName,
@@ -1467,6 +1484,9 @@ app.post("/", async (c) => {
       // the slip that carries its deduction.
       if (inserted && penaltySen > 0) {
         await linkPenaltyLinesToPayslip(c.var.DB, period, worker.id, id);
+      }
+      if (inserted && pieceSen > 0) {
+        await linkPieceRecordsToPayslip(c.var.DB, period, worker.id, id);
       }
     }
 
@@ -1529,6 +1549,22 @@ app.put("/", async (c) => {
             success: false,
             error: `Worker penalties changed since these payslips were generated (${names}${more}). Regenerate the period before approving.`,
             penaltyDrift: drift,
+          },
+          409,
+        );
+      }
+      // Same guard for piece wages, plus a worker with wages and no payslip:
+      // that money has no later month to roll into.
+      await ensureOutsourcePieceTables(c.var.DB);
+      const pieceDrift = await findPieceDrift(c.var.DB, period);
+      if (pieceDrift.length > 0) {
+        const names = pieceDrift.slice(0, 5).map((d) => d.employeeName || d.workerId).join(", ");
+        const more = pieceDrift.length > 5 ? ` and ${pieceDrift.length - 5} more` : "";
+        return c.json(
+          {
+            success: false,
+            error: `Outsource piece wages changed since these payslips were generated (${names}${more}). Regenerate the period before approving.`,
+            pieceDrift,
           },
           409,
         );
