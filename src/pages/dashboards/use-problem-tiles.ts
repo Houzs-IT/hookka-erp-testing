@@ -2,10 +2,12 @@ import { useMemo } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { deptName } from "./ops-floor-lib";
 import { isOutsourced } from "./dashboard-shared-lib";
+import type { OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
 
 // "Today's problems" tiles — shared by the desktop strip (ProblemsStrip.tsx)
 // and the phone (/m) strip so both say the same thing.
 type Feed = {
+  sales?: { overdueSets?: OverdueSetsSummary | null } | null;
   production?: {
     overdueByDept?: { department: string; count: number }[];
     orders?: { risk?: string; stagesDone: number; stagesTotal: number; currentDept: string | null }[];
@@ -33,7 +35,9 @@ const LOW_EFF_PCT = 75;
 /** The tiles, shared by the desktop strip and the phone (/m) strip so both say the same thing. */
 // Four tiles only (owner 2026-10-17: "show overdue order, 几个人没来, 效率,
 // service case overdue"): production orders overdue, people not in on the
-// latest attendance day, that day's efficiency, service cases overdue.
+// latest attendance day, that day's efficiency, service cases overdue. A fifth,
+// customer sets overdue (sets not yet delivered past the customer's date), was
+// added 2026-11-05.
 export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
   const { data } = useCachedJson<Feed>("/api/dashboard/prototype");
   return useMemo<Tile[]>(() => {
@@ -58,6 +62,15 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
     } else if (prod?.overdueByDept) {
       const n = prod.overdueByDept.reduce((a, d) => a + d.count, 0);
       out.push({ key: "overdue", tab: "operations", sub: "overview", anchor: "ops-overdue", value: String(n), label: "Production orders overdue", tone: n ? "bad" : "ok" });
+    }
+    const overdueSets = data.sales?.overdueSets;
+    if (overdueSets) {
+      const [worstCustomer] = overdueSets.customers;
+      out.push({
+        key: "overdueSets", tab: "sales", anchor: "sales-overdue-sets", value: String(overdueSets.totalSets), label: "Customer sets overdue",
+        hint: worstCustomer ? `most: ${worstCustomer.customerName} (${worstCustomer.overdueSets}) · ${overdueSets.totalOrders} orders` : "all delivered",
+        tone: overdueSets.totalSets ? "bad" : "ok",
+      });
     }
     const emp = data.employee;
     // Not in: headcount workers (not outsourced, has ever clocked in — a
