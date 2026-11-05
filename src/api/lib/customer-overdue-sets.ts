@@ -9,6 +9,7 @@ export interface OverdueSetsOrderRow {
   soId: string;
   soNo: string | null;
   customerPo: string | null;
+  customerState: string | null;
   customerId: string | null;
   customerName: string | null;
   customerDeliveryDate: string | null;
@@ -21,6 +22,7 @@ export interface OverdueSetsOrder {
   soId: string;
   soNo: string | null;
   customerPo: string | null;
+  customerState: string | null;
   dueDate: string;
   daysLate: number;
   orderedSets: number;
@@ -79,6 +81,7 @@ export async function collectOverdueSetsRows(
        SELECT so.id AS "soId",
               COALESCE(so.company_so_id, so.company_so) AS "soNo",
               COALESCE(NULLIF(so.customer_po_id, ''), NULLIF(so.customer_po, '')) AS "customerPo",
+              NULLIF(so.customer_state, '') AS "customerState",
               so.customer_id AS "customerId",
               so.customer_name AS "customerName",
               NULLIF(substr(so.customer_delivery_date::text, 1, 10), '') AS "customerDeliveryDate",
@@ -108,7 +111,7 @@ function toOverdueOrder(row: OverdueSetsOrderRow, dueDate: string, todayYmd: str
   const orderedSets = Math.max(0, (Number(row.orderedSets) || 0) - (Number(row.cancelledSets) || 0));
   const remainingSets = Math.max(0, orderedSets - (Number(row.deliveredSets) || 0));
   if (remainingSets === 0 || dueDate >= todayYmd) return null;
-  return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets };
+  return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, customerState: row.customerState, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets };
 }
 
 function groupByCustomer(entries: { row: OverdueSetsOrderRow; order: OverdueSetsOrder }[]): CustomerOverdueSets[] {

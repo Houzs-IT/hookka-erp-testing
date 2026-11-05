@@ -54,6 +54,7 @@ function OrderRow({ order }: { order: OverdueSetsOrder }) {
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF] transition-transform group-open/order:rotate-90" aria-hidden="true" />
           <span className="font-mono text-[#6B5C32]">{order.soNo ?? "(no number)"}</span>
           {order.customerPo && <span className="text-[#6B7280]">PO {order.customerPo}</span>}
+          {order.customerState && <span className="text-[#6B7280]">{order.customerState}</span>}
           <span className="text-[#6B7280]">due {order.dueDate}</span>
           <LatePill days={order.daysLate} />
           <span className="ml-auto tabular-nums text-[#1F1D1B]">
