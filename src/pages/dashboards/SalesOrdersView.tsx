@@ -24,6 +24,8 @@ import {
 import { LiveBadge } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { buildSalesTrend, computeSalesKpis } from "./dashboard-sales-lib";
+import { CustomerOverdueSetsCard } from "./CustomerOverdueSetsCard";
+import type { OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
 
 // Today, in the app's own local date. Used to cap the zero-fill: a future day
 // has no rows because it has not happened, which is not the same as a day that
@@ -39,8 +41,12 @@ const todayYmd = ymd(new Date());
 // when those tabs get ported.
 type Feed = {
   success?: boolean;
-  availability?: { sales?: { live: boolean; rows: number; reason?: string } };
+  availability?: {
+    sales?: { live: boolean; rows: number; reason?: string };
+    overdueSets?: { live: boolean; reason?: string };
+  };
   sales?: {
+    overdueSets?: OverdueSetsSummary | null;
     byDay: { date: string; orders: number; revenueSen: number; cancelled: number }[];
     orders: {
       id: string;
@@ -312,6 +318,12 @@ export function SalesOrdersView({
 
       {/* The Command Center KPI cards, exactly as on the old Dashboard. */}
       <CommandCenterSections period={period} sections={["kpis"]} />
+
+      <CustomerOverdueSetsCard
+        summary={data?.sales?.overdueSets}
+        isLoading={loading}
+        unavailableReason={data?.availability?.overdueSets?.reason ?? error ?? undefined}
+      />
 
       {/* Revenue: the Command Center chart itself (owner 2026-10-17: "换成
           第二张" — the old area chart, Sales Orders · Production · Invoices,

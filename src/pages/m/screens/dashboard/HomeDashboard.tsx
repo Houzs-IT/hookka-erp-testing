@@ -25,6 +25,7 @@ import { useNotificationFeed } from "../../lib/use-notification-feed";
 import { visibleModuleGroups } from "../../nav";
 import { M } from "../../theme";
 import { TONE, useProblemTiles, type Tile } from "../../../dashboards/use-problem-tiles";
+import type { OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
 import {
   monthLabel, quarterKeyOf, quarterPeriod, widgetPeriod, widgetPeriodLabel, yearsWithData, ymd, type Period,
 } from "../../../dashboards/dashboard-shared-lib";
@@ -129,7 +130,7 @@ function ProblemsSection({ tiles, onTap }: { tiles: Tile[]; onTap: (t: Tile) => 
         <Label style={{ whiteSpace: "nowrap" }}>TODAY’S PROBLEMS</Label>
         <span style={{ fontSize: 12, fontWeight: 600, color: M.raisin, lineHeight: "14px", whiteSpace: "nowrap" }}>{todayLabel()}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? 4 : 2},minmax(0,1fr))`, gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? 5 : 2},minmax(0,1fr))`, gap: 8 }}>
         {tiles.map((p) => (
           <button key={p.key} type="button" onClick={() => onTap(p)} aria-label={`${p.value} ${p.label}${p.hint ? `, ${p.hint}` : ""}`}
             style={{ position: "relative", overflow: "hidden", minWidth: 0, display: "flex", alignItems: "center", gap: 6, boxSizing: "border-box", padding: "9px 6px 10px 14px", borderRadius: 12, border: "none", backgroundColor: M.card, boxShadow: SHADOW_SMALL, fontFamily: "inherit", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
@@ -436,7 +437,30 @@ function Dashboard() {
 
 // "Not in" and "Efficiency" are computed from attendance and job-card data that
 // no /m screen lists, so the tile explains itself instead of faking a list.
+function OverdueSetsSheet({ tile, onClose }: { tile: Tile; onClose: () => void }) {
+  const { data } = useCachedJson<{ sales?: { overdueSets?: OverdueSetsSummary | null } | null }>(DASHBOARD_FEED_URL);
+  const customers = data?.sales?.overdueSets?.customers ?? [];
+  return (
+    <SheetFrame open title={tile.label} sub="Sets not yet delivered, past the customer's date" onClose={onClose}>
+      <SheetCard>
+        {customers.length === 0 ? (
+          <div style={{ padding: "12px 0", fontSize: 13, color: M.ink }}>Nothing overdue.</div>
+        ) : customers.map((customer) => (
+          <div key={customer.customerId ?? customer.customerName} style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, padding: "8px 0", borderBottom: `1px solid ${M.hairline}` }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: M.raisin, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{customer.customerName}</div>
+              <div style={{ fontSize: 11.5, color: M.muted }}>{customer.orders.length} {customer.orders.length === 1 ? "order" : "orders"} · oldest due {customer.oldestDueDate}</div>
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: toneValue(tile), ...TNUM }}>{customer.overdueSets}<span style={{ fontSize: 11, fontWeight: 500, color: M.muted }}> sets</span></div>
+          </div>
+        ))}
+      </SheetCard>
+    </SheetFrame>
+  );
+}
+
 function ProblemSheet({ tile, onClose, onOpen, isNavAllowed }: { tile: Tile; onClose: () => void; onOpen: (to: string) => void; isNavAllowed: (h: string) => boolean }) {
+  if (tile.key === "overdueSets") return <OverdueSetsSheet tile={tile} onClose={onClose} />;
   const d = problemDest(tile.key);
   const blockedRoute = d.kind === "route";
   const canEmployees = isNavAllowed("/employees");

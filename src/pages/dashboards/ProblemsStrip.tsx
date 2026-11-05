@@ -16,7 +16,7 @@ export function ProblemsStrip({ visibleTabs, onOpen }: { visibleTabs: readonly s
   return (
     <section aria-label="Today's problems" className="space-y-2">
       <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#6B5C32]">Today's problems</p>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {tiles.map((t) => (
           <button
             key={t.key}

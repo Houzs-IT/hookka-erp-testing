@@ -58,6 +58,7 @@ import { requirePermission, hasPermission, dashboardReadsFor } from "../lib/rbac
 import { buildServiceSlice } from "../lib/dashboard-service-slice";
 import { isCustomerScoped } from "../lib/customer-scope";
 import { collectOnTimeDelivery, EMPTY_ON_TIME } from "../lib/on-time-delivery";
+import { collectOverdueSetsRows, summarizeOverdueSets, todayInMalaysia } from "../lib/customer-overdue-sets";
 import { poInPlanning, poReadyForDelivery, type PipelinePO } from "../../lib/delivery-pipeline";
 import { loadPoValueMap, loadDoValueMap } from "../lib/do-value";
 import { buildDailySlice } from "../lib/dashboard-daily-slice";
@@ -356,7 +357,7 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const protoV = "v4";
+  const protoV = "v5";
   const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
   const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------
@@ -387,6 +388,10 @@ app.get("/", async (c) => {
       .then((r) => r.results ?? []),
   );
   const soRows = salesSec.rows;
+  const overdueSetsToday = todayInMalaysia();
+  const overdueSetsSec = await section("customer overdue sets", () =>
+    collectOverdueSetsRows(c.var.DB, orgId, overdueSetsToday),
+  );
   // MEASURED: 75 of 1,544 rows are Service Orders, 0 NULLs on the column. The
   // Sales tab's own figures (count, revenue, pipeline) use ONLY this subset —
   // `soRows` above stays whole-book because the OTIF join further down needs
@@ -1588,6 +1593,7 @@ app.get("/", async (c) => {
         rows: salesTabRows.length,
         reason: salesSec.error ?? soItemCatSec.error ?? undefined,
       },
+      overdueSets: { live: !overdueSetsSec.error, reason: overdueSetsSec.error ?? undefined },
       service: { live: !serviceSec.error, reason: serviceSec.error ?? undefined },
       employee: {
         live: !attSec.error && !workersSec.error && !wheSec.error && !jcSec.error,
@@ -1661,6 +1667,7 @@ app.get("/", async (c) => {
       })),
       byStateCategory: [...stateCategorySkuMap.values()],
       excludedServiceOrders,
+      overdueSets: overdueSetsSec.error ? null : summarizeOverdueSets(overdueSetsSec.rows, overdueSetsToday),
     },
     delivery: {
       otif,
@@ -1854,8 +1861,10 @@ app.get("/", async (c) => {
   // reports `live: false` with a reason, same shape a genuine query failure
   // already uses, so the frontend needs no special case for "no permission"
   // vs "query broke."
+  const customerScoped = isCustomerScoped(c);
   const payload = {
     ...rawPayload,
+    sales: { ...rawPayload.sales, overdueSets: customerScoped ? null : rawPayload.sales.overdueSets },
     delivery: canDelivery ? rawPayload.delivery : null,
     purchase: canPurchase ? rawPayload.purchase : null,
     inventory: canInventory ? rawPayload.inventory : null,
@@ -1865,6 +1874,9 @@ app.get("/", async (c) => {
     lim: canProduction ? rawPayload.lim : null,
     availability: {
       ...rawPayload.availability,
+      overdueSets: customerScoped
+        ? { live: false, reason: "customer-scoped role: the per-customer list covers every customer" }
+        : rawPayload.availability.overdueSets,
       delivery: canDelivery
         ? rawPayload.availability.delivery
         : { live: false, rows: 0, reason: "insufficient permission: delivery-orders:read" },
