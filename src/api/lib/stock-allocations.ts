@@ -1,0 +1,806 @@
+// ---------------------------------------------------------------------------
+// stock-allocations.ts — the append-only record of stock handed to a customer
+// order (DEV-05 / PRD T-014 R8-R13).
+//
+// THE HOLE. Nothing in this system could reserve anything. "Reserved" on the
+// inventory screen means only "a DRAFT delivery note already names the item"
+// (src/lib/fg-stock.ts) — downstream of production, not an order commitment.
+// So a production order built for stock could be finished and sitting in the
+// yard while the sales screen showed nothing, and the only way to point those
+// goods at an arriving order was to edit the order the PO was born against.
+//
+// WHY A SIBLING TABLE AND NOT fg_stock_events
+//   fg_stock_events is an ON-HAND ledger: its `direction` is
+//   onHand(to_status) − onHand(from_status), and Σ direction per product IS the
+//   on-hand count. An allocation changes NOTHING about whether we hold the
+//   piece — it is still in the yard, it is merely spoken for. Writing
+//   allocations into that table would corrupt the one invariant it exists to
+//   guarantee.
+//
+// WHAT ACTUALLY MOVES: A WHOLE PRODUCTION ORDER
+//   An allocation is not a counter. `POST /production-orders/stock` builds one
+//   order per piece, exactly as a customer order is built, so handing goods
+//   over is a whole order changing owner: `sales_order_id` moves from the stock
+//   order to the customer's, and `stock_origin_so_id` remembers where it came
+//   from. Nothing is ever split — splitting would drag job cards, stickered
+//   fg_units and cost rows with it. A SOFA set is one order and goes out whole
+//   (owner 2026-09-17).
+//
+// SO WHAT IS THIS TABLE FOR, THEN?
+//   The WHY, not the WHAT. The production order records who owns a piece now;
+//   these rows record every time that changed, who did it and for what reason.
+//   Availability is RECOMPUTED from the production orders themselves and never
+//   summed from here (see loadAvailability, pinned by a test) — so there is one
+//   source of truth for "is this spoken for", and this ledger can never drift
+//   away from it.
+//
+// WHY NO FOREIGN KEY ON sales_order_id
+//   Archiving a sales order DELETEs the row (it is copied to
+//   sales_orders_archive first). A plain FK would block that; ON DELETE CASCADE
+//   would silently erase the allocation trail of the very order someone is
+//   archiving. History about an archived order is exactly the history worth
+//   keeping, so the column is indexed but unconstrained, and the endpoints
+//   validate the order exists before writing.
+//
+// REVERSALS ARE COUNTER-ROWS. Nothing here is ever UPDATEd or DELETEd. A
+// release writes a second row with direction −1 pointing at what it undoes,
+// the same discipline fg_stock_events and buildDoCancelReleaseStatements
+// already follow.
+//
+// THE ONE ARITHMETIC RULE
+//   direction is derived from the ACTION, here, never chosen per call site:
+//   ALLOCATE = +1, RELEASE = −1. So
+//     Σ (direction × quantity) over a product = the quantity currently spoken
+//     for, and it can never go wrong by someone typing the sign themselves.
+//
+// Deploys do not replay migration files in this repo, so this is the
+// load-bearing copy of migrations-postgres/0252. Keep the two in step.
+// ---------------------------------------------------------------------------
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
+import { runSelfApply, memoizeSelfApply } from "./self-apply";
+import { STOCK_CUSTOMER_NAME } from "./stock-orders";
+// The department ORDER, shared with the repair-scope and stage-skip code so a
+// stage gate here can never disagree with the floor's own sequence.
+import { REPAIR_DEPT_CODES } from "../../lib/repair-scope";
+
+let _mig: Promise<void> | null = null;
+
+/** Awaited at the top of every handler that reads or writes an allocation. */
+export function ensureStockAllocationSchema(db: D1Database): Promise<void> {
+  return memoizeSelfApply(
+    () => _mig,
+    (p) => {
+      _mig = p;
+    },
+    () =>
+      runSelfApply(db, "stock-allocations", [
+        `CREATE TABLE IF NOT EXISTS stock_allocations (
+           id              TEXT PRIMARY KEY,
+           org_id          TEXT NOT NULL DEFAULT 'hookka',
+           action          TEXT NOT NULL,
+           direction       INTEGER NOT NULL,
+           quantity        INTEGER NOT NULL,
+           product_code    TEXT NOT NULL,
+           sales_order_id  TEXT NOT NULL,
+           sales_order_no  TEXT,
+           so_item_id      TEXT,
+           so_line_no      INTEGER,
+           source_po_id    TEXT,
+           actor_type      TEXT NOT NULL DEFAULT 'SYSTEM',
+           actor_id        TEXT,
+           actor_name      TEXT,
+           occurred_at     TEXT NOT NULL,
+           reverses_id     TEXT,
+           reason          TEXT,
+           created_at      TEXT NOT NULL
+         )`,
+        "CREATE INDEX IF NOT EXISTS idx_stock_allocations_product ON stock_allocations (org_id, product_code)",
+        "CREATE INDEX IF NOT EXISTS idx_stock_allocations_so ON stock_allocations (sales_order_id)",
+        "CREATE INDEX IF NOT EXISTS idx_stock_allocations_item ON stock_allocations (so_item_id)",
+      ]),
+  );
+}
+
+export type AllocationAction = "ALLOCATE" | "RELEASE";
+
+/** The ONE place the sign is decided. */
+export function directionFor(action: AllocationAction): 1 | -1 {
+  return action === "ALLOCATE" ? 1 : -1;
+}
+
+export type AllocationActor = {
+  type: "USER" | "SYSTEM";
+  id?: string | null;
+  name?: string | null;
+};
+
+export const SYSTEM_ALLOCATION_ACTOR: AllocationActor = {
+  type: "SYSTEM",
+  id: null,
+  name: "System",
+};
+
+export type AllocationInput = {
+  productCode: string;
+  /** Always POSITIVE. The sign comes from the action, not from the caller. */
+  quantity: number;
+  salesOrderId: string;
+  salesOrderNo?: string | null;
+  soItemId?: string | null;
+  soLineNo?: number | null;
+  /** The stock production order the goods are drawn from, when one is known. */
+  sourcePoId?: string | null;
+  actor?: AllocationActor;
+  occurredAt: string;
+  reason?: string | null;
+  /** Set on a RELEASE row so the reversal points at what it undoes. */
+  reversesId?: string | null;
+  orgId?: string;
+};
+
+function genAllocationId(): string {
+  return `alloc-${crypto.randomUUID()}`;
+}
+
+/**
+ * Returns the statement rather than writing it, so the caller can carry it in
+ * the same db.batch() as whatever state change it accompanies. A ledger row
+ * that could land without its cause (or the reverse) is the failure this table
+ * exists to prevent.
+ */
+export function buildAllocationStatement(
+  db: D1Database,
+  action: AllocationAction,
+  input: AllocationInput,
+): D1PreparedStatement {
+  const actor = input.actor ?? SYSTEM_ALLOCATION_ACTOR;
+  const qty = Math.max(0, Math.floor(input.quantity));
+  return db
+    .prepare(
+      `INSERT INTO stock_allocations (id, org_id, action, direction, quantity,
+         product_code, sales_order_id, sales_order_no, so_item_id, so_line_no,
+         source_po_id, actor_type, actor_id, actor_name, occurred_at,
+         reverses_id, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      genAllocationId(),
+      input.orgId ?? "hookka",
+      action,
+      directionFor(action),
+      qty,
+      input.productCode,
+      input.salesOrderId,
+      input.salesOrderNo ?? null,
+      input.soItemId ?? null,
+      input.soLineNo ?? null,
+      input.sourcePoId ?? null,
+      actor.type,
+      actor.id ?? null,
+      actor.name ?? null,
+      input.occurredAt,
+      input.reversesId ?? null,
+      input.reason ?? null,
+      new Date().toISOString(),
+    );
+}
+
+export type ProductAvailability = {
+  productCode: string;
+  /** Finished stock production orders — goods physically in the yard. */
+  onHandQty: number;
+  /** Stock POs still being made. Real supply, just not yet pickable. */
+  inProductionQty: number;
+  /** Σ (direction × quantity) — what is currently spoken for. */
+  allocatedQty: number;
+  /** R11. Never negative: an over-allocation reads as zero available. */
+  availableQty: number;
+};
+
+/**
+ * R11 — the availability figure that did not exist.
+ *
+ * RECOMPUTED, NOT STORED. Every number here is derived from the production
+ * orders themselves, never from summing the ledger. A stock order is still
+ * unallocated exactly while `sales_order_id = stock_origin_so_id`; allocating
+ * it moves sales_order_id to the customer, which removes it from supply in the
+ * same stroke. There is therefore only ONE source of truth for "is this piece
+ * spoken for", and no possibility of the pool and the ledger disagreeing —
+ * which is the failure mode a stored counter always eventually finds.
+ *
+ * Only STOCK production orders count as supply: a normal made-to-order PO is
+ * already somebody's. CANCELLED and ON_HOLD are excluded from both buckets —
+ * cancelled goods are not coming and held work is paused, and promising a
+ * delivery date off either is how a salesperson ends up apologising.
+ */
+export async function loadAvailability(
+  db: D1Database,
+  orgId: string,
+  productCodes?: string[],
+): Promise<Map<string, ProductAvailability>> {
+  const codes = (productCodes ?? []).filter(Boolean);
+  const filter = codes.length
+    ? ` AND product_code IN (${codes.map(() => "?").join(",")})`
+    : "";
+
+  const res = await db
+    .prepare(
+      `SELECT product_code,
+              SUM(CASE WHEN status = 'COMPLETED'
+                        AND sales_order_id = stock_origin_so_id
+                       THEN quantity ELSE 0 END) AS available_qty,
+              SUM(CASE WHEN status = 'COMPLETED'
+                       THEN quantity ELSE 0 END) AS on_hand_qty,
+              SUM(CASE WHEN status <> 'COMPLETED'
+                        AND sales_order_id = stock_origin_so_id
+                       THEN quantity ELSE 0 END) AS in_production_qty,
+              SUM(CASE WHEN sales_order_id <> stock_origin_so_id
+                       THEN quantity ELSE 0 END) AS allocated_qty
+         FROM production_orders
+        WHERE is_stock = TRUE
+          AND stock_origin_so_id IS NOT NULL
+          AND status NOT IN ('CANCELLED', 'ON_HOLD')
+          AND product_code IS NOT NULL${filter}
+        GROUP BY product_code`,
+    )
+    .bind(...codes)
+    .all<{
+      // Dual-keyed: the Postgres adapter folds snake_case columns and
+      // aliases to camelCase on read, but a fresh SELECT can surface either.
+      // Reading only one spelling yields undefined -> 0, silently (CLAUDE.md).
+      product_code?: string; productCode?: string;
+      available_qty?: number | null; availableQty?: number | null;
+      on_hand_qty?: number | null; onHandQty?: number | null;
+      in_production_qty?: number | null; inProductionQty?: number | null;
+      allocated_qty?: number | null; allocatedQty?: number | null;
+    }>();
+
+  const out = new Map<string, ProductAvailability>();
+  for (const r of res.results ?? []) {
+    out.set((r.productCode ?? r.product_code) ?? "", {
+      productCode: (r.productCode ?? r.product_code) ?? "",
+      onHandQty: Number((r.onHandQty ?? r.on_hand_qty) ?? 0),
+      inProductionQty: Number((r.inProductionQty ?? r.in_production_qty) ?? 0),
+      allocatedQty: Number((r.allocatedQty ?? r.allocated_qty) ?? 0),
+      availableQty: Number((r.availableQty ?? r.available_qty) ?? 0),
+    });
+  }
+  return out;
+}
+
+/**
+ * The stage a stock piece must have reached before it may be promised, or NULL
+ * for "any stage qualifies", which is today's behaviour.
+ *
+ * It is a named constant with one caller rather than a literal in the query
+ * because it encodes a DECISION NOBODY HAS MADE. The owner said work in
+ * progress counts as stock (2026-10-16); he was not asked whether a piece that
+ * was cut this morning counts the same as one waiting to be packed, and the
+ * honest answer today is that the system does not distinguish them.
+ *
+ * To set one, put a department code from REPAIR_DEPT_CODES here — a piece is
+ * then offered only once it has REACHED that department. Nothing else needs to
+ * change, and `tests/stock-allocations.test.mjs` pins both branches.
+ */
+export const ALLOCATABLE_FROM_DEPT: string | null = null;
+
+/** Whether an in-progress piece at `dept` is far enough along to be offered. */
+export function allocatableFromDept(dept: string | null): boolean {
+  if (!ALLOCATABLE_FROM_DEPT) return true;
+  if (!dept) return false;
+  const order = REPAIR_DEPT_CODES as readonly string[];
+  const at = order.indexOf(dept.toUpperCase());
+  const need = order.indexOf(ALLOCATABLE_FROM_DEPT);
+  // An unknown department is NOT silently treated as far enough along: a code
+  // the list does not know about is a reason to withhold, not to promise.
+  if (at < 0 || need < 0) return false;
+  return at >= need;
+}
+
+export type AllocatablePO = {
+  id: string;
+  poNo: string | null;
+  productCode: string;
+  quantity: number;
+  stockOriginSoId: string;
+  /**
+   * FALSE for a piece still on the floor. The pool offers both now, finished
+   * first, so a caller that must not promise unfinished goods can still tell
+   * them apart without re-reading the row.
+   */
+  isFinished: boolean;
+  /** Where an unfinished piece currently sits. NULL once it is finished. */
+  currentDepartment: string | null;
+};
+
+/**
+ * The stock production orders that can be handed over, FINISHED FIRST and
+ * oldest first within each half.
+ *
+ * Oldest first is the owner's tie-break ("earliest sales order date wins")
+ * applied to supply: the piece that has been waiting longest goes first, so
+ * stock cannot quietly age while newer output ships.
+ *
+ * Unfinished pieces are offered too (owner 2026-10-16: "WIP 也可以当成是库存"
+ * — work in progress counts as stock), but ONLY BEHIND every finished one.
+ * A piece that exists beats a piece that is promised, so the sort is the
+ * safety rule, not a preference: a line can only reach the floor stock after
+ * the shelf is empty.
+ *
+ * What stays excluded, and why it is not a cutoff:
+ *   - CANCELLED / ON_HOLD — not supply at all; `loadAvailability` excludes the
+ *     same two, so the pool and the figures cannot disagree.
+ *   - anything already handed to another order (`sales_order_id` moved).
+ *
+ * There is deliberately NO stage threshold here. One was considered — only
+ * offer a piece past UPHOLSTERY, say — and left out because the owner has not
+ * been asked which stage counts, and a number invented here would read as a
+ * decision. `ALLOCATABLE_FROM_DEPT` below is where it goes when he answers;
+ * today it is null and every in-progress piece qualifies.
+ *
+ * The caller must not treat an unfinished piece as shippable: the delivery
+ * path already refuses one (it requires COMPLETED/TRANSFERRED), so allocation
+ * reserves it and the floor still has to finish it.
+ */
+export async function loadAllocatablePOs(
+  db: D1Database,
+  productCode: string,
+): Promise<AllocatablePO[]> {
+  const res = await db
+    .prepare(
+      `SELECT id, poNo, product_code, quantity, stock_origin_so_id,
+              status, current_department
+         FROM production_orders
+        WHERE is_stock = TRUE
+          AND stock_origin_so_id IS NOT NULL
+          AND sales_order_id = stock_origin_so_id
+          AND status NOT IN ('CANCELLED', 'ON_HOLD')
+          AND product_code = ?
+        ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END ASC,
+                 created_at ASC, poNo ASC`,
+    )
+    .bind(productCode)
+    .all<{
+      // Dual-keyed: the Postgres adapter folds snake_case columns and
+      // aliases to camelCase on read, but a fresh SELECT can surface either.
+      // Reading only one spelling yields undefined -> 0, silently (CLAUDE.md).
+      id: string;
+      poNo: string | null;
+      product_code?: string; productCode?: string;
+      quantity: number | null;
+      stock_origin_so_id?: string; stockOriginSoId?: string;
+      status?: string | null;
+      current_department?: string | null; currentDepartment?: string | null;
+    }>();
+  return (res.results ?? [])
+    .map((r) => {
+      const status = String(r.status ?? "").toUpperCase();
+      const isFinished = status === "COMPLETED";
+      return {
+        id: r.id,
+        poNo: r.poNo,
+        productCode: (r.productCode ?? r.product_code) ?? "",
+        quantity: Number(r.quantity ?? 0),
+        stockOriginSoId: (r.stockOriginSoId ?? r.stock_origin_so_id) ?? "",
+        isFinished,
+        currentDepartment: isFinished
+          ? null
+          : ((r.currentDepartment ?? r.current_department) ?? null),
+      };
+    })
+    // The stage gate, when the owner sets one. Null today: every in-progress
+    // piece qualifies. Finished pieces never pass through it.
+    .filter((p) => p.isFinished || allocatableFromDept(p.currentDepartment))
+    // Finished first, AGAIN — the ORDER BY above already does this, and this
+    // line is not redundant. "A piece that exists beats a piece that is
+    // promised" is a safety rule, and a safety rule that lives only in a SQL
+    // clause is one edit away from silently not holding. Sorting here makes
+    // the guarantee a property of this function, provable without a database,
+    // whatever order the rows arrive in. `sort` is stable, so the oldest-first
+    // tie-break the query applied inside each half survives untouched.
+    .sort((a, b) => Number(b.isFinished) - Number(a.isFinished));
+}
+
+export type OwnerTarget = {
+  salesOrderId: string;
+  salesOrderNo: string | null;
+  customerName: string | null;
+  customerState: string | null;
+};
+
+/**
+ * R12 — the ownership change itself, and it is NEVER BARE: the caller is
+ * expected to carry these statements in the same batch as the ledger rows that
+ * explain them, so a piece can never change hands without a record of why.
+ *
+ * `is_stock` is deliberately NOT cleared. It records how the piece was BORN,
+ * which stays true forever and is what tells an invoice this came from stock
+ * rather than from the customer's own production run. What changes is who owns
+ * it, and that is `sales_order_id` — the one link every downstream reader
+ * (delivery, the one-customer check, invoice-so-item-link) already trusts.
+ */
+export function buildOwnershipTransferStatements(
+  db: D1Database,
+  poIds: string[],
+  to: OwnerTarget,
+  updatedAt: string,
+): D1PreparedStatement[] {
+  return poIds.map((id) =>
+    db
+      .prepare(
+        `UPDATE production_orders
+            SET salesOrderId = ?, salesOrderNo = ?, companySOId = ?,
+                customerName = ?, customerState = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(
+        to.salesOrderId,
+        to.salesOrderNo,
+        to.salesOrderNo,
+        to.customerName,
+        to.customerState,
+        updatedAt,
+        id,
+      ),
+  );
+}
+
+/**
+ * The mirror of the transfer: hand the piece back to the stock order it was
+ * born against. `stock_origin_so_id` is what makes this exact rather than a
+ * guess — without it there would be no way to know where a released piece
+ * belongs.
+ */
+export function buildOwnershipReleaseStatements(
+  db: D1Database,
+  pos: Array<{ id: string; stockOriginSoId: string }>,
+  stockOrderNo: string | null,
+  updatedAt: string,
+): D1PreparedStatement[] {
+  return pos.map((po) =>
+    db
+      .prepare(
+        `UPDATE production_orders
+            SET salesOrderId = ?, salesOrderNo = ?, companySOId = ?,
+                customerName = ?, customerState = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(
+        po.stockOriginSoId,
+        stockOrderNo,
+        stockOrderNo,
+        STOCK_CUSTOMER_NAME,
+        "",
+        updatedAt,
+        po.id,
+      ),
+  );
+}
+
+/** The production orders this sales order currently holds FROM STOCK. */
+export async function loadAllocatedPOsForOrder(
+  db: D1Database,
+  salesOrderId: string,
+): Promise<AllocatablePO[]> {
+  const res = await db
+    .prepare(
+      `SELECT id, poNo, product_code, quantity, stock_origin_so_id,
+              status, current_department
+         FROM production_orders
+        WHERE is_stock = TRUE
+          AND stock_origin_so_id IS NOT NULL
+          AND sales_order_id = ?
+          AND sales_order_id <> stock_origin_so_id
+        ORDER BY created_at ASC`,
+    )
+    .bind(salesOrderId)
+    .all<{
+      // Dual-keyed: the Postgres adapter folds snake_case columns and
+      // aliases to camelCase on read, but a fresh SELECT can surface either.
+      // Reading only one spelling yields undefined -> 0, silently (CLAUDE.md).
+      id: string;
+      poNo: string | null;
+      product_code?: string; productCode?: string;
+      quantity: number | null;
+      stock_origin_so_id?: string; stockOriginSoId?: string;
+      status?: string | null;
+      current_department?: string | null; currentDepartment?: string | null;
+    }>();
+  return (res.results ?? []).map((r) => {
+    const isFinished = String(r.status ?? "").toUpperCase() === "COMPLETED";
+    return {
+      id: r.id,
+      poNo: r.poNo,
+      productCode: (r.productCode ?? r.product_code) ?? "",
+      quantity: Number(r.quantity ?? 0),
+      stockOriginSoId: (r.stockOriginSoId ?? r.stock_origin_so_id) ?? "",
+      isFinished,
+      currentDepartment: isFinished
+        ? null
+        : ((r.currentDepartment ?? r.current_department) ?? null),
+    };
+  });
+}
+
+export type AutoAllocationLine = {
+  productCode: string;
+  soItemId?: string | null;
+  soLineNo?: number | null;
+  quantity: number;
+};
+
+export type AutoAllocationPlan = {
+  statements: D1PreparedStatement[];
+  /** One human sentence per allocation, for so_status_changes.autoActions. */
+  notes: string[];
+  /**
+   * How many pieces each SO line took from stock, keyed by so_item_id.
+   *
+   * The CALLER MUST SUBTRACT THIS before building production orders. Allocating
+   * four and still producing ten is not a cosmetic slip — it is the waste this
+   * whole feature exists to prevent, and the note above would be claiming "6 to
+   * be produced" while ten were queued. A string is not a guarantee; this map
+   * is what makes the sentence true.
+   */
+  allocatedByItemId: Map<string, number>;
+  /**
+   * How many of the allocated pieces were still being MADE when they were
+   * taken. Zero means every piece came off the shelf.
+   *
+   * The caller needs this for the same reason `allocatedByItemId` exists: a
+   * sentence it writes downstream would otherwise be false. A line covered
+   * without queueing new production is NOT automatically "filled entirely from
+   * stock — nothing to produce" once work in progress is allocatable, because
+   * some of those pieces are on the floor and the floor still has to finish
+   * them. Found by running a 6-piece order against 4 finished + 4 unfinished
+   * on staging, 2026-10-22; the unit suite missed it because the sentence is
+   * assembled in the confirm route, not here.
+   */
+  unfinishedTaken: number;
+};
+
+/**
+ * Owner decision 2026-09-07: allocation is AUTOMATIC when a sales order is
+ * confirmed. The rails that keep this from repeating the 2026-06-08 removal
+ * ("your scan silently completes someone else's job") are all here:
+ *
+ *   • it touches UNALLOCATED stock only — availability is already net of every
+ *     open claim, so nothing is ever taken from another order;
+ *   • a MANUAL decision always wins — a line that already holds an allocation
+ *     is skipped entirely rather than topped up, so no operator's number is
+ *     changed behind their back;
+ *   • NOTHING on the shop floor changes — this writes ledger rows and not one
+ *     job card, production order or piece;
+ *   • it is VISIBLE and REVERSIBLE — every row is named in autoActions on the
+ *     order's own history, and POST /release gives it back.
+ *
+ * Returns statements so the caller can carry them in the SAME batch as the
+ * confirm. An allocation that could land without its confirm (or the reverse)
+ * is exactly the drift this ledger exists to prevent.
+ */
+export async function planAutoAllocation(
+  db: D1Database,
+  orgId: string,
+  order: {
+    id: string;
+    companySOId?: string | null;
+    isStock?: boolean | null;
+    customerName?: string | null;
+    customerState?: string | null;
+  },
+  lines: AutoAllocationLine[],
+  actor: AllocationActor,
+  occurredAt: string,
+): Promise<AutoAllocationPlan> {
+  // A stock order IS the stock. Allocating to it would be the placeholder
+  // problem all over again.
+  if (order.isStock === true)
+    return { statements: [], notes: [], allocatedByItemId: new Map(), unfinishedTaken: 0 };
+
+  const wanted = lines.filter((l) => l.productCode && l.quantity > 0);
+  if (wanted.length === 0)
+    return { statements: [], notes: [], allocatedByItemId: new Map(), unfinishedTaken: 0 };
+
+  const alreadyHeld = await loadAllocatedPOsForOrder(db, order.id);
+  const heldCodes = new Set(alreadyHeld.map((p) => p.productCode));
+
+  // Candidates are fetched ONCE per product and spent down locally, so two
+  // lines of the same product cannot both claim the same production orders.
+  const codes = [...new Set(wanted.map((l) => l.productCode))];
+  const pool = new Map<string, AllocatablePO[]>();
+  for (const code of codes) {
+    pool.set(code, await loadAllocatablePOs(db, code));
+  }
+  // Read for the NOTES only, never to decide what to take — the pool above is
+  // the authority on that. This is what lets a line that lost a race say so:
+  // an emptied pool and a product nobody stocks are identical from `pool`, and
+  // differ only in on-hand versus available.
+  const avail = await loadAvailability(db, orgId, codes);
+
+  const statements: D1PreparedStatement[] = [];
+  const notes: string[] = [];
+  const allocatedByItemId = new Map<string, number>();
+  let unfinishedTaken = 0;
+  for (const line of wanted) {
+    // A manual decision wins: a product this order already holds from stock is
+    // left exactly as the operator set it.
+    if (heldCodes.has(line.productCode)) continue;
+
+    const candidates = pool.get(line.productCode) ?? [];
+    const oversized = candidates[0]?.quantity ?? 0;
+    const taken: AllocatablePO[] = [];
+    let got = 0;
+    while (candidates.length > 0 && got < line.quantity) {
+      const next = candidates[0];
+      // Whole orders only — never split one to top up a line. Taking a set of
+      // 3 to satisfy a line that wants 1 would hand the customer two pieces
+      // nobody ordered.
+      if (got + next.quantity > line.quantity) break;
+      candidates.shift();
+      taken.push(next);
+      got += next.quantity;
+    }
+    if (taken.length === 0) {
+      // A9: "the loser is told." Losing a race is INVISIBLE from here — once
+      // another order has taken the pieces they stop being offered, so an
+      // emptied pool looks exactly like a product that never had stock. The
+      // difference is only in availability: goods on hand with none available
+      // means somebody else holds them.
+      //
+      // Silence is right for the genuinely-no-stock case (an "0 available" line
+      // on every product nobody stocks is noise), so only these two speak.
+      //
+      // The pool now holds unfinished pieces too, so "on hand" alone can be a
+      // LIE here: a line can lose a race it never knew about to a piece that
+      // is still on the floor. The sentence names whichever supply actually
+      // exists, because a salesperson who is told "none on hand" while three
+      // are being built has been given the wrong answer, not a shorter one.
+      const a = avail.get(line.productCode);
+      const freeNow = (a?.availableQty ?? 0) + (a?.inProductionQty ?? 0);
+      if (a && a.allocatedQty > 0 && freeNow === 0) {
+        const have: string[] = [];
+        if (a.onHandQty > 0) have.push(`${a.onHandQty} on hand`);
+        const building = a.allocatedQty - a.onHandQty;
+        if (building > 0) have.push(`${building} still in production`);
+        notes.push(
+          `No stock allocated for ${line.productCode} — all ${have.join(" and ")} ` +
+            `are already committed to other orders.`,
+        );
+      } else if (oversized > line.quantity) {
+        notes.push(
+          `No stock allocated for ${line.productCode} — the only stock is a set of ${oversized}, larger than this line's ${line.quantity}.`,
+        );
+      }
+      continue;
+    }
+
+    statements.push(
+      ...buildOwnershipTransferStatements(
+        db,
+        taken.map((p) => p.id),
+        {
+          salesOrderId: order.id,
+          salesOrderNo: order.companySOId ?? null,
+          customerName: order.customerName ?? null,
+          customerState: order.customerState ?? null,
+        },
+        occurredAt,
+      ),
+    );
+    for (const po of taken) {
+      statements.push(
+        buildAllocationStatement(db, "ALLOCATE", {
+          productCode: line.productCode,
+          quantity: po.quantity,
+          salesOrderId: order.id,
+          salesOrderNo: order.companySOId ?? null,
+          soItemId: line.soItemId ?? null,
+          soLineNo: line.soLineNo ?? null,
+          sourcePoId: po.id,
+          actor,
+          occurredAt,
+          reason: "Auto-allocated on order confirmation",
+          orgId,
+        }),
+      );
+    }
+    if (line.soItemId) {
+      allocatedByItemId.set(
+        line.soItemId,
+        (allocatedByItemId.get(line.soItemId) ?? 0) + got,
+      );
+    }
+    // What the line got is now two different promises, and a salesperson
+    // reading one sentence has to be able to tell them apart: a finished piece
+    // is on the shelf TODAY, an unfinished one is a claim on the floor's
+    // future output and can still be scrapped or re-specced. Saying "from
+    // stock" for both is the shape of lie this feature exists to remove.
+    const fromShelf = taken.filter((p) => p.isFinished)
+      .reduce((n, p) => n + p.quantity, 0);
+    const fromFloor = got - fromShelf;
+    unfinishedTaken += fromFloor;
+    const remainder = line.quantity > got
+      ? ` (${line.quantity - got} to be produced)`
+      : "";
+    notes.push(
+      fromFloor === 0
+        // Unchanged, deliberately: a line filled entirely off the shelf reads
+        // exactly as it did before WIP was allocatable. The sentence people
+        // already know should not move for a case that did not change.
+        ? `Allocated ${got} x ${line.productCode} from stock${remainder}`
+        : `Allocated ${got} x ${line.productCode}` +
+          ` (${fromShelf > 0 ? `${fromShelf} from stock, ` : ""}` +
+          `${fromFloor} from pieces still in production)${remainder}`,
+    );
+  }
+  return { statements, notes, allocatedByItemId, unfinishedTaken };
+}
+
+export type OpenAllocation = {
+  productCode: string;
+  salesOrderId: string;
+  salesOrderNo: string | null;
+  soItemId: string | null;
+  soLineNo: number | null;
+  /** Net of releases. Lines that net to zero are dropped. */
+  quantity: number;
+};
+
+/**
+ * What a given sales order currently holds, netted per PRODUCT.
+ *
+ * THE GROUP KEY IS THE IDENTITY, AND IT IS DELIBERATELY SMALL. It was once
+ * (product, order, order_no, so_item_id, so_line_no), and a release then failed
+ * to cancel its own allocation: the ALLOCATE rows carried
+ * (soi-…, line 1, SO-2609-394) and the RELEASE counter-rows carried
+ * (null, null, null), so the two fell into different groups, the +4 stayed
+ * "open" and the −4 was hidden by the HAVING. The goods had gone home, the
+ * panel still offered to release them, and nothing anywhere disagreed.
+ *
+ * so_item_id, so_line_no and sales_order_no DESCRIBE an allocation; they do not
+ * identify one. A counter-row is the reversal of a claim on a product by an
+ * order, and that pair is the whole identity. Keeping the descriptive columns
+ * out of the key means the netting cannot be broken by a write site that
+ * forgets to populate one — which is the failure that actually happened, and
+ * which "remember to fill it in at every call site" would only postpone.
+ *
+ * MIN(so_item_id) etc. are reported for display only; they name the first line
+ * the product was claimed against, and a caller must not treat them as a key.
+ */
+export async function loadOpenAllocationsForOrder(
+  db: D1Database,
+  salesOrderId: string,
+): Promise<OpenAllocation[]> {
+  const res = await db
+    .prepare(
+      `SELECT product_code, sales_order_id,
+              MIN(sales_order_no) AS sales_order_no,
+              MIN(so_item_id)     AS so_item_id,
+              MIN(so_line_no)     AS so_line_no,
+              SUM(direction * quantity) AS net_qty
+         FROM stock_allocations
+        WHERE sales_order_id = ?
+        GROUP BY product_code, sales_order_id
+        HAVING SUM(direction * quantity) > 0`,
+    )
+    .bind(salesOrderId)
+    .all<{
+      // Dual-keyed: the Postgres adapter folds snake_case columns and
+      // aliases to camelCase on read, but a fresh SELECT can surface either.
+      // Reading only one spelling yields undefined -> 0, silently (CLAUDE.md).
+      product_code?: string; productCode?: string;
+      sales_order_id?: string; salesOrderId?: string;
+      sales_order_no?: string | null; salesOrderNo?: string | null;
+      so_item_id?: string | null; soItemId?: string | null;
+      so_line_no?: number | null; soLineNo?: number | null;
+      net_qty?: number | null; netQty?: number | null;
+    }>();
+  return (res.results ?? []).map((r) => ({
+    productCode: (r.productCode ?? r.product_code) ?? "",
+    salesOrderId: (r.salesOrderId ?? r.sales_order_id) ?? "",
+    salesOrderNo: (r.salesOrderNo ?? r.sales_order_no) ?? null,
+    soItemId: (r.soItemId ?? r.so_item_id) ?? null,
+    soLineNo: (r.soLineNo ?? r.so_line_no) ?? null,
+    quantity: Number((r.netQty ?? r.net_qty) ?? 0),
+  }));
+}

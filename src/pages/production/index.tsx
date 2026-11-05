@@ -1812,6 +1812,8 @@ export default function ProductionPage({
   // factory has actually built before — no need to prefill a catalog.
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
   const { hasPermission } = usePermissions();
+  // R7 - same (resource, action) POST /production-orders/stock enforces.
+  const canCreateStockPO = hasPermission("production-orders", "create");
   const canSendNotice = hasPermission("announcements", "create");
   // Print Schedule mode toggle. "detailed" → handlePrintSchedule (one row
   // per PO/JC). "total" → handlePrintTotalListing (rows merged on
@@ -7386,13 +7388,18 @@ export default function ProductionPage({
           <p className="text-xs text-[#6B7280]">Real-time production status across all 8 departments</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            onClick={() => setStockDialogOpen(true)}
-            className="bg-[#6B5C32] hover:bg-[#574A28] text-white gap-1.5"
-          >
-            <Plus className="w-4 h-4" />
-            Create Stock PO
-          </Button>
+          {/* R7 - the button carries the permission its endpoint does
+              (production-orders:create). Offering a button that can only 403
+              is how an operator learns to distrust the screen. */}
+          {canCreateStockPO && (
+            <Button
+              onClick={() => setStockDialogOpen(true)}
+              className="bg-[#6B5C32] hover:bg-[#574A28] text-white gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              Create Stock PO
+            </Button>
+          )}
           <Button variant="outline" onClick={() => navigate("/planning?tab=tracker")}>Master Tracker</Button>
           {/* Always visible on Overview (HK-0025: the only other entry is the yellow
               "N selected" bar, which Violet never saw). Disabled until orders are ticked. */}
