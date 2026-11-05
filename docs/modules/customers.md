@@ -1,6 +1,5 @@
 # Customers & Platform — Module Guide
 
-> **Last verified: 2026-11-05**: the `CustomerSofaCombosPanel` anchor re-derived (`customers.tsx:2411`) after the price list gained bedframe Price 3 (branch `feat/bedframe-price3-main`); nothing else re-checked.
 > **Last verified: 2026-10-17**: the three `src/api/routes/customers.ts` anchors (`validateDebtorCode`, `rowToCustomer`, POST / PUT) restamped after the Finance v2 party fields (branch `feat/finance-v2-party-fields`); nothing else re-checked.
 
 > **Last verified: 2026-08-19** against `src/pages/customers.tsx`, `src/pages/settings/Users.tsx`,

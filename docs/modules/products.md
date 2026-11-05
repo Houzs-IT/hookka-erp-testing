@@ -1,6 +1,5 @@
 # Products & MDM — Module Guide
 
-> **Last verified: 2026-11-05** (branch `feat/bedframe-price3-main`, to `main`): `src/pages/products/index.tsx` anchors re-derived after the bedframe Price 3 column (`ProductsPage` :2160, `VariantEditorDialog` :669, `MaintenanceView` :1157, `CustomerAssignmentsSection` :487); nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `feat/bom-variant-fields-list-main`, to `main`): `src/pages/products/index.tsx` anchors re-derived after the Variant Fields / WIP Types list rows (`ProductsPage` :2152, `MaintenanceView` :1149, modular photo fetch :3047). Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `feat/editable-wip-types-main-v2`, to `main`): the `src/pages/products/index.tsx` anchors (`ProductsPage` :2074, `VariantEditorDialog` :661, `MaintenanceView` :1145, `CustomerAssignmentsSection` :479, `ProductionConfig` / `CategoryBadge` :386 / :373), read from the file after the WIP Types and Variant Fields Maintenance tabs were added. Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `fix/bom-master-template-accessory`): the `bom-master-templates.ts` anchors (line count, PUT `/:id`, bulk PUT), read from the file; it now accepts ACCESSORY (BUG-2026-10-05-255). Nothing else re-checked.

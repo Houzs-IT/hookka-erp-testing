@@ -1,6 +1,5 @@
 # Production & BOM — Module Guide
 
-> **Last verified: 2026-11-05** (branch `feat/bedframe-price3-main`, to `main`): the two `BOMManagementPage` anchors re-derived (`bom.tsx:5980`); they had drifted on `main`. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-bedframe-main`, to `main`): the `filteredOrders` (:2910) and FG-sticker (:5623 / :5582) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` grew by four lines and main (#893) was merged in. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-wrap-main`, to `main`): the `filteredOrders` (:2904) and FG-sticker (:5617 / :5576) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` was added beside `oemMarkFor`. Nothing else re-checked.
 > **Last verified: 2026-10-15** (branch `feat/bom-draft-activate-main`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5952, `EditBOMDialog` :2974, `MasterTemplatesDialog` :3836), read from `src/pages/bom.tsx` after the DRAFT badge and Activate button moved them. Same change as staging #875. Nothing else re-checked.
@@ -65,7 +64,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 3. **PO status recompute + completion cascade** — `recomputePoStatusAndProgress` (`_helpers.ts:4133`) is the single source of truth for PO `status` + progress. On full completion it fans out to `postProductionOrderCompletion` (`fg-completion.ts`, FG units/batches), `postJobCardLabor` (`po-cost-cascade.ts:953`), and the SO/CO cascades (`cascadePoCompletionToSO` `_helpers.ts:3900` / `cascadeUpholsteryToSO` `:3536` / `cascadeCNCompletionToCO` `:3994`).
 4. **Cost cascade** — on scan/completion: `consumeRawMaterialsForPO` (`po-cost-cascade.ts:803`, RM_ISSUE), `postJobCardLabor` (`:953`, LABOR_POSTED — idempotent via a `cost_ledger` check in the scan handler), `backfillFGBatchCost` (`:1153`), `postWIPCompletionMarker` (`:1276`). All append-only to `cost_ledger`.
 5. **Stock PO create** — `app.post("/stock")` (`production-orders.ts:1187`) builds make-to-stock POs (no SO). Board list read is `app.get("/")` (`:726`) via `fetchFilteredPOs` (`_helpers.ts:1444`); board summary `app.get("/board")` (`:3301`).
-6. **BOM edit** — `bom.tsx` `EditBOMDialog` (`:2974`) → `PUT /templates/:id` (`bom.ts:484`); master templates via `MasterTemplatesDialog` (`bom.tsx:3836`). Per-dept minute rates are edited on `src/pages/production/wip-times.tsx` (backed by `wip-times.ts`) and land in `bom_templates.wipComponents`.
+6. **BOM edit** — `bom.tsx` `EditBOMDialog` (`:2974`) → `PUT /templates/:id` (`bom.ts:484`); master templates via `MasterTemplatesDialog` (`bom.tsx:3864`). Per-dept minute rates are edited on `src/pages/production/wip-times.tsx` (backed by `wip-times.ts`) and land in `bom_templates.wipComponents`.
 
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
@@ -74,7 +73,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `filteredOrders` (memo) | `src/pages/production/index.tsx:2881` | Dept-narrow + overdue-set grid filter |
 | `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5594 / 5553` | FG sticker set (immediate paint → /p/ token upgrade) |
 | `BOMManagementPage` | `src/pages/bom.tsx:5980` | BOM page shell (tabs, list) |
-| `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2974 / 3836` | L1+WIP editor / master variants |
+| `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2974 / 3864` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
 | `applyWipInventoryChange` | `production-orders/_helpers.ts:2574` | WIP inventory change; idempotent ONLY when `orgId` passed |
 | `recomputePoStatusAndProgress` | `production-orders/_helpers.ts:4133` | Single source of truth for PO status/progress |
