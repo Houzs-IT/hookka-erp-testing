@@ -49,7 +49,7 @@ export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
     : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
       ? { mode: "monthly", month: rawPeriod.month }
       : rawPeriod.day && !dayTab ? { ...rawPeriod, day: undefined } : rawPeriod;
-  // "Today's problems" — the same four tiles as the desktop strip.
+  // "Today's problems" — the same tiles as the desktop strip.
   const problems = useProblemTiles(tabs.map((t) => t.key));
   const blocked = !tabs.some((t) => t.key === tab);
   const Tab = TAB_REGISTRY[tab];
