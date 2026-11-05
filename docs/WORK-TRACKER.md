@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-04**: branch `fix/hk0130-rate-save`, to `main` (HK-0130 rate save and order breakdown) added under the HK-0130 entry; nothing else re-checked.
 > **Last verified: 2026-11-04**: branch `feat/hk0130-outsource-to-main`, to `main` (HK-0130 outsource piece-rate wages) added below; nothing else re-checked.
 > **Last verified: 2026-11-03**: branch `feat/hk0125-mobile-polish`, to `main` (HK-0125, phone SO / DO / PO / GRN / Employees) added below (its entry is the newest).
@@ -285,6 +286,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## Customer overdue sets on the Dashboard (feat/customer-overdue-sets-main, 2026-11-05)
+Ask: a Dashboard section showing, per customer, how many sets are past the customer's delivery date and not yet delivered, to follow up pending deliveries. Built on staging (#1166, #1168), cherry-picked to main.
+1. DONE: per-order remaining sets = ordered (sales order lines) minus delivered (delivered, non-cancelled DOs through production orders), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.
+2. DONE: "Customer sets overdue" tile in Today's problems and a per-customer list on the Sales tab; opening an order shows where each item is now (department, progress, status, DO).
+3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Every product line counts as sets, delivered means arrived, sales orders only, cancelled / draft and service orders excluded.
+4. KNOWN GAP: returns do not reopen sets. On main the /m tile opens the Sales tab, which has no per-customer list. Production numbers UNMEASURED.
+
 ## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-to-main, 2026-11-04)
 From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Cherry-picked from staging PRs #1156 and #1158. Violet confirmed piece rate is commission for work taken home, on a separate account per person, so it does not stack on normal pay.
 1. DONE: Employees > Outsource tab (`src/components/outsource-piece-tab.tsx`): per-worker rates (Excel upload or paste), Import from Production, Wages & Report with CSV.
