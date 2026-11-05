@@ -7,6 +7,7 @@ const today = "2026-11-05";
 const row = (overrides) => ({
   soId: "so-1",
   soNo: "SO-1",
+  customerPo: null,
   customerId: "cust-a",
   customerName: "Customer A",
   customerDeliveryDate: "2026-11-01",
@@ -20,6 +21,11 @@ test("remaining sets are ordered minus delivered", () => {
   assert.equal(summary.totalSets, 3);
   assert.equal(summary.customers[0].orders[0].remainingSets, 3);
   assert.equal(summary.customers[0].orders[0].daysLate, 4);
+});
+
+test("each overdue order carries its customer PO", () => {
+  const summary = summarizeOverdueSets([row({ customerPo: "PO-HC-0412" })], today);
+  assert.equal(summary.customers[0].orders[0].customerPo, "PO-HC-0412");
 });
 
 test("cancelled production orders are not owed", () => {
