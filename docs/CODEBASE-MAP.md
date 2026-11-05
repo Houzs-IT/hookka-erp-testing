@@ -928,7 +928,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/products/index.tsx` — 3-way view (SKU Master/Catalog/Maintenance) (5424). Bedframe **Price 3** column = Price 2 × 1.10, worked out on screen by `bedframePrice3Sen` (`src/lib/utils.ts`), read-only, not stored | `src/api/routes/products.ts` — core CRUD, nested bomComponents (1245) | `products` / `bom_components` / `dept_working_times` | `tests/bom-explosion.test.mjs` |
+| `src/pages/products/index.tsx` — 3-way view (SKU Master/Catalog/Maintenance) (5424). Bedframe **Price 3** column (shown first: Price 3 | Price 2 | Price 1) = Price 2 × 1.10, worked out on screen by `bedframePrice3Sen` (`src/lib/utils.ts`), read-only, not stored | `src/api/routes/products.ts` — core CRUD, nested bomComponents (1245) | `products` / `bom_components` / `dept_working_times` | `tests/bom-explosion.test.mjs` |
 | `src/pages/products/catalog.tsx` — model-based photo grid | `src/api/routes/customer-products.ts` — per-customer SKU + overrides (1122) | `product_prices` / `product_dept_configs` | |
 | `src/pages/products/bom.tsx` — Master BOM Templates editor | `src/api/routes/bom.ts` — /api/bom=versions, /templates=bom_templates (1438) | `customer_products` / `customer_product_prices` | |
 | `src/pages/products/documents.tsx` — Production Docs per-variant | `src/api/routes/bom-master-templates.ts` — master CRUD | `bom_versions` / `bom_templates` / `bom_master_templates` | |
@@ -1062,7 +1062,7 @@ that proves those locks can actually go red.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/customers.tsx` — customer hub, nested pricing/maintenance/combos (4518). Price list shows bedframe **Price 3** = the customer's Price 2 × 1.10 (`bedframePrice3Sen`, read-only); the quotation PDF (`generate-customer-quotation-pdf-v2.ts`) prints it too | `src/api/routes/customers.ts` — customer CRUD (795) | `customers` / `customer_products` / `customer_product_prices` | `tests/customer-notify.test.mjs` |
+| `src/pages/customers.tsx` — customer hub, nested pricing/maintenance/combos (4518). Price list shows bedframe **Price 3** (first price column, then Price 2, Price 1) = the customer's Price 2 × 1.10 (`bedframePrice3Sen`, read-only); the quotation PDF (`generate-customer-quotation-pdf-v2.ts`) prints it too | `src/api/routes/customers.ts` — customer CRUD (795) | `customers` / `customer_products` / `customer_product_prices` | `tests/customer-notify.test.mjs` |
 | `src/pages/settings/Users.tsx` — Users/Org/Mailbox tabs, SUPER_ADMIN-gated (2922) | `src/api/routes/customer-products.ts` — per-customer pricing + bulk (1122) | `customer_hubs` / `delivery_hubs` | `tests/hub-cascade-completeness.test.mjs` |
 | `src/pages/settings/index.tsx` — settings shell | `src/api/routes/customer-maintenance.ts` — snapshot mirror (185) | `maintenance_config_history` / `sofa_combo_rules` | `tests/service-hub-chain.test.mjs` |
 | `src/pages/settings/EmailReports.tsx` — per-report on/off, recipients, send times, send-test (SUPER_ADMIN) | `src/api/routes/reports.ts` — `/settings` GET/PUT, `internal/due-trigger`; `src/api/lib/report-settings.ts` | `kv_config` (`daily_report_settings`, `daily_report_last_sent`) | `tests/report-settings.test.mjs` |
