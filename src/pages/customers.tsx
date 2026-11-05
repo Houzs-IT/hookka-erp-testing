@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { formatCurrency, formatRM } from "@/lib/utils";
+import { bedframePrice3Sen, formatCurrency, formatRM } from "@/lib/utils";
 import { humanizeError } from "@/lib/humanize-error";
 import { parseDebtorCode } from "@/lib/debtor";
 import { useCachedJson, invalidateCache, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -811,15 +811,15 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   const isSofaView = categoryTab === "SOFA";
   const isAccessoryView = categoryTab === "ACCESSORY";
   // Column count (used as colSpan when rendering the table-level wrapper).
-  // BEDFRAME / ALL: Code | Description | Category | Size | Price 2 | Price 1 | Actions = 7
+  // BEDFRAME / ALL: Code | Description | Category | Size | Price 2 | Price 1 | Price 3 | Actions = 8
   // SOFA:           Code | Description | Model | <one per Maintenance size> | Actions
   // ACCESSORY:      Code | Description | Base Price | Actions = 4
-  const colSpanN = isSofaView ? 4 + seatHeights.length : isAccessoryView ? 4 : 7;
+  const colSpanN = isSofaView ? 4 + seatHeights.length : isAccessoryView ? 4 : 8;
   const gridCols = isSofaView
     ? `1.3fr 1.5fr 0.7fr ${seatHeights.map(() => "0.95fr").join(" ")} 0.7fr`
     : isAccessoryView
     ? "1.3fr 2.5fr 1fr 0.7fr"
-    : "1.3fr 2fr 0.8fr 0.8fr 1fr 1fr 0.7fr";
+    : "1.3fr 2fr 0.8fr 0.8fr 1fr 1fr 1fr 0.7fr";
   const thCls = "px-3 py-1.5 text-[11px] font-medium text-[#6B7280] uppercase tracking-wider";
 
   // The cp row whose history dialog is open, looked up against the current rows array.
@@ -1120,6 +1120,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                             <div className={`${thCls} text-left`}>Size</div>
                             <div className={`${thCls} text-right`}>Price 2</div>
                             <div className={`${thCls} text-right`}>Price 1</div>
+                            <div className={`${thCls} text-right`}>Price 3</div>
                             <div className={`${thCls} text-right`}>Actions</div>
                           </>
                         )}
@@ -1138,6 +1139,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                     const dirty = dirtyEdits.get(row.id);
                     const baseDirty = dirty?.basePriceSen !== undefined;
                     const p1Dirty = dirty?.price1Sen !== undefined;
+                    const price3Sen = row.category === "BEDFRAME" ? bedframePrice3Sen(row.basePriceSen) : null;
 
                     return (
                       <tr key={row.id} className="group">
@@ -1390,6 +1392,9 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                                         : <span className="text-[#9CA3AF]">-</span>}
                                     </button>
                                   )}
+                                </div>
+                                <div className="px-3 py-1.5 text-right text-sm font-medium text-[#111827]">
+                                  {price3Sen ? formatRM(price3Sen) : <span className="text-[#9CA3AF]">-</span>}
                                 </div>
                               </>
                             )}

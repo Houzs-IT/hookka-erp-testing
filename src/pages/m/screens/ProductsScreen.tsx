@@ -18,7 +18,7 @@
 //                   same storage the desktop Catalog uploads to); cover first.
 //   • Sofa prices — seatHeightPrices × tier (P1 / P2 / P3) behind "View
 //                   prices"; rows follow Maintenance → Sofa → Sizes.
-//   • Bedframe    — Price 1 (price1Sen) and Price 2 (basePriceSen).
+//   • Bedframe    — Price 1 (price1Sen), Price 2 (basePriceSen) and Price 3 (Price 2 × 1.10).
 //   • Accessory   — base price (basePriceSen).
 // A missing price reads "No price" / "—", never RM 0.00. No "from" prices.
 // Setup completeness and the prototype's ⋮ menu are deliberately not here.
@@ -926,6 +926,7 @@ function PriceSlot({ p, onPrices }: { p: HubProduct; onPrices: () => void }) {
       <div style={{ ...priceBox, display: "grid", rowGap: 2 }}>
         {row("PRICE 1", d.p1)}
         {row("PRICE 2", d.p2)}
+        {row("PRICE 3", d.p3)}
       </div>
     );
   }
@@ -1729,6 +1730,7 @@ function FamilyRowPrice({ p }: { p: HubProduct }) {
       <span style={{ flex: "none", display: "grid", rowGap: 2 }}>
         {row("PRICE 1", d.p1)}
         {row("PRICE 2", d.p2)}
+        {row("PRICE 3", d.p3)}
       </span>
     );
   }

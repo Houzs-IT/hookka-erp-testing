@@ -38,7 +38,7 @@ test("families follow familyOf + baseModel, as desktop Catalog", () => {
 test("missing / zero prices never become a price", () => {
   assert.deepEqual(priceDisplay(byId("prod-1")), { kind: "sofa" });
   assert.deepEqual(priceDisplay(byId("prod-2")), { kind: "none" });
-  assert.deepEqual(priceDisplay(byId("prod-3")), { kind: "bedframe", p1: 129900, p2: 149900 });
+  assert.deepEqual(priceDisplay(byId("prod-3")), { kind: "bedframe", p1: 129900, p2: 149900, p3: 164890 });
   assert.deepEqual(priceDisplay(byId("prod-4")), { kind: "none" });
   assert.deepEqual(priceDisplay(byId("prod-5")), { kind: "single", base: 12000 });
   assert.deepEqual(priceDisplay(byId("prod-6")), { kind: "none" });
@@ -127,7 +127,7 @@ test("Products Hub v2: category tone, unknown categories fall back to neutral", 
 
 test("Products Hub v2 keeps the price rules: no 'from' price, missing price stays 'none'", () => {
   // Bedframe keeps both tiers (no minimum collapsed into one), sofa stays the sheet link.
-  assert.deepEqual(priceDisplay(byId("prod-3")), { kind: "bedframe", p1: 129900, p2: 149900 });
+  assert.deepEqual(priceDisplay(byId("prod-3")), { kind: "bedframe", p1: 129900, p2: 149900, p3: 164890 });
   assert.deepEqual(priceDisplay(byId("prod-1")), { kind: "sofa" });
   assert.deepEqual(priceDisplay(byId("prod-4")), { kind: "none" });
   assert.deepEqual(priceDisplay(byId("prod-6")), { kind: "none" });

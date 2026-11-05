@@ -451,6 +451,7 @@ function PricingCard({ p, onPrices }: { p: HubProduct; onPrices: () => void }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
         {col("PRICE 1", d.p1)}
         {col("PRICE 2", d.p2)}
+        {col("PRICE 3", d.p3)}
       </div>
     );
   } else if (d.kind === "single") {

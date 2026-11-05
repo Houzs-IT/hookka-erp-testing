@@ -15,6 +15,7 @@
 //                  A missing or non-positive price is "no price", never RM 0.00.
 // ---------------------------------------------------------------------------
 import { familyOf } from "../../../lib/product-family";
+import { bedframePrice3Sen } from "../../../lib/utils";
 
 export type SofaTier = "PRICE_1" | "PRICE_2" | "PRICE_3";
 
@@ -309,7 +310,7 @@ export function seatRows(p: HubProduct, maintenanceHeights: string[]): string[] 
 
 export type PriceDisplay =
   | { kind: "sofa" }
-  | { kind: "bedframe"; p1?: number; p2?: number }
+  | { kind: "bedframe"; p1?: number; p2?: number; p3?: number }
   | { kind: "single"; base: number }
   | { kind: "none" };
 
@@ -321,7 +322,7 @@ export function priceDisplay(p: HubProduct): PriceDisplay {
   if (p.category === "BEDFRAME") {
     return p.price1Sen == null && p.basePriceSen == null
       ? { kind: "none" }
-      : { kind: "bedframe", p1: p.price1Sen, p2: p.basePriceSen };
+      : { kind: "bedframe", p1: p.price1Sen, p2: p.basePriceSen, p3: bedframePrice3Sen(p.basePriceSen) ?? undefined };
   }
   return p.basePriceSen != null ? { kind: "single", base: p.basePriceSen } : { kind: "none" };
 }

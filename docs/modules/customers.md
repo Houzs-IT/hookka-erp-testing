@@ -1,5 +1,6 @@
 # Customers & Platform — Module Guide
 
+> **Last verified: 2026-11-05**: the `CustomerSofaCombosPanel` anchor re-derived (`customers.tsx:2411`) after the price list gained bedframe Price 3 (branch `feat/bedframe-price3`); nothing else re-checked.
 > **Last verified: 2026-10-23**: the two `UsersPage` anchors re-derived (`Users.tsx:235`) after the users list gained `twoFactorOn` (branch `feat/2fa-login-code-step`); nothing else re-checked.
 
 > **Last verified: 2026-10-17**: the three `src/api/routes/customers.ts` anchors (`validateDebtorCode`, `rowToCustomer`, POST / PUT) restamped after the Finance v2 party fields (branch `feat/finance-v2-party-fields`); nothing else re-checked.
@@ -65,7 +66,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 | `CustomersPage` | `src/pages/customers.tsx:3424` | List/KPI/columns/CRUD/context menu (default export) |
 | `CustomerProductsPanel` | `src/pages/customers.tsx:193` | Per-customer pricing (mirrors Products bulk-edit) |
 | `CustomerMaintenancePanel` | `src/pages/customers.tsx:1639` | Per-customer config snapshot tabs |
-| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2403` | Per-customer combo pricing (config editor) |
+| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2411` | Per-customer combo pricing (config editor) |
 | `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2692` | Price-history viewer |
 | `AssignSkuModal` | `src/pages/customers.tsx:3218` | SKU assignment modal |
 | `UsersPage` | `src/pages/settings/Users.tsx:235` | Users/Org/Mailbox tab shell |

@@ -7,6 +7,7 @@
 // desktop thresholds (> 80% red, > 50% ochre, else green, customers.tsx:3874).
 // ===========================================================================
 import { num, str } from "../../config/helpers";
+import { bedframePrice3Sen } from "../../../../lib/utils";
 import type { ColumnDef, RawRow } from "../../config/types";
 
 export type Stage = "CONFIRMED" | "POTENTIAL" | "ALL";
@@ -125,6 +126,7 @@ export const DEFAULT_SORT = { key: "name", dir: "asc" } as const;
 // date (customer-products.ts resolvePrices); this just lays the fields out the
 // way the desktop Customer Products grid does (customers.tsx:1104-1130):
 //   BEDFRAME / other  Price 2 = basePriceSen, Price 1 = price1Sen
+//   BEDFRAME          also Price 3 = Price 2 × 1.10 (bedframePrice3Sen)
 //   ACCESSORY         Base Price = basePriceSen
 //   SOFA              seatHeightPrices by seat size × tier (P1/P2/P3; a
 //                     missing tier counts as P2, custEntryTier)
@@ -179,6 +181,9 @@ export function priceRows(rows: RawRow[]): PriceRow[] {
           : [
               { label: "Price 2", sen: senOrNull(r, "basePriceSen") },
               { label: "Price 1", sen: senOrNull(r, "price1Sen") },
+              ...(category === "BEDFRAME"
+                ? [{ label: "Price 3", sen: bedframePrice3Sen(senOrNull(r, "basePriceSen")) }]
+                : []),
             ];
       return { ...base, kind: "FLAT", lines, tiers: [] };
     })

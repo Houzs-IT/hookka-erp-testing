@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-05**: bedframe Price 3 entry added (branch `feat/bedframe-price3`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry, item 5 added (branch `feat/overdue-sets-order-progress`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-04**: Phase 2 (Sales Order actions + edit on phone) entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
@@ -7,6 +8,12 @@
 > **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+
+## Bedframe Price 3 (feat/bedframe-price3, 2026-11-05)
+Ask (client): a Price 3 column beside Price 1 and Price 2 for every bedframe, Price 3 = Price 2 x 1.10 rounded to 2 decimals, for existing and new bedframes, and in the customer price list.
+1. DECIDED with the owner: Price 3 is a formula, not a stored price. It is worked out on screen from Price 2 (the customer's own Price 2 in a customer price list), so every existing and new bedframe has it with no database change or backfill, and it cannot be typed over.
+2. DECIDED with the owner: display only. Sales and consignment order lines keep charging Price 1 or Price 2 as before.
+3. Surfaces: desktop product list, customer price list (desktop and phone), phone product screens, customer quotation PDF.
 
 ## Customer overdue sets on the Dashboard (feat/customer-overdue-sets, 2026-11-05)
 Ask: a Dashboard section showing, per customer, how many sets are past the customer's delivery date and not yet delivered, to follow up pending deliveries.
