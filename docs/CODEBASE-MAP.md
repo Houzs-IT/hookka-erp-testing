@@ -928,7 +928,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/products/index.tsx` — 3-way view (SKU Master/Catalog/Maintenance) (5424). Bedframe **Price 3** column (shown first: Price 3 | Price 2 | Price 1) = Price 2 × 1.10, worked out on screen by `bedframePrice3Sen` (`src/lib/utils.ts`), read-only, not stored | `src/api/routes/products.ts` — core CRUD, nested bomComponents (1245) | `products` / `bom_components` / `dept_working_times` | `tests/bom-explosion.test.mjs` |
+| `src/pages/products/index.tsx` — 3-way view (SKU Master/Catalog/Maintenance) (5431). Bedframe **Price 3** column (shown first: Price 3 | Price 2 | Price 1) = Price 2 × 1.10, worked out on screen by `bedframePrice3Sen` (`src/lib/utils.ts`), read-only, not stored | `src/api/routes/products.ts` — core CRUD, nested bomComponents (1245) | `products` / `bom_components` / `dept_working_times` | `tests/bom-explosion.test.mjs` |
 | `src/pages/products/catalog.tsx` — model-based photo grid | `src/api/routes/customer-products.ts` — per-customer SKU + overrides (1122) | `product_prices` / `product_dept_configs` | |
 | `src/pages/products/bom.tsx` — Master BOM Templates editor | `src/api/routes/bom.ts` — /api/bom=versions, /templates=bom_templates (1438) | `customer_products` / `customer_product_prices` | |
 | `src/pages/products/documents.tsx` — Production Docs per-variant | `src/api/routes/bom-master-templates.ts` — master CRUD | `bom_versions` / `bom_templates` / `bom_master_templates` | |
