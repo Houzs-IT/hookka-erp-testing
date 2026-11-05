@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-05**: customer overdue sets entry, item 5 added (branch `feat/overdue-sets-order-progress`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-04**: Phase 2 (Sales Order actions + edit on phone) entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-11-04**: mobile Scan to Create (SO, PI, GRN, PV) and the remaining SO actions (items 13-26); GRN / PV / PI backend fixes; everything verified locally only (typecheck, lint, build, tests over in-memory stand-ins, browser against a local fake API) — no real database, KV, accounting API or OCR; nothing else re-checked.
@@ -13,6 +14,7 @@ Ask: a Dashboard section showing, per customer, how many sets are past the custo
 2. DONE: "Customer sets overdue" tile in Today's problems (desktop and /m) and a per-customer list on the Sales tab; /m opens a customer sheet.
 3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Defaults accepted: every product line counts as sets, delivered means arrived, sales orders only (no consignment), cancelled / draft and service orders excluded.
 4. KNOWN GAP: returns do not reopen sets (on staging returns end in a credit note or restock). Production numbers UNMEASURED (read access blocked in this session).
+5. DONE: opening an order in the overdue list shows where each item is now: department, progress, status and DO (or "Not on a DO"), from the same data as the sales order page.
 
 ## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-piece-rate, 2026-11-04)
 From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Built to `staging`; Violet has not confirmed the open items below.
