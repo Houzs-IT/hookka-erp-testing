@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Link, useSearchParams } from "react-router-dom";
-import { formatCurrency } from "@/lib/utils";
+import { bedframePrice3Sen, formatCurrency } from "@/lib/utils";
 import { isSetupField, SETUP_FIELD_LABEL, type SetupField } from "@/lib/kpi-drill";
 import { Plus, Trash2, Check, Calendar, History, Pencil, FileDown, Loader2, X as XIcon } from "lucide-react";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
@@ -230,6 +230,7 @@ function buildBaseCols(sofaHeights: string[]): Record<ProdCat, BaseCol[]> {
       { key: "size", label: "Size", width: "minmax(90px,0.8fr)", align: "left" },
       { key: "price2", label: "Price 2", width: "minmax(100px,1fr)", align: "right" },
       { key: "price1", label: "Price 1", width: "minmax(100px,1fr)", align: "right" },
+      { key: "price3", label: "Price 3", width: "minmax(100px,1fr)", align: "right" },
       { key: "unitM3", label: "Unit (m³)", width: "minmax(80px,0.7fr)", align: "right" },
       { key: "fabric", label: "Fabric (m)", width: "minmax(80px,0.7fr)", align: "right" },
       { key: "totalMin", label: "Total Min", width: "minmax(84px,0.9fr)", align: "right" },
@@ -264,6 +265,7 @@ const BASE_COL_CHOOSER_LABEL: Record<string, string> = {
   model: "Model",
   price2: "Price 2",
   price1: "Price 1",
+  price3: "Price 3",
   basePrice: "Base Price",
   unitM3: "Unit (m³)",
   fabric: "Fabric (m)",
@@ -276,6 +278,12 @@ function baseColChooserLabel(col: { key: string; label: string }): string {
   const m = H_COL_RE.exec(col.key);
   if (m) return IS_NUMERIC_SIZE(m[1]) ? `Seat ${m[1]}"` : m[1];
   return BASE_COL_CHOOSER_LABEL[col.key] ?? col.label;
+}
+
+function productPrice3Sen(product: Product): number | null {
+  return product.category === "BEDFRAME"
+    ? bedframePrice3Sen(product.basePriceSen ?? product.costPriceSen)
+    : null;
 }
 
 type DeptWorkingTime = {
@@ -2223,7 +2231,7 @@ export default function ProductsPage() {
   const { hasPermission: hasPerm } = usePermissions();
   const canSeePricing = hasPerm("product-pricing", "read");
   const PRICE_COL_KEYS = useMemo(
-    () => new Set(["price2", "price1", "basePrice", "marginP2", "marginP1", "laborPctP2", "laborPctP1"]),
+    () => new Set(["price2", "price1", "price3", "basePrice", "marginP2", "marginP1", "laborPctP2", "laborPctP1"]),
     [],
   );
   const baseCols = useMemo(() => {
@@ -3441,6 +3449,8 @@ export default function ProductsPage() {
           return p.basePriceSen ?? p.costPriceSen ?? 0;
         case "price1":
           return p.price1Sen ?? 0;
+        case "price3":
+          return productPrice3Sen(p) ?? 0;
         case "unitM3":
           return cfg?.unitM3 ?? p.unitM3 ?? 0;
         case "fabric":
@@ -3500,6 +3510,10 @@ export default function ProductsPage() {
         case "price1": {
           const v = p.price1Sen ?? 0;
           return v > 0 ? formatCurrency(v) : "";
+        }
+        case "price3": {
+          const v = productPrice3Sen(p);
+          return v ? formatCurrency(v) : "";
         }
         case "unitM3":
           return (cfg?.unitM3 ?? p.unitM3 ?? 0).toFixed(3);
@@ -4552,6 +4566,7 @@ export default function ProductsPage() {
                   : (cfg ? totalConfigMinutes(cfg) : 0);
                 const price1Val = p.price1Sen ?? 0;
                 const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
+                const price3Val = productPrice3Sen(p);
                 // Estimated labor cost for this SKU = total production minutes
                 // × flat-average labor rate (see LABOR_RATE_PER_MIN_SEN). 0 when
                 // the SKU has no minutes yet — rendered as "—" downstream.
@@ -4788,6 +4803,13 @@ export default function ProductsPage() {
                                   {price1Val > 0 ? formatCurrency(price1Val) : <span className="text-[#9CA3AF]">-</span>}
                                 </button>
                               )}
+                            </div>
+                            ),
+                            price3: (
+                            <div className="px-3 py-1.5 text-right">
+                              <span className="text-sm font-medium text-[#111827]">
+                                {price3Val ? formatCurrency(price3Val) : <span className="text-[#9CA3AF]">-</span>}
+                              </span>
                             </div>
                             ),
                             basePrice: (

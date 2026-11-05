@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-05**: bedframe Price 3 entry added (branch `feat/bedframe-price3-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-04**: branch `fix/hk0130-rate-save`, to `main` (HK-0130 rate save and order breakdown) added under the HK-0130 entry; nothing else re-checked.
 > **Last verified: 2026-11-04**: branch `feat/hk0130-outsource-to-main`, to `main` (HK-0130 outsource piece-rate wages) added below; nothing else re-checked.
@@ -286,6 +287,12 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 design/mobile-home-dashboard
+## Bedframe Price 3 (feat/bedframe-price3-main, 2026-11-05)
+Ask (client): a Price 3 column beside Price 1 and Price 2 for every bedframe, Price 3 = Price 2 x 1.10 rounded to 2 decimals, for existing and new bedframes, and in the customer price list.
+1. DECIDED with the owner: Price 3 is a formula, not a stored price. It is worked out on screen from Price 2 (the customer's own Price 2 in a customer price list), so every existing and new bedframe has it with no database change or backfill, and it cannot be typed over.
+2. DECIDED with the owner: display only. Sales and consignment order lines keep charging Price 1 or Price 2 as before.
+3. Surfaces on main: desktop product list, customer price list, customer quotation PDF. Staging (`feat/bedframe-price3`) also has the phone screens, which main does not carry.
+
 ## Customer overdue sets on the Dashboard (feat/customer-overdue-sets-main, 2026-11-05)
 Ask: a Dashboard section showing, per customer, how many sets are past the customer's delivery date and not yet delivered, to follow up pending deliveries. Built on staging (#1166, #1168), cherry-picked to main.
 1. DONE: per-order remaining sets = ordered (sales order lines) minus delivered (delivered, non-cancelled DOs through production orders), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.

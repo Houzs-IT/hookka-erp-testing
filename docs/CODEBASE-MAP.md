@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-11-05 on branch `feat/bedframe-price3-main` (to `main`)**: the `src/pages/products/index.tsx` and `src/pages/customers.tsx` rows only (bedframe Price 3), read from those files and `src/lib/utils.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-21 on branch `feat/bs-parent-accounts` (to `main`)**: the Balance Sheet's parent accounts — `src/lib/bs-groups.ts` (`groupBsEntries`), `BalanceSheetTab` (`renderBSSection`, levels, `buildExport`) in `src/pages/accounting/index.tsx`, `plBalanceSheetResponse` (parentCode / parentName) and `REPORT_SNAPSHOT_V` in `src/api/routes/accounting.ts`, the PDF row kind `group` in `src/lib/export-report.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-21 on branch `feat/tf-draw-detail-look` (to `main`)**: Creditor Aging's opened drawdown — `TfDrawDetail` / `DueDateBox` / `TfRepaidRows` / `TfRepaidDraw` in `src/pages/accounting/tabs/TradeFinanceBlock.tsx`, `tfRepaid` in `APTab` (`src/pages/accounting/index.tsx`). Nothing else re-checked.
 > **Last verified: 2026-10-20 on branch `claude/t006-pi-caps-main-096a64` (to `main`)**: the convert-chain PO-ceiling line (T-006 R5 / R8 / R9: `po_item_id` buckets, `chk_grn_items_invoiced_qty`, the line-poId create guard) and the `checkPoRemaining` anchor. Nothing else re-checked.
@@ -928,7 +929,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/products/index.tsx` — 3-way view (SKU Master/Catalog/Maintenance) (5307) | `src/api/routes/products.ts` — core CRUD, nested bomComponents (1245) | `products` / `bom_components` / `dept_working_times` | `tests/bom-explosion.test.mjs` |
+| `src/pages/products/index.tsx` — 3-way view (SKU Master/Catalog/Maintenance) (5424). Bedframe **Price 3** column = Price 2 × 1.10, worked out on screen by `bedframePrice3Sen` (`src/lib/utils.ts`), read-only, not stored | `src/api/routes/products.ts` — core CRUD, nested bomComponents (1245) | `products` / `bom_components` / `dept_working_times` | `tests/bom-explosion.test.mjs` |
 | `src/pages/products/catalog.tsx` — model-based photo grid | `src/api/routes/customer-products.ts` — per-customer SKU + overrides (1122) | `product_prices` / `product_dept_configs` | |
 | `src/pages/products/bom.tsx` — Master BOM Templates editor | `src/api/routes/bom.ts` — /api/bom=versions, /templates=bom_templates (1438) | `customer_products` / `customer_product_prices` | |
 | `src/pages/products/documents.tsx` — Production Docs per-variant | `src/api/routes/bom-master-templates.ts` — master CRUD | `bom_versions` / `bom_templates` / `bom_master_templates` | |
@@ -1062,7 +1063,7 @@ that proves those locks can actually go red.
 
 | Frontend page | API route | Primary tables | Tests |
 |---|---|---|---|
-| `src/pages/customers.tsx` — customer hub, nested pricing/maintenance/combos (4491) | `src/api/routes/customers.ts` — customer CRUD (795) | `customers` / `customer_products` / `customer_product_prices` | `tests/customer-notify.test.mjs` |
+| `src/pages/customers.tsx` — customer hub, nested pricing/maintenance/combos (4518). Price list shows bedframe **Price 3** = the customer's Price 2 × 1.10 (`bedframePrice3Sen`, read-only); the quotation PDF (`generate-customer-quotation-pdf-v2.ts`) prints it too | `src/api/routes/customers.ts` — customer CRUD (795) | `customers` / `customer_products` / `customer_product_prices` | `tests/customer-notify.test.mjs` |
 | `src/pages/settings/Users.tsx` — Users/Org/Mailbox tabs, SUPER_ADMIN-gated (2922) | `src/api/routes/customer-products.ts` — per-customer pricing + bulk (1122) | `customer_hubs` / `delivery_hubs` | `tests/hub-cascade-completeness.test.mjs` |
 | `src/pages/settings/index.tsx` — settings shell | `src/api/routes/customer-maintenance.ts` — snapshot mirror (185) | `maintenance_config_history` / `sofa_combo_rules` | `tests/service-hub-chain.test.mjs` |
 | `src/pages/settings/EmailReports.tsx` — per-report on/off, recipients, send times, send-test (SUPER_ADMIN) | `src/api/routes/reports.ts` — `/settings` GET/PUT, `internal/due-trigger`; `src/api/lib/report-settings.ts` | `kv_config` (`daily_report_settings`, `daily_report_last_sent`) | `tests/report-settings.test.mjs` |

@@ -26,6 +26,7 @@ import { COMPANY } from "@/lib/constants";
 import { fmtRM, fmtDate, drawLetterhead } from "@/lib/pdf-utils";
 import { sofaSeatHeights, sofaSeatLabel } from "./sofa-seat-heights";
 import { getVariantsConfigSync } from "./kv-config";
+import { bedframePrice3Sen } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Envelope types — must match the GET /api/customer-quotation response.
@@ -532,13 +533,14 @@ export default function generateCustomerQuotationPdfV2(
         autoTable(doc, {
           startY: y,
           margin: { left: margin, right: margin },
-          head: [["Code", "Description", "Size", "Price 2", "Price 1"]],
+          head: [["Code", "Description", "Size", "Price 2", "Price 1", "Price 3"]],
           body: rows.map((p) => [
             p.code,
             p.name,
             p.sizeLabel || p.sizeCode || DASH,
             rmOrDash(p.basePriceSen),
             rmOrDash(p.price1Sen),
+            rmOrDash(bedframePrice3Sen(p.basePriceSen)),
           ]),
           styles: sharedStyles,
           headStyles: sharedHead,
@@ -549,6 +551,7 @@ export default function generateCustomerQuotationPdfV2(
             2: { cellWidth: 22 },
             3: { cellWidth: 24, halign: "right" },
             4: { cellWidth: 24, halign: "right" },
+            5: { cellWidth: 24, halign: "right" },
           },
         });
         advanceYAfterTable();

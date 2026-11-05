@@ -1,5 +1,6 @@
 # Production & BOM — Module Guide
 
+> **Last verified: 2026-11-05** (branch `feat/bedframe-price3-main`, to `main`): the two `BOMManagementPage` anchors re-derived (`bom.tsx:5980`); they had drifted on `main`. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-bedframe-main`, to `main`): the `filteredOrders` (:2910) and FG-sticker (:5623 / :5582) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` grew by four lines and main (#893) was merged in. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-wrap-main`, to `main`): the `filteredOrders` (:2904) and FG-sticker (:5617 / :5576) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` was added beside `oemMarkFor`. Nothing else re-checked.
 > **Last verified: 2026-10-15** (branch `feat/bom-draft-activate-main`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5952, `EditBOMDialog` :2974, `MasterTemplatesDialog` :3836), read from `src/pages/bom.tsx` after the DRAFT badge and Activate button moved them. Same change as staging #875. Nothing else re-checked.
@@ -40,7 +41,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
   - `/production/tracker` → redirect to `/planning?tab=tracker` (`src/dashboard-routes.tsx`). The Master Tracker lives as a TAB of the Planning page; the standalone `production/tracker.tsx` was deleted 2026-08-13 — unreachable since the route became a redirect, imported nowhere. **`PlanningPage` does not read `?tab=` yet** (`activeTab` is local state), so this redirect and the Production page's own "Master Tracker" button both land on Capacity Overview.
   - `/production/scan` → `src/pages/production/scan.tsx` (shop-floor dept scan) · `/production/fg-scan` → `src/pages/production/fg-scan.tsx`
   - `/production/wip-times` → `src/pages/production/wip-times.tsx` (per-dept minute rates)
-  - `/bom` → `src/pages/bom.tsx:5952` (`BOMManagementPage`) · `/cnc-templates` → `src/pages/cnc-templates.tsx`
+  - `/bom` → `src/pages/bom.tsx:5980` (`BOMManagementPage`) · `/cnc-templates` → `src/pages/cnc-templates.tsx`
 - API routes
   - PO / job-card / WIP / scan **handlers** → `src/api/routes/production-orders.ts` (3903 lines); every shared
     function lives in `src/api/routes/production-orders/_helpers.ts` (5799). Mounted `worker.ts:1233`.
@@ -72,7 +73,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `ProductionPage` | `src/pages/production/index.tsx:600` | WIP board; every column/row branches on `activeTab` |
 | `filteredOrders` (memo) | `src/pages/production/index.tsx:2881` | Dept-narrow + overdue-set grid filter |
 | `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5594 / 5553` | FG sticker set (immediate paint → /p/ token upgrade) |
-| `BOMManagementPage` | `src/pages/bom.tsx:5952` | BOM page shell (tabs, list) |
+| `BOMManagementPage` | `src/pages/bom.tsx:5980` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2974 / 3836` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
 | `applyWipInventoryChange` | `production-orders/_helpers.ts:2574` | WIP inventory change; idempotent ONLY when `orgId` passed |
