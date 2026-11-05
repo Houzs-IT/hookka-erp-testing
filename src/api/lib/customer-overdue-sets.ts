@@ -1,6 +1,6 @@
-// Customer overdue sets: per sales order, sets ordered minus sets delivered, for
-// orders past the customer's delivery date. Delivered = a non-cancelled DO with
-// `delivered_at`, joined through production_orders (same path as
+// Customer overdue sets: per sales order, sets ordered minus sets already on a
+// non-cancelled DO (any stage, owner 2026-11-05), for orders past the customer's
+// delivery date. Joined through production_orders (same path as
 // on-time-delivery.ts; delivery_orders.sales_order_id is only half filled).
 import { mytYmd, type DbLike } from "./on-time-delivery";
 
@@ -11,7 +11,7 @@ export interface OverdueSetsOrderRow {
   customerName: string | null;
   customerDeliveryDate: string | null;
   orderedSets: number | string | null;
-  deliveredSets: number | string | null;
+  setsOnDeliveryOrder: number | string | null;
 }
 
 export interface OverdueSetsOrder {
@@ -56,13 +56,12 @@ export async function collectOverdueSetsRows(
          SELECT soi.sales_order_id AS so_id, SUM(soi.quantity) AS ordered_sets
            FROM sales_order_items soi
           GROUP BY soi.sales_order_id
-       ), delivered AS (
-         SELECT po.sales_order_id AS so_id, SUM(di.quantity) AS delivered_sets
+       ), on_delivery_order AS (
+         SELECT po.sales_order_id AS so_id, SUM(di.quantity) AS sets_on_delivery_order
            FROM delivery_orders d
            JOIN delivery_order_items di ON di.delivery_order_id = d.id
            JOIN production_orders po ON po.id = di.production_order_id
           WHERE d.status <> 'CANCELLED'
-            AND NULLIF(d.delivered_at::text, '') IS NOT NULL
             AND NULLIF(po.sales_order_id, '') IS NOT NULL
           GROUP BY po.sales_order_id
        )
@@ -72,10 +71,10 @@ export async function collectOverdueSetsRows(
               so.customer_name AS "customerName",
               NULLIF(substr(so.customer_delivery_date::text, 1, 10), '') AS "customerDeliveryDate",
               COALESCE(o.ordered_sets, 0) AS "orderedSets",
-              COALESCE(dl.delivered_sets, 0) AS "deliveredSets"
+              COALESCE(dl.sets_on_delivery_order, 0) AS "setsOnDeliveryOrder"
          FROM sales_orders so
          LEFT JOIN ordered o ON o.so_id = so.id
-         LEFT JOIN delivered dl ON dl.so_id = so.id
+         LEFT JOIN on_delivery_order dl ON dl.so_id = so.id
         WHERE so.org_id = ?
           AND so.status NOT IN ('CANCELLED', 'DRAFT')
           AND NOT COALESCE(so.is_service_order, FALSE)
@@ -93,7 +92,7 @@ function daysBetween(fromYmd: string, toYmd: string): number {
 
 function toOverdueOrder(row: OverdueSetsOrderRow, dueDate: string, todayYmd: string): OverdueSetsOrder | null {
   const orderedSets = Number(row.orderedSets) || 0;
-  const remainingSets = Math.max(0, orderedSets - (Number(row.deliveredSets) || 0));
+  const remainingSets = Math.max(0, orderedSets - (Number(row.setsOnDeliveryOrder) || 0));
   if (remainingSets === 0 || dueDate >= todayYmd) return null;
   return { soId: row.soId, soNo: row.soNo, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets };
 }
