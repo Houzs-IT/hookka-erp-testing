@@ -1,6 +1,5 @@
 # Production & BOM — Module Guide
 
-> **Last verified: 2026-11-05** (branch `fix/bom-anchor-drift-main`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5980, `EditBOMDialog` :2974, `MasterTemplatesDialog` :3864), read from `src/pages/bom.tsx` after the Copy From search box (#1171) moved them. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-bedframe-main`, to `main`): the `filteredOrders` (:2910) and FG-sticker (:5623 / :5582) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` grew by four lines and main (#893) was merged in. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/fg-sticker-notes-wrap-main`, to `main`): the `filteredOrders` (:2904) and FG-sticker (:5617 / :5576) anchors, read from `src/pages/production/index.tsx` after `notesFontSize` was added beside `oemMarkFor`. Nothing else re-checked.
 > **Last verified: 2026-10-15** (branch `feat/bom-draft-activate-main`, to `main`): the `bom.tsx` anchors (`BOMManagementPage` :5952, `EditBOMDialog` :2974, `MasterTemplatesDialog` :3836), read from `src/pages/bom.tsx` after the DRAFT badge and Activate button moved them. Same change as staging #875. Nothing else re-checked.
