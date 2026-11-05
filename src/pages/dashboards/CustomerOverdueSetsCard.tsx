@@ -1,8 +1,9 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { CustomerOverdueSets, OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
+import type { CustomerOverdueSets, OverdueSetsOrder, OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
 import { fmtN } from "./dashboard-shared-lib";
+import { OverdueOrderProgress } from "./OverdueOrderProgress";
 
 export interface CustomerOverdueSetsCardProps {
   summary: OverdueSetsSummary | null | undefined;
@@ -38,20 +39,33 @@ function CustomerRow({ customer, asOf }: { customer: CustomerOverdueSets; asOf: 
         </div>
       </summary>
       <ul className="bg-[#FAF9F7] px-4 py-1" aria-label={`Overdue orders for ${customer.customerName} as of ${asOf}`}>
-        {customer.orders.map((order) => (
-          <li key={order.soId} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#EFEBE5] py-2 text-xs last:border-b-0">
-            <Link to={`/sales/${order.soId}`} className="min-h-11 inline-flex items-center font-mono text-[#6B5C32] underline-offset-2 hover:underline sm:min-h-0">
-              {order.soNo ?? "(no number)"}
-            </Link>
-            <span className="text-[#6B7280]">due {order.dueDate}</span>
-            <LatePill days={order.daysLate} />
-            <span className="ml-auto tabular-nums text-[#1F1D1B]">
-              <span className="font-semibold">{fmtN(order.remainingSets)}</span> of {fmtN(order.orderedSets)} sets to deliver
-            </span>
-          </li>
-        ))}
+        {customer.orders.map((order) => <OrderRow key={order.soId} order={order} />)}
       </ul>
     </details>
+  );
+}
+
+function OrderRow({ order }: { order: OverdueSetsOrder }) {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <li className="border-b border-[#EFEBE5] text-xs last:border-b-0">
+      <details className="group/order" onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 py-2 hover:bg-[#F2EFEA] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6B5C32] sm:min-h-0 [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF] transition-transform group-open/order:rotate-90" aria-hidden="true" />
+          <span className="font-mono text-[#6B5C32]">{order.soNo ?? "(no number)"}</span>
+          <span className="text-[#6B7280]">due {order.dueDate}</span>
+          <LatePill days={order.daysLate} />
+          <span className="ml-auto tabular-nums text-[#1F1D1B]">
+            <span className="font-semibold">{fmtN(order.remainingSets)}</span> of {fmtN(order.orderedSets)} sets to deliver
+          </span>
+        </summary>
+        {isOpen && (
+          <div className="pb-2 sm:pl-6">
+            <OverdueOrderProgress soId={order.soId} soNo={order.soNo} />
+          </div>
+        )}
+      </details>
+    </li>
   );
 }
 
@@ -75,7 +89,7 @@ export function CustomerOverdueSetsCard({ summary, isLoading, unavailableReason 
       <CardHeader className="pb-3">
         <CardTitle>Customer overdue sets{summary ? ` · ${fmtN(summary.totalSets)}` : ""}</CardTitle>
         <p className="mt-0.5 text-xs text-[#6B7280]">
-          Sets not yet delivered on orders past the customer's delivery date, by customer. Tap a customer for its orders.
+          Sets not yet delivered on orders past the customer's delivery date, by customer. Tap a customer for its orders, then an order to see where each item is now.
           {summary && summary.ordersWithoutCustomerDate > 0 && (
             <span className="text-[#9C6F1E]"> {fmtN(summary.ordersWithoutCustomerDate)} {summary.ordersWithoutCustomerDate === 1 ? "order has" : "orders have"} no delivery date and {summary.ordersWithoutCustomerDate === 1 ? "is" : "are"} not counted.</span>
           )}
