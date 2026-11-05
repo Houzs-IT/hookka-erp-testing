@@ -504,6 +504,34 @@ async function nextPayslipId(
   return `${prefix}${String(seq + 1).padStart(3, "0")}`;
 }
 
+export const MISSING_PAYSLIP_SQL =
+  "SELECT id, empNo, name FROM workers WHERE empNo NOT LIKE 'TEST%' AND (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND (joinDate IS NULL OR joinDate <= ?) AND id NOT IN (SELECT employeeId FROM payslips WHERE period = ?) ORDER BY empNo";
+
+export interface MissingPayslipWorker {
+  id: string;
+  empNo: string;
+  name: string;
+}
+
+export async function findWorkersMissingPayslip(
+  db: D1Database,
+  period: string,
+): Promise<MissingPayslipWorker[]> {
+  const [year, month] = period.split("-").map(Number);
+  const periodLastDay = `${period}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+  const [queryResult] = await db.batch<MissingPayslipWorker>([
+    db.prepare(MISSING_PAYSLIP_SQL).bind(`${period}%`, periodLastDay, period),
+  ]);
+  return queryResult?.results ?? [];
+}
+
+export interface PendingPayslipLink {
+  workerId: string;
+  payslipId: string;
+  penaltySen: number;
+  pieceSen: number;
+}
+
 // Per-period per-day absence/OT detail for a set of workers, computed from the
 // SAME working_hour_entries + public holidays + grace-cutoff the engine uses.
 // Display-only (no amounts) — lets the stored-payslips list carry the same
@@ -1080,6 +1108,7 @@ app.post("/", async (c) => {
     // worker config. APPROVED rows are protected — once payroll is
     // signed off the audit trail is inviolate, the operator has to
     // un-approve first (a separate flow) before a regenerate.
+    const draftDeletions: D1PreparedStatement[] = [];
     if (regenerate) {
       const approvedRow = await c.var.DB.prepare(
         "SELECT COUNT(*) AS c FROM payslips WHERE period = ? AND status != 'DRAFT'",
@@ -1095,11 +1124,9 @@ app.post("/", async (c) => {
           400,
         );
       }
-      await c.var.DB.prepare(
-        "DELETE FROM payslips WHERE period = ? AND status = 'DRAFT'",
-      )
-        .bind(period)
-        .run();
+      draftDeletions.push(
+        c.var.DB.prepare("DELETE FROM payslips WHERE period = ? AND status = 'DRAFT'").bind(period),
+      );
     } else {
       const existing = await c.var.DB.prepare(
         "SELECT COUNT(*) AS c FROM payslips WHERE period = ?",
@@ -1257,6 +1284,13 @@ app.post("/", async (c) => {
       effBounds.end,
     );
 
+    const nextId = await nextPayslipId(c.var.DB, period);
+    const firstId = draftDeletions.length > 0 ? nextId.replace(/\d+$/, "001") : nextId;
+    const idPrefix = firstId.replace(/\d+$/, "");
+    const firstSequence = Number(firstId.slice(idPrefix.length));
+    const payslipInserts: D1PreparedStatement[] = [];
+    const payslipLinks: PendingPayslipLink[] = [];
+
     for (const worker of activeWorkers) {
       // Join date. A worker who joined AFTER this period had not started yet —
       // skip them entirely (no payslip for a month before they were hired).
@@ -1408,8 +1442,11 @@ app.post("/", async (c) => {
         statutoryRules,
       );
 
-      const id = await nextPayslipId(c.var.DB, period);
-      await c.var.DB.prepare(
+      const id = `${idPrefix}${String(firstSequence + payslipInserts.length).padStart(3, "0")}`;
+      if (penaltySen > 0 || pieceSen > 0) {
+        payslipLinks.push({ workerId: worker.id, payslipId: id, penaltySen, pieceSen });
+      }
+      payslipInserts.push(c.var.DB.prepare(
         `INSERT OR IGNORE INTO payslips (
            id, employeeId, employeeName, employeeNo, departmentCode, period,
            basicSalarySen, workingDays, absentDays, absenceDeductionSen,
@@ -1471,23 +1508,22 @@ app.post("/", async (c) => {
           bankAccount,
           paymentMethod,
           bankName,
-        )
-        .run();
+        ));
+    }
 
-      const inserted = await c.var.DB.prepare(
-        "SELECT * FROM payslips WHERE id = ?",
-      )
-        .bind(id)
-        .first<PayslipRow>();
-      if (inserted) rows.push(inserted);
-      // Production Order -> Penalty -> Worker -> Payslip: the line now names
-      // the slip that carries its deduction.
-      if (inserted && penaltySen > 0) {
-        await linkPenaltyLinesToPayslip(c.var.DB, period, worker.id, id);
-      }
-      if (inserted && pieceSen > 0) {
-        await linkPieceRecordsToPayslip(c.var.DB, period, worker.id, id);
-      }
+    const batchResults = await c.var.DB.batch<PayslipRow>([
+      ...draftDeletions,
+      ...payslipInserts,
+      c.var.DB.prepare("SELECT * FROM payslips WHERE period = ? ORDER BY id").bind(period),
+    ]);
+    rows.push(...(batchResults[batchResults.length - 1]?.results ?? []));
+    const storedPayslipIds = new Set(rows.map((storedRow) => storedRow.id));
+    // Production Order -> Penalty -> Worker -> Payslip: the line now names
+    // the slip that carries its deduction.
+    for (const { workerId, payslipId, penaltySen, pieceSen } of payslipLinks) {
+      if (!storedPayslipIds.has(payslipId)) continue;
+      if (penaltySen > 0) await linkPenaltyLinesToPayslip(c.var.DB, period, workerId, payslipId);
+      if (pieceSen > 0) await linkPieceRecordsToPayslip(c.var.DB, period, workerId, payslipId);
     }
 
     const data = rows.map(rowToPayslip);
@@ -1539,6 +1575,22 @@ app.put("/", async (c) => {
     // took. Regenerate first. Refused BEFORE the status flip, as a 409 with the
     // names, not swallowed by the catch below.
     if (status !== "DRAFT") {
+      const workersWithoutPayslip = await findWorkersMissingPayslip(c.var.DB, period);
+      if (workersWithoutPayslip.length > 0) {
+        const names = workersWithoutPayslip
+          .slice(0, 5)
+          .map(({ empNo, name }) => `${empNo} ${name}`)
+          .join(", ");
+        const more = workersWithoutPayslip.length > 5 ? ` and ${workersWithoutPayslip.length - 5} more` : "";
+        return c.json(
+          {
+            success: false,
+            error: `${workersWithoutPayslip.length} worker(s) have no payslip for this period (${names}${more}). Regenerate the period before approving.`,
+            missingPayslips: workersWithoutPayslip,
+          },
+          409,
+        );
+      }
       await ensureWorkerPenaltyTables(c.var.DB);
       const drift = await findPenaltyDrift(c.var.DB, period);
       if (drift.length > 0) {

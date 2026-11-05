@@ -76,7 +76,7 @@ test("the payslip INSERT specifically — the one that wiped July", () => {
   );
   // And the bound arguments must match the placeholders.
   const bindStart = src.indexOf(".bind(", i);
-  const bindBlock = src.slice(bindStart, src.indexOf(")\n        .run()", bindStart));
+  const bindBlock = src.slice(bindStart, src.indexOf("\n        )", bindStart));
   const bound = splitCols(bindBlock.slice(bindBlock.indexOf("(") + 1)).length;
   assert.equal(bound, placeholders, `${bound} bound values vs ${placeholders} placeholders`);
 });
