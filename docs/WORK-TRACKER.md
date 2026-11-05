@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-05**: customer overdue sets entry, items 1, 3, 5 and 7 (branch `fix/overdue-sets-clear-on-do-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-05**: bedframe Price 3 entry added (branch `feat/bedframe-price3-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-04**: branch `fix/hk0130-rate-save`, to `main` (HK-0130 rate save and order breakdown) added under the HK-0130 entry; nothing else re-checked.
@@ -295,11 +296,12 @@ Ask (client): a Price 3 column beside Price 1 and Price 2 for every bedframe, Pr
 
 ## Customer overdue sets on the Dashboard (feat/customer-overdue-sets-main, 2026-11-05)
 Ask: a Dashboard section showing, per customer, how many sets are past the customer's delivery date and not yet delivered, to follow up pending deliveries. Built on staging (#1166, #1168), cherry-picked to main.
-1. DONE: per-order remaining sets = ordered (sales order lines) minus delivered (delivered, non-cancelled DOs through production orders), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.
+1. DONE: per-order remaining sets = ordered (sales order lines) minus sets on a DO (any non-cancelled DO through production orders, see item 7), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.
 2. DONE: "Customer sets overdue" tile in Today's problems and a per-customer list on the Sales tab; opening an order shows where each item is now (department, progress, status, DO).
-3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Every product line counts as sets, delivered means arrived, sales orders only, cancelled / draft and service orders excluded.
-5. DONE: cancelled production orders are not owed (taken off the ordered sets; on staging a cancelled production order always meant the item was removed, never replaced), and the order panel hides cancelled and delivered items.
+3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Every product line counts as sets, delivered means arrived (changed by item 7), sales orders only, cancelled / draft and service orders excluded.
+5. DONE: cancelled production orders are not owed (taken off the ordered sets; on staging a cancelled production order always meant the item was removed, never replaced), and the order panel hides cancelled and delivered items (now: items on a DO, item 7).
 6. KNOWN GAP: returns do not reopen sets. On main the /m tile opens the Sales tab, which has no per-customer list. Production numbers UNMEASURED.
+7. DONE (owner 2026-11-05, `fix/overdue-sets-clear-on-do-main`, same change as staging #1177): a set clears as soon as it is on any non-cancelled DO, Pending Dispatch included, not only once delivered. The order panel lists only items not on a DO. Wording now says "not on a DO".
 
 ## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-to-main, 2026-11-04)
 From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Cherry-picked from staging PRs #1156 and #1158. Violet confirmed piece rate is commission for work taken home, on a separate account per person, so it does not stack on normal pay.
