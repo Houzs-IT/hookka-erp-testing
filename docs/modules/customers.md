@@ -62,7 +62,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 | `CustomersPage` | `src/pages/customers.tsx:3424` | List/KPI/columns/CRUD/context menu (default export) |
 | `CustomerProductsPanel` | `src/pages/customers.tsx:193` | Per-customer pricing (mirrors Products bulk-edit) |
 | `CustomerMaintenancePanel` | `src/pages/customers.tsx:1639` | Per-customer config snapshot tabs |
-| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2403` | Per-customer combo pricing (config editor) |
+| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2411` | Per-customer combo pricing (config editor) |
 | `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2692` | Price-history viewer |
 | `AssignSkuModal` | `src/pages/customers.tsx:3218` | SKU assignment modal |
 | `UsersPage` | `src/pages/settings/Users.tsx:226` | Users/Org/Mailbox tab shell |

@@ -292,6 +292,10 @@ export function roundSen(amountSen: number): number {
   return Math.round(amountSen);
 }
 
+export function bedframePrice3Sen(price2Sen: number | null | undefined): number | null {
+  return price2Sen != null && price2Sen > 0 ? roundSen((price2Sen * 11) / 10) : null;
+}
+
 /**
  * Round a sen amount UP to a whole ringgit (a multiple of 100 sen).
  *
