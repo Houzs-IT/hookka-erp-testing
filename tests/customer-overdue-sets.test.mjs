@@ -11,20 +11,20 @@ const row = (overrides) => ({
   customerName: "Customer A",
   customerDeliveryDate: "2026-11-01",
   orderedSets: 3,
-  setsOnDeliveryOrder: 0,
+  deliveredSets: 0,
   ...overrides,
 });
 
-test("remaining sets are ordered minus sets on a delivery order", () => {
-  const summary = summarizeOverdueSets([row({ orderedSets: 5, setsOnDeliveryOrder: 2 })], today);
+test("remaining sets are ordered minus delivered", () => {
+  const summary = summarizeOverdueSets([row({ orderedSets: 5, deliveredSets: 2 })], today);
   assert.equal(summary.totalSets, 3);
   assert.equal(summary.customers[0].orders[0].remainingSets, 3);
   assert.equal(summary.customers[0].orders[0].daysLate, 4);
 });
 
-test("orders fully or over-covered by delivery orders are not overdue", () => {
+test("fully delivered and over-delivered orders are not overdue", () => {
   const summary = summarizeOverdueSets(
-    [row({ soId: "full", setsOnDeliveryOrder: 3 }), row({ soId: "over", orderedSets: 2, setsOnDeliveryOrder: 4 })],
+    [row({ soId: "full", deliveredSets: 3 }), row({ soId: "over", orderedSets: 2, deliveredSets: 4 })],
     today,
   );
   assert.equal(summary.totalOrders, 0);
@@ -60,7 +60,7 @@ test("customers are grouped and sorted by most overdue sets", () => {
 });
 
 test("bigint sums arriving as strings still add up", () => {
-  const summary = summarizeOverdueSets([row({ orderedSets: "6", setsOnDeliveryOrder: "1" })], today);
+  const summary = summarizeOverdueSets([row({ orderedSets: "6", deliveredSets: "1" })], today);
   assert.equal(summary.totalSets, 5);
 });
 
@@ -68,10 +68,10 @@ test("today is the Malaysia date, not the UTC date", () => {
   assert.equal(todayInMalaysia(new Date("2026-11-04T17:30:00Z")), "2026-11-05");
 });
 
-test("sets clear once on any non-cancelled DO, delivered or not, through production orders", () => {
+test("delivered sets come from delivered, non-cancelled DOs through production orders", () => {
   const source = readFileSync(new URL("../src/api/lib/customer-overdue-sets.ts", import.meta.url), "utf8");
   assert.match(source, /JOIN production_orders po ON po\.id = di\.production_order_id/);
   assert.match(source, /d\.status <> 'CANCELLED'/);
-  assert.doesNotMatch(source, /delivered_at/);
+  assert.match(source, /NULLIF\(d\.delivered_at::text, ''\) IS NOT NULL/);
   assert.match(source, /so\.status NOT IN \('CANCELLED', 'DRAFT'\)/);
 });
