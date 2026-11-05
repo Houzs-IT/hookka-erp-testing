@@ -1,4 +1,5 @@
-// Customer overdue sets: per sales order, sets ordered minus sets delivered, for
+// Customer overdue sets: per sales order, sets ordered (less cancelled
+// production orders) minus sets delivered, for
 // orders past the customer's delivery date. Delivered = a non-cancelled DO with
 // `delivered_at`, joined through production_orders (same path as
 // on-time-delivery.ts; delivery_orders.sales_order_id is only half filled).
@@ -11,6 +12,7 @@ export interface OverdueSetsOrderRow {
   customerName: string | null;
   customerDeliveryDate: string | null;
   orderedSets: number | string | null;
+  cancelledSets?: number | string | null;
   deliveredSets: number | string | null;
 }
 
@@ -56,6 +58,12 @@ export async function collectOverdueSetsRows(
          SELECT soi.sales_order_id AS so_id, SUM(soi.quantity) AS ordered_sets
            FROM sales_order_items soi
           GROUP BY soi.sales_order_id
+       ), cancelled AS (
+         SELECT po.sales_order_id AS so_id, SUM(po.quantity) AS cancelled_sets
+           FROM production_orders po
+          WHERE po.status = 'CANCELLED'
+            AND NULLIF(po.sales_order_id, '') IS NOT NULL
+          GROUP BY po.sales_order_id
        ), delivered AS (
          SELECT po.sales_order_id AS so_id, SUM(di.quantity) AS delivered_sets
            FROM delivery_orders d
@@ -72,9 +80,11 @@ export async function collectOverdueSetsRows(
               so.customer_name AS "customerName",
               NULLIF(substr(so.customer_delivery_date::text, 1, 10), '') AS "customerDeliveryDate",
               COALESCE(o.ordered_sets, 0) AS "orderedSets",
+              COALESCE(cx.cancelled_sets, 0) AS "cancelledSets",
               COALESCE(dl.delivered_sets, 0) AS "deliveredSets"
          FROM sales_orders so
          LEFT JOIN ordered o ON o.so_id = so.id
+         LEFT JOIN cancelled cx ON cx.so_id = so.id
          LEFT JOIN delivered dl ON dl.so_id = so.id
         WHERE so.org_id = ?
           AND so.status NOT IN ('CANCELLED', 'DRAFT')
@@ -92,7 +102,7 @@ function daysBetween(fromYmd: string, toYmd: string): number {
 }
 
 function toOverdueOrder(row: OverdueSetsOrderRow, dueDate: string, todayYmd: string): OverdueSetsOrder | null {
-  const orderedSets = Number(row.orderedSets) || 0;
+  const orderedSets = Math.max(0, (Number(row.orderedSets) || 0) - (Number(row.cancelledSets) || 0));
   const remainingSets = Math.max(0, orderedSets - (Number(row.deliveredSets) || 0));
   if (remainingSets === 0 || dueDate >= todayYmd) return null;
   return { soId: row.soId, soNo: row.soNo, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets };

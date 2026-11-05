@@ -291,7 +291,8 @@ Ask: a Dashboard section showing, per customer, how many sets are past the custo
 1. DONE: per-order remaining sets = ordered (sales order lines) minus delivered (delivered, non-cancelled DOs through production orders), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.
 2. DONE: "Customer sets overdue" tile in Today's problems and a per-customer list on the Sales tab; opening an order shows where each item is now (department, progress, status, DO).
 3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Every product line counts as sets, delivered means arrived, sales orders only, cancelled / draft and service orders excluded.
-4. KNOWN GAP: returns do not reopen sets. On main the /m tile opens the Sales tab, which has no per-customer list. Production numbers UNMEASURED.
+5. DONE: cancelled production orders are not owed (taken off the ordered sets; on staging a cancelled production order always meant the item was removed, never replaced), and the order panel hides cancelled and delivered items.
+6. KNOWN GAP: returns do not reopen sets. On main the /m tile opens the Sales tab, which has no per-customer list. Production numbers UNMEASURED.
 
 ## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-to-main, 2026-11-04)
 From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Cherry-picked from staging PRs #1156 and #1158. Violet confirmed piece rate is commission for work taken home, on a separate account per person, so it does not stack on normal pay.

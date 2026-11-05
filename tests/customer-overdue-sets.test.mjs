@@ -22,6 +22,19 @@ test("remaining sets are ordered minus delivered", () => {
   assert.equal(summary.customers[0].orders[0].daysLate, 4);
 });
 
+test("cancelled production orders are not owed", () => {
+  const summary = summarizeOverdueSets(
+    [
+      row({ soId: "part", orderedSets: 8, cancelledSets: 3, deliveredSets: 5 }),
+      row({ soId: "all", orderedSets: 4, cancelledSets: 4, deliveredSets: 0 }),
+      row({ soId: "some", orderedSets: 2, cancelledSets: "1", deliveredSets: 0 }),
+    ],
+    today,
+  );
+  assert.equal(summary.totalOrders, 1);
+  assert.deepEqual(summary.customers[0].orders.map((order) => [order.soId, order.orderedSets, order.remainingSets]), [["some", 1, 1]]);
+});
+
 test("fully delivered and over-delivered orders are not overdue", () => {
   const summary = summarizeOverdueSets(
     [row({ soId: "full", deliveredSets: 3 }), row({ soId: "over", orderedSets: 2, deliveredSets: 4 })],
@@ -74,4 +87,5 @@ test("delivered sets come from delivered, non-cancelled DOs through production o
   assert.match(source, /d\.status <> 'CANCELLED'/);
   assert.match(source, /NULLIF\(d\.delivered_at::text, ''\) IS NOT NULL/);
   assert.match(source, /so\.status NOT IN \('CANCELLED', 'DRAFT'\)/);
+  assert.match(source, /WHERE po\.status = 'CANCELLED'/);
 });
