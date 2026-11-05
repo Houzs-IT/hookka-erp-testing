@@ -441,7 +441,7 @@ function OverdueSetsSheet({ tile, onClose }: { tile: Tile; onClose: () => void }
   const { data } = useCachedJson<{ sales?: { overdueSets?: OverdueSetsSummary | null } | null }>(DASHBOARD_FEED_URL);
   const customers = data?.sales?.overdueSets?.customers ?? [];
   return (
-    <SheetFrame open title={tile.label} sub="Sets not yet delivered, past the customer's date" onClose={onClose}>
+    <SheetFrame open title={tile.label} sub="Sets not yet on a DO, past the customer's date" onClose={onClose}>
       <SheetCard>
         {customers.length === 0 ? (
           <div style={{ padding: "12px 0", fontSize: 13, color: M.ink }}>Nothing overdue.</div>
