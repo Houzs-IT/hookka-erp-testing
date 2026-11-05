@@ -789,7 +789,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/api/lib/packing-piece-identity.ts` — `packingPieceIdentity` (shared piece warehouse identity; appends `· pc N of M` to notes when pieceNo set + multi-piece) | | |
 | | `src/api/lib/job-card-completed-at.ts` — `ensureJobCardCompletedAt` / `observedCompletionAt` / `reconcileCompletedAt` / `readCompletedAt` (the completion INSTANT, beside the date-only `completed_date`) | `job_cards.completed_at` | `tests/job-card-completed-at.test.mjs` |
 | `src/pages/production/dept.tsx` / `overview.tsx` — thin wrappers over `production/index.tsx`, whose Overview counts now gate on `ordersObserved` (cold landing / in flight / dead read all print "—", -146) | `src/api/routes/wip-times.ts` — minute counts + `coverage.productsWithoutActiveBom` (`number \| null`, from `countProductsWithoutActiveBom` in `src/api/lib/wip-times-core.ts`) | `kv_config` · `products` (read: ACTIVE products with no ACTIVE bom_template) | `tests/sofa-combo.test.mjs` · `tests/planning-production-tile-truthfulness.test.mjs` |
-| `src/pages/bom.tsx` — BOM Management (6426) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
+| `src/pages/bom.tsx` — BOM Management (6454) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
 | `src/pages/cnc-templates.tsx` — CNC drilldown | | | |
 | `src/pages/production/components/` — BatchActionToolbar / CreateStockPODialog / CellBox / ProductDetailLine / OverviewCards (Cards view: WorkOrderCard, WorkOrderHeader, StagePipeline) | | | |
 
@@ -823,10 +823,10 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
   - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM) — L2448-2520 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
   - flattenWipTree / WipTreeCard / wipNodeAt — L2521-2749 (two-pane tree helpers, shared by Edit BOM and Master Templates)
   - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2750-2973
-  - EditBOMDialog (L1 tab + two-pane WIP tab) — L2974-3835
-  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3836-4863
-  - BatchEditMaterialsDialog — L4864-5951
-  - BOMManagementPage (default export — page shell, tabs, list) — L5952-6426
+  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L2974-3863
+  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3864-4891
+  - BatchEditMaterialsDialog — L4892-5979
+  - BOMManagementPage (default export — page shell, tabs, list) — L5980-6454
   - (ProductionTimesDialog and DeptPivotCategoryDialog were removed 2026-08-01.)
 
 **Gotchas**
