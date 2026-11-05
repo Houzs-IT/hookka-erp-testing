@@ -1,5 +1,5 @@
 // The /m Home (Home v10). Replaces the old Home presentation: header, greeting,
-// quick actions, Today's problems, a six-view selector and the period bar, then
+// Scan to Create tiles, Today's problems, a six-view selector and the period bar, then
 // the selected view. Only Sales is designed; the other five show one Coming Soon
 // state. Access follows the desktop dashboard (nav gate + tab list); a user with
 // no dashboard access gets a permission-filtered module list instead.
@@ -10,18 +10,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  Bell, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Factory, Landmark, Plus, ScanText, Search, ShoppingBag, Truck, TrendingUp, Users, Wrench, Hourglass,
+  Bell, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Factory, Landmark, ScanText, Search, TrendingUp, Users, Wrench, Hourglass,
   type LucideIcon,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { FormSheet } from "../../components";
 import { MobileHeader } from "../../components/MobileHeader";
 import { GlobalSearchSheet } from "../../components/GlobalSearchSheet";
 import { ModuleGroupList } from "../../components/ModuleMenu";
-import { type FormSpec } from "../../config/form-types";
-import { newDeliveryOrderSpec, newPurchaseOrderSpec, newSalesOrderSpec } from "../../config/forms";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { useNotificationFeed } from "../../lib/use-notification-feed";
@@ -39,6 +36,7 @@ import {
   DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, periodResolved, periodMode, problemDest, resolveView, stepSales, switchMode, todayLabel, type DashView,
 } from "./home-lib";
 import { SalesView } from "./SalesView";
+import { ScanToCreate } from "./ScanToCreate";
 import { Label, SectionState, SheetCard, SheetFrame, SheetNote } from "./home-ui";
 import { DATA, SHADOW_CARD, SHADOW_SMALL, TNUM } from "./home-style";
 
@@ -69,18 +67,9 @@ function RoundBtn({ label, onClick, children, dot }: { label: string; onClick: (
 
 function HomeTop({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const { hasPermission } = usePermissions();
   const { unread } = useNotificationFeed();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [formSpec, setFormSpec] = useState<FormSpec | null>(null);
   const first = (getCurrentUser()?.displayName || "there").split(" ")[0];
-  // Same create forms the old Home opened; shown only for what the user may create.
-  const actions: { label: string; icon: LucideIcon; spec: () => FormSpec; ok: boolean }[] = [
-    { label: "New SO", icon: Plus, spec: newSalesOrderSpec, ok: hasPermission("sales-orders", "create") },
-    { label: "Delivery", icon: Truck, spec: newDeliveryOrderSpec, ok: hasPermission("delivery-orders", "create") },
-    { label: "New PO", icon: ShoppingBag, spec: newPurchaseOrderSpec, ok: hasPermission("purchase-orders", "create") },
-  ];
-  const shown = actions.filter((a) => a.ok);
   return (
     <>
       <MobileHeader
@@ -95,21 +84,9 @@ function HomeTop({ children }: { children: ReactNode }) {
       />
       <div style={{ padding: "10px 16px 0" }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: M.raisin, lineHeight: "26px", letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{greetingWord()}, {first}</div>
-        {shown.length ? (
-          <div role="group" aria-label="Quick actions" style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            {shown.map((a) => {
-              const Icon = a.icon;
-              return (
-                <button key={a.label} type="button" onClick={() => setFormSpec(a.spec())} style={{ height: 34, display: "inline-flex", alignItems: "center", gap: 6, padding: "0 13px 0 11px", border: "none", borderRadius: 999, backgroundColor: M.card, boxShadow: SHADOW_SMALL, color: M.raisin, fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>
-                  <Icon size={14} strokeWidth={2} color={M.taupe} aria-hidden="true" />{a.label}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
+        <ScanToCreate />
       </div>
       {children}
-      <FormSheet open={formSpec != null} onClose={() => setFormSpec(null)} spec={formSpec} onSaved={(to) => { setFormSpec(null); if (to) navigate(to); }} />
       <GlobalSearchSheet open={searchOpen} onClose={() => setSearchOpen(false)} />
     </>
   );

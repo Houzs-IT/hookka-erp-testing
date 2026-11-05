@@ -12247,6 +12247,10 @@ app.get("/payment-vouchers", async (c) => {
 app.post("/payment-vouchers", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
+  // A retried create (a dropped response, a double tap) must not make the voucher twice. Opt-in: no
+  // Idempotency-Key header = the handler runs as before. The phone scan sends one (2026-11-04).
+  const idemKey = readIdempotencyKey(c);
+  return withIdempotency(c, "payment-vouchers", idemKey, async () => {
   try {
     const body = await c.req.json();
     const date = String(body.date || "");
@@ -12338,6 +12342,18 @@ app.post("/payment-vouchers", async (c) => {
     }
     await ensurePvApColumns(c.var.DB);
     const extra = pvExtraFields(body as Record<string, unknown>);
+    // Same payee + same supplier bill number as a live voucher = almost always a re-scan or a double entry.
+    // Refused with the voucher's number so the operator can open it instead (a cancelled voucher does not count).
+    if (!isTransfer && extra.billNo && String(body.payee ?? "").trim()) {
+      const dup = await findPvDuplicateBill(c.var.DB, String(body.payee), extra.billNo, null);
+      if (dup) {
+        return c.json({
+          success: false,
+          error: `Bill "${extra.billNo}" from ${String(body.payee).trim()} is already on ${dup.pvNo.startsWith(PV_DRAFT_PREFIX) ? "a draft voucher" : dup.pvNo} — looks like a duplicate. Open that voucher, or change the bill number if this is a different bill.`,
+          duplicateOf: dup.id,
+        }, 409);
+      }
+    }
     const pvNo = asDraft
       ? `${PV_DRAFT_PREFIX}${id.slice(3)}`
       : await issueDocNumber(c.var.DB, {
@@ -12385,12 +12401,40 @@ app.post("/payment-vouchers", async (c) => {
     // Surface the database's own words — a swallowed cause cost a prod
     // debugging round (2026-09-22, four-tier rollout).
     const cause = e instanceof Error ? e.message : String(e);
+    // 500, not 400: withIdempotency caches a 4xx for 24 h, and a transient database failure must not be
+    // replayed to a retry carrying the same key. Clients read `success` / `error`, never this status.
     return c.json(
       { success: false, error: `Failed to save the payment: ${cause.slice(0, 300)}` },
-      400,
+      500,
     );
   }
+  });
 });
+
+/** A live (not cancelled) voucher with this payee and this bill number, ignoring case, spacing and punctuation. */
+async function findPvDuplicateBill(
+  db: Env["Variables"]["DB"],
+  payee: string,
+  billNo: string,
+  excludeId: string | null,
+): Promise<{ id: string; pvNo: string } | null> {
+  const norm = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const wantPayee = norm(payee);
+  const wantBill = norm(billNo);
+  if (!wantBill) return null;
+  const rows = await db
+    .prepare("SELECT * FROM payment_vouchers WHERE status <> 'VOID'")
+    .all<Record<string, unknown>>();
+  for (const r of rows.results ?? []) {
+    const id = String(r.id ?? "");
+    if (excludeId && id === excludeId) continue;
+    if (norm(r.payee) !== wantPayee) continue;
+    // A voucher that merged several bills keeps their numbers comma-separated.
+    const nos = String(r.billNo ?? r.bill_no ?? "").split(/[,;]/).map(norm);
+    if (nos.includes(wantBill)) return { id, pvNo: String(r.pvNo ?? r.pv_no ?? "") };
+  }
+  return null;
+}
 
 // Edit a voucher that has NOT been checked yet (Draft / Prepared) — header
 // and lines replaced in place, no GL involved. After CHECK the voucher is

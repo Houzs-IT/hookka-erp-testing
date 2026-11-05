@@ -440,6 +440,7 @@ export default function MobileLayout() {
               each gated like its desktop page. */}
           <Route path="finance" element={<FinanceRouteShell />} />
           <Route path="finance/:screen" element={<FinanceRouteShell />} />
+          <Route path="finance/:screen/:id" element={<FinanceRouteShell />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders

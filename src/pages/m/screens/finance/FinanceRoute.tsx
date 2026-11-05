@@ -21,6 +21,7 @@ import { CashFlowScreen } from "./CashFlowScreen";
 import { BalanceSheetScreen } from "./BalanceSheetScreen";
 import { DashScreen } from "./DashScreen";
 import { CashScreen } from "./CashScreen";
+import { VoucherDetailScreen, VoucherListScreen } from "./VoucherScreens";
 
 // The screens the phone has so far; the menu shows these only.
 const SCREENS: Partial<Record<FinanceScreen, () => ReactNode>> = {
@@ -32,16 +33,18 @@ const SCREENS: Partial<Record<FinanceScreen, () => ReactNode>> = {
   bs: () => <BalanceSheetScreen />,
   debtors: () => <AgingScreen side="debtor" />,
   creditors: () => <AgingScreen side="creditor" />,
+  vouchers: () => <VoucherListScreen />,
 };
 
 export default function FinanceRoute() {
-  const { screen } = useParams();
+  const { screen, id } = useParams();
   const navigate = useNavigate();
   const { isNavAllowed } = usePermissions();
 
   if (screen) {
     const row = financeRowFor(screen, isNavAllowed);
     if (!row) return <FinanceNoAccess title="Finance" />;
+    if (row.screen === "vouchers" && id) return <VoucherDetailScreen id={id} />;
     const render = SCREENS[row.screen];
     if (!render) return <FinanceNoAccess title={row.label} note="Not on the phone yet — open it on the desktop." />;
     return <>{render()}</>;

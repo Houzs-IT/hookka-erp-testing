@@ -20,6 +20,7 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCachedJson } from "@/lib/cached-fetch";
+import { usePermissions } from "@/lib/use-permission";
 import { MobileHeader, StatusPill, FormSheet, ResponsiveActionDock } from "../components";
 import { M } from "../theme";
 import { useResponsiveLayout } from "../lib/responsive-layout";
@@ -67,6 +68,8 @@ export function SalesDetailTablet() {
     id ? `/api/audit-events?resource=sales-orders&resourceId=${encodeURIComponent(id)}` : null,
   );
 
+  const { hasPermission } = usePermissions();
+  const canConfirm = hasPermission("sales-orders", "confirm");
   const [editSpec, setEditSpec] = useState<FormSpec | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -83,7 +86,7 @@ export function SalesDetailTablet() {
   };
 
   const onConfirm = async () => {
-    if (busy) return;
+    if (busy || !canConfirm) return;
     setBusy(true);
     const r = await mutateJson(`${url}/confirm`, "POST");
     setBusy(false);
@@ -443,7 +446,7 @@ export function SalesDetailTablet() {
         {status === "DRAFT" ? (
           <>
             <Btn ghost flex={1} onClick={() => setEditSpec(editSalesOrderSpec(doc, id))}>Edit Draft</Btn>
-            <Btn flex={1.3} busy={busy} onClick={onConfirm}>Confirm Order</Btn>
+            {canConfirm ? <Btn flex={1.3} busy={busy} onClick={onConfirm}>Confirm Order</Btn> : null}
           </>
         ) : status === "CANCELLED" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>

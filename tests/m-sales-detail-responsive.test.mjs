@@ -10,22 +10,27 @@ import { readFileSync } from "node:fs";
 import { renderScreen, soFixture } from "./_ssr-sales.mjs";
 
 const ENTRY = ["src/pages/m/screens/SalesDetailScreen.tsx", "SalesDetailScreen"];
-const render = (opts) => renderScreen(...ENTRY, opts);
+const render = (opts) => renderScreen(...ENTRY, { permissions: ["*:*"], ...opts }); // a user who may do everything, unless a test says otherwise
 const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 const TWO_COLS = "grid-template-columns:minmax(0, 1fr) minmax(0, 1fr)";
 
-const WIDE_ONLY = ["Payments", "Paid", "Balance", "Confirm Order", "Cancel Order", "Undo Cancel", "Issue Delivery Order", "Edit Draft", "No payments recorded"];
+const WIDE_ONLY = ["Payments", "Paid", "Balance", "No payments recorded"];
 
-// ---- phone: unchanged and read-only --------------------------------------------
+// ---- phone: the same read-only blocks, PLUS the status actions (Mr Lim, 2026-11-03) ---------
 
-test("phone (390, 600, 719): read-only, no Payments / Paid / Balance / action bar", async () => {
+test("phone (390, 600, 719): no Payments / Paid / Balance and one column, but the status actions are there", async () => {
   for (const width of [390, 600, 719]) {
     for (const status of ["DRAFT", "CONFIRMED", "CANCELLED", "IN_PRODUCTION"]) {
       const html = await render({ width, fixture: soFixture({ status }) });
       const t = text(html);
       for (const word of WIDE_ONLY) assert.ok(!t.includes(word), `${width} ${status} must not show "${word}"`);
-      assert.ok(!html.includes("data-responsive-action-dock"), `${width} ${status}: no action dock`);
+      assert.ok(html.includes("data-responsive-action-dock"), `${width} ${status}: the action bar is on the phone too`);
       assert.ok(!html.includes(TWO_COLS), `${width} ${status}: one column`);
+    }
+    // Nothing to do in these statuses: no bar, no empty gap.
+    for (const status of ["SOMETHING_NEW"]) {
+      const html = await render({ width, fixture: soFixture({ status }) });
+      assert.ok(!html.includes("data-responsive-action-dock"), `${width} ${status}: no action bar`);
     }
   }
 });
@@ -74,21 +79,23 @@ test("the balance is coloured as due only while money is owed", async () => {
 
 // ---- status actions on wider screens ---------------------------------------------
 
-const ALL_LABELS = ["Edit Draft", "Confirm Order", "Undo Cancel", "Issue Delivery Order", "Edit", "Cancel Order", "Back"];
+const ALL_LABELS = ["Edit Draft", "Edit", "Override Edit Lock", "Confirm Order", "Put On Hold", "Resume Order", "Cancel Order", "Undo Cancel", "Issue Delivery Order"];
 const buttons = (html) => [...html.matchAll(/<button[^>]*>(?:<span[^>]*>)?([^<]+)(?:<\/span>)?<\/button>/g)].map((m) => m[1]);
 
+// What each status offers, in the order the buttons appear: the DESKTOP rules (src/pages/sales/detail.tsx).
 const expected = {
-  DRAFT: ["Edit Draft", "Confirm Order"],
-  CONFIRMED: ["Issue Delivery Order", "Edit", "Cancel Order"],
+  DRAFT: ["Confirm Order", "Edit Draft", "Cancel Order"],
+  CONFIRMED: ["Edit", "Put On Hold", "Cancel Order"],
+  IN_PRODUCTION: ["Edit", "Put On Hold", "Cancel Order"],
+  READY_TO_SHIP: ["Issue Delivery Order"],
+  ON_HOLD: ["Resume Order"],
   CANCELLED: ["Undo Cancel"],
-  IN_PRODUCTION: ["Back", "Cancel Order"],
-  READY_TO_SHIP: ["Back", "Cancel Order"],
-  DELIVERED: ["Back", "Cancel Order"],
-  ON_HOLD: ["Back", "Cancel Order"],
+  DELIVERED: [],
+  SHIPPED: [],
 };
 
-test("each status offers exactly the tablet's actions", async () => {
-  for (const width of [768, 1024, 1180]) {
+test("each status offers exactly desktop's actions, at every width from phone to tablet", async () => {
+  for (const width of [390, 768, 1024, 1180]) {
     for (const [status, want] of Object.entries(expected)) {
       const html = await render({ width, fixture: soFixture({ status }) });
       const got = buttons(html).filter((b) => ALL_LABELS.includes(b));
@@ -97,8 +104,37 @@ test("each status offers exactly the tablet's actions", async () => {
   }
 });
 
+test("a user without sales-orders:confirm sees a draft without Confirm Order, on the phone and on every tablet width", async () => {
+  for (const width of [390, 768, 1024, 1180]) {
+    const html = await render({ width, fixture: soFixture({ status: "DRAFT" }), permissions: ["sales-orders:read", "sales-orders:update"] });
+    assert.deepEqual(buttons(html).filter((b) => ALL_LABELS.includes(b)), ["Edit Draft", "Cancel Order"], String(width));
+    assert.ok(text(html).includes("needs the Confirm permission"), "says why");
+  }
+  const allowed = await render({ width: 390, fixture: soFixture({ status: "DRAFT" }), permissions: ["sales-orders:read", "sales-orders:update", "sales-orders:confirm"] });
+  assert.deepEqual(buttons(allowed).filter((b) => ALL_LABELS.includes(b)), ["Confirm Order", "Edit Draft", "Cancel Order"]);
+});
+
+test("a read-only user gets no status action and is told why (phone and tablet)", async () => {
+  for (const width of [390, 768]) {
+    for (const status of ["DRAFT", "CONFIRMED", "ON_HOLD", "CANCELLED"]) {
+      const html = await render({ width, fixture: soFixture({ status }), permissions: ["sales-orders:read"] });
+      const got = buttons(html).filter((b) => ALL_LABELS.includes(b));
+      // Confirm needs its own permission, so a DRAFT with neither shows nothing.
+      assert.deepEqual(got, [], `${width} ${status}`);
+    }
+  }
+  assert.ok(text(await render({ width: 390, fixture: soFixture({ status: "CONFIRMED" }), permissions: ["sales-orders:read"] })).includes("do not have permission"));
+});
+
+test("Issue Delivery Order needs delivery-orders:create", async () => {
+  const withIt = await render({ width: 390, fixture: soFixture({ status: "READY_TO_SHIP" }), permissions: ["sales-orders:read", "delivery-orders:create"] });
+  assert.deepEqual(buttons(withIt).filter((b) => ALL_LABELS.includes(b)), ["Issue Delivery Order"]);
+  const without = await render({ width: 390, fixture: soFixture({ status: "READY_TO_SHIP" }), permissions: ["sales-orders:read", "sales-orders:update"] });
+  assert.deepEqual(buttons(without).filter((b) => ALL_LABELS.includes(b)), []);
+});
+
 test("a cancelled order says so above its Undo Cancel", async () => {
-  const t = text(await render({ width: 768, fixture: soFixture({ status: "CANCELLED" }) }));
+  const t = text(await render({ width: 390, fixture: soFixture({ status: "CANCELLED" }) }));
   assert.ok(t.includes("This order was cancelled."));
 });
 

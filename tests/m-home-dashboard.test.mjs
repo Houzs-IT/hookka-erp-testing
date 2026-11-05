@@ -324,12 +324,10 @@ test("the landing warm-up only fetches the dashboard feeds, and only for a user 
   assert.match(src, /if \(!p\) return false;/, "nothing cached = nothing warmed");
 });
 
-test("quick actions reuse the existing create forms and only show for a permitted user", () => {
+test("Home shows Scan to Create (Sales Order, Purchase Invoice and Goods Receipt live, one Coming soon) instead of the old quick-action chips; search and bell stay", () => {
   const src = read("screens/dashboard/HomeDashboard.tsx");
-  for (const f of ["newSalesOrderSpec", "newDeliveryOrderSpec", "newPurchaseOrderSpec"]) assert.match(src, new RegExp(`import \{[^}]*${f}[^}]*\} from "../../config/forms"`));
-  assert.match(src, /hasPermission\("sales-orders", "create"\)/);
-  assert.match(src, /hasPermission\("delivery-orders", "create"\)/);
-  assert.match(src, /hasPermission\("purchase-orders", "create"\)/);
+  assert.match(src, /<ScanToCreate \/>/);
+  assert.doesNotMatch(src, /Quick actions|New SO|newSalesOrderSpec|newDeliveryOrderSpec|newPurchaseOrderSpec/);
   assert.match(src, /<GlobalSearchSheet/);
   assert.match(src, /navigate\("\/m\/updates"\)/);
 });

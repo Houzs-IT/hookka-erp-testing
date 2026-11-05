@@ -5,6 +5,9 @@ import { resolve as resolvePath } from "node:path";
 const STUB = pathToFileURL(resolvePath(process.cwd(), "tests/_stubs/cached-fetch.mjs")).href;
 export function resolve(specifier, context, nextResolve) {
   if (specifier === "@/lib/cached-fetch") return nextResolve(STUB, context);
+  // usePermissions reads /api/auth/me/permissions through its own relative import; serve it from the same
+  // fixtures (no fixture = no permissions, exactly as before).
+  if (specifier === "./cached-fetch" && context.parentURL?.endsWith("/src/lib/use-permission.ts")) return nextResolve(STUB, context);
   return nextResolve(specifier, context);
 }
 

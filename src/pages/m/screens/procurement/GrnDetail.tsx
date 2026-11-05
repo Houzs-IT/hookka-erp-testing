@@ -11,7 +11,7 @@
 // ===========================================================================
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Ban, Coins, Download, Files, Package, Receipt, Ship, Warehouse, type LucideIcon } from "lucide-react";
+import { Ban, Coins, Download, FileText, Files, Package, Pencil, Receipt, Ship, Warehouse, type LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { Sheet } from "../../components";
@@ -24,10 +24,11 @@ import {
   landedCost, n, rows, s, statusOf,
   type GrnActionKey, type RawRow,
 } from "../../lib/procurement-mobile";
-import { BottomDock, PrimaryButton, Surface } from "../delivery/ui";
-import { DL, SHADOW_SECTION, T } from "../delivery/ui-tokens";
+import { GRN_ARRIVAL_PERM, GRN_EDIT_QTY_PERM, grnArrivalAdvance, grnQtyBody, grnQtyCheck, grnQtyEditState, grnQtyLines } from "../../lib/grn-mobile";
+import { BottomDock, FieldLabel, PrimaryButton, SheetFooter, SheetSub, Surface } from "../delivery/ui";
+import { DL, INPUT, SHADOW_SECTION, T } from "../delivery/ui-tokens";
 import { useConfirmSheet, useMobileToast } from "../delivery/ui-hooks";
-import { downloadGrnPdf, putGrn, refreshProcurementCaches, send } from "./actions";
+import { downloadGrnPdf, putGrn, putGrnArrival, refreshProcurementCaches, send } from "./actions";
 import { Banner, ChainRow, DetailColumn, Fact, KvSection, LineCard, MenuGroup, MenuRow, OffFlow, SectionTitle, Timeline, TilePill, FlagPill, TotalBlock, type ChainNode, type KvRow } from "./parts";
 import { DetailFrame } from "./ProcurementDetailScreen";
 import { PiForm } from "./PiForm";
@@ -54,6 +55,11 @@ export function GrnDetail({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [piOpen, setPiOpen] = useState(false);
+  const [qtyOpen, setQtyOpen] = useState(false);
+  const [qtyVals, setQtyVals] = useState<string[]>([]);
+  const [qtyErr, setQtyErr] = useState<string | null>(null);
+  const filesList = useCachedJson<{ data?: RawRow[] }>(g ? `/api/files?resourceType=GRN&resourceId=${encodeURIComponent(id)}` : null);
+  const sourceFiles = rows(filesList.data?.data);
   const open = (docId: string) => navigate({ pathname: `/m/procurement/${encodeURIComponent(docId)}`, search: location.search });
 
   const run = async (k: GrnActionKey) => {
@@ -72,7 +78,8 @@ export function GrnDetail({ id }: { id: string }) {
       if (!r.ok) return toast.show(r.error, "error");
       refreshProcurementCaches();
       refresh();
-      return toast.show(`${no} posted to stock`, "success");
+      const unresolved = Number((r.body as { data?: { costing?: { unresolvedLines?: number } } } | undefined)?.data?.costing?.unresolvedLines ?? 0);
+      return unresolved > 0 ? toast.show(`Posted, but ${unresolved} line(s) had no matching raw material — that stock did NOT land. Check the item codes.`, "error") : toast.show(`${no} posted to stock`, "success");
     }
     if (k === "CANCEL") {
       const ok = await confirmSheet.confirm({ title: `Cancel receipt ${no}?`, lines: grnCancelLines(g).map((text, i) => ({ icon: i === 1 ? "warning" : "info", text })), confirmLabel: "Cancel Receipt" });
@@ -87,12 +94,72 @@ export function GrnDetail({ id }: { id: string }) {
     }
   };
 
+  const advance = async () => {
+    const adv = g ? grnArrivalAdvance(g) : null;
+    if (!g || !adv || busy) return;
+    setMoreOpen(false);
+    const no = s(g, "grnNumber");
+    const ok = await confirmSheet.confirm({
+      title: adv.label,
+      sub: no,
+      lines: [{ icon: "info", text: adv.target === "ARRIVED" ? "Marks the goods as arrived, which is what allows Post to Stock. Nothing is posted yet." : "Moves the shipment one step along the arrival pipeline (Planning → In Transit → At Customs → Arrived)." }],
+      confirmLabel: adv.label,
+    });
+    if (!ok) return;
+    setBusy(true);
+    const r = await putGrnArrival(id, adv.target);
+    setBusy(false);
+    if (!r.ok) return toast.show(r.error, "error");
+    refreshProcurementCaches();
+    refresh();
+    toast.show(`${adv.label} — done`, "success");
+  };
+
+  const openQtyEdit = () => {
+    if (!g) return;
+    setMoreOpen(false);
+    setQtyErr(null);
+    setQtyVals(grnQtyLines(g).map((l) => String(l.oldAccepted)));
+    setQtyOpen(true);
+  };
+  const saveQty = async () => {
+    if (!g || busy) return;
+    const check = grnQtyCheck(g, qtyVals);
+    if (!check.ok) return setQtyErr(check.error);
+    if (!check.changed) return setQtyErr("No quantities changed.");
+    const posted = s(g, "status") === "POSTED";
+    const ok = await confirmSheet.confirm({
+      title: "Adjust received quantities?",
+      sub: s(g, "grnNumber"),
+      lines: [{ icon: "info", text: posted ? `${check.deltaText} A matching cost entry is posted so inventory and cost stay in sync.` : "Updates the accepted quantities on this goods receipt. Nothing has been posted to stock yet." }],
+      confirmLabel: "Save quantities",
+    });
+    if (!ok) return;
+    setBusy(true);
+    const r = await putGrn(id, grnQtyBody(g, qtyVals));
+    setBusy(false);
+    if (!r.ok) return setQtyErr(r.error);
+    setQtyOpen(false);
+    refreshProcurementCaches();
+    refresh();
+    const unresolved = Number((r.body as { editAdjust?: { unresolved?: unknown[] } } | undefined)?.editAdjust?.unresolved?.length ?? 0);
+    if (unresolved > 0) toast.show(`Saved, but ${unresolved} changed line(s) had no matching raw material — that stock delta did NOT move. Check the item codes.`, "error");
+    else toast.show(posted ? "Received quantities updated — stock adjusted" : "Received quantities updated", "success");
+  };
+
   const status = g ? s(g, "status") : "";
   const st = statusOf("grn", status);
   const acts = g ? grnActions(g) : { primary: null, postBlocked: false, menu: [] as GrnActionKey[] };
   const primary = acts.primary && allowed(acts.primary) ? acts.primary : null;
   const menu = acts.menu.filter(allowed);
   const arrival = g ? arrivalOf(g) : "ARRIVED";
+  const adv = g ? grnArrivalAdvance(g) : null;
+  const canUpd = GRN_ARRIVAL_PERM.every(([r, a]) => hasPermission(r, a));
+  const advPrimary = !!(primary === "POST" && acts.postBlocked && adv && canUpd);
+  const qtyState = g ? grnQtyEditState(g) : ({ ok: false, reason: "" } as const);
+  const canEditQty = GRN_EDIT_QTY_PERM.every(([r, a]) => hasPermission(r, a));
+  const advInMenu = !!(adv && canUpd && !advPrimary);
+  const qtyInMenu = canEditQty && (qtyState.ok || !!qtyState.reason);
   const dockScope = layout.canSplitDetail ? "detail" : "content";
   const lc = g ? landedCost(g) : null;
 
@@ -128,7 +195,7 @@ export function GrnDetail({ id }: { id: string }) {
               <div style={{ ...T.meta, color: M.ink, marginTop: 4 }}>{s(g, "poNumber") ? `For ${s(g, "poNumber")}` : "No purchase order"}</div>
               {status !== "POSTED" && status !== "CANCELLED" && arrival !== "ARRIVED" ? (
                 <Banner tone="info" icon={Ship} title={`${ARRIVAL_LABEL[arrival] ?? arrival}.`}>
-                  Post to Stock unlocks once the goods are marked arrived on desktop.
+                  Post to Stock unlocks once the goods are marked arrived — use the button below, one step at a time.
                 </Banner>
               ) : null}
               {status === "CANCELLED" && s(g, "cancelled_reason") ? (
@@ -219,10 +286,16 @@ export function GrnDetail({ id }: { id: string }) {
                 <div style={{ fontSize: 13, lineHeight: 1.55, color: M.raisin, marginTop: 5, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{s(g, "notes")}</div>
               </Surface>
             ) : null}
-            {primary ? <div aria-hidden style={{ height: 84 }} /> : null}
+            {primary || advPrimary ? <div aria-hidden style={{ height: 84 }} /> : null}
           </DetailColumn>
 
-          {primary ? (
+          {advPrimary && adv ? (
+            <BottomDock variant="detail" scope={dockScope}>
+              <PrimaryButton icon={Ship} iconSize={17} onClick={() => void advance()} disabled={busy} style={{ flex: 1.4 }}>
+                {busy ? "Working…" : adv.label}
+              </PrimaryButton>
+            </BottomDock>
+          ) : primary ? (
             <BottomDock variant="detail" scope={dockScope}>
               <PrimaryButton icon={ICON[primary]} iconSize={17} onClick={() => void run(primary)} disabled={busy || (primary === "POST" && acts.postBlocked)} style={{ flex: 1.4 }}>
                 {busy ? "Working…" : primary === "POST" && acts.postBlocked ? "Post to Stock — not arrived" : LABEL[primary]}
@@ -232,12 +305,43 @@ export function GrnDetail({ id }: { id: string }) {
 
           <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More actions">
             <MenuGroup>
+              {advInMenu && adv ? <MenuRow icon={Ship} label={adv.label} first onClick={() => void advance()} /> : null}
+              {qtyInMenu ? (
+                <MenuRow icon={Pencil} label={qtyState.ok ? "Edit Quantities" : "Edit Quantities (unavailable)"} first={!advInMenu} onClick={() => { if (qtyState.ok) openQtyEdit(); else { setMoreOpen(false); toast.show(qtyState.reason, "error"); } }} />
+              ) : null}
               {menu.map((k, i) => (
-                <MenuRow key={k} icon={ICON[k]} label={LABEL[k]} first={i === 0} danger={k === "CANCEL"} onClick={() => void run(k)} />
+                <MenuRow key={k} icon={ICON[k]} label={LABEL[k]} first={i === 0 && !advInMenu && !qtyInMenu} danger={k === "CANCEL"} onClick={() => void run(k)} />
               ))}
             </MenuGroup>
             <div style={{ height: 16 }} />
           </Sheet>
+
+          <Sheet open={qtyOpen} onClose={busy ? () => undefined : () => setQtyOpen(false)} title="Edit Quantities">
+            <SheetSub>{`${s(g, "grnNumber")} · accepted quantity per line`}</SheetSub>
+            {s(g, "status") === "POSTED" ? <div role="note" style={{ margin: "8px 0", fontSize: 12.5, color: M.ink }}>Editing a posted receipt adjusts stock and writes a cost-ledger correction.</div> : null}
+            {grnQtyLines(g).map((l, i) => (
+              <label key={i} style={{ display: "block", marginTop: 12 }}>
+                <FieldLabel>{`${l.ref} — received ${n(rows(g.items)[i] ?? {}, "receivedQty")}${l.locked ? ` · locked, ${l.invoiced} invoiced` : ""}`}</FieldLabel>
+                <input className="dl-input" type="text" inputMode="decimal" disabled={l.locked} value={l.locked ? String(l.oldAccepted) : qtyVals[i] ?? ""} onChange={(e) => { const v = e.target.value; setQtyErr(null); setQtyVals((p) => p.map((x, j) => (j === i ? v : x))); }} aria-label={`Line ${i + 1} accepted quantity`} style={INPUT} />
+              </label>
+            ))}
+            {qtyErr ? <div role="alert" style={{ marginTop: 8, fontSize: 12.5, fontWeight: 600, color: "var(--dl-sem-danger)" }}>{qtyErr}</div> : null}
+            <SheetFooter onCancel={() => setQtyOpen(false)} confirmLabel="Save quantities" busy={busy} onConfirm={() => void saveQty()} />
+          </Sheet>
+
+          {sourceFiles.length ? (
+            <a
+              href={`/api/files/${encodeURIComponent(s(sourceFiles[0], "id"))}/download?inline=1`}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="View the scanned source document"
+              style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 16px 0", padding: "12px 14px", borderRadius: 14, backgroundColor: M.card, boxShadow: SHADOW_SECTION, color: M.raisin, textDecoration: "none" }}
+            >
+              <FileText size={17} strokeWidth={1.9} color={M.taupe} aria-hidden />
+              <span style={{ flex: 1, ...T.cardTitle }}>Source document</span>
+              <span style={{ ...T.meta, color: M.taupe }}>View</span>
+            </a>
+          ) : null}
 
           <PiForm
             open={piOpen}
