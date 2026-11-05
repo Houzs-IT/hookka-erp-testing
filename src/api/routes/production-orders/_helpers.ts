@@ -292,6 +292,11 @@ export type ProductionOrderRow = {
   // right downstream flow (SO -> Delivery Order, CO -> Consignment Note).
   consignmentOrderId: string | null;
   companyCOId: string | null;
+  // 0236/0237 — built for stock, and the stock order it was born against.
+  // Ownership has moved to a real customer exactly when salesOrderId no longer
+  // equals stockOriginSoId; poReadyForDelivery keys on that comparison.
+  isStock: boolean | null;
+  stockOriginSoId: string | null;
   productId: string | null;
   productCode: string | null;
   productName: string | null;
@@ -546,6 +551,14 @@ export type MinimalPOOut = {
   companySOId: string;
   consignmentOrderId: string;
   companyCOId: string;
+  // 0236/0237 — MUST be on the minimal payload. The Delivery page's
+  // ready-planning fetch asks for `minimal`, and poReadyForDelivery gates an
+  // unallocated stock order out of Pending Delivery by comparing salesOrderId
+  // against stockOriginSoId. Omit them here and both read `undefined`, the gate
+  // silently never fires, and stock walks onto a customer's delivery note —
+  // the exact bug it exists to stop. Same shape as the 2026-04-28 CO fix below.
+  isStock: boolean;
+  stockOriginSoId: string;
   customerPOId: string;
   customerReference: string;
   // Customer's own SO number (sales_orders.customerSOId), or the customer's
@@ -903,6 +916,8 @@ export function rowToMinimalPO(
     companySOId: row.companySOId ?? "",
     consignmentOrderId: row.consignmentOrderId ?? "",
     companyCOId: row.companyCOId ?? "",
+    isStock: row.isStock === true,
+    stockOriginSoId: row.stockOriginSoId ?? "",
     customerPOId: row.customerPOId ?? "",
     customerReference: row.customerReference ?? "",
     customerSO: "",
@@ -995,6 +1010,9 @@ export function rowToPO(
     // dropped them, leaving CO POs misclassified as SO-source on the FE.
     consignmentOrderId: row.consignmentOrderId ?? "",
     companyCOId: row.companyCOId ?? "",
+    // Both mappers carry these, for the same reason the CO pair above does.
+    isStock: row.isStock === true,
+    stockOriginSoId: row.stockOriginSoId ?? "",
     productId: row.productId ?? "",
     productCode: row.productCode ?? "",
     productName: row.productName ?? "",
@@ -1132,6 +1150,8 @@ export function rowsToPOsBatch(
       companySOId: row.companySOId ?? "",
       consignmentOrderId: row.consignmentOrderId ?? "",
       companyCOId: row.companyCOId ?? "",
+      isStock: row.isStock === true,
+      stockOriginSoId: row.stockOriginSoId ?? "",
       productId: row.productId ?? "",
       productCode: row.productCode ?? "",
       productName: row.productName ?? "",
