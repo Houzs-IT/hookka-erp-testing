@@ -533,14 +533,14 @@ export default function generateCustomerQuotationPdfV2(
         autoTable(doc, {
           startY: y,
           margin: { left: margin, right: margin },
-          head: [["Code", "Description", "Size", "Price 2", "Price 1", "Price 3"]],
+          head: [["Code", "Description", "Size", "Price 3", "Price 2", "Price 1"]],
           body: rows.map((p) => [
             p.code,
             p.name,
             p.sizeLabel || p.sizeCode || DASH,
+            rmOrDash(bedframePrice3Sen(p.basePriceSen)),
             rmOrDash(p.basePriceSen),
             rmOrDash(p.price1Sen),
-            rmOrDash(bedframePrice3Sen(p.basePriceSen)),
           ]),
           styles: sharedStyles,
           headStyles: sharedHead,

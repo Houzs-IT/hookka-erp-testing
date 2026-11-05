@@ -811,7 +811,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   const isSofaView = categoryTab === "SOFA";
   const isAccessoryView = categoryTab === "ACCESSORY";
   // Column count (used as colSpan when rendering the table-level wrapper).
-  // BEDFRAME / ALL: Code | Description | Category | Size | Price 2 | Price 1 | Price 3 | Actions = 8
+  // BEDFRAME / ALL: Code | Description | Category | Size | Price 3 | Price 2 | Price 1 | Actions = 8
   // SOFA:           Code | Description | Model | <one per Maintenance size> | Actions
   // ACCESSORY:      Code | Description | Base Price | Actions = 4
   const colSpanN = isSofaView ? 4 + seatHeights.length : isAccessoryView ? 4 : 8;
@@ -1118,9 +1118,9 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                           <>
                             <div className={`${thCls} text-left`}>Category</div>
                             <div className={`${thCls} text-left`}>Size</div>
+                            <div className={`${thCls} text-right`}>Price 3</div>
                             <div className={`${thCls} text-right`}>Price 2</div>
                             <div className={`${thCls} text-right`}>Price 1</div>
-                            <div className={`${thCls} text-right`}>Price 3</div>
                             <div className={`${thCls} text-right`}>Actions</div>
                           </>
                         )}
@@ -1309,6 +1309,9 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                                   </span>
                                 </div>
                                 <div className="px-3 py-1.5 text-sm text-[#111827]">{sizeLabel || "—"}</div>
+                                <div className="px-3 py-1.5 text-right text-sm font-medium text-[#111827]">
+                                  {price3Sen ? formatRM(price3Sen) : <span className="text-[#9CA3AF]">-</span>}
+                                </div>
                                 {/* Price 2 */}
                                 <div className="px-3 py-1.5 text-right">
                                   {isEditingBase ? (
@@ -1392,9 +1395,6 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                                         : <span className="text-[#9CA3AF]">-</span>}
                                     </button>
                                   )}
-                                </div>
-                                <div className="px-3 py-1.5 text-right text-sm font-medium text-[#111827]">
-                                  {price3Sen ? formatRM(price3Sen) : <span className="text-[#9CA3AF]">-</span>}
                                 </div>
                               </>
                             )}
