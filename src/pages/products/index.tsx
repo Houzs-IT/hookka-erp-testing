@@ -153,7 +153,7 @@ const ANALYTIC_COLS: AnalyticCol[] = [
   },
   {
     key: "marginP2",
-    width: "minmax(120px,1.15fr)",
+    width: "minmax(170px,1.15fr)",
     defaultOn: true,
     applies: () => true,
     label: (c) =>
@@ -161,7 +161,7 @@ const ANALYTIC_COLS: AnalyticCol[] = [
   },
   {
     key: "laborPctP2",
-    width: "minmax(90px,0.85fr)",
+    width: "minmax(112px,0.85fr)",
     defaultOn: true,
     applies: () => true,
     label: (c) =>
@@ -169,14 +169,14 @@ const ANALYTIC_COLS: AnalyticCol[] = [
   },
   {
     key: "marginP1",
-    width: "minmax(120px,1.15fr)",
+    width: "minmax(170px,1.15fr)",
     defaultOn: false,
     applies: (c) => c === "BEDFRAME",
     label: () => "Margin (P1)",
   },
   {
     key: "laborPctP1",
-    width: "minmax(90px,0.85fr)",
+    width: "minmax(112px,0.85fr)",
     defaultOn: false,
     applies: (c) => c === "BEDFRAME",
     label: () => "Labor % (P1)",
@@ -224,33 +224,33 @@ const H_COL_RE = /^h(.+)$/;
 function buildBaseCols(sofaHeights: string[]): Record<ProdCat, BaseCol[]> {
   return {
     BEDFRAME: [
-      { key: "code", label: "Product Code", width: "minmax(120px,1.3fr)", align: "left", frozen: true, alwaysOn: true },
+      { key: "code", label: "Product Code", width: "minmax(170px,1.3fr)", align: "left", frozen: true, alwaysOn: true },
       { key: "description", label: "Description", width: "minmax(160px,1.8fr)", align: "left" },
       { key: "category", label: "Category", width: "minmax(90px,0.8fr)", align: "left" },
       { key: "size", label: "Size", width: "minmax(90px,0.8fr)", align: "left" },
       { key: "price3", label: "Price 3", width: "minmax(100px,1fr)", align: "right" },
       { key: "price2", label: "Price 2", width: "minmax(100px,1fr)", align: "right" },
       { key: "price1", label: "Price 1", width: "minmax(100px,1fr)", align: "right" },
-      { key: "unitM3", label: "Unit (m³)", width: "minmax(80px,0.7fr)", align: "right" },
-      { key: "fabric", label: "Fabric (m)", width: "minmax(80px,0.7fr)", align: "right" },
+      { key: "unitM3", label: "Unit (m³)", width: "minmax(96px,0.7fr)", align: "right" },
+      { key: "fabric", label: "Fabric (m)", width: "minmax(100px,0.7fr)", align: "right" },
       { key: "totalMin", label: "Total Min", width: "minmax(84px,0.9fr)", align: "right" },
       { key: "variants", label: "Variants", width: "minmax(84px,0.8fr)", align: "center" },
     ],
     SOFA: [
-      { key: "code", label: "Product Code", width: "minmax(120px,1.3fr)", align: "left", frozen: true, alwaysOn: true },
+      { key: "code", label: "Product Code", width: "minmax(170px,1.3fr)", align: "left", frozen: true, alwaysOn: true },
       { key: "description", label: "Description", width: "minmax(150px,1.2fr)", align: "left" },
       { key: "model", label: "Model", width: "minmax(80px,0.55fr)", align: "left" },
       ...sofaHeights.map(SOFA_HEIGHT_COL),
-      { key: "unitM3", label: "Unit (m³)", width: "minmax(72px,0.6fr)", align: "right" },
-      { key: "fabric", label: "Fabric (m)", width: "minmax(72px,0.5fr)", align: "right" },
+      { key: "unitM3", label: "Unit (m³)", width: "minmax(96px,0.6fr)", align: "right" },
+      { key: "fabric", label: "Fabric (m)", width: "minmax(100px,0.5fr)", align: "right" },
       { key: "totalMin", label: "Total Min", width: "minmax(84px,0.9fr)", align: "right" },
       { key: "variants", label: "Variants", width: "minmax(84px,0.7fr)", align: "center" },
     ],
     ACCESSORY: [
-      { key: "code", label: "Product Code", width: "minmax(120px,1.3fr)", align: "left", frozen: true, alwaysOn: true },
+      { key: "code", label: "Product Code", width: "minmax(170px,1.3fr)", align: "left", frozen: true, alwaysOn: true },
       { key: "description", label: "Description", width: "minmax(180px,2.5fr)", align: "left" },
       { key: "basePrice", label: "Base Price", width: "minmax(100px,1fr)", align: "right" },
-      { key: "unitM3", label: "Unit (m³)", width: "minmax(80px,0.7fr)", align: "right" },
+      { key: "unitM3", label: "Unit (m³)", width: "minmax(96px,0.7fr)", align: "right" },
       { key: "fabric", label: "Fabric (m)", width: "minmax(95px,1fr)", align: "right" },
     ],
   };
@@ -2841,7 +2841,7 @@ export default function ProductsPage() {
             min="0"
           />
         ) : (
-          <div className="flex items-baseline justify-end gap-1">
+          <div className="flex flex-col items-end leading-tight whitespace-nowrap">
             {editMode ? (
               <button
                 onClick={() => {
@@ -2861,7 +2861,7 @@ export default function ProductsPage() {
               <span className="text-sm tabular-nums text-[#111827]">{shown} m</span>
             )}
             {hint && (
-              <span className="text-[10px] text-[#9CA3AF]">· {hint}</span>
+              <span className="text-[10px] text-[#9CA3AF]">{hint} roll</span>
             )}
           </div>
         )}
@@ -4280,6 +4280,7 @@ export default function ProductsPage() {
           label: string;
           frozen: boolean;
           fallbackWidth: string;
+          align: BaseColAlign;
         };
         // Build the natural (registry track) order first: base columns, then the
         // active analytics, exactly as before. Then apply the owner's saved
@@ -4290,12 +4291,14 @@ export default function ProductsPage() {
             label: baseColChooserLabel(col),
             frozen: !!col.frozen,
             fallbackWidth: col.width,
+            align: col.align,
           })),
           ...activeAnalyticCols.map((c) => ({
             key: c.key,
             label: c.label(cat),
             frozen: false,
             fallbackWidth: c.width,
+            align: "right" as const,
           })),
         ];
         const colByKey = new Map(naturalCols.map((c) => [c.key, c] as const));
@@ -4321,12 +4324,16 @@ export default function ProductsPage() {
         const gridColsFull = orderedCols
           .map((c) => trackFor(c.key, c.fallbackWidth))
           .join(" ");
-        // UNIFORM header style — every header cell (base + analytic) is
-        // IDENTICAL: same padding, same left alignment, same baseline. Sort
-        // arrow + resize handle render on all of them. (Owner: headers must
-        // look the same across every column.)
+        // UNIFORM header style — every header cell (base + analytic) has the
+        // same padding and baseline, and lines up with its column body (right
+        // for numbers, centre for Variants). Sort arrow + resize handle on all.
         const thCls =
-          "px-3 py-2 text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider text-left";
+          "px-3 py-2 text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider";
+        const thJustify: Record<BaseColAlign, string> = {
+          left: "justify-start text-left",
+          right: "justify-end text-right",
+          center: "justify-center text-center",
+        };
         // Give the scroll container a min-width so columns scroll horizontally
         // instead of crushing once the table outgrows the viewport. Derived
         // from the visible columns' minmax floors (digits parsed from each
@@ -4434,7 +4441,7 @@ export default function ProductsPage() {
                           }}
                           onClick={() => toggleSort(col.key)}
                           title={col.frozen ? "Click to sort" : "Drag to reorder · click to sort"}
-                          className={`${thCls} relative group/th flex items-center gap-1 select-none hover:text-[#374151] ${
+                          className={`${thCls} ${thJustify[col.align]} relative group/th flex items-center gap-1 min-w-0 select-none hover:text-[#374151] ${
                             col.frozen ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
                           } ${
                             col.frozen
@@ -4625,18 +4632,18 @@ export default function ProductsPage() {
                     <td colSpan={colSpanN} className="p-0">
                       {/* Main row */}
                       <div
-                        className={`grid cursor-pointer transition-colors ${rowGridBg} hover:bg-[#F4F2EC]`}
+                        className={`grid items-center cursor-pointer transition-colors ${rowGridBg} hover:bg-[#F4F2EC]`}
                         style={{ gridTemplateColumns: gridColsFull, minWidth: gridMinWidth }}
                         onClick={() => setExpandedId(isExpanded ? null : p.id)}
                       >
-                        <div className={`px-3 py-1.5 flex items-center gap-1.5 sticky left-0 z-[5] ${rowStickyBg} group-hover:bg-[#F4F2EC] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.08)]`}>
+                        <div className={`px-3 py-1.5 self-stretch min-w-0 flex items-center gap-1.5 sticky left-0 z-[5] ${rowStickyBg} group-hover:bg-[#F4F2EC] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.08)]`}>
                           <svg
                             className={`w-3.5 h-3.5 text-[#9CA3AF] transition-transform flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`}
                             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                           >
                             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                           </svg>
-                          <span className="text-xs font-medium text-[#111827] whitespace-nowrap">{p.code}</span>
+                          <span className="text-xs font-medium text-[#111827] whitespace-nowrap truncate min-w-0" title={p.code}>{p.code}</span>
                           {/* Schedule master price change. Same dialog drives the whole
                               row (works for BF Price 2/Price 1 and Sofa seat tiers).
                               stopPropagation so the click doesn't toggle the row's
