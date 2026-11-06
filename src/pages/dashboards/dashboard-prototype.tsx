@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 import { cachedFetchJson, invalidateCachePrefix, useCachedJson } from "@/lib/cached-fetch";
 import { useInterval } from "@/lib/scheduler";
 import { PeriodPicker } from "./dashboard-shared";
-import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, widgetPeriod, type Period, type OpsSub, type ServiceSub, type FinSub } from "./dashboard-shared-lib";
+import { resolvePeriod, opensOnToday, ymd, quarterOfPeriod, widgetPeriod, type Period, type OpsSub, type ServiceSub } from "./dashboard-shared-lib";
 import { TAB_SUBS } from "./dashboard-url-state-lib";
 import { useDashboardUrlState } from "./use-dashboard-url-state";
-import { FinanceView } from "./FinanceView";
 import { SalesOrdersView } from "./SalesOrdersView";
 import { OperationsView } from "./OperationsView";
 import { EmployeesDashboard } from "./EmployeesDashboard";
@@ -26,7 +25,7 @@ import { usePermissions } from "@/lib/use-permission";
 // injected srcdoc document can be a real, navigable, testable React screen.
 //
 // Tabs are named after the FUNCTION, never after the person who reads them:
-// Overview, Sales, Operations, Employees (key `people`), Service, Finance — the same keys the
+// Overview, Sales, Operations, Employees (key `people`), Service — the same keys the
 // /m dashboard uses (OCR is desktop-only: it reads GET /api/ocr-accuracy/models,
 // not the shared feed) (m/screens/dashboard/dashboard-m-lib.ts). A reviewer has
 // no tab of their own: each chart lives in the tab that owns it, approvals
@@ -56,12 +55,11 @@ import { usePermissions } from "@/lib/use-permission";
 // Merged dashboard (owner 2026-10-17): no separate Overview tab — its cards
 // moved into the tab that owns them (sales cards into Sales, production into
 // Operations, people into Employees). Old ?tab=overview links land on Sales.
-const TABS: TabItem<"sales" | "operations" | "people" | "service" | "finance" | "ocr">[] = [
+const TABS: TabItem<"sales" | "operations" | "people" | "service" | "ocr">[] = [
   { key: "sales", label: "Sales" },
   { key: "operations", label: "Operations" },
   { key: "people", label: "Employees" },
   { key: "service", label: "Service" },
-  { key: "finance", label: "Finance" },
   { key: "ocr", label: "OCR" },
 ];
 
@@ -137,7 +135,7 @@ export default function DashboardPrototypePage() {
   // cascading re-render on every load). A bare URL opens on TODAY - see
   // resolvePeriod - except Overview and Sales, which open on the month.
   // Day view: Employees, and Operations since 2026-10-19 (Department Revenue
-  // and Output & Cost show the picked day). Sales / Service / Finance keep the
+  // and Output & Cost show the picked day). Sales / Service keep the
   // owner's 2026-10-17 rule (their figures are the same whichever day you
   // pick): a picked day falls back to its month. Outside Employees a
   // non-quarter range falls back to its month too.
@@ -210,7 +208,7 @@ export default function DashboardPrototypePage() {
         <PageHeader
           className="max-md:hidden"
           title="Dashboard"
-          subtitle="Sales · Operations · Employees · Service · Finance"
+          subtitle="Sales · Operations · Employees · Service"
           actions={<Tabs tabs={visibleTabs} value={tab} onChange={setTab} variant="pill" />}
         />
 
@@ -261,7 +259,6 @@ export default function DashboardPrototypePage() {
       {view === "operations" && <OperationsView period={effectivePeriod} sub={sub as OpsSub} onPeriodChange={setPeriod} />}
       {view === "people" && <EmployeesDashboard period={effectivePeriod} />}
       {view === "service" && <ServiceView period={effectivePeriod} sub={sub as ServiceSub} onPeriodChange={setPeriod} />}
-      {view === "finance" && <FinanceView period={effectivePeriod} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} />}
       {view === "ocr" && <OcrView period={effectivePeriod} />}
     </div>
   );

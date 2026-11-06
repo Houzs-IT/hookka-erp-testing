@@ -11,9 +11,8 @@ import { SalesOrdersView } from "../../../../dashboards/SalesOrdersView";
 import { OperationsView } from "../../../../dashboards/OperationsView";
 import { EmployeesDashboard } from "../../../../dashboards/EmployeesDashboard";
 import { ServiceView } from "../../../../dashboards/ServiceView";
-import { FinanceView } from "../../../../dashboards/FinanceView";
 import { OcrView } from "../../../../dashboards/OcrView";
-import type { FinSub, OpsSub, ServiceSub } from "../../../../dashboards/dashboard-shared-lib";
+import type { OpsSub, ServiceSub } from "../../../../dashboards/dashboard-shared-lib";
 import { useDashboardSub } from "../hooks";
 import { MSubPills } from "../primitives";
 import type { DashboardTabProps } from "../types";
@@ -57,16 +56,6 @@ export function ServiceTab({ period, setPeriod }: DashboardTabProps) {
     <>
       <MSubPills subs={subs} active={sub} onChange={setSub} />
       <Surface><ServiceView period={period} sub={sub as ServiceSub} onPeriodChange={setPeriod} /></Surface>
-    </>
-  );
-}
-
-export function FinanceTab({ period, setPeriod, months }: DashboardTabProps) {
-  const { sub, setSub, subs } = useDashboardSub("finance");
-  return (
-    <>
-      <MSubPills subs={subs} active={sub} onChange={setSub} />
-      <Surface><FinanceView period={period} sub={sub as FinSub} months={months} onPeriodChange={setPeriod} /></Surface>
     </>
   );
 }
