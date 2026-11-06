@@ -593,19 +593,16 @@ async function resolveRmFromBom(
   db: D1Database,
   line: MaterialLine,
 ): Promise<ResolvedRm | null> {
-  // Codes can be duplicated (migration 0076) and an unordered LIMIT 1 picks
-  // either row, so an order could land on the empty twin of a stocked fabric.
-  // Taking the row holding the stock is what the factory physically cuts from.
   if (line.inventoryCode) {
     const hit = await db
-      .prepare("SELECT * FROM raw_materials WHERE itemCode = ? ORDER BY balanceQty DESC LIMIT 1")
+      .prepare("SELECT * FROM raw_materials WHERE itemCode = ? LIMIT 1")
       .bind(line.inventoryCode)
       .first<Record<string, unknown>>();
     if (hit) return toResolvedRm(hit);
   }
   if (line.code) {
     const hit = await db
-      .prepare("SELECT * FROM raw_materials WHERE itemCode = ? ORDER BY balanceQty DESC LIMIT 1")
+      .prepare("SELECT * FROM raw_materials WHERE itemCode = ? LIMIT 1")
       .bind(line.code)
       .first<Record<string, unknown>>();
     if (hit) return toResolvedRm(hit);
@@ -619,10 +616,6 @@ async function resolveRmFromBom(
   }
   return null;
 }
-
-// Metres of slack on the over-pull guard: far above float noise, far below a
-// real concurrent pull.
-export const RM_GUARD_TOLERANCE = 0.000001;
 
 function genLedgerId(prefix: string): string {
   return `cl-${prefix}-${crypto.randomUUID().slice(0, 8)}`;
@@ -1038,16 +1031,11 @@ export async function consumeRawMaterialsForPO(
       // consumption is not physically real - skip it rather than fail the
       // whole PO completion over it.
       if (slice.qty <= QTY_EPSILON) continue;
-      // The tolerance matters. remainingQty is a float the driver returns to 15
-      // digits, so a batch stored as 0.94999999999995... reads back a hair higher,
-      // and a guard on the exact figure fails on every attempt: "race lost" for
-      // an order nobody raced, and that fabric stops issuing altogether
-      // (BUG-2026-11-06-429). GREATEST keeps the tolerance from leaving -0.0000001.
       const updateRes = await db
         .prepare(
-          "UPDATE rm_batches SET remainingQty = GREATEST(0, remainingQty - ?) WHERE id = ? AND remainingQty >= ?",
+          "UPDATE rm_batches SET remainingQty = remainingQty - ? WHERE id = ? AND remainingQty >= ?",
         )
-        .bind(slice.qty, slice.batchId, slice.qty - RM_GUARD_TOLERANCE)
+        .bind(slice.qty, slice.batchId, slice.qty)
         .run();
       if (!updateRes.meta || updateRes.meta.changes === 0) {
         throw new Error(
