@@ -327,7 +327,7 @@ app.get("/labour", async (c) => {
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const data = await Promise.all(
-    months.map((ym) => cached(c, `dashboard:labour:${orgId}:v1:${ym}`, 60, () => loadLabourMonth(c.var.DB, orgId, ym))),
+    months.map((ym) => cached(c, `dashboard:labour:${orgId}:v2:${ym}`, 60, () => loadLabourMonth(c.var.DB, orgId, ym))),
   );
   return c.json({ success: true, data: data.filter(Boolean) });
 });

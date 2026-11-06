@@ -6976,3 +6976,5 @@ Asks, in order:
 80. Payroll split by department and by person; outsource amount visible.
 81. Consistent terms across the system (Labor Cost page cards renamed).
 82. Who generated / approved payroll must be on record: audit events on payslip generate and approve.
+83. Outsource always direct, shown under its department; non-production listed by department; people add up to the lines to the sen (owner 2026-11-06).
+84. Money rounding the same across the system: half up (roundSen). FG unit cost and sofa price adjustments no longer floor (owner 2026-11-06).

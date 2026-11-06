@@ -1386,7 +1386,7 @@ export async function backfillFGBatchCost(
 
   const totalCostSen = materialCostSen + laborCostSen;
   const unitCostSen =
-    batch.originalQty > 0 ? Math.floor(totalCostSen / batch.originalQty) : 0;
+    batch.originalQty > 0 ? Math.round(totalCostSen / batch.originalQty) : 0;
 
   const dateIso = batch.completedDate
     ? new Date(`${batch.completedDate}T12:00:00`).toISOString()
