@@ -36,7 +36,7 @@ const LOW_EFF_PCT = 75;
 // Four tiles only (owner 2026-10-17: "show overdue order, 几个人没来, 效率,
 // service case overdue"): production orders overdue, people not in on the
 // latest attendance day, that day's efficiency, service cases overdue. A fifth,
-// customer sets overdue (sets not yet delivered past the customer's date), was
+// customer sets overdue (sets not yet dispatched past the customer's date), was
 // added 2026-11-05.
 export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
   const { data } = useCachedJson<Feed>("/api/dashboard/prototype");
@@ -68,7 +68,7 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
       const [worstCustomer] = overdueSets.customers;
       out.push({
         key: "overdueSets", tab: "sales", anchor: "sales-overdue-sets", value: String(overdueSets.totalSets), label: "Customer sets overdue",
-        hint: worstCustomer ? `most: ${worstCustomer.customerName} (${worstCustomer.overdueSets}) · ${overdueSets.totalOrders} orders` : "all delivered",
+        hint: worstCustomer ? `most: ${worstCustomer.customerName} (${worstCustomer.overdueSets}) · ${overdueSets.totalOrders} orders` : "all dispatched",
         tone: overdueSets.totalSets ? "bad" : "ok",
       });
     }

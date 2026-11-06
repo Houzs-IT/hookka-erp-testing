@@ -27,10 +27,10 @@ const DELIVERY_STATUS_LABEL: Record<string, string> = {
   IN_TRANSIT: "In Transit",
 };
 
-const DELIVERED_STATUSES = new Set(["DELIVERED", "INVOICED"]);
+const DISPATCHED_STATUSES = new Set(["LOADED", "IN_TRANSIT", "DELIVERED", "INVOICED"]);
 
-function isStillToDeliver(line: OrderLineProgress): boolean {
-  return line.status !== "CANCELLED" && !DELIVERED_STATUSES.has(line.deliveryStatus ?? "");
+function isStillToDispatch(line: OrderLineProgress): boolean {
+  return line.status !== "CANCELLED" && !DISPATCHED_STATUSES.has(line.deliveryStatus ?? "");
 }
 
 function describeWhere(line: OrderLineProgress): string {
@@ -79,12 +79,12 @@ function LineRow({ line }: { line: OrderLineProgress }) {
 export function OverdueOrderProgress({ soId, soNo }: { soId: string; soNo: string | null }) {
   const { data, loading, error } = useCachedJson<SalesOrderDetailResponse>(`/api/sales-orders/${encodeURIComponent(soId)}`);
   const allLines = data?.linkedPOs ?? [];
-  const lines = allLines.filter(isStillToDeliver);
+  const lines = allLines.filter(isStillToDispatch);
 
   const body = (() => {
     if (data?.success) {
       return lines.length === 0
-        ? <p className="py-2 text-[#6B7280]">{allLines.length === 0 ? "No production orders yet for this sales order." : "Every production order here is delivered or cancelled."}</p>
+        ? <p className="py-2 text-[#6B7280]">{allLines.length === 0 ? "No production orders yet for this sales order." : "Every production order here is dispatched or cancelled."}</p>
         : <ul className="divide-y divide-[#EFEBE5]">{lines.map((line) => <LineRow key={line.id} line={line} />)}</ul>;
     }
     if (loading) return <p className="py-2 text-[#6B7280]">Loading progress…</p>;

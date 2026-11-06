@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-06**: customer overdue sets entry, item 9 added (branch `fix/overdue-sets-clear-on-dispatch`); nothing else re-checked.
 > **Last verified: 2026-11-06**: customer overdue sets entry, item 8 added (branch `feat/overdue-sets-production-filter`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry, item 7 added (branch `feat/overdue-sets-customer-po`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-05**: bedframe Price 3 entry added (branch `feat/bedframe-price3-main`, to `main`); nothing else re-checked.
@@ -304,6 +305,7 @@ Ask: a Dashboard section showing, per customer, how many sets are past the custo
 6. KNOWN GAP: returns do not reopen sets. On main the /m tile opens the Sales tab, which has no per-customer list. Production numbers UNMEASURED.
 7. DONE (`feat/overdue-sets-customer-po`): each overdue order row shows the customer PO (`customer_po_id`, else `customer_po`) and the customer state (`customer_state`) next to the SO number; each hidden when blank. Feed cache version bumped to `v7` in `dashboard-prototype.ts`: the `v6` copy shared with production has no such keys, so canary showed neither.
 8. DONE (`feat/overdue-sets-production-filter`): filter chips All / In production / Production complete on the overdue sets list, each with its set count. An order is production complete when it has production orders and every non-cancelled one is COMPLETED or TRANSFERRED; an order with no production orders yet counts as in production. Feed cache version bumped to `v8`.
+9. DONE (`fix/overdue-sets-clear-on-dispatch`): a set stops being overdue once it is dispatched, not only once delivered (reporter Violet, 2026-11-06). Dispatched = on a DO that is LOADED, IN_TRANSIT, DELIVERED or INVOICED; a Pending Dispatch (DRAFT) DO still counts as overdue, unlike the reverted #1177. A DO reversed to Pending Dispatch puts its sets back. The order panel hides dispatched items, and the wording says "to dispatch". Replaces "delivered means arrived" from item 3. Production numbers UNMEASURED.
 
 ## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-to-main, 2026-11-04)
 From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Cherry-picked from staging PRs #1156 and #1158. Violet confirmed piece rate is commission for work taken home, on a separate account per person, so it does not stack on normal pay.

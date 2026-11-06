@@ -1,7 +1,7 @@
 // Customer overdue sets: per sales order, sets ordered (less cancelled
-// production orders) minus sets delivered, for
-// orders past the customer's delivery date. Delivered = a non-cancelled DO with
-// `delivered_at`, joined through production_orders (same path as
+// production orders) minus sets dispatched, for
+// orders past the customer's delivery date. Dispatched = on a DO past Pending
+// Dispatch (not DRAFT, not CANCELLED), joined through production_orders (same path as
 // on-time-delivery.ts; delivery_orders.sales_order_id is only half filled).
 import { mytYmd, type DbLike } from "./on-time-delivery";
 
@@ -15,7 +15,7 @@ export interface OverdueSetsOrderRow {
   customerDeliveryDate: string | null;
   orderedSets: number | string | null;
   cancelledSets?: number | string | null;
-  deliveredSets: number | string | null;
+  dispatchedSets: number | string | null;
   productionOrders?: number | string | null;
   unfinishedProductionOrders?: number | string | null;
 }
@@ -79,13 +79,12 @@ export async function collectOverdueSetsRows(
           WHERE po.status <> 'CANCELLED'
             AND NULLIF(po.sales_order_id, '') IS NOT NULL
           GROUP BY po.sales_order_id
-       ), delivered AS (
-         SELECT po.sales_order_id AS so_id, SUM(di.quantity) AS delivered_sets
+       ), dispatched AS (
+         SELECT po.sales_order_id AS so_id, SUM(di.quantity) AS dispatched_sets
            FROM delivery_orders d
            JOIN delivery_order_items di ON di.delivery_order_id = d.id
            JOIN production_orders po ON po.id = di.production_order_id
-          WHERE d.status <> 'CANCELLED'
-            AND NULLIF(d.delivered_at::text, '') IS NOT NULL
+          WHERE d.status NOT IN ('DRAFT', 'CANCELLED')
             AND NULLIF(po.sales_order_id, '') IS NOT NULL
           GROUP BY po.sales_order_id
        )
@@ -98,14 +97,14 @@ export async function collectOverdueSetsRows(
               NULLIF(substr(so.customer_delivery_date::text, 1, 10), '') AS "customerDeliveryDate",
               COALESCE(o.ordered_sets, 0) AS "orderedSets",
               COALESCE(cx.cancelled_sets, 0) AS "cancelledSets",
-              COALESCE(dl.delivered_sets, 0) AS "deliveredSets",
+              COALESCE(dl.dispatched_sets, 0) AS "dispatchedSets",
               COALESCE(pr.production_orders, 0) AS "productionOrders",
               COALESCE(pr.unfinished_production_orders, 0) AS "unfinishedProductionOrders"
          FROM sales_orders so
          LEFT JOIN ordered o ON o.so_id = so.id
          LEFT JOIN cancelled cx ON cx.so_id = so.id
          LEFT JOIN production pr ON pr.so_id = so.id
-         LEFT JOIN delivered dl ON dl.so_id = so.id
+         LEFT JOIN dispatched dl ON dl.so_id = so.id
         WHERE so.org_id = ?
           AND so.status NOT IN ('CANCELLED', 'DRAFT')
           AND NOT COALESCE(so.is_service_order, FALSE)
@@ -123,7 +122,7 @@ function daysBetween(fromYmd: string, toYmd: string): number {
 
 function toOverdueOrder(row: OverdueSetsOrderRow, dueDate: string, todayYmd: string): OverdueSetsOrder | null {
   const orderedSets = Math.max(0, (Number(row.orderedSets) || 0) - (Number(row.cancelledSets) || 0));
-  const remainingSets = Math.max(0, orderedSets - (Number(row.deliveredSets) || 0));
+  const remainingSets = Math.max(0, orderedSets - (Number(row.dispatchedSets) || 0));
   if (remainingSets === 0 || dueDate >= todayYmd) return null;
   const isProductionComplete = (Number(row.productionOrders) || 0) > 0 && (Number(row.unfinishedProductionOrders) || 0) === 0;
   return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, customerState: row.customerState, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets, isProductionComplete };
