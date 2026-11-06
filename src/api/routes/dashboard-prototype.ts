@@ -370,7 +370,7 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const protoV = "v7";
+  const protoV = "v8";
   const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
   const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { CustomerOverdueSets, OverdueSetsOrder, OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
+import { filterCustomersByProduction, PRODUCTION_FILTERS } from "@/api/lib/customer-overdue-sets";
+import type { CustomerOverdueSets, OverdueSetsOrder, OverdueSetsSummary, ProductionFilter } from "@/api/lib/customer-overdue-sets";
 import { fmtN } from "./dashboard-shared-lib";
 import { OverdueOrderProgress } from "./OverdueOrderProgress";
 
@@ -73,16 +74,49 @@ function OrderRow({ order }: { order: OverdueSetsOrder }) {
   );
 }
 
+const PRODUCTION_FILTER_LABEL: Record<ProductionFilter, string> = {
+  all: "All",
+  inProduction: "In production",
+  productionComplete: "Production complete",
+};
+
+function ProductionFilterChips({ customers, selected, onSelect }: { customers: CustomerOverdueSets[]; selected: ProductionFilter; onSelect: (filter: ProductionFilter) => void }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Filter by production state">
+      {PRODUCTION_FILTERS.map((filter) => {
+        const setCount = filterCustomersByProduction(customers, filter).reduce((sum, customer) => sum + customer.overdueSets, 0);
+        const isSelected = filter === selected;
+        return (
+          <button
+            key={filter}
+            type="button"
+            aria-pressed={isSelected}
+            onClick={() => onSelect(filter)}
+            className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-xs font-medium sm:min-h-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6B5C32] ${isSelected ? "border-[#6B5C32] bg-[#6B5C32] text-white" : "border-[#E2DDD8] bg-white text-[#4B5563] hover:bg-[#F7F5F3]"}`}
+          >
+            {PRODUCTION_FILTER_LABEL[filter]}
+            <span className={`tabular-nums ${isSelected ? "text-white/80" : "text-[#9CA3AF]"}`}>{fmtN(setCount)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function CardMessage({ text }: { text: string }) {
   return <p className="px-4 py-6 text-center text-sm text-[#6B7280]">{text}</p>;
 }
 
 export function CustomerOverdueSetsCard({ summary, isLoading, unavailableReason }: CustomerOverdueSetsCardProps) {
+  const [productionFilter, setProductionFilter] = useState<ProductionFilter>("all");
+  const visibleCustomers = summary ? filterCustomersByProduction(summary.customers, productionFilter) : [];
+  const visibleSets = visibleCustomers.reduce((sum, customer) => sum + customer.overdueSets, 0);
   const body = (() => {
     if (summary) {
-      return summary.customers.length === 0
-        ? <CardMessage text="Nothing overdue. Every order past its delivery date has been fully delivered." />
-        : summary.customers.map((customer) => <CustomerRow key={customer.customerId ?? customer.customerName} customer={customer} asOf={summary.asOf} />);
+      if (summary.customers.length === 0) return <CardMessage text="Nothing overdue. Every order past its delivery date has been fully delivered." />;
+      return visibleCustomers.length === 0
+        ? <CardMessage text={`No overdue orders are ${PRODUCTION_FILTER_LABEL[productionFilter].toLowerCase()}.`} />
+        : visibleCustomers.map((customer) => <CustomerRow key={customer.customerId ?? customer.customerName} customer={customer} asOf={summary.asOf} />);
     }
     if (isLoading) return <CardMessage text="Loading overdue sets…" />;
     return <CardMessage text={`Overdue sets could not be loaded${unavailableReason ? ` (${unavailableReason})` : ""}. This is not a zero.`} />;
@@ -91,13 +125,16 @@ export function CustomerOverdueSetsCard({ summary, isLoading, unavailableReason 
   return (
     <Card id="sales-overdue-sets" className="scroll-mt-[var(--dash-sticky-top,0px)]">
       <CardHeader className="pb-3">
-        <CardTitle>Customer overdue sets{summary ? ` · ${fmtN(summary.totalSets)}` : ""}</CardTitle>
+        <CardTitle>Customer overdue sets{summary ? ` · ${fmtN(visibleSets)}` : ""}</CardTitle>
         <p className="mt-0.5 text-xs text-[#6B7280]">
           Sets not yet delivered on orders past the customer's delivery date, by customer. Tap a customer for its orders, then an order to see where each item is now.
           {summary && summary.ordersWithoutCustomerDate > 0 && (
             <span className="text-[#9C6F1E]"> {fmtN(summary.ordersWithoutCustomerDate)} {summary.ordersWithoutCustomerDate === 1 ? "order has" : "orders have"} no delivery date and {summary.ordersWithoutCustomerDate === 1 ? "is" : "are"} not counted.</span>
           )}
         </p>
+        {summary && summary.customers.length > 0 && (
+          <ProductionFilterChips customers={summary.customers} selected={productionFilter} onSelect={setProductionFilter} />
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <div className="max-h-[480px] overflow-y-auto border-t border-[#E2DDD8]">{body}</div>

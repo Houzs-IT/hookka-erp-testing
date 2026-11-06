@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { summarizeOverdueSets, todayInMalaysia } from "../src/api/lib/customer-overdue-sets.ts";
+import { filterCustomersByProduction, summarizeOverdueSets, todayInMalaysia } from "../src/api/lib/customer-overdue-sets.ts";
 
 const today = "2026-11-05";
 const row = (overrides) => ({
@@ -96,4 +96,40 @@ test("delivered sets come from delivered, non-cancelled DOs through production o
   assert.match(source, /NULLIF\(d\.delivered_at::text, ''\) IS NOT NULL/);
   assert.match(source, /so\.status NOT IN \('CANCELLED', 'DRAFT'\)/);
   assert.match(source, /WHERE po\.status = 'CANCELLED'/);
+  assert.match(source, /po\.status IN \('COMPLETED', 'TRANSFERRED'\) THEN 0 ELSE 1/);
+});
+
+test("production is complete only when every live production order is finished", () => {
+  const summary = summarizeOverdueSets(
+    [
+      row({ soId: "done", productionOrders: 2, unfinishedProductionOrders: 0 }),
+      row({ soId: "busy", productionOrders: "3", unfinishedProductionOrders: "1" }),
+      row({ soId: "none", productionOrders: 0, unfinishedProductionOrders: 0 }),
+    ],
+    today,
+  );
+  assert.deepEqual(
+    summary.customers[0].orders.map((order) => [order.soId, order.isProductionComplete]),
+    [["done", true], ["busy", false], ["none", false]],
+  );
+});
+
+test("filtering by production state recounts each customer and drops empty ones", () => {
+  const { customers } = summarizeOverdueSets(
+    [
+      row({ soId: "a-done", orderedSets: 5, customerDeliveryDate: "2026-10-01", productionOrders: 1, unfinishedProductionOrders: 0 }),
+      row({ soId: "a-busy", orderedSets: 2, customerDeliveryDate: "2026-10-20", productionOrders: 1, unfinishedProductionOrders: 1 }),
+      row({ soId: "b-busy", customerId: "cust-b", customerName: "Customer B", orderedSets: 4, productionOrders: 1, unfinishedProductionOrders: 1 }),
+    ],
+    today,
+  );
+  assert.equal(filterCustomersByProduction(customers, "all"), customers);
+  const inProduction = filterCustomersByProduction(customers, "inProduction");
+  assert.deepEqual(
+    inProduction.map((customer) => [customer.customerName, customer.overdueSets, customer.oldestDueDate]),
+    [["Customer B", 4, "2026-11-01"], ["Customer A", 2, "2026-10-20"]],
+  );
+  const complete = filterCustomersByProduction(customers, "productionComplete");
+  assert.deepEqual(complete.map((customer) => [customer.customerName, customer.orders.map((order) => order.soId)]), [["Customer A", ["a-done"]]]);
+  assert.equal(customers[0].overdueSets, 7);
 });

@@ -34,7 +34,7 @@ function isStillToDeliver(line: OrderLineProgress): boolean {
 }
 
 function describeWhere(line: OrderLineProgress): string {
-  if (line.status === "COMPLETED") return "Production done";
+  if (line.status === "COMPLETED" || line.status === "TRANSFERRED") return "Production done";
   return line.currentDepartment ? `At ${deptName(line.currentDepartment).replace(/_/g, " ")}` : "Not started";
 }
 
