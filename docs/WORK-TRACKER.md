@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-06**: mobile Home Operations entry added (branch `design/mobile-home-operationv3`, frontend only); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry, item 5 added (branch `feat/overdue-sets-order-progress`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-04**: Phase 2 (Sales Order actions + edit on phone) entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
@@ -7,6 +8,14 @@
 > **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+
+## Mobile Home: Operations view (design/mobile-home-operationv3, 2026-11-06)
+Ask: build the Operations view of the mobile Home from the Home Operations v2 prototype, desktop Operations as the functional source of truth, no API / desktop / RBAC change.
+1. DONE: shell (Day / Month / Quarter / Year in the URL, Overview | Output & Cost sub-tabs), all 11 sections, loading / error / partial / permission-denied states.
+2. DECIDED (owner): Daily Report keeps item sheets from verified `groups.*` fields only, no `+N more` link; Plan vs actual drops the revenue rows; Department Revenue keeps desktop order, All / Bedframe / Sofa only, no avg/day, quarter = the API's weekly buckets; Overdue rows read-only; no 7 / 3 day colour bands; Costing quarter focus month = `min(quarter end, current month)`; Purchasing spend gated on `invoices:read`.
+3. KNOWN: PRODUCTION cannot read the Daily Report (`sales-orders:read`), the P&L (`accounting:read`) or supplier invoices, so those parts show a permission state; Costing then shows revenue only.
+4. NOT VERIFIED: any authenticated run on real data. Checked by unit tests and a browser pass against a local fake API (phone widths 360 / 390 / 430, tablet width renders as one column).
+5. OPEN: the daily cost-% sparkline is a small read-only line from the loaded data; no tablet two-column layout; the tile `Production orders overdue` scrolls to the list on Operations only.
 
 ## Customer overdue sets on the Dashboard (feat/customer-overdue-sets, 2026-11-05)
 Ask: a Dashboard section showing, per customer, how many sets are past the customer's delivery date and not yet delivered, to follow up pending deliveries.

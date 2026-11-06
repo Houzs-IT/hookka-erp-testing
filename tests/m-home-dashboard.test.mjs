@@ -12,9 +12,9 @@ import {
 const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
 
 // ---- views ----------------------------------------------------------------
-test("six views, in the desktop order, and only Sales is built", () => {
+test("six views, in the desktop order; Sales and Operations are built, the rest are Soon", () => {
   assert.deepEqual(DASHBOARD_VIEWS.map((v) => v.key), ["sales", "operations", "people", "service", "finance", "ocr"]);
-  assert.deepEqual(DASHBOARD_VIEWS.filter((v) => v.built).map((v) => v.key), ["sales"]);
+  assert.deepEqual(DASHBOARD_VIEWS.filter((v) => v.built).map((v) => v.key), ["sales", "operations"]);
 });
 
 test("a tab-restricted role sees only its tabs; everyone else sees all six", () => {
@@ -362,7 +362,8 @@ test("an unresolved period (month list not loaded yet) is never labelled, fetche
   assert.match(src, /const periodKey = ready \? widgetPeriod\(period\) : "";/);
   assert.match(src, /const periodText = ready \? widgetPeriodLabel\(period\) : "";/);
   assert.match(src, /useSalesData\(periodKey, \{ \.\.\.access, view: access\.view && ready \}\)/);
-  assert.match(src, /period=\{onSales && base\.view && ready \? period : null\}/);
+  // The bar shows for Sales and (since the Operations view) for Operations, and only once the period is resolved.
+  assert.match(src, /period=\{\(\(onSales && base\.view\) \|\| \(onOps && opsView\)\) && ready \? period : null\}/);
 });
 
 test("KPI tiles carry no sparkline bars (the approved HTML renders none)", () => {

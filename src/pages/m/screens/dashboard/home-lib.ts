@@ -7,12 +7,16 @@
 // imported (dashboard-b/index.tsx, dashboards/SalesOrdersView.tsx). Where a
 // desktop line is known to be wrong the difference is named next to it.
 import {
+  dayLabel,
   monthLabel,
   quarterKeyOf,
   quarterOfPeriod,
   quarterPeriod,
+  stepDay,
   stepPeriod,
   stepQuarter,
+  widgetPeriodLabel,
+  ymd,
   type Period,
 } from "../../../dashboards/dashboard-shared-lib";
 import { parseDashPeriod } from "../../../../api/lib/dash-period";
@@ -25,7 +29,7 @@ import { pickCat, type RevCat, type RevenueSplitResp } from "../../../dashboard-
 // ---------------------------------------------------------------------------
 export const DASHBOARD_VIEWS = [
   { key: "sales", label: "Sales", blurb: "Orders, invoices, pipeline, forecast", built: true },
-  { key: "operations", label: "Operations", blurb: "Production, backlog, plant load", built: false },
+  { key: "operations", label: "Operations", blurb: "Production, backlog, plant load", built: true },
   { key: "people", label: "Employees", blurb: "Efficiency and attendance", built: false },
   { key: "service", label: "Service", blurb: "Cases, report, to do", built: false },
   { key: "finance", label: "Finance", blurb: "Per head, returns, outlook", built: false },
@@ -86,9 +90,58 @@ export const viewAllowsDay = (view: DashView): boolean => DAY_VIEWS.includes(vie
  * page); the URL keeps whatever was there.
  */
 export function effectivePeriod(view: DashView, raw: Period): Period {
+  if (view === "operations") return opsPeriod(raw);
   if (viewAllowsDay(view)) return raw;
   if (raw.mode === "range" && !quarterOfPeriod(raw)) return { mode: "monthly", month: raw.month };
   return raw.day ? { ...raw, day: undefined } : raw;
+}
+
+/**
+ * The period the Operations view reads (desktop dashboard-prototype.tsx
+ * `effectivePeriod`): a picked day survives, a range that is not a calendar
+ * quarter falls back to its month, and a year or a quarter carries no day (a
+ * day is only meaningful inside one month).
+ */
+export function opsPeriod(raw: Period): Period {
+  if (raw.mode === "range" && !quarterOfPeriod(raw)) return { mode: "monthly", month: raw.month, ...(raw.day ? { day: raw.day } : {}) };
+  if ((raw.mode === "ytd" || raw.mode === "range") && raw.day) return { ...raw, day: undefined };
+  return raw;
+}
+
+/** Day / Month / Quarter / Year switch of the Operations period bar; the month in view is kept. */
+export function switchOpsMode(p: Period, to: PeriodMode4, today: string): Period {
+  if (to === "day") {
+    const cur = today.slice(0, 7);
+    const lastDay = ymd(new Date(Number(p.month.slice(0, 4)), Number(p.month.slice(5, 7)), 0));
+    return { mode: "monthly", month: p.month, day: p.day ?? (p.month === cur ? today : lastDay < today ? lastDay : today) };
+  }
+  return switchMode({ ...p, day: undefined }, to, today);
+}
+
+/** One step of the < > arrows on Operations: a calendar day in Day mode (desktop stepDay), else as Sales. */
+export function stepOps(p: Period, months: string[], dir: -1 | 1, today: string): Period | null {
+  if (p.day) {
+    const d = stepDay(p.day, dir, today);
+    return d ? { mode: "monthly", month: d.slice(0, 7), day: d } : null;
+  }
+  return stepSales(p, months, dir, today);
+}
+
+/** The label of the period pill: the picked day, else the month / quarter / year. */
+export function opsPeriodLabel(p: Period): string {
+  return p.day ? dayLabel(p.day) : widgetPeriodLabel(p);
+}
+
+/**
+ * Costing's focus month (owner decision D2). Desktop uses the range's last
+ * month, which for the quarter in progress is a month that has not started.
+ * Here it is clamped to the current month; a finished quarter still uses its
+ * final month. Any other period uses its own month.
+ */
+export function costingFocusMonth(p: Period, today: string): string {
+  const cur = today.slice(0, 7);
+  const m = p.mode === "range" && p.to ? p.to.slice(0, 7) : p.month;
+  return m > cur ? cur : m;
 }
 
 /**
