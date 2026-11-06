@@ -2914,7 +2914,7 @@ app.post("/cleanup-headboard-only-divans", async (c) => {
 
 // ---------------------------------------------------------------------------
 // POST /reprice-opening-fabric-batches — sets OPENING fabric batches priced far
-// above real purchases to the latest purchase price, before the backfill below
+// above real purchases to the latest purchase price, before the backfill puts
 // the cost of cut orders on them (owner 2026-11-06). PC151-01 opened at RM 35
 // against RM 12 bought. The response lists every old price, so it can be undone.
 // dryRun=true → the list only (default).
