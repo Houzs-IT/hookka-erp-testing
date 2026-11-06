@@ -50,6 +50,7 @@
 // completions before 2026-08-14, so any "units produced" series built from it
 // would read as a factory that made nothing for three months.
 // ---------------------------------------------------------------------------
+import { loadLabourMonth } from "../lib/labour-to-date";
 import { loadServiceSla } from "../lib/dashboard-service-sla";
 import { liveOpenPunchRows } from "../lib/punch-autofill";
 import { Hono } from "hono";
@@ -316,6 +317,21 @@ async function section<T>(
 // GET /api/dashboard/prototype/service-sla — the Service tab's Overdue cases by
 // stage board. Readable by whoever may open that tab; a customer-scoped role
 // sees no service section, so it gets no board either.
+// GET /api/dashboard/prototype/labour?months=2026-09,2026-10 — the one labour
+// figure per month for every dashboard card (api/lib/labour-to-date.ts). Salary
+// figures, so payroll:read only.
+app.get("/labour", async (c) => {
+  const denied = await requirePermission(c, "payroll", "read");
+  if (denied) return denied;
+  const months = [...new Set((c.req.query("months") ?? "").split(",").filter((m) => /^\d{4}-\d{2}$/.test(m)))].slice(0, 18);
+  const orgId = getOrgId(c);
+  const { cached } = await import("../lib/kv-cache");
+  const data = await Promise.all(
+    months.map((ym) => cached(c, `dashboard:labour:${orgId}:v1:${ym}`, 60, () => loadLabourMonth(c.var.DB, orgId, ym))),
+  );
+  return c.json({ success: true, data: data.filter(Boolean) });
+});
+
 app.get("/service-sla", async (c) => {
   const denied = await requireReadOrDashboardTab(c, "service-cases", "service");
   if (denied) return denied;

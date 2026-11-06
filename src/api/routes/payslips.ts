@@ -13,6 +13,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { emitAudit } from "../lib/audit";
 import { getOrgId } from "../lib/tenant";
 import {
   computeMonthlyLabor,
@@ -1527,6 +1528,7 @@ app.post("/", async (c) => {
     }
 
     const data = rows.map(rowToPayslip);
+    await emitAudit(c, { resource: "payroll", resourceId: String(period), action: "generate", after: { period, payslips: data.length } });
     return c.json({ success: true, data, total: data.length }, 201);
   } catch (e) {
     // This bare catch wrapped the ENTIRE generation and reported every failure
@@ -1651,6 +1653,9 @@ app.put("/", async (c) => {
       penalties = await postPenaltiesForPeriod(c.var.DB, period, status !== "DRAFT");
     } catch (e) {
       console.warn("[payslips] penalty posting skipped:", e);
+    }
+    if ((res.meta?.changes ?? 0) > 0) {
+      await emitAudit(c, { resource: "payroll", resourceId: String(period), action: "update", after: { period, status, payslips: res.meta?.changes ?? 0 } });
     }
     return c.json({ success: true, updated: res.meta?.changes ?? 0, penalties });
   } catch {

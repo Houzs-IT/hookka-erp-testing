@@ -91,6 +91,8 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 
 - **Tab-restricted roles** (`DASHBOARD_TABS_BY_ROLE`): QA = Service only (2026-11-04), PRODUCTION = Sales / Operations / Employees / Service. The feed opens to any such role and strips every section its tabs do not read, `sales` included. A new card on a tab must read something that role can reach, or go through `requireReadOrDashboardTab`.
 
+- **One labour figure** (2026-11-06): every dashboard card reads `LabourMonth` (`GET /api/dashboard/prototype/labour`, `loadLabourMonth`, payroll:read). A finished month is the payroll (gross + employer EPF / SOCSO / EIS, outsource and piece wages inside); the running month is labour to date, the P&L's own figure. `useLabourCost` scales the logged hours to it per person (`lib/labour-to-payroll.ts`), so day, department and month all add up to payroll. Direct = the Reconciliation's Production Labor (incl. EPF); non-production = Warehousing + Shortfall + Overhead + Under-recorded. `Logged Hours Value` on the Labor Cost page is a costing rate, not what labour cost. Not the same thing: `cost_ledger` labour on a production order is a standard rate per minute, a job-card estimate.
+
 ## Common tasks (mini-playbook)
 - **Add a KPI/widget** → compute it inside the single `app.get("/")` (`dashboard-overview.ts:81`) and add it to the returned payload; type it in the `Overview` type (`index.tsx:58`); render via `KTile`/`SectionTitle` in `DashboardBPage`. Bump the cache key `v23` if the payload shape changes, so stale snapshots don't serve the old shape.
 - **Add a chart** → put the recharts component in `charts.tsx` and lazy-import it (keep recharts out of `index.tsx`); pass computed data + colors as props (parent owns the numbers).

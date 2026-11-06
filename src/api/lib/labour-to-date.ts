@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
 import { effectiveSalarySenForMonth } from "../../lib/labor-engine";
-import { computeLabourToDate, type LabourToDate, type TdEntry, type TdPayslip, type TdWorker } from "../../lib/labour-to-date";
+import { computeLabourToDate, runningMonthYm, type LabourMonth, type LabourToDate, type TdEntry, type TdPayslip, type TdWorker } from "../../lib/labour-to-date";
 import { loadPayRuleVersions } from "./pay-rules-store";
 import { projectedPayslipsForMonth } from "./labour-projection";
 import { requestMemo, timed } from "./step-timing";
@@ -22,6 +22,8 @@ const SEED_DEPARTMENT_CODES = [
   "UPHOLSTERY", "PACKING", "WAREHOUSING", "REPAIR", "MAINTENANCE", "PRODUCTION_SHORTFALL", "R_AND_D",
 ];
 
+const SEED_PRODUCTION_CODES = SEED_DEPARTMENT_CODES.slice(0, 10);
+
 const num = (v: unknown) => Number(v) || 0;
 const pick = (r: Record<string, unknown>, camel: string, snake: string) => r[camel] ?? r[snake];
 
@@ -33,6 +35,7 @@ async function loadLabourToDateUntimed(
   db: Env["Variables"]["DB"],
   orgId: string,
   ym: string,
+  finished = false,
 ): Promise<LabourToDate | null> {
   if (!/^\d{4}-\d{2}$/.test(ym)) return null;
   const [y, mo] = ym.split("-").map(Number);
@@ -73,9 +76,11 @@ async function loadLabourToDateUntimed(
 
   const wRes = await db.prepare("SELECT * FROM workers").all<Record<string, unknown>>();
   const workers = new Map<string, TdWorker>();
+  const outsourceWorkerIds = new Set<string>();
   for (const r of wRes.results ?? []) {
     const id = String(r.id ?? "");
     if (!id) continue;
+    if (/^OSC/i.test(String(pick(r, "empNo", "emp_no") ?? "")) || /^OUTSOURCE/i.test(String(r.name ?? "").trim())) outsourceWorkerIds.add(id);
     const basic = num(pick(r, "basicSalarySen", "basic_salary_sen"));
     const otm = pick(r, "otMultiplier", "ot_multiplier");
     workers.set(id, {
@@ -113,7 +118,8 @@ async function loadLabourToDateUntimed(
       epfEmployerSen: num(pick(r, "epfEmployerSen", "epf_employer_sen")),
       socsoEmployerSen: num(pick(r, "socsoEmployerSen", "socso_employer_sen")),
       eisEmployerSen: num(pick(r, "eisEmployerSen", "eis_employer_sen")),
-    }));
+      status: (r.status as string | null) ?? null,
+    })).filter((p) => p.status !== "CANCELLED");
   } catch { /* payslips table absent → the live estimate below */ }
   if (!payslips.length) payslips = await projectedPayslipsForMonth(db, ym);
 
@@ -124,14 +130,21 @@ async function loadLabourToDateUntimed(
   } catch { /* no docks table — no docks */ }
 
   const factoryDeptCodes = new Set<string>();
+  const productionDeptCodes = new Set<string>();
   try {
-    const dRes = await db.prepare("SELECT code FROM departments").all<{ code: string | null }>();
-    for (const r of dRes.results ?? []) { const c = String(r.code ?? "").trim(); if (c) factoryDeptCodes.add(c); }
+    const dRes = await db.prepare("SELECT code, isProduction FROM departments").all<Record<string, unknown>>();
+    for (const r of dRes.results ?? []) {
+      const c = String(r.code ?? "").trim();
+      if (!c) continue;
+      factoryDeptCodes.add(c);
+      if (pick(r, "isProduction", "is_production")) productionDeptCodes.add(c);
+    }
   } catch { /* master absent — seed below */ }
+  if (!productionDeptCodes.size) for (const c of SEED_PRODUCTION_CODES) productionDeptCodes.add(c);
   if (!factoryDeptCodes.size) for (const c of SEED_DEPARTMENT_CODES) factoryDeptCodes.add(c);
 
   const payRuleVersions = await loadPayRuleVersions(db);
-  return computeLabourToDate({ ym, entries, workers, payslips, deductions, holidays, payRuleVersions, factoryDeptCodes });
+  return computeLabourToDate({ ym, entries, workers, payslips, deductions, holidays, payRuleVersions, factoryDeptCodes, productionDeptCodes, outsourceWorkerIds, finished });
 }
 // Once per month per read request (2026-10-19, 「优化加载速度」): the P&L
 // statement's period and year-to-date windows both reach the running month and
@@ -139,3 +152,23 @@ async function loadLabourToDateUntimed(
 export const loadLabourToDate = (db: Env["Variables"]["DB"], orgId: string, ym: string): Promise<LabourToDate | null> =>
   requestMemo(`labour-to-date:${orgId}:${ym}`, () => timed("labour-to-date", () => loadLabourToDateUntimed(db, orgId, ym)));
 
+/**
+ * The one labour figure for a month (owner 2026-11-06: 「全部 costing 都是
+ * generate from payroll」). A finished month is the payroll; the month still
+ * running is labour to date, the figure the P&L carries for it.
+ */
+export async function loadLabourMonth(db: Env["Variables"]["DB"], orgId: string, ym: string): Promise<LabourMonth | null> {
+  const finished = ym < runningMonthYm();
+  const td = await loadLabourToDateUntimed(db, orgId, ym, finished);
+  if (!td) return null;
+  return {
+    ym,
+    finished,
+    totalSen: td.totalSen,
+    asOf: td.asOf,
+    split: td.split,
+    payroll: td.payroll,
+    byDept: td.byDept.map((d) => ({ departmentCode: d.departmentCode, workers: d.workers, costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen })),
+    workers: td.workerSplit,
+  };
+}

@@ -43,9 +43,9 @@ import { CC_AXIS_LINE, CC_TICK, fmtRMAxis, inPeriod, monthLabel, shiftMonth, ymd
 type CostDay = { date: string; materialSen: number; laborSen: number; totalSen: number };
 type CostStructure = { data?: { cols?: string[]; groups?: { group?: string; description?: string; months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
 type Pi = { invoiceDate: string | null; amountSen: number | string | null; status: string };
-type Bucket = { revenue: number; material: number; labour: number; purchases: number };
+type Bucket = { revenue: number; material: number; labour: number; direct: number; nonProd: number; purchases: number };
 
-const ZERO: Bucket = { revenue: 0, material: 0, labour: 0, purchases: 0 };
+const ZERO: Bucket = { revenue: 0, material: 0, labour: 0, direct: 0, nonProd: 0, purchases: 0 };
 const INK = "#6B5C32";
 const TEAL = "#3E6570";
 const GOLD = "#C9A24B";
@@ -80,7 +80,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
 
   const prodRev = useProductionRevenue(months);
   const revByDay = prodRev?.byDay ?? null;
-  const { byWorkerDay, ready: labourReady } = useLabourCost(from, to, canLabour);
+  const { byWorkerDay, months: labourMonths, ready: labourReady } = useLabourCost(from, to, canLabour);
   const { data: piResp } = useCachedJson<{ data?: Pi[] }>("/api/purchase-invoices");
   // P&L raw materials by month: this financial year, and the one before when
   // the 3-month window reaches back into it.
@@ -128,9 +128,14 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
     };
     for (const [d, v] of revByDay ?? []) if (d >= from && d <= to) addTo(m, d, "material", v.total * ratioOf(d.slice(0, 7)));
     void costByDay;
+    // Direct vs non-production at each month's own ratio (LabourMonth).
+    const directShare = new Map(labourMonths.map((lm) => [lm.ym, lm.totalSen > 0 ? lm.split.directSen / lm.totalSen : 1]));
     for (const [k, v] of byWorkerDay) {
       const d = k.slice(k.indexOf("|") + 1);
+      const r = directShare.get(d.slice(0, 7)) ?? 1;
       addTo(m, d, "labour", v);
+      addTo(m, d, "direct", v * r);
+      addTo(m, d, "nonProd", v * (1 - r));
     }
     for (const p of piResp?.data ?? []) {
       const d = String(p.invoiceDate ?? "").slice(0, 10);
@@ -138,7 +143,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       addTo(m, d, "purchases", Number(p.amountSen) || 0);
     }
     return m;
-  }, [revByDay, costByDay, byWorkerDay, piResp, from, to, pnlMaterials]);
+  }, [revByDay, costByDay, byWorkerDay, labourMonths, piResp, from, to, pnlMaterials]);
   const byMonth = useMemo(() => {
     const m = new Map<string, Bucket>();
     for (const [d, b] of byDay) for (const k of Object.keys(b) as (keyof Bucket)[]) addTo(m, d.slice(0, 7), k, b[k]);
@@ -155,13 +160,13 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
   // Summary columns: [the day], the focus month, last month, the 3 months before.
   const prev = shiftMonth(focusMonth, -1);
   const three = [1, 2, 3].map((i) => byMonth.get(shiftMonth(focusMonth, -i)) ?? ZERO);
-  const threeSum = three.reduce<Bucket>((a, b) => ({ revenue: a.revenue + b.revenue, material: a.material + b.material, labour: a.labour + b.labour, purchases: a.purchases + b.purchases }), { ...ZERO });
+  const threeSum = three.reduce<Bucket>((a, b) => ({ revenue: a.revenue + b.revenue, material: a.material + b.material, labour: a.labour + b.labour, direct: a.direct + b.direct, nonProd: a.nonProd + b.nonProd, purchases: a.purchases + b.purchases }), { ...ZERO });
   const isCurrent = focusMonth === today.slice(0, 7);
   const cols: { label: string; sub: string; b: Bucket; avg?: boolean; ym?: string }[] = [
     ...(period.day ? [{ label: period.day.slice(5).replace("-", "/"), sub: "the selected day", b: byDay.get(period.day) ?? ZERO }] : []),
     { label: monthLabel(focusMonth), sub: isCurrent ? `to date · live${estimated(focusMonth) ? " · materials est." : ""}` : `whole month${estimated(focusMonth) ? " · materials est." : ""}`, b: byMonth.get(focusMonth) ?? ZERO, ym: focusMonth },
     { label: monthLabel(prev), sub: "last month", b: byMonth.get(prev) ?? ZERO, ym: prev },
-    { label: "3-month avg", sub: `${monthLabel(shiftMonth(focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: threeSum.revenue / 3, material: threeSum.material / 3, labour: threeSum.labour / 3, purchases: threeSum.purchases / 3 }, avg: true },
+    { label: "3-month avg", sub: `${monthLabel(shiftMonth(focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: threeSum.revenue / 3, material: threeSum.material / 3, labour: threeSum.labour / 3, direct: threeSum.direct / 3, nonProd: threeSum.nonProd / 3, purchases: threeSum.purchases / 3 }, avg: true },
   ];
   const head = cols[period.day ? 1 : 0];
   const headPct = pctOf(cost(head.b), head.b.revenue);
@@ -175,7 +180,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
         .filter((m) => m.slice(0, 4) === focusMonth.slice(0, 4))
         .map((m) => {
           const b = byMonth.get(m) ?? ZERO;
-          return { key: m, label: monthLabel(m), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Labour: canLabour ? Math.round(b.labour / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue };
+          return { key: m, label: monthLabel(m), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Direct: canLabour ? Math.round(b.direct / 100) : 0, NonProd: canLabour ? Math.round(b.nonProd / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue };
         });
     }
     const days = [...byDay.keys()].filter((d) => inPeriod(period, d)).sort();
@@ -183,7 +188,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       days.map((d) => ({ d, b: byDay.get(d)! })),
       (x) => x.d,
       (x) => [x.b.revenue, x.b.material, x.b.labour],
-    ).map(({ d, b }) => ({ key: d, label: d.slice(5), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Labour: canLabour ? Math.round(b.labour / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue }));
+    ).map(({ d, b }) => ({ key: d, label: d.slice(5), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Direct: canLabour ? Math.round(b.direct / 100) : 0, NonProd: canLabour ? Math.round(b.nonProd / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ytd, months, byMonth, byDay, period, focusMonth, canLabour]);
   const pick = (e: { activeLabel?: unknown } | null) => {
@@ -233,7 +238,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Costing vs production revenue</CardTitle>
-          <p className="mt-0.5 text-xs text-[#9CA3AF]">% = share of production revenue · materials used + labour = cost</p>
+          <p className="mt-0.5 text-xs text-[#9CA3AF]">% = share of production revenue · materials + direct labour + non-production labour = cost</p>
         </CardHeader>
         <CardContent>
           <div className="mb-3 flex items-end gap-4">
@@ -254,7 +259,8 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
                   <th className="py-1.5 pr-2 text-left font-semibold">Month</th>
                   <th className="py-1.5 pl-2 text-right font-semibold">Production revenue</th>
                   <th className="py-1.5 pl-2 text-right font-semibold">Materials</th>
-                  <th className="py-1.5 pl-2 text-right font-semibold">Labour</th>
+                  <th className="py-1.5 pl-2 text-right font-semibold">Direct labour</th>
+                  <th className="py-1.5 pl-2 text-right font-semibold">Non-production</th>
                   <th className="py-1.5 pl-2 text-right font-semibold">Total cost</th>
                 </tr>
               </thead>
@@ -269,7 +275,8 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
                     <td className={`py-2 pl-2 text-right tabular-nums ${c.ym ? "cursor-pointer hover:bg-[#FAF8F4]" : ""}`} onClick={c.ym ? () => setDrill({ kind: "materials", ym: c.ym! }) : undefined} title={c.ym ? "Click for the P&L lines" : undefined}>
                       {cell(pnlReady ? c.b.material : NaN, c.b.revenue, { pct: true })}
                     </td>
-                    <td className="py-2 pl-2 text-right tabular-nums">{cell(canLabour ? c.b.labour : null, c.b.revenue, { pct: true })}</td>
+                    <td className="py-2 pl-2 text-right tabular-nums">{cell(canLabour ? c.b.direct : null, c.b.revenue, { pct: true })}</td>
+                    <td className="py-2 pl-2 text-right tabular-nums">{cell(canLabour ? c.b.nonProd : null, c.b.revenue, { pct: true })}</td>
                     <td className="py-2 pl-2 text-right tabular-nums font-semibold">{cell(pnlReady ? cost(c.b) : NaN, c.b.revenue, { pct: true })}</td>
                   </tr>
                 ))}
@@ -283,7 +290,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
             ))}
           </p>
           <p className="mt-2 text-[11px] text-[#9CA3AF]">
-            Materials used = the P&L's raw materials (opening stock + purchases − closing stock from the stock take). A month without its stock take yet is estimated at the last finished month's rate. Purchases are reference only, not added to cost.
+            Materials used = the P&L's raw materials (opening stock + purchases − closing stock from the stock take). A month without its stock take yet is estimated at the last finished month's rate. Labour = payroll: gross pay plus employer EPF, SOCSO and EIS, outsource included; a month still running is labour to date. Purchases are reference only, not added to cost.
             {!canLabour && " Labour needs payroll access, so cost here is materials only."}
           </p>
         </CardContent>
@@ -317,7 +324,8 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
                           <p className="mb-1 font-semibold text-[#1F1D1B]">{r.key}</p>
                           <p>Production revenue: <b>{rm(r.revenue)}</b></p>
                           <p>Materials used: <b>{rm(r.Materials * 100)}</b></p>
-                          {canLabour && <p>Labour: <b>{rm(r.Labour * 100)}</b></p>}
+                          {canLabour && <p>Direct labour: <b>{rm(r.Direct * 100)}</b></p>}
+                          {canLabour && <p>Non-production labour: <b>{rm(r.NonProd * 100)}</b></p>}
                           <p className="mt-1" style={{ color: GOLD }}>Cost %: <b>{pctTxt(r["Cost %"])}</b></p>
                         </div>
                       );
@@ -326,7 +334,8 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
                   <Legend {...t.legend} />
                   <Bar yAxisId="rm" dataKey="Revenue" hide={t.hide("Revenue")} fill="#E3DCD0" radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />
                   <Bar yAxisId="rm" dataKey="Materials" hide={t.hide("Materials")} stackId="c" fill={INK} maxBarSize={18} isAnimationActive={false} />
-                  {canLabour && <Bar yAxisId="rm" dataKey="Labour" hide={t.hide("Labour")} stackId="c" fill={TEAL} radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />}
+                  {canLabour && <Bar yAxisId="rm" dataKey="Direct" name="Direct labour" hide={t.hide("Direct")} stackId="c" fill={TEAL} maxBarSize={18} isAnimationActive={false} />}
+                  {canLabour && <Bar yAxisId="rm" dataKey="NonProd" name="Non-production" hide={t.hide("NonProd")} stackId="c" fill={GOLD} radius={[3, 3, 0, 0]} maxBarSize={18} isAnimationActive={false} />}
                   <Line yAxisId="pct" type="monotone" dataKey="Cost %" hide={t.hide("Cost %")} stroke={GOLD} strokeWidth={2.5} dot={{ r: 2.5 }} connectNulls isAnimationActive={false} />
                   {headPct != null && !ytd && <ReferenceLine yAxisId="pct" y={Math.round(headPct * 10) / 10} stroke={GOLD} strokeDasharray="4 3" strokeOpacity={0.6} />}
                   {period.day && !ytd && <ReferenceLine yAxisId="rm" x={period.day.slice(5)} stroke="#9C6F1E" strokeWidth={2} />}

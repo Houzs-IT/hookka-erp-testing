@@ -66,6 +66,8 @@ export type TdPayslip = {
   epfEmployerSen: number;
   socsoEmployerSen: number;
   eisEmployerSen: number;
+  /** DRAFT / APPROVED / PAID; absent on a live estimate. */
+  status?: string | null;
 };
 
 export type TdDeptCost = {
@@ -88,6 +90,40 @@ export type LabourToDate = {
   byDept: TdDeptCost[];
   /** Each worker's cost to date (rounded), keyed by worker id. */
   byWorker: Map<string, number>;
+  /** Direct vs non-production, the Payroll Reconciliation's lines. */
+  split: LabourSplit;
+  /** The same split per person. */
+  workerSplit: LabourWorker[];
+  payroll: { slips: number; approved: number; draft: number };
+};
+
+/**
+ * Total labour = direct + non-production (owner 2026-11-06). These are the
+ * Labor Cost page's Payroll Reconciliation lines: direct = Production Labor
+ * (incl. EPF), outsource included; non-production = the other four.
+ */
+export type LabourSplit = {
+  directSen: number;
+  nonProductionSen: number;
+  /** Part of direct: outsourced workers' cost, piece wages included. */
+  outsourceSen: number;
+  warehousingSen: number;
+  shortfallSen: number;
+  overheadSen: number;
+  underRecordedSen: number;
+};
+export type LabourWorker = { id: string; costSen: number; directSen: number; nonProductionSen: number };
+
+/** One month of labour as the dashboard reads it (GET /api/dashboard/prototype/labour). */
+export type LabourMonth = {
+  ym: string;
+  finished: boolean;
+  totalSen: number;
+  asOf: string;
+  split: LabourSplit;
+  payroll: { slips: number; approved: number; draft: number };
+  byDept: { departmentCode: string; workers: number; costSen: number }[];
+  workers: LabourWorker[];
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -122,8 +158,16 @@ export function computeLabourToDate(input: {
   holidays: string[];
   payRuleVersions: PayRuleVersion[];
   factoryDeptCodes: Set<string>;
+  /** Departments that make product; the rest of the factory is non-production. */
+  productionDeptCodes?: Set<string>;
+  outsourceWorkerIds?: Set<string>;
+  /** A finished month: the payroll itself, not a share of it. */
+  finished?: boolean;
 }): LabourToDate | null {
   const { ym, entries, workers, payslips, deductions, holidays, payRuleVersions, factoryDeptCodes } = input;
+  const finished = input.finished ?? false;
+  const productionCodes = input.productionDeptCodes ?? new Set<string>();
+  const outsourceIds = input.outsourceWorkerIds ?? new Set<string>();
   const [y, mo] = ym.split("-").map(Number);
   if (!y || !mo) return null;
   const calDays = new Date(y, mo, 0).getDate();
@@ -138,7 +182,7 @@ export function computeLabourToDate(input: {
   }
   if (!lastLogged) return null;
   const loggedDays = countElapsedWorkingDays(y, mo, Number(lastLogged.slice(8, 10)), holidays);
-  const share = loggedDayShare(loggedDays, monthDays);
+  const share = finished ? 1 : loggedDayShare(loggedDays, monthDays);
 
   // 1. Logged hours at the production-cost rate — per (department, category)
   //    bucket like the card's table (each bucket rounded), and per worker.
@@ -151,11 +195,13 @@ export function computeLabourToDate(input: {
   }
   const buckets = new Map<string, number>();
   const loggedByWorker = new Map<string, number>();
+  const directLoggedByWorker = new Map<string, number>();
   const book = (e: TdEntry, workerId: string, cost: number) => {
     const cat = typeof e.category === "string" ? e.category.trim().toUpperCase() : "";
     const key = `${e.departmentCode}|${cat}`;
     buckets.set(key, (buckets.get(key) ?? 0) + cost);
     loggedByWorker.set(workerId, (loggedByWorker.get(workerId) ?? 0) + cost);
+    if (productionCodes.has(e.departmentCode)) directLoggedByWorker.set(workerId, (directLoggedByWorker.get(workerId) ?? 0) + cost);
   };
   for (const [k, list] of segs) {
     const [workerId, date] = k.split("|");
@@ -227,7 +273,7 @@ export function computeLabourToDate(input: {
   const statOf = (p: TdPayslip) =>
     (Number(p.epfEmployerSen) || 0) + (Number(p.socsoEmployerSen) || 0) + (Number(p.eisEmployerSen) || 0);
   const totalSen = laborCostInclPayroll({
-    monthFinished: false,
+    monthFinished: finished,
     loggedSen,
     payslips: payslips.map((p) => ({
       id: p.id,
@@ -258,18 +304,23 @@ export function computeLabourToDate(input: {
     const logged = covered.has(p.employeeId) ? 0 : (loggedByWorker.get(p.employeeId) ?? 0);
     covered.add(p.employeeId);
     const factory = isFactoryDept(p.departmentCode || "UNASSIGNED");
-    const nonStat = factory
-      ? logged + (Number(p.allowancesSen) || 0) * share + (bridge.get(p.id) ?? 0)
-      : logged + (Number(p.grossPaySen) || 0) * share;
+    const nonStat = finished
+      ? Number(p.grossPaySen) || 0
+      : factory
+        ? logged + (Number(p.allowancesSen) || 0) * share + (bridge.get(p.id) ?? 0)
+        : logged + (Number(p.grossPaySen) || 0) * share;
     put(p.departmentCode, p.employeeId, nonStat,
       (Number(p.epfEmployerSen) || 0) * share,
       (Number(p.socsoEmployerSen) || 0) * share,
       (Number(p.eisEmployerSen) || 0) * share);
   }
   // Hours logged by anyone with no payslip this month: their own department.
-  for (const [workerId, logged] of loggedByWorker) {
-    if (covered.has(workerId)) continue;
-    put(workers.get(workerId)?.departmentCode, workerId, logged, 0, 0, 0);
+  // A finished month is the payroll: hours with no payslip cost nothing in it.
+  if (!finished) {
+    for (const [workerId, logged] of loggedByWorker) {
+      if (covered.has(workerId)) continue;
+      put(workers.get(workerId)?.departmentCode, workerId, logged, 0, 0, 0);
+    }
   }
 
   const byDept: TdDeptCost[] = [...depts.entries()]
@@ -291,7 +342,55 @@ export function computeLabourToDate(input: {
   }
   const byWorker = new Map<string, number>();
   for (const [id, v] of perWorker) byWorker.set(id, Math.round(v));
-  return { totalSen, asOf: lastLogged, loggedDays, monthDays, byDept, byWorker };
+
+  // 5. Direct vs non-production: the Payroll Reconciliation's lines
+  //    (employees.tsx reconBurden and friends). Logged hours go to the
+  //    department they were logged under; each person's statutory, allowances
+  //    (piece wages sit there) and pay-vs-cost differences go to their HOME
+  //    department; overhead closes to the total.
+  type Line = "direct" | "warehousing" | "shortfall" | "overhead";
+  const lineOf = (code: string): Line =>
+    code === "PRODUCTION_SHORTFALL" ? "shortfall" : code === "WAREHOUSING" ? "warehousing" : productionCodes.has(code) ? "direct" : "overhead";
+  const lines: Record<Line, number> = { direct: 0, warehousing: 0, shortfall: 0, overhead: 0 };
+  for (const [key, v] of buckets) lines[lineOf(key.split("|")[0])] += Math.round(v);
+  const burdenByWorker = new Map<string, number>();
+  let underRecordedSen = 0;
+  for (const p of payslips) {
+    const code = p.departmentCode || "UNASSIGNED";
+    if (!isFactoryDept(code)) continue;
+    const allowances = (Number(p.allowancesSen) || 0) * share;
+    const burden = statOf(p) * share + allowances + (bridge.get(p.id) ?? 0);
+    const line = lineOf(code);
+    lines[line] += burden;
+    if (line === "direct") burdenByWorker.set(p.employeeId, (burdenByWorker.get(p.employeeId) ?? 0) + burden);
+    if (finished) {
+      const gross = Number(p.grossPaySen) || 0;
+      if (gross > 0) {
+        const gap = Math.round(gross - (loggedByWorker.get(p.employeeId) ?? 0) - (bridge.get(p.id) ?? 0) - (Number(p.allowancesSen) || 0));
+        if (gap > 50) underRecordedSen += gap;
+      }
+    }
+  }
+  const directSen = Math.round(lines.direct);
+  const warehousingSen = Math.round(lines.warehousing);
+  const shortfallSen = Math.round(lines.shortfall);
+  const overheadSen = totalSen - underRecordedSen - directSen - warehousingSen - shortfallSen;
+  const workerSplit: LabourWorker[] = [...byWorker.entries()].map(([id, costSen]) => {
+    const direct = Math.min(costSen, Math.round((directLoggedByWorker.get(id) ?? 0) + (burdenByWorker.get(id) ?? 0)));
+    return { id, costSen, directSen: direct, nonProductionSen: costSen - direct };
+  });
+  const split: LabourSplit = {
+    directSen,
+    nonProductionSen: totalSen - directSen,
+    outsourceSen: workerSplit.filter((w) => outsourceIds.has(w.id)).reduce((a, w) => a + w.costSen, 0),
+    warehousingSen,
+    shortfallSen,
+    overheadSen,
+    underRecordedSen,
+  };
+  const approved = payslips.filter((p) => p.status === "APPROVED" || p.status === "PAID").length;
+  const draft = payslips.filter((p) => p.status === "DRAFT").length;
+  return { totalSen, asOf: lastLogged, loggedDays, monthDays, byDept, byWorker, split, workerSplit, payroll: { slips: payslips.length, approved, draft } };
 }
 
 // The month still running, in Malaysia time — the clock the Labor Cost page

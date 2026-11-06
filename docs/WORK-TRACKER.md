@@ -6966,3 +6966,11 @@ Asks, in order:
 74. Service stage targets set from history (p75 of closed cases), owner delegated the numbers (2026-11-04).
 75. QA role (Zamri) sees the dashboard Service tab only; SLA board served from the backend so it needs no delivery-orders access (owner 2026-11-04).
 76. Issues by category: only categories the period has; a pick from another month no longer leaves an empty list (owner 2026-11-04).
+
+### 2026-11-06 owner review: labour cost
+77. Why October labour read 48k: 27 of 39 payslips saved on 11-04, stale P&L snapshot (explained).
+78. One labour source: every costing figure from payroll (finished month) or labour to date (running month). October 68k vs 72k vs 73k resolved.
+79. Total labour = Direct labour (incl. outsource) + Non-production labour, each with RM and %. Shown on Employees, Costing, phone and desktop.
+80. Payroll split by department and by person; outsource amount visible.
+81. Consistent terms across the system (Labor Cost page cards renamed).
+82. Who generated / approved payroll must be on record: audit events on payslip generate and approve.
