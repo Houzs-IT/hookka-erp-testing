@@ -13,12 +13,12 @@ const row = (overrides) => ({
   customerName: "Customer A",
   customerDeliveryDate: "2026-11-01",
   orderedSets: 3,
-  deliveredSets: 0,
+  dispatchedSets: 0,
   ...overrides,
 });
 
-test("remaining sets are ordered minus delivered", () => {
-  const summary = summarizeOverdueSets([row({ orderedSets: 5, deliveredSets: 2 })], today);
+test("remaining sets are ordered minus dispatched", () => {
+  const summary = summarizeOverdueSets([row({ orderedSets: 5, dispatchedSets: 2 })], today);
   assert.equal(summary.totalSets, 3);
   assert.equal(summary.customers[0].orders[0].remainingSets, 3);
   assert.equal(summary.customers[0].orders[0].daysLate, 4);
@@ -33,9 +33,9 @@ test("each overdue order carries its customer PO and state", () => {
 test("cancelled production orders are not owed", () => {
   const summary = summarizeOverdueSets(
     [
-      row({ soId: "part", orderedSets: 8, cancelledSets: 3, deliveredSets: 5 }),
-      row({ soId: "all", orderedSets: 4, cancelledSets: 4, deliveredSets: 0 }),
-      row({ soId: "some", orderedSets: 2, cancelledSets: "1", deliveredSets: 0 }),
+      row({ soId: "part", orderedSets: 8, cancelledSets: 3, dispatchedSets: 5 }),
+      row({ soId: "all", orderedSets: 4, cancelledSets: 4, dispatchedSets: 0 }),
+      row({ soId: "some", orderedSets: 2, cancelledSets: "1", dispatchedSets: 0 }),
     ],
     today,
   );
@@ -43,9 +43,9 @@ test("cancelled production orders are not owed", () => {
   assert.deepEqual(summary.customers[0].orders.map((order) => [order.soId, order.orderedSets, order.remainingSets]), [["some", 1, 1]]);
 });
 
-test("fully delivered and over-delivered orders are not overdue", () => {
+test("fully dispatched and over-dispatched orders are not overdue", () => {
   const summary = summarizeOverdueSets(
-    [row({ soId: "full", deliveredSets: 3 }), row({ soId: "over", orderedSets: 2, deliveredSets: 4 })],
+    [row({ soId: "full", dispatchedSets: 3 }), row({ soId: "over", orderedSets: 2, dispatchedSets: 4 })],
     today,
   );
   assert.equal(summary.totalOrders, 0);
@@ -81,7 +81,7 @@ test("customers are grouped and sorted by most overdue sets", () => {
 });
 
 test("bigint sums arriving as strings still add up", () => {
-  const summary = summarizeOverdueSets([row({ orderedSets: "6", deliveredSets: "1" })], today);
+  const summary = summarizeOverdueSets([row({ orderedSets: "6", dispatchedSets: "1" })], today);
   assert.equal(summary.totalSets, 5);
 });
 
@@ -89,11 +89,11 @@ test("today is the Malaysia date, not the UTC date", () => {
   assert.equal(todayInMalaysia(new Date("2026-11-04T17:30:00Z")), "2026-11-05");
 });
 
-test("delivered sets come from delivered, non-cancelled DOs through production orders", () => {
+test("dispatched sets come from DOs past Pending Dispatch, not cancelled, through production orders", () => {
   const source = readFileSync(new URL("../src/api/lib/customer-overdue-sets.ts", import.meta.url), "utf8");
   assert.match(source, /JOIN production_orders po ON po\.id = di\.production_order_id/);
-  assert.match(source, /d\.status <> 'CANCELLED'/);
-  assert.match(source, /NULLIF\(d\.delivered_at::text, ''\) IS NOT NULL/);
+  assert.match(source, /d\.status NOT IN \('DRAFT', 'CANCELLED'\)/);
+  assert.doesNotMatch(source, /delivered_at/);
   assert.match(source, /so\.status NOT IN \('CANCELLED', 'DRAFT'\)/);
   assert.match(source, /WHERE po\.status = 'CANCELLED'/);
   assert.match(source, /po\.status IN \('COMPLETED', 'TRANSFERRED'\) THEN 0 ELSE 1/);

@@ -61,7 +61,7 @@ function OrderRow({ order }: { order: OverdueSetsOrder }) {
           <span className="text-[#6B7280]">due {order.dueDate}</span>
           <LatePill days={order.daysLate} />
           <span className="ml-auto tabular-nums text-[#1F1D1B]">
-            <span className="font-semibold">{fmtN(order.remainingSets)}</span> of {fmtN(order.orderedSets)} sets to deliver
+            <span className="font-semibold">{fmtN(order.remainingSets)}</span> of {fmtN(order.orderedSets)} sets to dispatch
           </span>
         </summary>
         {isOpen && (
@@ -127,7 +127,7 @@ export function CustomerOverdueSetsCard({ summary, isLoading, unavailableReason 
       <CardHeader className="pb-3">
         <CardTitle>Customer overdue sets{summary ? ` · ${fmtN(visibleSets)}` : ""}</CardTitle>
         <p className="mt-0.5 text-xs text-[#6B7280]">
-          Sets not yet delivered on orders past the customer's delivery date, by customer. Tap a customer for its orders, then an order to see where each item is now.
+          Sets not yet dispatched on orders past the customer's delivery date, by customer. Tap a customer for its orders, then an order to see where each item is now.
           {summary && summary.ordersWithoutCustomerDate > 0 && (
             <span className="text-[#9C6F1E]"> {fmtN(summary.ordersWithoutCustomerDate)} {summary.ordersWithoutCustomerDate === 1 ? "order has" : "orders have"} no delivery date and {summary.ordersWithoutCustomerDate === 1 ? "is" : "are"} not counted.</span>
           )}
