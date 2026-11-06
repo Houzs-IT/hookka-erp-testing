@@ -173,3 +173,29 @@ test("a finished month is the payroll: direct (outsource included) + non-product
   assert.equal(out.workerSplit.find((w) => w.id === "osc").directSen, 5000);
   assert.equal(out.workerSplit.find((w) => w.id === "b").nonProductionSen, 300000);
 });
+
+test("outsource is direct wherever it logged; people add up to the lines to the sen", () => {
+  const out = td.computeLabourToDate({
+    ym: "2026-10",
+    entries: [
+      { workerId: "osc", date: "2026-10-01", hours: 9, departmentCode: "WAREHOUSING", category: "" },
+      { workerId: "a", date: "2026-10-01", hours: 9, departmentCode: "REPAIR", category: "" },
+    ],
+    workers: new Map([worker("osc", "FAB_SEW", 270000), worker("a", "FAB_SEW", 270000)]),
+    payslips: [
+      slip("po", "osc", "FAB_SEW", { grossPaySen: 10000, status: "DRAFT" }),
+      slip("pa", "a", "FAB_SEW", { grossPaySen: 10000, status: "APPROVED" }),
+    ],
+    deductions: [], holidays: [], payRuleVersions: [],
+    factoryDeptCodes: new Set(["FAB_SEW", "WAREHOUSING", "REPAIR"]),
+    productionDeptCodes: new Set(["FAB_SEW"]),
+    outsourceWorkerIds: new Set(["osc"]),
+    finished: true,
+  });
+  assert.equal(out.split.warehousingSen, 0);
+  assert.equal(out.split.directSen, 10000);
+  assert.deepEqual(out.split.nonProductionLines, [{ departmentCode: "REPAIR", sen: 10000 }]);
+  assert.equal(out.outsourceByDept.get("FAB_SEW"), 10000);
+  assert.equal(out.workerSplit.reduce((a, w) => a + w.directSen, 0), out.split.directSen);
+  assert.equal(out.workerSplit.reduce((a, w) => a + w.nonProductionSen, 0), out.split.nonProductionSen);
+});

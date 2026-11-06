@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, roundSen } from "@/lib/utils";
 import type { LabourMonth } from "@/lib/labour-to-date";
 import { sumLabourMonths } from "@/lib/labour-to-payroll";
 import { DashModal } from "./DashModal";
@@ -15,7 +15,9 @@ import { deptName } from "./ops-floor-lib";
 // ---------------------------------------------------------------------------
 type Person = { id: string; name: string | null; dept: string | null; empNo?: string | null };
 
-const rm = (sen: number) => formatCurrency(Math.round(sen));
+const rm = (sen: number) => formatCurrency(roundSen(sen));
+const COST_CENTRE: Record<string, string> = { WAREHOUSING: "Warehousing", REPAIR: "Repair", MAINTENANCE: "Maintenance", R_AND_D: "R&D", PRODUCTION_SHORTFALL: "Shortfall", OTHER: "Other" };
+const labelOf = (code: string) => COST_CENTRE[code] ?? deptName(code);
 const share = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
 
 function Side({ label, value, pct, color, children }: { label: string; value: string; pct: string; color: string; children?: React.ReactNode }) {
@@ -41,14 +43,21 @@ export function LabourSplitCard({ months, label, people, revenueSen }: { months:
   const t = useMemo(() => sumLabourMonths(months), [months]);
   const nameOf = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
   const depts = useMemo(() => {
-    const m = new Map<string, { workers: number; costSen: number }>();
+    const m = new Map<string, { workers: number; costSen: number; outsourceSen: number }>();
     for (const mo of months) for (const d of mo.byDept) {
-      const r = m.get(d.departmentCode) ?? { workers: 0, costSen: 0 };
+      const r = m.get(d.departmentCode) ?? { workers: 0, costSen: 0, outsourceSen: 0 };
       r.workers = Math.max(r.workers, d.workers);
       r.costSen += d.costSen;
+      r.outsourceSen += d.outsourceSen ?? 0;
       m.set(d.departmentCode, r);
     }
     return [...m.entries()].sort((a, b) => b[1].costSen - a[1].costSen);
+  }, [months]);
+  const outsourceDepts = useMemo(() => depts.filter(([, d]) => d.outsourceSen !== 0).map(([code, d]) => [code, d.outsourceSen] as const), [depts]);
+  const nonProd = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const mo of months) for (const l of mo.split.nonProductionLines ?? []) m.set(l.departmentCode, (m.get(l.departmentCode) ?? 0) + l.sen);
+    return [...m.entries()].filter(([, v]) => v !== 0).sort((a, b) => b[1] - a[1]);
   }, [months]);
   const staff = useMemo(() => {
     const m = new Map<string, { costSen: number; directSen: number; nonProductionSen: number }>();
@@ -91,11 +100,10 @@ export function LabourSplitCard({ months, label, people, revenueSen }: { months:
           <Side label="Direct labour" value={rm(t.directSen)} pct={share(t.directSen, t.totalSen)} color={CHART_INK}>
             <Row k="Own production staff" v={t.directSen - t.outsourceSen} />
             <Row k="Outsource" v={t.outsourceSen} />
+            {outsourceDepts.map(([code, sen]) => <Row key={code} k={`  in ${deptName(code)}`} v={sen} />)}
           </Side>
           <Side label="Non-production labour" value={rm(t.nonProductionSen)} pct={share(t.nonProductionSen, t.totalSen)} color={CHART_GOLD}>
-            <Row k="Warehousing" v={t.warehousingSen} />
-            <Row k="Repair, R&D, office" v={t.overheadSen} />
-            {t.shortfallSen !== 0 && <Row k="Shortfall" v={t.shortfallSen} />}
+            {nonProd.map(([code, sen]) => <Row key={code} k={labelOf(code)} v={sen} />)}
             {t.underRecordedSen !== 0 && <Row k="Paid, hours not logged" v={t.underRecordedSen} />}
           </Side>
         </div>
@@ -104,10 +112,10 @@ export function LabourSplitCard({ months, label, people, revenueSen }: { months:
         <DashModal wide title={`Labour cost · ${label}`} subtitle={`${rm(t.totalSen)} · gross pay plus employer EPF, SOCSO and EIS`} onClose={() => setOpen(false)}>
           <div className="max-h-[65vh] space-y-4 overflow-y-auto">
             <table className="w-full text-[12.5px]">
-              <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]"><th className="py-1.5">Home department</th><th className="py-1.5 text-right">People</th><th className="py-1.5 text-right">Cost</th><th className="py-1.5 text-right">Share</th></tr></thead>
+              <thead><tr className="text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]"><th className="py-1.5">Home department</th><th className="py-1.5 text-right">People</th><th className="py-1.5 text-right">Of which outsource</th><th className="py-1.5 text-right">Cost</th><th className="py-1.5 text-right">Share</th></tr></thead>
               <tbody>
                 {depts.map(([code, d]) => (
-                  <tr key={code} className="border-b border-[#F0ECE6]"><td className="py-1.5">{deptName(code)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{fmtN(d.workers)}</td><td className="py-1.5 text-right tabular-nums font-semibold">{rm(d.costSen)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{share(d.costSen, t.totalSen)}</td></tr>
+                  <tr key={code} className="border-b border-[#F0ECE6]"><td className="py-1.5">{labelOf(code)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{fmtN(d.workers)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{d.outsourceSen ? rm(d.outsourceSen) : "—"}</td><td className="py-1.5 text-right tabular-nums font-semibold">{rm(d.costSen)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{share(d.costSen, t.totalSen)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -118,7 +126,7 @@ export function LabourSplitCard({ months, label, people, revenueSen }: { months:
                   {staff.map(([id, r]) => {
                     const p = nameOf.get(id);
                     return (
-                      <tr key={id} className="border-b border-[#F0ECE6]"><td className="py-1.5">{p?.name ?? id}</td><td className="py-1.5 text-[#6B7280]">{p?.dept ? deptName(p.dept) : "—"}</td><td className="py-1.5 text-right tabular-nums">{rm(r.directSen)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{r.nonProductionSen ? rm(r.nonProductionSen) : "—"}</td><td className="py-1.5 text-right tabular-nums font-semibold">{rm(r.costSen)}</td></tr>
+                      <tr key={id} className="border-b border-[#F0ECE6]"><td className="py-1.5">{p?.name ?? id}</td><td className="py-1.5 text-[#6B7280]">{p?.dept ? labelOf(p.dept) : "—"}</td><td className="py-1.5 text-right tabular-nums">{rm(r.directSen)}</td><td className="py-1.5 text-right tabular-nums text-[#6B7280]">{r.nonProductionSen ? rm(r.nonProductionSen) : "—"}</td><td className="py-1.5 text-right tabular-nums font-semibold">{rm(r.costSen)}</td></tr>
                     );
                   })}
                 </tbody>

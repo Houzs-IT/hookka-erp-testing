@@ -1214,7 +1214,7 @@ app.post("/recompute-so-sofa-prices", async (c) => {
         for (const p of best.subset) {
           const it = items.find(i => i.id === p.itemId)!;
           const oldLineSen = (p.newLineRM ?? 0) * 100;
-          const adjustedLineSen = Math.floor(oldLineSen * ratio);
+          const adjustedLineSen = Math.round(oldLineSen * ratio);
           // Same omission lived here too — the combo residual rebuilt the unit
           // price from its own sum of surcharges, also without totalHeight.
           const surchargesPerUnit =
@@ -1716,7 +1716,7 @@ app.post("/recompute-co-sofa-prices", async (c) => {
         for (const p of best.subset) {
           const it = items.find(i => i.id === p.itemId)!;
           const oldLineSen = (p.newLineRM ?? 0) * 100;
-          const adjustedLineSen = Math.floor(oldLineSen * ratio);
+          const adjustedLineSen = Math.round(oldLineSen * ratio);
           // Same omission, two more copies. The CANONICAL combo engine
           // (lib/sofa-combo.ts) already carries totalHeightPriceSen — and
           // lib/sofa-combo-pass.ts still holds the comment from the last time

@@ -168,7 +168,7 @@ export async function loadLabourMonth(db: Env["Variables"]["DB"], orgId: string,
     asOf: td.asOf,
     split: td.split,
     payroll: td.payroll,
-    byDept: td.byDept.map((d) => ({ departmentCode: d.departmentCode, workers: d.workers, costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen })),
+    byDept: td.byDept.map((d) => ({ departmentCode: d.departmentCode, workers: d.workers, costSen: d.nonStatutorySen + d.epfSen + d.socsoSen + d.eisSen, outsourceSen: td.outsourceByDept.get(d.departmentCode) ?? 0 })),
     workers: td.workerSplit,
   };
 }
