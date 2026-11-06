@@ -19,6 +19,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { nextCell, caretEdges, type CellPos } from "@/lib/grid-keys";
 import { forecastSnapshot } from "@/lib/forecast-snapshot";
+import { invalidateCachePrefix } from "@/lib/cached-fetch";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { pnlBucketFor } from "@/lib/pnl-bucket";
@@ -395,6 +396,7 @@ export default function ForecastPage() {
         body: JSON.stringify({ months: payload }),
       });
       const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
+      if (res.ok && j?.success) invalidateCachePrefix("/api/accounting/dashboard");
       if (res.ok && j?.success) { toast.success("Forecast saved"); setSavedSnap(snap); }
       else toast.error(j?.error || "Couldn't save the forecast — please try again.");
     } catch {

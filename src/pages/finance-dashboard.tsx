@@ -20,6 +20,7 @@
 // happened, 6 months by default (from July) or 12.
 // ---------------------------------------------------------------------------
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { cashflowTabTotals, type CashflowTab } from "@/lib/cashflow-engine";
 import {
   Bar,
   ComposedChart,
@@ -587,7 +588,7 @@ export default function FinanceDashboardPage() {
   // starting no earlier than July; or 12). An explicit From / To overrides it.
   const [span, setSpan] = useState<DashSpan>(6);
   const [plTab, setPlTab] = useState<keyof Slice>("sales");
-  const [cfTab, setCfTab] = useState<"operating" | "investing" | "financing" | "freeCashFlow">("operating");
+  const [cfTab, setCfTab] = useState<CashflowTab>("operating");
   const [cfView, setCfView] = useState<"summary" | "detail">("summary");
   // Explicit window (owner 2026-08-05). Blank = the rolling default: last 12
   // periods plus however far the forecast reaches.
@@ -612,6 +613,7 @@ export default function FinanceDashboardPage() {
   const [csHidden, setCsHidden] = useState<Set<string>>(new Set());
   const csHover = useChartHover();
 
+  const [reloadTick, setReloadTick] = useState(0);
   // The loading state is cleared by the toggle handler (a user action), not
   // here — setting state synchronously inside an effect cascades renders.
   useEffect(() => {
@@ -622,7 +624,15 @@ export default function FinanceDashboardPage() {
       .then((j) => { if (!stale && j?.success && j.data) setRows(j.data.rows); })
       .catch(() => { if (!stale) setRows([]); });
     return () => { stale = true; };
-  }, [granularity, fromYm, toYm]);
+  }, [granularity, fromYm, toYm, reloadTick]);
+
+  // Coming back to this tab re-reads the figures, so a forecast saved in another
+  // tab shows without a manual refresh.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") setReloadTick((n) => n + 1); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // The periods drawn: only those that have happened, the last 6 / 12 (or the
   // explicit range). Every card reads these; "vs last period" still compares
@@ -732,13 +742,18 @@ export default function FinanceDashboardPage() {
 
   const cfData = useMemo(
     () =>
-      shownRows.map((r) => ({
-        label: dashPeriodLabel(r.label, r.partial),
-        value: r.cashFlow?.[cfTab] ?? null,
-        net: r.cashFlow?.net ?? null,
-        inflow: r.cashFlow?.inflow ?? null,
-        outflow: r.cashFlow?.outflow ?? null,
-      })),
+      shownRows.map((r) => {
+        // Money in / out for THIS tab, so the bars change with it; they add up
+        // to the tab's own row. Net change stays the whole cash movement.
+        const t = r.cashFlow ? cashflowTabTotals(r.cashFlow.lines ?? [], cfTab) : null;
+        return {
+          label: dashPeriodLabel(r.label, r.partial),
+          value: r.cashFlow?.[cfTab] ?? null,
+          net: r.cashFlow?.net ?? null,
+          inflow: t?.inflow ?? null,
+          outflow: t?.outflow ?? null,
+        };
+      }),
     [shownRows, cfTab],
   );
   // Detail view: every account line the Cash Flow statement prints, one row

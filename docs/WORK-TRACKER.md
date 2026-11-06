@@ -6979,3 +6979,5 @@ Asks, in order:
 83. Outsource always direct, shown under its department; non-production listed by department; people add up to the lines to the sen (owner 2026-11-06).
 84. Money rounding the same across the system: half up (roundSen). FG unit cost and sofa price adjustments no longer floor (owner 2026-11-06).
 85. Labour tile shows the total only; the split stays in the card, with avg per person and % of production revenue on each side; "Outsource · Fabric Sewing" (owner 2026-11-06).
+86. Cash Flow tabs: Investing / Financing / Free Cash Flow show the real figures, and the chart changes with the tab (owner 2026-11-06).
+87. A saved forecast must show on the dashboard straight away (owner 2026-11-06).

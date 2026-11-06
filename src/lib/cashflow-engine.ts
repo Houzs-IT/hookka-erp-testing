@@ -49,6 +49,43 @@ export const OPERATING_SECTIONS: ReadonlySet<CfSection> = new Set<CfSection>([
   "GENERAL_EXPENSE", "TAXATION",
 ]);
 
+// The dashboard's Cash Flow tabs (owner 2026-11-06). Every section is in exactly
+// one of the three, so operating + investing + financing = the cash surplus.
+// UNALLOCATED is financing because what lands there is related-company money
+// (AMOUNT DUE TO RELATED CO); filing such an account under Loan on the cash-flow
+// map changes nothing on these tabs.
+export const INVESTING_SECTIONS: ReadonlySet<string> = new Set<CfSection>(["CAPEX"]);
+export const FINANCING_SECTIONS: ReadonlySet<string> = new Set<CfSection>([
+  "TRADE_FINANCE", "FINANCE_COST", "DEPOSIT", "LOAN", "UNALLOCATED",
+]);
+
+export type CashflowTab = "operating" | "investing" | "financing" | "freeCashFlow";
+
+/** Does a cash-flow section count towards this dashboard tab? Free cash flow = operating + investing. */
+export function sectionInCashflowTab(section: string, tab: CashflowTab): boolean {
+  if (tab === "investing") return INVESTING_SECTIONS.has(section);
+  if (tab === "financing") return FINANCING_SECTIONS.has(section);
+  if (tab === "freeCashFlow") return !FINANCING_SECTIONS.has(section);
+  return !INVESTING_SECTIONS.has(section) && !FINANCING_SECTIONS.has(section);
+}
+
+/**
+ * One tab's total, money in and money out, from the statement's account lines
+ * (display sign: in +, out -). Sums lines rather than subtotal rows because the
+ * sections below the operating result print a `group` row, not a `subtotal`:
+ * matching on subtotals is what left Investing and Financing at 0.
+ */
+export function cashflowTabTotals(lines: readonly { section: string; value: number }[], tab: CashflowTab) {
+  let inflow = 0;
+  let outflow = 0;
+  for (const l of lines) {
+    if (!sectionInCashflowTab(l.section, tab)) continue;
+    if (l.value >= 0) inflow += l.value;
+    else outflow += l.value;
+  }
+  return { total: inflow + outflow, inflow, outflow };
+}
+
 // Display order of sections in the statement. Trade Finance is the first
 // block after the operating result (owner 2026-09-29).
 export const SECTION_ORDER: CfSection[] = [

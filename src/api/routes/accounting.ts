@@ -36,7 +36,7 @@ import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, re
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
-import { buildStatement, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
+import { buildStatement, cashflowTabTotals, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
 import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection } from "../../lib/cashflow-engine";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
@@ -15842,7 +15842,7 @@ app.get("/dashboard", async (c) => {
   // Bump for a changed SHAPE *or* a changed default WINDOW: the stored copy is
   // keyed by the range string, and the default range's key is blank either way,
   // so a wider-or-narrower default would keep serving the old month list.
-  const DASH_PAYLOAD_V = "v20"; // v20: equity = net assets, the un-closed current-year earnings included (BUG-2026-10-19-344); v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
+  const DASH_PAYLOAD_V = "v21"; // v21: investing / financing read from the account lines, free cash flow net of capex (BUG-2026-11-06-427); v20: equity = net assets, the un-closed current-year earnings included (BUG-2026-10-19-344); v19: running-month estimates for recurring costs not yet recorded (actual.estimated); v18: the balance sheet's stock = the P&L's closing stock; v17: a blank Stock Take month's FG / WIP from the production orders; v16: the running month's labour is to date; v15: + productionRevenue per period; v14: non-prod actuals = clocked-hours share of payroll; v13: salaryByDept carries nonProd flag; v12: non-prod dept forecasts count in COGS; v11: report-layer labour injection (unrecorded months); v10: master non-prod depts file under staff cost; v9: dept forecasts file by labour-map bucket; v8: + forecastSen; v7: + salaryByDept
   // The explicit window is part of the identity — otherwise two different
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
@@ -16307,8 +16307,6 @@ app.get("/dashboard", async (c) => {
       cols.forEach((col, i) => {
         if (col.accum || !/^\d{4}-\d{2}$/.test(col.key) || cfByMonth.has(col.key)) return;
         const operating = rowVal(rowsCf, i, (r) => r.kind === "result" && /operation surplus/i.test(r.label));
-        const investing = rowVal(rowsCf, i, (r) => r.kind === "subtotal" && r.section === "CAPEX");
-        const financing = rowVal(rowsCf, i, (r) => r.kind === "subtotal" && (r.section === "LOAN" || r.section === "DEPOSIT" || r.section === "FINANCE_COST"));
         const net = rowVal(rowsCf, i, (r) => r.kind === "total" && /Cash Surplus/i.test(r.label));
         // Owner 2026-07-30: money IN vs money OUT, and the account-level
         // detail behind them. The statement's `line` rows already carry the
@@ -16316,6 +16314,8 @@ app.get("/dashboard", async (c) => {
         const detail = rowsCf
           .filter((r) => r.kind === "line" && (Number(r.values[i]) || 0) !== 0)
           .map((r) => ({ label: r.label, section: r.section ?? "", value: Number(r.values[i]) || 0 }));
+        const investing = cashflowTabTotals(detail, "investing").total;
+        const financing = cashflowTabTotals(detail, "financing").total;
         const bank = st.bankByMonth?.get(col.key) ?? { inflow: 0, outflow: 0 };
         cfByMonth.set(col.key, { operating, investing, financing, net, inflow: bank.inflow, outflow: bank.outflow, lines: detail });
       });
@@ -16535,7 +16535,10 @@ app.get("/dashboard", async (c) => {
       },
       cashFlow: {
         ...cf,
-        freeCashFlow: cf.operating, // owner: treat as no fixed assets
+        // Owner 2026-11-06: machinery and renovation are real spending now, so
+        // free cash flow is operating less capex (it was operating alone while
+        // the company had no fixed assets).
+        freeCashFlow: cf.operating + cf.investing,
         lines: [...cfLines.values()].filter((l) => l.value !== 0).sort((a, b) => a.section.localeCompare(b.section) || b.value - a.value),
       },
       balanceSheet: bs,
@@ -16641,6 +16644,12 @@ app.put("/forecast", async (c) => {
       action: "update",
       after: { months: Object.keys(months) },
     });
+    // The dashboard serves its stored copy first and rebuilds behind it, so the
+    // first look after a save still showed the old targets. Drop the copies so
+    // that look rebuilds. The forecast is one row for everyone, hence no org
+    // filter. Best effort: the save has already happened, and a kept copy
+    // corrects itself on the next read.
+    await c.var.DB.prepare("DELETE FROM accounting_dashboard_snapshot").run().catch(() => undefined);
     return c.json({ success: true, data: { months } });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
