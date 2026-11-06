@@ -51,7 +51,7 @@ test("resolveRmFromBom SELECT * (column-safe) and returns sheet dims", () => {
   const f = flat(CASCADE);
   // Must not name the runtime-added columns in the SELECT (would throw on a
   // fresh DB) — use SELECT * + dual-keyed read.
-  assert.match(f, /SELECT \* FROM raw_materials WHERE itemCode = \? LIMIT 1/);
+  assert.match(f, /SELECT \* FROM raw_materials WHERE itemCode = \? ORDER BY balanceQty DESC LIMIT 1/);
   assert.doesNotMatch(f, /SELECT id, itemCode, description, itemGroup FROM raw_materials/);
   assert.match(f, /sheetLengthIn: sl != null \? Number\(sl\) : null/);
 });
