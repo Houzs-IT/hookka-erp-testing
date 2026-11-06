@@ -2,9 +2,10 @@
 // cheapest-binding.ts (pure) — which supplier a PO line defaults to (owner
 // 2026-11-07: pick the Internal Code and the cheapest supplier comes up).
 //
-// A price only competes when it is above 0, in MYR and not past its valid-to
-// date. Ties go to the Main supplier. With no such price, the Main supplier
-// still comes up, as it did before.
+// A price only competes when it is above 0, in MYR, not past its valid-to date,
+// and the supplier was ordered from for this code in the last 4 months: past
+// that, the owner counts them as no longer supplying it (2026-11-07). Ties go to
+// the Main supplier. With no such price, the Main supplier still comes up.
 // ---------------------------------------------------------------------------
 
 type Binding = {
@@ -12,14 +13,28 @@ type Binding = {
   currency?: string | null;
   priceValidTo?: string | null;
   isMainSupplier?: boolean | number | null;
+  /** Latest PI or PO for this supplier and code, YYYY-MM-DD. */
+  lastOrderedAt?: string | null;
 };
+
+export const RECENT_ORDER_MONTHS = 4;
+
+/** The date `months` calendar months before a YYYY-MM-DD date, clamped to the month's end. */
+export function monthsBefore(ymd: string, months: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 - months, 1));
+  const lastDay = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, lastDay));
+  return first.toISOString().slice(0, 10);
+}
 
 const competes = (b: Binding, today: string): boolean => {
   const validTo = String(b.priceValidTo ?? "").slice(0, 10);
   return (
     Number(b.unitPrice) > 0 &&
     String(b.currency || "MYR").toUpperCase() === "MYR" &&
-    (validTo === "" || validTo >= today)
+    (validTo === "" || validTo >= today) &&
+    String(b.lastOrderedAt ?? "").slice(0, 10) >= monthsBefore(today, RECENT_ORDER_MONTHS)
   );
 };
 

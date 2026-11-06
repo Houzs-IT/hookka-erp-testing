@@ -6986,3 +6986,4 @@ Asks, in order:
 90. Backfill of raw material issues cancelled: dashboard only, WIP must not change; Finance adjusts stock from the list (owner 2026-11-07).
 91. PO line defaults to the cheapest supplier for the Internal Code, not the Main one (owner 2026-11-07).
 92. Merge duplicate raw material codes onto the commonly used code (owner 2026-11-07).
+93. A supplier with no PI or PO for a code in 4 months counts as no longer supplying it; bindings stay but do not auto-select (owner 2026-11-07).

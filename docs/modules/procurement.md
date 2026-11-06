@@ -142,3 +142,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 
 ## Related modules
 [[sales]] [[accounting]] [[inventory]] [[production]] [[delivery]]
+
+## Which supplier a PO line defaults to
+
+`src/lib/cheapest-binding.ts`: the lowest valid MYR price among suppliers with a PI or PO for that code in the last 4 months (`lastOrderedAt` on `GET /api/supplier-materials`). Older bindings stay in the dropdown but do not auto-select. With no such price, the Main supplier comes up.
