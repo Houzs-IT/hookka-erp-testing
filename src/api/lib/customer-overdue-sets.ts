@@ -16,6 +16,8 @@ export interface OverdueSetsOrderRow {
   orderedSets: number | string | null;
   cancelledSets?: number | string | null;
   deliveredSets: number | string | null;
+  productionOrders?: number | string | null;
+  unfinishedProductionOrders?: number | string | null;
 }
 
 export interface OverdueSetsOrder {
@@ -27,6 +29,7 @@ export interface OverdueSetsOrder {
   daysLate: number;
   orderedSets: number;
   remainingSets: number;
+  isProductionComplete: boolean;
 }
 
 export interface CustomerOverdueSets {
@@ -68,6 +71,14 @@ export async function collectOverdueSetsRows(
           WHERE po.status = 'CANCELLED'
             AND NULLIF(po.sales_order_id, '') IS NOT NULL
           GROUP BY po.sales_order_id
+       ), production AS (
+         SELECT po.sales_order_id AS so_id,
+                COUNT(*) AS production_orders,
+                SUM(CASE WHEN po.status IN ('COMPLETED', 'TRANSFERRED') THEN 0 ELSE 1 END) AS unfinished_production_orders
+           FROM production_orders po
+          WHERE po.status <> 'CANCELLED'
+            AND NULLIF(po.sales_order_id, '') IS NOT NULL
+          GROUP BY po.sales_order_id
        ), delivered AS (
          SELECT po.sales_order_id AS so_id, SUM(di.quantity) AS delivered_sets
            FROM delivery_orders d
@@ -87,10 +98,13 @@ export async function collectOverdueSetsRows(
               NULLIF(substr(so.customer_delivery_date::text, 1, 10), '') AS "customerDeliveryDate",
               COALESCE(o.ordered_sets, 0) AS "orderedSets",
               COALESCE(cx.cancelled_sets, 0) AS "cancelledSets",
-              COALESCE(dl.delivered_sets, 0) AS "deliveredSets"
+              COALESCE(dl.delivered_sets, 0) AS "deliveredSets",
+              COALESCE(pr.production_orders, 0) AS "productionOrders",
+              COALESCE(pr.unfinished_production_orders, 0) AS "unfinishedProductionOrders"
          FROM sales_orders so
          LEFT JOIN ordered o ON o.so_id = so.id
          LEFT JOIN cancelled cx ON cx.so_id = so.id
+         LEFT JOIN production pr ON pr.so_id = so.id
          LEFT JOIN delivered dl ON dl.so_id = so.id
         WHERE so.org_id = ?
           AND so.status NOT IN ('CANCELLED', 'DRAFT')
@@ -111,7 +125,8 @@ function toOverdueOrder(row: OverdueSetsOrderRow, dueDate: string, todayYmd: str
   const orderedSets = Math.max(0, (Number(row.orderedSets) || 0) - (Number(row.cancelledSets) || 0));
   const remainingSets = Math.max(0, orderedSets - (Number(row.deliveredSets) || 0));
   if (remainingSets === 0 || dueDate >= todayYmd) return null;
-  return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, customerState: row.customerState, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets };
+  const isProductionComplete = (Number(row.productionOrders) || 0) > 0 && (Number(row.unfinishedProductionOrders) || 0) === 0;
+  return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, customerState: row.customerState, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets, isProductionComplete };
 }
 
 function groupByCustomer(entries: { row: OverdueSetsOrderRow; order: OverdueSetsOrder }[]): CustomerOverdueSets[] {
@@ -151,4 +166,28 @@ export function summarizeOverdueSets(rows: OverdueSetsOrderRow[], todayYmd: stri
     ordersWithoutCustomerDate,
     customers,
   };
+}
+
+export const PRODUCTION_FILTERS = ["all", "inProduction", "productionComplete"] as const;
+export type ProductionFilter = (typeof PRODUCTION_FILTERS)[number];
+
+function matchesProductionFilter(order: OverdueSetsOrder, filter: ProductionFilter): boolean {
+  if (filter === "all") return true;
+  return order.isProductionComplete === (filter === "productionComplete");
+}
+
+export function filterCustomersByProduction(customers: CustomerOverdueSets[], filter: ProductionFilter): CustomerOverdueSets[] {
+  if (filter === "all") return customers;
+  return customers
+    .map((customer) => {
+      const orders = customer.orders.filter((order) => matchesProductionFilter(order, filter));
+      return {
+        ...customer,
+        orders,
+        overdueSets: orders.reduce((sum, order) => sum + order.remainingSets, 0),
+        oldestDueDate: orders[0]?.dueDate ?? customer.oldestDueDate,
+      };
+    })
+    .filter((customer) => customer.orders.length > 0)
+    .sort((first, second) => second.overdueSets - first.overdueSets || (first.oldestDueDate < second.oldestDueDate ? -1 : 1));
 }
