@@ -1006,7 +1006,7 @@ not carried forward: the previous stamp was 3 lines light on every entry.)
   - TAB 4b: Department Performance (DepartmentPerformanceTab) — L6024
   - DailyDrillDown helper — L6432
   - RuleDraftExplainer helper (payroll) — L6583
-  - TAB 5: Payroll (PayrollTab) — L6653 (+ Advance column / drift banner, 2026-08-07)
+  - TAB 5: Payroll (PayrollTab) — L6792 (+ Advance column / drift banner, 2026-08-07). Approve All locks the month (Approve / Regenerate hide); a fully approved month shows **Withdraw Approval** (`withdrawApproval`, PUT `/api/payslips` `status: "DRAFT"`, 2026-11-06), which un-posts penalties and unlocks advances
   - DepartmentsManager (inside Labor Cost section) — L8234
   - TAB 5b: Labor Cost (LaborCostTab) — L8481. Its Total Revenue = `GET /api/working-hour-entries/production-revenue`,
     whose recognition SQL lives in `src/api/lib/production-revenue.ts` (shared with the finance dashboard, 2026-10-12).
