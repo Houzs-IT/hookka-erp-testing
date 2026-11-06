@@ -102,3 +102,7 @@ Read-mostly stock visibility across the three stages of manufacturing: **Finishe
 
 ## Related modules
 [[production]] [[procurement]] [[accounting]] [[sales]] [[delivery]]
+
+## Merging duplicate raw material codes
+
+`POST /api/import-completion/merge-raw-material-codes` (dry run by default) folds rows whose codes match after dropping a HOK- or FABRIC prefix, spaces, dashes and leading zeros (`src/lib/rm-merge.ts`). The code used most on PIs, POs and orders stays, then the row with stock. Batches, cost ledger rows and bindings move to it. Retired rows stay inactive with `~MERGED~` in the code, and past PO and PI lines keep theirs. Rows in different item groups are never merged.
