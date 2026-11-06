@@ -23,6 +23,8 @@
 // change. Backend endpoint POST /api/purchase-orders is reused unchanged.
 // ---------------------------------------------------------------------------
 
+import { cheapestBinding, sortCheapestFirst } from "@/lib/cheapest-binding";
+import { todayYmdMY } from "@/lib/utils";
 import React, { useState, useCallback, useEffect, useMemo, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
@@ -156,8 +158,7 @@ function CreatePurchaseOrderPage() {
 
   const getMainBinding = useCallback(
     (materialCode: string): SupplierMaterialBinding | undefined => {
-      const bindings = getBindingsForRM(materialCode);
-      return bindings.find((b) => b.isMainSupplier) ?? bindings[0];
+      return cheapestBinding(getBindingsForRM(materialCode), todayYmdMY());
     },
     [getBindingsForRM],
   );
@@ -170,21 +171,13 @@ function CreatePurchaseOrderPage() {
     [allSuppliers],
   );
 
-  // Returns bindings for a material sorted main-first, then by supplier name.
-  // Used in the per-line supplier dropdown so the main supplier appears first
-  // and the owner can compare prices at a glance.
+  // Returns bindings for a material cheapest first. Used in the per-line
+  // supplier dropdown, so the top row is the one the line defaulted to.
   const getSortedBindingsForRM = useCallback(
     (materialCode: string): SupplierMaterialBinding[] => {
-      const bindings = getBindingsForRM(materialCode);
-      return [...bindings].sort((a, b) => {
-        if (a.isMainSupplier && !b.isMainSupplier) return -1;
-        if (!a.isMainSupplier && b.isMainSupplier) return 1;
-        return resolveSupplierName(a.supplierId).localeCompare(
-          resolveSupplierName(b.supplierId),
-        );
-      });
+      return sortCheapestFirst(getBindingsForRM(materialCode), todayYmdMY());
     },
-    [getBindingsForRM, resolveSupplierName],
+    [getBindingsForRM],
   );
 
   // Label shown in the per-line supplier dropdown: "CLM ETERNAL — RM 68.00"
