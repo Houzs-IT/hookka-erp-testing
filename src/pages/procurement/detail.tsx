@@ -1,3 +1,5 @@
+import { cheapestBinding } from "@/lib/cheapest-binding";
+import { todayYmdMY } from "@/lib/utils";
 import { useMemo, useState, useCallback, lazy, Suspense } from "react";
 import { AuditHistoryPanel } from "@/components/audit/AuditHistoryPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -337,7 +339,7 @@ export default function PurchaseOrderDetailPage() {
     const bindings = supplierMaterialBindings.filter(
       (b) => b.materialCode === rmCode && activeSupplierIds.has(b.supplierId),
     );
-    const main = bindings.find((b) => b.isMainSupplier) ?? bindings[0];
+    const main = cheapestBinding(bindings, todayYmdMY());
     const sid = main?.supplierId ?? "";
     setEditLines((prev) => [
       ...prev,

@@ -6984,3 +6984,5 @@ Asks, in order:
 88. Deduct raw material for orders already cut, per Fabric Usage / BOM, as far as stock allows; stock adjustment corrects the rest later (owner 2026-11-06).
 89. Finance tab removed from the Dashboard, desktop and phone (owner 2026-11-07).
 90. Backfill of raw material issues cancelled: dashboard only, WIP must not change; Finance adjusts stock from the list (owner 2026-11-07).
+91. PO line defaults to the cheapest supplier for the Internal Code, not the Main one (owner 2026-11-07).
+92. Merge duplicate raw material codes onto the commonly used code (owner 2026-11-07).

@@ -1,3 +1,5 @@
+import { cheapestBinding } from "@/lib/cheapest-binding";
+import { todayYmdMY } from "@/lib/utils";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
@@ -109,13 +111,12 @@ function POFormDialog({
     [supplierMaterialBindings, activeSupplierIds],
   );
 
-  /** For a given RM code, return the main-supplier binding (or first available).
+  /** For a given RM code, return the cheapest supplier's binding (or Main).
    *  Both candidates are already filtered to ACTIVE suppliers via
    *  getBindingsForRM, so we never auto-pick a deactivated vendor. */
   const getMainBinding = useCallback(
     (materialCode: string): SupplierMaterialBinding | undefined => {
-      const bindings = getBindingsForRM(materialCode);
-      return bindings.find((b) => b.isMainSupplier) ?? bindings[0];
+      return cheapestBinding(getBindingsForRM(materialCode), todayYmdMY());
     },
     [getBindingsForRM],
   );
@@ -1041,8 +1042,7 @@ export default function ProcurementPage() {
     const bindings = supplierMaterialBindings.filter(
       (b) => b.materialCode === prefillRm,
     );
-    const mainBinding =
-      bindings.find((b) => b.isMainSupplier) ?? bindings[0];
+    const mainBinding = cheapestBinding(bindings, todayYmdMY());
     const qty = qtyStr ? Math.max(1, Math.ceil(Number(qtyStr) || 0)) : 1;
     const seedQty = mainBinding?.moq
       ? Math.max(qty, mainBinding.moq)
@@ -1553,7 +1553,7 @@ export default function ProcurementPage() {
       const bindings = supplierMaterialBindings.filter(
         (b) => b.materialCode === rm.itemCode,
       );
-      const main = bindings.find((b) => b.isMainSupplier) ?? bindings[0];
+      const main = cheapestBinding(bindings, todayYmdMY());
       const moq = main?.moq ?? 1;
       const refill = Math.max((rm.maxStock ?? 0) - (rm.balanceQty ?? 0), moq);
       const sid = main?.supplierId ?? "";
