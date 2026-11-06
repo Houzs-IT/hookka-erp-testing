@@ -18,6 +18,7 @@ import { requireReadOrDashboardTab } from "../lib/rbac";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
 import { loadSoLinePriceIndex, priceForItem } from "../lib/do-value";
 import { computeFabricNext30ByCategory } from "../lib/fabric-usage";
+import { loadFabricFifo } from "../lib/fabric-fifo-data";
 import {
   readSnapshot,
   writeSnapshot,
@@ -72,8 +73,6 @@ const OVERVIEW_SOURCE_TABLES = [
   "grns",
   "kv_config",
 ] as const;
-
-const FABRIC_ITEM_GROUPS = ["B.M-FABR", "S.M-FABR", "S-FABRIC"];
 
 function fmtISO(d: Date): string {
   return d.toISOString().split("T")[0];
@@ -183,7 +182,7 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const overviewV = "v27";
+  const overviewV = "v28";
   const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}`;
   const computeOverview = async () => {
     const db = c.var.DB;
@@ -298,13 +297,9 @@ app.get("/", async (c) => {
       topSupRes,
       piSpendRes,
       topSupPiRes,
-      fabTotRes,
-      fabExclRes,
       soAggRes,
       catTopRes,
       sofaLineRes,
-      fabTopRes,
-      fabMonthRes,
       invMonthRes,
       prodRevRes,
       soPriceIdx,
@@ -313,8 +308,6 @@ app.get("/", async (c) => {
       compYestRes,
       compLast7Res,
       compRangeRes,
-      fabRecvRes,
-      fabPast30CatRes,
       backlogJcRes,
       headRes,
     ] = await Promise.all([
@@ -465,28 +458,6 @@ app.get("/", async (c) => {
         )
         .bind(orgId)
         .all<{ name: string; spendSen: number; invoices: number }>(),
-      db
-        .prepare(
-          `SELECT COALESCE(SUM(cl.totalCostSen),0) AS sen, COALESCE(SUM(cl.qty),0) AS qty
-             FROM cost_ledger cl
-             JOIN raw_materials rm ON rm.id = cl.itemId
-            WHERE rm.orgId = ? AND cl.type = 'RM_ISSUE'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')${kpiAllTime ? "" : ` AND substr(cl.date::text, 1, 7) IN (${dp.monthsSql})`}`,
-        )
-        .bind(orgId)
-        .first<{ sen: number; qty: number }>(),
-      db
-        .prepare(
-          `SELECT COALESCE(SUM(cl.totalCostSen),0) AS sen, COALESCE(SUM(cl.qty),0) AS qty
-             FROM cost_ledger cl
-             JOIN raw_materials rm ON rm.id = cl.itemId
-             JOIN production_orders po ON po.id = cl.refId
-            WHERE po.orgId = ? AND cl.type = 'RM_ISSUE' AND cl.refType = 'PRODUCTION_ORDER'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')
-              AND po.itemCategory NOT IN ('BEDFRAME','SOFA')${kpiAllTime ? "" : ` AND substr(cl.date::text, 1, 7) IN (${dp.monthsSql})`}`,
-        )
-        .bind(orgId)
-        .first<{ sen: number; qty: number }>(),
       // Per-SO aggregate (confirmed orders only). Drives BOTH the AOV
       // table and the monthly Bedframe-units / Sofa-sets card:
       //   - bedframe is sold per piece → keep its line value & qty
@@ -566,78 +537,6 @@ app.get("/", async (c) => {
           soTotalSen: number;
           ym: string | null;
         }>(),
-      // Top fabrics by ACTUAL production consumption (RM_ISSUE meters),
-      // split Bedframe vs Sofa via the consuming PO's category (same
-      // join the fabric-cost-excl query uses). Carries the consumption
-      // month (cl.date) so the headline figures (per-category Avg cost/m
-      // + per-fabric "used") can be scoped to the selected period; the
-      // JS rollup sums across months for All-time / the selected month.
-      db
-        .prepare(
-          `SELECT po.itemCategory AS "cat", rm.itemCode AS "fabCode",
-                  substr(cl.date::text, 1, 7) AS "ym",
-                  MAX(rm.description) AS "fabName",
-                  COALESCE(SUM(cl.qty),0) AS "meters",
-                  COALESCE(SUM(cl.totalCostSen),0) AS "costSen"
-             FROM cost_ledger cl
-             JOIN raw_materials rm ON rm.id = cl.itemId
-             JOIN production_orders po ON po.id = cl.refId
-            WHERE po.orgId = ? AND cl.type = 'RM_ISSUE'
-              AND cl.refType = 'PRODUCTION_ORDER'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')
-              AND po.itemCategory IN ('BEDFRAME','SOFA')
-            GROUP BY po.itemCategory, rm.itemCode, substr(cl.date::text, 1, 7)`,
-        )
-        .bind(orgId)
-        .all<{
-          cat: string;
-          fabCode: string;
-          ym: string | null;
-          fabName: string;
-          meters: number;
-          costSen: number;
-        }>(),
-      // Monthly fabric meters (RM_ISSUE), split Bedframe vs Sofa.
-      //
-      // These months are POSTING months, not consumption months — the ledger
-      // date is when the issue was recorded, which is not always when the
-      // fabric was cut. Owner 2026-08-05: "这个数据怎么可能是这样子的？"
-      // 2026-05 reads 6,403m against 300–800m either side, and 800 of its
-      // 1,394 issues (4,759m, 60%) belong to production orders raised in
-      // APRIL. That is April's cloth, booked late.
-      //
-      // The rows are real consumption and stay — dropping them would erase
-      // April's usage entirely.
-      //
-      // `lateMeters` reports the share whose production order predates the
-      // posting month. It is NOT a backfill detector, and an earlier version of
-      // this comment was wrong to imply it: measured across prod that share is
-      // 100% for August sofa, 83% for July, 48% for June. An order raised one
-      // month and cut the next is simply how the factory runs. It is exposed so
-      // the panel can say honestly that a bar is a POSTING month, not a
-      // production month; the May spike is a volume anomaly (1,394 issues
-      // against a ~120 baseline), which is a different question and one for the
-      // people who loaded it.
-      db
-        .prepare(
-          `SELECT po.itemCategory AS "cat",
-                  substr(cl.date::text, 1, 7) AS "ym",
-                  COALESCE(SUM(cl.qty),0) AS "meters",
-                  COALESCE(SUM(CASE
-                    WHEN substr(po.created_at::text, 1, 7) < substr(cl.date::text, 1, 7)
-                    THEN cl.qty ELSE 0 END), 0) AS "lateMeters",
-                  COALESCE(SUM(cl.totalCostSen),0) AS "costSen"
-             FROM cost_ledger cl
-             JOIN raw_materials rm ON rm.id = cl.itemId
-             JOIN production_orders po ON po.id = cl.refId
-            WHERE po.orgId = ? AND cl.type = 'RM_ISSUE'
-              AND cl.refType = 'PRODUCTION_ORDER'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')
-              AND po.itemCategory IN ('BEDFRAME','SOFA')
-            GROUP BY po.itemCategory, substr(cl.date::text, 1, 7)`,
-        )
-        .bind(orgId)
-        .all<{ cat: string; ym: string | null; meters: number; lateMeters: number; costSen: number }>(),
       // Invoiced per month — by invoiceDate, every invoice except
       // CANCELLED (incl. DRAFT, per Wei Siang: all current invoices are
       // still DRAFT, so excluding them would leave the line empty).
@@ -843,48 +742,6 @@ app.get("/", async (c) => {
         )
         .bind(orgId, completedRangeStart, completedRangeEnd)
         .first<{ bfUnits: number; sofaSets: number }>(),
-      // Fabric PURCHASE price per SKU — from RM_RECEIPT ledger rows.
-      // weighted avg = Σ cost ÷ Σ qty; plus min/max per-meter unit cost.
-      db
-        .prepare(
-          `SELECT rm.itemCode AS "fabCode",
-                  COALESCE(SUM(cl.totalCostSen),0) AS "totCostSen",
-                  COALESCE(SUM(cl.qty),0) AS "totQty",
-                  MIN(NULLIF(cl.unitCostSen,0)) AS "minUnitSen",
-                  MAX(cl.unitCostSen) AS "maxUnitSen"
-             FROM cost_ledger cl
-             JOIN raw_materials rm ON rm.id = cl.itemId
-            WHERE rm.orgId = ? AND cl.type = 'RM_RECEIPT'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')
-            GROUP BY rm.itemCode`,
-        )
-        .bind(orgId)
-        .all<{
-          fabCode: string;
-          totCostSen: number;
-          totQty: number;
-          minUnitSen: number | null;
-          maxUnitSen: number | null;
-        }>(),
-      // Category-specific Past-30-days actual fabric issued (RM_ISSUE
-      // in the last 30 days), so Bedframe/Sofa Past-30 is correct
-      // instead of the SKU total.
-      db
-        .prepare(
-          `SELECT po.itemCategory AS "cat", rm.itemCode AS "fabCode",
-                  COALESCE(SUM(cl.qty),0) AS "meters"
-             FROM cost_ledger cl
-             JOIN raw_materials rm ON rm.id = cl.itemId
-             JOIN production_orders po ON po.id = cl.refId
-            WHERE po.orgId = ? AND cl.type = 'RM_ISSUE'
-              AND cl.refType = 'PRODUCTION_ORDER'
-              AND rm.itemGroup IN ('${FABRIC_ITEM_GROUPS.join("','")}')
-              AND po.itemCategory IN ('BEDFRAME','SOFA')
-              AND substr(cl.date::text, 1, 10) >= ?
-            GROUP BY po.itemCategory, rm.itemCode`,
-        )
-        .bind(orgId, last30StartISO)
-        .all<{ cat: string; fabCode: string; meters: number }>(),
       // Per-JC rows for the Backlog-by-department drill-down — exact
       // mirror of the Planning page's capacityData: needs the JC's dept
       // + its production order's category & status.
@@ -1282,9 +1139,6 @@ app.get("/", async (c) => {
       }
     }
 
-    // ---- Fabric cost per meter (consumption basis) ----
-    const avgPerMeter = (r: { sen: number; qty: number } | null): number =>
-      r && Number(r.qty) > 0 ? Math.round(Number(r.sen) / Number(r.qty)) : 0;
 
     // ---- AOV by customer + monthly Bedframe units / Sofa sets ----
     // Bedframe is sold per piece: AOV = Σ bedframe line value ÷ Σ qty.
@@ -1876,69 +1730,42 @@ app.get("/", async (c) => {
     // bucketed by the JC's PO category — so a bedframe fabric never
     // shows its demand under Sofa. Same engine as the Fab Cut page.
     const fabNext30Cat = await computeFabricNext30ByCategory(db);
-    // Category-correct Past-30 actual issued (RM_ISSUE last 30 days).
-    const fabPast30Cat = new Map<string, Map<string, number>>();
-    for (const r of fabPast30CatRes.results ?? []) {
-      const cat = (r.cat ?? "").toUpperCase();
-      if (cat !== "BEDFRAME" && cat !== "SOFA") continue;
-      let m = fabPast30Cat.get(cat);
-      if (!m) {
-        m = new Map();
-        fabPast30Cat.set(cat, m);
-      }
-      m.set(r.fabCode ?? "", Number(r.meters) || 0);
-    }
-    // Purchase price per fabric SKU (from RM_RECEIPT ledger).
-    const fabPrice = new Map<
-      string,
-      { avgSen: number; minSen: number; maxSen: number }
-    >();
-    for (const r of fabRecvRes.results ?? []) {
-      const q = Number(r.totQty) || 0;
-      fabPrice.set(r.fabCode ?? "", {
-        avgSen: q > 0 ? Math.round((Number(r.totCostSen) || 0) / q) : 0,
-        minSen: Math.round(Number(r.minUnitSen) || 0),
-        maxSen: Math.round(Number(r.maxUnitSen) || 0),
-      });
-    }
-    // Used (categorised) per fabric, keyed by category. Scoped to the
-    // selected period: All-time sums every month; a specific YYYY-MM keeps
-    // only that month's RM_ISSUE rows. Rows now arrive split by month, so
-    // accumulate (do NOT overwrite) — a fabric used across several months
-    // would otherwise keep only its last month. The per-category Avg cost/m
-    // headline and the per-fabric "Used" column both read this map.
-    const fabUsedByCat = new Map<
-      string,
-      Map<string, { fabName: string; meters: number; costSen: number }>
-    >();
-    for (const r of fabTopRes.results ?? []) {
-      const cat = (r.cat ?? "").toUpperCase();
-      if (cat !== "BEDFRAME" && cat !== "SOFA") continue;
-      // Honour the selected month for the headline; All-time keeps every row.
+    // Used, cost and Past 30d all come from the Fabric Usage on the cut orders,
+    // costed first-in-first-out against the latest stock take (owner 2026-11-06).
+    // The RM_ISSUE ledger is not used: it only holds what a batch could supply.
+    // A failure here leaves the fabric cards empty rather than the dashboard down.
+    const fabFifo = await loadFabricFifo(db, orgId, last30StartISO).catch((err) => {
+      console.error("[dashboard-overview] fabric FIFO failed", err);
+      return { rows: [], past30: new Map<string, Map<string, number>>() };
+    });
+    const fabPast30Cat = fabFifo.past30;
+    type FabUsed = { meters: number; pricedMeters: number; costSen: number };
+    const fabUsedByCat = new Map<string, Map<string, FabUsed>>();
+    const fabPeriodAll = { meters: 0, pricedMeters: 0, costSen: 0 };
+    const fabPeriodOther = { meters: 0, pricedMeters: 0, costSen: 0 };
+    const addFab = (to: FabUsed, r: FabUsed) => {
+      to.meters += r.meters;
+      to.pricedMeters += r.pricedMeters;
+      to.costSen += r.costSen;
+    };
+    for (const r of fabFifo.rows) {
       if (!dp.inYm(r.ym)) continue;
-      let m = fabUsedByCat.get(cat);
-      if (!m) {
-        m = new Map();
-        fabUsedByCat.set(cat, m);
+      addFab(fabPeriodAll, r);
+      if (r.cat !== "BEDFRAME" && r.cat !== "SOFA") {
+        addFab(fabPeriodOther, r);
+        continue;
       }
-      const prev = m.get(r.fabCode ?? "");
-      m.set(r.fabCode ?? "", {
-        fabName: r.fabName ?? prev?.fabName ?? "",
-        meters: (prev?.meters ?? 0) + (Number(r.meters) || 0),
-        costSen: (prev?.costSen ?? 0) + (Number(r.costSen) || 0),
-      });
+      const m = fabUsedByCat.get(r.cat) ?? new Map<string, FabUsed>();
+      const cur = m.get(r.fabCode) ?? { meters: 0, pricedMeters: 0, costSen: 0 };
+      addFab(cur, r);
+      m.set(r.fabCode, cur);
+      fabUsedByCat.set(r.cat, m);
     }
-    // Per-category weighted avg fabric cost / meter (all issued to
-    // that category): Σ cost ÷ Σ meters. A shared fabric contributes
-    // only the portion actually issued to that category.
+    const perMeter = (v: FabUsed): number => (v.pricedMeters > 0 ? Math.round(v.costSen / v.pricedMeters) : 0);
     const catAvgCostSen = (cat: string) => {
-      let cost = 0;
-      let mtr = 0;
-      for (const v of (fabUsedByCat.get(cat) ?? new Map()).values()) {
-        cost += v.costSen;
-        mtr += v.meters;
-      }
-      return mtr > 0 ? Math.round(cost / mtr) : 0;
+      const tot = { meters: 0, pricedMeters: 0, costSen: 0 };
+      for (const v of (fabUsedByCat.get(cat) ?? new Map<string, FabUsed>()).values()) addFab(tot, v);
+      return perMeter(tot);
     };
     const bedframeAvgCostSen = catAvgCostSen("BEDFRAME");
     const sofaAvgCostSen = catAvgCostSen("SOFA");
@@ -1946,27 +1773,20 @@ app.get("/", async (c) => {
     // demand IN THAT CATEGORY. Past-30 / Next-30 are category-specific
     // (not SKU totals). Client toggles the ranking.
     const fabListByCat = (cat: string) => {
-      const used: Map<
-        string,
-        { fabName: string; meters: number; costSen: number }
-      > = fabUsedByCat.get(cat) ?? new Map();
+      const used = fabUsedByCat.get(cat) ?? new Map<string, FabUsed>();
       const next30 = fabNext30Cat.get(cat) ?? new Map<string, number>();
       const past30 = fabPast30Cat.get(cat) ?? new Map<string, number>();
       const codes = new Set<string>([...used.keys(), ...next30.keys()]);
       return [...codes]
         .map((code) => {
           const u = used.get(code);
-          const fp = fabPrice.get(code);
           return {
             fabCode: code || "—",
-            fabName: u?.fabName ?? "",
             meters: u?.meters ?? 0,
             costSen: u?.costSen ?? 0,
+            fifoPerMeterSen: u ? perMeter(u) : 0,
             past30Meters: Math.round(past30.get(code) ?? 0),
             next30Meters: Math.round(next30.get(code) ?? 0),
-            buyAvgSen: fp?.avgSen ?? 0,
-            buyMinSen: fp?.minSen ?? 0,
-            buyMaxSen: fp?.maxSen ?? 0,
           };
         })
         .filter((f) => f.meters > 0 || f.next30Meters > 0)
@@ -1976,19 +1796,20 @@ app.get("/", async (c) => {
         )
         .slice(0, 25);
     };
-    const fabMonthByCat = (cat: string) =>
-      (fabMonthRes.results ?? [])
-        .filter((r) => r.ym && (r.cat ?? "").toUpperCase() === cat)
-        .map((r) => ({
-          month: r.ym as string,
-          meters: Number(r.meters) || 0,
-          /** Of those meters, how many belong to an EARLIER month's orders. */
-          lateMeters: Number(r.lateMeters) || 0,
-          /** Issue cost that month ÷ meters = the month's average cost / m (owner 2026-10-17). */
-          costSen: Number(r.costSen) || 0,
-        }))
+    // Metres cut per month, whatever period is selected: this is the trend.
+    const fabMonthByCat = (cat: string) => {
+      const m = new Map<string, { meters: number; pricedMeters: number; costSen: number }>();
+      for (const r of fabFifo.rows) {
+        if (r.cat !== cat) continue;
+        const cur = m.get(r.ym) ?? { meters: 0, pricedMeters: 0, costSen: 0 };
+        addFab(cur, r);
+        m.set(r.ym, cur);
+      }
+      return [...m.entries()]
+        .map(([month, v]) => ({ month, ...v }))
         .sort((a, b) => a.month.localeCompare(b.month))
         .slice(-12);
+    };
     const fabric = {
       BEDFRAME: {
         list: fabListByCat("BEDFRAME"),
@@ -2309,8 +2130,8 @@ app.get("/", async (c) => {
         })),
       },
       fabricCostPerMeterSen: {
-        total: avgPerMeter(fabTotRes),
-        exclBedframeSofa: avgPerMeter(fabExclRes),
+        total: perMeter(fabPeriodAll),
+        exclBedframeSofa: perMeter(fabPeriodOther),
         bedframe: bedframeAvgCostSen,
         sofa: sofaAvgCostSen,
       },

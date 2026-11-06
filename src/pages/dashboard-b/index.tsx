@@ -193,11 +193,10 @@ type Overview = {
         meters: number;
         past30Meters: number;
         next30Meters: number;
-        buyAvgSen: number;
-        buyMinSen: number;
-        buyMaxSen: number;
+        costSen: number;
+        fifoPerMeterSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
+      monthly: { month: string; meters: number; pricedMeters?: number; costSen?: number }[];
     };
     SOFA: {
       list: {
@@ -205,11 +204,10 @@ type Overview = {
         meters: number;
         past30Meters: number;
         next30Meters: number;
-        buyAvgSen: number;
-        buyMinSen: number;
-        buyMaxSen: number;
+        costSen: number;
+        fifoPerMeterSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
+      monthly: { month: string; meters: number; pricedMeters?: number; costSen?: number }[];
     };
   };
   monthlyRevenue?: {
@@ -350,20 +348,16 @@ const CUR_YM = new Date().toISOString().slice(0, 7);
 
 // Roll the last-12 monthly fabric series up into the last 8 quarters.
 function toQuarterly(
-  monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[],
-): { label: string; meters: number; lateMeters: number; costSen: number }[] {
-  // The late share rolls up too: a quarter that absorbed the PREVIOUS
-  // quarter's postings deserves the same warning a month gets. Late-within-
-  // the-same-quarter is still flagged — the tag says "an earlier month", which
-  // remains true, and a quarter bar is read against other quarters anyway.
-  const q = new Map<string, { meters: number; lateMeters: number; costSen: number }>();
+  monthly: { month: string; meters: number; pricedMeters?: number; costSen?: number }[],
+): { label: string; meters: number; pricedMeters: number; costSen: number }[] {
+  const q = new Map<string, { meters: number; pricedMeters: number; costSen: number }>();
   for (const m of monthly) {
     const [y, mm] = m.month.split("-");
     const qn = Math.ceil((Number(mm) || 1) / 3);
     const key = `${y}-Q${qn}`;
-    const e = q.get(key) ?? { meters: 0, lateMeters: 0, costSen: 0 };
+    const e = q.get(key) ?? { meters: 0, pricedMeters: 0, costSen: 0 };
     e.meters += m.meters;
-    e.lateMeters += m.lateMeters ?? 0;
+    e.pricedMeters += m.pricedMeters ?? 0;
     e.costSen += m.costSen ?? 0;
     q.set(key, e);
   }
@@ -2451,7 +2445,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     .map((m) => ({
                       label: m.month,
                       meters: m.meters,
-                      lateMeters: m.lateMeters ?? 0,
+                      pricedMeters: m.pricedMeters ?? 0,
                       costSen: m.costSen ?? 0,
                     }))
                     // Newest at the top (owner 2026-08-05). The series arrives
@@ -2480,12 +2474,12 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     sub={
                       fabMode === "next"
                         ? "forecast — next 30 days · purchase price /m"
-                        : `used in ${period === "all" ? "all time" : period} · lifetime purchase price /m`
+                        : `used in ${period === "all" ? "all time" : period} · from Fabric Usage on cut orders · FIFO cost`
                     }
                     right={
                       <div className="text-right">
                         <p className="text-[10px] uppercase tracking-wider text-[#9CA3AF]">
-                          Avg cost /m
+                          FIFO cost /m
                         </p>
                         <p className="text-sm font-bold text-[#1F1D1B] tabular-nums">
                           {rm(cat === "BEDFRAME" ? fc?.bedframe : fc?.sofa)}
@@ -2523,22 +2517,14 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                               live
                             </span>
                           </th>
-                          {/* Weighted average across EVERY receipt ever, not
-                              the selected month — three columns on this row sit
-                              on three different clocks (Used = the month,
-                              Past 30d = a rolling window, Avg buy = lifetime)
-                              and none of them said so. Owner 2026-08-05. */}
                           <th
                             className="font-medium pb-1.5 text-right"
-                            title="Weighted average purchase price across all receipts to date — not scoped to the selected month."
+                            title="First-in-first-out cost per metre of what this fabric used in the selected period."
                           >
-                            Avg buy
-                            <span className="ml-1 text-[8px] uppercase tracking-wide text-[#9CA3AF]">
-                              all time
-                            </span>
+                            FIFO /m
                           </th>
                           <th className="font-medium pb-1.5 text-right">
-                            Min–Max
+                            FIFO cost
                           </th>
                         </tr>
                       </thead>
@@ -2568,12 +2554,10 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                               {f.past30Meters.toLocaleString()} m
                             </td>
                             <td className="py-1 text-right tabular-nums text-[#1F1D1B]">
-                              {f.buyAvgSen ? rm(f.buyAvgSen) : "—"}
+                              {f.fifoPerMeterSen ? rm(f.fifoPerMeterSen) : "—"}
                             </td>
                             <td className="py-1 text-right tabular-nums text-[#9CA3AF]">
-                              {f.buyMinSen || f.buyMaxSen
-                                ? `${rm(f.buyMinSen)}–${rm(f.buyMaxSen)}`
-                                : "—"}
+                              {f.costSen ? rm(f.costSen) : "—"}
                             </td>
                           </tr>
                         ))}
@@ -2584,9 +2568,9 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                   <div className="mt-3 border-t border-[#F0ECE6] pt-2 space-y-1">
                     <p className="text-[11px] font-semibold text-[#5A5550] mb-1">
                       {fabGran === "quarter"
-                        ? "Quarterly meters posted — last 8"
-                        : "Monthly meters posted — last 12"}
-                      <span className="float-right font-normal text-[#9CA3AF]">avg cost / m</span>
+                        ? "Quarterly meters used — last 8"
+                        : "Monthly meters used — last 12"}
+                      <span className="float-right font-normal text-[#9CA3AF]">FIFO cost / m</span>
                     </p>
                     {trend.length === 0 ? (
                       <p className="text-xs text-[#9CA3AF]">No data.</p>
@@ -2616,19 +2600,19 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                             {Math.round(t.meters).toLocaleString()} m
                           </span>
                           {/* That month's average cost per metre (owner 2026-10-17). */}
-                          <span className="w-20 text-right text-[11px] text-[#6B5C32] tabular-nums" title="Issue cost ÷ meters that month">
-                            {t.meters > 0 && t.costSen > 0 ? `${rm(Math.round(t.costSen / t.meters))}/m` : "—"}
+                          <span className="w-20 text-right text-[11px] text-[#6B5C32] tabular-nums" title="FIFO cost ÷ the meters that have a receipt behind them">
+                            {t.pricedMeters > 0 ? `${rm(Math.round(t.costSen / t.pricedMeters))}/m` : "—"}
                           </span>
                         </div>
                       ))
                     )}
                   </div>
                   <p className="text-[10px] text-[#9CA3AF] mt-2">
-                    Fabric issued to{" "}
-                    {cat === "BEDFRAME" ? "bedframe" : "sofa"} production
-                    (RM_ISSUE). Bars are grouped by the date the issue was
-                    POSTED — an order raised one month is routinely cut the
-                    next, so a bar is not that month&rsquo;s production.
+                    Meters = Fabric Usage on the{" "}
+                    {cat === "BEDFRAME" ? "bedframe" : "sofa"} orders cut that
+                    month. Cost is first-in-first-out, with the latest stock
+                    take as closing stock. Meters with no receipt behind them
+                    carry no cost.
                   </p>
                 </CardContent>
               </Card>
