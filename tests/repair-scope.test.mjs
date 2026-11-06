@@ -758,7 +758,7 @@ test("cascade: material filter runs before consumption, keyed off the PO's stamp
   // Class lookup source: raw_materials.itemGroup rides on resolveRmFromBom.
   // resolveRmFromBom now SELECT *'s (column-safe for the runtime-added FILLER
   // sheet-size columns) and maps itemGroup through toResolvedRm.
-  assert.match(cascadeSrc, /SELECT \* FROM raw_materials WHERE itemCode = \? LIMIT 1/);
+  assert.match(cascadeSrc, /SELECT \* FROM raw_materials WHERE itemCode = \? ORDER BY balanceQty DESC LIMIT 1/);
   assert.match(cascadeSrc, /itemGroup: \(row\.itemGroup \?\? null\)/);
   // Owning-node depts captured for the CUSTOM branch rule.
   assert.match(cascadeSrc, /ownerDeptCodes/);
