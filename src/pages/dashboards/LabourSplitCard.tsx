@@ -20,7 +20,7 @@ const COST_CENTRE: Record<string, string> = { WAREHOUSING: "Warehousing", REPAIR
 const labelOf = (code: string) => COST_CENTRE[code] ?? deptName(code);
 const share = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—");
 
-function Side({ label, value, pct, color, children }: { label: string; value: string; pct: string; color: string; children?: React.ReactNode }) {
+function Side({ label, value, pct, perPerson, ofRevenue, color, children }: { label: string; value: string; pct: string; perPerson: string | null; ofRevenue: string | null; color: string; children?: React.ReactNode }) {
   return (
     <div className="min-w-0 rounded-lg bg-[#F7F4EF] px-4 py-3">
       <div className="flex items-center gap-2">
@@ -29,7 +29,17 @@ function Side({ label, value, pct, color, children }: { label: string; value: st
         <span className="ml-auto text-sm font-bold tabular-nums text-[#1F1D1B]">{pct}</span>
       </div>
       <p className="mt-1 text-xl font-bold tabular-nums text-[#1F1D1B] max-sm:text-lg">{value}</p>
-      <div className="mt-1 space-y-0.5 text-[11.5px] text-[#6B7280]">{children}</div>
+      <div className="mt-1.5 grid grid-cols-2 gap-2">
+        <div className="min-w-0 rounded-md bg-white px-2.5 py-1.5">
+          <p className="truncate text-[10.5px] text-[#9CA3AF]">Avg per person</p>
+          <p className="truncate text-sm font-semibold tabular-nums text-[#1F1D1B]">{perPerson ?? "—"}</p>
+        </div>
+        <div className="min-w-0 rounded-md bg-white px-2.5 py-1.5">
+          <p className="truncate text-[10.5px] text-[#9CA3AF]">Of production revenue</p>
+          <p className="truncate text-sm font-semibold tabular-nums text-[#1F1D1B]">{ofRevenue ?? "—"}</p>
+        </div>
+      </div>
+      <div className="mt-2 space-y-0.5 text-[11.5px] text-[#6B7280]">{children}</div>
     </div>
   );
 }
@@ -38,7 +48,7 @@ const Row = ({ k, v }: { k: string; v: number }) => (
   <p className="flex justify-between gap-3"><span className="truncate">{k}</span><span className="shrink-0 tabular-nums">{rm(v)}</span></p>
 );
 
-export function LabourSplitCard({ months, label, people, revenueSen }: { months: readonly LabourMonth[]; label: string; people: Person[]; revenueSen: number | null }) {
+export function LabourSplitCard({ months, label, people, revenueSen, fullTimePeople }: { months: readonly LabourMonth[]; label: string; people: Person[]; revenueSen: number | null; fullTimePeople: number }) {
   const [open, setOpen] = useState(false);
   const t = useMemo(() => sumLabourMonths(months), [months]);
   const nameOf = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
@@ -70,6 +80,10 @@ export function LabourSplitCard({ months, label, people, revenueSen }: { months:
   }, [months]);
   if (months.length === 0 || t.totalSen === 0) return null;
 
+  // Both sides over the same full-time people, so they add up to the
+  // Avg labour cost / person tile.
+  const perPerson = (sen: number) => (fullTimePeople > 0 ? rm(sen / fullTimePeople) : null);
+  const ofRevenue = (sen: number) => (revenueSen != null && revenueSen > 0 ? share(sen, revenueSen) : null);
   const running = months.some((m) => !m.finished);
   const directPct = t.totalSen > 0 ? (t.directSen / t.totalSen) * 100 : 0;
   const status = running
@@ -97,12 +111,11 @@ export function LabourSplitCard({ months, label, people, revenueSen }: { months:
           <div style={{ width: `${100 - directPct}%`, background: CHART_GOLD }} />
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Side label="Direct labour" value={rm(t.directSen)} pct={share(t.directSen, t.totalSen)} color={CHART_INK}>
+          <Side label="Direct labour" value={rm(t.directSen)} pct={share(t.directSen, t.totalSen)} perPerson={perPerson(t.directSen)} ofRevenue={ofRevenue(t.directSen)} color={CHART_INK}>
             <Row k="Own production staff" v={t.directSen - t.outsourceSen} />
-            <Row k="Outsource" v={t.outsourceSen} />
-            {outsourceDepts.map(([code, sen]) => <Row key={code} k={`  in ${deptName(code)}`} v={sen} />)}
+            {outsourceDepts.map(([code, sen]) => <Row key={code} k={`Outsource · ${labelOf(code)}`} v={sen} />)}
           </Side>
-          <Side label="Non-production labour" value={rm(t.nonProductionSen)} pct={share(t.nonProductionSen, t.totalSen)} color={CHART_GOLD}>
+          <Side label="Non-production labour" value={rm(t.nonProductionSen)} pct={share(t.nonProductionSen, t.totalSen)} perPerson={perPerson(t.nonProductionSen)} ofRevenue={ofRevenue(t.nonProductionSen)} color={CHART_GOLD}>
             {nonProd.map(([code, sen]) => <Row key={code} k={labelOf(code)} v={sen} />)}
             {t.underRecordedSen !== 0 && <Row k="Paid, hours not logged" v={t.underRecordedSen} />}
           </Side>

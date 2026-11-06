@@ -6,7 +6,6 @@ import { usePermissions } from "@/lib/use-permission";
 import { formatCurrency } from "@/lib/utils";
 import { useLabourCost } from "./use-labour-cost";
 import { LabourSplitCard } from "./LabourSplitCard";
-import { sumLabourMonths } from "@/lib/labour-to-payroll";
 import { monthsOf, useProductionRevenue } from "./use-production-revenue";
 import { dropIdleSundays } from "@/lib/idle-sundays";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -206,9 +205,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const labourPct = ratio(winSalary, totals.revenue);
   const prevSalary = useMemo(() => [...prevCost.values()].reduce((a, v) => a + v, 0), [prevCost]);
   const prevLabourPct = prev && prevSalary > 0 ? ratio(prevSalary, prev.revenue) : null;
-  // Direct vs non-production for the window, at the months' own ratio.
-  const labourSplit = useMemo(() => sumLabourMonths(labourMonths), [labourMonths]);
-  const directShare = labourSplit.totalSen > 0 ? labourSplit.directSen / labourSplit.totalSen : null;
+  // The Labour cost card covers the whole period, whatever day window the tiles
+  // are on, so its per-person and % figures use the whole period too.
+  const periodTotals = useMemo(() => sumWindow((d) => inPeriod(period, d), costByWorkerDay), [allDays, period, costByWorkerDay, prodRev]); // eslint-disable-line react-hooks/exhaustive-deps
   const revPerFte = prodRev && totals.fte ? totals.revenue / totals.fte : null;
   // Compared per WORKER-DAY: a month to date against a whole last month is
   // only fair per day worked (half a month is half the revenue per person).
@@ -400,7 +399,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         <Tile
           label={`Labour · ${winLabel}`}
           value={money(winSalary)}
-          sub={directShare == null ? "payroll cost · click for each worker" : `Direct ${(directShare * 100).toFixed(1)}% · non-production ${((1 - directShare) * 100).toFixed(1)}% · click for each worker`}
+          sub="from payroll · click for each worker"
           color={CHART_INK}
           onClick={canSalary ? () => setTileDrill("salary") : undefined}
         />
@@ -421,7 +420,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         />
         <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working · click for each worker`} color={effColor(eff(totals.prod, totals.work), target)} onClick={() => setTileDrill("eff")} />
       </div>
-      {canSalary && <LabourSplitCard months={labourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? totals.revenue : null} />}
+      {canSalary && <LabourSplitCard months={labourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? periodTotals.revenue : null} fullTimePeople={periodTotals.fte} />}
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
         {winLabel} · full-time people = worker-days ÷ working days ({fmtN(totals.workerDays)} ÷ {fmtN(totals.workingDays)}), so a joiner, a leaver or a day off counts by the days actually worked.
       </p>
