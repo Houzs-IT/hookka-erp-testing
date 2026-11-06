@@ -5,6 +5,8 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { formatCurrency } from "@/lib/utils";
 import { useLabourCost } from "./use-labour-cost";
+import { LabourSplitCard } from "./LabourSplitCard";
+import { sumLabourMonths } from "@/lib/labour-to-payroll";
 import { monthsOf, useProductionRevenue } from "./use-production-revenue";
 import { dropIdleSundays } from "@/lib/idle-sundays";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -143,7 +145,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const winLabel = effWin === "day" ? anchor : effWin === "7d" ? `7 days to ${anchor.slice(5)}` : `${periodLabel(period)}${period.mode === "monthly" && range.to ? ` · to ${range.to.slice(5)}` : ""}`;
 
   // ---- Salary + production revenue -------------------------------------------
-  const { byWorkerDay: costByWorkerDay, byWorkerDayDept: costByDept, entries: hourEntries, ready: salaryReady } = useLabourCost(range.from, range.to, canSalary);
+  const { byWorkerDay: costByWorkerDay, byWorkerDayDept: costByDept, entries: hourEntries, months: labourMonths, ready: salaryReady } = useLabourCost(range.from, range.to, canSalary);
   const prevYm = anchor ? shiftMonth(anchor.slice(0, 7), -1) : "";
   const prevTo = prevYm ? ymd(new Date(Number(prevYm.slice(0, 4)), Number(prevYm.slice(5, 7)), 0)) : "";
   const { byWorkerDay: prevCost } = useLabourCost(prevYm ? `${prevYm}-01` : "", prevTo, canSalary);
@@ -202,7 +204,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     return t;
   }, [costByDept, winDates, totals.sen]);
   const labourPct = ratio(winSalary, totals.revenue);
-  const prevLabourPct = prev && prev.sen > 0 ? ratio(prev.sen, prev.revenue) : null;
+  const prevSalary = useMemo(() => [...prevCost.values()].reduce((a, v) => a + v, 0), [prevCost]);
+  const prevLabourPct = prev && prevSalary > 0 ? ratio(prevSalary, prev.revenue) : null;
+  // Direct vs non-production for the window, at the months' own ratio.
+  const labourSplit = useMemo(() => sumLabourMonths(labourMonths), [labourMonths]);
+  const directShare = labourSplit.totalSen > 0 ? labourSplit.directSen / labourSplit.totalSen : null;
   const revPerFte = prodRev && totals.fte ? totals.revenue / totals.fte : null;
   // Compared per WORKER-DAY: a month to date against a whole last month is
   // only fair per day worked (half a month is half the revenue per person).
@@ -356,7 +362,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px]">
             <thead><tr className="border-b border-[#E2DDD8] text-left text-[10.5px] uppercase tracking-wide text-[#6B7280]">
-              <th className="px-3 py-1.5">#</th><th className="px-3 py-1.5">Worker</th><th className="px-3 py-1.5">Dept</th><th className="px-3 py-1.5 text-right">Days</th><th className="px-3 py-1.5 text-right">Prod / Working</th><th className="px-3 py-1.5 text-right">Efficiency</th>{canSalary && <th className="px-3 py-1.5 text-right">Salary</th>}
+              <th className="px-3 py-1.5">#</th><th className="px-3 py-1.5">Worker</th><th className="px-3 py-1.5">Dept</th><th className="px-3 py-1.5 text-right">Days</th><th className="px-3 py-1.5 text-right">Prod / Working</th><th className="px-3 py-1.5 text-right">Efficiency</th>{canSalary && <th className="px-3 py-1.5 text-right">Labour</th>}
             </tr></thead>
             <tbody>
               {list.map((r, i) => {
@@ -391,7 +397,13 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           color={presence.absent.length ? "#9A3A2D" : "#1F1D1B"}
           onClick={() => document.getElementById("emp-attendance")?.scrollIntoView({ behavior: "smooth", block: "start" })}
         />
-        <Tile label={`Salary · ${winLabel}`} value={money(winSalary)} sub="logged hours at the Labor Cost rate · click for each worker" color={CHART_INK} onClick={canSalary ? () => setTileDrill("salary") : undefined} />
+        <Tile
+          label={`Labour · ${winLabel}`}
+          value={money(winSalary)}
+          sub={directShare == null ? "payroll cost · click for each worker" : `Direct ${(directShare * 100).toFixed(1)}% · non-production ${((1 - directShare) * 100).toFixed(1)}% · click for each worker`}
+          color={CHART_INK}
+          onClick={canSalary ? () => setTileDrill("salary") : undefined}
+        />
         <Tile
           label="Avg labour cost / person"
           value={money(totals.fte ? winSalary / totals.fte : 0)}
@@ -409,6 +421,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         />
         <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working · click for each worker`} color={effColor(eff(totals.prod, totals.work), target)} onClick={() => setTileDrill("eff")} />
       </div>
+      {canSalary && <LabourSplitCard months={labourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? totals.revenue : null} />}
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
         {winLabel} · full-time people = worker-days ÷ working days ({fmtN(totals.workerDays)} ÷ {fmtN(totals.workingDays)}), so a joiner, a leaver or a day off counts by the days actually worked.
       </p>
@@ -416,7 +429,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Working vs production hours · efficiency · {periodLabel(period)}</CardTitle>
-          <p className="text-xs text-[#9CA3AF]">Shaded = hours clocked · bar = production hours earned · line = efficiency (dots green at target, amber close, red well under) · hover a day for its salary · idle Sundays left out</p>
+          <p className="text-xs text-[#9CA3AF]">Shaded = hours clocked · bar = production hours earned · line = efficiency (dots green at target, amber close, red well under) · hover a day for its labour · idle Sundays left out</p>
         </CardHeader>
         <CardContent>
           <div className="select-none [&_*]:outline-none" style={{ width: "100%", height: 280 }}>
@@ -434,7 +447,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     formatter={(v, n) => (n === "Efficiency" ? [`${v}%`, n] : [`${v} h`, n])}
                     labelFormatter={(l, p) => {
                       const c = (p?.[0]?.payload as { cost?: number } | undefined)?.cost ?? 0;
-                      return canSalary && salaryReady ? `${l} · salary ${formatCurrency(Math.round(c))}` : String(l);
+                      return canSalary && salaryReady ? `${l} · labour ${formatCurrency(Math.round(c))}` : String(l);
                     }}
                   />
                   <Legend {...tHours.legend} />
@@ -486,7 +499,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Department efficiency · {winLabel}</CardTitle>
-          <p className="mt-0.5 text-xs text-[#9CA3AF]">Output = the department's progressive revenue: its minute-weighted share of each order's price, earned when its own job card completes (Labor Cost report's Category Revenue){canSalary ? " · labour % = salary ÷ that share" : ""}</p>
+          <p className="mt-0.5 text-xs text-[#9CA3AF]">Output = the department's progressive revenue: its minute-weighted share of each order's price, earned when its own job card completes (Labor Cost report's Category Revenue){canSalary ? " · labour % = labour ÷ that share" : ""}</p>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -494,7 +507,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
               <thead><tr className="border-b border-[#E2DDD8] text-left text-[10.5px] uppercase tracking-wide text-[#6B7280]">
                 <th className="px-3 py-1.5">Department</th><th className="px-3 py-1.5 text-right">People</th><th className="px-3 py-1.5 text-right">Working</th><th className="px-3 py-1.5 text-right">Production</th><th className="px-3 py-1.5 text-right">Efficiency</th>
                 <th className="px-3 py-1.5 text-right">Output · Bedframe</th><th className="px-3 py-1.5 text-right">Output · Sofa</th>
-                {canSalary && <><th className="px-3 py-1.5 text-right">Salary</th><th className="px-3 py-1.5 text-right">Labour %</th></>}
+                {canSalary && <><th className="px-3 py-1.5 text-right">Labour</th><th className="px-3 py-1.5 text-right">Labour %</th></>}
               </tr></thead>
               <tbody>
                 {deptRows.map((r) => {
@@ -558,7 +571,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         <AttendanceLogCard employee={employee} period={anchor ? { ...period, day: anchor } : period} />
       </div>
       <p className="text-[11px]" style={{ color: MUTED, borderColor: BORDER }}>
-        Salary = logged hours priced by the Labor Cost rule (regular hours at salary ÷ the month's working days ÷ hours per day; OT by day type), so it matches the Labor Cost tab. <span style={{ color: TEAL }}>Efficiency</span> = production minutes ÷ working minutes.
+        Labour = what payroll cost: gross pay plus employer EPF, SOCSO and EIS, outsource included. Each person's month is spread over their days by logged hours. <span style={{ color: TEAL }}>Efficiency</span> = production minutes ÷ working minutes.
       </p>
 
       {deptDrill && (() => {
@@ -572,7 +585,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
             <div className="max-h-[60vh] overflow-y-auto">
               <table className="w-full text-[12.5px]">
                 <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
-                  <th className="py-1.5">Worker</th><th className="py-1.5">Home dept</th><th className="py-1.5 text-right">Hours logged here</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Salary</th>}
+                  <th className="py-1.5">Worker</th><th className="py-1.5">Home dept</th><th className="py-1.5 text-right">Hours logged here</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Labour</th>}
                 </tr></thead>
                 <tbody>
                   {list.sort((a, b) => (hoursHere.get(b.id) ?? 0) - (hoursHere.get(a.id) ?? 0)).map((r) => {
@@ -600,14 +613,14 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       {tileDrill && (
         <DashModal
           wide
-          title={tileDrill === "salary" ? `Salary by worker · ${winLabel}` : `Efficiency by worker · ${winLabel}`}
-          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · Labor Cost rate` : `Overall ${pct(eff(totals.prod, totals.work))} · production ÷ working hours`}
+          title={tileDrill === "salary" ? `Labour by worker · ${winLabel}` : `Efficiency by worker · ${winLabel}`}
+          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · from payroll` : `Overall ${pct(eff(totals.prod, totals.work))} · production ÷ working hours`}
           onClose={() => setTileDrill(null)}
         >
           <div className="max-h-[60vh] overflow-y-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
-                <th className="py-1.5">Worker</th><th className="py-1.5">Dept</th><th className="py-1.5 text-right">Days</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Salary</th>}
+                <th className="py-1.5">Worker</th><th className="py-1.5">Dept</th><th className="py-1.5 text-right">Days</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Labour</th>}
               </tr></thead>
               <tbody>
                 {[...rows].sort((a, b) => (tileDrill === "salary" ? b.cost - a.cost : (eff(a.prod, a.work) ?? 0) - (eff(b.prod, b.work) ?? 0))).map((r) => {
@@ -636,7 +649,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           <div className="max-h-[60vh] overflow-y-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
-                <th className="py-1.5">Date</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Salary</th>}
+                <th className="py-1.5">Date</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Labour</th>}
               </tr></thead>
               <tbody>
                 {openWorker.byDay.filter((d) => d.work > 0).map((d) => {

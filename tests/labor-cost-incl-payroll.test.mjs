@@ -52,8 +52,8 @@ test("the share of the month: working days logged so far over the month's workin
 });
 
 test("the card sits after Total Labor Cost and only when a whole, un-filtered month can be read", () => {
-  assert.match(UI, /<p className="text-xs text-\[#6B7280\]">Total Labor Cost<\/p>[\s\S]{0,300}?\{fullCostCard && \(/);
-  assert.match(UI, />Labor Cost incl\. EPF &amp; Allowances</);
+  assert.match(UI, /<p className="text-xs text-\[#6B7280\]">Logged Hours Value<\/p>[\s\S]{0,300}?\{fullCostCard && \(/);
+  assert.match(UI, />Total Labor Cost \(Payroll\)</);
   assert.match(UI, /if \(categoryFilter \|\| !isFullSingleMonth\(from, to\)\) return null;/);
   assert.match(UI, /laborCostInclPayroll\(\{/);
 });

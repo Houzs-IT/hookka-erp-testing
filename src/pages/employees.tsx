@@ -10017,7 +10017,7 @@ function LaborCostTab({
         <div className={`grid gap-3 grid-cols-2 ${fullCostCard && canSeeRevenue ? "md:grid-cols-6" : "md:grid-cols-5"} mb-4 max-md:grid-cols-2 max-sm:grid-cols-1`}>
           <Card>
             <CardContent className="p-3">
-              <p className="text-xs text-[#6B7280]">Production Labor Cost</p>
+              <p className="text-xs text-[#6B7280]">Production Hours Value</p>
               <p
                 className="text-lg font-bold text-[#1F1D1B]"
                 title={`Production-only (excl. Warehousing / Repair / Maintenance / Shortfall). Total incl. overhead = ${formatCurrency(totalLaborCostSen)}`}
@@ -10028,13 +10028,13 @@ function LaborCostTab({
           </Card>
           <Card>
             <CardContent className="p-3" title="Labor for the non-production depts — Warehousing / Repair / Maintenance / Production Shortfall / R&D — plus any office / sales / admin salaries. These don't earn revenue directly.">
-              <p className="text-xs text-[#6B7280]">Non-Production Labor Cost</p>
+              <p className="text-xs text-[#6B7280]">Non-Production Hours Value</p>
               <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(totalLaborCostSen - productionLaborCostSen)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3" title="Production + Non-Production — the full labor bill for the period.">
-              <p className="text-xs text-[#6B7280]">Total Labor Cost</p>
+              <p className="text-xs text-[#6B7280]">Logged Hours Value</p>
               <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(totalLaborCostSen)}</p>
             </CardContent>
           </Card>
@@ -10048,7 +10048,7 @@ function LaborCostTab({
                     : "The month's payroll: gross pay plus employer EPF / SOCSO / EIS — the Total Payroll Cost in the reconciliation below."
                 }
               >
-                <p className="text-xs text-[#6B7280]">Labor Cost incl. EPF &amp; Allowances</p>
+                <p className="text-xs text-[#6B7280]">Total Labor Cost (Payroll)</p>
                 <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(fullCostCard.sen)}</p>
                 {fullCostCard.asOf && (
                   <p className="text-[10px] text-[#9CA3AF]">to {formatDateDMY(fullCostCard.asOf)} · estimate</p>

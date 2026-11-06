@@ -138,3 +138,38 @@ test("the projection's per-department figure is the sum of its per-worker paysli
   assert.match(PROJ, /for \(const p of await projectedPayslipsForMonth\(db, period\)\) \{/);
   assert.match(PROJ, /grossPaySen: labor\.payroll\.grossSen \+ allowances,/);
 });
+
+test("a finished month is the payroll: direct (outsource included) + non-production = total, like the Reconciliation", () => {
+  const out = td.computeLabourToDate({
+    ym: "2026-10",
+    entries: [
+      { workerId: "a", date: "2026-10-01", hours: 9, departmentCode: "FAB_SEW", category: "SOFA" },
+      { workerId: "a", date: "2026-10-02", hours: 9, departmentCode: "WAREHOUSING", category: "" },
+    ],
+    workers: new Map([worker("a", "FAB_SEW", 270000), worker("osc", "FAB_SEW", 0), worker("b", "OFFICE", 300000)]),
+    payslips: [
+      slip("pa", "a", "FAB_SEW", { basicSalarySen: 270000, grossPaySen: 20000 + 1000, allowancesSen: 1000, epfEmployerSen: 500, status: "APPROVED" }),
+      slip("posc", "osc", "FAB_SEW", { grossPaySen: 5000, allowancesSen: 5000, status: "DRAFT" }),
+      slip("pb", "b", "OFFICE", { basicSalarySen: 300000, grossPaySen: 300000, status: "APPROVED" }),
+    ],
+    deductions: [], holidays: [], payRuleVersions: [],
+    factoryDeptCodes: new Set(["FAB_SEW", "WAREHOUSING"]),
+    productionDeptCodes: new Set(["FAB_SEW"]),
+    outsourceWorkerIds: new Set(["osc"]),
+    finished: true,
+  });
+  // Payroll: 21000 + 500 + 5000 + 300000.
+  assert.equal(out.totalSen, 326500);
+  // Direct: a's FAB_SEW day (270000/27 = 10000) + a's statutory and allowance + outsource piece wages.
+  assert.equal(out.split.directSen, 10000 + 500 + 1000 + 5000);
+  assert.equal(out.split.warehousingSen, 10000);
+  assert.equal(out.split.outsourceSen, 5000);
+  assert.equal(out.split.directSen + out.split.nonProductionSen, out.totalSen);
+  assert.equal(out.split.warehousingSen + out.split.shortfallSen + out.split.overheadSen + out.split.underRecordedSen, out.split.nonProductionSen);
+  assert.equal(out.split.overheadSen, 300000);
+  assert.deepEqual(out.payroll, { slips: 3, approved: 2, draft: 1 });
+  // Each person's row is their payslip; the rows add up to the total.
+  assert.equal(out.workerSplit.reduce((a, w) => a + w.costSen, 0), out.totalSen);
+  assert.equal(out.workerSplit.find((w) => w.id === "osc").directSen, 5000);
+  assert.equal(out.workerSplit.find((w) => w.id === "b").nonProductionSen, 300000);
+});
