@@ -55,3 +55,13 @@ test("a count in rolls becomes metres through its value", () => {
   assert.equal(f.countedMeters({ qty: 19, uom: "ROLL", valueSen: 1254000 }, 1200), 1045);
   assert.equal(f.countedMeters({ qty: 54, uom: "MTR", valueSen: 113400 }, 2100), 54);
 });
+
+test("an out-of-line opening batch takes the latest purchase price", () => {
+  const bought = [
+    { date: "2026-01-29", qty: 10, unitSen: 850 },
+    { date: "2026-10-19", qty: 10, unitSen: 1200 },
+  ];
+  assert.equal(f.repricedOpeningSen(3500, bought), 1200);
+  assert.equal(f.repricedOpeningSen(1500, bought), null);
+  assert.equal(f.repricedOpeningSen(3500, []), null);
+});

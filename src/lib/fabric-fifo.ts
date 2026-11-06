@@ -43,6 +43,15 @@ export function openingIsCredible(openingUnitSen: number, boughtUnitSens: readon
   return openingUnitSen <= Math.max(...boughtUnitSens) * 1.5;
 }
 
+/**
+ * What an out-of-line OPENING batch should cost: the fabric's latest purchase
+ * price, whole sen. Null when the batch is in line or nothing was ever bought.
+ */
+export function repricedOpeningSen(openingUnitSen: number, bought: readonly FifoLayer[]): number | null {
+  if (bought.length === 0 || openingIsCredible(openingUnitSen, bought.map((l) => l.unitSen))) return null;
+  return Math.round(bought.reduce((a, b) => (b.date >= a.date ? b : a)).unitSen);
+}
+
 /** The cost of the stretch of the tape between two positions, in metres from the oldest. */
 function costBetween(layers: readonly FifoLayer[], from: number, to: number): FifoMonth {
   let at = 0;

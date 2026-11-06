@@ -5,6 +5,8 @@ import { applyWipInventoryChange, type JobCardRow, type ProductionOrderRow } fro
 import { consumeRawMaterialsForPO, postJobCardLabor } from "../../lib/po-cost-cascade";
 import { loadLeadTimes, type LeadTimeMap } from "../../lib/lead-times";
 import { getOrgId } from "../../lib/tenant";
+import { emitAudit } from "../../lib/audit";
+import { planOpeningReprice } from "../../lib/fabric-fifo-data";
 import { ensureJobCardCompletedAt } from "../../lib/job-card-completed-at";
 import { breakBomIntoWips, type BomVariantContext } from "../../lib/bom-wip-breakdown";
 import { findJobCardsByPO, loadProductionOrderById, CASCADE_DATE_CLAMP, addDaysISO, UPH_POFOLD_TARGET_DEPTS, UPH_POFOLD_DEPT_ORDER, type UphPofoldCandidate, type FcCandidate, type RefundCandidateRow, type RefundSiblingRow, type RebuildJcRow, type RebuildPoRow, type RebuildWipRow, type JcBackfillRow, type DriftSample, ACTIVE_JC_STATUSES, COMPLETED_JC_STATUSES, type RefreshJcRow } from "./_shared";
@@ -2908,6 +2910,38 @@ app.post("/cleanup-headboard-only-divans", async (c) => {
     skippedDueToLocks: { jcs: skippedJcs, fgUnits: skippedFgUnits },
     sample,
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /reprice-opening-fabric-batches — sets OPENING fabric batches priced far
+// above real purchases to the latest purchase price, before the backfill below
+// the cost of cut orders on them (owner 2026-11-06). PC151-01 opened at RM 35
+// against RM 12 bought. The response lists every old price, so it can be undone.
+// dryRun=true → the list only (default).
+// ---------------------------------------------------------------------------
+app.post("/reprice-opening-fabric-batches", async (c) => {
+  const denied = await requirePermission(c, "production-orders", "update");
+  if (denied) return denied;
+  const dryRun = c.req.query("dryRun") !== "false";
+  const db = c.var.DB;
+  const plan = await planOpeningReprice(db, getOrgId(c));
+  const valueSen = (key: "oldUnitSen" | "newUnitSen") =>
+    Math.round(plan.reduce((s, p) => s + p.remainingQty * p[key], 0));
+  if (!dryRun) {
+    for (const p of plan) {
+      await db
+        .prepare("UPDATE rm_batches SET unitCostSen = ? WHERE id = ? AND source = 'OPENING'")
+        .bind(p.newUnitSen, p.batchId)
+        .run();
+    }
+    await emitAudit(c, {
+      resource: "rm-batches",
+      resourceId: "opening-fabric-reprice",
+      action: "update",
+      after: { batches: plan.length, plan },
+    });
+  }
+  return c.json({ success: true, dryRun, batches: plan.length, oldValueSen: valueSen("oldUnitSen"), newValueSen: valueSen("newUnitSen"), plan });
 });
 
 export default app;

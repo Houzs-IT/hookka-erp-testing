@@ -14,6 +14,7 @@ import {
   fabricCodeKey,
   fifoCostByMonth,
   openingIsCredible,
+  repricedOpeningSen,
   type FifoLayer,
 } from "../../lib/fabric-fifo";
 
@@ -113,6 +114,39 @@ async function loadLayers(db: D1Database, orgId: string): Promise<Map<string, Fi
     if (kept.length > 0) received.set(code, [...kept, ...(received.get(code) ?? [])]);
   }
   return received;
+}
+
+export type OpeningReprice = {
+  batchId: string;
+  fabCode: string;
+  remainingQty: number;
+  oldUnitSen: number;
+  newUnitSen: number;
+};
+
+/** OPENING fabric batches still on hand whose cost is out of line with what the fabric is bought at. */
+export async function planOpeningReprice(db: D1Database, orgId: string): Promise<OpeningReprice[]> {
+  const groups = FABRIC_GROUPS.map((g) => `'${g}'`).join(",");
+  const res = await db
+    .prepare(
+      `SELECT b.id AS "id", rm.itemCode AS "code", b.remainingQty AS "remainingQty", b.unitCostSen AS "unitSen"
+         FROM rm_batches b
+         JOIN raw_materials rm ON rm.id = b.rmId
+        WHERE rm.orgId = ? AND rm.itemGroup IN (${groups})
+          AND b.source = 'OPENING' AND b.remainingQty > 0`,
+    )
+    .bind(orgId)
+    .all<{ id: string; code: string; remainingQty: number; unitSen: number }>();
+  const layers = await loadLayers(db, orgId);
+  const out: OpeningReprice[] = [];
+  for (const b of res.results ?? []) {
+    const oldUnitSen = Number(b.unitSen) || 0;
+    const key = fabricCodeKey(b.code);
+    const newUnitSen = repricedOpeningSen(oldUnitSen, layers.get(key) ?? []);
+    if (newUnitSen === null) continue;
+    out.push({ batchId: b.id, fabCode: key, remainingQty: Number(b.remainingQty) || 0, oldUnitSen, newUnitSen });
+  }
+  return out;
 }
 
 /** The latest stock take that kept its lines: the month, and metres by fabric. */
