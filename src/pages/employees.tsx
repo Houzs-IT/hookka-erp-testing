@@ -69,6 +69,7 @@ import {
   KeyRound,
   Copy,
   AlertTriangle,
+  Undo2,
 } from "lucide-react";
 // One money parser. NOTE: hours/day and the OT multiplier below are NOT money
 // and deliberately keep `parseFloat`.
@@ -7077,6 +7078,42 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
     setApproving(false);
   };
 
+  // Approved month is locked; this puts it back to DRAFT (backend un-posts penalties, unlocks advances).
+  const withdrawApproval = async () => {
+    if (
+      !(await confirm({
+        title: `Withdraw approval for ${months[selectedMonth - 1]} ${selectedYear}?`,
+        message:
+          "Every payslip in this period goes back to DRAFT. Penalties posted to it are un-posted, its salary advances become editable again, and workers see the month as not final until you approve it again. Then use Regenerate and Approve All.",
+        confirmLabel: "Withdraw Approval",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
+    setApproving(true);
+    try {
+      const res = await fetch("/api/payslips", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ period, status: "DRAFT" }),
+      });
+      if (!res.ok) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: any = await res.json().catch(() => ({}));
+        toast.error(data?.error || `Failed to withdraw approval (HTTP ${res.status})`);
+      } else {
+        toast.success("Approval withdrawn. The month is editable again.");
+        invalidateCachePrefix("/api/worker-penalties");
+        invalidateCachePrefix("/api/employee-advances");
+        fetchPayslips();
+      }
+    } catch {
+      toast.error("Error withdrawing approval");
+    }
+    setApproving(false);
+  };
+
   const totals = useMemo(() => {
     return payslipData.reduce(
       (acc, r) => ({
@@ -7693,6 +7730,17 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
                   {generating ? "Regenerating..." : "Regenerate"}
                 </Button>
               )}
+              {storedPayslips.length > 0 && storedPayslips.every((r) => r.status === "APPROVED") && (
+                <Button
+                  variant="outline"
+                  onClick={withdrawApproval}
+                  disabled={approving}
+                  title="This month is approved and locked. Withdraw the approval to put it back to DRAFT so it can be regenerated and approved again."
+                >
+                  <Undo2 className="h-4 w-4" />
+                  {approving ? "Withdrawing..." : "Withdraw Approval"}
+                </Button>
+              )}
               {payslipData.length > 0 && (
                 <Button variant="outline" onClick={exportCSV}>
                   <Download className="h-4 w-4" />
@@ -7720,7 +7768,7 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
             <div className="mb-3 rounded-md border border-[#E8C9C3] bg-[#FBEFEC] px-3 py-2 text-xs text-[#9A3A2D]">
               <span className="font-semibold">Advances changed since these payslips were generated.</span>{" "}
               {formatCurrency(Math.abs(advanceDrift))} of advances {advanceDrift > 0 ? "is not yet" : "is no longer"} reflected in Net Pay.
-              Use &ldquo;Regenerate&rdquo; to recompute this period. (Approved payslips keep the figure they were signed off with — un-approve first.)
+              Use &ldquo;Regenerate&rdquo; to recompute this period. (Approved payslips keep the figure they were signed off with — click &ldquo;Withdraw Approval&rdquo; first.)
             </div>
           )}
           {penaltyDrift !== 0 && payslipData.length > 0 && !isProjected && (
@@ -9072,7 +9120,7 @@ function LaborCostTab({
       if (d) {
         setSettleResult(
           d.periodLocked
-            ? "Month already finalised — nothing changed (un-approve first to re-settle)."
+            ? "Month already finalised — nothing changed (click Withdraw Approval on the Payroll tab first to re-settle)."
             : `${d.applied} day(s) auto-docked (${d.dockedHours}h — ${d["punch-source"]} from punches, ${d["logged-source"]} from under-logged hours), ${d["no-shortfall"]} full day(s), ${d["manual-exists"]} left on your manual pick.`,
         );
       }

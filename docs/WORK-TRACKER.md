@@ -1,6 +1,5 @@
 # Hookka ERP — Work Tracker
 > **Last verified: 2026-11-06**: mobile Home Operations entry added (branch `design/mobile-home-operationv3`, frontend only); nothing else re-checked.
-> **Last verified: 2026-11-05**: customer overdue sets entry, items 1, 3 and 6 (branch `fix/overdue-sets-clear-on-do`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry, item 5 added (branch `feat/overdue-sets-order-progress`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry added (branch `feat/customer-overdue-sets`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-04**: Phase 2 (Sales Order actions + edit on phone) entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
@@ -20,12 +19,11 @@ Ask: build the Operations view of the mobile Home from the Home Operations v2 pr
 
 ## Customer overdue sets on the Dashboard (feat/customer-overdue-sets, 2026-11-05)
 Ask: a Dashboard section showing, per customer, how many sets are past the customer's delivery date and not yet delivered, to follow up pending deliveries.
-1. DONE: per-order remaining sets = ordered (sales order lines) minus sets on a DO (any non-cancelled DO through production orders, see item 6), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.
+1. DONE: per-order remaining sets = ordered (sales order lines) minus delivered (delivered, non-cancelled DOs through production orders), floored at 0; only orders past the Malaysia-date customer delivery date; summed per customer.
 2. DONE: "Customer sets overdue" tile in Today's problems (desktop and /m) and a per-customer list on the Sales tab; /m opens a customer sheet.
-3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Defaults accepted: every product line counts as sets, delivered means arrived (changed by item 6), sales orders only (no consignment), cancelled / draft and service orders excluded.
+3. DECIDED with the owner: count by quantity even when the order status says Invoiced / Delivered / Closed. Defaults accepted: every product line counts as sets, delivered means arrived, sales orders only (no consignment), cancelled / draft and service orders excluded.
 4. KNOWN GAP: returns do not reopen sets (on staging returns end in a credit note or restock). Production numbers UNMEASURED (read access blocked in this session).
 5. DONE: opening an order in the overdue list shows where each item is now: department, progress, status and DO (or "Not on a DO"), from the same data as the sales order page.
-6. DONE (owner 2026-11-05, `fix/overdue-sets-clear-on-do`): a set clears as soon as it is on any non-cancelled DO, Pending Dispatch included, not only once delivered. Wording now says "not on a DO".
 
 ## HK-0130: Outsource piece-rate wages (feat/hk0130-outsource-piece-rate, 2026-11-04)
 From HK-0130 (Violet, "Outsource Worker Piece-Rate Payroll Module"). Built to `staging`; Violet has not confirmed the open items below.
