@@ -1,6 +1,6 @@
 // The /m Home (Home v10). Replaces the old Home presentation: header, greeting,
 // Scan to Create tiles, Today's problems, a six-view selector and the period bar, then
-// the selected view. Only Sales is designed; the other five show one Coming Soon
+// the selected view. Sales and Operations are built; the other four show one Coming Soon
 // state. Access follows the desktop dashboard (nav gate + tab list); a user with
 // no dashboard access gets a permission-filtered module list instead.
 //
@@ -31,12 +31,14 @@ import {
 } from "../../../dashboards/dashboard-shared-lib";
 import { DASHBOARD_NAV_HREF } from "./dashboard-m-lib";
 import { DASHBOARD_FEED_URL } from "./types";
-import { useDashboardPeriod } from "./hooks";
+import { useDashboardPeriod, useDashboardSub } from "./hooks";
 import { useSalesData, type ProtoFeed, type SalesAccess } from "./home-data";
 import {
-  DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, periodResolved, periodMode, problemDest, resolveView, stepSales, switchMode, todayLabel, type DashView,
+  DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, opsPeriodLabel, periodResolved, periodMode, problemDest, resolveView, stepOps, stepSales, switchMode, switchOpsMode, todayLabel, type DashView, type PeriodMode4,
 } from "./home-lib";
 import { SalesView } from "./SalesView";
+import { OpsView, type OpsSubKey } from "./OpsView";
+import type { OpsAccess } from "./ops-data";
 import { ScanToCreate } from "./ScanToCreate";
 import { Label, SectionState, SheetCard, SheetFrame, SheetNote } from "./home-ui";
 import { DATA, SHADOW_CARD, SHADOW_SMALL, TNUM } from "./home-style";
@@ -152,6 +154,9 @@ function ProblemsSection({ tiles, onTap }: { tiles: Tile[]; onTap: (t: Tile) => 
 // View selector + period bar
 // ---------------------------------------------------------------------------
 const MODES = [["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]] as const;
+/** Operations adds Day (desktop: Operations is a day tab). */
+const OPS_MODES = [["day", "Day"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]] as const;
+const OPS_SUB_OPTIONS: readonly (readonly [OpsSubKey, string])[] = [["overview", "Overview"], ["production", "Output & Cost"]];
 
 function PeriodCalendar({
   period, months, today, onPick, onClose,
@@ -185,7 +190,13 @@ function PeriodCalendar({
   const monthOf = (y: string, m: number) => `${y}-${String(m).padStart(2, "0")}`;
 
   let body: ReactNode;
-  if (mode === "month") {
+  if (mode === "day") {
+    body = (
+      <input type="date" aria-label="Pick a day" value={period.day ?? ""} max={today} min="2020-01-01"
+        onChange={(e) => { const v = e.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v <= today) onPick({ mode: "monthly", month: v.slice(0, 7), day: v }); }}
+        style={{ width: "100%", boxSizing: "border-box", height: 44, padding: "0 12px", borderRadius: 10, border: `1px solid ${M.hairline}`, backgroundColor: M.paper, color: M.raisin, fontFamily: "inherit", fontSize: 15 }} />
+    );
+  } else if (mode === "month") {
     body = (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 6 }}>
         {Array.from({ length: 12 }, (_, i) => {
@@ -216,7 +227,9 @@ function PeriodCalendar({
   return (
     <>
       <div ref={box} role="dialog" aria-label="Choose period" style={{ position: "absolute", top: "calc(100% + 4px)", right: 16, zIndex: 2, width: 300, maxWidth: "calc(100% - 32px)", boxSizing: "border-box", backgroundColor: M.card, borderRadius: 16, padding: 12, boxShadow: "0 2px 6px rgba(31,29,27,.08),0 24px 48px -18px rgba(31,29,27,.40)" }}>
-        {mode !== "year" ? (
+        {mode === "day" ? (
+          <div style={{ padding: "2px 4px 10px" }}><Label>DAY</Label></div>
+        ) : mode !== "year" ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <button type="button" aria-label="Previous year" onClick={() => years[yi - 1] && setViewYear(years[yi - 1])} style={{ width: 36, height: 36, border: "none", background: "none", color: years[yi - 1] ? M.raisin : M.faint, cursor: years[yi - 1] ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronLeft size={18} strokeWidth={2} aria-hidden="true" /></button>
             <span style={{ fontSize: 14, fontWeight: 700, color: M.raisin, ...TNUM }}>{viewYear}</span>
@@ -230,15 +243,19 @@ function PeriodCalendar({
 }
 
 function ViewBar({
-  view, canSwitch, onViews, period, months, today, onPeriod,
-}: { view: DashView; canSwitch: boolean; onViews: () => void; period: Period | null; months: string[]; today: string; onPeriod: (p: Period) => void }) {
+  view, canSwitch, onViews, period, months, today, onPeriod, sub, onSub,
+}: { view: DashView; canSwitch: boolean; onViews: () => void; period: Period | null; months: string[]; today: string; onPeriod: (p: Period) => void; sub?: OpsSubKey; onSub?: (k: OpsSubKey) => void }) {
   const top = useStickyBelowHeader();
   const [cal, setCal] = useState(false);
   const closeCal = useCallback(() => setCal(false), []);
   const label = DASHBOARD_VIEWS.find((v) => v.key === view)?.label ?? "Dashboard";
+  const ops = view === "operations";
   const mode = period ? periodMode(period) : "month";
-  const prev = period ? stepSales(period, months, -1, today) : null;
-  const next = period ? stepSales(period, months, 1, today) : null;
+  const step = ops ? stepOps : stepSales;
+  const prev = period ? step(period, months, -1, today) : null;
+  const next = period ? step(period, months, 1, today) : null;
+  const modes: readonly (readonly [PeriodMode4, string])[] = ops ? OPS_MODES : MODES;
+  const pickMode = (p: Period, k: PeriodMode4): Period => (ops ? switchOpsMode(p, k, today) : switchMode(p, k as "month" | "quarter" | "year", today));
   const arrow = (dir: "prev" | "next", target: Period | null) => (
     <button type="button" aria-label={dir === "prev" ? "Previous period" : "Next period"} aria-disabled={!target} onClick={() => target && onPeriod(target)}
       style={{ width: 32, height: 36, border: "none", background: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: target ? "pointer" : "default", color: target ? M.raisin : M.faint, WebkitTapHighlightColor: "transparent" }}>
@@ -257,22 +274,33 @@ function ViewBar({
         {period ? (
           <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
             {arrow("prev", prev)}
-            <button type="button" onClick={() => setCal((v) => !v)} aria-haspopup="dialog" aria-expanded={cal} aria-label={`Choose period: ${widgetPeriodLabel(period)}`}
+            <button type="button" onClick={() => setCal((v) => !v)} aria-haspopup="dialog" aria-expanded={cal} aria-label={`Choose period: ${ops ? opsPeriodLabel(period) : widgetPeriodLabel(period)}`}
               style={{ height: 36, display: "inline-flex", alignItems: "center", gap: 7, padding: "0 12px", borderRadius: 999, border: "none", backgroundColor: cal ? M.taupe : M.card, color: cal ? M.paper : M.raisin, boxShadow: SHADOW_SMALL, fontFamily: "inherit", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
               <CalendarDays size={15} strokeWidth={2} aria-hidden="true" />
-              <span style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", ...TNUM }}>{widgetPeriodLabel(period)}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", ...TNUM }}>{ops ? opsPeriodLabel(period) : widgetPeriodLabel(period)}</span>
             </button>
             {arrow("next", next)}
           </div>
         ) : null}
       </div>
       {period ? (
-        <div role="tablist" aria-label="Reporting period" style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 4, height: 46, marginTop: 10, boxSizing: "border-box", padding: 4, borderRadius: 14, backgroundColor: M.divider }}>
-          {MODES.map(([k, l]) => {
+        <div role="tablist" aria-label="Reporting period" style={{ display: "grid", gridTemplateColumns: `repeat(${modes.length},minmax(0,1fr))`, gap: 4, height: 46, marginTop: 10, boxSizing: "border-box", padding: 4, borderRadius: 14, backgroundColor: M.divider }}>
+          {modes.map(([k, l]) => {
             const on = mode === k;
             return (
-              <button key={k} type="button" role="tab" aria-selected={on} onClick={() => { if (!on) onPeriod(switchMode(period, k, today)); }}
+              <button key={k} type="button" role="tab" aria-selected={on} onClick={() => { if (!on) onPeriod(pickMode(period, k)); }}
                 style={{ minWidth: 0, height: "100%", border: "none", borderRadius: 10, backgroundColor: on ? M.card : "transparent", boxShadow: on ? "0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)" : "none", color: on ? M.raisin : M.ink, fontFamily: "inherit", fontSize: 13, fontWeight: on ? 700 : 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{l}</button>
+            );
+          })}
+        </div>
+      ) : null}
+      {ops && sub && onSub ? (
+        <div role="tablist" aria-label="Operations section" style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          {OPS_SUB_OPTIONS.map(([k, l]) => {
+            const on = sub === k;
+            return (
+              <button key={k} type="button" role="tab" aria-selected={on} onClick={() => { if (!on) onSub(k); }}
+                style={{ flex: "none", height: 34, padding: "0 14px", border: "none", borderRadius: 999, backgroundColor: on ? M.taupe : M.card, color: on ? "#FFFFFF" : "#3A352C", boxShadow: on ? "0 6px 14px -6px rgba(107,92,50,.6)" : SHADOW_SMALL, fontFamily: "inherit", fontSize: 12.5, fontWeight: on ? 700 : 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" }}>{l}</button>
             );
           })}
         </div>
@@ -361,8 +389,25 @@ function Dashboard() {
   const onSales = view === "sales";
   const access: SalesAccess = { ...base, view: base.view && onSales };
 
+  // Operations: the tab list for a tab-restricted role (PRODUCTION), else the feed's own front door
+  // (sales-orders:read). Each section then gates itself (ops-data.ts); the server stays the authority.
+  const onOps = view === "operations";
+  const opsView = dashboardTabs ? tabHas("operations") : hasPermission("sales-orders", "read");
+  const opsAccess: OpsAccess = {
+    view: opsView && onOps,
+    salesOrders: hasPermission("sales-orders", "read"),
+    accounting: hasPermission("accounting", "read"),
+    invoices: hasPermission("invoices", "read"),
+    purchaseOrders: hasPermission("purchase-orders", "read"),
+    payroll: hasPermission("payroll", "read"),
+    workers: hasPermission("workers", "read"),
+    payslips: hasPermission("payslips", "read"),
+  };
+  const { sub: rawSub, setSub } = useDashboardSub("operations");
+  const opsSub: OpsSubKey = rawSub === "production" ? "production" : "overview";
+
   // The month list drives the period model; it is the prototype feed the desktop page reads.
-  const proto = useCachedJson<ProtoFeed>(onSales && base.view ? DASHBOARD_FEED_URL : null);
+  const proto = useCachedJson<ProtoFeed>((onSales && base.view) || (onOps && opsView) ? DASHBOARD_FEED_URL : null);
   const months = useMemo(() => proto.data?.meta?.monthsWithSales ?? proto.data?.meta?.months ?? [], [proto.data]);
   const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, view ?? "sales");
   const period = effectivePeriod(view ?? "sales", rawPeriod);
@@ -376,6 +421,18 @@ function Dashboard() {
   const tiles = useProblemTiles(allowed);
   const [viewsOpen, setViewsOpen] = useState(false);
   const [problem, setProblem] = useState<Tile | null>(null);
+  // A tile that scrolls to a card: once the card is in the page (after the sub-tab and the data have rendered) go to it.
+  const scrollTo = useRef<string | null>(null);
+  const goToCard = (id: string): boolean => {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.style.scrollMarginTop = "200px";
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  };
+  useEffect(() => {
+    if (scrollTo.current && goToCard(scrollTo.current)) scrollTo.current = null;
+  });
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const closeViews = useCallback(() => setViewsOpen(false), []);
   const closeProblem = useCallback(() => setProblem(null), []);
@@ -385,6 +442,13 @@ function Dashboard() {
     setViewsOpen(false);
   };
   const onTile = (t: Tile) => {
+    // On Operations the overdue tile scrolls to the list behind its number (as on the desktop), not away from the dashboard.
+    if (t.key === "overdue" && onOps && opsView) {
+      if (opsSub === "overview" && goToCard("ops-overdue")) return;
+      scrollTo.current = "ops-overdue";
+      setSub("overview");
+      return;
+    }
     const d = problemDest(t.key);
     if (d.kind === "route" && isNavAllowed(d.navGate)) navigate(d.to);
     else setProblem(t);
@@ -402,15 +466,31 @@ function Dashboard() {
         view={view ?? (resolved.kind === "blocked" ? resolved.view : "sales")}
         canSwitch={allowed.length > 1}
         onViews={() => setViewsOpen(true)}
-        period={onSales && base.view && ready ? period : null}
+        period={((onSales && base.view) || (onOps && opsView)) && ready ? period : null}
         months={months}
         today={today}
         onPeriod={setPeriod}
+        sub={onOps && opsView ? opsSub : undefined}
+        onSub={onOps && opsView ? setSub : undefined}
       />
       {resolved.kind === "none" ? (
         <div style={{ padding: 16 }}><div role="status" style={{ padding: 20, borderRadius: 16, backgroundColor: M.card, boxShadow: SHADOW_CARD, fontSize: 13, color: M.ink }}>No dashboard views are available for your role.</div></div>
       ) : resolved.kind === "blocked" ? (
         <NotAvailable view={resolved.view} onFirst={firstAllowed ? () => setView(firstAllowed) : null} firstLabel={firstLabel} />
+      ) : onOps ? (
+        !opsView ? (
+          <NotAvailable view="operations" onFirst={firstAllowed && firstAllowed !== "operations" ? () => setView(firstAllowed) : null} firstLabel={firstLabel} />
+        ) : !ready ? (
+          <div style={{ padding: "14px 16px 120px" }}>
+            <SectionState
+              kind={proto.loading || (!proto.data && !proto.failure) ? "loading" : proto.failure ? "error" : "empty"}
+              text={proto.loading || (!proto.data && !proto.failure) ? undefined : proto.failure ? "Could not load the list of months." : "No records yet, so there is no period to show."}
+              onRetry={proto.refresh} minHeight={240}
+            />
+          </div>
+        ) : (
+          <OpsView access={opsAccess} period={period} periodKey={periodKey} sub={opsSub} today={today} onPeriod={setPeriod} />
+        )
       ) : view !== "sales" ? (
         <ComingSoon view={view!} onSales={allowed.includes("sales") ? () => setView("sales") : null} />
       ) : !base.view ? (
