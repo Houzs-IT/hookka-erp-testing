@@ -6979,3 +6979,5 @@ Asks, in order:
 83. Outsource always direct, shown under its department; non-production listed by department; people add up to the lines to the sen (owner 2026-11-06).
 84. Money rounding the same across the system: half up (roundSen). FG unit cost and sofa price adjustments no longer floor (owner 2026-11-06).
 85. Labour tile shows the total only; the split stays in the card, with avg per person and % of production revenue on each side; "Outsource · Fabric Sewing" (owner 2026-11-06).
+86. Fabric usage card: Used, Past 30d and Monthly meters from Fabric Usage on cut orders; cost and /m by FIFO, not lifetime purchase prices (owner 2026-11-06).
+87. Pending: Oct stock take stored RM 14,877 of fabric but its lines add to RM 97,660; owner to say which is right.

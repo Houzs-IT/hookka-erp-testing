@@ -169,15 +169,15 @@ test("capacityPerWorkerMin skips days with no workers", () => {
 
 test("toQuarterly + fabricView", () => {
   const monthly = [
-    { month: "2026-01", meters: 10 }, { month: "2026-02", meters: 5, lateMeters: 2 },
+    { month: "2026-01", meters: 10 }, { month: "2026-02", meters: 5, pricedMeters: 2, costSen: 100 },
     { month: "2026-04", meters: 7 },
   ];
   assert.deepEqual(toQuarterly(monthly), [
-    { label: "2026-Q2", meters: 7, lateMeters: 0 },
-    { label: "2026-Q1", meters: 15, lateMeters: 2 },
+    { label: "2026-Q2", meters: 7, pricedMeters: 0, costSen: 0 },
+    { label: "2026-Q1", meters: 15, pricedMeters: 2, costSen: 100 },
   ]);
   const list = Array.from({ length: 12 }, (_, i) => ({
-    fabCode: `F${i}`, meters: i, past30Meters: 0, next30Meters: 12 - i, buyAvgSen: 0, buyMinSen: 0, buyMaxSen: 0,
+    fabCode: `F${i}`, meters: i, past30Meters: 0, next30Meters: 12 - i, costSen: 0, fifoPerMeterSen: 0,
   }));
   const prev = fabricView({ list, monthly }, "prev", "month");
   assert.equal(prev.rows.length, 10);

@@ -148,11 +148,10 @@ export type Overview = {
         meters: number;
         past30Meters: number;
         next30Meters: number;
-        buyAvgSen: number;
-        buyMinSen: number;
-        buyMaxSen: number;
+        costSen: number;
+        fifoPerMeterSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number }[];
+      monthly: { month: string; meters: number; pricedMeters?: number; costSen?: number }[];
     };
     SOFA: {
       list: {
@@ -160,11 +159,10 @@ export type Overview = {
         meters: number;
         past30Meters: number;
         next30Meters: number;
-        buyAvgSen: number;
-        buyMinSen: number;
-        buyMaxSen: number;
+        costSen: number;
+        fifoPerMeterSen: number;
       }[];
-      monthly: { month: string; meters: number; lateMeters?: number }[];
+      monthly: { month: string; meters: number; pricedMeters?: number; costSen?: number }[];
     };
   };
   monthlyRevenue?: {
@@ -467,22 +465,23 @@ export function capacityPerWorkerMin(
   return avgWorkers > 0 ? dailyCapacityMin / avgWorkers : null;
 }
 
-type FabricMonth = { month: string; meters: number; lateMeters?: number };
+type FabricMonth = { month: string; meters: number; pricedMeters?: number; costSen?: number };
 type FabricBlock = NonNullable<Overview["fabric"]>["BEDFRAME"];
 
 // Roll the last-12 monthly fabric series up into the last 8 quarters, newest
 // first. The late share rolls up too.
 export function toQuarterly(
   monthly: FabricMonth[],
-): { label: string; meters: number; lateMeters: number }[] {
-  const q = new Map<string, { meters: number; lateMeters: number }>();
+): { label: string; meters: number; pricedMeters: number; costSen: number }[] {
+  const q = new Map<string, { meters: number; pricedMeters: number; costSen: number }>();
   for (const m of monthly) {
     const [y, mm] = m.month.split("-");
     const qn = Math.ceil((Number(mm) || 1) / 3);
     const key = `${y}-Q${qn}`;
-    const e = q.get(key) ?? { meters: 0, lateMeters: 0 };
+    const e = q.get(key) ?? { meters: 0, pricedMeters: 0, costSen: 0 };
     e.meters += m.meters;
-    e.lateMeters += m.lateMeters ?? 0;
+    e.pricedMeters += m.pricedMeters ?? 0;
+    e.costSen += m.costSen ?? 0;
     q.set(key, e);
   }
   return [...q.entries()]
@@ -510,7 +509,7 @@ export function fabricView(
     gran === "quarter"
       ? toQuarterly(blk?.monthly ?? [])
       : (blk?.monthly ?? [])
-          .map((m) => ({ label: m.month, meters: m.meters, lateMeters: m.lateMeters ?? 0 }))
+          .map((m) => ({ label: m.month, meters: m.meters, pricedMeters: m.pricedMeters ?? 0, costSen: m.costSen ?? 0 }))
           .reverse();
   const max = Math.max(1, ...trend.map((t) => t.meters));
   return { rows, trend, max };

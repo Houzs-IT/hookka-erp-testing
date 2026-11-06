@@ -841,7 +841,7 @@ export function FabricUsageCard({ period }: { period: Period }) {
   return (
     <CardShell
       title={`Fabric Usage — Bedframe vs Sofa · ${widgetPeriodLabel(period)}`}
-      sub={`${mode === "next" ? "forecast — fabric needed next 30 days" : "history — fabric used to date"} · ${gran === "quarter" ? "quarterly" : "monthly"} trend`}
+      sub={`${mode === "next" ? "forecast — fabric needed next 30 days" : "fabric cut · FIFO cost"} · ${gran === "quarter" ? "quarterly" : "monthly"} trend`}
       right={
         <div className="flex flex-wrap items-center gap-2">
           <Pills value={mode} options={[["prev", "Previous"], ["next", "Next"]] as const} onChange={setMode} />
@@ -871,18 +871,18 @@ export function FabricUsageCard({ period }: { period: Period }) {
                     <p className="text-xs" style={{ color: MUTED }}>{mode === "next" ? "No upcoming fabric demand." : "No fabric issued."}</p>
                   ) : (
                     <MiniTable
-                      cols={["Fabric", mode === "next" ? "Next 30d (live)" : `Used · ${wp === "all" ? "all time" : wp}`, "Past 30d (live)", "Avg buy (all time)", "Min–Max"]}
+                      cols={["Fabric", mode === "next" ? "Next 30d (live)" : `Used · ${wp === "all" ? "all time" : wp}`, "Past 30d (live)", "FIFO /m", "FIFO cost"]}
                       rows={v.rows.map((f) => [
                         f.fabCode,
                         `${fmtDec2(mode === "next" ? f.next30Meters : f.meters)} m`,
                         `${fmtDec2(f.past30Meters)} m`,
-                        f.buyAvgSen ? fmtRM2(f.buyAvgSen) : "—",
-                        f.buyMinSen || f.buyMaxSen ? `${fmtRM2(f.buyMinSen)}–${fmtRM2(f.buyMaxSen)}` : "—",
+                        f.fifoPerMeterSen ? fmtRM2(f.fifoPerMeterSen) : "—",
+                        f.costSen ? fmtRM2(f.costSen) : "—",
                       ])}
                     />
                   )}
                   <p className="pt-1 text-[11px] font-semibold text-[#5A5550]">
-                    {gran === "quarter" ? "Quarterly meters posted — last 8" : "Monthly meters posted — last 12"} (newest first)
+                    {gran === "quarter" ? "Quarterly meters used — last 8" : "Monthly meters used — last 12"} (newest first)
                   </p>
                   {v.trend.length === 0 ? (
                     <p className="text-xs" style={{ color: MUTED }}>No data.</p>
@@ -894,6 +894,7 @@ export function FabricUsageCard({ period }: { period: Period }) {
                           <div className="h-full rounded" style={{ width: `${Math.max(2, (t.meters / v.max) * 100)}%`, background: CHART_INK, opacity: 0.7 }} />
                         </div>
                         <span className="w-20 text-right text-[11px] font-semibold tabular-nums text-[#1F1D1B]">{fmtDec2(t.meters)} m</span>
+                        <span className="w-20 text-right text-[11px] tabular-nums" style={{ color: MUTED }}>{t.pricedMeters > 0 ? `${fmtRM2(Math.round(t.costSen / t.pricedMeters))}/m` : "—"}</span>
                       </div>
                     ))
                   )}
@@ -902,8 +903,8 @@ export function FabricUsageCard({ period }: { period: Period }) {
             })}
           </div>
           <p className="text-[10px]" style={{ color: MUTED }}>
-            Fabric issued to production (RM_ISSUE), grouped by the date the issue was POSTED — an order raised one month is
-            routinely cut the next, so a bar is not that month&rsquo;s production.
+            Meters = Fabric Usage on the orders cut that month. Cost is first-in-first-out, with the latest stock take as closing
+            stock. Meters with no receipt behind them carry no cost.
           </p>
         </div>
       )}
