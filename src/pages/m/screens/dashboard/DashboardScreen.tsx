@@ -1,5 +1,5 @@
 // DashboardScreen — the /m/dashboard/:tab shell: header (back + period chip),
-// the section strip (Sales · Operations · Employees · Service · Finance · OCR,
+// the section strip (Sales · Operations · Employees · Service · OCR,
 // the desktop's tabs; it replaced a dropdown 2026-10-23), the active tab's own
 // sub-page pills, and the active tab from TAB_REGISTRY. It owns nothing
 // tab-specific: tabs, their data and their states live behind the registry.

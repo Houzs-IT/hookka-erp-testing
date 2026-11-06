@@ -6982,3 +6982,5 @@ Asks, in order:
 86. Fabric usage card: Used, Past 30d and Monthly meters from Fabric Usage on cut orders; cost and /m by FIFO, not lifetime purchase prices (owner 2026-11-06).
 87. Pending: Oct stock take stored RM 14,877 of fabric but its lines add to RM 97,660; owner to say which is right.
 88. Deduct raw material for orders already cut, per Fabric Usage / BOM, as far as stock allows; stock adjustment corrects the rest later (owner 2026-11-06).
+89. Finance tab removed from the Dashboard, desktop and phone (owner 2026-11-07).
+90. Backfill of raw material issues cancelled: dashboard only, WIP must not change; Finance adjusts stock from the list (owner 2026-11-07).
