@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 148 mounts, 146 route files in
-`src/api/routes/`, 1072 top-level handler registrations discovered.
+`src/api/routes/`, 1073 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -135,7 +135,7 @@ offsets pointing past the end of their own file.
 | `/api/job-cards` | `src/api/routes/job-cards.ts` | `GET /` <sub>:100</sub><br>`GET /summary` <sub>:261</sub><br>`GET /:id/events` <sub>:430</sub><br>`GET /duedate-original-backup` <sub>:536</sub><br>`GET /completion-pic-original-backup` <sub>:688</sub> | gated |
 | `/api/audit-events` | `src/api/routes/audit-events.ts` | `GET /` <sub>:49</sub> | gated |
 | `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:82</sub><br>`GET /revenue-split` <sub>:2404</sub> | gated |
-| `/api/dashboard/prototype` | `src/api/routes/dashboard-prototype.ts` | `GET /service-sla` <sub>:319</sub><br>`GET /` <sub>:326</sub> | gated |
+| `/api/dashboard/prototype` | `src/api/routes/dashboard-prototype.ts` | `GET /labour` <sub>:323</sub><br>`GET /service-sla` <sub>:335</sub><br>`GET /` <sub>:342</sub> | gated |
 | `/api/dashboard/finance` | `src/api/routes/dashboard-finance.ts` | `GET /` <sub>:42</sub><br>`PUT /valuation` <sub>:110</sub> | gated |
 | `/api/kpi` | `src/api/routes/kpi.ts` | `GET /me` <sub>:331</sub><br>`GET /users/:id` <sub>:340</sub><br>`GET /payout/:id` <sub>:355</sub><br>`PUT /payout/:id` <sub>:362</sub><br>`PUT /checklist/:kpiKey` <sub>:433</sub><br>`GET /checklist/:kpiKey` <sub>:494</sub><br>`POST /survey/:kpiKey` <sub>:516</sub><br>`POST /survey/:kpiKey/link` <sub>:573</sub><br>`PUT /rating/:kpiKey` <sub>:640</sub><br>`GET /survey/:kpiKey` <sub>:693</sub><br>`GET /library` <sub>:714</sub><br>`PUT /rules/:kpiKey` <sub>:772</sub><br>`GET /people` <sub>:815</sub><br>`GET /catalog` <sub>:864</sub><br>`GET /assignments/:id` <sub>:878</sub><br>`PUT /assignments/:id` <sub>:891</sub><br>`PUT /kpi/:kpiKey/assignees` <sub>:954</sub> | gated |
 | `/api/it-support` | `src/api/routes/it-support.ts` | `GET /tickets` <sub>:130</sub><br>`GET /unread-count` <sub>:139</sub><br>`GET /tickets/:code` <sub>:146</sub><br>`POST /tickets` <sub>:155</sub><br>`POST /tickets/:code/replies` <sub>:176</sub><br>`POST /tickets/:code/confirm` <sub>:195</sub><br>`GET /attachments/:id` <sub>:204</sub> | gated |
@@ -171,7 +171,7 @@ offsets pointing past the end of their own file.
 | `/api/notifications` | `src/api/routes/notifications.ts` | `GET /` <sub>:71</sub><br>`PUT /` <sub>:101</sub> | gated |
 | `/api/payroll` | `src/api/routes/payroll.ts` | `GET /` <sub>:78</sub><br>`POST /` <sub>:125</sub><br>`PUT /` <sub>:145</sub> | gated |
 | `/api/pay-rules` | `src/api/routes/pay-rules.ts` | `GET /` <sub>:48</sub><br>`POST /` <sub>:64</sub><br>`DELETE /:id` <sub>:107</sub> | gated |
-| `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:641</sub><br>`GET /projected` <sub>:776</sub><br>`POST /` <sub>:1077</sub><br>`PUT /` <sub>:1559</sub><br>`GET /:id` <sub>:1664</sub> | gated |
+| `/api/payslips` | `src/api/routes/payslips.ts` | `GET /` <sub>:642</sub><br>`GET /projected` <sub>:777</sub><br>`POST /` <sub>:1078</sub><br>`PUT /` <sub>:1561</sub><br>`GET /:id` <sub>:1669</sub> | gated |
 | `/api/production-leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/leadtimes` | `src/api/routes/production-leadtimes.ts` | `GET /` <sub>:193</sub><br>`PUT /settings` <sub>:202</sub><br>`PUT /` <sub>:230</sub><br>`POST /recalc-all` <sub>:310</sub><br>`GET /history` <sub>:411</sub><br>`POST /schedule` <sub>:526</sub><br>`DELETE /history/:id` <sub>:602</sub> | gated |
 | `/api/production/sync-jobcards-from-bom` | `src/api/routes/jobcard-sync.ts` | `POST /` <sub>:214</sub><br>`POST /fill-zero-minutes` <sub>:404</sub> | gated |
