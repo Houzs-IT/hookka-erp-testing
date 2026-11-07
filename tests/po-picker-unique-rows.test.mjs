@@ -6,8 +6,8 @@
 // material pairs stored twice, so two rows shared a key and React stopped
 // updating the list: typing "pearl" left plywood rows on screen.
 //
-// Pins the three parts of the fix: the options are one per supplier, the row
-// key is built from that supplier, and Add picks the same binding the row shows.
+// Pins the three parts of the fix: the options are one per supplier + SKU, the
+// row key is built from the binding, and Add picks the binding the row shows.
 // ---------------------------------------------------------------------------
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,17 +15,17 @@ import { readFileSync } from "node:fs";
 
 const src = readFileSync(new URL("../src/pages/procurement/create.tsx", import.meta.url), "utf8");
 
-test("popup options are deduped by supplier", () => {
+test("popup options are deduped by supplier + SKU", () => {
   const block = src.slice(src.indexOf("optionsFor={(code) =>"), src.indexOf("addedKeys={addedKeys}"));
   assert.ok(block.length > 0, "optionsFor prop not found");
-  assert.match(block, /findIndex\(\(x\) => x\?\.supplierId === b\.supplierId\) === i/);
+  assert.match(block, /uniqueSkuOptions\(/);
 });
 
-test("row key is material id + supplier id", () => {
-  assert.match(src, /key=\{`\$\{rm\.id\}\|\$\{opt\?\.supplierId \?\? ""\}`\}/);
+test("row key is material id + binding id", () => {
+  assert.match(src, /key=\{`\$\{rm\.id\}\|\$\{opt\?\.bindingId \?\? ""\}`\}/);
 });
 
-test("Add uses the first sorted binding for the row's supplier, like the row", () => {
+test("Add uses the binding the row shows", () => {
   const add = src.slice(src.indexOf("const addItemFromRM"), src.indexOf("const seedQty"));
-  assert.match(add, /getSortedBindingsForRM\(rmItemCode\)\.find\(\(b\) => b\.supplierId === supplierId\)/);
+  assert.match(add, /getSortedBindingsForRM\(rmItemCode\)\.find\(\(b\) => b\.id === bindingId\)/);
 });

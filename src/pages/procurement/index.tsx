@@ -1,4 +1,4 @@
-import { cheapestBinding } from "@/lib/cheapest-binding";
+import { bindingIdForLine, cheapestBinding, uniqueSkuOptions } from "@/lib/cheapest-binding";
 import { todayYmdMY } from "@/lib/utils";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -256,11 +256,8 @@ function POFormDialog({
     setItems(updated);
   };
 
-  const switchSupplier = (idx: number, supplierId: string) => {
-    const item = items[idx];
-    const binding = supplierMaterialBindings.find(
-      (b) => b.materialCode === item.rmCode && b.supplierId === supplierId
-    );
+  const switchSupplier = (idx: number, bindingId: string) => {
+    const binding = supplierMaterialBindings.find((b) => b.id === bindingId);
     if (!binding) return;
 
     const updated = [...items];
@@ -636,12 +633,12 @@ function POFormDialog({
                           {bindings.length > 0 ? (
                             <select
                               className="flex h-8 w-full rounded border border-[#E2DDD8] bg-white px-2 text-xs"
-                              value={item.supplierId}
+                              value={bindingIdForLine(uniqueSkuOptions(bindings), item)}
                               onChange={(e) => switchSupplier(idx, e.target.value)}
                             >
-                              {bindings.map((b) => (
-                                <option key={b.id} value={b.supplierId}>
-                                  {resolveSupplierName(b.supplierId)}{b.isMainSupplier ? " (main)" : ""}
+                              {uniqueSkuOptions(bindings).map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {resolveSupplierName(b.supplierId)}{b.supplierSku ? ` · ${b.supplierSku}` : ""}{b.isMainSupplier ? " (main)" : ""}
                                 </option>
                               ))}
                             </select>

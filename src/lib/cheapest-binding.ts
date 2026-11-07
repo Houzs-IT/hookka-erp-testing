@@ -54,3 +54,29 @@ export function sortCheapestFirst<T extends Binding>(bindings: readonly T[], tod
 export function cheapestBinding<T extends Binding>(bindings: readonly T[], today: string): T | undefined {
   return sortCheapestFirst(bindings, today)[0];
 }
+
+type SkuBinding = { id: string; supplierId: string; supplierSku?: string | null };
+
+/**
+ * One option per supplier + supplier SKU. A supplier can sell one Internal Code
+ * under two SKUs at two prices, and each must stay pickable; a pair stored twice
+ * with the same SKU is one option (BUG-2026-10-12-276). Keeps the order given.
+ */
+export function uniqueSkuOptions<T extends SkuBinding>(bindings: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return bindings.filter((b) => {
+    const key = `${b.supplierId}|${b.supplierSku ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Which option a PO line is on: its exact SKU, else the first for its supplier. */
+export function bindingIdForLine(
+  bindings: readonly SkuBinding[],
+  line: { supplierId: string; supplierSku?: string | null },
+): string {
+  const same = bindings.filter((b) => b.supplierId === line.supplierId);
+  return (same.find((b) => (b.supplierSku ?? "") === (line.supplierSku ?? "")) ?? same[0])?.id ?? "";
+}

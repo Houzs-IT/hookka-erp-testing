@@ -17,15 +17,15 @@ const detail = read("detail.tsx");
 const index = read("index.tsx");
 
 test("New PO: Add hands over the clicked row, not its code", () => {
-  assert.match(create, /const addItemFromRM = \(rm: RawMaterial, supplierId\?: string\)/);
-  assert.match(create, /onClick=\{\(\) => onAdd\(rm, opt\?\.supplierId\)\}/);
+  assert.match(create, /const addItemFromRM = \(rm: RawMaterial, bindingId\?: string\)/);
+  assert.match(create, /onClick=\{\(\) => onAdd\(rm, opt\?\.bindingId\)\}/);
   const add = create.slice(create.indexOf("const addItemFromRM"), create.indexOf("const seedQty"));
   assert.doesNotMatch(add, /rawMaterials\.find/);
 });
 
 test("New PO: 'Added' is per RM row, not per code", () => {
-  assert.match(create, /new Set\(items\.map\(\(it\) => `\$\{it\.rmId\}\|\$\{it\.supplierId\}`\)\)/);
-  assert.match(create, /addedKeys\.has\(`\$\{rm\.id\}\|\$\{opt\?\.supplierId \?\? ""\}`\)/);
+  assert.match(create, /new Set\(items\.map\(\(it\) => `\$\{it\.rmId\}\|\$\{it\.supplierId\}\|\$\{it\.supplierSku\}`\)\)/);
+  assert.match(create, /addedKeys\.has\(`\$\{rm\.id\}\|\$\{opt\?\.supplierId \?\? ""\}\|\$\{opt\?\.supplierSku \?\? ""\}`\)/);
 });
 
 test("Edit PO: add line takes the clicked row", () => {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cheapestBinding, monthsBefore, sortCheapestFirst } from "../src/lib/cheapest-binding.ts";
+import { bindingIdForLine, cheapestBinding, monthsBefore, sortCheapestFirst, uniqueSkuOptions } from "../src/lib/cheapest-binding.ts";
 
 const today = "2026-11-07";
 const b = (id, unitPrice, extra = {}) => ({ id, unitPrice, currency: "MYR", priceValidTo: "", isMainSupplier: false, lastOrderedAt: "2026-10-20", ...extra });
@@ -55,4 +55,18 @@ test("four months back keeps to a real date", () => {
   assert.equal(monthsBefore("2026-11-07", 4), "2026-07-07");
   assert.equal(monthsBefore("2026-06-30", 4), "2026-02-28");
   assert.equal(monthsBefore("2026-02-15", 4), "2025-10-15");
+});
+
+const opt = (id, supplierId, supplierSku) => ({ id, supplierId, supplierSku });
+
+test("one supplier keeps both its SKUs; the same SKU stored twice is one option", () => {
+  const list = [opt("a", "M", "COMFY-01"), opt("b", "M", "IVORY"), opt("c", "M", "IVORY"), opt("d", "A", "4047-1")];
+  assert.deepEqual(uniqueSkuOptions(list).map((b) => b.id), ["a", "b", "d"]);
+});
+
+test("a PO line sits on its own SKU, and falls back to its supplier's first", () => {
+  const list = [opt("a", "M", "COMFY-01"), opt("b", "M", "IVORY")];
+  assert.equal(bindingIdForLine(list, { supplierId: "M", supplierSku: "IVORY" }), "b");
+  assert.equal(bindingIdForLine(list, { supplierId: "M", supplierSku: "OLD" }), "a");
+  assert.equal(bindingIdForLine(list, { supplierId: "X", supplierSku: "" }), "");
 });

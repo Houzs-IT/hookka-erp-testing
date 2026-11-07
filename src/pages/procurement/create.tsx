@@ -23,7 +23,7 @@
 // change. Backend endpoint POST /api/purchase-orders is reused unchanged.
 // ---------------------------------------------------------------------------
 
-import { cheapestBinding, sortCheapestFirst } from "@/lib/cheapest-binding";
+import { bindingIdForLine, cheapestBinding, sortCheapestFirst, uniqueSkuOptions } from "@/lib/cheapest-binding";
 import { todayYmdMY } from "@/lib/utils";
 import React, { useState, useCallback, useEffect, useMemo, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
@@ -186,7 +186,8 @@ function CreatePurchaseOrderPage() {
     (b: SupplierMaterialBinding): string => {
       const name = resolveSupplierName(b.supplierId);
       const price = b.unitPrice > 0 ? ` — ${formatRM(b.unitPrice)}` : "";
-      return `${name}${price}`;
+      const sku = b.supplierSku ? ` · ${b.supplierSku}` : "";
+      return `${name}${sku}${price}`;
     },
     [resolveSupplierName],
   );
@@ -226,17 +227,17 @@ function CreatePurchaseOrderPage() {
       : undefined) ?? getMainBinding(rmItemCode);
 
   const addedKeys = useMemo(
-    () => new Set(items.map((it) => `${it.rmId}|${it.supplierId}`)),
+    () => new Set(items.map((it) => `${it.rmId}|${it.supplierId}|${it.supplierSku}`)),
     [items],
   );
 
   // ── Line-item mutators ─────────────────────────────────────────
   // Takes the clicked row, not its code: one code can be several RMs (ROLL and MTR).
-  const addItemFromRM = (rm: RawMaterial, supplierId?: string) => {
+  const addItemFromRM = (rm: RawMaterial, bindingId?: string) => {
     const rmItemCode = rm.itemCode;
     const mainBinding =
-      (supplierId
-        ? getSortedBindingsForRM(rmItemCode).find((b) => b.supplierId === supplierId)
+      (bindingId
+        ? getSortedBindingsForRM(rmItemCode).find((b) => b.id === bindingId)
         : undefined) ?? bindingForPick(rmItemCode);
     const seedQty = mainBinding?.moq ?? 1;
     const newItem: POLineItem = {
@@ -294,13 +295,9 @@ function CreatePurchaseOrderPage() {
     });
   };
 
-  const switchSupplier = (idx: number, supplierId: string) => {
+  const switchSupplier = (idx: number, bindingId: string) => {
     setItems((prev) => {
-      const item = prev[idx];
-      const wantCode = normMatCode(item.rmCode);
-      const binding = supplierMaterialBindings.find(
-        (b) => normMatCode(b.materialCode) === wantCode && b.supplierId === supplierId,
-      );
+      const binding = supplierMaterialBindings.find((b) => b.id === bindingId);
       if (!binding) return prev;
       const next = [...prev];
       next[idx] = {
@@ -781,7 +778,7 @@ function CreatePurchaseOrderPage() {
                 </thead>
                 <tbody>
                   {items.map((item, idx) => {
-                    const bindings = getSortedBindingsForRM(item.rmCode);
+                    const bindings = uniqueSkuOptions(getSortedBindingsForRM(item.rmCode));
                     const prevCategory = idx > 0 ? items[idx - 1].materialCategory : null;
                     const showCategoryHeader = idx === 0 || prevCategory !== item.materialCategory;
                     return (
@@ -844,11 +841,11 @@ function CreatePurchaseOrderPage() {
                             {bindings.length > 0 ? (
                               <select
                                 className="flex h-8 w-full rounded border border-[#E2DDD8] bg-white px-2 text-xs"
-                                value={item.supplierId}
+                                value={bindingIdForLine(bindings, item)}
                                 onChange={(e) => switchSupplier(idx, e.target.value)}
                               >
                                 {bindings.map((b) => (
-                                  <option key={b.id} value={b.supplierId}>
+                                  <option key={b.id} value={b.id}>
                                     {supplierOptionLabel(b)}{b.isMainSupplier ? " ★" : ""}
                                   </option>
                                 ))}
@@ -972,13 +969,13 @@ function CreatePurchaseOrderPage() {
           materials={pickerRMs}
           supplierLabel={selectedSupplierId ? resolveSupplierName(selectedSupplierId) : ""}
           optionsFor={(code) =>
-            // One row per supplier: some suppliers carry the same material twice,
-            // and a repeated row key froze the list (BUG-2026-10-12-276).
-            (selectedSupplierId ? [bindingForPick(code)] : getSortedBindingsForRM(code))
-              .filter((b, i, all): b is SupplierMaterialBinding =>
-                !!b && all.findIndex((x) => x?.supplierId === b.supplierId) === i)
+            // One row per supplier + SKU: a pair stored twice with one SKU is a
+            // repeat, and a repeated row key froze the list (BUG-2026-10-12-276).
+            uniqueSkuOptions(getSortedBindingsForRM(code).filter((b) => !selectedSupplierId || b.supplierId === selectedSupplierId))
               .map((b) => ({
+                bindingId: b.id,
                 supplierId: b.supplierId,
+                supplierSku: b.supplierSku,
                 supplierName: resolveSupplierName(b.supplierId),
                 priceSen: b.unitPrice,
                 isMain: !!b.isMainSupplier,
@@ -993,7 +990,7 @@ function CreatePurchaseOrderPage() {
   );
 }
 
-type PickOption = { supplierId: string; supplierName: string; priceSen: number; isMain: boolean };
+type PickOption = { bindingId: string; supplierId: string; supplierSku: string; supplierName: string; priceSen: number; isMain: boolean };
 
 // Select Materials popup. Category + search run over the materials the page
 // passes in (already narrowed to the picked supplier); filters reset on each open.
@@ -1007,11 +1004,11 @@ function MaterialPickerModal({
 }: {
   materials: RawMaterial[];
   supplierLabel: string;
-  /** One entry per supplier that sells this material (main first); each becomes its own row. */
+  /** One entry per supplier + SKU that sells this material, cheapest first; each becomes its own row. */
   optionsFor: (rmCode: string) => PickOption[];
-  /** `${rmId}|${supplierId}` of lines already in the table. */
+  /** `${rmId}|${supplierId}|${supplierSku}` of lines already in the table. */
   addedKeys: Set<string>;
-  onAdd: (rm: RawMaterial, supplierId?: string) => void;
+  onAdd: (rm: RawMaterial, bindingId?: string) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState("");
@@ -1134,11 +1131,11 @@ function MaterialPickerModal({
                 const options = optionsFor(rm.itemCode);
                 const rows: (PickOption | null)[] = options.length > 0 ? options : [null];
                 return rows.map((opt) => {
-                  const added = addedKeys.has(`${rm.id}|${opt?.supplierId ?? ""}`);
+                  const added = addedKeys.has(`${rm.id}|${opt?.supplierId ?? ""}|${opt?.supplierSku ?? ""}`);
                   const priceSen = opt?.priceSen ?? 0;
                   return (
                     <div
-                      key={`${rm.id}|${opt?.supplierId ?? ""}`}
+                      key={`${rm.id}|${opt?.bindingId ?? ""}`}
                       className="flex items-center gap-3 border-b border-[#E2DDD8] px-4 py-2.5 last:border-b-0"
                     >
                       <div className="min-w-0 flex-1">
@@ -1146,7 +1143,10 @@ function MaterialPickerModal({
                         <div className="truncate text-xs text-[#6B7280]" title={rm.description}>
                           {rm.description}
                         </div>
-                        {/* No supplier picked above: one row per supplier, Add uses that row's supplier. */}
+                        {opt?.supplierSku && (
+                          <div className="truncate text-xs text-[#6B5C32]" title={opt.supplierSku}>{opt.supplierSku}</div>
+                        )}
+                        {/* No supplier picked above: one row per supplier + SKU, Add uses that row's binding. */}
                         {!supplierLabel && (
                           opt ? (
                             <div className="truncate text-xs text-[#6B5C32]" title={opt.supplierName}>
@@ -1179,7 +1179,7 @@ function MaterialPickerModal({
                           size="sm"
                           variant="outline"
                           className="w-24 flex-shrink-0"
-                          onClick={() => onAdd(rm, opt?.supplierId)}
+                          onClick={() => onAdd(rm, opt?.bindingId)}
                         >
                           <Plus className="h-3.5 w-3.5" /> Add
                         </Button>

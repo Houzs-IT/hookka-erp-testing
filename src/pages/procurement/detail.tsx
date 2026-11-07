@@ -1,4 +1,4 @@
-import { cheapestBinding } from "@/lib/cheapest-binding";
+import { bindingIdForLine, cheapestBinding, uniqueSkuOptions } from "@/lib/cheapest-binding";
 import { todayYmdMY } from "@/lib/utils";
 import { useMemo, useState, useCallback, lazy, Suspense } from "react";
 import { AuditHistoryPanel } from "@/components/audit/AuditHistoryPanel";
@@ -371,17 +371,14 @@ export default function PurchaseOrderDetailPage() {
     });
   };
 
-  const switchLineSupplier = (idx: number, sid: string) => {
-    if (!sid) return;
-    const line = editLines[idx];
-    const binding = supplierMaterialBindings.find(
-      (b) => b.materialCode === line.rmCode && b.supplierId === sid,
-    );
+  const switchLineSupplier = (idx: number, bindingId: string) => {
+    const binding = supplierMaterialBindings.find((b) => b.id === bindingId);
+    if (!binding) return;
     updateLine(idx, {
-      supplierId: sid,
-      supplierName: resolveSupplierName(sid),
-      supplierSku: binding?.supplierSku ?? line.supplierSku,
-      unitPriceSen: binding?.unitPrice ?? line.unitPriceSen,
+      supplierId: binding.supplierId,
+      supplierName: resolveSupplierName(binding.supplierId),
+      supplierSku: binding.supplierSku,
+      unitPriceSen: binding.unitPrice,
     });
   };
 
@@ -951,13 +948,13 @@ export default function PurchaseOrderDetailPage() {
                           {bindings.length > 0 ? (
                             <select
                               className="flex h-8 w-full rounded border border-[#E2DDD8] bg-white px-2 text-xs"
-                              value={line.supplierId}
+                              value={bindingIdForLine(uniqueSkuOptions(bindings), line)}
                               onChange={(e) => switchLineSupplier(idx, e.target.value)}
                             >
                               <option value="">Pick supplier…</option>
-                              {bindings.map((b) => (
-                                <option key={b.id} value={b.supplierId}>
-                                  {resolveSupplierName(b.supplierId)}{b.isMainSupplier ? " (main)" : ""}
+                              {uniqueSkuOptions(bindings).map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {resolveSupplierName(b.supplierId)}{b.supplierSku ? ` · ${b.supplierSku}` : ""}{b.isMainSupplier ? " (main)" : ""}
                                 </option>
                               ))}
                             </select>

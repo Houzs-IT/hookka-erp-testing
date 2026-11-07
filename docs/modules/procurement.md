@@ -146,3 +146,5 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 ## Which supplier a PO line defaults to
 
 `src/lib/cheapest-binding.ts`: the lowest valid MYR price among suppliers with a PI or PO for that code in the last 4 months (`lastOrderedAt` on `GET /api/supplier-materials`). Older bindings stay in the dropdown but do not auto-select. With no such price, the Main supplier comes up.
+
+One supplier can sell an Internal Code under two SKUs at two prices. PO dropdowns and the material picker key on the binding, one option per supplier + SKU (`uniqueSkuOptions`), so picking one brings its SKU and price.
