@@ -8,6 +8,7 @@
 //
 // Schema column `isMainSupplier` is INTEGER 0/1; we return it as boolean.
 // ---------------------------------------------------------------------------
+import { fabricCodeKey } from "../../lib/fabric-fifo";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -72,6 +73,41 @@ function rowToBinding(r: BindingRow) {
     priceValidTo: r.priceValidTo ?? "",
     isMainSupplier: r.isMainSupplier === 1,
   };
+}
+
+const lastOrderedKey = (supplierId: string, code: string | null) => `${supplierId}|${fabricCodeKey(code)}`;
+
+/** Latest PI or PO date per supplier + code, so the PO screen can tell who still supplies an item. */
+async function loadLastOrdered(db: D1Database, orgId: string): Promise<Map<string, string>> {
+  const [piRes, poRes] = await Promise.all([
+    db
+      .prepare(
+        `SELECT pi.supplierId AS "supplierId", pii.materialCode AS "code", MAX(pi.invoiceDate) AS "at"
+           FROM purchase_invoice_items pii
+           JOIN purchase_invoices pi ON pi.id = pii.piId
+          WHERE pi.orgId = ? AND pi.status <> 'CANCELLED' AND pii.materialCode IS NOT NULL
+          GROUP BY pi.supplierId, pii.materialCode`,
+      )
+      .bind(orgId)
+      .all<{ supplierId: string; code: string; at: string | null }>(),
+    db
+      .prepare(
+        `SELECT po.supplierId AS "supplierId", poi.material_code AS "code", MAX(po.orderDate) AS "at"
+           FROM purchase_order_items poi
+           JOIN purchase_orders po ON po.id = poi.purchaseOrderId
+          WHERE po.orgId = ? AND po.status <> 'CANCELLED' AND poi.material_code IS NOT NULL
+          GROUP BY po.supplierId, poi.material_code`,
+      )
+      .bind(orgId)
+      .all<{ supplierId: string; code: string; at: string | null }>(),
+  ]);
+  const out = new Map<string, string>();
+  for (const r of [...(piRes.results ?? []), ...(poRes.results ?? [])]) {
+    const key = lastOrderedKey(r.supplierId, r.code);
+    const at = String(r.at ?? "").slice(0, 10);
+    if (at > (out.get(key) ?? "")) out.set(key, at);
+  }
+  return out;
 }
 
 function todayIso(): string {
@@ -160,10 +196,12 @@ app.get("/", async (c) => {
   const res = await c.var.DB.prepare(sql)
     .bind(...binds)
     .all<BindingRow & { _supplierName?: string | null; _supplierCode?: string | null }>();
+  const lastOrdered = await loadLastOrdered(c.var.DB, orgId);
   const data = (res.results ?? []).map((r) => ({
     ...rowToBinding(r),
     supplierName: r._supplierName ?? "",
     supplierCode: r._supplierCode ?? "",
+    lastOrderedAt: lastOrdered.get(lastOrderedKey(r.supplierId, r.materialCode)) ?? "",
   }));
   return c.json({ success: true, data });
 });

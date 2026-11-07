@@ -1011,6 +1011,8 @@ export type SupplierMaterialBinding = {
    * was missing from this type, so the scanner could not see it.
    */
   supplierDescription?: string;
+  /** Latest PI or PO for this supplier and code; older than 4 months = no longer supplied. */
+  lastOrderedAt?: string;
   unitPrice: number;
   currency: "MYR" | "CNY";
   leadTimeDays: number;

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cheapestBinding, sortCheapestFirst } from "../src/lib/cheapest-binding.ts";
+import { cheapestBinding, monthsBefore, sortCheapestFirst } from "../src/lib/cheapest-binding.ts";
 
 const today = "2026-11-07";
-const b = (id, unitPrice, extra = {}) => ({ id, unitPrice, currency: "MYR", priceValidTo: "", isMainSupplier: false, ...extra });
+const b = (id, unitPrice, extra = {}) => ({ id, unitPrice, currency: "MYR", priceValidTo: "", isMainSupplier: false, lastOrderedAt: "2026-10-20", ...extra });
 
 test("the cheapest supplier comes up, not the Main one", () => {
   assert.equal(cheapestBinding([b("main", 1200, { isMainSupplier: true }), b("low", 1050)], today).id, "low");
@@ -35,4 +35,24 @@ test("the dropdown lists cheapest first and does not touch the input", () => {
   const list = [b("c", 300), b("a", 100), b("none", 0)];
   assert.deepEqual(sortCheapestFirst(list, today).map((x) => x.id), ["a", "c", "none"]);
   assert.equal(list[0].id, "c");
+});
+
+test("a supplier not ordered from in 4 months does not come up, however cheap", () => {
+  const list = [b("stale", 100, { lastOrderedAt: "2026-07-06" }), b("recent", 900, { lastOrderedAt: "2026-07-07" })];
+  assert.equal(cheapestBinding(list, today).id, "recent");
+});
+
+test("a supplier never ordered from does not come up", () => {
+  assert.equal(cheapestBinding([b("never", 100, { lastOrderedAt: "" }), b("recent", 900)], today).id, "recent");
+});
+
+test("nobody ordered from lately: the Main supplier still comes up", () => {
+  const list = [b("x", 100, { lastOrderedAt: "" }), b("main", 900, { lastOrderedAt: "", isMainSupplier: true })];
+  assert.equal(cheapestBinding(list, today).id, "main");
+});
+
+test("four months back keeps to a real date", () => {
+  assert.equal(monthsBefore("2026-11-07", 4), "2026-07-07");
+  assert.equal(monthsBefore("2026-06-30", 4), "2026-02-28");
+  assert.equal(monthsBefore("2026-02-15", 4), "2025-10-15");
 });
