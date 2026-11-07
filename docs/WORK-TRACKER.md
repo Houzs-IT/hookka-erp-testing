@@ -6987,3 +6987,4 @@ Asks, in order:
 91. PO line defaults to the cheapest supplier for the Internal Code, not the Main one (owner 2026-11-07).
 92. Merge duplicate raw material codes onto the commonly used code (owner 2026-11-07).
 93. A supplier with no PI or PO for a code in 4 months counts as no longer supplying it; bindings stay but do not auto-select (owner 2026-11-07).
+94. One supplier can carry two supplier SKUs on one Internal Code: the PO lets the buyer pick which, with its price (owner 2026-11-07).
