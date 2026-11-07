@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-11-06** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-07** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -118,7 +118,7 @@ offsets pointing past the end of their own file.
 | `/api/stock` | `src/api/routes/stock-breakdown.ts` | `GET /breakdown` <sub>:168</sub> | gated |
 | `/api/goods-in-transit` | `src/api/routes/goods-in-transit.ts` | `GET /` <sub>:95</sub><br>`POST /` <sub>:120</sub><br>`GET /:id` <sub>:244</sub><br>`PUT /:id` <sub>:259</sub><br>`DELETE /:id` <sub>:368</sub> | gated |
 | `/api/suppliers` | `src/api/routes/suppliers.ts` | `GET /` <sub>:306</sub><br>`POST /` <sub>:332</sub><br>`GET /:id` <sub>:465</sub><br>`POST /_backfill-snapshot-names` <sub>:495</sub><br>`PUT /:id` <sub>:517</sub><br>`DELETE /:id` <sub>:750</sub> | gated |
-| `/api/supplier-materials` | `src/api/routes/supplier-materials.ts` | `GET /` <sub>:137</sub><br>`POST /` <sub>:172</sub><br>`GET /:id` <sub>:306</sub><br>`PUT /:id` <sub>:318</sub><br>`DELETE /:id` <sub>:456</sub> | gated |
+| `/api/supplier-materials` | `src/api/routes/supplier-materials.ts` | `GET /` <sub>:173</sub><br>`POST /` <sub>:210</sub><br>`GET /:id` <sub>:344</sub><br>`PUT /:id` <sub>:356</sub><br>`DELETE /:id` <sub>:494</sub> | gated |
 | `/api/supplier-scorecards` | `src/api/routes/supplier-scorecards.ts` | `GET /` <sub>:47</sub><br>`GET /summary` <sub>:94</sub><br>`GET /:supplierId` <sub>:182</sub> | gated |
 | `/api/price-history` | `src/api/routes/price-history.ts` | `GET /` <sub>:59</sub><br>`POST /` <sub>:103</sub> | gated |
 | `/api/auth/oauth` | `src/api/routes/auth-oauth.ts` | `GET /google/start` <sub>:52</sub><br>`GET /google/callback` <sub>:97</sub> | **public** (PUBLIC_PREFIXES) |
