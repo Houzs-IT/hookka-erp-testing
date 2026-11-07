@@ -5,6 +5,8 @@ import { applyWipInventoryChange, type JobCardRow, type ProductionOrderRow } fro
 import { consumeRawMaterialsForPO, postJobCardLabor } from "../../lib/po-cost-cascade";
 import { loadLeadTimes, type LeadTimeMap } from "../../lib/lead-times";
 import { getOrgId } from "../../lib/tenant";
+import { emitAudit } from "../../lib/audit";
+import { loadRmMerge, rmMergeStatements } from "../../lib/rm-merge-data";
 import { ensureJobCardCompletedAt } from "../../lib/job-card-completed-at";
 import { breakBomIntoWips, type BomVariantContext } from "../../lib/bom-wip-breakdown";
 import { findJobCardsByPO, loadProductionOrderById, CASCADE_DATE_CLAMP, addDaysISO, UPH_POFOLD_TARGET_DEPTS, UPH_POFOLD_DEPT_ORDER, type UphPofoldCandidate, type FcCandidate, type RefundCandidateRow, type RefundSiblingRow, type RebuildJcRow, type RebuildPoRow, type RebuildWipRow, type JcBackfillRow, type DriftSample, ACTIVE_JC_STATUSES, COMPLETED_JC_STATUSES, type RefreshJcRow } from "./_shared";
@@ -2907,6 +2909,56 @@ app.post("/cleanup-headboard-only-divans", async (c) => {
     deletedFgUnits,
     skippedDueToLocks: { jcs: skippedJcs, fgUnits: skippedFgUnits },
     sample,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /merge-raw-material-codes — merges duplicate raw material rows onto the
+// code people use (owner 2026-11-07). Stock batches, cost ledger rows and
+// supplier bindings move to the kept row. The retired row stays, inactive, and
+// the audit event holds the plan, so it can be undone. Past PO and PI lines keep
+// the code they were written with.
+// dryRun=true → the plan only (default).
+// ---------------------------------------------------------------------------
+app.post("/merge-raw-material-codes", async (c) => {
+  const denied = await requirePermission(c, "production-orders", "update");
+  if (denied) return denied;
+  const dryRun = c.req.query("dryRun") !== "false";
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const load = await loadRmMerge(db, orgId);
+  const code = (r: { itemCode: string }) => r.itemCode.trim().toUpperCase();
+  const groups = load.plan.groups.map((g) => ({
+    keep: {
+      id: g.keep.id,
+      code: g.keep.itemCode,
+      description: g.description ?? g.keep.description,
+      used: load.usageByCode.get(code(g.keep)) ?? 0,
+      stock: load.stockByRow.get(g.keep.id) ?? 0,
+    },
+    retire: g.losers.map((l) => ({
+      id: l.id,
+      code: l.itemCode,
+      description: l.description,
+      used: load.usageByCode.get(code(l)) ?? 0,
+      stock: load.stockByRow.get(l.id) ?? 0,
+      balanceQty: load.balanceByRow.get(l.id) ?? 0,
+    })),
+  }));
+  if (!dryRun) {
+    await db.batch(rmMergeStatements(db, orgId, load));
+    await emitAudit(c, {
+      resource: "raw-materials",
+      resourceId: "code-merge",
+      action: "update",
+      after: { groups },
+    });
+  }
+  return c.json({
+    success: true,
+    dryRun,
+    groups,
+    skippedMixedGroup: load.plan.skippedMixedGroup.map((g) => g.map((r) => ({ code: r.itemCode, group: r.itemGroup }))),
   });
 });
 
