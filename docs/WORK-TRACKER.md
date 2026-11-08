@@ -290,7 +290,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
-## Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
+## 🔵 Cash Flow forecast (feat/cashflow-forecast, 2026-11-08)
+Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少钱，用多少钱」, settled item by item, then 「做」. Design: `docs/superpowers/specs/2026-11-08-cash-flow-forecast-design.md`; plan: `docs/superpowers/plans/2026-11-08-cash-flow-forecast.md`.
+1. 🔵 Batch 1, engine and endpoint: shared Forecast P&L figures (`src/lib/forecast-pnl.ts`); pure schedule (`src/lib/cashflow-forecast.ts`); forecast columns in `buildStatement`; `GET /cashflow-forecast`; `POST /cash-position/planned/:id/paid`. Prod check: the reused routes byte-identical before and after.
+2. ⚪ Batch 2, the page: a Forecast toggle on the Cash Flow tab (Actual and Forecast columns per month, future months, red forecast cells, drill), Mark paid on Daily Cash Position.
+3. 🟡 Owner data before go-live: the real supplier terms (12 suppliers, names in the handover file) and which customers are on 2-month terms.
+4. Not done here: the Finance Dashboard keeps its own copy of the Forecast P&L amount rule.
+
+## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
+Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
 Ask (owner): check the Finance Dashboard Cash Flow card against the report, then fix what is wrong; three replies on how it should count.
 1. MEASURED read-only on production: Net change = the statement's Cash Surplus = bank c/f − b/f in every month; Operating = Net operation surplus; Money in − Money out = Net change.
 2. FIXED (BUG-2026-11-08-419): the Investing and Financing tabs were 0 in every month. They read `subtotal` rows the statement only emits for Revenue Collection; now summed from the statement's lines by section (`src/lib/cashflow-card.ts`).
