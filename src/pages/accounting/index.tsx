@@ -18894,6 +18894,9 @@ type CfForecastData = CfApiData & {
   openingYm?: string | null;
   termFlagged?: string[];
   excluded?: { ym: string; code: string; name: string; amtSen: number }[];
+  // Customer receipts not knocked off from the opening period, left out of
+  // the netting (owner 2026-11-09).
+  openingCredits?: { uptoYm: string; count: number; sen: number } | null;
   forecastSources?: Record<string, Record<string, CfForecastSource[]>>;
 };
 // The four raw-material template categories a supplier can be assigned to
@@ -19739,6 +19742,12 @@ function CashFlowTab() {
           </p>
           {(fcData.termFlagged?.length ?? 0) > 0 && <p>Term blank or unreadable, taken as 1 month: {(fcData.termFlagged ?? []).join(", ")}.</p>}
           {(fcData.excluded?.length ?? 0) > 0 && <p>Not forecast (no cash moves): {[...new Set((fcData.excluded ?? []).map((e) => e.name))].join(", ")}.</p>}
+          {fcData.openingCredits && (
+            <p>
+              Customer receipts not knocked off and dated up to {cfYmLabel(fcData.openingCredits.uptoYm)} (opening period) are not netted:{" "}
+              {fcData.openingCredits.count} receipt{fcData.openingCredits.count === 1 ? "" : "s"}, {formatCurrency(fcData.openingCredits.sen)}. The invoices still count.
+            </p>
+          )}
         </div>
       )}
     </div>

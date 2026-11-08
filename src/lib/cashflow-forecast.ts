@@ -111,6 +111,30 @@ export function scheduleOpenDocs(docs: readonly OpenDoc[], termOf: (d: OpenDoc) 
   return out;
 }
 
+/** The last month whose customer receipts not knocked off are left out of the
+ *  netting: the month after the opening month (owner 2026-11-09 「把这些初期的
+ *  排除掉」, narrowed to the customers' receipts). Such receipts pay invoices
+ *  from before the opening that the system does not hold yet. Null without an
+ *  opening month. */
+export function openingCreditCutoffYm(openingYm: string | null): string | null {
+  return openingYm ? addMonthsYm(openingYm, 1) : null;
+}
+
+/** Splits the opening-period customer receipts off an aging, before
+ *  scheduleOpenDocs nets credits: a customer credit dated up to `cutoffYm`
+ *  waits for the opening balances instead of lowering current invoices.
+ *  Invoices and supplier payments stay whatever their date. */
+export function splitOpeningCredits(docs: readonly OpenDoc[], cutoffYm: string | null): { kept: OpenDoc[]; leftOut: OpenDoc[] } {
+  if (!cutoffYm) return { kept: [...docs], leftOut: [] };
+  const kept: OpenDoc[] = [];
+  const leftOut: OpenDoc[] = [];
+  for (const d of docs) {
+    const opening = d.kind === "invoice" && d.sen < 0 && /^\d{4}-\d{2}/.test(d.date) && d.date.slice(0, 7) <= cutoffYm;
+    (opening ? leftOut : kept).push(d);
+  }
+  return { kept, leftOut };
+}
+
 /** Sort order of the past-term line: last in its section, after the line the
  *  same money lands on when it is on time (owner reads TRADE DEBTORS, then
  *  what is overdue). Under Raw Materials it also stays flat (rmLineOrder). */

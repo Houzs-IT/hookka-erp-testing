@@ -1,6 +1,6 @@
 # Cash Flow forecast — design
 
-> **Last verified: 2026-11-08** against `src/api/routes/accounting.ts`, `src/lib/cashflow-engine.ts`, `src/lib/terms.ts`, `src/pages/forecast.tsx` and read-only production data.
+> **Last verified: 2026-11-09** against `src/api/routes/accounting.ts`, `src/lib/cashflow-engine.ts`, `src/lib/cashflow-forecast.ts`, `src/lib/terms.ts`, `src/pages/forecast.tsx` and read-only production data.
 
 > Status: design agreed with the owner in chat, 2026-11-06 to 2026-11-08. The owner said 做
 > (build it) on 2026-11-08. Build plan: `docs/superpowers/plans/2026-11-08-cash-flow-forecast.md`.
@@ -111,6 +111,14 @@ existing features look similar but are not this one:
   - Netting stops at zero, and leftover credit is never a negative receipt. [my call]
   - Money that reached the bank but was never recorded is unknown to the system and is not
     netted. [owner understood this]
+  - **Opening period [owner, 2026-11-09 「把这些初期的排除掉」, narrowed to 「…的收款就行」].** A
+    customer receipt not knocked off and dated up to the end of the month after the opening month
+    (with the May opening: up to 30 June) is not netted. Such receipts pay invoices from before
+    the opening that the system does not hold yet; they wait for the customers' opening balances
+    instead of lowering what current invoices are expected to bring. The invoices themselves still
+    count. Supplier payments are unchanged. A footnote under the statement gives how many were
+    left out and their total. [my call: the rule is by date, not by customer name, and it applies
+    to every as-at aging, so past months' baselines follow it too]
 - **Past term, still unpaid.** One row, "Overdue (past term)", counted in the current month. If
   it stays unpaid, next month counts it again in the same way, so it accumulates. [owner]
 - **Not-yet-invoiced sales are not filled.** [owner, 先不补] So the months furthest out show only
