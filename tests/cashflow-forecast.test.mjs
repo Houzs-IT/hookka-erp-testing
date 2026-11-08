@@ -91,7 +91,7 @@ test("baseline column: earlier lines are overdue, this month's are due, later on
   const legs = fc.docLegsForColumn(docs, "2026-11", "baseline", notControl);
   assert.equal(legs.length, 2);
   const over = legs.find((l) => l.item.ref === "A");
-  assert.deepEqual([over.col, over.sen, over.label, over.order], ["fc:2026-11", 100, cf.OVERDUE_LABEL, 98]);
+  assert.deepEqual([over.col, over.sen, over.label, over.order], ["fc:2026-11", 100, cf.OVERDUE_LABEL, fc.OVERDUE_ORDER]);
   const due = legs.find((l) => l.item.ref === "B");
   assert.deepEqual([due.sen, due.label, due.accountCode], [200, undefined, "300-0000"]);
   const fut = fc.docLegsForColumn(docs, "2026-12", "future", notControl);

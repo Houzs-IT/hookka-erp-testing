@@ -58,6 +58,20 @@ test("an overdue raw-material amount is one flat line, not nested under a purcha
   assert.equal(cf.rmLineOrder(cf.OVERDUE_LABEL), 98);
 });
 
+test("the past-term line sits after the trade line it belongs with (prod 2026-11-08: it sorted first)", async () => {
+  const fcMod = await import(pathToFileURL(resolve(process.cwd(), "src/lib/cashflow-forecast.ts")).href);
+  const st = run([
+    { col: "fc:2026-11", sen: 900, accountCode: "300-0000", label: cf.OVERDUE_LABEL, order: fcMod.OVERDUE_ORDER, item: item("OLD") },
+    { col: "fc:2026-11", sen: 500, accountCode: "300-0000", item: item("NEW") },
+  ]);
+  const labels = st.rows.filter((r) => r.kind === "line" && r.section === "REVENUE_COLLECTION").map((r) => r.label);
+  assert.deepEqual(labels, ["TRADE DEBTORS", cf.OVERDUE_LABEL]);
+  const rm = run([{ col: "fc:2026-11", sen: -700, accountCode: "400-0000", label: cf.OVERDUE_LABEL, order: fcMod.OVERDUE_ORDER, item: item("PI-1") }]);
+  const rmLines = rm.rows.filter((r) => r.kind === "line" && r.section === "RAW_MATERIALS").map((r) => r.label);
+  assert.equal(rmLines[rmLines.length - 1], cf.OVERDUE_LABEL, "last under Raw Materials too");
+  assert.equal(rm.rows.find((r) => r.lineKey === `RAW_MATERIALS|${cf.OVERDUE_LABEL}`).groupId, "RAW_MATERIALS", "and still flat");
+});
+
 test("a forecast purchase invoice splits by its materials like an actual payment", () => {
   const st = run(
     [{ col: "fc:2026-11", sen: -400, accountCode: "400-0000", splitKey: "fc:pi:1", item: item("PI-1") }],
