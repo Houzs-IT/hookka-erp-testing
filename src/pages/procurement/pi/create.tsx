@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { formatCurrency } from "@/lib/utils";
 import { roundUnitPriceSen, allocateDiscountSen } from "@/lib/unit-price";
 import { DiscountInput } from "@/components/ui/discount-input";
@@ -149,6 +150,9 @@ export default function CreatePurchaseInvoicePageWrapper() {
 function CreatePurchaseInvoicePage() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  // The server already honours the key (purchase-invoices.ts POST); without it
+  // a retry after a lost response could bill the same invoice twice.
+  const piIdem = useIdempotencyKey();
   const [searchParams] = useSearchParams();
 
   // Data fetches — same endpoints as pi.tsx; cache is shared.
@@ -582,11 +586,13 @@ function CreatePurchaseInvoicePage() {
       if (sourceGrnId) {
         payload.grnId = sourceGrnId;
       }
-      const res = await fetch("/api/purchase-invoices", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = await piIdem.withKey((key) =>
+        fetch("/api/purchase-invoices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body: JSON.stringify(payload),
+        }),
+      );
       const j = (await res.json().catch(() => null)) as
         | { success?: boolean; error?: string; data?: { piNo?: string } }
         | null;

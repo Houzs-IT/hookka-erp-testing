@@ -36,6 +36,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { useIdempotencyKeys } from "@/lib/idempotency-key";
 import { formatCurrency, formatRM } from "@/lib/utils";
 import {
   roundUnitPriceSen,
@@ -81,6 +82,9 @@ export default function CreatePurchaseOrderPageWrapper() {
 function CreatePurchaseOrderPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  // One key per PO being created: a retry after a lost response replays that PO
+  // instead of creating a second one (the per-supplier split makes several).
+  const poIdem = useIdempotencyKeys();
   const { confirm } = useConfirm();
 
   // Data fetches — same endpoints procurement/index.tsx uses, so
@@ -425,11 +429,13 @@ function CreatePurchaseOrderPage() {
     }
     setSaving(true);
     try {
-      const res = await fetch("/api/purchase-orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload()),
-      });
+      const res = await poIdem.withKey("single", (key) =>
+        fetch("/api/purchase-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body: JSON.stringify(buildPayload()),
+        }),
+      );
       const body = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; data?: { id?: string } };
       if (!res.ok || !body.success) {
         toast.error(body.error || `Failed to create PO (HTTP ${res.status})`);
@@ -500,11 +506,13 @@ function CreatePurchaseOrderPage() {
       for (let i = 0; i < groups.length; i++) {
         const g = groups[i];
         try {
-          const res = await fetch("/api/purchase-orders", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(g),
-          });
+          const res = await poIdem.withKey(`supplier:${g.supplierId ?? g.supplierName}`, (key) =>
+            fetch("/api/purchase-orders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+              body: JSON.stringify(g),
+            }),
+          );
           const body = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
           if (!res.ok || !body.success) {
             failures.push({

@@ -7008,3 +7008,4 @@ Asks, in order:
 93. A supplier with no PI or PO for a code in 4 months counts as no longer supplying it; bindings stay but do not auto-select (owner 2026-11-07).
 94. One supplier can carry two supplier SKUs on one Internal Code: the PO lets the buyer pick which, with its price (owner 2026-11-07).
 95. From the Houzs / Conts review (owner 2026-11-08): do the approved list. Hookka allows over-receipt (no guard); PO price 0 is fine, stock cost follows the PI price. First: paged lists end their sort on the id.
+96. PO, GRN and PI create screens send an Idempotency-Key; PO create honours it (from the Houzs review, owner 2026-11-08).
