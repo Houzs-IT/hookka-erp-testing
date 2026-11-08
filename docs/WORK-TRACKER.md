@@ -289,6 +289,16 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
+Ask (owner): check the Finance Dashboard Cash Flow card against the report, then fix what is wrong; three replies on how it should count.
+1. MEASURED read-only on production: Net change = the statement's Cash Surplus = bank c/f − b/f in every month; Operating = Net operation surplus; Money in − Money out = Net change.
+2. FIXED (BUG-2026-11-08-419): the Investing and Financing tabs were 0 in every month. They read `subtotal` rows the statement only emits for Revenue Collection; now summed from the statement's lines by section (`src/lib/cashflow-card.ts`).
+3. DECIDED with the owner: Free cash flow = operating − capex (was operating alone).
+4. DECIDED with the owner: Trade Finance counts as Financing.
+5. DECIDED with the owner: a move between our own bank and cash accounts (a petty-cash top-up) is not money in or out; money in / out net each entry's bank legs first. Net change unchanged.
+6. OPEN, owner's entry: petty-cash reimbursements are recorded as fund transfers into Cash in Hand and almost no spending from it is recorded, so those expenses are not in the statement by purpose.
+7. Not discussed: Unallocated stays outside the three tabs.
 design/mobile-home-dashboard
 ## Bedframe Price 3 (feat/bedframe-price3-main, 2026-11-05)
 Ask (client): a Price 3 column beside Price 1 and Price 2 for every bedframe, Price 3 = Price 2 x 1.10 rounded to 2 decimals, for existing and new bedframes, and in the customer price list.

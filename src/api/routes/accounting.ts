@@ -62,6 +62,7 @@ import { loadPreparedProduction, mytDay } from "../lib/production-stock";
 import { productionStockDetailAt, costedWipRows, completedPriceSen, costRatio, type PreparedProduction, type PsWipRow } from "../../lib/production-stock";
 import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDrill, stockDrillRows, type ClosingStock } from "../../lib/bs-stock";
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
+import { bankInOutByMonth, cashFlowCardMonth, freeCashFlow } from "../../lib/cashflow-card";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
 import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt, parseTfLimitSen } from "../lib/trade-finance";
@@ -10817,7 +10818,7 @@ async function computeCashflowStatement(
     if (!hasBank && !viaTf) continue;
     for (const l of legs) {
       if (bankCodes.has(l.code)) {
-        bankLegs.push({ accountCode: l.code, debitSen: l.debitSen, creditSen: l.creditSen, ym: l.ym });
+        bankLegs.push({ accountCode: l.code, debitSen: l.debitSen, creditSen: l.creditSen, ym: l.ym, entry: `${l.sourceType}::${l.sourceId}` });
       } else if (!opening) {
         if (tfAccounts.has(l.code)) {
           // The facility leg, as posted: CR = the lender lent (negative in the
@@ -11306,14 +11307,10 @@ async function computeCashflowStatement(
   // here rather than by summing statement lines: the statement's line values
   // carry a per-SECTION display sign, so a salary payment reads positive under
   // "COST / EXPENSE OUT" — summing those gave an in/out pair that didn't add
-  // up to the cash surplus. Bank legs tie to it by construction.
-  const bankByMonth = new Map<string, { inflow: number; outflow: number }>();
-  for (const l of bankLegs) {
-    const cur = bankByMonth.get(l.ym) ?? { inflow: 0, outflow: 0 };
-    cur.inflow += Number(l.debitSen) || 0;
-    cur.outflow -= Number(l.creditSen) || 0;
-    bankByMonth.set(l.ym, cur);
-  }
+  // up to the cash surplus. Bank legs tie to it by construction. Netted per
+  // entry, so a move between our own bank / cash accounts (a petty-cash
+  // top-up) is neither in nor out (owner 2026-11-08, BUG-2026-11-08-419).
+  const bankByMonth = bankInOutByMonth(bankLegs);
   return { ...statement, bankByMonth, drill };
 }
 
@@ -16295,21 +16292,17 @@ app.get("/dashboard", async (c) => {
       const w = fyWindowAt(ym, fySchedD);
       fyKeys.set(w.startIso, ym);
     }
-    const rowVal = (
-      rowsCf: { kind: string; label: string; section?: string; values: (number | null)[] }[],
-      idx: number,
-      pred: (r: { kind: string; label: string; section?: string }) => boolean,
-    ) => rowsCf.filter(pred).reduce((s, r) => s + (Number(r.values[idx]) || 0), 0);
     for (const anchor of fyKeys.values()) {
       const st = await computeCashflowStatement(db, anchor, false, orgIdDash);
       const cols = (st.columns ?? []) as { key: string; accum?: boolean }[];
       const rowsCf = (st.rows ?? []) as { kind: string; label: string; section?: string; values: (number | null)[] }[];
       cols.forEach((col, i) => {
         if (col.accum || !/^\d{4}-\d{2}$/.test(col.key) || cfByMonth.has(col.key)) return;
-        const operating = rowVal(rowsCf, i, (r) => r.kind === "result" && /operation surplus/i.test(r.label));
-        const investing = rowVal(rowsCf, i, (r) => r.kind === "subtotal" && r.section === "CAPEX");
-        const financing = rowVal(rowsCf, i, (r) => r.kind === "subtotal" && (r.section === "LOAN" || r.section === "DEPOSIT" || r.section === "FINANCE_COST"));
-        const net = rowVal(rowsCf, i, (r) => r.kind === "total" && /Cash Surplus/i.test(r.label));
+        // BUG-2026-11-08-419: investing / financing summed from the lines by
+        // section (they used to read subtotal rows the statement never emits
+        // for those sections, so both tabs were 0); financing includes Trade
+        // Finance (owner 2026-11-08).
+        const { operating, investing, financing, net } = cashFlowCardMonth(rowsCf, i);
         // Owner 2026-07-30: money IN vs money OUT, and the account-level
         // detail behind them. The statement's `line` rows already carry the
         // display sign (inflow +, outflow −), so the split is a sign filter.
@@ -16535,7 +16528,7 @@ app.get("/dashboard", async (c) => {
       },
       cashFlow: {
         ...cf,
-        freeCashFlow: cf.operating, // owner: treat as no fixed assets
+        freeCashFlow: freeCashFlow(cf), // operating − capex (owner 2026-11-08; was operating alone)
         lines: [...cfLines.values()].filter((l) => l.value !== 0).sort((a, b) => a.section.localeCompare(b.section) || b.value - a.value),
       },
       balanceSheet: bs,
