@@ -22,7 +22,7 @@ import { forecastSnapshot } from "@/lib/forecast-snapshot";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { monthHasDeptForecast } from "@/lib/salary-dept";
-import { forecastLineGroups, forecastMonthFigures, type FcEntry, type FcMonth } from "@/lib/forecast-pnl";
+import { forecastDepts, forecastLineGroups, forecastMonthFigures, type FcEntry, type FcMonth } from "@/lib/forecast-pnl";
 // One money parser. NOTE `strToBp` below is a PERCENTAGE and deliberately
 // keeps `parseFloat` - it is not money and is not in this fix's scope.
 import { parseMoneyInput } from "@/lib/parse-money";
@@ -178,15 +178,7 @@ export default function ForecastPage() {
         const deptData = deptJ?.data as
           | { departments?: { code?: string; bucket?: string }[] | string[]; mappedAccounts?: string[] }
           | undefined;
-        const live = new Map<string, string>();
-        for (const d of deptData?.departments ?? []) {
-          if (typeof d === "string") { if (d) live.set(d, "DIRECT_LABOUR"); }
-          else if (d?.code) live.set(String(d.code), String(d.bucket ?? "DIRECT_LABOUR"));
-        }
-        for (const mm of Object.values(next))
-          for (const k of Object.keys(mm.pct))
-            if (k.startsWith("dept:") && !live.has(k.slice(5))) live.set(k.slice(5), "DIRECT_LABOUR");
-        setDeptInfo([...live.entries()].map(([code, bucket]) => ({ code, bucket })).sort((a, b) => a.code.localeCompare(b.code)));
+        setDeptInfo(forecastDepts(deptData?.departments ?? [], Object.values(next).map((mm) => mm.pct)));
         setMappedAccounts(new Set((deptData?.mappedAccounts ?? []).filter((a): a is string => typeof a === "string")));
         // Saved figures exist → start with empty lines hidden (owner rule);
         // a fresh page shows everything so the first month can be keyed.

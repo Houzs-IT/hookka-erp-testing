@@ -26,7 +26,9 @@ try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
 const cf = await import(pathToFileURL(resolve(process.cwd(), "src/lib/cashflow-engine.ts")).href);
 
 const api = readFileSync("src/api/routes/accounting.ts", "utf8").replace(/\r\n/g, "\n");
-const body = api.slice(api.indexOf("async function computeCashflowStatement("), api.indexOf('app.get("/cashflow-statement"'));
+// From the PI material weights (loadPiMaterialWeights, moved out of the
+// statement 2026-11-08 to be shared with the forecast) to the statement route.
+const body = api.slice(api.indexOf("async function loadPiMaterialWeights("), api.indexOf('app.get("/cashflow-statement"'));
 
 test("finance-cost accounts default to the Finance Cost block (found by the parent's NAME), owner's drag wins", () => {
   assert.match(body, /const financeParents = new Set\(\[\.\.\.coa\.values\(\)\]\.filter\(\(a\) => \/\^FINANCE COSTS\?\$\/i\.test\(a\.name\.trim\(\)\)\)\.map\(\(a\) => a\.code\)\);/);

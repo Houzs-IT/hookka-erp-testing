@@ -137,7 +137,9 @@ test("trade finance as at the date: the draws rebuilt from the ledger lines date
 
 test("/aging: a past asOf builds fresh; PAID items count, later items don't; ages measured at the date", () => {
   const api = read("src/api/routes/accounting.ts");
-  const at = api.indexOf('app.get("/aging"');
+  // The aging is computed in computeAgingData (2026-11-08, shared with the Cash
+  // Flow forecast), right above the route that serves it.
+  const at = api.indexOf("async function computeAgingData(");
   const block = api.slice(at, api.indexOf('app.post("/aging"', at));
   assert.match(block, /const asOf = \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(asOfQ\) && asOfQ < new Date\(\)\.toISOString\(\)\.slice\(0, 10\) \? asOfQ : null;/);
   assert.match(block, /const data = asOf\n\s*\? await buildAging\(\)\n\s*: await withSnapshot\(c\.var\.DB, snapshotConfig, orgId, buildAging, cacheKey\);/);
@@ -148,12 +150,12 @@ test("/aging: a past asOf builds fresh; PAID items count, later items don't; age
   assert.match(block, /monthsOverdue\(i\.invoiceDate \?\? i\.dueDate, nowRef\)/);
   assert.match(block, /monthsOverdue\(p\.invoiceDate \?\? p\.dueDate, nowRef\)/);
   assert.match(block, /if \(asOf && String\(n\.date \?\? ""\)\.slice\(0, 10\) > asOf\) continue;/);
-  assert.match(block, /const derived = asOf \? await loadTfDrawsAt\(c\.var\.DB, s, asOf\) : await loadTfDraws\(c\.var\.DB, s\);/);
+  assert.match(block, /const derived = asOf \? await loadTfDrawsAt\(db, s, asOf\) : await loadTfDraws\(db, s\);/);
   // The other two reads the aging page makes take the date too.
   assert.match(api, /owedAt\(pre \? 0 : r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\)/, "a pre-opening bill counts for what was paid after the date");
   assert.match(api, /\.filter\(\(r\) => asOf \|\| !rowBeforeOpening\(r\.billDate, obDateOpa, r\.isOpening \?\? r\.is_opening\)\)/);
   assert.match(api, /b\.billDate <= \?/);
-  assert.equal((api.match(/const derived = asOf \? await loadTfDrawsAt\(c\.var\.DB, s, asOf\) : await loadTfDraws\(c\.var\.DB, s\);/g) ?? []).length, 2, "/aging and /trade-finance");
+  assert.equal((api.match(/const derived = asOf \? await loadTfDrawsAt\((?:c\.var\.DB|db), s, asOf\) : await loadTfDraws\((?:c\.var\.DB|db), s\);/g) ?? []).length, 2, "/aging and /trade-finance");
 });
 
 test("the pages: a month stepper; a past month reads ?asOf= and the trial balance as at then", () => {
@@ -194,8 +196,8 @@ test("money received / paid by the date but knocked off a document dated after i
   assert.deepEqual(b.get("s-1"), { name: "S", items: [{ no: "PV-1", date: "2026-09-28", sen: 5000 }] }, "one advance per payment");
   // The aging merges them into the advance lines.
   const api = read("src/api/routes/accounting.ts");
-  assert.match(api, /for \(const \[id, a\] of await supplierPaymentsAheadOf\(c\.var\.DB, orgId, asOf, piDate\)\)/);
-  assert.match(api, /for \(const \[id, a\] of await receiptsAheadOf\(c\.var\.DB, asOf, invDate\)\)/);
+  assert.match(api, /for \(const \[id, a\] of await supplierPaymentsAheadOf\(db, orgId, asOf, piDate\)\)/);
+  assert.match(api, /for \(const \[id, a\] of await receiptsAheadOf\(db, asOf, invDate\)\)/);
   assert.match(api, /for \(const \[supplierId, adv\] of supAdv\) \{/);
   assert.match(api, /for \(const \[customerId, adv\] of custAdv\) \{/);
 });

@@ -34,7 +34,9 @@ test("one definition of 'postable': a parent is never postable", () => {
 
 test("the journal post, the account list and the COA editor all honour it", () => {
   assert.match(api, /if \(\(acct\.isPostable \?\? 1\) === 0 \|\| \(await accountHasChildren\(c\.var\.DB, l\.accountCode\)\)\) \{/);
-  const get = api.slice(api.indexOf('app.get("/coa", async (c) => {'), api.indexOf('app.post("/coa", async (c) => {'));
+  // GET /coa serves loadCoaList (2026-11-08, shared with the Cash Flow forecast).
+  const get = api.slice(api.indexOf("async function loadCoaList("), api.indexOf('app.post("/coa", async (c) => {'));
+  assert.match(get, /const data = await loadCoaList\(c\.var\.DB, includeInactive\);/);
   assert.match(get, /return parents\.has\(row\.code\) \? \{ \.\.\.row, isPostable: false \} : row;/);
   const put = api.slice(api.indexOf('app.put("/coa", async (c) => {'), api.indexOf("\napp.", api.indexOf('app.put("/coa", async (c) => {') + 10));
   assert.match(put, /if \(await accountHasChildren\(c\.var\.DB, String\(code\)\)\) \{\s*\n\s*if \(body\.isPostable === true\) \{/);

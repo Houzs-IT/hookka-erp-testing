@@ -30,6 +30,25 @@ export type FcLineGroups = {
   expenses: FcAccount[];
 };
 
+/** The department rows: the departments master (GET /labor/departments,
+ *  each with its bucket) plus any department already keyed in the saved
+ *  months — a keyed dept must never vanish from the grid; one the master no
+ *  longer knows files under DIRECT_LABOUR. Sorted by code. */
+export function forecastDepts(
+  master: readonly (string | { code?: string; bucket?: string })[],
+  monthPcts: Iterable<Record<string, unknown> | undefined>,
+): FcDept[] {
+  const live = new Map<string, string>();
+  for (const d of master) {
+    if (typeof d === "string") { if (d) live.set(d, "DIRECT_LABOUR"); }
+    else if (d?.code) live.set(String(d.code), String(d.bucket ?? "DIRECT_LABOUR"));
+  }
+  for (const pct of monthPcts)
+    for (const k of Object.keys(pct ?? {}))
+      if (k.startsWith("dept:") && !live.has(k.slice(5))) live.set(k.slice(5), "DIRECT_LABOUR");
+  return [...live.entries()].map(([code, bucket]) => ({ code, bucket })).sort((a, b) => a.code.localeCompare(b.code));
+}
+
 export const FC_CARRIAGE = "700-1015";
 export const FC_SST = "706-0000";
 

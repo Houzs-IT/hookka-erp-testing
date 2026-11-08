@@ -69,7 +69,7 @@ test("unapplied customer advances are netted off the AR control", () => {
 });
 
 test("…and appear in the AR aging as negative rows, like the supplier side", () => {
-  assert.match(ACC, /loadUnappliedCustomerAdvances\(c\.var\.DB, orgId\)/);
+  assert.match(ACC, /loadUnappliedCustomerAdvances\(db, orgId\)/); // inside computeAgingData
   assert.match(ACC, /no: `\$\{it\.receiptNumber\} · Advance`/);
   assert.match(ACC, /amountSen: -it\.sen,/);
 });

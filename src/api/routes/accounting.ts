@@ -19,7 +19,7 @@ import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
 import { requirePermission, requireFinance, hasPermission } from "../lib/rbac";
 import { monthsOverdue, nextMonthDueDate } from "../../lib/terms";
-import { getOrgId, companyFilter } from "../lib/tenant";
+import { getOrgId, companyFilter, type CompanyFilter } from "../lib/tenant";
 import {
   buildJournalEntryStatements,
   ledgerHasSource,
@@ -36,8 +36,23 @@ import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, re
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
-import { buildStatement, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
-import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection } from "../../lib/cashflow-engine";
+import { buildStatement, fyMonths, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
+import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection, ForecastColumn, ForecastLeg } from "../../lib/cashflow-engine";
+import {
+  addMonthsYm,
+  buildForecastLegs,
+  forecastCashLines,
+  isNonCashAccount,
+  parseTermMonths,
+  piIdIndex,
+  scheduleOpenDocs,
+  type FcCashLine,
+  type OpenDoc,
+  type PlannedPayment,
+  type ScheduledDoc,
+  type TermInfo,
+} from "../../lib/cashflow-forecast";
+import { forecastDepts, forecastLineGroups, type FcMonth } from "../../lib/forecast-pnl";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
@@ -82,6 +97,8 @@ import {
   validateBillShape,
   buildBillLegs,
   editedBillStatus,
+  OTHER_CREDITOR_CONTROL,
+  OTHER_DEBTOR_CONTROL,
   type PartyType,
   type BillItemInput,
 } from "../../lib/other-party-bill";
@@ -560,6 +577,333 @@ async function loadUnappliedCustomerAdvancesUntimed(
 }
 const loadUnappliedCustomerAdvances = timedFn("customer-advances", loadUnappliedCustomerAdvancesUntimed);
 
+// The Debtor / Creditor Aging — live, or as at a past date (`asOf`, rolled
+// back from today, src/api/lib/aging-as-at.ts). GET /aging serves it through
+// its snapshot; the Cash Flow forecast reads the very same open items as at
+// the 1st of each month (spec 2026-11-08-cash-flow-forecast-design.md 4).
+async function computeAgingData(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  asOf: string | null,
+  coFilter: CompanyFilter,
+) {
+  const arWhere = coFilter.active ? ` WHERE ${coFilter.sql}` : "";
+  const apWhere = coFilter.active ? ` WHERE ${coFilter.sql}` : "";
+  const nowRef = asOf ? asAtNow(asOf) : undefined;
+  const [invRes, piRes, cnAgRes, dnAgRes, custCodeRes, supCodeRes] = await Promise.all([
+    db.prepare(
+      `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
+    )
+      .bind(...(coFilter.active ? [coFilter.param] : []))
+      .all<{
+      id: string;
+      customerId: string;
+      customerName: string;
+      invoiceNo?: string | null;
+      invoice_no?: string | null;
+      totalSen: number;
+      paidAmount: number;
+      status: string;
+      dueDate: string | null;
+      invoiceDate: string | null;
+      isOpening: number | null;
+    }>(),
+    db.prepare(
+      `SELECT id, supplierId, supplierName, piNo, amountSen, paidAmountSen, status, dueDate, invoiceDate, isOpening FROM purchase_invoices${apWhere}`,
+    )
+      .bind(...(coFilter.active ? [coFilter.param] : []))
+      .all<{
+      id: string;
+      supplierId: string;
+      supplierName: string;
+      piNo?: string | null;
+      pi_no?: string | null;
+      amountSen: number;
+      paidAmountSen?: number | null;
+      paid_amount_sen?: number | null;
+      status: string;
+      dueDate: string | null;
+      invoiceDate: string | null;
+      isOpening: number | null;
+    }>(),
+    db.prepare(
+      "SELECT invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')",
+    ).all<Record<string, unknown>>(),
+    db.prepare(
+      "SELECT invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'",
+    ).all<Record<string, unknown>>(),
+    db.prepare("SELECT id, code FROM customers").all<{ id: string; code: string | null }>(),
+    db.prepare("SELECT id, code FROM suppliers").all<{ id: string; code: string | null }>(),
+  ]);
+  const custCode = new Map((custCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+  const supCode = new Map((supCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
+  // As at a past date: what was settled after it, to roll each item back.
+  const [arBack, notesBack, apBack] = asOf
+    ? await Promise.all([receiptsAfter(db, asOf), notesAfter(db, asOf), supplierPaymentsAfter(db, orgId, asOf)])
+    : [null, null, null];
+  // Issued notes per invoice — each becomes its own Debtor Aging line
+  // (owner 2026-10-17), bucketed on its own date like an advance.
+  const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
+  for (const [rows, kind] of [[cnAgRes.results ?? [], "CN"], [dnAgRes.results ?? [], "DN"]] as const) {
+    for (const n of rows) {
+      const invId = String(n.invoiceId ?? n.invoice_id ?? "");
+      const amt = Math.round(Number(n.totalAmount ?? n.total_amount) || 0);
+      if (!invId || amt <= 0) continue;
+      if (asOf && String(n.date ?? "").slice(0, 10) > asOf) continue; // issued after the as-at date
+      const list = agingNotes.get(invId) ?? [];
+      list.push({
+        no: `${String(n.noteNumber ?? n.note_number ?? "")} · ${kind === "CN" ? "Credit note" : "Debit note"}`,
+        date: String(n.date ?? "").slice(0, 10),
+        sen: kind === "CN" ? -amt : amt,
+      });
+      agingNotes.set(invId, list);
+    }
+  }
+  const obDateAg = await getOpeningDate(db);
+  const apExclAg = await loadOpeningApExcludes(db);
+
+  const arMap = new Map<string, ArAgingRow>();
+  for (const i of invRes.results ?? []) {
+    if (rowBeforeOpening(i.invoiceDate, obDateAg, i.isOpening)) continue; // pre-opening: not extracted
+    // As at a past date a PAID invoice may still have been open then, and
+    // one dated after it did not exist yet.
+    if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(i.status)) continue;
+    if (asOf && String(i.invoiceDate ?? "").slice(0, 10) > asOf) continue;
+    const outstanding = owedAt(
+      (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0),
+      (arBack?.get(i.id) ?? 0) + (notesBack?.get(i.id) ?? 0),
+    );
+    if (outstanding <= 0) continue;
+    let row = arMap.get(i.customerId);
+    if (!row) {
+      row = {
+        customerId: i.customerId,
+        customerName: i.customerName || "Unknown",
+        customerCode: custCode.get(i.customerId) ?? "",
+        currentSen: 0,
+        days30Sen: 0,
+        days60Sen: 0,
+        days90Sen: 0,
+        over90Sen: 0,
+        docs: [],
+      };
+      arMap.set(i.customerId, row);
+    }
+    const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate, nowRef);
+    // A credit / debit note on the invoice is its own line: the invoice
+    // shows what was owed before its notes, each note its own amount on
+    // its own date. A debit note already paid would leave the invoice line
+    // negative — that invoice keeps its one combined line.
+    const notesAr = agingNotes.get(i.id) ?? [];
+    const invoiceSen = notesAr.length ? splitOutstandingByNotes(outstanding, notesAr) : null;
+    const split = invoiceSen !== null;
+    const ownSen = split ? invoiceSen : outstanding;
+    if (ownSen !== 0) {
+      addToBucket(row, moAr, ownSen);
+      row.docs.push({
+        no: String(i.invoiceNo ?? i.invoice_no ?? ""),
+        date: String(i.invoiceDate ?? "").slice(0, 10),
+        mo: agingBucketIdx(moAr),
+        amountSen: ownSen,
+      });
+    }
+    if (split) {
+      for (const n of notesAr) {
+        const moN = monthsOverdue(n.date || null, nowRef);
+        addToBucket(row, moN, n.sen);
+        row.docs.push({ no: n.no, date: n.date, mo: agingBucketIdx(moN), amountSen: n.sen });
+      }
+    }
+  }
+
+  const apMap = new Map<string, ApAgingRow>();
+  for (const p of piRes.results ?? []) {
+    // Pre-opening PIs count as opening by default; only excluded ones drop.
+    if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateAg, apExclAg)) continue;
+    if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(p.status)) continue;
+    if (asOf && String(p.invoiceDate ?? "").slice(0, 10) > asOf) continue;
+    // Net outstanding = face − paid (BUG-2026-07-05-001: this tab showed the
+    // FULL face amount for partially-paid PIs — the AR loop above always
+    // netted, the AP loop didn't); as at a past date, plus what was paid
+    // on it after.
+    const outstanding = owedAt(
+      (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0),
+      apBack?.get(p.id) ?? 0,
+    );
+    if (outstanding <= 0) continue;
+    let row = apMap.get(p.supplierId);
+    if (!row) {
+      row = {
+        supplierId: p.supplierId,
+        supplierName: p.supplierName || "Unknown",
+        supplierCode: supCode.get(p.supplierId) ?? "",
+        currentSen: 0,
+        days30Sen: 0,
+        days60Sen: 0,
+        days90Sen: 0,
+        over90Sen: 0,
+        docs: [],
+      };
+      apMap.set(p.supplierId, row);
+    }
+    const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate, nowRef);
+    addToBucket(row, moAp, outstanding);
+    row.docs.push({
+      no: String(p.piNo ?? p.pi_no ?? ""),
+      date: String(p.invoiceDate ?? "").slice(0, 10),
+      mo: agingBucketIdx(moAp),
+      amountSen: outstanding,
+      due: String(p.dueDate ?? "").slice(0, 10),
+    });
+  }
+  // Unapplied supplier advances → NEGATIVE current-bucket rows (owner rule
+  // 2026-07-05), so the AP aging total ties the 400-0000 control exactly.
+  // Each advance also joins the expandable detail as its own negative doc.
+  // As at a past date, money paid ahead of a bill dated after it was on
+  // account then — an advance at the date (src/api/lib/aging-as-at.ts).
+  const supAdv = await loadUnappliedSupplierAdvances(db, orgId);
+  if (asOf) {
+    const piDate = new Map((piRes.results ?? []).map((p) => [p.id, String(p.invoiceDate ?? "").slice(0, 10)] as const));
+    for (const [id, a] of await supplierPaymentsAheadOf(db, orgId, asOf, piDate)) {
+      const cur = supAdv.get(id) ?? { supplierName: a.name, sen: 0, items: [] };
+      for (const it of a.items) { cur.items.push({ paymentNo: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+      supAdv.set(id, cur);
+    }
+  }
+  for (const [supplierId, adv] of supAdv) {
+    const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+    if (!advItems.length) continue;
+    let row = apMap.get(supplierId);
+    if (!row) {
+      row = {
+        supplierId,
+        supplierName: adv.supplierName || "Unknown",
+        supplierCode: supCode.get(supplierId) ?? "",
+        currentSen: 0,
+        days30Sen: 0,
+        days60Sen: 0,
+        days90Sen: 0,
+        over90Sen: 0,
+        docs: [],
+      };
+      apMap.set(supplierId, row);
+    }
+    // Bucket each advance by ITS payment date (owner 2026-07-08: a May
+    // advance belongs in the May column, not Current) — same month-based
+    // bucketing as the bills above.
+    for (const it of advItems) {
+      const moAdv = monthsOverdue(it.date || null, nowRef);
+      addToBucket(row, moAdv, -it.sen);
+      row.docs.push({
+        no: `${it.paymentNo} · Advance`,
+        date: it.date,
+        mo: agingBucketIdx(moAdv),
+        amountSen: -it.sen,
+      });
+    }
+  }
+  // Unapplied customer advances → NEGATIVE rows, the mirror of the supplier
+  // block above, so the AR aging total ties the 300-0000 control exactly.
+  // The customer mirror: received ahead of an invoice dated after it.
+  const custAdv = await loadUnappliedCustomerAdvances(db, orgId);
+  if (asOf) {
+    const invDate = new Map((invRes.results ?? []).map((i) => [i.id, String(i.invoiceDate ?? "").slice(0, 10)] as const));
+    for (const [id, a] of await receiptsAheadOf(db, asOf, invDate)) {
+      const cur = custAdv.get(id) ?? { customerName: a.name, sen: 0, items: [] };
+      for (const it of a.items) { cur.items.push({ receiptNumber: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
+      custAdv.set(id, cur);
+    }
+  }
+  for (const [customerId, adv] of custAdv) {
+    const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
+    if (!advItems.length) continue;
+    let row = arMap.get(customerId);
+    if (!row) {
+      row = {
+        customerId,
+        customerName: adv.customerName || "Unknown",
+        customerCode: custCode.get(customerId) ?? "",
+        currentSen: 0,
+        days30Sen: 0,
+        days60Sen: 0,
+        days90Sen: 0,
+        over90Sen: 0,
+        docs: [],
+      };
+      arMap.set(customerId, row);
+    }
+    for (const it of advItems) {
+      const moAdv = monthsOverdue(it.date || null, nowRef);
+      addToBucket(row, moAdv, -it.sen);
+      row.docs.push({
+        no: `${it.receiptNumber} · Advance`,
+        date: it.date,
+        mo: agingBucketIdx(moAdv),
+        amountSen: -it.sen,
+      });
+    }
+  }
+  // Owner rule 2026-07-09: within each aging bucket the NEWEST document
+  // sits on top (bucket ascending, date descending).
+  for (const row of arMap.values()) row.docs.sort((a, b) => a.mo - b.mo || b.date.localeCompare(a.date));
+  for (const row of apMap.values()) row.docs.sort((a, b) => a.mo - b.mo || b.date.localeCompare(a.date));
+
+  // Trade-finance section (owner 2026-08-11) — a SEPARATE block, never
+  // mixed into the trade-creditor rows above: its subtotal ties the TF
+  // account's ledger net, not 400-0000. Buckets run on the DUE date.
+  const tfSection = [];
+  try {
+    const tfSrcs = await getTfSources(db);
+    const todayIsoTf = new Date().toISOString().slice(0, 10);
+    for (const s of tfSrcs) {
+      const acctRow = await db.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
+        .bind(s.accountCode).first<{ name: string }>();
+      // As at a past date: the draws rebuilt from the ledger lines dated by
+      // then (loadTfDrawsAt).
+      const derived = asOf ? await loadTfDrawsAt(db, s, asOf) : await loadTfDraws(db, s);
+      const drawsAt = derived.draws;
+      const tfDraws = [];
+      for (const d of drawsAt) {
+        let paidSupplier = "";
+        try {
+          const rs = await db.prepare(
+            "SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?",
+          ).bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
+          paidSupplier = [...new Set(
+            (rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean),
+          )].join(", ");
+        } catch { /* leave blank */ }
+        tfDraws.push({ ...d, paidSupplier });
+      }
+      tfSection.push({
+        lender: s.lenderName,
+        lenderSupplierId: s.lenderSupplierId,
+        accountCode: s.accountCode,
+        accountName: acctRow?.name ?? "",
+        tenorDays: s.tenorDays,
+        accountNetSen: derived.accountNetSen,
+        unallocatedSen: derived.unallocatedSen,
+        totals: tfTotals(drawsAt, asOf ?? todayIsoTf),
+        draws: tfDraws,
+      });
+    }
+  } catch {
+    /* TF unconfigured / tables absent → empty section */
+  }
+
+  return {
+    data: {
+      ar: [...arMap.values()].sort((a, b) =>
+        a.customerName.localeCompare(b.customerName),
+      ),
+      ap: [...apMap.values()].sort((a, b) =>
+        a.supplierName.localeCompare(b.supplierName),
+      ),
+      tf: tfSection,
+    },
+  };
+}
+
 app.get("/aging", async (c) => {
   // RBAC gate (P3.3-followup) — accounting:read.
   const denied = await requirePermission(c, "accounting", "read");
@@ -570,8 +914,6 @@ app.get("/aging", async (c) => {
   // The column it filters on is runtime-ensured so this can never 500 on prod.
   await ensureFinanceOrgColumns(c.var.DB);
   const coFilter = companyFilter(c);
-  const arWhere = coFilter.active ? ` WHERE ${coFilter.sql}` : "";
-  const apWhere = coFilter.active ? ` WHERE ${coFilter.sql}` : "";
   const { withSnapshot } = await import("../lib/snapshot");
   // PR 7 — cache-aside snapshot. AR/AP aging is computed live from
   // unpaid invoices + purchase invoices, bucketed by months overdue
@@ -593,7 +935,6 @@ app.get("/aging", async (c) => {
   // never cached. Absent / today / later = today's aging, cached as before.
   const asOfQ = c.req.query("asOf") ?? "";
   const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
-  const nowRef = asOf ? asAtNow(asOf) : undefined;
   const snapshotConfig = {
       tableName: "accounting_aging_snapshot",
       // kv_config so the snapshot rebuilds when opening_date (the pre-opening
@@ -612,320 +953,7 @@ app.get("/aging", async (c) => {
         "trade_finance_draws", "trade_finance_repay_allocs",
       ],
   };
-  const buildAging = async () => {
-      const [invRes, piRes, cnAgRes, dnAgRes, custCodeRes, supCodeRes] = await Promise.all([
-        c.var.DB.prepare(
-          `SELECT id, customerId, customerName, invoiceNo, totalSen, paidAmount, status, dueDate, invoiceDate, isOpening FROM invoices${arWhere}`,
-        )
-          .bind(...(coFilter.active ? [coFilter.param] : []))
-          .all<{
-          id: string;
-          customerId: string;
-          customerName: string;
-          invoiceNo?: string | null;
-          invoice_no?: string | null;
-          totalSen: number;
-          paidAmount: number;
-          status: string;
-          dueDate: string | null;
-          invoiceDate: string | null;
-          isOpening: number | null;
-        }>(),
-        c.var.DB.prepare(
-          `SELECT id, supplierId, supplierName, piNo, amountSen, paidAmountSen, status, dueDate, invoiceDate, isOpening FROM purchase_invoices${apWhere}`,
-        )
-          .bind(...(coFilter.active ? [coFilter.param] : []))
-          .all<{
-          id: string;
-          supplierId: string;
-          supplierName: string;
-          piNo?: string | null;
-          pi_no?: string | null;
-          amountSen: number;
-          paidAmountSen?: number | null;
-          paid_amount_sen?: number | null;
-          status: string;
-          dueDate: string | null;
-          invoiceDate: string | null;
-          isOpening: number | null;
-        }>(),
-        c.var.DB.prepare(
-          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM credit_notes WHERE status IN ('APPROVED','POSTED')",
-        ).all<Record<string, unknown>>(),
-        c.var.DB.prepare(
-          "SELECT invoiceId, noteNumber, date, totalAmount, status FROM debit_notes WHERE status = 'POSTED'",
-        ).all<Record<string, unknown>>(),
-        c.var.DB.prepare("SELECT id, code FROM customers").all<{ id: string; code: string | null }>(),
-        c.var.DB.prepare("SELECT id, code FROM suppliers").all<{ id: string; code: string | null }>(),
-      ]);
-      const custCode = new Map((custCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
-      const supCode = new Map((supCodeRes.results ?? []).map((r) => [r.id, String(r.code ?? "")] as const));
-      // As at a past date: what was settled after it, to roll each item back.
-      const [arBack, notesBack, apBack] = asOf
-        ? await Promise.all([receiptsAfter(c.var.DB, asOf), notesAfter(c.var.DB, asOf), supplierPaymentsAfter(c.var.DB, orgId, asOf)])
-        : [null, null, null];
-      // Issued notes per invoice — each becomes its own Debtor Aging line
-      // (owner 2026-10-17), bucketed on its own date like an advance.
-      const agingNotes = new Map<string, { no: string; date: string; sen: number }[]>();
-      for (const [rows, kind] of [[cnAgRes.results ?? [], "CN"], [dnAgRes.results ?? [], "DN"]] as const) {
-        for (const n of rows) {
-          const invId = String(n.invoiceId ?? n.invoice_id ?? "");
-          const amt = Math.round(Number(n.totalAmount ?? n.total_amount) || 0);
-          if (!invId || amt <= 0) continue;
-          if (asOf && String(n.date ?? "").slice(0, 10) > asOf) continue; // issued after the as-at date
-          const list = agingNotes.get(invId) ?? [];
-          list.push({
-            no: `${String(n.noteNumber ?? n.note_number ?? "")} · ${kind === "CN" ? "Credit note" : "Debit note"}`,
-            date: String(n.date ?? "").slice(0, 10),
-            sen: kind === "CN" ? -amt : amt,
-          });
-          agingNotes.set(invId, list);
-        }
-      }
-      const obDateAg = await getOpeningDate(c.var.DB);
-      const apExclAg = await loadOpeningApExcludes(c.var.DB);
-
-      const arMap = new Map<string, ArAgingRow>();
-      for (const i of invRes.results ?? []) {
-        if (rowBeforeOpening(i.invoiceDate, obDateAg, i.isOpening)) continue; // pre-opening: not extracted
-        // As at a past date a PAID invoice may still have been open then, and
-        // one dated after it did not exist yet.
-        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(i.status)) continue;
-        if (asOf && String(i.invoiceDate ?? "").slice(0, 10) > asOf) continue;
-        const outstanding = owedAt(
-          (Number(i.totalSen) || 0) - (Number(i.paidAmount) || 0),
-          (arBack?.get(i.id) ?? 0) + (notesBack?.get(i.id) ?? 0),
-        );
-        if (outstanding <= 0) continue;
-        let row = arMap.get(i.customerId);
-        if (!row) {
-          row = {
-            customerId: i.customerId,
-            customerName: i.customerName || "Unknown",
-            customerCode: custCode.get(i.customerId) ?? "",
-            currentSen: 0,
-            days30Sen: 0,
-            days60Sen: 0,
-            days90Sen: 0,
-            over90Sen: 0,
-            docs: [],
-          };
-          arMap.set(i.customerId, row);
-        }
-        const moAr = monthsOverdue(i.invoiceDate ?? i.dueDate, nowRef);
-        // A credit / debit note on the invoice is its own line: the invoice
-        // shows what was owed before its notes, each note its own amount on
-        // its own date. A debit note already paid would leave the invoice line
-        // negative — that invoice keeps its one combined line.
-        const notesAr = agingNotes.get(i.id) ?? [];
-        const invoiceSen = notesAr.length ? splitOutstandingByNotes(outstanding, notesAr) : null;
-        const split = invoiceSen !== null;
-        const ownSen = split ? invoiceSen : outstanding;
-        if (ownSen !== 0) {
-          addToBucket(row, moAr, ownSen);
-          row.docs.push({
-            no: String(i.invoiceNo ?? i.invoice_no ?? ""),
-            date: String(i.invoiceDate ?? "").slice(0, 10),
-            mo: agingBucketIdx(moAr),
-            amountSen: ownSen,
-          });
-        }
-        if (split) {
-          for (const n of notesAr) {
-            const moN = monthsOverdue(n.date || null, nowRef);
-            addToBucket(row, moN, n.sen);
-            row.docs.push({ no: n.no, date: n.date, mo: agingBucketIdx(moN), amountSen: n.sen });
-          }
-        }
-      }
-
-      const apMap = new Map<string, ApAgingRow>();
-      for (const p of piRes.results ?? []) {
-        // Pre-opening PIs count as opening by default; only excluded ones drop.
-        if (apRowBeforeOpening({ id: p.id, date: p.invoiceDate, isOpening: p.isOpening }, obDateAg, apExclAg)) continue;
-        if (["DRAFT", "CANCELLED", ...(asOf ? [] : ["PAID"])].includes(p.status)) continue;
-        if (asOf && String(p.invoiceDate ?? "").slice(0, 10) > asOf) continue;
-        // Net outstanding = face − paid (BUG-2026-07-05-001: this tab showed the
-        // FULL face amount for partially-paid PIs — the AR loop above always
-        // netted, the AP loop didn't); as at a past date, plus what was paid
-        // on it after.
-        const outstanding = owedAt(
-          (Number(p.amountSen) || 0) - (Number(p.paidAmountSen ?? p.paid_amount_sen) || 0),
-          apBack?.get(p.id) ?? 0,
-        );
-        if (outstanding <= 0) continue;
-        let row = apMap.get(p.supplierId);
-        if (!row) {
-          row = {
-            supplierId: p.supplierId,
-            supplierName: p.supplierName || "Unknown",
-            supplierCode: supCode.get(p.supplierId) ?? "",
-            currentSen: 0,
-            days30Sen: 0,
-            days60Sen: 0,
-            days90Sen: 0,
-            over90Sen: 0,
-            docs: [],
-          };
-          apMap.set(p.supplierId, row);
-        }
-        const moAp = monthsOverdue(p.invoiceDate ?? p.dueDate, nowRef);
-        addToBucket(row, moAp, outstanding);
-        row.docs.push({
-          no: String(p.piNo ?? p.pi_no ?? ""),
-          date: String(p.invoiceDate ?? "").slice(0, 10),
-          mo: agingBucketIdx(moAp),
-          amountSen: outstanding,
-          due: String(p.dueDate ?? "").slice(0, 10),
-        });
-      }
-      // Unapplied supplier advances → NEGATIVE current-bucket rows (owner rule
-      // 2026-07-05), so the AP aging total ties the 400-0000 control exactly.
-      // Each advance also joins the expandable detail as its own negative doc.
-      // As at a past date, money paid ahead of a bill dated after it was on
-      // account then — an advance at the date (src/api/lib/aging-as-at.ts).
-      const supAdv = await loadUnappliedSupplierAdvances(c.var.DB, orgId);
-      if (asOf) {
-        const piDate = new Map((piRes.results ?? []).map((p) => [p.id, String(p.invoiceDate ?? "").slice(0, 10)] as const));
-        for (const [id, a] of await supplierPaymentsAheadOf(c.var.DB, orgId, asOf, piDate)) {
-          const cur = supAdv.get(id) ?? { supplierName: a.name, sen: 0, items: [] };
-          for (const it of a.items) { cur.items.push({ paymentNo: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
-          supAdv.set(id, cur);
-        }
-      }
-      for (const [supplierId, adv] of supAdv) {
-        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
-        if (!advItems.length) continue;
-        let row = apMap.get(supplierId);
-        if (!row) {
-          row = {
-            supplierId,
-            supplierName: adv.supplierName || "Unknown",
-            supplierCode: supCode.get(supplierId) ?? "",
-            currentSen: 0,
-            days30Sen: 0,
-            days60Sen: 0,
-            days90Sen: 0,
-            over90Sen: 0,
-            docs: [],
-          };
-          apMap.set(supplierId, row);
-        }
-        // Bucket each advance by ITS payment date (owner 2026-07-08: a May
-        // advance belongs in the May column, not Current) — same month-based
-        // bucketing as the bills above.
-        for (const it of advItems) {
-          const moAdv = monthsOverdue(it.date || null, nowRef);
-          addToBucket(row, moAdv, -it.sen);
-          row.docs.push({
-            no: `${it.paymentNo} · Advance`,
-            date: it.date,
-            mo: agingBucketIdx(moAdv),
-            amountSen: -it.sen,
-          });
-        }
-      }
-      // Unapplied customer advances → NEGATIVE rows, the mirror of the supplier
-      // block above, so the AR aging total ties the 300-0000 control exactly.
-      // The customer mirror: received ahead of an invoice dated after it.
-      const custAdv = await loadUnappliedCustomerAdvances(c.var.DB, orgId);
-      if (asOf) {
-        const invDate = new Map((invRes.results ?? []).map((i) => [i.id, String(i.invoiceDate ?? "").slice(0, 10)] as const));
-        for (const [id, a] of await receiptsAheadOf(c.var.DB, asOf, invDate)) {
-          const cur = custAdv.get(id) ?? { customerName: a.name, sen: 0, items: [] };
-          for (const it of a.items) { cur.items.push({ receiptNumber: it.no, date: it.date, sen: it.sen }); cur.sen += it.sen; }
-          custAdv.set(id, cur);
-        }
-      }
-      for (const [customerId, adv] of custAdv) {
-        const advItems = asOf ? adv.items.filter((it) => it.date <= asOf) : adv.items;
-        if (!advItems.length) continue;
-        let row = arMap.get(customerId);
-        if (!row) {
-          row = {
-            customerId,
-            customerName: adv.customerName || "Unknown",
-            customerCode: custCode.get(customerId) ?? "",
-            currentSen: 0,
-            days30Sen: 0,
-            days60Sen: 0,
-            days90Sen: 0,
-            over90Sen: 0,
-            docs: [],
-          };
-          arMap.set(customerId, row);
-        }
-        for (const it of advItems) {
-          const moAdv = monthsOverdue(it.date || null, nowRef);
-          addToBucket(row, moAdv, -it.sen);
-          row.docs.push({
-            no: `${it.receiptNumber} · Advance`,
-            date: it.date,
-            mo: agingBucketIdx(moAdv),
-            amountSen: -it.sen,
-          });
-        }
-      }
-      // Owner rule 2026-07-09: within each aging bucket the NEWEST document
-      // sits on top (bucket ascending, date descending).
-      for (const row of arMap.values()) row.docs.sort((a, b) => a.mo - b.mo || b.date.localeCompare(a.date));
-      for (const row of apMap.values()) row.docs.sort((a, b) => a.mo - b.mo || b.date.localeCompare(a.date));
-
-      // Trade-finance section (owner 2026-08-11) — a SEPARATE block, never
-      // mixed into the trade-creditor rows above: its subtotal ties the TF
-      // account's ledger net, not 400-0000. Buckets run on the DUE date.
-      const tfSection = [];
-      try {
-        const tfSrcs = await getTfSources(c.var.DB);
-        const todayIsoTf = new Date().toISOString().slice(0, 10);
-        for (const s of tfSrcs) {
-          const acctRow = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
-            .bind(s.accountCode).first<{ name: string }>();
-          // As at a past date: the draws rebuilt from the ledger lines dated by
-          // then (loadTfDrawsAt).
-          const derived = asOf ? await loadTfDrawsAt(c.var.DB, s, asOf) : await loadTfDraws(c.var.DB, s);
-          const drawsAt = derived.draws;
-          const tfDraws = [];
-          for (const d of drawsAt) {
-            let paidSupplier = "";
-            try {
-              const rs = await c.var.DB.prepare(
-                "SELECT DISTINCT supplierName FROM supplier_payments WHERE paymentNo = ?",
-              ).bind(d.drawSourceId).all<{ supplierName: string | null; supplier_name: string | null }>();
-              paidSupplier = [...new Set(
-                (rs.results ?? []).map((r) => String(r.supplierName ?? r.supplier_name ?? "").trim()).filter(Boolean),
-              )].join(", ");
-            } catch { /* leave blank */ }
-            tfDraws.push({ ...d, paidSupplier });
-          }
-          tfSection.push({
-            lender: s.lenderName,
-            lenderSupplierId: s.lenderSupplierId,
-            accountCode: s.accountCode,
-            accountName: acctRow?.name ?? "",
-            tenorDays: s.tenorDays,
-            accountNetSen: derived.accountNetSen,
-            unallocatedSen: derived.unallocatedSen,
-            totals: tfTotals(drawsAt, asOf ?? todayIsoTf),
-            draws: tfDraws,
-          });
-        }
-      } catch {
-        /* TF unconfigured / tables absent → empty section */
-      }
-
-      return {
-        data: {
-          ar: [...arMap.values()].sort((a, b) =>
-            a.customerName.localeCompare(b.customerName),
-          ),
-          ap: [...apMap.values()].sort((a, b) =>
-            a.supplierName.localeCompare(b.supplierName),
-          ),
-          tf: tfSection,
-        },
-      };
-  };
+  const buildAging = () => computeAgingData(c.var.DB, orgId, asOf, coFilter);
   const data = asOf
     ? await buildAging()
     : await withSnapshot(c.var.DB, snapshotConfig, orgId, buildAging, cacheKey);
@@ -1020,22 +1048,29 @@ app.post("/aging", async (c) => {
 // ---------------------------------------------------------------------------
 // CHART OF ACCOUNTS
 // ---------------------------------------------------------------------------
+// The chart as GET /coa serves it to every account picker (and the Forecast
+// P&L page): active accounts unless asked, a parent never postable. The Cash
+// Flow forecast reads the same list, so its Forecast P&L lines are the page's.
+async function loadCoaList(db: Env["Variables"]["DB"], includeInactive: boolean) {
+  const res = await db.prepare(
+    `SELECT * FROM chart_of_accounts${includeInactive ? "" : " WHERE isActive = 1"} ORDER BY code`,
+  ).all<CoaRow>();
+  // A parent is never postable (see EFFECTIVE_POSTABLE_SQL) — every account
+  // picker filters on isPostable, so a header can no longer be chosen.
+  const parents = new Set((res.results ?? []).map((r) => r.parentCode).filter((x): x is string => !!x));
+  return (res.results ?? []).map((r) => {
+    const row = rowToCoa(r);
+    return parents.has(row.code) ? { ...row, isPostable: false } : row;
+  });
+}
+
 app.get("/coa", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   // ?includeInactive=1: the Chart of Accounts list (2026-10-20) shows the
   // inactive ones too, to set them active again. Every picker keeps the default.
   const includeInactive = c.req.query("includeInactive") === "1";
-  const res = await c.var.DB.prepare(
-    `SELECT * FROM chart_of_accounts${includeInactive ? "" : " WHERE isActive = 1"} ORDER BY code`,
-  ).all<CoaRow>();
-  // A parent is never postable (see EFFECTIVE_POSTABLE_SQL) — every account
-  // picker filters on isPostable, so a header can no longer be chosen.
-  const parents = new Set((res.results ?? []).map((r) => r.parentCode).filter((x): x is string => !!x));
-  const data = (res.results ?? []).map((r) => {
-    const row = rowToCoa(r);
-    return parents.has(row.code) ? { ...row, isPostable: false } : row;
-  });
+  const data = await loadCoaList(c.var.DB, includeInactive);
   return c.json({ success: true, data, total: data.length });
 });
 
@@ -5775,23 +5810,22 @@ app.get("/change-log", async (c) => {
 // excluding voided/deleted) and buckets by age. Returns the aging rows plus
 // the raw unpaid bills (for the bills page's per-party drill-down).
 // ---------------------------------------------------------------------------
-app.get("/other-party-aging", async (c) => {
-  const denied = await requirePermission(c, "accounting", "read");
-  if (denied) return denied;
-  await ensureOtherPartyBillOpening(c.var.DB);
-  const orgId = getOrgId(c);
-  const type = c.req.query("type");
-  if (type !== "DEBTOR" && type !== "CREDITOR") {
-    return c.json({ success: false, error: "type must be DEBTOR or CREDITOR" }, 400);
-  }
-  // As at a past date (owner 2026-10-17): bills dated by then, each rolled
-  // back by the payments made on it after (src/api/lib/aging-as-at.ts).
-  const asOfQ = c.req.query("asOf") ?? "";
-  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
-  const paidBack = asOf ? await otherPartyPaymentsAfter(c.var.DB, orgId, asOf) : null;
+// The bills of one side, still owed — live, or as at a past date (owner
+// 2026-10-17): bills dated by then, each rolled back by the payments made on
+// it after (src/api/lib/aging-as-at.ts). GET /other-party-aging serves it
+// without the ids; the Cash Flow forecast reads the same bills with their ids,
+// for the item accounts each one was spent on.
+async function computeOtherPartyAging(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  type: "DEBTOR" | "CREDITOR",
+  asOf: string | null,
+) {
+  await ensureOtherPartyBillOpening(db);
+  const paidBack = asOf ? await otherPartyPaymentsAfter(db, orgId, asOf) : null;
   const rows =
     (
-      await c.var.DB.prepare(
+      await db.prepare(
         `SELECT b.id AS id, b.partyId AS partyId, b.partyName AS partyName, b.billNo AS billNo, b.billDate AS billDate,
                 (b.totalSen - b.paidAmountSen) AS amt, b.is_opening AS is_opening
            FROM other_party_bills b
@@ -5804,8 +5838,8 @@ app.get("/other-party-aging", async (c) => {
         .bind(orgId, type, ...(asOf ? [asOf] : []))
         .all<{ id: string; partyId: string; partyName: string; billNo: string; billDate: string; amt: number; is_opening?: number | null; isOpening?: number | null }>()
     ).results ?? [];
-  const obDateOpa = await getOpeningDate(c.var.DB);
-  const bills = rows
+  const obDateOpa = await getOpeningDate(db);
+  return rows
     // opening bills (is_opening=1) bypass the floor — owner rule 2026-07-01.
     // As at a past date a pre-opening bill still counts for what was paid on
     // it AFTER the date: the opening balance held that much then (what it owes
@@ -5816,9 +5850,23 @@ app.get("/other-party-aging", async (c) => {
     // rows' columns (owner 2026-10-17, Finance v2).
     .map((r) => {
       const pre = rowBeforeOpening(r.billDate, obDateOpa, r.isOpening ?? r.is_opening);
-      return { partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(pre ? 0 : r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) };
+      return { id: r.id, partyId: r.partyId, partyName: r.partyName, billNo: r.billNo, billDate: r.billDate, outstandingSen: owedAt(pre ? 0 : r.amt, paidBack?.get(r.id) ?? 0), mo: agingBucketIdx(monthsOverdue(r.billDate, asOf ? asAtNow(asOf) : undefined)) };
     })
     .filter((b) => b.outstandingSen > 0);
+}
+
+app.get("/other-party-aging", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const type = c.req.query("type");
+  if (type !== "DEBTOR" && type !== "CREDITOR") {
+    await ensureOtherPartyBillOpening(c.var.DB);
+    return c.json({ success: false, error: "type must be DEBTOR or CREDITOR" }, 400);
+  }
+  const asOfQ = c.req.query("asOf") ?? "";
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const bills = (await computeOtherPartyAging(c.var.DB, orgId, type, asOf)).map(({ id: _id, ...b }) => b);
   const today = asOf ?? new Date().toISOString().slice(0, 10);
   return c.json({ success: true, data: { aging: bucketAging(bills, today), bills, ...(asOf ? { asOf } : {}) } });
 });
@@ -10696,12 +10744,308 @@ type CfDrill = {
   items: CfDrillItem[]; months: { ym: string; label: string; sen: number }[];
 };
 
+// Material weights of purchase invoices: each PI's item lines by stock group
+// (the owner's override renames a group, tax rides its own line, a line with
+// no group is named by its supplier). The Cash Flow statement splits a
+// supplier payment by the PIs it settled; the forecast splits an open PI the
+// same way, so both land on the same material lines.
+async function loadPiMaterialWeights(
+  db: Env["Variables"]["DB"],
+  piIds: Iterable<string>,
+  sgOverride: Record<string, string>,
+): Promise<(piId: string, supplier: string) => Map<string, number>> {
+  const rmRes = await db.prepare("SELECT * FROM raw_materials").all<Record<string, unknown>>();
+  const grpByCode = new Map<string, string>();
+  // Exact description → group, kept only when ONE master item carries that
+  // description (an ambiguous description resolves nothing).
+  const grpByDesc = new Map<string, string | null>();
+  for (const r of rmRes.results ?? []) {
+    const code = String((r.item_code ?? r.itemCode) ?? "");
+    const grp = String((r.item_group ?? r.itemGroup) ?? "");
+    if (code) grpByCode.set(code, grp);
+    const desc = String(r.description ?? "").trim().toUpperCase();
+    if (desc && grp) grpByDesc.set(desc, grpByDesc.has(desc) && grpByDesc.get(desc) !== grp ? null : grp);
+  }
+  // Owner 2026-09-29 「不应该出现 unallocated，就是 meditex 那个」: a PI line
+  // whose code is not in the master used to fall straight to "Unallocated —
+  // <supplier>". Measured: MEDITEX keyed `MED-PSF15.064HCS(A1)` on 44 lines
+  // while the master item is `MED-PSF15.064HCS(14)(L)` — same product name
+  // ("POLYESTER FIBER 15D X 64MM 10KG/BAG"), same price (RM 8.36). The line
+  // now resolves the way GRN receiving already does (resolveRmForGRNItem,
+  // grn.ts): the supplier's SKU in the price list, then the EXACT product
+  // name of one master item. No guessing on the code: a line that matches
+  // neither still shows as "Unallocated — <supplier>", so a real mistake
+  // stays visible.
+  const bindRes = await db.prepare("SELECT supplierSku, materialCode FROM supplier_material_bindings")
+    .all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
+  const codeBySku = new Map<string, string | null>();
+  for (const b of bindRes.results ?? []) {
+    const sku = String(b.supplierSku ?? b.supplier_sku ?? "").trim().toUpperCase();
+    const code = String(b.materialCode ?? b.material_code ?? "").trim();
+    if (!sku || !code) continue;
+    codeBySku.set(sku, codeBySku.has(sku) && codeBySku.get(sku) !== code ? null : code);
+  }
+  const groupForLine = (code: string, name: string): string => {
+    const direct = code ? grpByCode.get(code) : undefined;
+    if (direct) return direct;
+    const viaSku = code ? codeBySku.get(code.trim().toUpperCase()) : undefined;
+    if (viaSku) { const g = grpByCode.get(viaSku); if (g) return g; }
+    const viaName = name ? grpByDesc.get(name.trim().toUpperCase()) : undefined;
+    return viaName ?? "";
+  };
+  const chunk = <T,>(arr: T[], n: number): T[][] => { const out: T[][] = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  const piItemsById = new Map<string, Record<string, unknown>[]>();
+  for (const part of chunk([...piIds], 200)) {
+    const res = await db.prepare(`SELECT * FROM purchase_invoice_items WHERE pi_id IN (${part.map(() => "?").join(",")})`).bind(...part).all<Record<string, unknown>>();
+    for (const it of res.results ?? []) {
+      const id = String(it.piId ?? it.pi_id ?? "");
+      const arr = piItemsById.get(id) ?? [];
+      arr.push(it);
+      piItemsById.set(id, arr);
+    }
+  }
+  // Per-PI material-line weights, computed once per PI and reused across
+  // every payment that touched it. A PI belongs to exactly one supplier, so
+  // the supplier-tagged fallback label is stable under the piId cache key.
+  const piWeightCache = new Map<string, Map<string, number>>();
+  const piWeightsFor = (piId: string, supplier: string): Map<string, number> => {
+    const hit = piWeightCache.get(piId);
+    if (hit) return hit;
+    const w = new Map<string, number>();
+    for (const it of piItemsById.get(piId) ?? []) {
+      const lt = String((it.line_type ?? it.lineType) ?? "STOCKED");
+      const amt = Number((it.line_total_sen ?? it.lineTotalSen) ?? 0);
+      const mc = String((it.material_code ?? it.materialCode) ?? "");
+      const grp = groupForLine(mc, String((it.material_name ?? it.materialName) ?? ""));
+      // Owner 2026-08-27 「拆散」: one row PER STOCK GROUP, not the four
+      // rolled-up lines. The stock-group override map still renames a group
+      // when set; tax rides its own line; a line with no resolvable group is
+      // named by its SUPPLIER (owner 2026-08-31 「这个我也有要分」) so he can
+      // see whose invoice needs a material code — or that it is a service.
+      const line = lt === "TAX" ? "SST / TAX" : grp ? (sgOverride[grp] ?? grp) : `Unallocated — ${supplier}`;
+      w.set(line, (w.get(line) ?? 0) + Math.max(0, amt));
+    }
+    piWeightCache.set(piId, w);
+    return w;
+  };
+  return piWeightsFor;
+}
+
+/** Today in Malaysia time (UTC+8), YYYY-MM-DD. */
+const todayMyt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+
+type CashflowForecastMeta = {
+  today: string;
+  openingYm: string | null;
+  termFlagged: string[];
+  excluded: { ym: string; code: string; name: string; amtSen: number }[];
+};
+
+// The Cash Flow forecast's inputs (spec docs/superpowers/specs/2026-11-08-
+// cash-flow-forecast-design.md), all read only: the aging as at the 1st of
+// every shown month after the opening month (plus the month before the
+// earliest, whose receipts set its salaries), the aging as at today for the
+// months ahead, master terms, Forecast P&L, planned payments. Turned into
+// forecast legs by the pure src/lib/cashflow-forecast.ts.
+async function loadCashflowForecast(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  o: {
+    today: string;
+    period: string;
+    months: string[];
+    openingYm: string | null;
+    coa: Map<string, CoaLite>;
+    resolveAcct: (code: string) => string;
+    sgOverride: Record<string, string>;
+  },
+): Promise<{ forecast: { columns: ForecastColumn[]; legs: ForecastLeg[]; rmSplit: RmSplit }; meta: CashflowForecastMeta }> {
+  const { today, period, months, openingYm, coa, resolveAcct, sgOverride } = o;
+  const blank = (ym: string) => !!openingYm && ym <= openingYm;
+  const baseYms = months.filter((m) => !blank(m));
+  const before = months.length ? addMonthsYm(months[months.length - 1], -1) : "";
+  if (before && !blank(before)) baseYms.push(before);
+  const wantLive = period === today.slice(0, 7);
+  // A hand check made on an earlier day (?asOf=) sees that day's documents.
+  const liveAsOf = today < todayMyt() ? today : null;
+  const NO_COMPANY: CompanyFilter = { active: false, sql: "", param: null, orgId: null };
+  const snap = async (asOf: string | null) => {
+    const [ag, oc, od] = await Promise.all([
+      computeAgingData(db, orgId, asOf, NO_COMPANY),
+      computeOtherPartyAging(db, orgId, "CREDITOR", asOf),
+      computeOtherPartyAging(db, orgId, "DEBTOR", asOf),
+    ]);
+    return { ...ag.data, oc, od };
+  };
+  type Snap = Awaited<ReturnType<typeof snap>>;
+  // Three agings at a time — each is a dozen reads of its own.
+  const jobs: (() => Promise<Snap>)[] = [...baseYms.map((m) => () => snap(`${m}-01`)), ...(wantLive ? [() => snap(liveAsOf)] : [])];
+  const got: Snap[] = [];
+  for (let i = 0; i < jobs.length; i += 3) got.push(...(await Promise.all(jobs.slice(i, i + 3).map((f) => f()))));
+  const liveSnap = wantLive ? got[got.length - 1] : null;
+
+  const [custRes, supRes, piRes, mixRes] = await Promise.all([
+    db.prepare("SELECT id, creditTerms FROM customers").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, piNo, supplierId FROM purchase_invoices").all<Record<string, unknown>>(),
+    db.prepare("SELECT billId AS bill_id, counterAccount AS counter_account, amountSen AS amount_sen FROM other_party_bill_items").all<Record<string, unknown>>(),
+  ]);
+  // A term the master leaves empty reads as the screens show it (NET30).
+  const termMap = (rows: Record<string, unknown>[], camel: string, snake: string) =>
+    new Map(rows.map((r) => [String(r.id), String((r[camel] ?? r[snake]) ?? "NET30")] as const));
+  const custTerm = termMap(custRes.results ?? [], "creditTerms", "credit_terms");
+  const supTerm = termMap(supRes.results ?? [], "paymentTerms", "payment_terms");
+  const termOf = (d: OpenDoc): TermInfo => {
+    if (d.kind === "tf") return { months: 0, flagged: false };
+    if (d.kind === "ocb" || d.kind === "odb") return { months: 1, flagged: false }; // no term field (owner 2026-11-06)
+    const m = d.kind === "invoice" ? custTerm : supTerm;
+    return m.has(d.partyId) ? parseTermMonths(m.get(d.partyId)) : { months: 1, flagged: true };
+  };
+  const piIdOf = piIdIndex((piRes.results ?? []).map((r) => ({
+    id: String(r.id),
+    piNo: String(r.piNo ?? r.pi_no ?? ""),
+    supplierId: String(r.supplierId ?? r.supplier_id ?? ""),
+  })));
+  const mixOf = new Map<string, Map<string, number>>();
+  for (const r of mixRes.results ?? []) {
+    const bid = String(r.billId ?? r.bill_id ?? "");
+    const acct = String(r.counterAccount ?? r.counter_account ?? "").trim();
+    const sen = Math.max(0, Number(r.amountSen ?? r.amount_sen) || 0);
+    if (!bid || !acct || !sen) continue;
+    const m = mixOf.get(bid) ?? new Map<string, number>();
+    const code = resolveAcct(acct);
+    m.set(code, (m.get(code) ?? 0) + sen);
+    mixOf.set(bid, m);
+  }
+  const mixFor = (billId: string) => {
+    const m = mixOf.get(billId);
+    return m && m.size ? [...m.entries()].map(([accountCode, weight]) => ({ accountCode, weight })) : undefined;
+  };
+
+  const sdc = [...coa.values()].filter((a) => a.sat === "SDC");
+  const arAcct = sdc.length === 1 ? sdc[0].code : resolveAcct("300-0000");
+  const apAcct = resolveAcct("400-0000");
+  const ocAcct = resolveAcct(OTHER_CREDITOR_CONTROL);
+  const odAcct = resolveAcct(OTHER_DEBTOR_CONTROL);
+  const piWanted = new Set<string>();
+  const piSupplier = new Map<string, string>(); // splitKey → supplier
+  const toDocs = (s: Snap): OpenDoc[] => {
+    const out: OpenDoc[] = [];
+    for (const row of s.ar)
+      for (const d of row.docs) out.push({ kind: "invoice", partyId: row.customerId, partyName: row.customerName, no: d.no, date: d.date, sen: d.amountSen, accountCode: arAcct });
+    for (const row of s.ap) {
+      const supplier = String(row.supplierName ?? "").trim();
+      for (const d of row.docs) {
+        let splitKey: string | undefined;
+        if (d.amountSen > 0) {
+          const id = piIdOf(row.supplierId, d.no);
+          splitKey = id ? `fc:pi:${id}` : `fc:pi:?${row.supplierId}|${d.no}`;
+          if (id) piWanted.add(id);
+          piSupplier.set(splitKey, supplier);
+        }
+        out.push({ kind: "pi", partyId: row.supplierId, partyName: supplier, no: d.no, date: d.date, sen: d.amountSen, accountCode: apAcct, ...(splitKey ? { splitKey } : {}) });
+      }
+    }
+    for (const f of s.tf) {
+      const acct = resolveAcct(f.accountCode);
+      const lender = f.lender || "lender";
+      for (const d of f.draws)
+        out.push({ kind: "tf", partyId: acct, partyName: lender, no: d.paidSupplier ? `${d.drawSourceId} · ${d.paidSupplier}` : d.drawSourceId, date: d.dueDate, sen: d.outstandingSen, accountCode: acct, label: `Repaid to ${lender}` });
+      // Repaid but not yet allocated to a draw: a credit on the facility.
+      if (f.unallocatedSen < 0) out.push({ kind: "tf", partyId: acct, partyName: lender, no: "unallocated repayment", date: "", sen: f.unallocatedSen, accountCode: acct });
+    }
+    for (const b of s.oc) {
+      const mix = mixFor(b.id);
+      out.push({ kind: "ocb", partyId: b.partyId, partyName: b.partyName, no: b.billNo, date: b.billDate, sen: b.outstandingSen, accountCode: ocAcct, ...(mix ? { mix } : {}) });
+    }
+    for (const b of s.od) {
+      const mix = mixFor(b.id);
+      out.push({ kind: "odb", partyId: b.partyId, partyName: b.partyName, no: b.billNo, date: b.billDate, sen: b.outstandingSen, accountCode: odAcct, ...(mix ? { mix } : {}) });
+    }
+    return out;
+  };
+  const baselines = new Map<string, ScheduledDoc[]>();
+  baseYms.forEach((m, i) => baselines.set(m, scheduleOpenDocs(toDocs(got[i]), termOf)));
+  const live = liveSnap ? scheduleOpenDocs(toDocs(liveSnap), termOf) : null;
+
+  // Each open PI splits by its own materials, exactly as a payment of it
+  // would (an opening PI with no lines → "Opening creditors — <supplier>").
+  const weightsFor = await loadPiMaterialWeights(db, piWanted, sgOverride);
+  const rmSplit: RmSplit = {};
+  for (const [key, supplier] of piSupplier) {
+    const id = key.startsWith("fc:pi:?") ? null : key.slice("fc:pi:".length);
+    const w = id ? weightsFor(id, supplier) : new Map<string, number>();
+    let total = 0;
+    for (const v of w.values()) total += v;
+    rmSplit[key] = total
+      ? [...w.entries()].map(([line, weight]) => ({ line, weight: Math.round(weight) }))
+      : [{ line: id?.startsWith("pi-ob-") ? `Opening creditors — ${supplier}` : `Unallocated — ${supplier}`, weight: 1 }];
+  }
+
+  // Forecast P&L, read exactly as the Forecast page reads it.
+  const fcRow = await db.prepare("SELECT value FROM kv_config WHERE key = 'forecast_pnl'").first<{ value: string }>();
+  let fcMonths: Record<string, FcMonth> = {};
+  try {
+    fcMonths = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
+  } catch { /* none yet */ }
+  const [coaList, override, labour] = await Promise.all([
+    loadCoaList(db, false),
+    getPnlSectionMap(db),
+    loadLabourDepartments(db, orgId).catch(() => ({ departments: [] as { code: string; account: string; bucket: string }[], mappedAccounts: [] as string[] })),
+  ]);
+  const groups = forecastLineGroups(
+    coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
+    override,
+    forecastDepts(labour.departments, Object.values(fcMonths).map((m) => m.pct)),
+  );
+  const mapped = new Set(labour.mappedAccounts);
+  const nonCash = (code: string, name: string) => isNonCashAccount(code, name, TF_INTEREST_ACCT.code);
+  const pnl = new Map<string, { salesSen: number; lines: FcCashLine[] }>();
+  const excluded: CashflowForecastMeta["excluded"] = [];
+  for (const [ym, m] of Object.entries(fcMonths)) {
+    const r = forecastCashLines(m, groups, override, mapped, { salaryAccount: LABOUR_ACCRUAL_ACCT, nonCash });
+    pnl.set(ym, { salesSen: r.salesSen, lines: r.lines.map((l) => ({ ...l, accountCode: resolveAcct(l.accountCode) })) });
+    for (const e of r.excluded) excluded.push({ ym, ...e });
+  }
+
+  await ensureCashBoardTables(db);
+  const planRes = await db.prepare("SELECT id, party_name, ref, expected_date, amount_sen, done_at FROM planned_payments").all<Record<string, unknown>>();
+  const plans: PlannedPayment[] = (planRes.results ?? [])
+    .map((r) => {
+      const done = r.doneAt ?? r.done_at;
+      const ref = r.ref ?? null;
+      return {
+        id: String(r.id),
+        party: String(r.partyName ?? r.party_name ?? ""),
+        ref: ref === null ? null : String(ref),
+        expectedDate: String(r.expectedDate ?? r.expected_date ?? "").slice(0, 10),
+        amountSen: Math.round(Number(r.amountSen ?? r.amount_sen) || 0),
+        doneAt: done ? String(done) : null,
+      };
+    })
+    .filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.expectedDate) && p.amountSen > 0);
+
+  const isCreditorControl = (code: string): boolean => {
+    const a = coa.get(code);
+    const b = parseInt(code.split("-")[0] ?? "0", 10) || 0;
+    return a?.sat === "SCC" || b === 400 || b === 405;
+  };
+  const built = buildForecastLegs({ today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl });
+  const shown = new Set(built.columns.filter((c) => !c.blank).map((c) => c.ym));
+  return {
+    forecast: { columns: built.columns, legs: built.legs, rmSplit },
+    meta: { today, openingYm, termFlagged: built.termFlagged, excluded: excluded.filter((e) => shown.has(e.ym)) },
+  };
+}
+
 async function computeCashflowStatement(
   db: Env["Variables"]["DB"],
   period: string,
   editable: boolean,
   orgId: string,
-  opts?: { traceKey?: string },
+  // `forecast`: also build the Cash Flow forecast columns, as at `today`
+  // (GET /cashflow-forecast). Absent = the statement exactly as before.
+  opts?: { traceKey?: string; forecast?: { today: string } },
 ) {
   // Local alias so the extracted body reads exactly as it did in the route.
   const c: { var: { DB: Env["Variables"]["DB"] } } = { var: { DB: db } };
@@ -10876,45 +11220,6 @@ async function computeCashflowStatement(
   const sgOverride = await getCashflowStockGroupMap(c.var.DB);
   const rmSplit: RmSplit = {};
   if (paymentNos.size || opLegs.length) {
-    const rmRes = await c.var.DB.prepare("SELECT * FROM raw_materials").all<Record<string, unknown>>();
-    const grpByCode = new Map<string, string>();
-    // Exact description → group, kept only when ONE master item carries that
-    // description (an ambiguous description resolves nothing).
-    const grpByDesc = new Map<string, string | null>();
-    for (const r of rmRes.results ?? []) {
-      const code = String((r.item_code ?? r.itemCode) ?? "");
-      const grp = String((r.item_group ?? r.itemGroup) ?? "");
-      if (code) grpByCode.set(code, grp);
-      const desc = String(r.description ?? "").trim().toUpperCase();
-      if (desc && grp) grpByDesc.set(desc, grpByDesc.has(desc) && grpByDesc.get(desc) !== grp ? null : grp);
-    }
-    // Owner 2026-09-29 「不应该出现 unallocated，就是 meditex 那个」: a PI line
-    // whose code is not in the master used to fall straight to "Unallocated —
-    // <supplier>". Measured: MEDITEX keyed `MED-PSF15.064HCS(A1)` on 44 lines
-    // while the master item is `MED-PSF15.064HCS(14)(L)` — same product name
-    // ("POLYESTER FIBER 15D X 64MM 10KG/BAG"), same price (RM 8.36). The line
-    // now resolves the way GRN receiving already does (resolveRmForGRNItem,
-    // grn.ts): the supplier's SKU in the price list, then the EXACT product
-    // name of one master item. No guessing on the code: a line that matches
-    // neither still shows as "Unallocated — <supplier>", so a real mistake
-    // stays visible.
-    const bindRes = await c.var.DB.prepare("SELECT supplierSku, materialCode FROM supplier_material_bindings")
-      .all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] }));
-    const codeBySku = new Map<string, string | null>();
-    for (const b of bindRes.results ?? []) {
-      const sku = String(b.supplierSku ?? b.supplier_sku ?? "").trim().toUpperCase();
-      const code = String(b.materialCode ?? b.material_code ?? "").trim();
-      if (!sku || !code) continue;
-      codeBySku.set(sku, codeBySku.has(sku) && codeBySku.get(sku) !== code ? null : code);
-    }
-    const groupForLine = (code: string, name: string): string => {
-      const direct = code ? grpByCode.get(code) : undefined;
-      if (direct) return direct;
-      const viaSku = code ? codeBySku.get(code.trim().toUpperCase()) : undefined;
-      if (viaSku) { const g = grpByCode.get(viaSku); if (g) return g; }
-      const viaName = name ? grpByDesc.get(name.trim().toUpperCase()) : undefined;
-      return viaName ?? "";
-    };
     // Owner 2026-09-29 「load 这么慢」: measured 8.6–9.3 s on prod, and the
     // cause was one query per ticked payment (115) plus one per settled PI
     // (298) — ~415 serial round-trips. The same two reads now come in bulk,
@@ -10940,40 +11245,8 @@ async function computeCashflowStatement(
     // 2. The item lines of every PI those rows settled.
     const piIds = new Set<string>();
     for (const rows of payRowsByNo.values()) for (const r of rows) { const id = String(r.purchaseInvoiceId ?? r.purchase_invoice_id ?? ""); if (id) piIds.add(id); }
-    const piItemsById = new Map<string, Record<string, unknown>[]>();
-    for (const part of chunk([...piIds], 200)) {
-      const res = await c.var.DB.prepare(`SELECT * FROM purchase_invoice_items WHERE pi_id IN (${part.map(() => "?").join(",")})`).bind(...part).all<Record<string, unknown>>();
-      for (const it of res.results ?? []) {
-        const id = String(it.piId ?? it.pi_id ?? "");
-        const arr = piItemsById.get(id) ?? [];
-        arr.push(it);
-        piItemsById.set(id, arr);
-      }
-    }
-    // Per-PI material-line weights, computed once per PI and reused across
-    // every payment that touched it. A PI belongs to exactly one supplier, so
-    // the supplier-tagged fallback label is stable under the piId cache key.
-    const piWeightCache = new Map<string, Map<string, number>>();
-    const piWeightsFor = (piId: string, supplier: string): Map<string, number> => {
-      const hit = piWeightCache.get(piId);
-      if (hit) return hit;
-      const w = new Map<string, number>();
-      for (const it of piItemsById.get(piId) ?? []) {
-        const lt = String((it.line_type ?? it.lineType) ?? "STOCKED");
-        const amt = Number((it.line_total_sen ?? it.lineTotalSen) ?? 0);
-        const mc = String((it.material_code ?? it.materialCode) ?? "");
-        const grp = groupForLine(mc, String((it.material_name ?? it.materialName) ?? ""));
-        // Owner 2026-08-27 「拆散」: one row PER STOCK GROUP, not the four
-        // rolled-up lines. The stock-group override map still renames a group
-        // when set; tax rides its own line; a line with no resolvable group is
-        // named by its SUPPLIER (owner 2026-08-31 「这个我也有要分」) so he can
-        // see whose invoice needs a material code — or that it is a service.
-        const line = lt === "TAX" ? "SST / TAX" : grp ? (sgOverride[grp] ?? grp) : `Unallocated — ${supplier}`;
-        w.set(line, (w.get(line) ?? 0) + Math.max(0, amt));
-      }
-      piWeightCache.set(piId, w);
-      return w;
-    };
+    // 2b. Their material weights (loadPiMaterialWeights).
+    const piWeightsFor = await loadPiMaterialWeights(c.var.DB, piIds, sgOverride);
     // What one payment actually settled: its allocation rows, weighted by
     // the BOOKED amount each row paid off. Rows the system can name but not
     // split get their own labelled line (owner 2026-08-27 「必须要知道还
@@ -11123,9 +11396,23 @@ async function computeCashflowStatement(
   for (const [sup, cat] of Object.entries(await getCashflowSupplierCategoryMap(c.var.DB))) {
     if (cat) supplierCategory[sup] = cat; else delete supplierCategory[sup];
   }
+  let forecastMeta: CashflowForecastMeta | undefined;
+  let forecast: { columns: ForecastColumn[]; legs: ForecastLeg[]; rmSplit: RmSplit } | undefined;
+  if (opts?.forecast) {
+    const fc = await loadCashflowForecast(c.var.DB, orgId, {
+      today: opts.forecast.today,
+      period,
+      months: fyMonths(period, fyeMonth, fyStartYm),
+      openingYm: obDate ? obDate.slice(0, 7) : null,
+      coa, resolveAcct, sgOverride,
+    });
+    forecast = fc.forecast;
+    forecastMeta = fc.meta;
+  }
   const statement = buildStatement({
     classified, bankLegs, coa, map, rmSplit, deptSplit, stockGroupOverride: sgOverride,
     supplierCategory, fyeMonth, fyStartYm, period, editable, trace: !!opts?.traceKey,
+    ...(forecast ? { forecast } : {}),
   });
   let drill: CfDrill | undefined;
   if (opts?.traceKey) {
@@ -11311,7 +11598,7 @@ async function computeCashflowStatement(
   // entry, so a move between our own bank / cash accounts (a petty-cash
   // top-up) is neither in nor out (owner 2026-11-08, BUG-2026-11-08-419).
   const bankByMonth = bankInOutByMonth(bankLegs);
-  return { ...statement, bankByMonth, drill };
+  return { ...statement, bankByMonth, drill, ...(forecastMeta ? { forecastMeta } : {}) };
 }
 
 app.get("/cashflow-statement", async (c) => {
@@ -11339,6 +11626,24 @@ app.get("/cashflow-drill", async (c) => {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return c.json({ success: false, error: "period must be YYYY-MM" }, 400);
   const { drill } = await computeCashflowStatement(c.var.DB, period, false, getOrgId(c), { traceKey: key });
   return c.json({ success: true, data: { period, ...drill } });
+});
+
+// Cash Flow forecast (owner 2026-11-08 「做」; spec docs/superpowers/specs/
+// 2026-11-08-cash-flow-forecast-design.md): the statement with each month's
+// Forecast column beside its Actual one, future months as far as documents
+// reach, and what makes up every forecast cell. Read only. `?asOf=` replays
+// an earlier day (a hand check), never a later one.
+app.get("/cashflow-forecast", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const realToday = todayMyt();
+  const period = c.req.query("period") || realToday.slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return c.json({ success: false, error: "period must be YYYY-MM" }, 400);
+  const asOfQ = c.req.query("asOf") ?? "";
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ <= realToday ? asOfQ : realToday;
+  const { bankByMonth: _bank, drill: _drill, sources: _sources, forecastMeta, ...statement } =
+    await computeCashflowStatement(c.var.DB, period, false, getOrgId(c), { forecast: { today } });
+  return c.json({ success: true, data: { period, ...forecastMeta, ...statement } });
 });
 
 // GL-truth P&L + Balance Sheet, computed from the immutable
@@ -14908,32 +15213,34 @@ app.get("/labor/preview", async (c) => {
 // labour map would post it to and that account's P&L bucket, so the Forecast
 // page files the row in the SAME section the real books would use. Also
 // returns the mapped-account list the dept-mode supersede rule skips.
-app.get("/labor/departments", async (c) => {
-  const denied = await requirePermission(c, "accounting", "read");
-  if (denied) return denied;
-  try {
+// The departments the Forecast P&L keys salaries by, each with the account
+// the labour map posts it to and that account's P&L bucket, plus the accounts
+// a dept-mode month supersedes. GET /labor/departments serves it to the
+// Forecast page; the Cash Flow forecast reads the same list server-side.
+async function loadLabourDepartments(db: Env["Variables"]["DB"], orgId: string) {
+  {
     const codes = new Set<string>();
     try {
-      const master = await c.var.DB.prepare(`SELECT code FROM departments`).all<{ code: string | null }>();
+      const master = await db.prepare(`SELECT code FROM departments`).all<{ code: string | null }>();
       for (const r of master.results ?? []) {
         const t = String(r.code ?? "").trim();
         if (t) codes.add(t);
       }
     } catch { /* departments master absent — payslips still seed below */ }
     try {
-      const ps = await c.var.DB.prepare(
+      const ps = await db.prepare(
         `SELECT DISTINCT departmentCode FROM payslips WHERE orgId = ? AND status != 'CANCELLED'`,
       )
-        .bind(getOrgId(c))
+        .bind(orgId)
         .all<{ departmentCode: string | null; department_code: string | null }>();
       for (const r of ps.results ?? []) {
         const t = String(r.departmentCode ?? r.department_code ?? "").trim();
         if (t) codes.add(t);
       }
     } catch { /* payslips absent */ }
-    const map = await getLabourMap(c.var.DB);
-    const override = await getPnlSectionMap(c.var.DB);
-    const coaRes = await c.var.DB.prepare("SELECT code, type FROM chart_of_accounts")
+    const map = await getLabourMap(db);
+    const override = await getPnlSectionMap(db);
+    const coaRes = await db.prepare("SELECT code, type FROM chart_of_accounts")
       .all<{ code: string; type: string }>();
     const coaTypes = new Map((coaRes.results ?? []).map((a) => [a.code, a.type] as const));
     // Owner 2026-08-29 「不想要改labour tab, 直接forecast 映射在non production」:
@@ -14942,7 +15249,7 @@ app.get("/labor/departments", async (c) => {
     // its labour-map account (which still decides where wages POST) is 750-x.
     const nonProd = new Set<string>();
     try {
-      const flags = await c.var.DB.prepare(`SELECT code, is_production FROM departments`)
+      const flags = await db.prepare(`SELECT code, is_production FROM departments`)
         .all<{ code: string | null; isProduction: number | null; is_production: number | null }>();
       for (const r of flags.results ?? []) {
         const t = String(r.code ?? "").trim();
@@ -14957,7 +15264,15 @@ app.get("/labor/departments", async (c) => {
         : pnlBucketFor(account, type, override) ?? "DIRECT_LABOUR";
       return { code, account, bucket };
     });
-    return c.json({ success: true, data: { departments, mappedAccounts: labourMappedAccounts(map) } });
+    return { departments, mappedAccounts: labourMappedAccounts(map) };
+  }
+}
+
+app.get("/labor/departments", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  try {
+    return c.json({ success: true, data: await loadLabourDepartments(c.var.DB, getOrgId(c)) });
   } catch {
     return c.json({ success: true, data: { departments: [], mappedAccounts: [] } });
   }
@@ -18681,6 +18996,30 @@ app.post("/cash-position/planned", async (c) => {
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
+});
+
+// Mark a planned payment paid (or not paid again). It then leaves the board
+// and every later Cash Flow forecast month; the month it was due in keeps it,
+// because that month's forecast is as at its 1st (spec 6.3).
+app.post("/cash-position/planned/:id/paid", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  await ensureCashBoardTables(c.var.DB);
+  const id = c.req.param("id");
+  const body = (await c.req.json().catch(() => ({}))) as { paid?: boolean };
+  const plan = await c.var.DB.prepare("SELECT party_name, done_at FROM planned_payments WHERE id = ?").bind(id).first<Record<string, unknown>>().catch(() => null);
+  if (!plan) return c.json({ success: false, error: "Planned payment not found" }, 404);
+  const paid = body.paid !== false;
+  const doneAt = paid ? new Date().toISOString() : null;
+  await c.var.DB.prepare("UPDATE planned_payments SET done_at = ? WHERE id = ?").bind(doneAt, id).run();
+  await emitAudit(c, {
+    resource: "cash-position",
+    resourceId: String(plan.partyName ?? plan.party_name ?? ""),
+    action: paid ? "planned-paid" : "planned-unpaid",
+    before: { doneAt: plan.doneAt ?? plan.done_at ?? null },
+    after: { doneAt },
+  });
+  return c.json({ success: true, data: { id, doneAt } });
 });
 
 app.delete("/cash-position/planned/:id", async (c) => {

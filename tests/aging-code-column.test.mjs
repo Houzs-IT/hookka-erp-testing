@@ -14,8 +14,9 @@ const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
 test("/aging rows carry their party's code; the cached shape is versioned", () => {
   const api = read("src/api/routes/accounting.ts");
-  assert.match(api, /c\.var\.DB\.prepare\("SELECT id, code FROM customers"\)\.all/);
-  assert.match(api, /c\.var\.DB\.prepare\("SELECT id, code FROM suppliers"\)\.all/);
+  // Read inside computeAgingData (2026-11-08), whose handle is `db`.
+  assert.match(api, /db\.prepare\("SELECT id, code FROM customers"\)\.all/);
+  assert.match(api, /db\.prepare\("SELECT id, code FROM suppliers"\)\.all/);
   assert.equal((api.match(/customerCode: custCode\.get\(/g) ?? []).length, 2, "invoice rows and advance-only rows");
   assert.equal((api.match(/supplierCode: supCode\.get\(/g) ?? []).length, 2, "bill rows and advance-only rows");
   assert.match(api, /\|due\|notes\|code/);
