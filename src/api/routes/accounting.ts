@@ -43,9 +43,11 @@ import {
   buildForecastLegs,
   forecastCashLines,
   isNonCashAccount,
+  openingCreditCutoffYm,
   parseTermMonths,
   piIdIndex,
   scheduleOpenDocs,
+  splitOpeningCredits,
   type FcCashLine,
   type OpenDoc,
   type PlannedPayment,
@@ -10839,6 +10841,9 @@ type CashflowForecastMeta = {
   openingYm: string | null;
   termFlagged: string[];
   excluded: { ym: string; code: string; name: string; amtSen: number }[];
+  /** Customer receipts not knocked off, dated up to `uptoYm`, left out of the
+   *  netting (opening period); `sen` is their total as a positive amount. */
+  openingCredits: { uptoYm: string; count: number; sen: number } | null;
 };
 
 // The Cash Flow forecast's inputs (spec docs/superpowers/specs/2026-11-08-
@@ -10964,9 +10969,20 @@ async function loadCashflowForecast(
     }
     return out;
   };
+  // Opening-period customer receipts wait for the opening balances (owner
+  // 2026-11-09): split off every aging before its credits are netted. The
+  // footnote counts them in the aging the page leads with (today's, else the
+  // period's own 1st).
+  const cutoffYm = openingCreditCutoffYm(openingYm);
+  let openingLeftOut: OpenDoc[] = [];
+  const scheduleSnap = (s: Snap, report: boolean): ScheduledDoc[] => {
+    const { kept, leftOut } = splitOpeningCredits(toDocs(s), cutoffYm);
+    if (report) openingLeftOut = leftOut;
+    return scheduleOpenDocs(kept, termOf);
+  };
   const baselines = new Map<string, ScheduledDoc[]>();
-  baseYms.forEach((m, i) => baselines.set(m, scheduleOpenDocs(toDocs(got[i]), termOf)));
-  const live = liveSnap ? scheduleOpenDocs(toDocs(liveSnap), termOf) : null;
+  baseYms.forEach((m, i) => baselines.set(m, scheduleSnap(got[i], !liveSnap && m === period)));
+  const live = liveSnap ? scheduleSnap(liveSnap, true) : null;
 
   // Each open PI splits by its own materials, exactly as a payment of it
   // would (an opening PI with no lines → "Opening creditors — <supplier>").
@@ -11034,7 +11050,12 @@ async function loadCashflowForecast(
   const shown = new Set(built.columns.filter((c) => !c.blank).map((c) => c.ym));
   return {
     forecast: { columns: built.columns, legs: built.legs, rmSplit },
-    meta: { today, openingYm, termFlagged: built.termFlagged, excluded: excluded.filter((e) => shown.has(e.ym)) },
+    meta: {
+      today, openingYm, termFlagged: built.termFlagged, excluded: excluded.filter((e) => shown.has(e.ym)),
+      openingCredits: cutoffYm && openingLeftOut.length
+        ? { uptoYm: cutoffYm, count: openingLeftOut.length, sen: openingLeftOut.reduce((t, d) => t - d.sen, 0) }
+        : null,
+    },
   };
 }
 

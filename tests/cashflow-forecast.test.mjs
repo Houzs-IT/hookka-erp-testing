@@ -46,6 +46,34 @@ test("credits knock off the customer's oldest expected invoice first, never belo
   assert.ok(out.every((d) => d.dueSen >= 0));
 });
 
+// ---- opening period (owner 2026-11-09 「把这些初期的排除掉」 → the customers' receipts) ----
+
+test("openingCreditCutoffYm: the month after the opening month; none without an opening", () => {
+  assert.equal(fc.openingCreditCutoffYm("2026-05"), "2026-06");
+  assert.equal(fc.openingCreditCutoffYm("2026-12"), "2027-01");
+  assert.equal(fc.openingCreditCutoffYm(null), null);
+});
+
+test("an opening-period customer receipt is left out of the netting; the invoices still count", () => {
+  const docs = [
+    doc({ no: "OLD-INV", date: "2026-05-30", sen: 4000 }),
+    doc({ no: "NEW-INV", date: "2026-10-05", sen: 9000 }),
+    doc({ no: "R-JUN · Advance", date: "2026-06-30", sen: -7000 }),
+    doc({ no: "R-JUL · Advance", date: "2026-07-01", sen: -500 }),
+    doc({ kind: "pi", partyId: "S1", partyName: "S1", no: "P-ADV · Advance", date: "2026-06-03", sen: -300, accountCode: "400-0000" }),
+  ];
+  const { kept, leftOut } = fc.splitOpeningCredits(docs, "2026-06");
+  assert.deepEqual(leftOut.map((d) => d.no), ["R-JUN · Advance"]);
+  assert.deepEqual(kept.map((d) => d.no), ["OLD-INV", "NEW-INV", "R-JUL · Advance", "P-ADV · Advance"], "a July receipt, the invoices and supplier payments stay");
+  const by = Object.fromEntries(fc.scheduleOpenDocs(kept, term(1)).map((d) => [d.no, d.dueSen]));
+  assert.deepEqual([by["OLD-INV"], by["NEW-INV"]], [3500, 9000], "only the July receipt is knocked off, oldest first");
+});
+
+test("without an opening month nothing is left out", () => {
+  const docs = [doc({ no: "R · Advance", date: "2026-06-30", sen: -7000 })];
+  assert.deepEqual(fc.splitOpeningCredits(docs, null), { kept: docs, leftOut: [] });
+});
+
 test("a two-month customer pays the invoices of two months ago", () => {
   const [d] = fc.scheduleOpenDocs([doc({ date: "2026-09-30", sen: 100 })], term(2));
   assert.equal(d.expectedYm, "2026-11");

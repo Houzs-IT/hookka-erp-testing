@@ -36,6 +36,11 @@ test("forecast on: a month heading over Actual and Forecast; forecast cells carr
   assert.match(tab, /Term blank or unreadable, taken as 1 month:/);
 });
 
+test("a footnote names the opening-period customer receipts left out of the netting", () => {
+  assert.match(tab, /fcData\.openingCredits && \(/);
+  assert.match(tab, /\(opening period\) are not netted/);
+});
+
 test("the drill: forecast items under the line; the payment drill keeps out of forecast columns", () => {
   assert.match(tab, /<CfForecastDrillRows sources=\{fcData\.forecastSources\?\.\[r\.lineKey\]\} cols=\{cols\} depth=\{r\.depth\} \/>/);
   const drill = slice("function CfMonthlyDrillRows(", "\nfunction ");

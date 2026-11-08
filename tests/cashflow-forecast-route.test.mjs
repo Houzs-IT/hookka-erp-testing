@@ -44,6 +44,16 @@ test("POST /cash-position/planned/:id/paid sets done_at and nothing else", () =>
   assert.doesNotMatch(h, /DELETE|INSERT/);
 });
 
+test("opening-period customer receipts are split off every aging before the netting, and counted for the footnote", () => {
+  const start = src.indexOf("async function loadCashflowForecast(");
+  const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));
+  assert.match(body, /const cutoffYm = openingCreditCutoffYm\(openingYm\);/);
+  assert.match(body, /splitOpeningCredits\(toDocs\(s\), cutoffYm\)/);
+  assert.match(body, /scheduleOpenDocs\(kept, termOf\)/);
+  assert.doesNotMatch(body, /scheduleOpenDocs\(toDocs\(/, "no aging is scheduled without the split");
+  assert.match(body, /openingCredits:/);
+});
+
 test("the forecast loader reads master terms, Forecast P&L and planned payments, and writes nothing", () => {
   const start = src.indexOf("async function loadCashflowForecast(");
   const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));
