@@ -211,6 +211,22 @@ export function EditLayoutToggle({ on, onToggle }: { on: boolean; onToggle: () =
   );
 }
 
+/** The Cash Flow forecast switch (owner 2026-11-08): off on every load;
+ *  pressed, it takes the forecast red. */
+export function ForecastToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onToggle}
+      title={on ? "Hide the forecast" : "Show the forecast beside each month's actual figures"}
+      className={`${CTRL} px-3 ${on ? "border-[#C0392B] bg-[#C0392B] text-white hover:bg-[#A93226]" : "hover:bg-[#F4F6F8]"}`}
+    >
+      Forecast
+    </button>
+  );
+}
+
 /** One download icon; its menu lists the report's exports. */
 export function DownloadMenu({ items }: { items: { label: string; onSelect: () => void }[] }) {
   const { open, setOpen, boxRef } = usePopover();

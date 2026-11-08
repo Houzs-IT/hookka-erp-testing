@@ -280,6 +280,22 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   background-color: #F7F5F1;
 }
 
+/* Cash Flow forecast (owner 2026-11-08): a Forecast column reads in the
+   forecast red on a faint tint, its heading over a dashed rule; "-" and zero
+   cells keep the quiet grey (the data-zero rule below wins on :not). */
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="fc"] {
+  color: #C0392B;
+  border-bottom: 1.5px dashed #C0392B;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="fc"] {
+  background-color: #FCF5F4;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="fc"]:not([data-zero]) {
+  color: #C0392B;
+}
+
 /* Row kinds. */
 /* A break between sections is a line, not an empty strip (design rule 3,
    "Lines, not fills, separate groups"; owner 2026-10-17 screenshot: the 10px
