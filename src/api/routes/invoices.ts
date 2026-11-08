@@ -1290,7 +1290,7 @@ app.get("/", async (c) => {
     // []`. This also retires the 2026-04-26 ROWS_HARD_CAP workaround whose
     // sole purpose was capping those two unbounded child fetches.
     const invs = await db
-      .prepare(`SELECT * FROM invoices ${clause} ORDER BY created_at DESC`)
+      .prepare(`SELECT * FROM invoices ${clause} ORDER BY created_at DESC, id DESC`)
       .bind(...params)
       .all<InvoiceRow>();
 
@@ -1322,7 +1322,7 @@ app.get("/", async (c) => {
       .first<{ n: number }>(),
     db
       .prepare(
-        `SELECT * FROM invoices ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT * FROM invoices ${clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       )
       .bind(...params, limit, offset)
       .all<InvoiceRow>(),
