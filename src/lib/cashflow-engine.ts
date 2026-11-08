@@ -173,6 +173,9 @@ export function rawMaterialLineFor(
 // "Unallocated raw material" always last.
 export function rmLineOrder(line: string): number {
   if (line === "Unallocated raw material") return 99;
+  // The forecast's past-term amount: one flat row near the bottom, never
+  // nested under a purchase parent as if it were a stock group.
+  if (line === OVERDUE_LABEL) return 98;
   // Per-supplier unresolved rows (owner 2026-08-31 「这个我也有要分」) sit
   // just above the absolute-residual line.
   if (line.startsWith("Unallocated — ")) return 15;
@@ -336,7 +339,11 @@ export type RmSplit = Record<string, { line: string; weight: number }[]>;
 export type CfMapEntry = { section: CfSection; order: number };
 export type CfMap = Record<string, CfMapEntry>;
 
-export type CfColumn = { key: string; label: string; accum?: boolean };
+// `ym`, `forecast`, `future`, `blank` appear only on a statement built with a
+// forecast: each month's Actual column carries its `ym`, its Forecast column
+// sits right after it (key "fc:YYYY-MM"); future months are Forecast only;
+// a blank Forecast column (at or before the opening month) is null throughout.
+export type CfColumn = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; future?: boolean; blank?: boolean };
 export type CfRow = {
   kind: "section" | "group" | "line" | "subtotal" | "result" | "total" | "bf" | "cf" | "gap";
   label: string;
@@ -354,7 +361,16 @@ export type CfRow = {
 // leg's whole cash when the line only got a share of it (a payment split
 // across the materials of the PIs it settled, a salary split by department).
 export type CfSource = { sourceType: string; sourceId: string; ym: string; sen: number; legAccount: string; of?: number };
-export type CfStatement = { columns: CfColumn[]; rows: CfRow[]; sources?: Record<string, CfSource[]> };
+/** What makes up one forecast cell: the items of the legs that fed it (a split
+ *  leg records its share as `sen` and the whole leg as `ofSen`). */
+export type CfForecastSource = ForecastItem & { sen: number; ofSen?: number };
+export type CfStatement = {
+  columns: CfColumn[];
+  rows: CfRow[];
+  sources?: Record<string, CfSource[]>;
+  /** lineKey → forecast column key → items. Only with a forecast. */
+  forecastSources?: Record<string, Record<string, CfForecastSource[]>>;
+};
 
 // Months of the current FY from period back to FY start (inclusive),
 // newest first, e.g. fye=8, period=2026-03 → [2026-03,...,2025-09,2025-08].
@@ -424,14 +440,36 @@ export function buildStatement(opts: {
   editable?: boolean;
   // Record every line's sources (CfSource) for the inline drill.
   trace?: boolean;
+  // The Cash Flow forecast (src/lib/cashflow-forecast.ts): forecast columns
+  // and the pseudo-legs that fill them. Absent = today's statement, unchanged.
+  // `rmSplit` holds the material weights the legs' `splitKey`s name.
+  forecast?: { columns: ForecastColumn[]; legs: ForecastLeg[]; rmSplit?: RmSplit };
 }): CfStatement {
-  const { classified, bankLegs, coa, map, rmSplit, deptSplit = {}, stockGroupOverride, supplierCategory = {}, fyeMonth, fyStartYm, period, editable, trace } = opts;
+  const { classified, bankLegs, coa, map, rmSplit, deptSplit = {}, stockGroupOverride, supplierCategory = {}, fyeMonth, fyStartYm, period, editable, trace, forecast } = opts;
   const months = fyMonths(period, fyeMonth, fyStartYm);        // newest first
   const fyStart = months[months.length - 1];        // FY start ym
-  const columns: CfColumn[] = [
-    { key: "__accum__", label: `Accumulated`, accum: true },
-    ...months.map((m) => ({ key: m, label: monthLabel(m) })),
-  ];
+  const fcKey = (ym: string) => `fc:${ym}`;
+  let columns: CfColumn[];
+  if (!forecast) {
+    columns = [
+      { key: "__accum__", label: `Accumulated`, accum: true },
+      ...months.map((m) => ({ key: m, label: monthLabel(m) })),
+    ];
+  } else {
+    // Owner 2026-11-08 「一个月 oct 里面包括 actual 和 forecast，然后多月」: each
+    // month's Actual and Forecast side by side; future months (Forecast only)
+    // first, so the order stays newest first.
+    const fcByYm = new Map(forecast.columns.filter((c) => !c.future).map((c) => [c.ym, c] as const));
+    columns = [
+      { key: "__accum__", label: `Accumulated`, accum: true },
+      ...forecast.columns.filter((c) => c.future).map((c) => ({ key: fcKey(c.ym), label: monthLabel(c.ym), ym: c.ym, forecast: true, future: true })),
+      ...months.flatMap((m): CfColumn[] => {
+        const f = fcByYm.get(m);
+        const actual: CfColumn = { key: m, label: monthLabel(m), ym: m };
+        return f ? [actual, { key: fcKey(m), label: monthLabel(m), ym: m, forecast: true, ...(f.blank ? { blank: true } : {}) }] : [actual];
+      }),
+    ];
+  }
   const colIndex = new Map(columns.map((c, i) => [c.key, i] as const));
   const inFy = (ym: string) => ym >= fyStart && ym <= period;
 
@@ -511,6 +549,55 @@ export function buildStatement(opts: {
     }
   }
 
+  // Forecast legs go through the same placement as ledger legs — the owner's
+  // map, the material split, the supplier categories — so a forecast lands on
+  // the line its actual money lands on. They fill their own column only:
+  // never Accumulated (overdue money rolls month to month, so a summed
+  // forecast would count it again) and never an actual column.
+  const forecastSources: Record<string, Record<string, CfForecastSource[]>> = {};
+  const addFc = (section: CfSection, label: string, order: number, colKey: string, sen: number, accountCode: string | undefined, item: ForecastItem, ofSen?: number) => {
+    const ci = colIndex.get(colKey);
+    if (ci === undefined || !sen) return;
+    const a = ensure(section, label, order, accountCode);
+    a.vals[ci] += sen;
+    ((forecastSources[`${section}|${label}`] ??= {})[colKey] ??= []).push({ ...item, sen, ...(ofSen !== undefined ? { ofSen } : {}) });
+  };
+  for (const fl of forecast?.legs ?? []) {
+    if (fl.section) {
+      addFc(fl.section, fl.label ?? SECTION_LABELS[fl.section], fl.order ?? 10, fl.col, fl.sen, undefined, fl.item);
+      continue;
+    }
+    const code = fl.accountCode ?? "";
+    const a = coa.get(code);
+    const place = placement(code, a);
+    if (fl.label) {
+      // A named line (past term, a department, "Repaid to …"): no split. It
+      // keeps its account only under Trade Finance, where the facility is
+      // the group the line nests in.
+      const order = fl.order ?? (place.section === "TRADE_FINANCE" ? tfLineOrder(fl.label) : place.section === "RAW_MATERIALS" ? rmLineOrder(fl.label) : place.order);
+      addFc(place.section, fl.label, order, fl.col, fl.sen, place.section === "TRADE_FINANCE" ? code : undefined, fl.item);
+    } else if (place.section === "RAW_MATERIALS") {
+      const split = fl.splitKey ? forecast?.rmSplit?.[fl.splitKey] : undefined;
+      if (split && split.length) {
+        const parts = splitByLargestRemainder(Math.abs(fl.sen), split.map((s) => ({ key: s.line, weight: s.weight })));
+        const sign = fl.sen < 0 ? -1 : 1;
+        for (const [line, sen] of Object.entries(parts)) {
+          const via = supplierSectionFor(line, supplierCategory);
+          if (via) addFc(via.section, via.supplier, 50, fl.col, sign * sen, undefined, fl.item, fl.sen);
+          else addFc("RAW_MATERIALS", line, rmLineOrder(line), fl.col, sign * sen, undefined, fl.item, fl.sen);
+        }
+      } else if (a && !(a.sat === "SCC" || band(code) === 400 || band(code) === 405)) {
+        addFc("RAW_MATERIALS", place.name, rmLineOrder(place.name), fl.col, fl.sen, code, fl.item);
+      } else {
+        addFc("RAW_MATERIALS", "Unallocated raw material", 99, fl.col, fl.sen, undefined, fl.item);
+      }
+    } else if (place.section === "TRADE_FINANCE") {
+      addFc("TRADE_FINANCE", place.name, tfLineOrder(place.name), fl.col, fl.sen, code, fl.item);
+    } else {
+      addFc(place.section, place.name, place.order, fl.col, fl.sen, code, fl.item);
+    }
+  }
+
   const surplusByCol = columns.map(() => 0); // = bank movement (authoritative)
   for (const bl of bankLegs) {
     const d = bl.debitSen - bl.creditSen; // + = balance up
@@ -518,15 +605,37 @@ export function buildStatement(opts: {
     const ci = colIndex.get(bl.ym);
     if (ci !== undefined) surplusByCol[ci] += d;
   }
+  // A forecast column's surplus is what its legs bring in less what they pay.
+  for (const fl of forecast?.legs ?? []) {
+    const ci = colIndex.get(fl.col);
+    if (ci !== undefined && columns[ci].forecast) surplusByCol[ci] += fl.sen;
+  }
   const balBefore = (ym: string): number => {
     let s = 0;
     for (const bl of bankLegs) if (bl.ym < ym) s += bl.debitSen - bl.creditSen;
     return s;
   };
   const bfVals = columns.map((col) =>
-    col.accum ? balBefore(fyStart) : balBefore(col.key),
+    col.accum ? balBefore(fyStart) : col.forecast ? (col.future ? 0 : balBefore(col.ym!)) : balBefore(col.key),
   );
   const cfVals = columns.map((col, i) => bfVals[i] + surplusByCol[i]);
+  // Bank c/f forecast (spec 8): a month's forecast starts from its ACTUAL b/f
+  // (above); a future month from the month before's forecast c/f, chained
+  // oldest first so each one sees the last.
+  if (forecast) {
+    const fcIndexByYm = new Map<string, number>();
+    columns.forEach((c, i) => { if (c.forecast && c.ym) fcIndexByYm.set(c.ym, i); });
+    const prevYm = (ym: string) => {
+      const [y, m] = ym.split("-").map(Number);
+      return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+    };
+    for (const c of columns.filter((x) => x.future).sort((x, y) => x.ym!.localeCompare(y.ym!))) {
+      const i = colIndex.get(c.key)!;
+      const pi = fcIndexByYm.get(prevYm(c.ym!));
+      bfVals[i] = pi !== undefined ? cfVals[pi] : 0;
+      cfVals[i] = bfVals[i] + surplusByCol[i];
+    }
+  }
 
   const rows: CfRow[] = [];
   const push = (r: CfRow) => rows.push(r);
@@ -550,7 +659,8 @@ export function buildStatement(opts: {
   };
   const emitSection = (sec: CfSection, asGroup: boolean) => {
     const aggs = sectionLines(sec);
-    if (aggs.length === 0 && sec !== "REVENUE_COLLECTION" && !editable) return;
+    // PLANNED only ever holds forecast legs: no empty block in edit mode.
+    if (aggs.length === 0 && (sec === "PLANNED" || (sec !== "REVENUE_COLLECTION" && !editable))) return;
     const sign = displaySign(sec);
     const sub = sumCols(aggs);
     const baseDepth = asGroup ? 2 : 1;
@@ -631,7 +741,7 @@ export function buildStatement(opts: {
   push({ kind: "result", label: "Net operation surplus / (deficit)", depth: 0, values: sumCols(opAggs) });
 
   push({ kind: "gap", label: "", depth: 0, values: columns.map(() => null) });
-  for (const sec of ["TRADE_FINANCE", "FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN", "UNALLOCATED"] as CfSection[])
+  for (const sec of ["TRADE_FINANCE", "FINANCE_COST", "CAPEX", "DEPOSIT", "LOAN", "PLANNED", "UNALLOCATED"] as CfSection[])
     emitSection(sec, true);
 
   push({ kind: "gap", label: "", depth: 0, values: columns.map(() => null) });
@@ -639,5 +749,9 @@ export function buildStatement(opts: {
   push({ kind: "bf", label: "Bank balance b/f", depth: 0, values: bfVals });
   push({ kind: "cf", label: "Bank balance c/f", depth: 0, values: cfVals });
 
-  return trace ? { columns, rows, sources } : { columns, rows };
+  if (!forecast) return trace ? { columns, rows, sources } : { columns, rows };
+  // A month at or before the opening month has no forecast: "-" throughout.
+  const blank = columns.flatMap((c, i) => (c.blank ? [i] : []));
+  for (const r of rows) for (const i of blank) r.values[i] = null;
+  return trace ? { columns, rows, sources, forecastSources } : { columns, rows, forecastSources };
 }
