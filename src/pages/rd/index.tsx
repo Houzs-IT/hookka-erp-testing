@@ -40,6 +40,7 @@ import {
   PROJECT_BUDGET_CHIP,
   type ProjectHealth,
 } from "./health";
+import { csvBlob } from "@/lib/csv-cell";
 
 const RDMutationSchema = mutationWithData(RdProjectSchema);
 
@@ -808,8 +809,7 @@ function ReportsView({ projects }: { projects: RDProject[] }) {
       String(p.assignedTeam.length),
       String(p.prototypes.length),
     ]);
-    const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = csvBlob([headers, ...rows]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

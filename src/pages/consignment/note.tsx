@@ -63,6 +63,7 @@ import type { ConsignmentNote, Customer } from "@/types";
 // Type-only — erased at compile time, so the jsPDF module still loads
 // lazily (its own chunk) via the await import() in the print handlers.
 import type { CNPdfData, CNPdfItem } from "@/lib/generate-cn-pdf";
+import { csvBlob } from "@/lib/csv-cell";
 
 // Per-line rich detail from GET /api/consignment-notes/:id/print-extras —
 // the CN twin of DO's print-extras. Keyed by consignment_items.id, merged
@@ -3047,8 +3048,7 @@ export default function ConsignmentNotePage() {
       (r.totalM3 ?? 0).toFixed(2),
       STATUS_LABEL[r.status],
     ]);
-    const csv = [headers, ...csvRows].map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = csvBlob([headers, ...csvRows]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

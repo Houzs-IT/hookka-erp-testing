@@ -16,20 +16,16 @@
 // Excel / Numbers / Sheets all open the result without conversion.
 // ---------------------------------------------------------------------------
 
+import { csvCell } from "./csv-cell";
+
 export type CsvColumn<T> = {
   header: string;
   accessor: (row: T) => string | number | null | undefined;
 };
 
+// Formula-safe and RFC 4180 quoted: see csv-cell.ts.
 function escape(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  // RFC 4180: quote any field that contains comma, double-quote, or newline.
-  // Embedded quotes are doubled.
-  if (/[",\r\n]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
+  return csvCell(value);
 }
 
 export function exportToCsv<T>({

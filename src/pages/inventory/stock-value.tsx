@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { MonthlyStockValue, StockAccount } from "@/types";
 import { moneyFieldToSen } from "@/lib/money-field";
+import { csvBlob } from "@/lib/csv-cell";
 
 // =============== TYPES ===============
 
@@ -861,8 +862,7 @@ function ReportsTab({
       v.status,
     ]);
 
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = csvBlob([headers, ...rows]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

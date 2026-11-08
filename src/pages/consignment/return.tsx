@@ -78,6 +78,12 @@ import {
   RotateCcw,
 } from "lucide-react";
 import type { ConsignmentItem, ConsignmentNote } from "@/types";
+import { CSV_BOM, csvCell as sharedCsvCell } from "@/lib/csv-cell";
+
+/** Formula-safe, RFC 4180 quoted cell (src/lib/csv-cell.ts). A name with a comma would otherwise shift every later column. */
+function csvCell(v: string | number): string {
+  return sharedCsvCell(v);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,10 +182,6 @@ function buildReturnRows(notes: ConsignmentNote[]): ConsignmentReturnRow[] {
 
 /** CSV cell: quote anything containing a comma, quote or newline. A customer
  *  name with a comma in it used to shift every later column by one. */
-function csvCell(v: string | number): string {
-  const s = String(v ?? "");
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -324,8 +326,8 @@ export default function ConsignmentReturnPage() {
     ]);
     const csv = [CSV_HEADERS, ...csvRows]
       .map((row) => row.map(csvCell).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+      .join("\r\n");
+    const blob = new Blob([CSV_BOM + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
