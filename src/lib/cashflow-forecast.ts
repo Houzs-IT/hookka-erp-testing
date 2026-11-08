@@ -6,7 +6,16 @@
 // No DB, no I/O. Spec: docs/superpowers/specs/2026-11-08-cash-flow-forecast-design.md.
 // Tests: tests/cashflow-forecast.test.mjs.
 // ---------------------------------------------------------------------------
-import { OVERDUE_LABEL, splitByLargestRemainder, type ForecastItem, type ForecastLeg } from "./cashflow-engine";
+import {
+  OVERDUE_LABEL,
+  PLANNED_LABEL,
+  splitByLargestRemainder,
+  type ForecastColumn,
+  type ForecastItem,
+  type ForecastLeg,
+} from "./cashflow-engine";
+import { forecastEntryRatio, forecastMonthFigures, type FcAccount, type FcLineGroups, type FcMonth } from "./forecast-pnl";
+import { pnlBucketFor } from "./pnl-bucket";
 
 export type TermInfo = { months: number; flagged: boolean };
 
@@ -156,6 +165,205 @@ export function docLegsForColumn(
     }
   }
   return legs;
+}
+
+// ---- Money without a document: Forecast P&L × forecast receipts (spec 6.2) --
+
+/** One Forecast P&L line as cash. `timing`: a salary is paid the month after
+ *  (owner: 11 月薪水应该是 12 月出); an expense in its month; factory overhead
+ *  in its month at the amount keyed, not scaled by receipts. `ratio` is the
+ *  line's share of that month's forecast sales. */
+export type FcCashLine = {
+  code: string;
+  name: string;
+  timing: "salary" | "expense" | "overhead";
+  ratio: { num: number; den: number } | { fixedSen: number };
+  amtSen: number;
+  accountCode: string;
+  /** A department row: its line in the statement (the department's code). */
+  label?: string;
+};
+
+/** Accounts whose P&L amount moves no cash: depreciation, amortisation,
+ *  write-offs — and trade-finance interest, which is already inside each
+ *  draw's amount and repaid with it. */
+export function isNonCashAccount(code: string, name: string, tfInterestCode: string): boolean {
+  return code === tfInterestCode || /DEPRECIATION|AMORTI[SZ]ATION|WRITTEN OFF|WRITE[- ]?OFF/i.test(name);
+}
+
+/** The Forecast P&L lines the cash forecast uses, in the page's own figures
+ *  (forecastMonthFigures, so the dept-mode supersede rule is the page's):
+ *  department rows, labour accounts and staff-salary accounts as salaries;
+ *  operating expenses; factory overhead. Materials, carriage, SST and other
+ *  income are left out (their cash comes from purchase invoices). */
+export function forecastCashLines(
+  m: FcMonth | undefined,
+  g: FcLineGroups,
+  override: Record<string, string>,
+  mappedAccounts: ReadonlySet<string>,
+  opts: { salaryAccount: string; nonCash: (code: string, name: string) => boolean },
+): { salesSen: number; lines: FcCashLine[]; excluded: { code: string; name: string; amtSen: number }[] } {
+  const f = forecastMonthFigures(m, g, mappedAccounts);
+  const lines: FcCashLine[] = [];
+  const excluded: { code: string; name: string; amtSen: number }[] = [];
+  const add = (a: FcAccount, timing: FcCashLine["timing"], dept: boolean) => {
+    if (f.superseded(a.code)) return;
+    const ratio = forecastEntryRatio(f.salesSen, m?.pct?.[a.code]);
+    if ("fixedSen" in ratio ? !ratio.fixedSen : !ratio.num) return; // not keyed
+    const amtSen = f.amt(a.code);
+    if (!dept && opts.nonCash(a.code, a.name)) { excluded.push({ code: a.code, name: a.name, amtSen }); return; }
+    lines.push({
+      code: a.code, name: a.name, timing, ratio, amtSen,
+      accountCode: dept ? opts.salaryAccount : a.code,
+      ...(dept ? { label: a.name } : {}),
+    });
+  };
+  for (const a of [...g.labour, ...g.labourOvhDepts, ...g.labourExpDepts]) add(a, "salary", true);
+  for (const a of g.labourAccounts) add(a, "salary", false);
+  for (const a of g.expenses) add(a, pnlBucketFor(a.code, a.type, override) === "OPEX_SALARIES" ? "salary" : "expense", false);
+  for (const a of g.overhead) add(a, "overhead", false);
+  return { salesSen: f.salesSen, lines, excluded };
+}
+
+// ---- Planned payments and the whole forecast ----------------------------------
+
+export type PlannedPayment = {
+  id: string;
+  party: string;
+  ref: string | null;
+  expectedDate: string;
+  amountSen: number;
+  doneAt: string | null;
+};
+
+export type ForecastInput = {
+  /** Today, Malaysia time (YYYY-MM-DD). */
+  today: string;
+  /** The statement's period (YYYY-MM). */
+  period: string;
+  /** The statement's months, newest first (fyMonths). */
+  months: string[];
+  openingYm: string | null;
+  /** Month → its aging as at the 1st, scheduled: every displayed month after
+   *  the opening month, plus the month before the earliest one (whose
+   *  receipts set the first month's salaries). */
+  baselines: Map<string, ScheduledDoc[]>;
+  /** The aging as at today, scheduled; null unless `period` is this month. */
+  live: ScheduledDoc[] | null;
+  /** Month → its Forecast P&L cash lines (forecastCashLines). */
+  pnl: Map<string, { salesSen: number; lines: FcCashLine[] }>;
+  plans: PlannedPayment[];
+  isCreditorControl: (code: string) => boolean;
+};
+
+const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthLabel = (ym: string): string => `${MONTH_NAMES[parseInt(ym.slice(5, 7), 10)]}'${ym.slice(2, 4)}`;
+const isReceipt = (l: ForecastLeg) => l.item.kind === "invoice" || l.item.kind === "odb";
+
+/** Every forecast leg and column for one statement. */
+export function buildForecastLegs(input: ForecastInput): { columns: ForecastColumn[]; legs: ForecastLeg[]; termFlagged: string[] } {
+  const { today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl } = input;
+  const currentYm = today.slice(0, 7);
+  const isBlank = (ym: string) => !!openingYm && ym <= openingYm;
+
+  // Future months only for this month's statement, as far as a document
+  // reaches (owner 2026-11-08 「显示」: a month only a bill reaches is shown).
+  const futureYms: string[] = [];
+  if (period === currentYm && live) {
+    let horizon = "";
+    for (const d of live) if (d.dueSen > 0 && d.expectedYm > currentYm && d.expectedYm > horizon) horizon = d.expectedYm;
+    for (let ym = addMonthsYm(currentYm, 1); horizon && ym <= horizon; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
+  }
+  const columns: ForecastColumn[] = [
+    ...[...futureYms].reverse().map((ym) => ({ ym, future: true, blank: false })),
+    ...months.map((ym) => ({ ym, future: false, blank: isBlank(ym) })),
+  ];
+
+  // Documents.
+  const docLegs = new Map<string, ForecastLeg[]>();
+  for (const ym of months) if (!isBlank(ym)) docLegs.set(ym, docLegsForColumn(baselines.get(ym) ?? [], ym, "baseline", isCreditorControl));
+  for (const ym of futureYms) docLegs.set(ym, docLegsForColumn(live ?? [], ym, "future", isCreditorControl));
+
+  // Forecast receipts per month (overdue included) — what the salaries and
+  // expenses are scaled by.
+  const receipts = new Map<string, number>();
+  for (const [ym, ls] of docLegs) receipts.set(ym, ls.filter(isReceipt).reduce((s, l) => s + l.sen, 0));
+  const before = months.length ? addMonthsYm(months[months.length - 1], -1) : "";
+  if (before && !isBlank(before) && baselines.has(before)) {
+    const ls = docLegsForColumn(baselines.get(before) ?? [], before, "baseline", isCreditorControl);
+    receipts.set(before, ls.filter(isReceipt).reduce((s, l) => s + l.sen, 0));
+  }
+
+  // Bills already counted, per column and account (no double count, spec 6.2).
+  const billed = new Map<string, number>();
+  for (const [ym, ls] of docLegs)
+    for (const l of ls) if (l.item.kind === "ocb" && l.accountCode) billed.set(`${ym}|${l.accountCode}`, (billed.get(`${ym}|${l.accountCode}`) ?? 0) - l.sen);
+
+  const legs: ForecastLeg[] = [...docLegs.values()].flat();
+  const pct = (r: { num: number; den: number }) => ((r.num / r.den) * 100).toFixed(2);
+  for (const [ym, p] of [...pnl.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (isBlank(ym)) continue;
+    for (const line of p.lines) {
+      const target = line.timing === "salary" ? addMonthsYm(ym, 1) : ym;
+      if (!docLegs.has(target)) continue; // not a displayed forecast column
+      let sen: number;
+      let note: string;
+      if (line.timing === "overhead") {
+        sen = line.amtSen;
+        note = "as keyed";
+      } else {
+        const r = receipts.get(ym);
+        if (r === undefined) continue; // that month's receipts are not known
+        if ("fixedSen" in line.ratio) {
+          sen = line.ratio.fixedSen;
+          note = "as keyed (no forecast sales)";
+        } else {
+          sen = Math.round((r * line.ratio.num) / line.ratio.den);
+          note = `${pct(line.ratio)}% of ${monthLabel(ym)} forecast receipts`;
+        }
+        if (line.timing === "salary") note += " · paid the month after";
+      }
+      if (!line.label) {
+        const k = `${target}|${line.accountCode}`;
+        const b = billed.get(k) ?? 0;
+        if (b > 0 && sen > 0) {
+          const take = Math.min(b, sen);
+          sen -= take;
+          billed.set(k, b - take);
+          note += " · less bills already counted";
+        }
+      }
+      if (sen <= 0) continue;
+      legs.push({
+        col: fcCol(target), sen: -sen, accountCode: line.accountCode,
+        ...(line.label ? { label: line.label } : {}),
+        item: { kind: "pnl", party: line.name, ref: line.code, expectedYm: target, note },
+      });
+    }
+  }
+
+  // Planned payments (spec 6.3): a month's row holds the plans still unpaid
+  // on its 1st and expected by then; a future month, the unpaid plans
+  // expected in it.
+  const planLeg = (ym: string, p: PlannedPayment, overdue: boolean): ForecastLeg => ({
+    col: fcCol(ym), sen: -p.amountSen, section: "PLANNED", label: PLANNED_LABEL,
+    item: { kind: "planned", party: p.party, ref: p.ref ?? "", date: p.expectedDate, expectedYm: p.expectedDate.slice(0, 7), ...(overdue ? { note: "past its date, not paid" } : {}) },
+  });
+  for (const ym of months) {
+    if (isBlank(ym)) continue;
+    const first = `${ym}-01`;
+    for (const p of plans) {
+      const exp = p.expectedDate.slice(0, 7);
+      if (exp > ym) continue;
+      if (p.doneAt && p.doneAt.slice(0, 10) < first) continue;
+      legs.push(planLeg(ym, p, exp < ym));
+    }
+  }
+  for (const ym of futureYms) for (const p of plans) if (!p.doneAt && p.expectedDate.slice(0, 7) === ym) legs.push(planLeg(ym, p, false));
+
+  const flagged = new Set<string>();
+  for (const docs of [...baselines.values(), live ?? []]) for (const d of docs) if (d.termFlagged && d.dueSen > 0) flagged.add(d.partyName);
+  return { columns, legs, termFlagged: [...flagged].sort() };
 }
 
 /** (supplier, PI number) → PI id. An aging line names its PI by number only;

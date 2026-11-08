@@ -145,3 +145,159 @@ test("review 1: an ambiguous PI number resolves to no PI", () => {
   assert.equal(idOf("S", "PI-2"), "c");
   assert.equal(idOf("T", "PI-2"), null);
 });
+
+// ---- Forecast P&L lines as cash (spec 6.2) ------------------------------------
+
+const fp = await import(pathToFileURL(resolve(process.cwd(), "src/lib/forecast-pnl.ts")).href);
+const acct = (code, type, name = code) => ({ code, name, type, isPostable: true });
+const groups = fp.forecastLineGroups([
+  acct("701-0010", "COST", "PURCHASE - B.M FABRIC"),
+  acct("700-1015", "COST", "CARRIAGE INWARDS"),
+  acct("750-0010", "COST", "PRODUCTION - SALARY"),
+  acct("780-0030", "COST", "FACTORY RENTAL"),
+  acct("780-0080", "COST", "DEPRECIATION - MACHINERY"),
+  acct("900-S001", "EXPENSE", "STAFF SALARIES"),
+  acct("900-0010", "EXPENSE", "UPKEEP"),
+  acct("530-0010", "REVENUE", "OTHER INCOME"),
+], {}, [{ code: "PROD-A", bucket: "DIRECT_LABOUR" }]);
+const cashOpts = { salaryAccount: "410-0010", nonCash: (code, name) => fc.isNonCashAccount(code, name, "900-I004") };
+
+test("forecastCashLines: dept rows and staff salaries are salaries, opex an expense, rent overhead; materials and other income stay out", () => {
+  const m = { salesSen: 1_000_000, pct: {
+    "cat:FABRIC": { bp: 3000 }, "700-1015": { bp: 100 }, "530-0010": { bp: 100 },
+    "dept:PROD-A": { bp: 1000 }, "900-S001": { bp: 200 }, "900-0010": { bp: 300 },
+    "780-0030": { amtSen: 20_000 }, "780-0080": { amtSen: 5_000 },
+  } };
+  const r = fc.forecastCashLines(m, groups, {}, new Set(), cashOpts);
+  const by = Object.fromEntries(r.lines.map((l) => [l.code, l]));
+  assert.deepEqual(Object.keys(by).sort(), ["780-0030", "900-0010", "900-S001", "dept:PROD-A"]);
+  assert.deepEqual([by["dept:PROD-A"].timing, by["dept:PROD-A"].accountCode, by["dept:PROD-A"].label], ["salary", "410-0010", "PROD-A"]);
+  assert.equal(by["900-S001"].timing, "salary");
+  assert.equal(by["900-0010"].timing, "expense");
+  assert.deepEqual([by["780-0030"].timing, by["780-0030"].amtSen], ["overhead", 20_000]);
+  assert.deepEqual(r.excluded, [{ code: "780-0080", name: "DEPRECIATION - MACHINERY", amtSen: 5_000 }]);
+});
+
+test("forecastCashLines follows the page's supersede rule", () => {
+  const r = fc.forecastCashLines({ salesSen: 1_000_000, pct: { "dept:PROD-A": { bp: 1000 }, "750-0010": { bp: 500 }, "900-S001": { bp: 200 } } }, groups, {}, new Set(["900-S001"]), cashOpts);
+  assert.deepEqual(r.lines.map((l) => l.code), ["dept:PROD-A"]);
+});
+
+test("isNonCashAccount: depreciation, amortisation, write-offs and the trade-finance interest account", () => {
+  assert.equal(fc.isNonCashAccount("900-I004", "INTEREST ON TRADE FINANCE", "900-I004"), true);
+  assert.equal(fc.isNonCashAccount("780-0090", "AMORTISATION OF X", "900-I004"), true);
+  assert.equal(fc.isNonCashAccount("900-I001", "INCORPORATION EXPENSE WRITTEN OFF", "900-I004"), true);
+  assert.equal(fc.isNonCashAccount("900-0010", "UPKEEP", "900-I004"), false);
+});
+
+// ---- the whole forecast ----------------------------------------------------------
+
+const inv = (no, sen, expectedYm, o = {}) => sched({ no, sen, expectedYm, ...o });
+const line = (code, timing, ratio, o = {}) => ({ code, name: o.name ?? code, timing, ratio, amtSen: o.amtSen ?? 0, accountCode: o.accountCode ?? code, ...(o.label ? { label: o.label } : {}) });
+const base = (o = {}) => ({
+  today: "2026-11-08",
+  period: "2026-11",
+  months: ["2026-11", "2026-10", "2026-09"],
+  openingYm: "2026-05",
+  baselines: new Map([
+    ["2026-08", [inv("AUG", 100_000, "2026-08")]],
+    ["2026-09", []],
+    ["2026-10", []],
+    ["2026-11", [inv("NOV", 200_000, "2026-11")]],
+  ]),
+  live: [
+    inv("DEC", 80_000, "2026-12"),
+    sched({ kind: "tf", partyName: "L1", no: "D1", sen: 30_000, accountCode: "310-0020", label: "Repaid to L1", expectedYm: "2027-01" }),
+  ],
+  pnl: new Map([["2026-11", { salesSen: 1_000_000, lines: [
+    line("dept:PROD-A", "salary", { num: 1000, den: 10000 }, { accountCode: "410-0010", label: "PROD-A" }),
+    line("900-0010", "expense", { num: 300, den: 10000 }),
+    line("780-0030", "overhead", { fixedSen: 20_000 }, { amtSen: 20_000 }),
+  ] }]]),
+  plans: [],
+  isCreditorControl: () => false,
+  ...o,
+});
+const inCol = (r, col) => r.legs.filter((l) => l.col === col).map((l) => ({ sen: l.sen, ref: l.item.ref, label: l.label })).sort((a, b) => a.sen - b.sen);
+
+test("buildForecastLegs: future months as far as documents reach; salaries the month after, expenses and overhead the same month", () => {
+  const r = fc.buildForecastLegs(base());
+  assert.deepEqual(r.columns.map((c) => c.ym), ["2027-01", "2026-12", "2026-11", "2026-10", "2026-09"]);
+  assert.deepEqual(r.columns.map((c) => c.future), [true, true, false, false, false]);
+  assert.deepEqual(inCol(r, "fc:2026-11"), [
+    { sen: -20_000, ref: "780-0030", label: undefined },
+    { sen: -6_000, ref: "900-0010", label: undefined },
+    { sen: 200_000, ref: "NOV", label: undefined },
+  ]);
+  assert.deepEqual(inCol(r, "fc:2026-12"), [
+    { sen: -20_000, ref: "dept:PROD-A", label: "PROD-A" },
+    { sen: 80_000, ref: "DEC", label: undefined },
+  ]);
+  assert.deepEqual(inCol(r, "fc:2027-01"), [{ sen: -30_000, ref: "D1", label: "Repaid to L1" }], "no salary: December has no Forecast P&L");
+});
+
+test("buildForecastLegs: the first month's salaries come from the month before's receipts", () => {
+  const r = fc.buildForecastLegs(base({ pnl: new Map([["2026-08", { salesSen: 1_000_000, lines: [
+    line("dept:PROD-A", "salary", { num: 1000, den: 10000 }, { accountCode: "410-0010", label: "PROD-A" }),
+  ] }]]) }));
+  assert.deepEqual(inCol(r, "fc:2026-09"), [{ sen: -10_000, ref: "dept:PROD-A", label: "PROD-A" }]);
+  assert.ok(!r.columns.some((c) => c.ym === "2026-08"));
+});
+
+test("buildForecastLegs: a bill already counted on the same account and month comes off, floored at zero", () => {
+  const ocb = (sen) => sched({ kind: "ocb", partyName: "P1", no: "OCB", sen, accountCode: "405-0000", mix: [{ accountCode: "900-0010", weight: 1 }], expectedYm: "2026-11" });
+  const r4 = fc.buildForecastLegs(base({ baselines: new Map([...base().baselines, ["2026-11", [inv("NOV", 200_000, "2026-11"), ocb(4_000)]]]) }));
+  assert.equal(r4.legs.find((l) => l.col === "fc:2026-11" && l.item.kind === "pnl" && l.item.ref === "900-0010").sen, -2_000);
+  const r8 = fc.buildForecastLegs(base({ baselines: new Map([...base().baselines, ["2026-11", [inv("NOV", 200_000, "2026-11"), ocb(8_000)]]]) }));
+  assert.equal(r8.legs.filter((l) => l.item.kind === "pnl" && l.item.ref === "900-0010").length, 0);
+});
+
+test("review 4: zero sales pays RM lines as keyed; a month without Forecast P&L gets no salary or expense", () => {
+  const r = fc.buildForecastLegs(base({ pnl: new Map([["2026-11", { salesSen: 0, lines: [line("900-0010", "expense", { fixedSen: 50_000 }, { amtSen: 50_000 })] }]]) }));
+  assert.equal(r.legs.find((l) => l.item.kind === "pnl").sen, -50_000);
+  assert.deepEqual(inCol(r, "fc:2026-10"), []);
+});
+
+test("buildForecastLegs: planned payments as at each month's 1st", () => {
+  const plan = (id, expectedDate, doneAt = null) => ({ id, party: id, ref: null, expectedDate, amountSen: 1000, doneAt });
+  const r = fc.buildForecastLegs(base({ plans: [
+    plan("A", "2026-10-20"),
+    plan("B", "2026-11-25", "2026-11-15T03:00:00.000Z"),
+    plan("C", "2026-10-05", "2026-10-06T03:00:00.000Z"),
+    plan("D", "2026-12-10"),
+    plan("E", "2027-03-01"),
+  ] }));
+  const where = (id) => r.legs.filter((l) => l.item.kind === "planned" && l.item.party === id).map((l) => l.col).sort();
+  assert.deepEqual(where("A"), ["fc:2026-10", "fc:2026-11"]);
+  assert.deepEqual(where("B"), ["fc:2026-11"]);
+  assert.deepEqual(where("C"), ["fc:2026-10"]);
+  assert.deepEqual(where("D"), ["fc:2026-12"]);
+  assert.deepEqual(where("E"), [], "beyond the horizon");
+  assert.ok(r.legs.filter((l) => l.item.kind === "planned").every((l) => l.section === "PLANNED" && l.label === "Planned payments" && l.sen === -1000));
+});
+
+test("buildForecastLegs: months up to the opening month are blank, and their receipts set no salary", () => {
+  const r = fc.buildForecastLegs(base({
+    openingYm: "2026-10",
+    pnl: new Map([["2026-10", { salesSen: 1_000_000, lines: [line("dept:PROD-A", "salary", { num: 1000, den: 10000 }, { accountCode: "410-0010", label: "PROD-A" })] }]]),
+  }));
+  assert.deepEqual(r.columns.filter((c) => c.blank).map((c) => c.ym), ["2026-10", "2026-09"]);
+  assert.deepEqual(inCol(r, "fc:2026-10"), []);
+  assert.deepEqual(inCol(r, "fc:2026-09"), []);
+  assert.ok(!r.legs.some((l) => l.col === "fc:2026-11" && l.item.kind === "pnl"));
+});
+
+test("review 3: an earlier period has no future columns", () => {
+  const r = fc.buildForecastLegs(base({ period: "2026-10", months: ["2026-10", "2026-09"], live: null }));
+  assert.deepEqual(r.columns.map((c) => [c.ym, c.future]), [["2026-10", false], ["2026-09", false]]);
+});
+
+test("review 5: a document dated after the 1st and due the same month is in no forecast column", () => {
+  const r = fc.buildForecastLegs(base({ live: [inv("COD", 7_000, "2026-11", { date: "2026-11-03" })] }));
+  assert.ok(!r.legs.some((l) => l.item.ref === "COD"));
+});
+
+test("buildForecastLegs names the parties whose term was guessed", () => {
+  const r = fc.buildForecastLegs(base({ live: [{ ...inv("DEC", 80_000, "2026-12"), partyName: "Z1", termFlagged: true }] }));
+  assert.deepEqual(r.termFlagged, ["Z1"]);
+});
