@@ -21,8 +21,8 @@ import { nextCell, caretEdges, type CellPos } from "@/lib/grid-keys";
 import { forecastSnapshot } from "@/lib/forecast-snapshot";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
-import { pnlBucketFor } from "@/lib/pnl-bucket";
-import { monthHasDeptForecast, forecastEntryKind } from "@/lib/salary-dept";
+import { monthHasDeptForecast } from "@/lib/salary-dept";
+import { forecastLineGroups, forecastMonthFigures, type FcEntry, type FcMonth } from "@/lib/forecast-pnl";
 // One money parser. NOTE `strToBp` below is a PERCENTAGE and deliberately
 // keeps `parseFloat` - it is not money and is not in this fix's scope.
 import { parseMoneyInput } from "@/lib/parse-money";
@@ -35,8 +35,6 @@ type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean 
 type CellEntry = { p?: string; a?: string };
 type MonthState = { salesStr: string; pct: Record<string, CellEntry> };
 
-const CARRIAGE = "700-1015";
-const SST = "706-0000";
 
 // Fixed column slots (owner 2026-07-29: 「amount 一个 column 对齐，percentage
 // 整个 column 对齐」) — keyable cells AND computed rows render into the same
@@ -102,6 +100,22 @@ const strToBp = (s: string): number => {
   return Number.isFinite(v) ? Math.round(v * 100) : 0;
 };
 const bpToStr = (bp: number): string => (bp === 0 ? "" : (bp / 100).toString());
+
+// The sheet's strings → the kv shape (`forecast_pnl.months[ym]`) the shared
+// calc reads. BUG-2026-08-13-095: `AmountInput` strips commas on the way in,
+// but that only covered ONE grouping style; the shared money parser reads
+// every form and returns null for the rest. `save` refuses on null, so the
+// `?? 0` here is only ever reached by a cell the operator is already being
+// told to fix. Every key is kept, even a cleared one: the dept-mode test
+// (monthHasDeptForecast) looks at keys, exactly as the old inline calc did.
+function toFcMonth(m: MonthState | undefined): FcMonth | undefined {
+  if (!m) return undefined;
+  const pct: Record<string, FcEntry> = {};
+  for (const [code, e] of Object.entries(m.pct)) {
+    pct[code] = e.a !== undefined && e.a !== "" ? { amtSen: moneyFieldToSen(e.a) ?? 0 } : { bp: strToBp(e.p ?? "") };
+  }
+  return { salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0), pct };
+}
 
 export default function ForecastPage() {
   const { toast } = useToast();
@@ -186,105 +200,23 @@ export default function ForecastPage() {
   }, []);
 
   // ---- Line structure (same classification as the real P&L) ----
-  const lines = useMemo(() => {
-    const postable = accounts.filter((a) => a.isPostable !== false);
-    const materialAccts = postable
-      .filter(
-        (a) =>
-          a.type === "COST" &&
-          pnlBucketFor(a.code, a.type, override) === null &&
-          a.code !== CARRIAGE &&
-          a.code !== SST &&
-          !/STOCK|PROGRESS/i.test(a.name),
-      )
-      .sort((a, b) => a.code.localeCompare(b.code));
-    // Owner 2026-07-29: materials forecast by TYPE, not by sofa/bedframe —
-    // "PURCHASE - B.M FABRIC" / "S FABRIC" / "S.M FABRIC" fold into ONE
-    // FABRIC row (likewise FILLER / WEBBING / …). Percentages store under a
-    // stable `cat:<TYPE>` key, so a future sofa/bedframe split can add
-    // per-line rows without clashing with what was keyed here.
-    const catOf = (name: string): string => {
-      const stripped = name.replace(/^PURCHASE\s*-\s*/i, "").trim();
-      const cat = stripped.replace(/^(B\.M|S\.M|B|S)[.\s]+/i, "").trim();
-      return cat || stripped;
-    };
-    const catNames = [...new Set(materialAccts.map((a) => catOf(a.name)))].sort();
-    const materials = catNames.map(
-      (n) => ({ code: `cat:${n}`, name: n, type: "COST" }) as CoaAcct,
-    );
-    const byBucket = (bucket: string) =>
-      postable
-        .filter((a) => pnlBucketFor(a.code, a.type, override) === bucket)
-        .sort((a, b) => a.code.localeCompare(b.code));
-    const direct = postable.filter((a) => a.code === CARRIAGE || a.code === SST);
-    return {
-      materials,
-      direct,
-      // Owner 2026-08-11: salaries are FORECAST PER DEPARTMENT — pseudo-lines
-      // `dept:<CODE>` (same trick as `cat:`). Owner 2026-08-24: every dept in
-      // the MASTER is keyable, and each row files in the SAME P&L section its
-      // labour-map account posts to (production → direct labour; warehouse /
-      // maintenance → factory overhead; office / R&D → operating expenses).
-      // Accounts the labour map can post to are SUPERSEDED in dept-mode months.
-      labour: deptInfo
-        .filter((d) => d.bucket !== "FACTORY_OVERHEAD" && d.bucket !== "OPEX_SALARIES" && d.bucket !== "OPERATING_EXPENSE")
-        .map((d) => ({ code: `dept:${d.code}`, name: d.code, type: "COST" }) as CoaAcct),
-      labourOvhDepts: deptInfo
-        .filter((d) => d.bucket === "FACTORY_OVERHEAD")
-        .map((d) => ({ code: `dept:${d.code}`, name: d.code, type: "COST" }) as CoaAcct),
-      labourExpDepts: deptInfo
-        .filter((d) => d.bucket === "OPEX_SALARIES" || d.bucket === "OPERATING_EXPENSE")
-        .map((d) => ({ code: `dept:${d.code}`, name: d.code, type: "EXPENSE" }) as CoaAcct),
-      labourAccounts: byBucket("DIRECT_LABOUR"),
-      overhead: byBucket("FACTORY_OVERHEAD"),
-      otherIncome: byBucket("OTHER_INCOME"),
-      expenses: [...byBucket("OPEX_SALARIES"), ...byBucket("OPERATING_EXPENSE")].sort((a, b) =>
-        a.code.localeCompare(b.code),
-      ),
-    };
-  }, [accounts, override, deptInfo]);
-  // Owner 2026-08-31 「算法也要改」: the non-production salary dept rows sit
-  // between Direct Labour and Factory Overhead AND count inside TOTAL COGS
-  // (they reduce GROSS PROFIT, not TOTAL EXPENSES).
-  const cogsRows = useMemo(
-    () => [...lines.materials, ...lines.direct, ...lines.labour, ...lines.labourExpDepts, ...lines.labourOvhDepts, ...lines.labourAccounts, ...lines.overhead],
-    [lines],
-  );
+  // Shared with the Cash Flow forecast (src/lib/forecast-pnl.ts), so both read
+  // the same lines, the same supersede rule and the same amounts. The
+  // non-production salary dept rows count inside TOTAL COGS there
+  // (forecastCogsRows, owner 2026-08-31 「算法也要改」).
+  const lines = useMemo(() => forecastLineGroups(accounts, override, deptInfo), [accounts, override, deptInfo]);
 
   const yms = useMemo(() => Object.keys(months).sort(), [months]);
   // "2026-08" → "Aug 2026" (header reads at a glance).
   const monthLabel = (ym: string) =>
     new Date(`${ym}-01T00:00:00Z`).toLocaleString("en", { month: "short", year: "numeric", timeZone: "UTC" });
 
-  // ---- Per-month computed figures ----
-  const calc = (ym: string) => {
-    const m = months[ym];
-    // BUG-2026-08-13-095 - `AmountInput` strips commas on the way in, but that
-    // only covered ONE grouping style: "12 000" or "12.000,50" still reached
-    // `parseFloat` and came back as 12. The shared parser reads every form and
-    // returns null for the rest; `save` refuses on null, so the `?? 0` here is
-    // only ever reached by a cell the operator is already being told to fix.
-    const salesSen = Math.max(0, moneyFieldToSen(m?.salesStr ?? "") ?? 0);
-    // Amount-keyed cells win; %-keyed cells derive from sales.
-    const amt = (code: string) => {
-      const e = m?.pct[code];
-      if (e?.a !== undefined && e.a !== "") return moneyFieldToSen(e.a) ?? 0;
-      return Math.round((salesSen * strToBp(e?.p ?? "")) / 10000);
-    };
-    const sum = (rows: CoaAcct[]) => rows.reduce((s, r) => s + amt(r.code), 0);
-    // Supersede rule (salary-dept.ts): a month with any dept row ignores the
-    // 750-x accounts AND every account the labour map posts to — keying both
-    // a dept row and its account would double-count the same wages.
-    const deptMode = monthHasDeptForecast(m?.pct);
-    const superseded = (code: string) =>
-      deptMode && (forecastEntryKind(code) === "labourAccount" || mappedAccounts.has(code));
-    const sumGuard = (rows: CoaAcct[]) => rows.reduce((s, r) => (superseded(r.code) ? s : s + amt(r.code)), 0);
-    const cogs = sumGuard(cogsRows);
-    const oi = sum(lines.otherIncome);
-    const exp = sumGuard(lines.expenses);
-    const gp = salesSen - cogs;
-    return { salesSen, amt, cogs, gp, oi, exp, np: gp + oi - exp, superseded };
-  };
+  // ---- Per-month computed figures (src/lib/forecast-pnl.ts) ----
+  // The sheet keeps strings while the owner types; each month is read in the
+  // kv shape it saves to (toFcMonth) and the shared rule does the arithmetic:
+  // amount-keyed cells win, %-keyed cells derive from sales, and a month with
+  // any dept row supersedes the 750-x and labour-map accounts.
+  const calc = (ym: string) => forecastMonthFigures(toFcMonth(months[ym]), lines, mappedAccounts);
 
   // Keying one side CLEARS the other (owner: "就是其中一个").
   const setPctStr = (ym: string, code: string, v: string) =>
@@ -687,7 +619,7 @@ export default function ForecastPage() {
                 )}
                 {/* Owner 2026-08-31: the non-production salary rows sit between
                     Direct Labour and Factory Overhead, and their money counts
-                    inside TOTAL COGS (「算法也要改」) — see cogsRows above. */}
+                    inside TOTAL COGS (「算法也要改」) — see forecastCogsRows in src/lib/forecast-pnl.ts. */}
                 {section("expDept", "NON-PRODUCTION SALARIES — BY DEPARTMENT", lines.labourExpDepts)}
                 {section("ovh", "FACTORY OVERHEAD", lines.overhead)}
                 {section("ovhDept", "OVERHEAD SALARIES — BY DEPARTMENT", lines.labourOvhDepts)}
