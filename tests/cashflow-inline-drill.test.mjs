@@ -108,10 +108,12 @@ test("the tab: a line's name opens the payments under the row (not in Edit), in 
   const tab = slice(ui, "function CashFlowTab(", "\nfunction ");
   assert.match(tab, /const canDrill = !edit && r\.kind === "line" && !!r\.lineKey;/);
   assert.match(tab, /const drillKey = canDrill \? `\$\{period\}\|\$\{r\.lineKey\}` : "";/, "a new period starts closed");
-  assert.match(tab, /\{drilled && r\.lineKey && <CfMonthlyDrillRows period=\{period\} lineKey=\{r\.lineKey\} cols=\{cols\} depth=\{r\.depth\} accountCode=\{r\.accountCode\} \/>\}/);
+  // With the forecast on (2026-11-08) a forecast-only line has no payments to fetch.
+  assert.match(tab, /\{drilled && r\.lineKey && \(!fcData \|\| r\.values\.some\(/);
+  assert.match(tab, /<CfMonthlyDrillRows period=\{period\} lineKey=\{r\.lineKey\} cols=\{cols\} depth=\{r\.depth\} accountCode=\{r\.accountCode\} \/>/);
   const rows = slice(ui, "function CfMonthlyDrillRows(", "\nfunction ");
   assert.match(rows, /fetch\(`\/api\/accounting\/cashflow-drill\?period=\$\{encodeURIComponent\(period\)\}&key=\$\{encodeURIComponent\(lineKey\)\}`\)/);
-  assert.match(rows, /const on = c\.accum \|\| c\.key === it\.ym;/, "the amount sits in its month's column and in Accumulated");
+  assert.match(rows, /const on = !c\.forecast && \(c\.accum \|\| c\.key === it\.ym\);/, "the amount sits in its month's column and in Accumulated, never a forecast one");
   assert.match(rows, /entr\{data\.items\.length === 1 \? "y" : "ies"\}/, "the last row counts them");
   // Finance v2: the detail-total row's link reads "Open In GL →".
   assert.match(rows, /Open In GL →<\/Link>/);

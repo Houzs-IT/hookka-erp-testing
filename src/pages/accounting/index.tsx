@@ -123,7 +123,7 @@ import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, 
 import { drawCashPositionImage, tfDueByMonthEnd } from "@/lib/cash-position-image";
 import { financePage } from "@/lib/finance-nav";
 import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
-import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner } from "@/components/finance/report-shell";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner, ForecastToggle } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -15786,6 +15786,7 @@ function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope,
 
 function DailyCashTab() {
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [data, setData] = useState<CashPosData | null>(null);
@@ -15865,6 +15866,25 @@ function DailyCashTab() {
     const res = await fetch(`/api/accounting/cash-position/planned/${id}`, { method: "DELETE" });
     const j = asMutationResponse(await res.json());
     if (j?.success) setReload((n) => n + 1);
+    else toast.error(j?.error || "Failed");
+  };
+
+  // Mark paid (2026-11-08, Cash Flow forecast): the plan leaves this board and
+  // every later forecast month; the month it was due in keeps it as its
+  // baseline (that month's forecast is as at its 1st).
+  const markPlannedPaid = async (p: { id: string; partyName: string; amountSen: number }) => {
+    const ok = await confirm({
+      title: "Mark paid?",
+      message: `Mark ${p.partyName} ${formatCurrency(p.amountSen)} paid? It leaves this board and the Cash Flow forecast's later months.`,
+    });
+    if (!ok) return;
+    const res = await fetch(`/api/accounting/cash-position/planned/${p.id}/paid`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paid: true }),
+    });
+    const j = asMutationResponse(await res.json());
+    if (j?.success) { toast.success("Marked paid"); setReload((n) => n + 1); }
     else toast.error(j?.error || "Failed");
   };
 
@@ -16092,7 +16112,7 @@ function DailyCashTab() {
           {showPlanned && (
             <Card>
               <CardContent className="p-0">
-                <div className="px-4 py-2.5 border-b border-[#E2DDD8] text-sm font-semibold text-[#1F1D1B]">Planned payments <span className="text-[11px] font-normal text-[#9CA3AF]">— no voucher yet, just intentions; used by future-date projections</span></div>
+                <div className="px-4 py-2.5 border-b border-[#E2DDD8] text-sm font-semibold text-[#1F1D1B]">Planned payments <span className="text-[11px] font-normal text-[#9CA3AF]">— money with no bill and not in Forecast P&amp;L (loan principal, tax, capex without a bill); used by future-date projections and the Cash Flow forecast</span></div>
                 {(cur.planned.length > 0) && (
                   <table className="w-full text-sm">
                     <tbody>
@@ -16101,7 +16121,10 @@ function DailyCashTab() {
                           <td className="px-4 py-1 text-xs text-[#6B7280] whitespace-nowrap">{p.expectedDate}</td>
                           <td className="px-4 py-1 text-xs w-full max-w-0"><div className="truncate">{p.partyName}{p.ref ? ` · ${p.ref}` : ""}</div></td>
                           <td className="px-4 py-1 text-right tabular-nums text-xs whitespace-nowrap">{formatCurrency(p.amountSen)}</td>
-                          <td className="px-4 py-1 text-right"><button onClick={() => void deletePlanned(p.id)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer">del</button></td>
+                          <td className="px-4 py-1 text-right whitespace-nowrap">
+                            <button onClick={() => void markPlannedPaid(p)} className="mr-3 text-[#9CA3AF] hover:text-[#2F7A3B] text-[11px] underline decoration-dotted cursor-pointer">paid</button>
+                            <button onClick={() => void deletePlanned(p.id)} className="text-[#9CA3AF] hover:text-[#9A3A2D] text-[11px] underline decoration-dotted cursor-pointer">del</button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -18740,7 +18763,7 @@ type CfDrillData = {
 function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
   period: string;
   lineKey: string;
-  cols: { key: string; label: string; accum?: boolean }[];
+  cols: CfApiCol[];
   depth: number;
   accountCode?: string;
 }) {
@@ -18755,7 +18778,8 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
     return () => { dead = true; };
   }, [period, lineKey]);
   const pad = { paddingLeft: `${34 + depth * 18}px` };
-  const acc = (c: { accum?: boolean }) => (c.accum ? " acc" : "");
+  // Forecast columns (the Forecast toggle) carry no payments: left empty.
+  const acc = (c: CfApiCol) => (c.accum ? " acc" : "") + (c.forecast ? " fc" : "");
   if (!data || !data.found) {
     const msg = err ?? (data ? "This line is not on the statement any more — reload the page." : "Loading the payments…");
     return <tr data-row="det"><td data-cell="stick" className={err ? "text-[#9A3412]" : "text-[#9CA3AF]"} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
@@ -18764,7 +18788,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
   const perMonth = new Map<string, number>();
   for (const it of data.items) perMonth.set(it.ym, (perMonth.get(it.ym) ?? 0) + it.sen);
   const total = data.items.reduce((sum, it) => sum + it.sen, 0);
-  const months = cols.filter((c) => !c.accum).map((c) => c.key).sort();
+  const months = cols.filter((c) => !c.accum && !c.forecast).map((c) => c.key).sort();
   return (
     <>
       {data.items.map((it) => {
@@ -18781,7 +18805,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
               <div className="truncate max-w-[34rem]">{text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
             </td>
             {cols.map((c) => {
-              const on = c.accum || c.key === it.ym;
+              const on = !c.forecast && (c.accum || c.key === it.ym);
               return <td key={c.key} data-cell={`num split${acc(c)}`} data-neg={on && it.sen < 0 ? "" : undefined}>{on ? amt(it.sen) : ""}</td>;
             })}
           </tr>
@@ -18794,6 +18818,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
           {!data.tied && <span className="font-normal text-[#9A3412]"> · these payments do not add up to the line — please report it</span>}
         </td>
         {cols.map((c) => {
+          if (c.forecast) return <td key={c.key} data-cell={`num split${acc(c)}`} />;
           const sen = c.accum ? total : (perMonth.get(c.key) ?? 0);
           return <td key={c.key} data-cell={`num split${acc(c)}`} data-neg={sen < 0 ? "" : undefined}>{amt(sen)}</td>;
         })}
@@ -18801,7 +18826,76 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
     </>
   );
 }
-type CfApiData = { period: string; columns: { key: string; label: string; accum?: boolean }[]; rows: CfApiRow[] };
+
+// What makes up the forecast cells of one line (the Forecast toggle): one row
+// per customer / supplier document, Forecast P&L line or planned payment, its
+// amount under the forecast column it fell in.
+type CfForecastSource = {
+  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned";
+  party: string; ref: string; date?: string; expectedYm?: string; note?: string;
+  sen: number; ofSen?: number;
+};
+/** The forecast header's first row: Accumulated alone, then one heading per
+ *  month over its columns (Actual + Forecast, or a future month's Forecast). */
+function cfMonthHeads(cols: CfApiCol[]): { key: string; label: string; span: number; accum?: boolean; future?: boolean }[] {
+  const out: { key: string; label: string; span: number; accum?: boolean; future?: boolean }[] = [];
+  for (const c of cols) {
+    if (c.accum) { out.push({ key: c.key, label: c.label, span: 1, accum: true }); continue; }
+    const key = `m:${c.ym ?? c.key}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) { last.span += 1; continue; }
+    out.push({ key, label: c.label, span: 1, future: !!c.future });
+  }
+  return out;
+}
+const cfYmLabel = (ym: string): string => {
+  const names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return /^\d{4}-\d{2}$/.test(ym) ? `${names[parseInt(ym.slice(5, 7), 10)]}'${ym.slice(2, 4)}` : ym;
+};
+function CfForecastDrillRows({ sources, cols, depth }: {
+  sources: Record<string, CfForecastSource[]> | undefined;
+  cols: CfApiCol[];
+  depth: number;
+}) {
+  const pad = { paddingLeft: `${34 + depth * 18}px` };
+  const rows = cols.filter((c) => c.forecast).flatMap((c) => (sources?.[c.key] ?? []).map((it, i) => ({ col: c.key, it, i })));
+  if (!rows.length) return null;
+  const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
+  const dmy = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : "");
+  return (
+    <>
+      {rows.map(({ col, it, i }) => {
+        const parts = it.kind === "pnl"
+          ? [it.party, it.note]
+          : [it.party, it.ref, dmy(it.date), it.expectedYm ? `due ${cfYmLabel(it.expectedYm)}` : "", it.note];
+        const text = parts.filter(Boolean).join(" · ");
+        return (
+          <tr key={`${col}|${i}`} data-row="det" title={it.ofSen ? `This line's share of RM ${plDrillAmt(Math.abs(it.ofSen))}` : undefined}>
+            <td data-cell="stick" style={pad}>
+              <div className="truncate max-w-[34rem]"><span className="text-[#C0392B]">Forecast</span> · {text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
+            </td>
+            {cols.map((c) => (
+              <td key={c.key} data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`} data-neg={c.key === col && it.sen < 0 ? "" : undefined}>
+                {c.key === col ? amt(it.sen) : ""}
+              </td>
+            ))}
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+// `ym` / `forecast` / `future` / `blank` come only with the Forecast toggle
+// (GET /cashflow-forecast): each month's Actual column, then its Forecast one.
+type CfApiCol = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; future?: boolean; blank?: boolean };
+type CfApiData = { period: string; columns: CfApiCol[]; rows: CfApiRow[] };
+type CfForecastData = CfApiData & {
+  today?: string;
+  openingYm?: string | null;
+  termFlagged?: string[];
+  excluded?: { ym: string; code: string; name: string; amtSen: number }[];
+  forecastSources?: Record<string, Record<string, CfForecastSource[]>>;
+};
 // The four raw-material template categories a supplier can be assigned to
 // (mirrors RM_LINES in cashflow-engine.ts).
 const RM_CATEGORIES = ["Purchase of Fabric", "Purchase of Wooden", "Purchase of Filler", "Purchase of Other & Packaging"];
@@ -18835,7 +18929,19 @@ function CashFlowTab() {
     `/api/accounting/cashflow-statement?period=${period}${edit ? "&editable=1" : ""}`,
   );
   const data = resp?.success ? resp.data : undefined;
-  const cols = data?.columns ?? [];
+  // Cash Flow forecast (owner 2026-11-08 「做」): off by default and after every
+  // reload, and never in Edit Layout (the mapping editor works on the
+  // actuals). On, the table shows GET /cashflow-forecast — the same statement
+  // with each month's Forecast column beside its Actual one — and the actuals
+  // stay on screen while it loads or if it fails.
+  const [forecast, setForecast] = useState(false);
+  const fcOn = forecast && !edit;
+  const { data: fcResp, loading: fcLoading, error: fcErr, refresh: fcRefresh } = useCachedJson<{ success?: boolean; data?: CfForecastData; error?: string }>(
+    fcOn ? `/api/accounting/cashflow-forecast?period=${period}` : null,
+  );
+  const fcData = fcOn && fcResp?.success ? fcResp.data : undefined;
+  const fcFailed = fcOn && !fcLoading && !fcData && (!!fcErr || (!!fcResp && !fcResp.success));
+  const cols: CfApiCol[] = (fcData ?? data)?.columns ?? [];
 
   // DEV-ONLY preview of the raw-material split (owner 2026-08-27: 「本地那边给
   // 我看不行吗」). The local vite server proxies /api to PRODUCTION, so the
@@ -19205,6 +19311,9 @@ function CashFlowTab() {
   }, [data]);
 
   const rows = useMemo(() => {
+    // The forecast statement is served whole; the DEV-only shims below work
+    // on the actual statement's columns, so they stay out of it.
+    if (fcData) return fcData.rows;
     let base = data?.rows ?? [];
     if (devRp) {
       const idx = base.findIndex((r) => r.kind === "line" && r.label === "Unallocated raw material" && r.section === "RAW_MATERIALS");
@@ -19292,7 +19401,7 @@ function CashFlowTab() {
         ? { ...r, values: r.values.map((x, k) => (x ?? 0) + devRp.surplusShift[k]) } : r);
     }
     return base;
-  }, [data, devRp, devSalRows]);
+  }, [data, devRp, devSalRows, fcData]);
 
   useEffect(() => {
     if (!edit) return;
@@ -19345,7 +19454,7 @@ function CashFlowTab() {
   };
   const applyLevel = (L: number) => { setCollapsed(cfCollapseForLevel(rows, L)); setLevel(L); };
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
-  useEffect(() => { setCollapsed(cfCollapseForLevel(rows, level)); }, [data]);
+  useEffect(() => { setCollapsed(cfCollapseForLevel(rows, level)); }, [data, fcData]);
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
 
   const sectionAccounts = (sec: string): string[] =>
@@ -19413,7 +19522,8 @@ function CashFlowTab() {
   const visibleRows = (edit ? rows : cleanRows).filter((r) => !hiddenByCollapse(r));
 
   const buildExport = (): Aoa => {
-    const head: (string | number)[] = ["ITEM", ...cols.map((c) => c.label)];
+    // With the forecast on, each month has two columns: say which is which.
+    const head: (string | number)[] = ["ITEM", ...cols.map((c) => (fcData && !c.accum ? `${c.label} ${c.forecast ? "Forecast" : "Actual"}` : c.label))];
     const aoa: Aoa = [head];
     for (const r of cleanRows) {
       if (r.kind === "gap") { aoa.push([]); continue; }
@@ -19448,8 +19558,16 @@ function CashFlowTab() {
             an owner decision; the fix here is to stop offering a period
             the engine cannot compute. */}
         <PeriodStepper value={period} options={periodOpts} onChange={setPeriod} today={today} />
-        <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); } }} />
+        <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); setForecast(false); } }} />
         {!edit && <DetailLevels levels={[1, 2, 3]} value={level} onChange={applyLevel} />}
+        {!edit && <ForecastToggle on={forecast} onToggle={() => setForecast((v) => !v)} />}
+        {fcOn && fcLoading && !fcData && <span className="text-[11px] text-[#9CA3AF]">Loading forecast…</span>}
+        {fcFailed && (
+          <span className="text-[11px] text-[#9A3412]">
+            Could not load the forecast ·{" "}
+            <button type="button" onClick={() => fcRefresh()} className="underline decoration-dotted cursor-pointer">Retry</button>
+          </span>
+        )}
         {data && <DownloadMenu items={downloads} />}
       </ReportToolbar>
       {edit && (
@@ -19496,7 +19614,7 @@ function CashFlowTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title="Statement Of Cash Flow"
-        note={`Prepared on cash basis · all figures RM · Accumulated + trailing 12 months · view ${periodLabel(period, "")}`}
+        note={`Prepared on cash basis · all figures RM · ${fcData ? "Actual and Forecast per month" : "Accumulated + trailing 12 months"} · view ${periodLabel(period, "")}`}
         maxHeight="calc(100vh - 280px)"
       >
         {!data ? (
@@ -19506,12 +19624,32 @@ function CashFlowTab() {
             <thead>
               {/* Accumulated shaded so the cumulative column never reads as a
                   13th month. */}
-              <tr>
-                <th data-cell="stick" className="min-w-[280px]">Item</th>
-                {cols.map((c) => (
-                  <th key={c.key} data-cell={`num split${c.accum ? " acc" : ""}`}>{c.label}</th>
-                ))}
-              </tr>
+              {fcData ? (
+                <>
+                  {/* Forecast on (owner 「一个月 oct 里面包括 actual 和 forecast，
+                      然后多月」): a month heading over its Actual and Forecast
+                      columns; a future month has Forecast only. */}
+                  <tr data-row="h1">
+                    <th data-cell="stick" rowSpan={2} className="min-w-[280px]">Item</th>
+                    {cfMonthHeads(cols).map((h) => (
+                      <th key={h.key} colSpan={h.span} rowSpan={h.accum ? 2 : undefined}
+                        data-cell={`${h.accum ? "num " : ""}split center${h.accum ? " acc" : ""}${h.future ? " fc" : ""}`}>{h.label}</th>
+                    ))}
+                  </tr>
+                  <tr data-row="h2">
+                    {cols.filter((c) => !c.accum).map((c) => (
+                      <th key={c.key} data-cell={`num split${c.forecast ? " fc" : ""}`}>{c.forecast ? "Forecast" : "Actual"}</th>
+                    ))}
+                  </tr>
+                </>
+              ) : (
+                <tr>
+                  <th data-cell="stick" className="min-w-[280px]">Item</th>
+                  {cols.map((c) => (
+                    <th key={c.key} data-cell={`num split${c.accum ? " acc" : ""}`}>{c.label}</th>
+                  ))}
+                </tr>
+              )}
             </thead>
             <tbody>
               {visibleRows.map((r, i) => {
@@ -19567,11 +19705,19 @@ function CashFlowTab() {
                         </>
                       )}
                     </td>
-                    {r.values.map((v, j) => (
-                      <td key={j} data-cell={`num split${cols[j]?.accum ? " acc" : ""}`} data-neg={typeof v === "number" && v < 0 ? "" : undefined} data-zero={v === 0 ? "" : undefined}>{fmt(v)}</td>
-                    ))}
+                    {r.values.map((v, j) => {
+                      // A forecast column at or before the opening month has
+                      // no forecast at all: "-" in every row.
+                      const blank = !!cols[j]?.blank;
+                      return (
+                        <td key={j} data-cell={`num split${cols[j]?.accum ? " acc" : ""}${cols[j]?.forecast ? " fc" : ""}`} data-neg={!blank && typeof v === "number" && v < 0 ? "" : undefined} data-zero={blank || v === 0 ? "" : undefined}>{blank ? "-" : fmt(v)}</td>
+                      );
+                    })}
                   </tr>
-                  {drilled && r.lineKey && <CfMonthlyDrillRows period={period} lineKey={r.lineKey} cols={cols} depth={r.depth} accountCode={r.accountCode} />}
+                  {drilled && r.lineKey && (!fcData || r.values.some((v, j) => !cols[j]?.forecast && !cols[j]?.accum && !!v)) && (
+                    <CfMonthlyDrillRows period={period} lineKey={r.lineKey} cols={cols} depth={r.depth} accountCode={r.accountCode} />
+                  )}
+                  {drilled && r.lineKey && fcData && <CfForecastDrillRows sources={fcData.forecastSources?.[r.lineKey]} cols={cols} depth={r.depth} />}
                   </Fragment>
                 );
               })}
@@ -19581,6 +19727,20 @@ function CashFlowTab() {
       </ReportFrame>
       <p className="text-[11px] text-[#9CA3AF]">Cash basis · classified from bank/cash ledger movements · Raw Materials traced to PI stock groups · Bank c/f = b/f + Cash Surplus.</p>
       <p className="text-[11px] text-[#9CA3AF]">Signs: every line reads the bank's way — amount = money in, (amount) = money out.</p>
+      {fcData && (
+        <div className="space-y-1 text-[11px] text-[#9CA3AF]">
+          {!rows.some((r) => r.kind === "line" && cols.some((c, j) => c.forecast && !c.blank && !!r.values[j])) && (
+            <p className="text-[#9A3412]">No forecast for this period.</p>
+          )}
+          <p>
+            <span className="text-[#C0392B]">Forecast (red)</span>: open documents by customer / supplier term as at the 1st of each month (amounts past their term count in that month);
+            salaries and expenses from Forecast P&amp;L × that month's forecast receipts (salaries paid the month after, factory overhead as keyed); planned payments.
+            Future months run as far as documents reach. A month's forecast c/f starts from its actual b/f.
+          </p>
+          {(fcData.termFlagged?.length ?? 0) > 0 && <p>Term blank or unreadable, taken as 1 month: {(fcData.termFlagged ?? []).join(", ")}.</p>}
+          {(fcData.excluded?.length ?? 0) > 0 && <p>Not forecast (no cash moves): {[...new Set((fcData.excluded ?? []).map((e) => e.name))].join(", ")}.</p>}
+        </div>
+      )}
     </div>
   );
 }

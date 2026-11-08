@@ -43,9 +43,10 @@ test("the frame carries the legal name; content width; Accumulated shaded", () =
 test("the engine's row kinds in the report look; zeros pale, negatives red", () => {
   assert.match(cf, /r\.kind === "result" \|\| r\.kind === "total" \? "res" :/);
   assert.match(cf, /r\.kind === "cf" \? "fin" :/, "Bank c/f closes with the double line");
-  assert.match(cf, /data-zero=\{v === 0 \? "" : undefined\}/);
+  // A blank forecast month (2026-11-08) prints "-" and reads as a zero.
+  assert.match(cf, /data-zero=\{blank \|\| v === 0 \? "" : undefined\}/);
   assert.match(css, /td\[data-zero\] \{\n  color: #C4BDB3;\n\}/);
-  assert.match(cf, /data-neg=\{typeof v === "number" && v < 0 \? "" : undefined\}/);
+  assert.match(cf, /data-neg=\{!blank && typeof v === "number" && v < 0 \? "" : undefined\}/);
 });
 
 test("the drill: detail rows, a detail-total row that ties and opens the ledger", () => {

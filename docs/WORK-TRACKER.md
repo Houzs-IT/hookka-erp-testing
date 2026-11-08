@@ -292,8 +292,8 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 ## 🔵 Cash Flow forecast (feat/cashflow-forecast, 2026-11-08)
 Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少钱，用多少钱」, settled item by item, then 「做」. Design: `docs/superpowers/specs/2026-11-08-cash-flow-forecast-design.md`; plan: `docs/superpowers/plans/2026-11-08-cash-flow-forecast.md`.
-1. 🔵 Batch 1, engine and endpoint: shared Forecast P&L figures (`src/lib/forecast-pnl.ts`); pure schedule (`src/lib/cashflow-forecast.ts`); forecast columns in `buildStatement`; `GET /cashflow-forecast`; `POST /cash-position/planned/:id/paid`. Prod check: the reused routes byte-identical before and after.
-2. ⚪ Batch 2, the page: a Forecast toggle on the Cash Flow tab (Actual and Forecast columns per month, future months, red forecast cells, drill), Mark paid on Daily Cash Position.
+1. ✅ Batch 1, engine and endpoint (#1203): shared Forecast P&L figures (`src/lib/forecast-pnl.ts`); pure schedule (`src/lib/cashflow-forecast.ts`); forecast columns in `buildStatement`; `GET /cashflow-forecast`; `POST /cash-position/planned/:id/paid`. MEASURED on prod 2026-11-08: 11 reused-route fingerprints identical before and after; every document-based forecast total and the salary reverse calculation match an independent recomputation; c/f = b/f + total in every forecast column; about 3 s per call.
+2. 🔵 Batch 2, the page (`feat/cashflow-forecast-ui`): a Forecast toggle on the Cash Flow tab (Actual and Forecast columns per month, future months, red forecast cells, drill), Mark paid on Daily Cash Position.
 3. 🟡 Owner data before go-live: the real supplier terms (12 suppliers, names in the handover file) and which customers are on 2-month terms.
 4. Not done here: the Finance Dashboard keeps its own copy of the Forecast P&L amount rule.
 
