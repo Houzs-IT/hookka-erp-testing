@@ -281,13 +281,9 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 }
 
 /* Cash Flow forecast (owner 2026-11-08): a Forecast column reads in the
-   forecast red on a faint tint, its heading over a dashed rule; "-" and zero
-   cells keep the quiet grey (the data-zero rule below wins on :not). */
-[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="fc"] {
-  color: #C0392B;
-  border-bottom: 1.5px dashed #C0392B;
-}
-
+   forecast red on a faint tint; "-" and zero cells keep the quiet grey (the
+   data-zero rule below wins on :not). Its heading's rule sits after the
+   two-row header rules, which would otherwise override it. */
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="fc"] {
   background-color: #FCF5F4;
 }
@@ -428,6 +424,14 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   font-size: 12px;
   font-weight: 600;
   color: #374151;
+}
+
+/* A Forecast heading (Cash Flow forecast): the forecast red over a dashed
+   rule. After the two header-row rules above, which set the same properties
+   at the same specificity. */
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="fc"] {
+  color: #C0392B;
+  border-bottom: 1.5px dashed #C0392B;
 }
 
 /* A report that keeps to its content's width (owner 2026-10-01: the month

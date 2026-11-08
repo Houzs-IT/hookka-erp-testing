@@ -111,6 +111,11 @@ export function scheduleOpenDocs(docs: readonly OpenDoc[], termOf: (d: OpenDoc) 
   return out;
 }
 
+/** Sort order of the past-term line: last in its section, after the line the
+ *  same money lands on when it is on time (owner reads TRADE DEBTORS, then
+ *  what is overdue). Under Raw Materials it also stays flat (rmLineOrder). */
+export const OVERDUE_ORDER = 99_999;
+
 const splitMix = (sen: number, mix: { accountCode: string; weight: number }[]): [string, number][] =>
   Object.entries(splitByLargestRemainder(sen, mix.map((m) => ({ key: m.accountCode, weight: m.weight })))).filter(([, v]) => v !== 0);
 
@@ -135,8 +140,8 @@ export function docLegsForColumn(
     const item: ForecastItem = { kind: d.kind, party: d.partyName, ref: d.no, date: d.date, expectedYm: d.expectedYm };
     const parts = (d.kind === "ocb" || d.kind === "odb") && d.mix?.length ? splitMix(d.dueSen, d.mix) : null;
     if (overdue) {
-      if (parts) for (const [acct, sen] of parts) legs.push({ col, sen: sign * sen, accountCode: acct, label: OVERDUE_LABEL, order: 98, item });
-      else legs.push({ col, sen: sign * d.dueSen, accountCode: d.accountCode, label: OVERDUE_LABEL, order: 98, item });
+      if (parts) for (const [acct, sen] of parts) legs.push({ col, sen: sign * sen, accountCode: acct, label: OVERDUE_LABEL, order: OVERDUE_ORDER, item });
+      else legs.push({ col, sen: sign * d.dueSen, accountCode: d.accountCode, label: OVERDUE_LABEL, order: OVERDUE_ORDER, item });
       continue;
     }
     switch (d.kind) {

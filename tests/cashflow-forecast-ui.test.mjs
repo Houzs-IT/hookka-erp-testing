@@ -47,6 +47,11 @@ test("the drill: forecast items under the line; the payment drill keeps out of f
 test("the forecast colour: red on a tint, zero cells stay grey", () => {
   assert.match(css, /th\[data-cell~="fc"\] \{\n  color: #C0392B;\n  border-bottom: 1\.5px dashed #C0392B;/);
   assert.match(css, /td\[data-cell~="fc"\]:not\(\[data-zero\]\) \{\n  color: #C0392B;/);
+  // Prod 2026-11-08: the two-row header rules (same specificity, later in the
+  // file) overrode the heading's red and dashed rule. It must come after them.
+  const fcHead = css.indexOf('> thead > tr > th[data-cell~="fc"] {');
+  assert.ok(fcHead > css.indexOf('> thead > tr[data-row="h1"] > th {'), "after the h1 rule");
+  assert.ok(fcHead > css.indexOf('> thead > tr[data-row="h2"] > th {'), "after the h2 rule");
 });
 
 test("Daily Cash Position: Mark paid, and the Planned payments hint", () => {
