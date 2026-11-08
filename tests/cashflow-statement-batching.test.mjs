@@ -14,7 +14,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const api = readFileSync("src/api/routes/accounting.ts", "utf8").replace(/\r\n/g, "\n");
-const body = api.slice(api.indexOf("async function computeCashflowStatement("), api.indexOf('app.get("/cashflow-statement"'));
+// From the PI material weights (loadPiMaterialWeights, moved out of the
+// statement 2026-11-08 to be shared with the forecast) to the statement route.
+const body = api.slice(api.indexOf("async function loadPiMaterialWeights("), api.indexOf('app.get("/cashflow-statement"'));
 
 test("no per-payment or per-PI query survives inside the statement", () => {
   // (A comment in the function still quotes the old per-PI SQL as history —

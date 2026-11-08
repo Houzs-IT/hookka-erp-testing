@@ -1,0 +1,1465 @@
+{
+ "plain": {
+  "columns": [
+   {
+    "key": "__accum__",
+    "label": "Accumulated",
+    "accum": true
+   },
+   {
+    "key": "2026-11",
+    "label": "Nov'26"
+   },
+   {
+    "key": "2026-10",
+    "label": "Oct'26"
+   },
+   {
+    "key": "2026-09",
+    "label": "Sep'26"
+   }
+  ],
+  "rows": [
+   {
+    "kind": "section",
+    "label": "REVENUE COLLECTION",
+    "section": "REVENUE_COLLECTION",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "TRADE DEBTORS",
+    "section": "REVENUE_COLLECTION",
+    "depth": 1,
+    "values": [
+     800000,
+     300000,
+     500000,
+     0
+    ],
+    "accountCode": "300-0000",
+    "lineKey": "REVENUE_COLLECTION|TRADE DEBTORS"
+   },
+   {
+    "kind": "subtotal",
+    "label": "REVENUE COLLECTION",
+    "section": "REVENUE_COLLECTION",
+    "depth": 1,
+    "values": [
+     800000,
+     300000,
+     500000,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "section",
+    "label": "COST / EXPENSE OUT",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Raw Materials",
+    "section": "RAW_MATERIALS",
+    "depth": 1,
+    "groupId": "RAW_MATERIALS",
+    "values": [
+     -280000,
+     0,
+     -280000,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "PURCHASE - FABRIC",
+    "section": "RAW_MATERIALS",
+    "depth": 2,
+    "groupId": "RAW_MATERIALS>701-0000",
+    "accountCode": "701-0000",
+    "values": [
+     -230000,
+     0,
+     -230000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "FABRIC",
+    "section": "RAW_MATERIALS",
+    "depth": 3,
+    "groupId": "RAW_MATERIALS>701-0000",
+    "values": [
+     -230000,
+     0,
+     -230000,
+     0
+    ],
+    "lineKey": "RAW_MATERIALS|FABRIC"
+   },
+   {
+    "kind": "group",
+    "label": "PURCHASE - OTHER & PACKAGING",
+    "section": "RAW_MATERIALS",
+    "depth": 2,
+    "groupId": "RAW_MATERIALS>704-0000",
+    "accountCode": "704-0000",
+    "values": [
+     -50000,
+     0,
+     -50000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "Unallocated — SUP C",
+    "section": "RAW_MATERIALS",
+    "depth": 3,
+    "groupId": "RAW_MATERIALS>704-0000",
+    "values": [
+     -50000,
+     0,
+     -50000,
+     0
+    ],
+    "lineKey": "RAW_MATERIALS|Unallocated — SUP C"
+   },
+   {
+    "kind": "group",
+    "label": "Direct Labour",
+    "section": "DIRECT_LABOUR",
+    "depth": 1,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -90000,
+     -90000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "OFFICE",
+    "section": "DIRECT_LABOUR",
+    "depth": 2,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -30000,
+     -30000,
+     0,
+     0
+    ],
+    "lineKey": "DIRECT_LABOUR|OFFICE"
+   },
+   {
+    "kind": "line",
+    "label": "PROD-A",
+    "section": "DIRECT_LABOUR",
+    "depth": 2,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -60000,
+     -60000,
+     0,
+     0
+    ],
+    "lineKey": "DIRECT_LABOUR|PROD-A"
+   },
+   {
+    "kind": "group",
+    "label": "General Expense",
+    "section": "GENERAL_EXPENSE",
+    "depth": 1,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -15000,
+     -15000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "ACCRUAL - EPF",
+    "section": "GENERAL_EXPENSE",
+    "depth": 2,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -11000,
+     -11000,
+     0,
+     0
+    ],
+    "accountCode": "410-0020",
+    "lineKey": "GENERAL_EXPENSE|ACCRUAL - EPF"
+   },
+   {
+    "kind": "line",
+    "label": "UPKEEP",
+    "section": "GENERAL_EXPENSE",
+    "depth": 2,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -4000,
+     -4000,
+     0,
+     0
+    ],
+    "accountCode": "900-0010",
+    "lineKey": "GENERAL_EXPENSE|UPKEEP"
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "result",
+    "label": "Net operation surplus / (deficit)",
+    "depth": 0,
+    "values": [
+     415000,
+     195000,
+     220000,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Trade Finance",
+    "section": "TRADE_FINANCE",
+    "depth": 1,
+    "groupId": "TRADE_FINANCE",
+    "values": [
+     20000,
+     -60000,
+     80000,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "TRADE FINANCE - LENDER",
+    "section": "TRADE_FINANCE",
+    "depth": 2,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "accountCode": "310-0020",
+    "values": [
+     20000,
+     -60000,
+     80000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "Drawdown — SUP B",
+    "section": "TRADE_FINANCE",
+    "depth": 3,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "values": [
+     80000,
+     0,
+     80000,
+     0
+    ],
+    "accountCode": "310-0020",
+    "lineKey": "TRADE_FINANCE|Drawdown — SUP B"
+   },
+   {
+    "kind": "line",
+    "label": "Repaid to LENDER",
+    "section": "TRADE_FINANCE",
+    "depth": 3,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "values": [
+     -60000,
+     -60000,
+     0,
+     0
+    ],
+    "accountCode": "310-0020",
+    "lineKey": "TRADE_FINANCE|Repaid to LENDER"
+   },
+   {
+    "kind": "group",
+    "label": "Capital Expenditure (CAPEX)",
+    "section": "CAPEX",
+    "depth": 1,
+    "groupId": "CAPEX",
+    "values": [
+     -50000,
+     -50000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "MACHINERY",
+    "section": "CAPEX",
+    "depth": 2,
+    "groupId": "CAPEX",
+    "values": [
+     -50000,
+     -50000,
+     0,
+     0
+    ],
+    "accountCode": "200-0040",
+    "lineKey": "CAPEX|MACHINERY"
+   },
+   {
+    "kind": "group",
+    "label": "Loan received / (repaid · lent)",
+    "section": "LOAN",
+    "depth": 1,
+    "groupId": "LOAN",
+    "values": [
+     70000,
+     0,
+     0,
+     70000
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "LOAN FROM RELATED PARTY",
+    "section": "LOAN",
+    "depth": 2,
+    "groupId": "LOAN",
+    "values": [
+     70000,
+     0,
+     0,
+     70000
+    ],
+    "accountCode": "440-0030",
+    "lineKey": "LOAN|LOAN FROM RELATED PARTY"
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "total",
+    "label": "Cash Surplus / (Deficit)",
+    "depth": 0,
+    "values": [
+     455000,
+     85000,
+     300000,
+     70000
+    ]
+   },
+   {
+    "kind": "bf",
+    "label": "Bank balance b/f",
+    "depth": 0,
+    "values": [
+     1000000,
+     1370000,
+     1070000,
+     1000000
+    ]
+   },
+   {
+    "kind": "cf",
+    "label": "Bank balance c/f",
+    "depth": 0,
+    "values": [
+     1455000,
+     1455000,
+     1370000,
+     1070000
+    ]
+   }
+  ]
+ },
+ "traced": {
+  "columns": [
+   {
+    "key": "__accum__",
+    "label": "Accumulated",
+    "accum": true
+   },
+   {
+    "key": "2026-11",
+    "label": "Nov'26"
+   },
+   {
+    "key": "2026-10",
+    "label": "Oct'26"
+   },
+   {
+    "key": "2026-09",
+    "label": "Sep'26"
+   }
+  ],
+  "rows": [
+   {
+    "kind": "section",
+    "label": "REVENUE COLLECTION",
+    "section": "REVENUE_COLLECTION",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "TRADE DEBTORS",
+    "section": "REVENUE_COLLECTION",
+    "depth": 1,
+    "values": [
+     800000,
+     300000,
+     500000,
+     0
+    ],
+    "accountCode": "300-0000",
+    "lineKey": "REVENUE_COLLECTION|TRADE DEBTORS"
+   },
+   {
+    "kind": "subtotal",
+    "label": "REVENUE COLLECTION",
+    "section": "REVENUE_COLLECTION",
+    "depth": 1,
+    "values": [
+     800000,
+     300000,
+     500000,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "section",
+    "label": "COST / EXPENSE OUT",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Raw Materials",
+    "section": "RAW_MATERIALS",
+    "depth": 1,
+    "groupId": "RAW_MATERIALS",
+    "values": [
+     -280000,
+     0,
+     -280000,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "PURCHASE - FABRIC",
+    "section": "RAW_MATERIALS",
+    "depth": 2,
+    "groupId": "RAW_MATERIALS>701-0000",
+    "accountCode": "701-0000",
+    "values": [
+     -230000,
+     0,
+     -230000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "FABRIC",
+    "section": "RAW_MATERIALS",
+    "depth": 3,
+    "groupId": "RAW_MATERIALS>701-0000",
+    "values": [
+     -230000,
+     0,
+     -230000,
+     0
+    ],
+    "lineKey": "RAW_MATERIALS|FABRIC"
+   },
+   {
+    "kind": "group",
+    "label": "PURCHASE - OTHER & PACKAGING",
+    "section": "RAW_MATERIALS",
+    "depth": 2,
+    "groupId": "RAW_MATERIALS>704-0000",
+    "accountCode": "704-0000",
+    "values": [
+     -50000,
+     0,
+     -50000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "Unallocated — SUP C",
+    "section": "RAW_MATERIALS",
+    "depth": 3,
+    "groupId": "RAW_MATERIALS>704-0000",
+    "values": [
+     -50000,
+     0,
+     -50000,
+     0
+    ],
+    "lineKey": "RAW_MATERIALS|Unallocated — SUP C"
+   },
+   {
+    "kind": "group",
+    "label": "Direct Labour",
+    "section": "DIRECT_LABOUR",
+    "depth": 1,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -90000,
+     -90000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "OFFICE",
+    "section": "DIRECT_LABOUR",
+    "depth": 2,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -30000,
+     -30000,
+     0,
+     0
+    ],
+    "lineKey": "DIRECT_LABOUR|OFFICE"
+   },
+   {
+    "kind": "line",
+    "label": "PROD-A",
+    "section": "DIRECT_LABOUR",
+    "depth": 2,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -60000,
+     -60000,
+     0,
+     0
+    ],
+    "lineKey": "DIRECT_LABOUR|PROD-A"
+   },
+   {
+    "kind": "group",
+    "label": "General Expense",
+    "section": "GENERAL_EXPENSE",
+    "depth": 1,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -15000,
+     -15000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "ACCRUAL - EPF",
+    "section": "GENERAL_EXPENSE",
+    "depth": 2,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -11000,
+     -11000,
+     0,
+     0
+    ],
+    "accountCode": "410-0020",
+    "lineKey": "GENERAL_EXPENSE|ACCRUAL - EPF"
+   },
+   {
+    "kind": "line",
+    "label": "UPKEEP",
+    "section": "GENERAL_EXPENSE",
+    "depth": 2,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -4000,
+     -4000,
+     0,
+     0
+    ],
+    "accountCode": "900-0010",
+    "lineKey": "GENERAL_EXPENSE|UPKEEP"
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "result",
+    "label": "Net operation surplus / (deficit)",
+    "depth": 0,
+    "values": [
+     415000,
+     195000,
+     220000,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Trade Finance",
+    "section": "TRADE_FINANCE",
+    "depth": 1,
+    "groupId": "TRADE_FINANCE",
+    "values": [
+     20000,
+     -60000,
+     80000,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "TRADE FINANCE - LENDER",
+    "section": "TRADE_FINANCE",
+    "depth": 2,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "accountCode": "310-0020",
+    "values": [
+     20000,
+     -60000,
+     80000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "Drawdown — SUP B",
+    "section": "TRADE_FINANCE",
+    "depth": 3,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "values": [
+     80000,
+     0,
+     80000,
+     0
+    ],
+    "accountCode": "310-0020",
+    "lineKey": "TRADE_FINANCE|Drawdown — SUP B"
+   },
+   {
+    "kind": "line",
+    "label": "Repaid to LENDER",
+    "section": "TRADE_FINANCE",
+    "depth": 3,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "values": [
+     -60000,
+     -60000,
+     0,
+     0
+    ],
+    "accountCode": "310-0020",
+    "lineKey": "TRADE_FINANCE|Repaid to LENDER"
+   },
+   {
+    "kind": "group",
+    "label": "Capital Expenditure (CAPEX)",
+    "section": "CAPEX",
+    "depth": 1,
+    "groupId": "CAPEX",
+    "values": [
+     -50000,
+     -50000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "MACHINERY",
+    "section": "CAPEX",
+    "depth": 2,
+    "groupId": "CAPEX",
+    "values": [
+     -50000,
+     -50000,
+     0,
+     0
+    ],
+    "accountCode": "200-0040",
+    "lineKey": "CAPEX|MACHINERY"
+   },
+   {
+    "kind": "group",
+    "label": "Loan received / (repaid · lent)",
+    "section": "LOAN",
+    "depth": 1,
+    "groupId": "LOAN",
+    "values": [
+     70000,
+     0,
+     0,
+     70000
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "LOAN FROM RELATED PARTY",
+    "section": "LOAN",
+    "depth": 2,
+    "groupId": "LOAN",
+    "values": [
+     70000,
+     0,
+     0,
+     70000
+    ],
+    "accountCode": "440-0030",
+    "lineKey": "LOAN|LOAN FROM RELATED PARTY"
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "total",
+    "label": "Cash Surplus / (Deficit)",
+    "depth": 0,
+    "values": [
+     455000,
+     85000,
+     300000,
+     70000
+    ]
+   },
+   {
+    "kind": "bf",
+    "label": "Bank balance b/f",
+    "depth": 0,
+    "values": [
+     1000000,
+     1370000,
+     1070000,
+     1000000
+    ]
+   },
+   {
+    "kind": "cf",
+    "label": "Bank balance c/f",
+    "depth": 0,
+    "values": [
+     1455000,
+     1455000,
+     1370000,
+     1070000
+    ]
+   }
+  ],
+  "sources": {
+   "REVENUE_COLLECTION|TRADE DEBTORS": [
+    {
+     "sourceType": "payment",
+     "sourceId": "R1",
+     "legAccount": "300-0000",
+     "ym": "2026-10",
+     "sen": 500000
+    },
+    {
+     "sourceType": "payment",
+     "sourceId": "R2",
+     "legAccount": "300-0000",
+     "ym": "2026-11",
+     "sen": 300000
+    }
+   ],
+   "RAW_MATERIALS|FABRIC": [
+    {
+     "sourceType": "supplier_payment",
+     "sourceId": "HPV-1",
+     "legAccount": "400-0000",
+     "of": -200000,
+     "ym": "2026-10",
+     "sen": -150000
+    },
+    {
+     "sourceType": "supplier_payment",
+     "sourceId": "HPV-TF",
+     "legAccount": "400-0000",
+     "of": -80000,
+     "ym": "2026-10",
+     "sen": -80000
+    }
+   ],
+   "RAW_MATERIALS|Unallocated — SUP C": [
+    {
+     "sourceType": "supplier_payment",
+     "sourceId": "HPV-1",
+     "legAccount": "400-0000",
+     "of": -200000,
+     "ym": "2026-10",
+     "sen": -50000
+    }
+   ],
+   "DIRECT_LABOUR|PROD-A": [
+    {
+     "sourceType": "payment_voucher",
+     "sourceId": "PV-SAL",
+     "legAccount": "410-0010",
+     "of": -90000,
+     "ym": "2026-11",
+     "sen": -60000
+    }
+   ],
+   "DIRECT_LABOUR|OFFICE": [
+    {
+     "sourceType": "payment_voucher",
+     "sourceId": "PV-SAL",
+     "legAccount": "410-0010",
+     "of": -90000,
+     "ym": "2026-11",
+     "sen": -30000
+    }
+   ],
+   "GENERAL_EXPENSE|ACCRUAL - EPF": [
+    {
+     "sourceType": "payment_voucher",
+     "sourceId": "PV-EPF",
+     "legAccount": "410-0020",
+     "ym": "2026-11",
+     "sen": -11000
+    }
+   ],
+   "CAPEX|MACHINERY": [
+    {
+     "sourceType": "payment_voucher",
+     "sourceId": "PV-CAP",
+     "legAccount": "200-0040",
+     "ym": "2026-11",
+     "sen": -50000
+    }
+   ],
+   "LOAN|LOAN FROM RELATED PARTY": [
+    {
+     "sourceType": "journal",
+     "sourceId": "JV-LOAN",
+     "legAccount": "440-0030",
+     "ym": "2026-09",
+     "sen": 70000
+    }
+   ],
+   "GENERAL_EXPENSE|UPKEEP": [
+    {
+     "sourceType": "payment_voucher",
+     "sourceId": "PV-UP",
+     "legAccount": "900-0010",
+     "ym": "2026-11",
+     "sen": -4000
+    }
+   ],
+   "TRADE_FINANCE|Drawdown — SUP B": [
+    {
+     "sourceType": "supplier_payment",
+     "sourceId": "HPV-TF",
+     "legAccount": "310-0020",
+     "ym": "2026-10",
+     "sen": 80000
+    }
+   ],
+   "TRADE_FINANCE|Repaid to LENDER": [
+    {
+     "sourceType": "supplier_payment",
+     "sourceId": "HPV-REPAY",
+     "legAccount": "310-0020",
+     "ym": "2026-11",
+     "sen": -60000
+    }
+   ]
+  }
+ },
+ "editable": {
+  "columns": [
+   {
+    "key": "__accum__",
+    "label": "Accumulated",
+    "accum": true
+   },
+   {
+    "key": "2026-11",
+    "label": "Nov'26"
+   },
+   {
+    "key": "2026-10",
+    "label": "Oct'26"
+   },
+   {
+    "key": "2026-09",
+    "label": "Sep'26"
+   }
+  ],
+  "rows": [
+   {
+    "kind": "section",
+    "label": "REVENUE COLLECTION",
+    "section": "REVENUE_COLLECTION",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "TRADE DEBTORS",
+    "section": "REVENUE_COLLECTION",
+    "depth": 1,
+    "values": [
+     800000,
+     300000,
+     500000,
+     0
+    ],
+    "accountCode": "300-0000",
+    "lineKey": "REVENUE_COLLECTION|TRADE DEBTORS"
+   },
+   {
+    "kind": "subtotal",
+    "label": "REVENUE COLLECTION",
+    "section": "REVENUE_COLLECTION",
+    "depth": 1,
+    "values": [
+     800000,
+     300000,
+     500000,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "section",
+    "label": "COST / EXPENSE OUT",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Raw Materials",
+    "section": "RAW_MATERIALS",
+    "depth": 1,
+    "groupId": "RAW_MATERIALS",
+    "values": [
+     -280000,
+     0,
+     -280000,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "PURCHASE - FABRIC",
+    "section": "RAW_MATERIALS",
+    "depth": 2,
+    "groupId": "RAW_MATERIALS>701-0000",
+    "accountCode": "701-0000",
+    "values": [
+     -230000,
+     0,
+     -230000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "FABRIC",
+    "section": "RAW_MATERIALS",
+    "depth": 3,
+    "groupId": "RAW_MATERIALS>701-0000",
+    "values": [
+     -230000,
+     0,
+     -230000,
+     0
+    ],
+    "lineKey": "RAW_MATERIALS|FABRIC"
+   },
+   {
+    "kind": "group",
+    "label": "PURCHASE - OTHER & PACKAGING",
+    "section": "RAW_MATERIALS",
+    "depth": 2,
+    "groupId": "RAW_MATERIALS>704-0000",
+    "accountCode": "704-0000",
+    "values": [
+     -50000,
+     0,
+     -50000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "Unallocated — SUP C",
+    "section": "RAW_MATERIALS",
+    "depth": 3,
+    "groupId": "RAW_MATERIALS>704-0000",
+    "values": [
+     -50000,
+     0,
+     -50000,
+     0
+    ],
+    "lineKey": "RAW_MATERIALS|Unallocated — SUP C"
+   },
+   {
+    "kind": "group",
+    "label": "Direct Labour",
+    "section": "DIRECT_LABOUR",
+    "depth": 1,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -90000,
+     -90000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "OFFICE",
+    "section": "DIRECT_LABOUR",
+    "depth": 2,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -30000,
+     -30000,
+     0,
+     0
+    ],
+    "lineKey": "DIRECT_LABOUR|OFFICE"
+   },
+   {
+    "kind": "line",
+    "label": "PROD-A",
+    "section": "DIRECT_LABOUR",
+    "depth": 2,
+    "groupId": "DIRECT_LABOUR",
+    "values": [
+     -60000,
+     -60000,
+     0,
+     0
+    ],
+    "lineKey": "DIRECT_LABOUR|PROD-A"
+   },
+   {
+    "kind": "group",
+    "label": "Factory Overhead",
+    "section": "FACTORY_OVERHEAD",
+    "depth": 1,
+    "groupId": "FACTORY_OVERHEAD",
+    "values": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "General Expense",
+    "section": "GENERAL_EXPENSE",
+    "depth": 1,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -15000,
+     -15000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "ACCRUAL - EPF",
+    "section": "GENERAL_EXPENSE",
+    "depth": 2,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -11000,
+     -11000,
+     0,
+     0
+    ],
+    "accountCode": "410-0020",
+    "lineKey": "GENERAL_EXPENSE|ACCRUAL - EPF"
+   },
+   {
+    "kind": "line",
+    "label": "UPKEEP",
+    "section": "GENERAL_EXPENSE",
+    "depth": 2,
+    "groupId": "GENERAL_EXPENSE",
+    "values": [
+     -4000,
+     -4000,
+     0,
+     0
+    ],
+    "accountCode": "900-0010",
+    "lineKey": "GENERAL_EXPENSE|UPKEEP"
+   },
+   {
+    "kind": "group",
+    "label": "Taxation",
+    "section": "TAXATION",
+    "depth": 1,
+    "groupId": "TAXATION",
+    "values": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "result",
+    "label": "Net operation surplus / (deficit)",
+    "depth": 0,
+    "values": [
+     415000,
+     195000,
+     220000,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Trade Finance",
+    "section": "TRADE_FINANCE",
+    "depth": 1,
+    "groupId": "TRADE_FINANCE",
+    "values": [
+     20000,
+     -60000,
+     80000,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "TRADE FINANCE - LENDER",
+    "section": "TRADE_FINANCE",
+    "depth": 2,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "accountCode": "310-0020",
+    "values": [
+     20000,
+     -60000,
+     80000,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "Drawdown — SUP B",
+    "section": "TRADE_FINANCE",
+    "depth": 3,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "values": [
+     80000,
+     0,
+     80000,
+     0
+    ],
+    "accountCode": "310-0020",
+    "lineKey": "TRADE_FINANCE|Drawdown — SUP B"
+   },
+   {
+    "kind": "line",
+    "label": "Repaid to LENDER",
+    "section": "TRADE_FINANCE",
+    "depth": 3,
+    "groupId": "TRADE_FINANCE>310-0020",
+    "values": [
+     -60000,
+     -60000,
+     0,
+     0
+    ],
+    "accountCode": "310-0020",
+    "lineKey": "TRADE_FINANCE|Repaid to LENDER"
+   },
+   {
+    "kind": "group",
+    "label": "Finance Cost",
+    "section": "FINANCE_COST",
+    "depth": 1,
+    "groupId": "FINANCE_COST",
+    "values": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Capital Expenditure (CAPEX)",
+    "section": "CAPEX",
+    "depth": 1,
+    "groupId": "CAPEX",
+    "values": [
+     -50000,
+     -50000,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "MACHINERY",
+    "section": "CAPEX",
+    "depth": 2,
+    "groupId": "CAPEX",
+    "values": [
+     -50000,
+     -50000,
+     0,
+     0
+    ],
+    "accountCode": "200-0040",
+    "lineKey": "CAPEX|MACHINERY"
+   },
+   {
+    "kind": "group",
+    "label": "Deposit refunded / (paid)",
+    "section": "DEPOSIT",
+    "depth": 1,
+    "groupId": "DEPOSIT",
+    "values": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "group",
+    "label": "Loan received / (repaid · lent)",
+    "section": "LOAN",
+    "depth": 1,
+    "groupId": "LOAN",
+    "values": [
+     70000,
+     0,
+     0,
+     70000
+    ]
+   },
+   {
+    "kind": "line",
+    "label": "LOAN FROM RELATED PARTY",
+    "section": "LOAN",
+    "depth": 2,
+    "groupId": "LOAN",
+    "values": [
+     70000,
+     0,
+     0,
+     70000
+    ],
+    "accountCode": "440-0030",
+    "lineKey": "LOAN|LOAN FROM RELATED PARTY"
+   },
+   {
+    "kind": "group",
+    "label": "Unallocated",
+    "section": "UNALLOCATED",
+    "depth": 1,
+    "groupId": "UNALLOCATED",
+    "values": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "kind": "gap",
+    "label": "",
+    "depth": 0,
+    "values": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "kind": "total",
+    "label": "Cash Surplus / (Deficit)",
+    "depth": 0,
+    "values": [
+     455000,
+     85000,
+     300000,
+     70000
+    ]
+   },
+   {
+    "kind": "bf",
+    "label": "Bank balance b/f",
+    "depth": 0,
+    "values": [
+     1000000,
+     1370000,
+     1070000,
+     1000000
+    ]
+   },
+   {
+    "kind": "cf",
+    "label": "Bank balance c/f",
+    "depth": 0,
+    "values": [
+     1455000,
+     1455000,
+     1370000,
+     1070000
+    ]
+   }
+  ]
+ }
+}

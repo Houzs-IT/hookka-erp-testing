@@ -45,8 +45,10 @@ test("the grouped export: a band per group, its parties, its total, then the gra
 
 test("/other-party-aging gives each bill the /aging month bucket", () => {
   const api = read("src/api/routes/accounting.ts");
-  const at = api.indexOf('app.get("/other-party-aging"');
-  const body = api.slice(at, api.indexOf("\n});\n", at));
+  // The bills are computed in computeOtherPartyAging (2026-11-08, shared with
+  // the Cash Flow forecast), right above the route that serves them.
+  const at = api.indexOf("async function computeOtherPartyAging(");
+  const body = api.slice(at, api.indexOf("\n});\n", api.indexOf('app.get("/other-party-aging"', at)));
   // As at a past date (2026-10-17) the bill is rolled back and aged at the date.
   assert.match(body, /outstandingSen: owedAt\(pre \? 0 : r\.amt, paidBack\?\.get\(r\.id\) \?\? 0\), mo: agingBucketIdx\(monthsOverdue\(r\.billDate, asOf \? asAtNow\(asOf\) : undefined\)\) \};/);
 });
