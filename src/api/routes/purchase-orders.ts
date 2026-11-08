@@ -17,6 +17,7 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { poLineUnit, rmUnitMap } from "../../lib/material-variants";
 import { emitAudit } from "../lib/audit";
+import { idempotent } from "../lib/idempotency";
 import { availableQty as computeAvailableQty } from "../../lib/convert-chain";
 import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
 import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
@@ -460,7 +461,7 @@ app.get("/stats", async (c) => {
 });
 
 // POST /api/purchase-orders — create PO + items atomically
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   // RBAC gate (P3.3-followup) — purchase-orders:create.
   const denied = await requirePermission(c, "purchase-orders", "create");
   if (denied) return denied;

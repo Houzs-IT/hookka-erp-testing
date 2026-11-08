@@ -44,6 +44,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { roundUnitPriceSen } from "@/lib/unit-price";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import type { PurchaseOrder, Supplier, RawMaterial, SupplierMaterialBinding } from "@/types";
 import { ArrowLeft, Save, ScanLine, Plus, Trash2, ChevronDown, ChevronUp, Ship, FolderInput } from "lucide-react";
 import {
@@ -127,6 +128,9 @@ export default function GRNCreatePageWrapper() {
 function GRNCreatePage() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  // The server already honours the key (grn.ts POST); without it a retry after
+  // a lost response could post the same goods twice.
+  const grnIdem = useIdempotencyKey();
   const [searchParams] = useSearchParams();
 
   const seedPoId = searchParams.get("poId") ?? "";
@@ -630,11 +634,13 @@ function GRNCreatePage() {
         };
       }
 
-      const res = await fetch("/api/grn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const res = await grnIdem.withKey((key) =>
+        fetch("/api/grn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body: JSON.stringify(body),
+        }),
+      );
       const resBody = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         error?: string;
