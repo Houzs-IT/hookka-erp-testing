@@ -85,7 +85,7 @@ export const OVERDUE_LABEL = "Overdue (past term)";
 export const PLANNED_LABEL = "Planned payments";
 /** What makes up one forecast amount — shown when the line is opened. */
 export type ForecastItem = {
-  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned";
+  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned" | "input";
   party: string;
   ref: string;
   date?: string;

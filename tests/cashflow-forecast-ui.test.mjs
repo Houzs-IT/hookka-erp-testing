@@ -41,6 +41,25 @@ test("a footnote names the opening-period customer receipts left out of the nett
   assert.match(tab, /\(opening period\) are not netted/);
 });
 
+test("Capex & financing: a button with the forecast on opens a twelve-month table that saves the keyed amounts", () => {
+  assert.match(tab, /\{fcOn && \(\s*<Button[^>]*onClick=\{\(\) => setInputsOpen\(true\)\}[^>]*>\s*Capex &amp; financing\s*<\/Button>\s*\)\}/);
+  assert.match(tab, /\{inputsOpen && <CfForecastInputsDialog /);
+  assert.match(tab, /invalidateCachePrefix\("\/api\/accounting\/cashflow-forecast"\)/, "a save refreshes the forecast");
+  const dlg = slice("function CfForecastInputsDialog(", "\nfunction ");
+  assert.match(dlg, /fetch\("\/api\/accounting\/cashflow-forecast-inputs", \{ cache: "no-store" \}\)/);
+  assert.match(dlg, /method: "PUT"/);
+  assert.match(dlg, /KEYED_MONTHS/);
+  assert.match(dlg, /<MoneyInput/);
+  assert.match(dlg, /Money in \+, money out −/);
+  assert.match(dlg, /Forecast only/);
+  assert.match(dlg, /Planned payments/, "says not to key the same money twice");
+});
+
+test("a keyed amount reads in the forecast drill as who keyed it and that nothing was posted", () => {
+  const drill = slice("function CfForecastDrillRows(", "\nfunction ");
+  assert.match(drill, /it\.kind === "pnl" \|\| it\.kind === "input"/);
+});
+
 test("the drill: forecast items under the line; the payment drill keeps out of forecast columns", () => {
   assert.match(tab, /<CfForecastDrillRows sources=\{fcData\.forecastSources\?\.\[r\.lineKey\]\} cols=\{cols\} depth=\{r\.depth\} \/>/);
   const drill = slice("function CfMonthlyDrillRows(", "\nfunction ");

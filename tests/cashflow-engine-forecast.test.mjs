@@ -114,6 +114,18 @@ test("Planned payments is its own block after Loan, only when a plan lands in it
   assert.ok(!none.rows.some((x) => x.section === "PLANNED"));
 });
 
+test("a keyed capex or loan amount sits on its account's line beside the actual (spec 6.4)", () => {
+  const st = run([
+    { col: "fc:2026-12", sen: -40_000, accountCode: "200-0040", item: { kind: "input", party: "K", ref: "200-0040" } },
+    { col: "fc:2026-11", sen: 25_000, accountCode: "440-0030", item: { kind: "input", party: "K", ref: "440-0030" } },
+  ]);
+  const capex = row(st, (x) => x.kind === "line" && x.section === "CAPEX" && x.accountCode === "200-0040");
+  assert.equal(capex.values[col(st, "2026-11")], -50_000, "the actual on the same line");
+  assert.equal(capex.values[col(st, "fc:2026-12")], -40_000);
+  const loan = row(st, (x) => x.kind === "line" && x.section === "LOAN" && x.accountCode === "440-0030");
+  assert.equal(loan.values[col(st, "fc:2026-11")], 25_000);
+});
+
 test("forecast lines feed the operating result in their own columns", () => {
   const st = run([{ col: "fc:2026-11", sen: 500, accountCode: "300-0000", item: item("A") }]);
   const res = row(st, (x) => x.kind === "result");

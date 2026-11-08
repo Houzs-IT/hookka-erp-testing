@@ -54,6 +54,31 @@ test("opening-period customer receipts are split off every aging before the nett
   assert.match(body, /openingCredits:/);
 });
 
+test("GET /cashflow-forecast-inputs reads the keyed amounts and the CAPEX / Loan accounts, writing nothing", () => {
+  const h = handler("get", "/cashflow-forecast-inputs");
+  assert.match(h, /requirePermission\(c, "accounting", "read"\)/);
+  assert.match(h, /loadCfForecastInputs\(c\.var\.DB\)/);
+  assert.match(h, /cfForecastInputAccounts\(c\.var\.DB\)/);
+  assert.doesNotMatch(h, /\b(INSERT|UPDATE|DELETE)\b/);
+});
+
+test("PUT /cashflow-forecast-inputs keeps CAPEX / Loan accounts only, refuses the rest, and audits", () => {
+  const h = handler("put", "/cashflow-forecast-inputs");
+  assert.match(h, /requirePermission\(c, "accounting", "update"\)/);
+  assert.match(h, /cleanKeyedInputs\(body\.months, new Set\(\(await cfForecastInputAccounts\(c\.var\.DB\)\)\.map\(\(a\) => a\.code\)\)\)/);
+  assert.match(h, /is not a CAPEX or Loan account/);
+  assert.match(h, /VALUES \('cashflow_forecast_inputs', \?, \?\)/);
+  assert.match(h, /resourceId: "cashflow_forecast_inputs"/);
+});
+
+test("the forecast loader hands the keyed amounts to the engine, on the statement's account codes", () => {
+  const start = src.indexOf("async function loadCashflowForecast(");
+  const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));
+  assert.match(body, /await loadCfForecastInputs\(db\)/);
+  assert.match(body, /resolveAcct\(code\)/);
+  assert.match(body, /buildForecastLegs\(\{ [^}]*\binputs\b[^}]*\}\)/);
+});
+
 test("the forecast loader reads master terms, Forecast P&L and planned payments, and writes nothing", () => {
   const start = src.indexOf("async function loadCashflowForecast(");
   const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));

@@ -10,6 +10,7 @@ import {
   OVERDUE_LABEL,
   PLANNED_LABEL,
   splitByLargestRemainder,
+  type CfSection,
   type ForecastColumn,
   type ForecastItem,
   type ForecastLeg,
@@ -283,7 +284,55 @@ export type ForecastInput = {
   pnl: Map<string, { salesSen: number; lines: FcCashLine[] }>;
   plans: PlannedPayment[];
   isCreditorControl: (code: string) => boolean;
+  /** Keyed capex & financing (spec 6.4): month → account code → sen, the
+   *  statement's way round (+ money in, − money out). Forecast only. */
+  inputs?: Record<string, Record<string, number>>;
 };
+
+/** How many months the Capex & financing table offers, from the current
+ *  month: a keyed month reaches at most this far (spec 6.4). */
+export const KEYED_MONTHS = 12;
+/** Who a keyed amount is "from" in the forecast drill. */
+export const KEYED_PARTY = "Keyed on Cash Flow (Capex & financing)";
+
+/** The accounts the Capex & financing table offers (spec 6.4): postable, put
+ *  by the statement under CAPEX or Loan (`sectionOf` is the statement's own
+ *  placement: the owner's mapping, then defaultSectionFor), and not a
+ *  depreciation or amortisation account. Sorted by code. */
+export function keyableAccounts<A extends { code: string; name: string; isPostable?: boolean | null }>(
+  accounts: readonly A[],
+  sectionOf: (a: A) => CfSection,
+): { code: string; name: string; section: "CAPEX" | "LOAN" }[] {
+  const out: { code: string; name: string; section: "CAPEX" | "LOAN" }[] = [];
+  for (const a of accounts) {
+    if (a.isPostable === false || /DEPRECIATION|DEPRN|AMORTI[SZ]ATION/i.test(a.name)) continue;
+    const section = sectionOf(a);
+    if (section === "CAPEX" || section === "LOAN") out.push({ code: a.code, name: a.name, section });
+  }
+  return out.sort((x, y) => x.code.localeCompare(y.code));
+}
+
+/** A keyed-amounts map, cleaned (spec 6.4): months as YYYY-MM, whole sen,
+ *  zeros dropped. With `allowed`, any other account is refused — listed in
+ *  `rejected`, never kept. Anything unreadable reads as nothing. */
+export function cleanKeyedInputs(
+  raw: unknown,
+  allowed: ReadonlySet<string> | null,
+): { months: Record<string, Record<string, number>>; rejected: string[] } {
+  const months: Record<string, Record<string, number>> = {};
+  const rejected = new Set<string>();
+  if (!raw || typeof raw !== "object") return { months, rejected: [] };
+  for (const [ym, cells] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym) || !cells || typeof cells !== "object") continue;
+    for (const [code, v] of Object.entries(cells as Record<string, unknown>)) {
+      const sen = Math.round(Number(v));
+      if (!Number.isSafeInteger(sen) || sen === 0) continue;
+      if (allowed && !allowed.has(code)) { rejected.add(code); continue; }
+      (months[ym] ??= {})[code] = sen;
+    }
+  }
+  return { months, rejected: [...rejected].sort() };
+}
 
 const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthLabel = (ym: string): string => `${MONTH_NAMES[parseInt(ym.slice(5, 7), 10)]}'${ym.slice(2, 4)}`;
@@ -291,16 +340,21 @@ const isReceipt = (l: ForecastLeg) => l.item.kind === "invoice" || l.item.kind =
 
 /** Every forecast leg and column for one statement. */
 export function buildForecastLegs(input: ForecastInput): { columns: ForecastColumn[]; legs: ForecastLeg[]; termFlagged: string[] } {
-  const { today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl } = input;
+  const { today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl, inputs = {} } = input;
   const currentYm = today.slice(0, 7);
   const isBlank = (ym: string) => !!openingYm && ym <= openingYm;
+  const keyedSen = (v: unknown) => Math.round(Number(v) || 0);
 
   // Future months only for this month's statement, as far as a document
-  // reaches (owner 2026-11-08 「显示」: a month only a bill reaches is shown).
+  // reaches (owner 2026-11-08 「显示」: a month only a bill reaches is shown),
+  // or a keyed capex / financing amount within the input table's months.
   const futureYms: string[] = [];
   if (period === currentYm && live) {
     let horizon = "";
     for (const d of live) if (d.dueSen > 0 && d.expectedYm > currentYm && d.expectedYm > horizon) horizon = d.expectedYm;
+    const lastKeyable = addMonthsYm(currentYm, KEYED_MONTHS - 1);
+    for (const [ym, cells] of Object.entries(inputs))
+      if (ym > currentYm && ym <= lastKeyable && ym > horizon && Object.values(cells ?? {}).some((v) => keyedSen(v) !== 0)) horizon = ym;
     for (let ym = addMonthsYm(currentYm, 1); horizon && ym <= horizon; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
   }
   const columns: ForecastColumn[] = [
@@ -389,6 +443,15 @@ export function buildForecastLegs(input: ForecastInput): { columns: ForecastColu
     }
   }
   for (const ym of futureYms) for (const p of plans) if (!p.doneAt && p.expectedDate.slice(0, 7) === ym) legs.push(planLeg(ym, p, false));
+
+  // Keyed capex & financing (spec 6.4): on its account, in its month's
+  // forecast column wherever that column is shown — a past month keeps what
+  // was keyed for it, beside its actual.
+  for (const ym of docLegs.keys())
+    for (const [code, v] of Object.entries(inputs[ym] ?? {})) {
+      const sen = keyedSen(v);
+      if (sen) legs.push({ col: fcCol(ym), sen, accountCode: code, item: { kind: "input", party: KEYED_PARTY, ref: code, expectedYm: ym, note: "forecast only, nothing posted" } });
+    }
 
   const flagged = new Set<string>();
   for (const docs of [...baselines.values(), live ?? []]) for (const d of docs) if (d.termFlagged && d.dueSen > 0) flagged.add(d.partyName);

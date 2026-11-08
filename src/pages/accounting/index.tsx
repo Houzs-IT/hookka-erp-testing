@@ -14,9 +14,10 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
+import { KEYED_MONTHS, addMonthsYm } from "@/lib/cashflow-forecast";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
-import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
 import { docNoFromDescription, monthLabel as drillMonthLabel, shortBankName } from "@/lib/ledger-drill";
 import { comboCandidates, pickAction, pickCandidates, pickState, suggestionFor, PICK_MAX } from "@/lib/bank-pick";
 import { COA_SECTIONS, COA_SECTION_BAND, codeCheck, coaSectionOf, defaultCashFlowFor, groupParentsIn, isPnlType, nextFreeCode, normalBalanceOf } from "@/lib/coa-form";
@@ -8470,8 +8471,10 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
 // 这些都要双击点开」): every document list opens its record on double-click
 // — the same shell for vouchers, receipts, transfers — while single click
 // keeps doing what it did (select / expand). Actions inside mirror the row.
-function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
+function DocDetailModal({ title, badges, onClose, children, actions, wide, xwide }: {
   title: string; badges?: React.ReactNode; onClose: () => void; children: React.ReactNode; actions?: React.ReactNode; wide?: boolean;
+  /** Room for a twelve-month table (the Cash Flow Capex & financing input). */
+  xwide?: boolean;
 }) {
   // Esc closes it (owner 2026-10-02 「点开后无法用esc 关闭」) — the ✕ always said so.
   useEscapeClose(onClose);
@@ -8480,7 +8483,7 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide }: {
   // [data-fin-modal-body]); the body scrolls, the header and actions stay.
   return (
     <div data-fin-backdrop="" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
-      <div data-fin-pop="" className={`flex max-h-[90vh] w-full ${wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
+      <div data-fin-pop="" className={`flex max-h-[90vh] w-full ${xwide ? "max-w-[1320px]" : wide ? "max-w-[980px]" : "max-w-[900px]"} flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-[16px] font-semibold text-[#1F1D1B]">{title}</h2>
@@ -18831,7 +18834,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
 // per customer / supplier document, Forecast P&L line or planned payment, its
 // amount under the forecast column it fell in.
 type CfForecastSource = {
-  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned";
+  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned" | "input";
   party: string; ref: string; date?: string; expectedYm?: string; note?: string;
   sen: number; ofSen?: number;
 };
@@ -18865,7 +18868,7 @@ function CfForecastDrillRows({ sources, cols, depth }: {
   return (
     <>
       {rows.map(({ col, it, i }) => {
-        const parts = it.kind === "pnl"
+        const parts = it.kind === "pnl" || it.kind === "input"
           ? [it.party, it.note]
           : [it.party, it.ref, dmy(it.date), it.expectedYm ? `due ${cfYmLabel(it.expectedYm)}` : "", it.note];
         const text = parts.filter(Boolean).join(" · ");
@@ -18885,6 +18888,199 @@ function CfForecastDrillRows({ sources, cols, depth }: {
     </>
   );
 }
+// Capex & financing keyed on the Cash Flow page (owner 2026-11-09 「做」, spec
+// 6.4): a Forecast P&L-style table — the CAPEX and Loan accounts down, twelve
+// months across from this month — whose amounts land in the Forecast columns
+// on their accounts' lines. Forecast only: nothing is posted, no document.
+// Saving sends the whole map, so months outside the twelve are kept.
+type CfKeyableAccount = { code: string; name: string; section: "CAPEX" | "LOAN" };
+function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const firstYm = todayYmdMY().slice(0, 7);
+  const yms = useMemo(() => Array.from({ length: KEYED_MONTHS }, (_, i) => addMonthsYm(firstYm, i)), [firstYm]);
+  const [accounts, setAccounts] = useState<CfKeyableAccount[] | null>(null);
+  const [months, setMonths] = useState<Record<string, Record<string, number>>>({});
+  const [rows, setRows] = useState<string[]>([]);
+  const [adding, setAdding] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const r = await fetch("/api/accounting/cashflow-forecast-inputs", { cache: "no-store" });
+        const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string; data?: { months?: Record<string, Record<string, number>>; accounts?: CfKeyableAccount[] } } | null;
+        if (!r.ok || !j?.success || !j.data) throw new Error(j?.error || `HTTP ${r.status}`);
+        if (!live) return;
+        const m = j.data.months ?? {};
+        const keyed = new Set<string>();
+        for (const ym of yms) for (const code of Object.keys(m[ym] ?? {})) keyed.add(code);
+        setMonths(m);
+        setAccounts(j.data.accounts ?? []);
+        setRows([...keyed].sort());
+      } catch (e) {
+        if (live) setLoadError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { live = false; };
+  }, [yms]);
+  const accountOf = useMemo(() => new Map((accounts ?? []).map((a) => [a.code, a])), [accounts]);
+  const setCell = (code: string, ym: string, rm: number | null) => {
+    const sen = rm === null ? 0 : roundSen(rm * 100);
+    setMonths((prev) => {
+      const cells = { ...(prev[ym] ?? {}) };
+      if (sen) cells[code] = sen; else delete cells[code];
+      const next = { ...prev };
+      if (Object.keys(cells).length) next[ym] = cells; else delete next[ym];
+      return next;
+    });
+  };
+  const clearRow = (code: string) => {
+    setMonths((prev) => {
+      const next = { ...prev };
+      for (const ym of yms) {
+        if (next[ym]?.[code] === undefined) continue;
+        const cells = { ...next[ym] };
+        delete cells[code];
+        if (Object.keys(cells).length) next[ym] = cells; else delete next[ym];
+      }
+      return next;
+    });
+    setRows((r) => r.filter((c) => c !== code));
+  };
+  const addRow = () => {
+    if (!adding) return;
+    setRows((r) => (r.includes(adding) ? r : [...r, adding].sort()));
+    setAdding("");
+  };
+  const total = (section: CfKeyableAccount["section"], ym: string) =>
+    rows.reduce((s, code) => s + (accountOf.get(code)?.section === section ? months[ym]?.[code] ?? 0 : 0), 0);
+  // A row kept from before whose account is no longer CAPEX / Loan (the
+  // mapping moved it): the server would refuse it, so Save waits for a clear.
+  const stale = accounts ? rows.filter((code) => !accountOf.has(code)) : [];
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const r = await fetch("/api/accounting/cashflow-forecast-inputs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ months }),
+      });
+      const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string } | null;
+      if (!r.ok || !j?.success) throw new Error(j?.error || `HTTP ${r.status}`);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const amt = (sen: number) => (!sen ? "-" : sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
+  const th = "px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280] whitespace-nowrap";
+  const sectionWord = (s: CfKeyableAccount["section"]) => (s === "LOAN" ? "Loan" : "CAPEX");
+  return (
+    <DocDetailModal
+      title="Capex & financing — forecast"
+      onClose={onClose}
+      xwide
+      actions={
+        <>
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="sm" disabled={saving || !accounts || stale.length > 0} onClick={() => void save()}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-xs text-[#6B7280]">
+        Forecast only: nothing is posted and no document is made. Money in +, money out − (the statement&apos;s way round).
+        Each amount shows in that month&apos;s Forecast column, on its account&apos;s line. Money already in Planned payments
+        (Daily Cash Position) should not be keyed here too.
+      </p>
+      {loadError ? (
+        <p className="text-xs text-[#9A3412]">Could not load the keyed amounts: {loadError}</p>
+      ) : !accounts ? (
+        <p className="text-xs text-[#9CA3AF]">Loading…</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-md border border-[#E2DDD8] bg-white">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-[#E2DDD8]">
+                  <th className={`${th} sticky left-0 z-10 bg-white text-left`}>Account</th>
+                  {yms.map((ym) => <th key={ym} className={`${th} text-right`}>{cfYmLabel(ym)}</th>)}
+                  <th className={th} aria-label="Clear row" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr><td colSpan={yms.length + 2} className="px-3 py-4 text-center text-[#9CA3AF]">Nothing keyed yet. Add an account below.</td></tr>
+                )}
+                {rows.map((code) => {
+                  const a = accountOf.get(code);
+                  return (
+                    <tr key={code} className="border-b border-[#F0ECE9]">
+                      <td className="sticky left-0 z-10 bg-white px-2 py-1 whitespace-nowrap">
+                        <span className="tabular-nums text-[#6B7280]">{code}</span>{" "}
+                        {a ? (
+                          <>
+                            <span className="text-[#1F1D1B]">{a.name}</span>{" "}
+                            <span className="rounded bg-[#F0ECE9] px-1.5 py-0.5 text-[10px] text-[#6B7280]">{sectionWord(a.section)}</span>
+                          </>
+                        ) : (
+                          <span className="text-[#9A3412]">No longer a CAPEX or Loan account — clear it to save</span>
+                        )}
+                      </td>
+                      {yms.map((ym) => (
+                        <td key={ym} className="px-1 py-1">
+                          <MoneyInput
+                            value={months[ym]?.[code] ? months[ym][code] / 100 : null}
+                            onChange={(v) => setCell(code, ym, v)}
+                            className="h-8 w-28 px-2 text-xs tabular-nums"
+                          />
+                        </td>
+                      ))}
+                      <td className="px-1 text-center">
+                        <button type="button" onClick={() => clearRow(code)} title="Clear this row's twelve months" className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {rows.length > 0 && (
+                <tfoot>
+                  {(["CAPEX", "LOAN"] as const).filter((s) => rows.some((code) => accountOf.get(code)?.section === s)).map((s) => (
+                    <tr key={s} className="border-t border-[#E2DDD8] font-semibold">
+                      <td className="sticky left-0 z-10 bg-white px-2 py-1.5">{sectionWord(s)} total</td>
+                      {yms.map((ym) => {
+                        const v = total(s, ym);
+                        return <td key={ym} className={`px-2 py-1.5 text-right tabular-nums ${v < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{amt(v)}</td>;
+                      })}
+                      <td />
+                    </tr>
+                  ))}
+                </tfoot>
+              )}
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={adding} onChange={(e) => setAdding(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm">
+              <option value="">Add an account…</option>
+              {accounts.filter((a) => !rows.includes(a.code)).map((a) => (
+                <option key={a.code} value={a.code}>{a.code} {a.name} ({sectionWord(a.section)})</option>
+              ))}
+            </select>
+            <Button variant="outline" size="sm" disabled={!adding} onClick={addRow}>Add</Button>
+          </div>
+        </>
+      )}
+      {saveError && <p className="text-xs text-[#9A3412]">Could not save: {saveError}</p>}
+    </DocDetailModal>
+  );
+}
+
 // `ym` / `forecast` / `future` / `blank` come only with the Forecast toggle
 // (GET /cashflow-forecast): each month's Actual column, then its Forecast one.
 type CfApiCol = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; future?: boolean; blank?: boolean };
@@ -18939,6 +19135,8 @@ function CashFlowTab() {
   // stay on screen while it loads or if it fails.
   const [forecast, setForecast] = useState(false);
   const fcOn = forecast && !edit;
+  // The Capex & financing input table (spec 6.4), opened from the toolbar.
+  const [inputsOpen, setInputsOpen] = useState(false);
   const { data: fcResp, loading: fcLoading, error: fcErr, refresh: fcRefresh } = useCachedJson<{ success?: boolean; data?: CfForecastData; error?: string }>(
     fcOn ? `/api/accounting/cashflow-forecast?period=${period}` : null,
   );
@@ -19564,6 +19762,12 @@ function CashFlowTab() {
         <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); setForecast(false); } }} />
         {!edit && <DetailLevels levels={[1, 2, 3]} value={level} onChange={applyLevel} />}
         {!edit && <ForecastToggle on={forecast} onToggle={() => setForecast((v) => !v)} />}
+        {fcOn && (
+          <Button variant="outline" size="sm" onClick={() => setInputsOpen(true)} title="Key forecast capex and financing amounts by month (forecast only, nothing is posted)">
+            Capex &amp; financing
+          </Button>
+        )}
+        {inputsOpen && <CfForecastInputsDialog onClose={() => setInputsOpen(false)} onSaved={() => invalidateCachePrefix("/api/accounting/cashflow-forecast")} />}
         {fcOn && fcLoading && !fcData && <span className="text-[11px] text-[#9CA3AF]">Loading forecast…</span>}
         {fcFailed && (
           <span className="text-[11px] text-[#9A3412]">
@@ -19737,8 +19941,9 @@ function CashFlowTab() {
           )}
           <p>
             <span className="text-[#C0392B]">Forecast (red)</span>: open documents by customer / supplier term as at the 1st of each month (amounts past their term count in that month);
-            salaries and expenses from Forecast P&amp;L × that month's forecast receipts (salaries paid the month after, factory overhead as keyed); planned payments.
-            Future months run as far as documents reach. A month's forecast c/f starts from its actual b/f.
+            salaries and expenses from Forecast P&amp;L × that month's forecast receipts (salaries paid the month after, factory overhead as keyed); planned payments;
+            capex and financing keyed under Capex &amp; financing (forecast only, nothing posted).
+            Future months run as far as documents or keyed amounts reach. A month's forecast c/f starts from its actual b/f.
           </p>
           {(fcData.termFlagged?.length ?? 0) > 0 && <p>Term blank or unreadable, taken as 1 month: {(fcData.termFlagged ?? []).join(", ")}.</p>}
           {(fcData.excluded?.length ?? 0) > 0 && <p>Not forecast (no cash moves): {[...new Set((fcData.excluded ?? []).map((e) => e.name))].join(", ")}.</p>}

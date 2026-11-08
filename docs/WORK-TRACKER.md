@@ -297,7 +297,7 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
 5. ✅ Polish (`fix/cashflow-forecast-polish`, #1205), seen on prod: the Forecast headings printed grey with a solid rule (the two-row header rules come later in `finance-v2.css`); "Overdue (past term)" sorted first in Revenue Collection. Now red with the dashed rule, and last in its section. Verified on prod 2026-11-08.
 3. ✅ Owner data: entered on prod 2026-11-09 on the owner's order (「帮我改」) — 12 suppliers' payment terms and 2 customers on 2-month terms, through the Supplier and Customer pages; only the term field changed (names and figures in the handover file).
 6. 🔵 Opening-period customer receipts (`feat/cashflow-forecast-opening-credits`), owner 2026-11-09 「把这些初期的排除掉」, narrowed to the customers' receipts: a receipt not knocked off and dated up to the end of the month after the opening month is no longer netted against current invoices; the invoices still count; a footnote says how many were left out.
-7. 🔵 Capex & financing inputs on the Cash Flow page, keyed like Forecast P&L (owner 2026-11-09 「做」): forecast-only amounts per account and month, no documents, no ledger.
+7. 🔵 Capex & financing inputs on the Cash Flow page (`feat/cashflow-forecast-capex-financing`), keyed like Forecast P&L (owner 2026-11-09 「做」): forecast-only amounts per CAPEX / Loan account and month, no documents, no ledger (spec 6.4). Item 6 shipped as #1210.
 4. Not done here: the Finance Dashboard keeps its own copy of the Forecast P&L amount rule.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)

@@ -325,6 +325,67 @@ test("review 5: a document dated after the 1st and due the same month is in no f
   assert.ok(!r.legs.some((l) => l.item.ref === "COD"));
 });
 
+// ---- keyed capex & financing (spec 6.4, owner 2026-11-09 「做」) ---------------
+
+const keyedLegs = (r) => r.legs.filter((l) => l.item.kind === "input");
+
+test("a keyed amount lands in its month's forecast column on its account, the statement's way round", () => {
+  const r = fc.buildForecastLegs(base({ inputs: { "2026-12": { "200-0030": -500_000, "440-0030": 300_000 } } }));
+  assert.deepEqual(keyedLegs(r).map((l) => [l.col, l.accountCode, l.sen]).sort(), [["fc:2026-12", "200-0030", -500_000], ["fc:2026-12", "440-0030", 300_000]]);
+  assert.ok(keyedLegs(r).every((l) => !l.section && !l.label && !l.splitKey), "placed by its account, like a ledger leg");
+  assert.ok(!r.legs.some((l) => l.item.kind === "pnl" && l.col === "fc:2026-12" && l.sen > 0), "keyed money is not a receipt: salaries do not scale with it");
+});
+
+test("a keyed month no document reaches is shown, at most eleven months ahead", () => {
+  const r = fc.buildForecastLegs(base({ inputs: { "2027-03": { "200-0030": -100 }, "2027-11": { "200-0030": -100 } } }));
+  assert.deepEqual(r.columns.filter((c) => c.future).map((c) => c.ym), ["2027-03", "2027-02", "2027-01", "2026-12"]);
+  assert.deepEqual(keyedLegs(r).map((l) => l.col), ["fc:2027-03"], "twelve months on is past the input table");
+});
+
+test("a keyed amount in a past or current month stays in that month's forecast column; opening months get none", () => {
+  const r = fc.buildForecastLegs(base({ openingYm: "2026-09", inputs: { "2026-10": { "440-0030": -2_000 }, "2026-09": { "440-0030": -9 } } }));
+  assert.deepEqual(keyedLegs(r).map((l) => [l.col, l.sen]), [["fc:2026-10", -2_000]]);
+});
+
+test("without keyed amounts the forecast is what it was; a zero stretches no month", () => {
+  assert.deepEqual(fc.buildForecastLegs(base({ inputs: {} })), fc.buildForecastLegs(base()));
+  assert.deepEqual(fc.buildForecastLegs(base({ inputs: { "2027-05": { "200-0030": 0 } } })), fc.buildForecastLegs(base()));
+});
+
+test("an earlier period's statement gets no future months from keyed amounts", () => {
+  const r = fc.buildForecastLegs(base({ period: "2026-10", months: ["2026-10", "2026-09"], live: null, inputs: { "2026-12": { "200-0030": -100 } } }));
+  assert.ok(!r.columns.some((c) => c.future));
+  assert.deepEqual(keyedLegs(r), []);
+});
+
+test("keyableAccounts: postable CAPEX and Loan accounts, the owner's mapping first; depreciation and headers left out", () => {
+  const accts = [
+    { code: "200-0030", name: "PLANT & MACHINERY", type: "ASSET", isPostable: true },
+    { code: "200-0035", name: "ACCUM. DEPRN. - PLANT & MACHINERY", type: "ASSET", isPostable: true },
+    { code: "440-0000", name: "LOAN FROM RELATED PARTIES", type: "LIABILITY", isPostable: false },
+    { code: "440-0030", name: "LOAN FROM RELATED PARTY", type: "LIABILITY", isPostable: true },
+    { code: "480-0000", name: "HIRE PURCHASE CREDITOR", type: "LIABILITY", isPostable: true },
+    { code: "900-0010", name: "UPKEEP", type: "EXPENSE", isPostable: true },
+    { code: "910-0001", name: "DEPOSIT FOR MACHINE", type: "ASSET", isPostable: true },
+  ];
+  const map = { "480-0000": { section: "GENERAL_EXPENSE" }, "910-0001": { section: "CAPEX" } };
+  const sectionOf = (a) => map[a.code]?.section ?? cf.defaultSectionFor(a);
+  assert.deepEqual(fc.keyableAccounts(accts, sectionOf), [
+    { code: "200-0030", name: "PLANT & MACHINERY", section: "CAPEX" },
+    { code: "440-0030", name: "LOAN FROM RELATED PARTY", section: "LOAN" },
+    { code: "910-0001", name: "DEPOSIT FOR MACHINE", section: "CAPEX" },
+  ]);
+});
+
+test("cleanKeyedInputs: whole sen, real months, allowed accounts only, zeros dropped", () => {
+  const raw = { "2026-12": { "200-0030": -500_000.4, "440-0030": 0, "900-0010": -5 }, "2026-13": { "200-0030": -1 }, nope: { "200-0030": 1 }, "2027-01": { "440-0030": "x" } };
+  const r = fc.cleanKeyedInputs(raw, new Set(["200-0030", "440-0030"]));
+  assert.deepEqual(r.months, { "2026-12": { "200-0030": -500_000 } });
+  assert.deepEqual(r.rejected, ["900-0010"]);
+  assert.deepEqual(fc.cleanKeyedInputs(raw, null).months, { "2026-12": { "200-0030": -500_000, "900-0010": -5 } }, "no list: every account is kept");
+  assert.deepEqual(fc.cleanKeyedInputs("junk", null), { months: {}, rejected: [] });
+});
+
 test("buildForecastLegs names the parties whose term was guessed", () => {
   const r = fc.buildForecastLegs(base({ live: [{ ...inv("DEC", 80_000, "2026-12"), partyName: "Z1", termFlagged: true }] }));
   assert.deepEqual(r.termFlagged, ["Z1"]);
