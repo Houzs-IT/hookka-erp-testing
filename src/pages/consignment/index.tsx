@@ -33,6 +33,7 @@ import { mutationWithData } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
 import { z } from "zod";
+import { csvBlob } from "@/lib/csv-cell";
 
 const DOListSchema = z
   .object({
@@ -385,11 +386,7 @@ export default function SalesPage() {
       ];
     });
 
-    const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = csvBlob([headers, ...rows]);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;

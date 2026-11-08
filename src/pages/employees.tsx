@@ -79,6 +79,7 @@ import {
   pcbHasFigure,
   PCB_STATUS_NOTE,
 } from "@/lib/pcb";
+import { CSV_BOM, csvBlob, csvCell as sharedCsvCell } from "@/lib/csv-cell";
 
 // --------------- TYPES ---------------
 
@@ -400,10 +401,7 @@ function dateRangeLabel(from: string, to: string): string {
 // safe cells render as-is. Internal quotes are escaped by doubling per RFC
 // 4180.
 function csvCell(value: string): string {
-  if (value == null) return "";
-  const needsQuote = /[",\n\r]/.test(value);
-  const escaped = value.replace(/"/g, '""');
-  return needsQuote ? `"${escaped}"` : escaped;
+  return sharedCsvCell(value);
 }
 
 
@@ -2580,7 +2578,7 @@ function EmployeeMasterTab({
           `${csvCell(r.empNo)},${csvCell(r.name)},${csvCell(r.pin)}`,
       )
       .join("\n");
-    const blob = new Blob([header + rows], {
+    const blob = new Blob([CSV_BOM + header + rows], {
       type: "text/csv;charset=utf-8",
     });
     const url = URL.createObjectURL(blob);
@@ -7345,12 +7343,7 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
     });
     // Quote anything containing a comma / quote / newline — the new detail
     // columns join dates with "; " and would otherwise split the row.
-    const esc = (v: unknown) => {
-      const s = String(v ?? "");
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const csv = [headers.join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = csvBlob([headers, ...rows]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -11132,12 +11125,7 @@ function AdvancesTab({ workers }: { workers: Worker[] }) {
     // A payout sheet without its own total is a sheet somebody has to add up by
     // hand before they can count the cash.
     rows.push(["", "TOTAL", "", "", "", "", rm2(grandTotalSen)]);
-    const esc = (v: unknown) => {
-      const s = String(v ?? "");
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const csv = [headers.join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = csvBlob([headers, ...rows]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

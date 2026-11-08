@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { parseRateLines, pieceItemCode, priceListText } from "@/lib/outsource-piece";
 import { useDebounced } from "@/pages/m/lib/use-debounced";
+import { csvCell as sharedCsvCell } from "@/lib/csv-cell";
 
 type OutsourceWorker = {
   id: string;
@@ -433,8 +434,7 @@ function ImportPanel({ workerId, period, canEdit }: { workerId: string; period: 
 }
 
 function csvCell(v: string | number): string {
-  const t = String(v);
-  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  return sharedCsvCell(v);
 }
 
 function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {

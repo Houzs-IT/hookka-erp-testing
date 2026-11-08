@@ -42,6 +42,7 @@ import {
   FromSourceModal,
   type SourceSelection,
 } from "@/components/from-source-modal";
+import { csvBlob } from "@/lib/csv-cell";
 
 // ============================================================
 // Types
@@ -338,10 +339,7 @@ export default function PurchaseInvoicesPage() {
       (pi.amountSen / 100).toFixed(2),
       pi.status,
     ]);
-    const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = csvBlob([headers, ...rows]);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;

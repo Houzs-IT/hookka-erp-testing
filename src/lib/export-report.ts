@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { COMPANY } from "./constants";
+import { csvCell } from "./csv-cell";
 
 export type Aoa = (string | number)[][];
 
@@ -21,9 +22,9 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// Formula-safe and RFC 4180 quoted: see csv-cell.ts.
 function csvEscape(v: string | number): string {
-  const s = String(v ?? "");
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return csvCell(v);
 }
 
 export function exportReportCsv(

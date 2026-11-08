@@ -37,7 +37,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
   - `/sales/:id` → `src/pages/sales/detail.tsx:583` (`SalesOrderDetailPage`; linked POs/JCs/DOs/invoices)
   - `/sales/:id/edit` → `src/pages/sales/edit.tsx` (Edit SO; re-runs sofa-combo on save)
   - `/consignment` list/create/edit/detail/return → `src/pages/consignment/{index,create,edit,detail,return}.tsx`
-  - `/consignment/note` → `src/pages/consignment/note.tsx:454` (`ConsignmentNotePage`; 3 inline tabs)
+  - `/consignment/note` → `src/pages/consignment/note.tsx:462` (`ConsignmentNotePage`; 3 inline tabs)
   - Sofa combo grid → `src/pages/maintenance/sofa-combos.tsx:370` (`SofaCombosPage`)
 - API routes
   - SO **handlers** → `src/api/routes/sales-orders.ts` (5,733 lines); shared helpers in
@@ -91,7 +91,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `findComboSubset` | `src/api/lib/sofa-combo.ts:98` | Subset-match lines against a combo rule (module-private) |
 | `app.post("/")` (CO create) | `src/api/routes/consignment-orders.ts:663` | Consignment Order create |
 | `app.get("/status-changes")` (CO) | `src/api/routes/consignment-orders.ts:1148` | co_status_changes read |
-| `ConsignmentNotePage` | `src/pages/consignment/note.tsx:454` | CN workspace, all 3 tabs inline |
+| `ConsignmentNotePage` | `src/pages/consignment/note.tsx:462` | CN workspace, all 3 tabs inline |
 
 ## Gotchas
 - **Combo pricing is backend-unified.** Never re-implement it in the frontend. Note the map's `applySofaCombos`-in-sales-orders wiring is now **indirect**: sales-orders imports `runSofaComboPass` (`sofa-combo-pass.ts`, moved 2026-06-11), which calls `applySofaCombos`. Piece code = productCode (stored sizeCode is the SEAT size); a null tier disqualifies the group; `discount <= 0` is an idempotent no-op. Old full-price combo SOs re-price down on next edit.

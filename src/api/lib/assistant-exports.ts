@@ -24,6 +24,7 @@ import * as XLSX from "xlsx";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { putFile, signedDownloadUrl } from "./supabase-storage";
 import { winAnsi } from "./unified-do-invoice-pdf";
+import { csvSafeText } from "../../lib/csv-cell";
 
 type StorageEnv = {
   SUPABASE_PROJECT_REF?: string;
@@ -100,6 +101,8 @@ export function csvEscapeCell(value: unknown): string {
   else if (value instanceof Date) s = value.toISOString();
   else s = JSON.stringify(value);
   if (s.length === 0) return "";
+  // Text a spreadsheet would run as a formula gets a leading apostrophe.
+  if (typeof value === "string") s = csvSafeText(s);
   const needsQuote = /[",\r\n]/.test(s);
   if (!needsQuote) return s;
   return `"${s.replace(/"/g, '""')}"`;

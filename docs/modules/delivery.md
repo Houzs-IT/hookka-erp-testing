@@ -52,7 +52,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
   - DO detail **drawer** (right slide-over, opened from a row) → chrome `src/components/ui/document-detail-drawer.tsx`,
     model `src/lib/document-drawer.ts`, body inline in `delivery/index.tsx` (was a centred modal until 2026-08-08)
   - Delivery Agent tab → `src/pages/delivery/agent-tab.tsx:128` (`DeliveryAgentTab`; rendered inline when `pageTab==="agent"`)
-  - `/consignment/note` → `src/pages/consignment/note.tsx:454` (`ConsignmentNotePage`; CN workbench, DO-parity)
+  - `/consignment/note` → `src/pages/consignment/note.tsx:462` (`ConsignmentNotePage`; CN workbench, DO-parity)
   - CO list/create/edit/detail/return → `src/pages/consignment/{index,create,edit,detail,return}.tsx`
 - API routes
   - DO routes → `src/api/routes/delivery-orders.ts` (3010 lines) — **handlers only**; every shared
@@ -118,7 +118,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 | `DocumentDetailDrawer` | `src/components/ui/document-detail-drawer.tsx` | Shared slide-over chrome (chrome only, no domain knowledge) |
 | 3PL Providers block | `src/pages/delivery/index.tsx` (~6.5k) | `pageTab==="3pl"` list + Create/Edit dialog |
 | `DeliveryAgentTab` | `src/pages/delivery/agent-tab.tsx:128` | Brief strip + proposal approve/reject |
-| `ConsignmentNotePage` | `src/pages/consignment/note.tsx:454` | CN workbench (DO-parity mirror) |
+| `ConsignmentNotePage` | `src/pages/consignment/note.tsx:462` | CN workbench (DO-parity mirror) |
 | `VALID_TRANSITIONS` | `delivery-orders/_helpers.ts:87` | DO status machine |
 | `fireCustomerNoticeBestEffort` | `delivery-orders/_helpers.ts:131` | Backend notice safety-net (waitUntil) |
 | `createDeliveryOrderForPOs` | `delivery-orders/_helpers.ts:2223` | Build a DO from POs |
