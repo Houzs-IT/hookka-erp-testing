@@ -22,7 +22,12 @@ export type CfSection =
   | "CAPEX"
   | "DEPOSIT"
   | "LOAN"
-  | "UNALLOCATED";
+  | "UNALLOCATED"
+  // Forecast only (2026-11-08 Cash Flow forecast): the one "Planned payments"
+  // row — loan principal, tax, capex without a bill. Never in SECTION_ORDER,
+  // so the mapping editor and every SECTION_ORDER loop never offer it; the
+  // statement emits it only when a forecast leg lands in it.
+  | "PLANNED";
 
 export type CoaLite = {
   code: string;
@@ -70,7 +75,40 @@ export const SECTION_LABELS: Record<CfSection, string> = {
   DEPOSIT: "Deposit refunded / (paid)",
   LOAN: "Loan received / (repaid · lent)",
   UNALLOCATED: "Unallocated",
+  PLANNED: "Planned payments",
 };
+
+// --- Forecast (docs/superpowers/specs/2026-11-08-cash-flow-forecast-design.md)
+// The forecast is built as pseudo-legs (src/lib/cashflow-forecast.ts) that
+// this engine places exactly like ledger legs, into forecast columns.
+export const OVERDUE_LABEL = "Overdue (past term)";
+export const PLANNED_LABEL = "Planned payments";
+/** What makes up one forecast amount — shown when the line is opened. */
+export type ForecastItem = {
+  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned";
+  party: string;
+  ref: string;
+  date?: string;
+  expectedYm?: string;
+  note?: string;
+};
+/** One forecast amount. `sen`: + money in, − money out. `col` = "fc:YYYY-MM".
+ *  Placed by `section` (forced), else by `accountCode` like a ledger leg; a
+ *  `label` names the line and skips the material / department split;
+ *  `splitKey` picks a purchase invoice's material weights out of rmSplit. */
+export type ForecastLeg = {
+  col: string;
+  sen: number;
+  accountCode?: string;
+  section?: CfSection;
+  label?: string;
+  order?: number;
+  splitKey?: string;
+  item: ForecastItem;
+};
+/** One forecast column: a month, whether it is after the current month, and
+ *  whether it is at or before the opening month (no forecast, prints "-"). */
+export type ForecastColumn = { ym: string; future: boolean; blank: boolean };
 
 export function displaySign(section: CfSection): 1 | -1 {
   return OUTFLOW_SECTIONS.has(section) ? -1 : 1;
