@@ -96,3 +96,14 @@ test("source guard: the dashboard reads the card through cashflow-card, never a 
   assert.doesNotMatch(src, /kind === "subtotal" && r\.section === "CAPEX"/);
   assert.doesNotMatch(src, /freeCashFlow: cf\.operating/);
 });
+
+test("source guard: the dashboard snapshot key was bumped for this fix", () => {
+  // withSnapshot revalidates only when a source TABLE changes, so a code-only
+  // change to the card's figures keeps serving the old copy unless the payload
+  // version moves (the first ship of BUG-2026-11-08-419 missed this).
+  const src = readFileSync(resolve(process.cwd(), "src/api/routes/accounting.ts"), "utf8");
+  const m = src.match(/const DASH_PAYLOAD_V = "v(\d+)"; \/\/ (.*)/);
+  assert.ok(m, "DASH_PAYLOAD_V not found");
+  assert.ok(Number(m[1]) >= 21, `DASH_PAYLOAD_V is v${m[1]}`);
+  assert.match(m[2], /BUG-2026-11-08-419/);
+});
