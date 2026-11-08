@@ -14,7 +14,8 @@ const shell = ui.slice(ui.indexOf("function DocDetailModal("), ui.indexOf("funct
 const field = ui.slice(ui.indexOf("function DetailField("), ui.indexOf("\n}\n", ui.indexOf("function DetailField(")));
 
 test("same props, same Esc", () => {
-  assert.match(shell, /function DocDetailModal\(\{ title, badges, onClose, children, actions, wide \}/);
+  // `xwide` (2026-11-09) only adds a width for the Cash Flow Capex & financing table.
+  assert.match(shell, /function DocDetailModal\(\{ title, badges, onClose, children, actions, wide, xwide \}/);
   assert.match(shell, /useEscapeClose\(onClose\);/);
   assert.match(shell, /onClick=\{onClose\}/, "a click on the backdrop closes it");
   assert.match(shell, /onClick=\{\(e\) => e\.stopPropagation\(\)\}/);

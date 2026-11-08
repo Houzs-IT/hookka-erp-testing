@@ -36,13 +36,15 @@ import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, re
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
-import { buildStatement, fyMonths, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
+import { buildStatement, defaultSectionFor, fyMonths, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
 import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection, ForecastColumn, ForecastLeg } from "../../lib/cashflow-engine";
 import {
   addMonthsYm,
   buildForecastLegs,
+  cleanKeyedInputs,
   forecastCashLines,
   isNonCashAccount,
+  keyableAccounts,
   openingCreditCutoffYm,
   parseTermMonths,
   piIdIndex,
@@ -11046,7 +11048,15 @@ async function loadCashflowForecast(
     const b = parseInt(code.split("-")[0] ?? "0", 10) || 0;
     return a?.sat === "SCC" || b === 400 || b === 405;
   };
-  const built = buildForecastLegs({ today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl });
+  // Capex & financing keyed on the Cash Flow page (spec 6.4), forecast only,
+  // on the statement's own account codes.
+  const inputs: Record<string, Record<string, number>> = {};
+  for (const [ym, cells] of Object.entries(await loadCfForecastInputs(db)))
+    for (const [code, sen] of Object.entries(cells)) {
+      const k = resolveAcct(code);
+      (inputs[ym] ??= {})[k] = (inputs[ym][k] ?? 0) + sen;
+    }
+  const built = buildForecastLegs({ today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl, inputs });
   const shown = new Set(built.columns.filter((c) => !c.blank).map((c) => c.ym));
   return {
     forecast: { columns: built.columns, legs: built.legs, rmSplit },
@@ -11665,6 +11675,59 @@ app.get("/cashflow-forecast", async (c) => {
   const { bankByMonth: _bank, drill: _drill, sources: _sources, forecastMeta, ...statement } =
     await computeCashflowStatement(c.var.DB, period, false, getOrgId(c), { forecast: { today } });
   return c.json({ success: true, data: { period, ...forecastMeta, ...statement } });
+});
+
+// Capex & financing keyed on the Cash Flow page (owner 2026-11-09 「做」, spec
+// 6.4): forecast only — nothing is posted and no document is made. kv
+// `cashflow_forecast_inputs` = { months: { "YYYY-MM": { "<code>": sen } } },
+// sen the statement's way round (+ money in, − money out).
+async function loadCfForecastInputs(db: Env["Variables"]["DB"]): Promise<Record<string, Record<string, number>>> {
+  const row = await db.prepare("SELECT value FROM kv_config WHERE key = 'cashflow_forecast_inputs'").first<{ value: string }>().catch(() => null);
+  let raw: unknown = null;
+  try {
+    raw = (JSON.parse(row?.value ?? "{}") as { months?: unknown }).months ?? null;
+  } catch { /* none yet */ }
+  return cleanKeyedInputs(raw, null).months;
+}
+
+// The accounts the table offers: the ones the statement places under CAPEX or
+// Loan — the owner's Cash Flow mapping first, then the default bands.
+async function cfForecastInputAccounts(db: Env["Variables"]["DB"]): Promise<{ code: string; name: string; section: "CAPEX" | "LOAN" }[]> {
+  const [coaList, map] = await Promise.all([loadCoaList(db, false), getCashflowMap(db)]);
+  return keyableAccounts(coaList, (a) => map[a.code]?.section
+    ?? defaultSectionFor({ code: a.code, name: a.name, type: a.type, sat: a.specialAccountType ?? null, parentCode: a.parentCode ?? null }));
+}
+
+app.get("/cashflow-forecast-inputs", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const [months, accounts] = await Promise.all([loadCfForecastInputs(c.var.DB), cfForecastInputAccounts(c.var.DB)]);
+  return c.json({ success: true, data: { months, accounts } });
+});
+
+// Replaces the whole map (the table sends every month it holds, the ones
+// outside its twelve included).
+app.put("/cashflow-forecast-inputs", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  let body: { months?: unknown };
+  try {
+    body = (await c.req.json()) as { months?: unknown };
+  } catch {
+    return c.json({ success: false, error: "Invalid request body" }, 400);
+  }
+  if (!body?.months || typeof body.months !== "object") return c.json({ success: false, error: "months required" }, 400);
+  const { months, rejected } = cleanKeyedInputs(body.months, new Set((await cfForecastInputAccounts(c.var.DB)).map((a) => a.code)));
+  if (rejected.length) {
+    return c.json({ success: false, error: `Account ${rejected[0]} is not a CAPEX or Loan account${rejected.length > 1 ? ` (nor ${rejected.slice(1).join(", ")})` : ""}` }, 400);
+  }
+  const before = await loadCfForecastInputs(c.var.DB);
+  await c.var.DB.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES ('cashflow_forecast_inputs', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(JSON.stringify({ months }), new Date().toISOString()).run();
+  await emitAudit(c, { resource: "accounting", resourceId: "cashflow_forecast_inputs", action: "update", before: { months: before }, after: { months } });
+  return c.json({ success: true, data: { months } });
 });
 
 // GL-truth P&L + Balance Sheet, computed from the immutable

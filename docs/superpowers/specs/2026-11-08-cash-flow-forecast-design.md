@@ -227,6 +227,28 @@ The owner's rule (「薪水和 general expense 能根据我 forecast P&L 的 rat
   the Forecast P&L, for example loan principal, tax or capex without a bill. There is no
   automatic matching. [my call]
 
+### 6.4 Capex and financing, keyed [owner, 2026-11-09 「做」]
+
+The owner's words: 「capex 和 financing 我可以就是随便输入，像 forecast PNL 这样，所以实际不会付，然后把这个输入的地方放在 cash flow 那边」. The proposal below was put to them and they said 做.
+
+- With the Forecast toggle on, a "Capex & financing" button opens an input table: one row per
+  account, one column per month, twelve months from the current month (MYT).
+- Rows are the postable, active accounts the statement places under CAPEX or Loan (the owner's
+  Cash Flow mapping first, then `defaultSectionFor`). [my call: accumulated depreciation and other
+  non-cash accounts are left out of the list]
+- Amounts read the statement's way: money in positive, money out negative.
+- Forecast only: nothing is posted and no document is made. Stored in kv
+  `cashflow_forecast_inputs` = `{ months: { "YYYY-MM": { "<account code>": sen } } }`; empty
+  cells are not stored. Months outside the table's twelve are kept as they are when the table is
+  saved. [my call on the storage]
+- Each keyed amount is a forecast leg on its account, so it sits on the same line as that
+  account's actual money, in that month's Forecast column. A month keyed earlier keeps its amount
+  once it is in the past, for the comparison with the actual. Bank c/f follows.
+- A month with a keyed amount is shown even when no document reaches it, at most eleven months
+  ahead (the owner's earlier 「显示」). Only the current month's statement has future months.
+- Planned payments on Daily Cash Position stay as they are; the table says not to key the same
+  money in both. [my call]
+
 ## 7. Horizon [my call, plus one owner decision]
 
 - **Owner, 2026-11-08 (「显示」): show them.** A month that only known payments reach, such as a
@@ -234,7 +256,8 @@ The owner's rule (「薪水和 general expense 能根据我 forecast P&L 的 rat
   sales not invoiced yet are not filled (section 5).
 
 - Future months run up to the furthest month that has a document-based amount: a receipt, a bill
-  or a drawdown due date. Today that is about two months ahead.
+  or a drawdown due date. Today that is about two months ahead. A keyed capex or financing
+  amount (section 6.4) also reaches a month, up to eleven months ahead.
 - Reverse-calculated and planned amounts stop at the same horizon. Otherwise later months would
   show money going out with nothing coming in.
 

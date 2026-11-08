@@ -12,7 +12,8 @@ const ui = readFileSync("src/pages/accounting/index.tsx", "utf8").replace(/\r\n/
 const block = (from, to) => { const a = ui.indexOf(from); assert.notEqual(a, -1, from); const b = ui.indexOf(to, a + 1); return ui.slice(a, b === -1 ? undefined : b); };
 
 test("one shell for every document popup", () => {
-  assert.match(ui, /function DocDetailModal\(\{ title, badges, onClose, children, actions, wide \}/);
+  // `xwide` (2026-11-09): room for the Cash Flow Capex & financing table.
+  assert.match(ui, /function DocDetailModal\(\{ title, badges, onClose, children, actions, wide, xwide \}/);
   assert.match(ui, /function DetailField\(\{ label, children, span \}/);
   assert.ok((ui.match(/<DocDetailModal/g) ?? []).length >= 3, "PV, receipts and fund transfer all use the shell");
 });
