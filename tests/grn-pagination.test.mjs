@@ -16,7 +16,7 @@ const page = readFileSync(resolve(process.cwd(), "src/pages/procurement/grn.tsx"
 test("backend list supports opt-in pagination over the same where-clause", () => {
   const f = route.replace(/\s+/g, " ");
   assert.match(f, /const paginate = pageParam !== undefined \|\| limitParam !== undefined/);
-  assert.match(f, /ORDER BY grnNumber DESC LIMIT \? OFFSET \?/);
+  assert.match(f, /ORDER BY grnNumber DESC, id DESC LIMIT \? OFFSET \?/);
   assert.match(f, /paginate \? \{ success: true, data, total, page, limit \} : \{ success: true, data \}/);
   // count uses the SAME where clause (poId/supplierId filters honored)
   assert.match(f, /SELECT COUNT\(\*\) AS n FROM grns \$\{where\}/);

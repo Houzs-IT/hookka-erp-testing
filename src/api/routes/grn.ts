@@ -1308,8 +1308,8 @@ app.get("/", async (c) => {
   }
 
   const grnsSql = paginate
-    ? `SELECT * FROM grns ${where} ORDER BY grnNumber DESC LIMIT ? OFFSET ?`
-    : `SELECT * FROM grns ${where} ORDER BY grnNumber DESC`;
+    ? `SELECT * FROM grns ${where} ORDER BY grnNumber DESC, id DESC LIMIT ? OFFSET ?`
+    : `SELECT * FROM grns ${where} ORDER BY grnNumber DESC, id DESC`;
   const grnsRes = await c.var.DB
     .prepare(grnsSql)
     .bind(...(paginate ? [...binds, limit, (page - 1) * limit] : binds))

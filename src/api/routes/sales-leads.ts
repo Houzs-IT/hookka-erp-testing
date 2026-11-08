@@ -174,7 +174,7 @@ app.get("/", async (c) => {
     .first<{ n: number }>();
 
   const res = await c.var.DB.prepare(
-    `SELECT * FROM sales_leads WHERE ${clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM sales_leads WHERE ${clause} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`,
   )
     .bind(...args, limit, offset)
     .all<LeadRow>();

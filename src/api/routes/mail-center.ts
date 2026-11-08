@@ -1417,7 +1417,7 @@ app.get("/outbox", async (c) => {
               body_html        AS "bodyHtml"
          FROM outbox_emails
         WHERE ${whereSql}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ? OFFSET ?`,
     )
       .bind(...binds, limit, offset)

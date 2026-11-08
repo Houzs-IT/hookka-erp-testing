@@ -317,7 +317,7 @@ app.get("/", async (c) => {
       .first<{ n: number }>(),
     db
       .prepare(
-        `SELECT * FROM delivery_orders WHERE orgId = ?${dWhere} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT * FROM delivery_orders WHERE orgId = ?${dWhere} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       )
       .bind(orgId, ...dBinds, limit, offset)
       .all<DeliveryOrderRow>(),
