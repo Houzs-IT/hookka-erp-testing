@@ -288,6 +288,9 @@ export type BankLeg = {
   debitSen: number;
   creditSen: number;
   ym: string;
+  /** `sourceType::sourceId` of the entry the leg belongs to — lets money in /
+   *  out net a move between our own accounts (src/lib/cashflow-card.ts). */
+  entry?: string;
 };
 // Per-PI raw-material weights (line label → weight in sen of the PI's lines).
 export type RmSplit = Record<string, { line: string; weight: number }[]>;
