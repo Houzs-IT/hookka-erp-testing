@@ -959,6 +959,14 @@ function CreatePurchaseInvoicePage() {
                           On pick: fills code + name + supplier SKU; if no supplier is
                           selected yet, auto-fills the supplier from the main binding. */}
                       <td className="px-2 py-1.5">
+                        {/* A line drawn off a goods receipt bills what was
+                            received — the server refuses a different material,
+                            so the picker is not offered (Houzs review 2026-11-08). */}
+                        {line.grnItemId ? (
+                          <span className="block h-8 leading-8 truncate text-sm text-[#1F1D1B]" title="From the goods receipt — the material is fixed">
+                            {line.materialName}
+                          </span>
+                        ) : (
                         <MaterialPicker
                           className="h-8"
                           inputClassName="h-8"
@@ -987,6 +995,7 @@ function CreatePurchaseInvoicePage() {
                             updateLine(idx, "materialName", text)
                           }
                         />
+                        )}
                       </td>
                       {/* Internal Code — read-only display of materialCode, set
                           by the Description picker. Blank until a catalog item
