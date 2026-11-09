@@ -24,6 +24,7 @@ import {
   isResolvedGrnPoLine,
   type GrnPoLineOutcome,
 } from "../lib/grn-po-line-link";
+import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
 
 const app = new Hono<Env>();
 
@@ -333,11 +334,13 @@ app.get("/by-po/:poId", async (c) => {
     )
       .bind(poId)
       .all<PoLineRow>(),
-    c.var.DB.prepare(
-      `SELECT id FROM grns WHERE poId = ? AND status = 'POSTED'`,
-    )
-      .bind(poId)
-      .all<{ id: string }>(),
+    ensureGrnItemPoRef(c.var.DB).then(() =>
+      c.var.DB.prepare(
+        `SELECT id FROM grns WHERE ${GRN_OF_PO_SQL} AND status = 'POSTED'`,
+      )
+        .bind(poId, poId)
+        .all<{ id: string }>(),
+    ),
     c.var.DB.prepare(
       `SELECT id FROM purchase_invoices WHERE purchaseOrderId = ?`,
     )
@@ -352,11 +355,15 @@ app.get("/by-po/:poId", async (c) => {
   let piLines: PiLineRow[] = [];
   if (grnIds.length > 0) {
     const ph = grnIds.map(() => "?").join(",");
+    // A multi-PO receipt also holds other POs' lines: keep this PO's lines,
+    // plus legacy lines with no po_id on a GRN whose header names this PO.
     const gRes = await c.var.DB.prepare(
-      `SELECT materialCode, materialName, receivedQty, acceptedQty, unitPrice
-       FROM grn_items WHERE grnId IN (${ph})`,
+      `SELECT gi.materialCode, gi.materialName, gi.receivedQty, gi.acceptedQty, gi.unitPrice
+       FROM grn_items gi JOIN grns g ON g.id = gi.grnId
+       WHERE gi.grnId IN (${ph})
+         AND (gi.po_id = ? OR (COALESCE(gi.po_id, '') = '' AND g.poId = ?))`,
     )
-      .bind(...grnIds)
+      .bind(...grnIds, poId, poId)
       .all<GrnLineRow>();
     grnLines = gRes.results ?? [];
   }

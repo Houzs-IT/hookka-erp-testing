@@ -988,6 +988,14 @@ export function buildPoReceiptStatements(
   }
   return statements;
 }
+// A GRN belongs to a PO when its header names the PO OR any of its lines
+// receives a line of that PO. A receipt spanning several POs carries no header
+// poId (owner 2026-08-04: one GR is often made from several POs), so a lookup
+// on the header alone never saw it: the PO showed no receipt, its supplier and
+// lines stayed editable over posted stock, and "mark received" was refused.
+// Binds the PO id twice. Run ensureGrnItemPoRef first.
+export const GRN_OF_PO_SQL = "(poId = ? OR id IN (SELECT grnId FROM grn_items WHERE po_id = ?))";
+
 // ---------------------------------------------------------------------------
 // Per-line PO ownership (owner 2026-08-04: "正常都是 GR 会 generate from 好几张
 // PO 的").
@@ -1009,7 +1017,7 @@ export function buildPoReceiptStatements(
 // Legacy rows have no `po_item_id`, so the positional path stays as a fallback
 // rather than requiring a backfill to be correct.
 let grnItemPoRefEnsured = false;
-async function ensureGrnItemPoRef(db: D1Database): Promise<void> {
+export async function ensureGrnItemPoRef(db: D1Database): Promise<void> {
   if (grnItemPoRefEnsured) return;
   try {
     await db
@@ -1022,6 +1030,10 @@ async function ensureGrnItemPoRef(db: D1Database): Promise<void> {
       .prepare(
         "CREATE INDEX IF NOT EXISTS idx_grn_items_po_item ON grn_items(po_item_id)",
       )
+      .run();
+    // A PO finds a multi-PO receipt through its lines (GRN_OF_PO_SQL).
+    await db
+      .prepare("CREATE INDEX IF NOT EXISTS idx_grn_items_po_id ON grn_items(po_id)")
       .run();
     grnItemPoRefEnsured = true;
   } catch (err) {

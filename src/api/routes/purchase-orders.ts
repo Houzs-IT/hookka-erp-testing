@@ -21,6 +21,7 @@ import { idempotent } from "../lib/idempotency";
 import { availableQty as computeAvailableQty } from "../../lib/convert-chain";
 import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
 import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
+import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
 
 const app = new Hono<Env>();
 
@@ -737,15 +738,16 @@ app.get("/:id", async (c) => {
   const denied = await requirePermission(c, "purchase-orders", "read");
   if (denied) return denied;
   const id = c.req.param("id");
+  await ensureGrnItemPoRef(c.var.DB);
   const [po, grnRes, piRes] = await Promise.all([
     fetchPOWithItems(c.var.DB, id),
     c.var.DB.prepare(
       `SELECT id, grnNumber, status, receiveDate, totalAmount
          FROM grns
-        WHERE poId = ?
+        WHERE ${GRN_OF_PO_SQL}
         ORDER BY grnNumber`,
     )
-      .bind(id)
+      .bind(id, id)
       .all<{
         id: string;
         grnNumber: string | null;
@@ -827,10 +829,11 @@ app.put("/:id", async (c) => {
       body.supplierId !== undefined && body.supplierId !== existing.supplierId;
     const wantsItemChange = body.items !== undefined;
     if (wantsSupplierChange || wantsItemChange) {
+      await ensureGrnItemPoRef(c.var.DB);
       const postedGrn = await c.var.DB.prepare(
-        `SELECT id FROM grns WHERE poId = ? AND status IN ('POSTED','CONFIRMED') LIMIT 1`,
+        `SELECT id FROM grns WHERE ${GRN_OF_PO_SQL} AND status IN ('POSTED','CONFIRMED') LIMIT 1`,
       )
-        .bind(id)
+        .bind(id, id)
         .first<{ id: string }>();
       if (postedGrn) {
         return c.json(
@@ -874,13 +877,14 @@ app.put("/:id", async (c) => {
       // create + post a GRN first. CONFIRMED is treated as committed
       // for this check (rare but legal — see grn.ts COMMITTED_STATUSES).
       if (body.status === "RECEIVED") {
+        await ensureGrnItemPoRef(c.var.DB);
         const postedGrn = await c.var.DB.prepare(
           `SELECT id FROM grns
-            WHERE poId = ?
+            WHERE ${GRN_OF_PO_SQL}
               AND status IN ('POSTED','CONFIRMED')
             LIMIT 1`,
         )
-          .bind(id)
+          .bind(id, id)
           .first<{ id: string }>();
         if (!postedGrn) {
           return c.json(

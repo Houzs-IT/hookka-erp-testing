@@ -58,9 +58,9 @@ const INV_GET = getByIdHandler(INV_ROUTE, "invoices");
 // learn that from the PO was to download every GRN and every purchase invoice
 // in the system and filter them in the browser.
 // ---------------------------------------------------------------------------
-test("PO detail returns linkedGRNs from grns.poId", () => {
+test("PO detail returns linkedGRNs by header poId or any GRN line (multi-PO receipts)", () => {
   assert.match(PO_GET, /linkedGRNs:/);
-  assert.match(PO_GET, /FROM grns\s+WHERE poId = \?/);
+  assert.match(PO_GET, /FROM grns\s+WHERE \$\{GRN_OF_PO_SQL\}/);
 });
 
 test("PO detail returns linkedPIs from purchase_invoices.purchaseOrderId", () => {
