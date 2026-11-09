@@ -329,11 +329,14 @@ async function migrateLocalMastersToD1IfNeeded(): Promise<MasterTemplate[]> {
   }
 
   try {
-    await fetch("/api/bom-master-templates", {
+    const res = await fetch("/api/bom-master-templates", {
       method: "PUT",
       headers: authHeaders(),
       body: JSON.stringify({ templates, replaceAll: false }),
     });
+    // A refused upload (4xx/5xx) is not a throw — without this check the
+    // legacy local copy was deleted even though the server never stored it.
+    if (!res.ok) return templates;
     invalidateCachePrefix("/api/bom-master-templates");
     invalidateCachePrefix("/api/products");
     // Only clear the legacy keys after a successful upload so a failed
