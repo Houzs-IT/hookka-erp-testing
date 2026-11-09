@@ -55,6 +55,15 @@ test("Capex & financing: a button with the forecast on opens a twelve-month tabl
   assert.match(dlg, /Planned payments/, "says not to key the same money twice");
 });
 
+test("Capex & financing: every account is a row from the start, nothing to pick one by one; the month heading stays while scrolling", () => {
+  const dlg = slice("function CfForecastInputsDialog(", "\nfunction ");
+  assert.match(dlg, /keyedInputGroups\(accounts, months\)/);
+  assert.doesNotMatch(dlg, /Add an account/);
+  assert.doesNotMatch(dlg, /<select/);
+  assert.match(dlg, /clearKeyedCode\(/, "a row's clear goes through the tested helper");
+  assert.match(dlg, /sticky top-0/, "the month heading");
+});
+
 test("a keyed amount reads in the forecast drill as who keyed it and that nothing was posted", () => {
   const drill = slice("function CfForecastDrillRows(", "\nfunction ");
   assert.match(drill, /it\.kind === "pnl" \|\| it\.kind === "input"/);

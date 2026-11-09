@@ -47,11 +47,30 @@ test("the stepper steps only to periods the report offers; a closed end fades to
 });
 
 test("controls: 32px, #D9D3CA border, radius 8, 12.5px/600; the active level is ink", () => {
-  assert.match(shell, /const CTRL = "h-8 rounded-lg border border-\[#D9D3CA\] bg-white text-\[12\.5px\] font-semibold text-\[#1F1D1B\]";/);
+  assert.match(shell, /const CTRL_SHAPE = "h-8 rounded-lg border text-\[12\.5px\] font-semibold";/);
+  assert.match(shell, /const CTRL_IDLE = "border-\[#D9D3CA\] bg-white text-\[#1F1D1B\]";/);
+  assert.match(shell, /const CTRL = `\$\{CTRL_SHAPE\} \$\{CTRL_IDLE\}`;/);
   const lv = part("DetailLevels");
   assert.match(lv, /text-\[11px\] font-bold tracking-\[\.04em\] text-\[#9CA3AF\]">DETAIL</);
   assert.match(lv, /value === L \? "bg-\[#1F1D1B\] text-white"/);
   assert.match(shell, /className="mx-0\.5 h-\[22px\] w-px bg-\[#E2DDD8\]"/, "the 1×22 divider");
+});
+
+test("a control carries one colour set at a time: pressed Forecast / Edit Layout are readable (BUG-2026-11-09-430)", () => {
+  // CTRL's own colours beside a pressed colour left the stylesheet to choose,
+  // and bg-white / text-white are written last there: pressed, both toggles
+  // read white on white (owner 2026-11-09 screenshot of the Forecast toggle).
+  for (const line of shell.split("\n").filter((l) => l.includes("${CTRL}"))) {
+    assert.doesNotMatch(line, /(?:^|[\s"'`{])(?:bg-|text-white|text-black|text-\[#|border-\[#)/, line.trim());
+  }
+  const pressed = {
+    EditLayoutToggle: "border-[#1F1D1B] bg-[#1F1D1B] text-white hover:bg-black",
+    ForecastToggle: "border-[#C0392B] bg-[#C0392B] text-white hover:bg-[#A93226]",
+  };
+  for (const [name, on] of Object.entries(pressed)) {
+    assert.ok(part(name).includes(`className={\`\${CTRL_SHAPE} px-3 \${on ? "${on}" : \`\${CTRL_IDLE} hover:bg-[#F4F6F8]\`}\`}`), name);
+  }
+  assert.ok(part("DownloadMenu").includes("${CTRL_SHAPE} border-[#D9D3CA] bg-white text-[#4B5563]"), "the icon's grey is its only text colour");
 });
 
 test("one download icon; its menu lists the report's exports", () => {

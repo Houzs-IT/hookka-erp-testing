@@ -334,6 +334,44 @@ export function cleanKeyedInputs(
   return { months, rejected: [...rejected].sort() };
 }
 
+/** The Capex & financing table's rows (owner 2026-11-09 「输入时就显示全部」):
+ *  every offered account, CAPEX then Loan, each in code order; then OTHER,
+ *  the accounts keyed in any month that are no longer offered (the mapping
+ *  moved them). The server refuses the whole map while one is there, so the
+ *  table shows them to be cleared. An empty group is left out. */
+export function keyedInputGroups(
+  accounts: readonly { code: string; section: "CAPEX" | "LOAN" }[],
+  months: Readonly<Record<string, Readonly<Record<string, number>>>>,
+): { group: "CAPEX" | "LOAN" | "OTHER"; codes: string[] }[] {
+  const offered = new Set(accounts.map((a) => a.code));
+  const inSection = (s: "CAPEX" | "LOAN") => accounts.filter((a) => a.section === s).map((a) => a.code).sort();
+  const other = new Set<string>();
+  for (const cells of Object.values(months)) for (const [code, sen] of Object.entries(cells ?? {})) if (sen && !offered.has(code)) other.add(code);
+  const groups: { group: "CAPEX" | "LOAN" | "OTHER"; codes: string[] }[] = [
+    { group: "CAPEX", codes: inSection("CAPEX") },
+    { group: "LOAN", codes: inSection("LOAN") },
+    { group: "OTHER", codes: [...other].sort() },
+  ];
+  return groups.filter((g) => g.codes.length > 0);
+}
+
+/** One row of the Capex & financing table cleared: `code` taken out of the
+ *  months `yms` (the twelve shown), or of every month when `yms` is null (an
+ *  account no longer offered). A month left empty goes. A new map. */
+export function clearKeyedCode(
+  months: Readonly<Record<string, Readonly<Record<string, number>>>>,
+  code: string,
+  yms: readonly string[] | null,
+): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const [ym, cells] of Object.entries(months)) {
+    const kept = { ...cells };
+    if (!yms || yms.includes(ym)) delete kept[code];
+    if (Object.keys(kept).length) out[ym] = kept;
+  }
+  return out;
+}
+
 const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthLabel = (ym: string): string => `${MONTH_NAMES[parseInt(ym.slice(5, 7), 10)]}'${ym.slice(2, 4)}`;
 const isReceipt = (l: ForecastLeg) => l.item.kind === "invoice" || l.item.kind === "odb";

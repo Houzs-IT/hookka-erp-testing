@@ -236,6 +236,12 @@ The owner's words: 「capex 和 financing 我可以就是随便输入，像 fore
 - Rows are the postable, active accounts the statement places under CAPEX or Loan (the owner's
   Cash Flow mapping first, then `defaultSectionFor`). [my call: accumulated depreciation and other
   non-cash accounts are left out of the list]
+- **Owner, 2026-11-09 (「这个表格输入时就显示全部，我不想一个一个选」): every one of those accounts
+  is a row as soon as the table opens**, CAPEX first and then Loan, each in code order with its
+  total under it. There is nothing to pick. An account keyed earlier that the mapping has since
+  moved out of CAPEX and Loan shows in a last group, read-only, to be cleared: the save refuses
+  it, from any month, while it is there, so its clear takes it out of every month. [my call on
+  that last group]
 - Amounts read the statement's way: money in positive, money out negative.
 - Forecast only: nothing is posted and no document is made. Stored in kv
   `cashflow_forecast_inputs` = `{ months: { "YYYY-MM": { "<account code>": sen } } }`; empty

@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
-import { KEYED_MONTHS, addMonthsYm } from "@/lib/cashflow-forecast";
+import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups } from "@/lib/cashflow-forecast";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -18889,18 +18889,17 @@ function CfForecastDrillRows({ sources, cols, depth }: {
   );
 }
 // Capex & financing keyed on the Cash Flow page (owner 2026-11-09 「做」, spec
-// 6.4): a Forecast P&L-style table — the CAPEX and Loan accounts down, twelve
-// months across from this month — whose amounts land in the Forecast columns
-// on their accounts' lines. Forecast only: nothing is posted, no document.
-// Saving sends the whole map, so months outside the twelve are kept.
+// 6.4): a Forecast P&L-style table — every CAPEX and Loan account down (owner
+// 2026-11-09 「输入时就显示全部，我不想一个一个选」), twelve months across from
+// this month — whose amounts land in the Forecast columns on their accounts'
+// lines. Forecast only: nothing is posted, no document. Saving sends the
+// whole map, so months outside the twelve are kept.
 type CfKeyableAccount = { code: string; name: string; section: "CAPEX" | "LOAN" };
 function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const firstYm = todayYmdMY().slice(0, 7);
   const yms = useMemo(() => Array.from({ length: KEYED_MONTHS }, (_, i) => addMonthsYm(firstYm, i)), [firstYm]);
   const [accounts, setAccounts] = useState<CfKeyableAccount[] | null>(null);
   const [months, setMonths] = useState<Record<string, Record<string, number>>>({});
-  const [rows, setRows] = useState<string[]>([]);
-  const [adding, setAdding] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -18912,19 +18911,18 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
         const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string; data?: { months?: Record<string, Record<string, number>>; accounts?: CfKeyableAccount[] } } | null;
         if (!r.ok || !j?.success || !j.data) throw new Error(j?.error || `HTTP ${r.status}`);
         if (!live) return;
-        const m = j.data.months ?? {};
-        const keyed = new Set<string>();
-        for (const ym of yms) for (const code of Object.keys(m[ym] ?? {})) keyed.add(code);
-        setMonths(m);
+        setMonths(j.data.months ?? {});
         setAccounts(j.data.accounts ?? []);
-        setRows([...keyed].sort());
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : String(e));
       }
     })();
     return () => { live = false; };
-  }, [yms]);
+  }, []);
   const accountOf = useMemo(() => new Map((accounts ?? []).map((a) => [a.code, a])), [accounts]);
+  // Every account is a row from the start; OTHER holds an account keyed
+  // before that is no longer CAPEX / Loan (the mapping moved it).
+  const groups = useMemo(() => (accounts ? keyedInputGroups(accounts, months) : []), [accounts, months]);
   const setCell = (code: string, ym: string, rm: number | null) => {
     const sen = rm === null ? 0 : roundSen(rm * 100);
     setMonths((prev) => {
@@ -18935,29 +18933,13 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
       return next;
     });
   };
-  const clearRow = (code: string) => {
-    setMonths((prev) => {
-      const next = { ...prev };
-      for (const ym of yms) {
-        if (next[ym]?.[code] === undefined) continue;
-        const cells = { ...next[ym] };
-        delete cells[code];
-        if (Object.keys(cells).length) next[ym] = cells; else delete next[ym];
-      }
-      return next;
-    });
-    setRows((r) => r.filter((c) => c !== code));
-  };
-  const addRow = () => {
-    if (!adding) return;
-    setRows((r) => (r.includes(adding) ? r : [...r, adding].sort()));
-    setAdding("");
-  };
-  const total = (section: CfKeyableAccount["section"], ym: string) =>
-    rows.reduce((s, code) => s + (accountOf.get(code)?.section === section ? months[ym]?.[code] ?? 0 : 0), 0);
-  // A row kept from before whose account is no longer CAPEX / Loan (the
-  // mapping moved it): the server would refuse it, so Save waits for a clear.
-  const stale = accounts ? rows.filter((code) => !accountOf.has(code)) : [];
+  // A row's ✕ empties its twelve months. An account no longer CAPEX / Loan
+  // goes from every month: the server refuses the map while it is there, so
+  // Save waits for that clear.
+  const clearRow = (code: string) => setMonths((prev) => clearKeyedCode(prev, code, accountOf.has(code) ? yms : null));
+  const stale = groups.find((g) => g.group === "OTHER")?.codes ?? [];
+  const total = (codes: readonly string[], ym: string) => codes.reduce((s, code) => s + (months[ym]?.[code] ?? 0), 0);
+  const hasAmount = (code: string) => yms.some((ym) => !!months[ym]?.[code]);
   const save = async () => {
     setSaving(true);
     setSaveError(null);
@@ -18978,8 +18960,10 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
     }
   };
   const amt = (sen: number) => (!sen ? "-" : sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
-  const th = "px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280] whitespace-nowrap";
-  const sectionWord = (s: CfKeyableAccount["section"]) => (s === "LOAN" ? "Loan" : "CAPEX");
+  // The heading sticks while the rows scroll (the table scrolls inside the
+  // popup); its rule is a shadow, which sticks with it.
+  const th = "sticky top-0 bg-white px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280] whitespace-nowrap shadow-[inset_0_-1px_0_#E2DDD8]";
+  const groupWord = { CAPEX: "CAPEX", LOAN: "Loan", OTHER: "No longer CAPEX or Loan" } as const;
   return (
     <DocDetailModal
       title="Capex & financing — forecast"
@@ -19003,78 +18987,69 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
         <p className="text-xs text-[#9A3412]">Could not load the keyed amounts: {loadError}</p>
       ) : !accounts ? (
         <p className="text-xs text-[#9CA3AF]">Loading…</p>
+      ) : groups.length === 0 ? (
+        <p className="text-xs text-[#9CA3AF]">No CAPEX or Loan account in the chart of accounts.</p>
       ) : (
-        <>
-          <div className="overflow-x-auto rounded-md border border-[#E2DDD8] bg-white">
+        <div>
+          <div className="max-h-[calc(90vh-16rem)] overflow-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-[#E2DDD8]">
-                  <th className={`${th} sticky left-0 z-10 bg-white text-left`}>Account</th>
-                  {yms.map((ym) => <th key={ym} className={`${th} text-right`}>{cfYmLabel(ym)}</th>)}
-                  <th className={th} aria-label="Clear row" />
+                <tr>
+                  <th className={`${th} left-0 z-30 text-left`}>Account</th>
+                  {yms.map((ym) => <th key={ym} className={`${th} z-20 text-right`}>{cfYmLabel(ym)}</th>)}
+                  <th className={`${th} z-20`} aria-label="Clear row" />
                 </tr>
               </thead>
-              <tbody>
-                {rows.length === 0 && (
-                  <tr><td colSpan={yms.length + 2} className="px-3 py-4 text-center text-[#9CA3AF]">Nothing keyed yet. Add an account below.</td></tr>
-                )}
-                {rows.map((code) => {
-                  const a = accountOf.get(code);
-                  return (
-                    <tr key={code} className="border-b border-[#F0ECE9]">
-                      <td className="sticky left-0 z-10 bg-white px-2 py-1 whitespace-nowrap">
-                        <span className="tabular-nums text-[#6B7280]">{code}</span>{" "}
-                        {a ? (
-                          <>
-                            <span className="text-[#1F1D1B]">{a.name}</span>{" "}
-                            <span className="rounded bg-[#F0ECE9] px-1.5 py-0.5 text-[10px] text-[#6B7280]">{sectionWord(a.section)}</span>
-                          </>
-                        ) : (
-                          <span className="text-[#9A3412]">No longer a CAPEX or Loan account — clear it to save</span>
-                        )}
-                      </td>
-                      {yms.map((ym) => (
-                        <td key={ym} className="px-1 py-1">
-                          <MoneyInput
-                            value={months[ym]?.[code] ? months[ym][code] / 100 : null}
-                            onChange={(v) => setCell(code, ym, v)}
-                            className="h-8 w-28 px-2 text-xs tabular-nums"
-                          />
+              {groups.map((g) => (
+                <tbody key={g.group}>
+                  <tr className="bg-[#F7F5F2]">
+                    <td className="sticky left-0 z-10 bg-[#F7F5F2] px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280] whitespace-nowrap">{groupWord[g.group]}</td>
+                    <td colSpan={yms.length + 1} />
+                  </tr>
+                  {g.codes.map((code) => {
+                    const a = accountOf.get(code);
+                    return (
+                      <tr key={code} className="border-b border-[#F0ECE9]">
+                        <td className="sticky left-0 z-10 bg-white px-2 py-0.5 whitespace-nowrap">
+                          <span className="tabular-nums text-[#6B7280]">{code}</span>{" "}
+                          {a ? <span className="text-[#1F1D1B]">{a.name}</span> : <span className="text-[#9A3412]">Clear it (✕) to save</span>}
                         </td>
-                      ))}
-                      <td className="px-1 text-center">
-                        <button type="button" onClick={() => clearRow(code)} title="Clear this row's twelve months" className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              {rows.length > 0 && (
-                <tfoot>
-                  {(["CAPEX", "LOAN"] as const).filter((s) => rows.some((code) => accountOf.get(code)?.section === s)).map((s) => (
-                    <tr key={s} className="border-t border-[#E2DDD8] font-semibold">
-                      <td className="sticky left-0 z-10 bg-white px-2 py-1.5">{sectionWord(s)} total</td>
+                        {yms.map((ym) => (
+                          <td key={ym} className="px-1 py-0.5">
+                            {a ? (
+                              <MoneyInput
+                                value={months[ym]?.[code] ? months[ym][code] / 100 : null}
+                                onChange={(v) => setCell(code, ym, v)}
+                                className="h-7 w-28 px-2 text-xs tabular-nums"
+                              />
+                            ) : (
+                              <span className="block w-28 px-2 text-right tabular-nums text-[#6B7280]">{amt(months[ym]?.[code] ?? 0)}</span>
+                            )}
+                          </td>
+                        ))}
+                        <td className="px-1 text-center">
+                          {(!a || hasAmount(code)) && (
+                            <button type="button" onClick={() => clearRow(code)} title={a ? "Clear this row's twelve months" : "Clear this account from every month"} className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {g.group !== "OTHER" && (
+                    <tr className="border-b border-[#E2DDD8] font-semibold">
+                      <td className="sticky left-0 z-10 bg-white px-2 py-1.5 whitespace-nowrap">{groupWord[g.group]} total</td>
                       {yms.map((ym) => {
-                        const v = total(s, ym);
+                        const v = total(g.codes, ym);
                         return <td key={ym} className={`px-2 py-1.5 text-right tabular-nums ${v < 0 ? "text-[#9A3A2D]" : "text-[#1F1D1B]"}`}>{amt(v)}</td>;
                       })}
                       <td />
                     </tr>
-                  ))}
-                </tfoot>
-              )}
+                  )}
+                </tbody>
+              ))}
             </table>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={adding} onChange={(e) => setAdding(e.target.value)} className="rounded-md border border-[#E2DDD8] bg-white px-2 py-1.5 text-sm">
-              <option value="">Add an account…</option>
-              {accounts.filter((a) => !rows.includes(a.code)).map((a) => (
-                <option key={a.code} value={a.code}>{a.code} {a.name} ({sectionWord(a.section)})</option>
-              ))}
-            </select>
-            <Button variant="outline" size="sm" disabled={!adding} onClick={addRow}>Add</Button>
-          </div>
-        </>
+        </div>
       )}
       {saveError && <p className="text-xs text-[#9A3412]">Could not save: {saveError}</p>}
     </DocDetailModal>
