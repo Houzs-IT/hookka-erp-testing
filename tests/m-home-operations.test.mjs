@@ -23,8 +23,8 @@ const OPS_FILES = ["OpsView.tsx", "HomeOpsA.tsx", "HomeOpsP.tsx", "HomeOpsB.tsx"
 const PROD_TABS = ["sales", "operations", "people", "service"];
 
 // ---- Sales <-> Operations --------------------------------------------------
-test("Operations is built; the other four views still say Soon", () => {
-  assert.deepEqual(DASHBOARD_VIEWS.filter((v) => v.built).map((v) => v.key), ["sales", "operations"]);
+test("Operations is built (with Sales and Employees); the other three views still say Soon", () => {
+  assert.deepEqual(DASHBOARD_VIEWS.filter((v) => v.built).map((v) => v.key), ["sales", "operations", "people"]);
 });
 
 test("Sales <-> Operations: each view keeps its own period rule and Sales never reads a day", () => {

@@ -1,6 +1,6 @@
 // The /m Home (Home v10). Replaces the old Home presentation: header, greeting,
 // Scan to Create tiles, Today's problems, a six-view selector and the period bar, then
-// the selected view. Sales and Operations are built; the other four show one Coming Soon
+// the selected view. Sales, Operations and Employees are built; the other three show one Coming Soon
 // state. Access follows the desktop dashboard (nav gate + tab list); a user with
 // no dashboard access gets a permission-filtered module list instead.
 //
@@ -38,6 +38,8 @@ import {
 } from "./home-lib";
 import { SalesView } from "./SalesView";
 import { OpsView, type OpsSubKey } from "./OpsView";
+import { EmpView } from "./EmpView";
+import type { EmpAccess } from "./emp-data";
 import type { OpsAccess } from "./ops-data";
 import { ScanToCreate } from "./ScanToCreate";
 import { Label, SectionState, SheetCard, SheetFrame, SheetNote } from "./home-ui";
@@ -250,12 +252,14 @@ function ViewBar({
   const closeCal = useCallback(() => setCal(false), []);
   const label = DASHBOARD_VIEWS.find((v) => v.key === view)?.label ?? "Dashboard";
   const ops = view === "operations";
+  // Operations and Employees are the two Day views: same four period modes, same day arrows.
+  const dayView = ops || view === "people";
   const mode = period ? periodMode(period) : "month";
-  const step = ops ? stepOps : stepSales;
+  const step = dayView ? stepOps : stepSales;
   const prev = period ? step(period, months, -1, today) : null;
   const next = period ? step(period, months, 1, today) : null;
-  const modes: readonly (readonly [PeriodMode4, string])[] = ops ? OPS_MODES : MODES;
-  const pickMode = (p: Period, k: PeriodMode4): Period => (ops ? switchOpsMode(p, k, today) : switchMode(p, k as "month" | "quarter" | "year", today));
+  const modes: readonly (readonly [PeriodMode4, string])[] = dayView ? OPS_MODES : MODES;
+  const pickMode = (p: Period, k: PeriodMode4): Period => (dayView ? switchOpsMode(p, k, today) : switchMode(p, k as "month" | "quarter" | "year", today));
   const arrow = (dir: "prev" | "next", target: Period | null) => (
     <button type="button" aria-label={dir === "prev" ? "Previous period" : "Next period"} aria-disabled={!target} onClick={() => target && onPeriod(target)}
       style={{ width: 32, height: 36, border: "none", background: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: target ? "pointer" : "default", color: target ? M.raisin : M.faint, WebkitTapHighlightColor: "transparent" }}>
@@ -274,10 +278,10 @@ function ViewBar({
         {period ? (
           <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
             {arrow("prev", prev)}
-            <button type="button" onClick={() => setCal((v) => !v)} aria-haspopup="dialog" aria-expanded={cal} aria-label={`Choose period: ${ops ? opsPeriodLabel(period) : widgetPeriodLabel(period)}`}
+            <button type="button" onClick={() => setCal((v) => !v)} aria-haspopup="dialog" aria-expanded={cal} aria-label={`Choose period: ${dayView ? opsPeriodLabel(period) : widgetPeriodLabel(period)}`}
               style={{ height: 36, display: "inline-flex", alignItems: "center", gap: 7, padding: "0 12px", borderRadius: 999, border: "none", backgroundColor: cal ? M.taupe : M.card, color: cal ? M.paper : M.raisin, boxShadow: SHADOW_SMALL, fontFamily: "inherit", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
               <CalendarDays size={15} strokeWidth={2} aria-hidden="true" />
-              <span style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", ...TNUM }}>{ops ? opsPeriodLabel(period) : widgetPeriodLabel(period)}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", ...TNUM }}>{dayView ? opsPeriodLabel(period) : widgetPeriodLabel(period)}</span>
             </button>
             {arrow("next", next)}
           </div>
@@ -403,11 +407,23 @@ function Dashboard() {
     workers: hasPermission("workers", "read"),
     payslips: hasPermission("payslips", "read"),
   };
+  // Employees: the tab list for a tab-restricted role, else workers:read (the server redacts the feed's employee
+  // section without it). Salary needs payroll:read AND the inputs the server gates separately (workers, payslips).
+  const onPeople = view === "people";
+  const peopleView = dashboardTabs ? tabHas("people") : hasPermission("workers", "read");
+  const peopleAccess: EmpAccess = {
+    view: peopleView && onPeople,
+    workers: hasPermission("workers", "read"),
+    payroll: hasPermission("payroll", "read"),
+    payslips: hasPermission("payslips", "read"),
+    revenueFigures: hasPermission("revenue-figures", "read"),
+  };
+  const [logSignal, setLogSignal] = useState(0);
   const { sub: rawSub, setSub } = useDashboardSub("operations");
   const opsSub: OpsSubKey = rawSub === "production" ? "production" : "overview";
 
   // The month list drives the period model; it is the prototype feed the desktop page reads.
-  const proto = useCachedJson<ProtoFeed>((onSales && base.view) || (onOps && opsView) ? DASHBOARD_FEED_URL : null);
+  const proto = useCachedJson<ProtoFeed>((onSales && base.view) || (onOps && opsView) || (onPeople && peopleView) ? DASHBOARD_FEED_URL : null);
   const months = useMemo(() => proto.data?.meta?.monthsWithSales ?? proto.data?.meta?.months ?? [], [proto.data]);
   const { period: rawPeriod, setPeriod } = useDashboardPeriod(months, view ?? "sales");
   const period = effectivePeriod(view ?? "sales", rawPeriod);
@@ -449,6 +465,8 @@ function Dashboard() {
       setSub("overview");
       return;
     }
+    // On Employees the Not in tile opens the attendance log it counts (as on the desktop, where it scrolls to that card).
+    if (t.key === "absent" && onPeople && peopleView) { setLogSignal((n) => n + 1); return; }
     const d = problemDest(t.key);
     if (d.kind === "route" && isNavAllowed(d.navGate)) navigate(d.to);
     else setProblem(t);
@@ -466,7 +484,7 @@ function Dashboard() {
         view={view ?? (resolved.kind === "blocked" ? resolved.view : "sales")}
         canSwitch={allowed.length > 1}
         onViews={() => setViewsOpen(true)}
-        period={((onSales && base.view) || (onOps && opsView)) && ready ? period : null}
+        period={((onSales && base.view) || (onOps && opsView) || (onPeople && peopleView)) && ready ? period : null}
         months={months}
         today={today}
         onPeriod={setPeriod}
@@ -490,6 +508,20 @@ function Dashboard() {
           </div>
         ) : (
           <OpsView access={opsAccess} period={period} periodKey={periodKey} sub={opsSub} today={today} onPeriod={setPeriod} />
+        )
+      ) : onPeople ? (
+        !peopleView ? (
+          <NotAvailable view="people" onFirst={firstAllowed && firstAllowed !== "people" ? () => setView(firstAllowed) : null} firstLabel={firstLabel} />
+        ) : !ready ? (
+          <div style={{ padding: "14px 16px 120px" }}>
+            <SectionState
+              kind={proto.loading || (!proto.data && !proto.failure) ? "loading" : proto.failure ? "error" : "empty"}
+              text={proto.loading || (!proto.data && !proto.failure) ? undefined : proto.failure ? "Could not load the Employees dashboard." : "No employee records yet, so there is no period to show."}
+              onRetry={proto.refresh} minHeight={240}
+            />
+          </div>
+        ) : (
+          <EmpView access={peopleAccess} period={period} today={today} logSignal={logSignal} />
         )
       ) : view !== "sales" ? (
         <ComingSoon view={view!} onSales={allowed.includes("sales") ? () => setView("sales") : null} />
