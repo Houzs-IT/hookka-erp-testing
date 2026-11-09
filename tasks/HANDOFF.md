@@ -78,3 +78,27 @@ Trend was made live + elastic on 2026-11-09. Still static: Balance, Cash, Outloo
 
 - Local worktrees on the Windows machine (`../hookka-erp-testing-worktrees/{checklist,tmp-rebase,sec-batch,fe-batch-a,fe-batch-b,fe-grid-copy-sum}`) can be removed once #1234/#1235 merge; they hold no unpushed work.
 - `CLAUDE.md` still points at `docs/context-packs/NAVIGATION-MAP.md`; the map now lives at `docs/CODEBASE-MAP.md`.
+
+## Working agreements with the owner (carried over — the Windows machine's Claude memory does not travel)
+
+- The owner is **not technical**: reply in plain Chinese (UI stays 100% English), say what shipped and how to use it, no code dumps. Only pull him in for real business decisions.
+- Low-risk docs / chore / navigation work may be finished and **merged autonomously**. Anything touching **money, inventory, payroll, auth or cascades**: propose → owner confirms → then code; do not auto-merge.
+- Production data writes need explicit owner approval each time. Salary figures only for accounts with Payroll permission. Never print `.dev.vars` or secrets.
+- Owner rulings already given: Hookka **may over-receive** against a PO; a PO price of 0 is fine — **stock is valued at the PI price**; raw-material UOM rows must not be merged across units ("UOM 你不要动她"); default supplier = cheapest by the **largest-quantity** PI price, and a supplier not ordered from in **4 months** counts as no longer supplying.
+- HR / costing records that look wrong but are deliberate: resignation date = last **paid** day; "OUTSOURCE - …" records (OSC-002/003) are intentional and not counted as people; **Chee** is a view-only login; raw-material usage stays on the P&L stock-take basis until the RM BOM is complete; Houzs Venture salaries stay out of Hookka labour.
+- Repo lint debt: main carries eslint errors in untouched files and the pre-commit hook is zero-tolerance on touched files — update PR branches by **rebase**, clear debt in touched files in a separate `chore(lint)` commit.
+
+## Parked by the owner (do NOT do unless he reopens it)
+
+Security audit of 2026-07-23 — findings verified in code, owner said "这批不做" for now. Plan, if reopened:
+- **A1** worker first-time PIN self-registration (`worker-auth.ts`, anyone knowing an empNo can set a PIN) → reject first-time self-set; admin sets PIN (`workers.ts /:id/set-pin`, `/bulk-generate-pins` already exist).
+- **A3** public rack stock-in write — open question: does the warehouse scan while logged into the worker portal? If yes, gate the write behind `X-Worker-Token`.
+- **A4** DO-QR never expires → expire ~30 days after `deliveredAt`, days configurable via kv_config.
+- **B1** `import-completion.ts POST /backfill-fabcut-rm-issue` has no `requirePermission` → add `production-orders:update`.
+- **B2** accept-invite allows a 6-char password → `validatePasswordStrength`.
+- **B3** `files.ts PATCH /:id/cover` has no permission check.
+- **C1** assistant `run_select_query` has no sensitive table/column deny-list (user_sessions token, totpSecret, pins, reset tokens, invites, password hashes).
+- **D** four stored-XSS print sinks (`document.write` of raw DB text) in accounting, production and sales detail → wrap in `escapeHtml`.
+- Owner keeps: A2 (public rack-QR GET shows customer name/PO — tokens are physical only).
+
+Older pending lists live in `docs/archive/PENDING-TASKS-HANDOFF.md` and the other `docs/archive/HANDOFF-*.md` files. About 200 stale local worktrees on the Windows machine were never cleaned up (machine-local, no repo impact).
