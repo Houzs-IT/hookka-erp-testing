@@ -211,6 +211,14 @@ jobs:
       # re-run built, tested and then SKIPPED the deploy — which is how a merge
       # into `staging` that produced no push run at all left staging sitting
       # undeployed with no way to kick it except an empty commit.
+      # GET /api/health reports the commit it was built from (Houzs review,
+      # owner 2026-11-08). Pages bundles the Functions at deploy time, so the
+      # stamp is written here, before either deploy step below.
+      - name: Stamp build commit for /api/health
+        run: |
+          echo "export const BUILD_COMMIT = \"${{ github.event.pull_request.head.sha || github.sha }}\";" > src/api/build-stamp.ts
+          cat src/api/build-stamp.ts
+
       - name: Deploy to Cloudflare Pages (main / branch push)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: cloudflare/wrangler-action@v3

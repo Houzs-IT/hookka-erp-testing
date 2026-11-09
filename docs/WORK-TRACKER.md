@@ -7028,3 +7028,4 @@ Asks, in order:
 102. PI detail shows the PO line unit price under the billed price when they differ (display only; stock stays at PI price) (Houzs review list, owner 2026-11-08).
 108. SO edit page and PO edit form: a save is refused (409) if someone else saved the order after it was opened — no more silent overwrite (Houzs review list, owner 2026-11-08).
 107. Duplicate supplier invoice / DO number: compared without case or spaces, and an edit that changes the number is checked too (Houzs review list, owner 2026-11-08).
+109. Platform batch: /api/health reports the deployed commit; Smart Placement on; announcements admin list capped (flags the cut); a new lead with a phone already on file is flagged (+60/0/spacing ignored) and a refused lead save now shows its error (Houzs review list, owner 2026-11-08).
