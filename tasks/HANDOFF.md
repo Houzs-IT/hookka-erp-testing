@@ -1,0 +1,80 @@
+# Handoff — current state, what's next, what's blocked
+
+_Last updated: 2026-11-09 (Windows session → owner moving to a MacBook)._
+Keep this file current in the same PR that changes state (global rule §6/§8).
+
+## How to pick this up on another machine (MacBook)
+
+```bash
+git clone https://github.com/Houzs-IT/hookka-erp-testing.git
+cd hookka-erp-testing
+npm install
+```
+
+Then start Claude Code in that folder and say:
+> "Read tasks/HANDOFF.md and continue the pending work."
+
+Claude reads `CLAUDE.md` on its own; this file gives it the rest of the context.
+Secrets (`.dev.vars`, Cloudflare/Supabase keys) are **not** in the repo and are
+not needed for the code work below; never paste them into chat.
+
+Every task: new worktree from `origin/main` → `npm install` → change →
+`npx tsc -p tsconfig.app.json --noEmit` → commit (hooks run the full suite) →
+PR → CI green → squash-merge → delete branch → verify on prod.
+
+## Open PRs (at time of writing)
+
+| PR | What | State |
+| --- | --- | --- |
+| #1234 | Security batch: default-deny RBAC test, text-length caps, **signed-in devices** (list / sign out one / sign out others), query-in-loop guard | Owner approved merge 2026-11-09. Rebased; waiting for CI, then merge. **After merge verify on prod:** device list loads; signing one device out makes it get 401; a 5,001-char SO note is refused with 400. Auth middleware now updates `last_seen_at` (throttled) — watch for errors. |
+| #1235 | Data grid: Ctrl/Cmd+C copy, range Sum/Count/Avg, filters in the URL | Doc note added; waiting for CI, then merge. **After merge:** test a real Ctrl+C into Excel. |
+
+If either is still open, check `gh pr checks <n>`; rebase onto main if it says CONFLICTING (conflicts are almost always only `docs/WORK-TRACKER.md` — keep both sides).
+
+## Merged in this run (2026-11-08/09) — from the Houzs / Conts review list
+
+#1207 paging tie-break · #1208 PO/GRN/PI idempotency · #1209 CSV formula-injection + BOM ·
+#1215 capped lists say so · #1216 invoice search/filter paging · #1217 every "today" in Malaysia time ·
+#1218 PI auto-GRN linked back (no double billing) · #1219 PI shows PO price · #1220 PI line must match GRN material ·
+#1221 PO sees multi-PO GRNs · #1224 RM code rename carries bindings/BOM/price history ·
+#1225 stock value load error instead of RM 0 · #1226 duplicate supplier invoice check (edits + spacing) ·
+#1228 stale SO/PO save refused (409) · #1229 /health commit stamp, Smart Placement, announcements cap, lead phone dedupe ·
+#1230 locked SO says which department holds it · #1231 in-app confirms, multi-word search, consolidated save blockers ·
+#1233 FE quality batch (real error reasons, PDF text clean-up, number-input wheel guard, dropdown flip, MRP sticky header, header wrap).
+
+## Still to verify on prod (not yet observed)
+
+- MRP page `/planning/mrp`: header row + Material column stay fixed while scrolling (#1233).
+- `GET /api/health` shows `"commit": "<sha>"` after the #1229 deploy (not "dev").
+- Lead create with a phone already on a lead → "Possible duplicate lead" dialog (#1229).
+- Two-word grid search, e.g. "ivory 151" (#1231); save-blocker toast listing several problems (#1231).
+
+## Follow-ups (approved, not done yet)
+
+- ~40 lesser saves still ignore the server response (employees, settings, assistant, cash-flow…). List in `docs/bugs/BUG-2026-11-09-435.md`. Same fix pattern as #1233 (`src/lib/response-error.ts`).
+- Backfill: system GRNs created by PI auto stock-in **before** #1218 are not linked back (still read "received, not billed"). Needs owner approval — production data write.
+
+## Waiting on the OWNER (decide / provide)
+
+1. **Money / process items A–H** (from the Houzs review; not touched):
+   A. re-cost by PI price incl. multi-PO lines · B. editing a payment resets the bank to Hong Leong ·
+   C. first DO flips the whole SO to shipped · D. partial completion locks the whole SO ·
+   E. document numbers by creation month can collide · F. bank reconciliation duplicates & closing ·
+   G. automatic month-end stock posting · H. SO amendment flow.
+2. **Item 9 — enforce PO→GRN→PI link in the DB:** recommended **not** to do (office bills straight from the PO; most PIs since June have no GRN). Confirm drop.
+3. **SO edit lock:** should a BLOCKED job card count as "production started"? (today it does, so the SO locks). Also send the SO number that could not be edited so it can be checked.
+4. **Mail Center:** the ERP "Sent" (outbox) list is not filtered by mailbox — anyone with Mail Center access sees every ERP-sent email. Keep, or limit to own + subordinates?
+5. **Gmail questions:** viewing subordinates' mail — in Gmail or in ERP Mail Center? Company-domain mailboxes or personal @gmail.com? ("Undo send" is Gmail's own 5–30 s hold, not an ERP feature.)
+6. **6 retired raw-material unit rows** (merged by mistake across units): PC151-01 / PC151-02 / PC151-17 (MTR), NON WOVEN BLACK (ROLL), MHW 1 X 2 (CTN), TARONI-NAVY BLUE (PCS) — restore needs owner authorisation (or restore in Raw Materials).
+7. **Supplier ↔ material bindings:** waiting for the owner's checked raw-material list (`Raw-Material-Supplier-List-2026-11-07.xlsx`, `Supplier-Binding-Plan-2026-11-07.xlsx`).
+8. **Finance to confirm:** Oct staff cost RM 1,733 looks incomplete; equity rose 73,279 more than profit; Oct fabric stock-take RM 14,877 stored vs RM 97,660 from lines; Monthly P&L Oct net 136,271 vs /pl report 194,914.
+
+## Board report (artifact)
+
+Monthly board report design artifact: pages Trend/PnL/Labour/Materials/Customers/Main/full statements are live-data driven.
+Trend was made live + elastic on 2026-11-09. Still static: Balance, Cash, Outlook, Notes — make them read the data JSON the same way. Charts still wanted on Materials and Customers.
+
+## Housekeeping
+
+- Local worktrees on the Windows machine (`../hookka-erp-testing-worktrees/{checklist,tmp-rebase,sec-batch,fe-batch-a,fe-batch-b,fe-grid-copy-sum}`) can be removed once #1234/#1235 merge; they hold no unpushed work.
+- `CLAUDE.md` still points at `docs/context-packs/NAVIGATION-MAP.md`; the map now lives at `docs/CODEBASE-MAP.md`.
