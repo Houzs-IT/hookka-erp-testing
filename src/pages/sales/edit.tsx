@@ -886,6 +886,8 @@ export default function EditSalesOrderPage() {
         companySODate, customerDeliveryDate, hookkaExpectedDD, notes,
         items: itemsForServer,
         ...(overrideTokenFromState ? { overrideToken: overrideTokenFromState } : {}),
+        // Refused (409) if someone else saved this SO after it was opened.
+        ...(order?.updatedAt ? { expectedUpdatedAt: order.updatedAt } : {}),
       };
       const result = await verifiedSave<SalesOrder>({
         endpoint: `/api/sales-orders/${id}`,

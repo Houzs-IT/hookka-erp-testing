@@ -22,6 +22,7 @@ import { availableQty as computeAvailableQty } from "../../lib/convert-chain";
 import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
 import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
+import { editConflictMessage } from "../lib/edit-conflict";
 
 const app = new Hono<Env>();
 
@@ -819,6 +820,9 @@ app.put("/:id", async (c) => {
     }
     const body = await c.req.json();
     const now = new Date().toISOString();
+    // Two people saving the same PO: the edit form sends the updatedAt it loaded.
+    const staleMsg = editConflictMessage(existing as { updated_at?: unknown; updatedAt?: unknown }, body?.expectedUpdatedAt, "purchase order");
+    if (staleMsg) return c.json({ success: false, error: staleMsg, conflict: true }, 409);
 
     // Lock supplier + line items once goods have been received against this PO.
     // A POSTED/CONFIRMED GRN has written rm_batches + cost_ledger against the

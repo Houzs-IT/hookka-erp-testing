@@ -129,6 +129,7 @@ import type {
   SOCascadeResult,
 } from "./sales-orders/_helpers";
 import { todayYmdMY } from "../../lib/utils";
+import { editConflictMessage } from "../lib/edit-conflict";
 
 // Re-export the helpers that external modules / tests import from this route
 // module, so importers of ".../sales-orders" keep working with no changes.
@@ -3303,6 +3304,9 @@ app.put("/:id", async (c) => {
     // handled below this guard, BEFORE the items/header re-write block.
     const lockMsg = await checkSalesOrderLocked(c.var.DB, id);
     const body = await c.req.json();
+    // Two people saving the same order: the form sends the updatedAt it loaded.
+    const staleMsg = editConflictMessage(existing as { updated_at?: unknown; updatedAt?: unknown }, body?.expectedUpdatedAt, "sales order");
+    if (staleMsg) return c.json({ success: false, error: staleMsg, conflict: true }, 409);
     // Only a CHANGED date is validated: an edit that echoes back a legacy
     // stored value must not be blocked by it.
     const dateErr = normaliseBodyDates(
