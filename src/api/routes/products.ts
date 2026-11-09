@@ -674,7 +674,7 @@ app.get("/new-models", async (c) => {
       }
     }));
   }
-  const models = buildNewModels(products, combos, photos, { from, to });
+  const models = buildNewModels(products, combos, photos, { from, to }, { pricesIncluded: canPrice });
   return c.json({
     success: true,
     data: {
