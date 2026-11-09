@@ -23,6 +23,8 @@ import {
   type ProductBulkImportInput,
 } from "../lib/product-bulk-import";
 import { todayYmdMY } from "../../lib/utils";
+import { buildNewModels, NEW_MODELS_PRICE_NOTE, type NmCombo, type NmProduct } from "../../lib/new-models-export";
+import { getFile } from "../lib/supabase-storage";
 
 const app = new Hono<Env>();
 
@@ -569,6 +571,126 @@ app.get("/", async (c) => {
 //
 // Registered BEFORE /:id so Hono's trie picks the right handler.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// GET /api/products/new-models?from=YYYY-MM-DD&to=YYYY-MM-DD
+// The Catalog's "Export new models" download (owner 2026-11-10): models whose
+// first SKU was CREATED in the range (products.created_at, the owner's pick),
+// one per family, with the Catalog cover photo inlined as a data URL and the
+// master prices / sofa combos as text. Read-only. Prices ride only for
+// product-pricing:read and combos only for sofa-combos:read, the same gates as
+// the Products list and the Sofa Combo page. Registered BEFORE /:id.
+// ---------------------------------------------------------------------------
+const NEW_MODELS_MAX_PHOTO_BYTES = 600 * 1024;
+app.get("/new-models", async (c) => {
+  const denied = await requirePermission(c, "products", "read");
+  if (denied) return denied;
+  const from = c.req.query("from") || "";
+  const to = c.req.query("to") || "";
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ymd.test(from) || !ymd.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from on or before to" }, 400);
+  }
+  const orgId = getOrgId(c);
+  await ensureProductCreatedAtColumn(c.var.DB);
+  const today = todayYmdMY();
+  const [rowsRes, overlays, canPrice, canCombo] = await Promise.all([
+    c.var.DB.prepare(
+      `SELECT * FROM products WHERE orgId = ? AND status = 'ACTIVE' ORDER BY code`,
+    ).bind(orgId).all<ProductRow & { created_at?: string | null; createdAt?: string | null }>(),
+    loadPriceOverlays(c.var.DB, today),
+    hasPermission(c, "product-pricing", "read"),
+    hasPermission(c, "sofa-combos", "read"),
+  ]);
+  const rows = rowsRes.results ?? [];
+  const undated = rows.filter((r) => !(r.created_at ?? r.createdAt)).length;
+  const products: NmProduct[] = rows.map((r) => {
+    const ov = overlays.get(r.id);
+    const base = ov && ov.basePriceSen !== null ? ov.basePriceSen : r.basePriceSen;
+    const seatRaw = ov && ov.seatHeightPricesRaw !== null ? ov.seatHeightPricesRaw : r.seatHeightPrices;
+    return {
+      code: r.code,
+      name: r.name,
+      category: r.category,
+      sizeLabel: r.sizeLabel ?? null,
+      sizeCode: r.sizeCode ?? null,
+      createdAt: (r.created_at ?? r.createdAt) || null,
+      basePriceSen: canPrice ? base : null,
+      seatHeightPrices: canPrice ? parseJson<NmProduct["seatHeightPrices"]>(seatRaw, []) : [],
+    };
+  });
+  let combos: NmCombo[] = [];
+  if (canPrice && canCombo) {
+    const cr = await c.var.DB.prepare(
+      `SELECT scr.baseModel AS "baseModel", scr.componentSizes AS "componentSizes",
+              scr.pricesByHeight AS "pricesByHeight", scr.fabricTier AS "fabricTier", cu.name AS "customerName"
+         FROM sofa_combo_rules scr LEFT JOIN customers cu ON cu.id = scr.customerId
+        WHERE scr.effectiveFrom IS NULL OR scr.effectiveFrom <= ?`,
+    ).bind(today).all<{ baseModel: string; componentSizes: string | null; pricesByHeight: string | null; fabricTier: string | null; customerName: string | null }>()
+      .catch(() => ({ results: [] as never[] }));
+    combos = (cr.results ?? []).map((r) => ({
+      baseModel: r.baseModel,
+      componentSizes: parseJson<string[][]>(r.componentSizes, []),
+      pricesByHeight: parseJson<Record<string, number>>(r.pricesByHeight, {}),
+      fabricTier: r.fabricTier,
+      customerName: r.customerName,
+    }));
+  }
+  // Cover photo per family: lowest sort_order, then newest upload — the
+  // Catalog's own rule. Only families that are actually new are fetched.
+  const prelim = buildNewModels(products, [], new Map(), { from, to });
+  const photos = new Map<string, string | null>();
+  if (prelim.length) {
+    const fams = prelim.map((m) => m.code);
+    const fr = await c.var.DB.prepare(
+      `SELECT * FROM file_assets WHERE orgId = ? AND resourceType = 'modular' AND resourceId IN (${fams.map(() => "?").join(",")})`,
+    ).bind(orgId, ...fams).all<Record<string, unknown>>();
+    const byFam = new Map<string, Record<string, unknown>[]>();
+    for (const f of fr.results ?? []) {
+      const k = String(f.resourceId);
+      const arr = byFam.get(k);
+      if (arr) arr.push(f); else byFam.set(k, [f]);
+    }
+    await Promise.all([...byFam.entries()].map(async ([fam, files]) => {
+      const imgs = files.filter((f) => String(f.contentType || "").startsWith("image/"));
+      imgs.sort((a, b) => {
+        const ao = Number(a.sortOrder ?? a.sort_order ?? 1e9), bo = Number(b.sortOrder ?? b.sort_order ?? 1e9);
+        return ao !== bo ? ao - bo : String(b.uploadedAt || "").localeCompare(String(a.uploadedAt || ""));
+      });
+      photos.set(fam, null);
+      // A missing object (deleted from storage) falls through to the next photo.
+      for (const f of imgs) {
+        if (Number(f.sizeBytes || 0) > NEW_MODELS_MAX_PHOTO_BYTES) continue;
+        try {
+          const obj = await getFile(c.env, String(f.r2Key));
+          if (!obj) continue;
+          const buf = new Uint8Array(await new Response(obj.body).arrayBuffer());
+          let bin = "";
+          for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+          photos.set(fam, `data:${String(f.contentType)};base64,${btoa(bin)}`);
+          return;
+        } catch {
+          /* storage unavailable or object gone — try the next photo */
+        }
+      }
+    }));
+  }
+  const models = buildNewModels(products, combos, photos, { from, to });
+  return c.json({
+    success: true,
+    data: {
+      source: "Hookka ERP · Products Catalog · new models",
+      from,
+      to,
+      measuredOn: today,
+      basis: "products.created_at",
+      undatedProducts: undated,
+      pricesIncluded: canPrice,
+      priceNote: canPrice ? NEW_MODELS_PRICE_NOTE : "Prices left out: this login has no product-pricing permission.",
+      models,
+    },
+  });
+});
+
 app.get("/setup-incomplete", async (c) => {
   const denied = await requirePermission(c, "products", "read");
   if (denied) return denied;
