@@ -24,6 +24,7 @@ import { fetchFilteredPOs } from "./production-orders";
 import { loadUomConfig, uomNotAllowedMsg } from "./raw-materials";
 import { isUomAllowed } from "../../lib/material-variants";
 import { deriveFGStock, splitFgDeltas, type FgStockPO } from "../../lib/fg-stock";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -297,7 +298,7 @@ app.get("/shortage-forecast", async (c) => {
   const denied = await requirePermission(c, "inventory", "read");
   if (denied) return denied;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const horizonDate = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 14);

@@ -24,6 +24,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { resolveProductPriceAsOf } from "./products";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -74,7 +75,7 @@ function genPriceRowId(): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 
 type SeatHeightPrice = { height: string; priceSen: number };

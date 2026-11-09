@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { formatRM } from "@/lib/utils";
+import { formatRM, todayYmdMY } from "@/lib/utils";
 import {
   Bot,
   CheckCircle2,
@@ -450,7 +450,7 @@ export default function DeliveryAgentTab() {
                 Select all ({visible.length})
               </label>
               {visible.map((p) => {
-                const today = new Date().toISOString().slice(0, 10);
+                const today = todayYmdMY();
                 const isPlan = p.kind === "LOAD_PLAN";
                 const due = p.dueDate || "";
                 const expired = !!due && due < today;

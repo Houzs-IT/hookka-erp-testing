@@ -7,6 +7,7 @@ import { fmtDate, drawLetterhead } from "@/lib/pdf-utils";
 // Lives in its own dependency-free module so the page can import the same
 // comparator without pulling jsPDF into the page bundle.
 import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
+import { todayYmdMY } from "./utils";
 // DO-document rack line: per-component rack groups, NO label prefix, joined by
 // " · " (owner's spec). Shares formatRacksCompact's dedup + numeric sort.
 
@@ -1254,7 +1255,7 @@ export function generateConsolidatedDoPdf(
     });
   }
   stampDoFooters(doc);
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const stamp = todayYmdMY().replace(/-/g, "");
   const fileName = packingNo
     ? `PackingList-${packingNo}.pdf`
     : `PackingList-Run-${stamp}-${orders.length}DO.pdf`;

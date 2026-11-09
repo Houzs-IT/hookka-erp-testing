@@ -1,3 +1,4 @@
+import { todayYmdMY } from "../../lib/utils";
 // ---------------------------------------------------------------------------
 // production_lead_times seed + lookup helpers.
 //
@@ -114,7 +115,7 @@ export async function loadLeadTimes(
   db: D1Database,
   asOfDate?: string,
 ): Promise<LeadTimeMap> {
-  const asOf = asOfDate || new Date().toISOString().slice(0, 10);
+  const asOf = asOfDate || todayYmdMY();
   const map: LeadTimeMap = { BEDFRAME: {}, SOFA: {} };
 
   // History → latest effective_from <= asOf wins per (cat, dept).
@@ -200,7 +201,7 @@ export async function loadHookkaDDBuffer(
   db: D1Database,
   asOfDate?: string,
 ): Promise<HookkaDDBuffer> {
-  const asOf = asOfDate || new Date().toISOString().slice(0, 10);
+  const asOf = asOfDate || todayYmdMY();
   const map: HookkaDDBuffer = { ...DEFAULT_HOOKKA_DD_BUFFER };
 
   const histRes = await db

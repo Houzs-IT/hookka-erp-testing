@@ -45,6 +45,7 @@ import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
 import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
 import { autoReceivePiStock, previewPiAutoGrn } from "../lib/pi-auto-grn";
+import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Runtime schema self-apply — convert-chain columns (PO→GRN→PI). All
@@ -2570,7 +2571,7 @@ app.put("/:id", async (c) => {
           );
         }
         const spId = `sp-${crypto.randomUUID().slice(0, 8)}`;
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayYmdMY();
         const payNo = await issueDocNumber(db, {
           bankAccountCode: apBankAcct("BANK_TRANSFER"),
           direction: "out",

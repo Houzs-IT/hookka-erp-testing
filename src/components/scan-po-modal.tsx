@@ -20,6 +20,7 @@ import { resolveScanParty } from "@/lib/scan-party-resolve";
 import { usePartyAliases, teachPartyAlias } from "@/lib/party-alias-client";
 import { moneyFieldToSen } from "@/lib/money-field";
 import { toConsignmentOrderBody, hasCustomSpecials, type ScanTarget } from "@/lib/scan-po-target";
+import { todayYmdMY } from "@/lib/utils";
 
 // Background scan queue dispatch — shared with scan-supplier-modal. >2-file
 // drops POST to /api/scan-queue/upload + navigate to /scan-queue/<batchId>
@@ -1148,7 +1149,7 @@ export function ScanPOModal({ open, onClose, onCreated, target = "SO" }: Props) 
           // alongside Customer PO.
           customerSOId: po.customerSO ?? null,
           deliveryHubId: resolvedHubId,
-          companySODate: new Date().toISOString().split("T")[0],
+          companySODate: todayYmdMY(),
           // The "Delivery Date" on a customer PO is what the customer
           // expects — that's customerDeliveryDate. hookkaExpectedDD is
           // computed downstream by Production Planning (customer DD minus
@@ -1250,7 +1251,7 @@ export function ScanPOModal({ open, onClose, onCreated, target = "SO" }: Props) 
           customerState: hub.state || po.deliveryHub,
           customerPOId: po.poNo,
           deliveryHubId: hub.hubId,
-          companySODate: po.poDate || new Date().toISOString().split("T")[0],
+          companySODate: po.poDate || todayYmdMY(),
           hookkaExpectedDD: po.deliveryDate,
           terms: po.terms,
           isUrgent: po.isUrgent,

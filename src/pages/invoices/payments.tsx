@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
-import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { defaultBankCode } from "@/lib/default-bank";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -69,7 +69,7 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit, copyFrom =
   const [reference, setReference] = useState(editing?.reference ?? "");
   // Document date (owner 2026-07-07): receipts are often keyed in days after
   // the money landed — the operator picks the real date; defaults to today.
-  const [payDate, setPayDate] = useState<string>(() => (editing?.date || "").slice(0, 10) || new Date().toISOString().slice(0, 10));
+  const [payDate, setPayDate] = useState<string>(() => (editing?.date || "").slice(0, 10) || todayYmdMY());
   // Owner: the receipt deposits into a SPECIFIC bank/cash account, not a
   // method-derived default. Options = SBK/SCH accounts from the COA.
   const [bankAccount, setBankAccount] = useState("");
@@ -225,7 +225,7 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit, copyFrom =
         setSelectedCustomerId("");
         setMethod("BANK_TRANSFER");
         setReference("");
-        setPayDate(new Date().toISOString().slice(0, 10));
+        setPayDate(todayYmdMY());
         setAllocations([]);
         setAmountTouched(false);
         setAmountStr("");

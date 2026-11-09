@@ -80,6 +80,7 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 // One shared completion core with the desktop QC page — see the QC-on-the-
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -4437,7 +4438,7 @@ app.post("/rack-bulk-stock-in", async (c) => {
       return c.json({ ok: false, error: "rack not found" }, 404);
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayYmdMY();
     const now = new Date().toISOString();
     // Atomic (audit H1): build EVERY write into one db.batch() so a mid-loop
     // failure can't half-stock the rack, and a retry can't double-insert

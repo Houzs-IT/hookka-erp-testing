@@ -96,6 +96,7 @@ import {
   poOrphanedUpstream,
   wipTerminalCards,
 } from "../../lib/wip-expected";
+import { todayYmdMY } from "../../../lib/utils";
 
 // Self-applying migrations for the production-orders / job-cards space.
 // Mirrors the pattern in src/api/routes/sales-orders.ts:1492 — each ALTER
@@ -4350,7 +4351,7 @@ export async function recomputePoStatusAndProgress(
     newCompletedDate =
       dates.length > 0
         ? dates[dates.length - 1]
-        : (poRow.completedDate ?? new Date().toISOString().slice(0, 10));
+        : (poRow.completedDate ?? todayYmdMY());
   }
 
   const statusChanged = poRow.status !== derivedStatus;

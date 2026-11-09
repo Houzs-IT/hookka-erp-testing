@@ -54,7 +54,7 @@ test("one Scan: every receipt its own voucher, merge several into one, create dr
   assert.match(b, /billNo: v\.docs\.map\(\(d\) => d\.billNo\)\.filter\(Boolean\)\.join\(", "\)/);
   assert.match(b, /for \(const f of \[\.\.\.new Set\(v\.docs\.map\(\(d\) => d\.file\)\)\]\) \{\n\s+try \{ await uploadPvAttachment\(j\.data\.id, f\); \}/, "every receipt attached, a shared PDF once");
   assert.match(b, /saveAs: "draft",/, "vouchers go onto the approval ladder");
-  assert.match(b, /voucherDate: new Date\(\)\.toISOString\(\)\.slice\(0, 10\), state: "ready" \}\);/, "dated today");
+  assert.match(b, /voucherDate: todayYmdMY\(\), state: "ready" \}\);/, "dated today");
   assert.match(b, /if \(l\.isTax\) return \{ description: l\.description, amountSen: l\.amountSen, accountCode: "706-0000", guess: null, isTax: true \};/);
   assert.doesNotMatch(b, /other-party-bills|"OCB"|other-parties/, "no other-creditor bills from this page");
   assert.match(b, /onOpenInForm\(\{ payee: v\.payee, date: v\.voucherDate, docs: v\.docs \}\)/, "the last voucher can go into the full form");

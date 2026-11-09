@@ -290,7 +290,7 @@ export default function PurchaseOrderDetailPage() {
     try {
       const body: Record<string, unknown> = { status: newStatus };
       if (newStatus === "RECEIVED") {
-        body.receivedDate = new Date().toISOString().split("T")[0];
+        body.receivedDate = todayYmdMY();
       }
       const res = await fetch(`/api/purchase-orders/${po.id}`, {
         method: "PUT",
@@ -469,7 +469,7 @@ export default function PurchaseOrderDetailPage() {
     setCancelling(true);
     try {
       const target = closeShort ? "CLOSED" : "CANCELLED";
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayYmdMY();
       const annotation = `[${target} ${today}: ${reason}]`;
       const newNotes = po.notes ? `${po.notes}\n${annotation}` : annotation;
       const res = await fetch(`/api/purchase-orders/${po.id}`, {

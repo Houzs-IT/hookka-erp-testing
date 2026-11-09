@@ -57,6 +57,7 @@ import { pickPackingCard } from "../lib/packing-card-resolve";
 import { packingPieceIdentity } from "../lib/packing-piece-identity";
 import { ensurePiecePicsRackingColumn } from "../lib/packing-rack-write";
 import { resolveCard as resolvePackingCardByToken } from "./public-rack-write";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -135,7 +136,7 @@ export function buildRackStockInStatements(
   items: RackStockInItem[],
   performedBy: string,
 ): D1PreparedStatement[] {
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayYmdMY();
   const now = new Date().toISOString();
   const statements: D1PreparedStatement[] = [];
   for (const item of items) {

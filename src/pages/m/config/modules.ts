@@ -2351,7 +2351,7 @@ export const inventoryConfig: ModuleConfig = {
 //   • Payroll    → /api/payslips?period=<this month>
 // ---------------------------------------------------------------------------
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 function thisPeriod(): string {
   return new Date().toISOString().slice(0, 7); // YYYY-MM

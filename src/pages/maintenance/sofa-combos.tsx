@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { humanizeError } from "@/lib/humanize-error";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { asArray } from "@/lib/safe-json";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { AlertTriangle, Loader2, Plus, Trash2, X, Layers, History, Pencil, Copy } from "lucide-react";
 import { DataGrid, type Column } from "@/components/ui/data-grid";
 import { useToast } from "@/components/ui/toast";
@@ -84,7 +84,7 @@ function renderComponentSizes(sizes: ComponentSizeGroups): string {
 type ApiList<T> = { success?: boolean; data?: T[] };
 type ApiSingle<T> = { success?: boolean; data?: T; error?: string };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayYmdMY();
 
 // ---------------------------------------------------------------------------
 // Helpers

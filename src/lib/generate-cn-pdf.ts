@@ -13,6 +13,7 @@ import {
   fmtComponentRacks,
   type BuildSpecExtra,
 } from "@/lib/generate-do-pdf";
+import { todayYmdMY } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Consignment Note PDF — the CN twin of generate-do-pdf.ts (owner asked for
@@ -667,6 +668,6 @@ export function printCnPackingList(cns: CNPdfData[]) {
     renderCnInto(doc, cn);
   });
   stampCnFooters(doc);
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = todayYmdMY();
   doc.save(`Consignment-PackingList-${stamp}.pdf`);
 }

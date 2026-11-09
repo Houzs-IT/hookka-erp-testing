@@ -105,6 +105,7 @@ import type {
   PiecePicRow,
   ProductionOrderRow,
 } from "./production-orders/_helpers";
+import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -118,7 +119,7 @@ import type {
 // changing it here would silently orphan every stored snapshot row.
 // ---------------------------------------------------------------------------
 export function overdueTodayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 export function overdueCountsCacheKey(
   dept: string | null,
@@ -461,7 +462,7 @@ app.get("/tracker-summary", async (c) => {
   if (denied) return denied;
   const orgId = getOrgId(c);
   const db = c.var.DB;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   // Throughput window: 14 days back, inclusive of today.
   const since = new Date(Date.now() - 13 * 86400000).toISOString().slice(0, 10);
 
@@ -568,7 +569,7 @@ app.get("/report-summary", async (c) => {
   const orgId = getOrgId(c);
   const db = c.var.DB;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
   const fromRaw = (c.req.query("from") || "").trim();
   const toRaw = (c.req.query("to") || "").trim();

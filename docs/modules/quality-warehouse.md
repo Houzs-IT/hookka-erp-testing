@@ -82,7 +82,7 @@ is enforced by hand in the handler, not by the middleware.
 | `generatePendingForSlot` | `src/api/routes/qc-pending.ts:1699` | Insert one PENDING inspection per active template |
 | `POST /:id/start` | `src/api/routes/qc-pending.ts:1969` | Begin an inspection |
 | `POST /:id/complete` | `src/api/routes/qc-pending.ts:2409` | Record results + write qc_tags on FAIL |
-| `POST /` (inspection create) | `src/api/routes/qc-inspections.ts:255` | Ad-hoc QC inspection CRUD |
+| `POST /` (inspection create) | `src/api/routes/qc-inspections.ts:263` | Ad-hoc QC inspection CRUD |
 | `POST /` (template create) | `src/api/routes/qc-templates.ts:164` | Checklist template + items |
 | `GET /` (racks list) | `src/api/routes/warehouse.ts:248` | Rack grid + occupancy read |
 | `replaceRackItems` | `src/api/routes/warehouse.ts:204` | Rewrite a rack's `rack_items` set |

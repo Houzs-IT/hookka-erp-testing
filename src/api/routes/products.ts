@@ -22,6 +22,7 @@ import {
   shapeProductBulkRow,
   type ProductBulkImportInput,
 } from "../lib/product-bulk-import";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -336,7 +337,7 @@ function genBomId(): string {
 }
 
 async function fetchProductWithChildren(db: D1Database, id: string) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const [product, bomsRes, dwtsRes, priceOverlays] = await Promise.all([
     db.prepare("SELECT * FROM products WHERE id = ?").bind(id).first<ProductRow>(),
     db
@@ -476,7 +477,7 @@ app.get("/", async (c) => {
       .all<{ id: string; code: string; name: string }>();
     return c.json({ success: true, data: matches.results ?? [] });
   }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const [products, boms, dwts, tpls, priceOverlays] = await Promise.all([
     c.var.DB.prepare(
       "SELECT * FROM products WHERE orgId = ? AND status = 'ACTIVE' ORDER BY code",
@@ -1336,7 +1337,7 @@ app.post("/:productId/prices", async (c) => {
     //     (the most recent existing row already plays the baseline role)
     //   - the new row is back-dated or effective today
     //     (the new row itself is the source of truth from today onward)
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
     if (effectiveFrom > today) {
       const existingHistory = await c.var.DB.prepare(
         "SELECT id FROM product_prices WHERE productId = ? LIMIT 1",

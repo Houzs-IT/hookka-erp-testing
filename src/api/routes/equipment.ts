@@ -11,6 +11,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -101,7 +102,7 @@ function genId(prefix: string): string {
 }
 
 function addDays(isoDate: string, days: number): string {
-  const d = new Date(isoDate || new Date().toISOString().split("T")[0]);
+  const d = new Date(isoDate || todayYmdMY());
   d.setDate(d.getDate() + days);
   return d.toISOString().split("T")[0];
 }

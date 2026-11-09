@@ -86,6 +86,7 @@ import {
 } from "@/lib/scan-queue-client";
 import { compressScanFile } from "@/lib/compress-scan-pdf";
 import { useIdempotencyKeys } from "@/lib/idempotency-key";
+import { todayYmdMY } from "@/lib/utils";
 
 // ─── Shared types (kept exported for callers) ─────────────────────────────
 
@@ -1136,7 +1137,7 @@ function makeBlankLine(): PreviewLine {
 }
 
 function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  return todayYmdMY();
 }
 
 function CreatePIWizard({

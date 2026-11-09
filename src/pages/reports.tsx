@@ -4,7 +4,7 @@ import { cachedFetchJsonResult } from "@/lib/cached-fetch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, roundSen } from "@/lib/utils";
+import { formatCurrency, roundSen, todayYmdMY } from "@/lib/utils";
 import {
   AlertTriangle,
   BarChart3,
@@ -193,7 +193,7 @@ type PurchaseOrder = {
 // between tabs and revisiting the page lands on the range they last cared
 // about. Mirrors the pattern in employees.tsx (introduced 2026-05-08).
 function todayStr(): string {
-  return new Date().toISOString().split("T")[0];
+  return todayYmdMY();
 }
 
 function readPersistedDateRange(key: string): { from?: string; to?: string } {

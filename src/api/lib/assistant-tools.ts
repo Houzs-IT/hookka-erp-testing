@@ -1202,7 +1202,7 @@ const getDailyReport: ToolDefinition = {
   execute: async (c, args) => {
     const orgId = getOrgId(c);
     const reportType = String(args.type ?? "").toLowerCase();
-    const date = ymdOrNull(args.date) ?? new Date().toISOString().slice(0, 10);
+    const date = ymdOrNull(args.date) ?? todayYmdMY();
 
     if (reportType === "overdue") {
       const overdueInvs = await c.var.DB
@@ -3348,7 +3348,7 @@ const getCapacityLoading: ToolDefinition = {
   },
   execute: async (c, args) => {
     const orgId = getOrgId(c);
-    const date = ymdOrNull(args.date) ?? new Date().toISOString().slice(0, 10);
+    const date = ymdOrNull(args.date) ?? todayYmdMY();
     const dept = strOrNull(args.department);
     const wheres = ["orgId = ?", "dueDate = ?", "UPPER(status) IN ('WAITING','IN_PROGRESS','PAUSED','BLOCKED')"];
     const params: unknown[] = [orgId, date];
@@ -3516,7 +3516,7 @@ const getDispatchSummary: ToolDefinition = {
   },
   execute: async (c, args) => {
     const orgId = getOrgId(c);
-    const date = ymdOrNull(args.date) ?? new Date().toISOString().slice(0, 10);
+    const date = ymdOrNull(args.date) ?? todayYmdMY();
     const hub = strOrNull(args.hubKey);
     const baseWhere = ["orgId = ?"];
     const baseParams: unknown[] = [orgId];
@@ -4426,7 +4426,7 @@ const listOverdueOrders: ToolDefinition = {
   execute: async (c, args) => {
     const orgId = getOrgId(c);
     const type = String(args.type ?? "").toUpperCase();
-    const asOf = ymdOrNull(args.dateAsOf) ?? new Date().toISOString().slice(0, 10);
+    const asOf = ymdOrNull(args.dateAsOf) ?? todayYmdMY();
     const limit = clampLimit(args.limit, 50);
     let sql = "";
     if (type === "SO") {
@@ -4487,7 +4487,7 @@ const getAbnormalOrders: ToolDefinition = {
   execute: async (c, args) => {
     const orgId = getOrgId(c);
     const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
     // Abnormal GP = SO total vs estimated cost (sum of cost × qty for its items).
     const gpRows = await c.var.DB.prepare(
       `SELECT so.id AS soId, so.companySOId AS companySOId, so.customerName AS customerName,
@@ -5402,6 +5402,7 @@ import {
   getReportTemplate,
   listReportTemplates,
 } from "./assistant-skills";
+import { todayYmdMY } from "../../lib/utils";
 
 function asRowArray(v: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(v)) return [];

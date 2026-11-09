@@ -16,6 +16,7 @@ import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import { ensureCnyCurrency } from "../lib/currency-checks";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
 import { getOrgId } from "../lib/tenant";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -111,7 +112,7 @@ async function loadLastOrdered(db: D1Database, orgId: string): Promise<Map<strin
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 
 function genId(): string {

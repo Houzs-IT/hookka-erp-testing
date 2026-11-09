@@ -240,5 +240,5 @@ test("the page: Setup › Currency & FX, its two cards; the forms open on the mo
   assert.match(spui, /if \(row\.rateStr\.trim\(\)\) return \{\};/, "a rate already typed is never overwritten");
   assert.match(spui, /<td className="px-3 py-2 text-right text-gray-500">\{formatCurrency\(pi\.paidAmountSen\)\}<\/td>/, "booked RM shown as RM, not under the foreign code");
   assert.match(read("src/pages/procurement/pi.tsx"), /const setup = await fetchFxRate\(ccy, todayYmdMY\(\)\);/);
-  assert.match(read("src/pages/procurement/grn-detail.tsx"), /const setup = await fetchFxRate\(currency, new Date\(\)\.toISOString\(\)\.split\("T"\)\[0\]\);/);
+  assert.match(read("src/pages/procurement/grn-detail.tsx"), /const setup = await fetchFxRate\(currency, todayYmdMY\(\)\);/);
 });

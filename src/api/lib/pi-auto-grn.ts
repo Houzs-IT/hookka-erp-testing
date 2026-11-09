@@ -26,6 +26,7 @@ import {
   isPoOverReceiptRace,
   resolveRmForGRNItem,
 } from "../routes/grn";
+import { todayYmdMY } from "../../lib/utils";
 
 export interface AutoGrnPiLine {
   id: string;
@@ -265,7 +266,7 @@ export async function autoReceivePiStock(db: D1Database, piId: string): Promise<
     if (lines.length === 0) return empty("no matched line", plan.skipped);
 
     const grnNumber = await generateGrnNumber(db);
-    const receiveDate = String(pi.invoiceDate ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const receiveDate = String(pi.invoiceDate ?? "").slice(0, 10) || todayYmdMY();
     const headerPoId = poIds.length === 1 ? poIds[0] : null;
     const headerPoNo = headerPoId
       ? (await db.prepare("SELECT poNo FROM purchase_orders WHERE id = ?").bind(headerPoId).first<{ poNo: string }>())?.poNo ?? null

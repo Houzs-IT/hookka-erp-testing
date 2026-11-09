@@ -147,6 +147,7 @@ import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, buildSupplie
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
 import { capList } from "../lib/list-cap";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -859,7 +860,7 @@ async function computeAgingData(
   const tfSection = [];
   try {
     const tfSrcs = await getTfSources(db);
-    const todayIsoTf = new Date().toISOString().slice(0, 10);
+    const todayIsoTf = todayYmdMY();
     for (const s of tfSrcs) {
       const acctRow = await db.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
         .bind(s.accountCode).first<{ name: string }>();
@@ -939,7 +940,7 @@ app.get("/aging", async (c) => {
   // every item back from today (src/api/lib/aging-as-at.ts) — built fresh,
   // never cached. Absent / today / later = today's aging, cached as before.
   const asOfQ = c.req.query("asOf") ?? "";
-  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < todayYmdMY() ? asOfQ : null;
   const snapshotConfig = {
       tableName: "accounting_aging_snapshot",
       // kv_config so the snapshot rebuilds when opening_date (the pre-opening
@@ -2077,7 +2078,7 @@ app.get("/ar-control", async (c) => {
     .filter((a) => a.code !== "305-0000")
     .reduce((s, a) => s + a.balanceSen, 0);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   type AgingRow = {
     customerId: string;
     customerName: string;
@@ -2645,7 +2646,7 @@ app.put("/purchase-credit-notes/:id", async (c) => {
       if (!alloc.ok) {
         return c.json({ success: false, error: alloc.error }, 400);
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayYmdMY();
       for (const ap of alloc.applied) {
         statements.push(
           c.var.DB.prepare(
@@ -3273,7 +3274,7 @@ app.get("/ap-control", async (c) => {
     .filter((a) => a.code !== "405-0000")
     .reduce((s, a) => s + a.balanceSen, 0);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   type ApAging = {
     supplierId: string;
     supplierName: string;
@@ -3560,7 +3561,7 @@ app.get("/ap-reconciliation", async (c) => {
   return c.json({
     success: true,
     data: {
-      asOf: new Date().toISOString().slice(0, 10),
+      asOf: todayYmdMY(),
       openingDate: obDateRc ?? null,
       controls,
       tradeControlSen,
@@ -3733,7 +3734,7 @@ app.get("/ar-reconciliation", async (c) => {
   return c.json({
     success: true,
     data: {
-      asOf: new Date().toISOString().slice(0, 10),
+      asOf: todayYmdMY(),
       openingDate: obDateArc ?? null,
       controls,
       tradeControlSen,
@@ -5870,9 +5871,9 @@ app.get("/other-party-aging", async (c) => {
     return c.json({ success: false, error: "type must be DEBTOR or CREDITOR" }, 400);
   }
   const asOfQ = c.req.query("asOf") ?? "";
-  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < todayYmdMY() ? asOfQ : null;
   const bills = (await computeOtherPartyAging(c.var.DB, orgId, type, asOf)).map(({ id: _id, ...b }) => b);
-  const today = asOf ?? new Date().toISOString().slice(0, 10);
+  const today = asOf ?? todayYmdMY();
   return c.json({ success: true, data: { aging: bucketAging(bills, today), bills, ...(asOf ? { asOf } : {}) } });
 });
 
@@ -6263,7 +6264,7 @@ app.get("/stock-map/effective", async (c) => {
 app.get("/trial-balance", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const asOf = c.req.query("asOf") || new Date().toISOString().slice(0, 10);
+  const asOf = c.req.query("asOf") || todayYmdMY();
   // Multi-company (Phase 1): OPTIONAL ?orgId= / ?company= scopes the TB to one
   // company. Absent → today's consolidated trial balance, byte-identical.
   const coFilter = companyFilter(c, "orgId");
@@ -6852,7 +6853,7 @@ app.post("/year-close", async (c) => {
       fyEnd?: string;
     };
     const fyEndIso = body.fyEnd || lastEndedFyeIso(new Date(), await getFySchedule(c.var.DB));
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
     if (fyEndIso >= today) {
       return c.json(
         {
@@ -12042,7 +12043,7 @@ async function plBalanceSheetResponse(c: AccountingCtx) {
     parentCode?: string | null;
     parentName?: string | null;
   }[] = [];
-  const asOf = endYm ? `${endYm}-28` : new Date().toISOString().slice(0, 10);
+  const asOf = endYm ? `${endYm}-28` : todayYmdMY();
   const bsOverride = await getBsSectionMap(c.var.DB);
   // Stock = the P&L's closing stock for the sheet's month, not what the ledger
   // holds (owner 2026-10-13; sheetStockAt). The difference lands in Current
@@ -15881,8 +15882,8 @@ app.get("/trade-finance", async (c) => {
     // As at a past date (owner 2026-10-17, Creditor Aging as at a month-end):
     // each draw as it stood then; absent = today, unchanged.
     const asOfQ = c.req.query("asOf") ?? "";
-    const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < new Date().toISOString().slice(0, 10) ? asOfQ : null;
-    const todayIso = asOf ?? new Date().toISOString().slice(0, 10);
+    const asOf = /^\d{4}-\d{2}-\d{2}$/.test(asOfQ) && asOfQ < todayYmdMY() ? asOfQ : null;
+    const todayIso = asOf ?? todayYmdMY();
     const out = [];
     for (const s of sources) {
       const acct = await c.var.DB.prepare("SELECT name FROM chart_of_accounts WHERE code = ?")
@@ -16046,7 +16047,7 @@ app.put("/trade-finance/draw-interest", async (c) => {
     // leg self-dates (doc-date). Defaults to today for hand-keyed figures.
     const chargeDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date ?? ""))
       ? String(body.date)
-      : new Date().toISOString().slice(0, 10);
+      : todayYmdMY();
     if (!drawSourceId || targetSen < 0) {
       return c.json({ success: false, error: "drawSourceId and a non-negative interestSen are required" }, 400);
     }
@@ -16111,7 +16112,7 @@ app.put("/trade-finance/draw-bank-charge", async (c) => {
     const targetSen = Math.round(Number(body.bankChargeSen) || 0);
     const chargeDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date ?? ""))
       ? String(body.date)
-      : new Date().toISOString().slice(0, 10);
+      : todayYmdMY();
     if (!drawSourceId || targetSen < 0) {
       return c.json({ success: false, error: "drawSourceId and a non-negative bankChargeSen are required" }, 400);
     }
@@ -17176,7 +17177,7 @@ app.post("/landed-cost", async (c) => {
     if (allocs.length === 0) {
       return c.json({ success: false, error: "Batches carry zero value — nothing to allocate against" }, 400);
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
     const statements: D1PreparedStatement[] = [];
     for (const a of allocs) {
       if (a.allocSen === 0) continue;
@@ -19048,7 +19049,7 @@ app.post("/cash-position/tick", async (c) => {
       await emitAudit(c, { resource: "cash-position", resourceId: String(body.accountCode || ""), action: "untick", before: { legId } });
       return c.json({ success: true });
     }
-    const clearedOn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "")) ? String(body.date) : new Date().toISOString().slice(0, 10);
+    const clearedOn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "")) ? String(body.date) : todayYmdMY();
     await c.var.DB.prepare(
       `INSERT INTO bank_board_cleared (leg_id, account_code, cleared_on, created_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(leg_id) DO UPDATE SET cleared_on = excluded.cleared_on`,
@@ -19133,7 +19134,7 @@ app.delete("/cash-position/planned/:id", async (c) => {
 app.get("/cash-position", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const date = c.req.query("date") || new Date().toISOString().slice(0, 10);
+  const date = c.req.query("date") || todayYmdMY();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ success: false, error: "date must be YYYY-MM-DD" }, 400);
   await ensureBankRecoCols(c.var.DB);
   await ensureCashBoardTables(c.var.DB);

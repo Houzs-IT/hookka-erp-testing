@@ -3602,7 +3602,7 @@ function JournalsTab({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        date: new Date().toISOString().slice(0, 10),
+        date: todayYmdMY(),
         description: row.description,
         lines: row.lines.map((l) => ({
           accountCode: l.accountCode,
@@ -3917,7 +3917,7 @@ function JournalEntryForm({
   onSave: () => void;
   onCancel: () => void;
 }) {
-  const [date, setDate] = useState(() => (editing?.date ?? "").slice(0, 10) || new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(() => (editing?.date ?? "").slice(0, 10) || todayYmdMY());
   const [description, setDescription] = useState(editing?.description ?? "");
   // Its own field, not the description (owner 2026-10-19 「先做 Reference 栏」).
   const [reference, setReference] = useState(editing?.reference ?? "");
@@ -4961,7 +4961,7 @@ function SupplierDiscountTab() {
   const [netRm, setNetRm] = useState("");
   const [sstRm, setSstRm] = useState("");
   const [reason, setReason] = useState("");
-  const [cnDate, setCnDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [cnDate, setCnDate] = useState(() => todayYmdMY());
 
   // Open PIs for the picked supplier + per-PI allocation rows (keyed by PI id).
   const [openPIs, setOpenPIs] = useState<SDOpenPI[]>([]);
@@ -5062,7 +5062,7 @@ function SupplierDiscountTab() {
     setNetRm("");
     setSstRm("");
     setReason("");
-    setCnDate(new Date().toISOString().slice(0, 10));
+    setCnDate(todayYmdMY());
     setOpenPIs([]);
     setAllocRows({});
   };
@@ -7569,7 +7569,7 @@ function ScanVouchers({ accounts, bankCash, onDone, onOpenInForm }: {
             payee, docType: d.docType ?? "", billNo: d.docNo ?? "", billDate: d.docDate ?? "",
             lines, totalSen: lines.reduce((s, l) => s + l.amountSen, 0), duplicateOf: dup ? dup.ref : null,
           };
-          found.push({ key: `v${run}:${i}:${k}`, docs: [doc], ticked: !dup, payee, voucherDate: new Date().toISOString().slice(0, 10), state: "ready" });
+          found.push({ key: `v${run}:${i}:${k}`, docs: [doc], ticked: !dup, payee, voucherDate: todayYmdMY(), state: "ready" });
         });
         const readable = docs.length - unread;
         if (!readable) throw new Error("no amount read");
@@ -7870,7 +7870,7 @@ function SelfCheckTab() {
       g<Ctrl>("/api/accounting/ap-control"), g<Ctrl>("/api/accounting/ar-control"),
       g<Recon>("/api/accounting/ap-reconciliation"), g<Recon>("/api/accounting/ar-reconciliation"),
       g<Tb>("/api/accounting/trial-balance"), g<Pv>("/api/accounting/payment-vouchers"),
-      g<Cp>(`/api/accounting/cash-position?date=${new Date().toISOString().slice(0, 10)}`), g<Coa>("/api/accounting/coa"),
+      g<Cp>(`/api/accounting/cash-position?date=${todayYmdMY()}`), g<Coa>("/api/accounting/coa"),
     ]);
     const banks = (coa ?? []).filter((a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH");
     const chains = await Promise.all(banks.map(async (b) => ({ code: b.code, name: b.name, chain: await g<Chain>(`/api/accounting/bank-reco/chain?account=${b.code}`) })));
@@ -8988,7 +8988,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   // Edit-in-place (owner 2026-07-09): non-null = the form saves via PUT to
   // this bill number instead of creating a new bill.
   const [editingBillNo, setEditingBillNo] = useState<string | null>(formOnly?.mode === "edit" && formOnly.bill ? formOnly.bill.billNo : null);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const blankLine = (): BillLineDraft => ({ counterAccount: "", amountStr: "", description: "" });
   const [form, setForm] = useState<BillFormState>(() =>
     formOnly?.bill && formOnly.mode !== "new"
@@ -9753,7 +9753,7 @@ function OtherPartyPaymentForm({ parties, accounts, side, editing, onSaved, onCa
   receiveFor?: { partyId: string; billId: string } | null;
 }) {
   const { toast } = useToast();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const banks = accounts.filter((a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH");
   const [partyId, setPartyId] = useState(editing?.partyId ?? copyFrom?.partyId ?? receiveFor?.partyId ?? "");
   const [bankAccountSel, setBankAccountSel] = useState(editing?.bankAccount ?? copyFrom?.bankAccount ?? "");
@@ -11176,7 +11176,7 @@ type PvFormState = {
 };
 function blankPvForm(): PvFormState {
   return {
-    date: new Date().toISOString().slice(0, 10), payee: "", description: "", accrued: false, payFrom: "", accrualAccount: "",
+    date: todayYmdMY(), payee: "", description: "", accrued: false, payFrom: "", accrualAccount: "",
     productLine: "", notes: "", billNo: "", billDate: "", reference: "", mode: "PAYMENT", transferTo: "", transferAmount: "",
   };
 }
@@ -11648,7 +11648,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // numbers already on our books (loaded on a scan or a typed bill no.).
   const [scanMemory, setScanMemory] = useState<ScanMemory | null>(null);
   const [apForm, setApForm] = useState({
-    date: new Date().toISOString().slice(0, 10),
+    date: todayYmdMY(),
     payFrom: "",
     partyKind: (initialPay?.docKind === "AP" ? "OTHER" : "SUPPLIER") as "SUPPLIER" | "OTHER",
     partyId: initialPay?.partyId ?? "",
@@ -11886,7 +11886,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setPendingScanFiles([]);
     setForm(blankPvForm());
     setLines([{ accountCode: "", description: "", amount: "" }]);
-    setApForm({ date: new Date().toISOString().slice(0, 10), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", description: "", advance: "", tfDue: "", tfInterest: "" });
+    setApForm({ date: todayYmdMY(), payFrom: "", partyKind: "SUPPLIER", partyId: "", reference: "", description: "", advance: "", tfDue: "", tfInterest: "" });
     setApAlloc({});
     setApFxRate("");
     setApBills(null);
@@ -12361,7 +12361,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     setShowForm(true);
   };
   const copyApForm = (party: { kind: "SUPPLIER" | "OTHER"; id: string }, payFrom: string): typeof apForm => ({
-    date: new Date().toISOString().slice(0, 10), payFrom, partyKind: party.kind, partyId: party.id,
+    date: todayYmdMY(), payFrom, partyKind: party.kind, partyId: party.id,
     reference: "", description: "", advance: "", tfDue: "", tfInterest: "",
   });
   const startDuplicate = (r: PvRow) => {
@@ -12466,7 +12466,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         mode: "PAYMENT",
         // The voucher is dated the day it is keyed; the bill keeps its own number
         // and date (owner 2026-10-01).
-        date: new Date().toISOString().slice(0, 10),
+        date: todayYmdMY(),
         billNo: docNos.join(", ") || f.billNo,
         billDate: d.docDate ?? f.billDate,
         payee: d.partyName ?? f.payee,
@@ -13405,7 +13405,7 @@ function OfficialReceiptForm({ accounts, editing, onSaved, onCancel, copyFrom = 
   const [saving, setSaving] = useState(false);
   const seed = editing ?? copyFrom;
   const [form, setForm] = useState({
-    date: editing ? String(editing.date ?? "").slice(0, 10) : new Date().toISOString().slice(0, 10),
+    date: editing ? String(editing.date ?? "").slice(0, 10) : todayYmdMY(),
     receivedFrom: seed?.receivedFrom ?? "",
     description: seed?.description ?? "",
     payTo: seed?.payTo ?? "",
@@ -13468,7 +13468,7 @@ function OfficialReceiptForm({ accounts, editing, onSaved, onCancel, copyFrom = 
         onSaved();
       } else if (j?.success) {
         toast.success("Receipt posted");
-        setForm({ date: new Date().toISOString().slice(0, 10), receivedFrom: "", description: "", payTo: "" });
+        setForm({ date: todayYmdMY(), receivedFrom: "", description: "", payTo: "" });
         setLines([{ accountCode: "", description: "", amount: "" }]);
         onSaved();
       } else toast.error(j?.error || "Save failed");
@@ -14117,7 +14117,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [amountStr, setAmountStr] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayYmdMY());
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<FtRow[] | null>(null);
@@ -14167,7 +14167,7 @@ function FundTransferTab({ accounts }: { accounts: ChartOfAccount[] }) {
         setFrom("");
         setTo("");
         setAmountStr("");
-        setDate(new Date().toISOString().slice(0, 10));
+        setDate(todayYmdMY());
         setReference("");
         load();
       } else {
@@ -15795,7 +15795,7 @@ function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope,
 function DailyCashTab() {
   const { toast } = useToast();
   const { confirm } = useConfirm();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const [date, setDate] = useState(today);
   const [data, setData] = useState<CashPosData | null>(null);
   const [reload, setReload] = useState(0);

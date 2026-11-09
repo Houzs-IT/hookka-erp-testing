@@ -10,6 +10,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureCnyCurrency } from "../lib/currency-checks";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -170,7 +171,7 @@ app.post("/", async (c) => {
       trackingNumber: body.trackingNumber ?? null,
       carrierName: body.carrierName ?? "",
       status: body.status ?? "ORDERED",
-      orderDate: body.orderDate ?? new Date().toISOString().split("T")[0],
+      orderDate: body.orderDate ?? todayYmdMY(),
       shippedDate: body.shippedDate ?? null,
       expectedArrival: body.expectedArrival ?? "",
       actualArrival: body.actualArrival ?? null,

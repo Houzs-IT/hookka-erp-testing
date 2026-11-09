@@ -32,7 +32,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { MALAYSIA_STATES, resolveStateCode } from "@/lib/malaysia-states";
@@ -1289,7 +1289,7 @@ export default function ConsignmentNotePage() {
           branchName: first.customerState || "Branch",
           // FE deliveryDate → BE sentDate. Empty string falls back to
           // server-side default (today) inside the POST handler.
-          sentDate: createCNForm.deliveryDate || new Date().toISOString().split("T")[0],
+          sentDate: createCNForm.deliveryDate || todayYmdMY(),
           consignmentOrderId: first.consignmentOrderId || null,
           // FE remarks → BE notes
           notes: createCNForm.remarks || `Created from CO ${first.consignmentOrderNo}`,
@@ -3052,7 +3052,7 @@ export default function ConsignmentNotePage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `consignment-notes-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `consignment-notes-${todayYmdMY()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

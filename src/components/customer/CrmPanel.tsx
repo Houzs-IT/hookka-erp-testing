@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Phone, Mail, Trash2, CalendarClock } from "lucide-react";
+import { todayYmdMY } from "@/lib/utils";
 
 type Contact = {
   id: string;
@@ -67,7 +68,7 @@ export function CrmPanel({ customerId }: { customerId: string; customerName?: st
   //
   // And the follow-up DATE is not required — a follow-up with no topic is the
   // thing that is actually useless, so the topic is what the reminder carries.
-  const todayIso = () => new Date().toISOString().slice(0, 10);
+  const todayIso = () => todayYmdMY();
   const [aForm, setAForm] = useState({
     activityType: "CALL",
     occurredAt: todayIso(),

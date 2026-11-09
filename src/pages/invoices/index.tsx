@@ -6,7 +6,7 @@ import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import {
   Plus,
@@ -255,7 +255,7 @@ export default function InvoicesPage() {
   const [payingInvoiceId, setPayingInvoiceId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().split("T")[0]
+    todayYmdMY()
   );
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("BANK_TRANSFER");
@@ -633,7 +633,7 @@ export default function InvoicesPage() {
     { label: "Record Payment", action: () => {
         const balance = row.totalSen - row.paidAmount;
         setPaymentAmount(String(balance / 100));
-        setPaymentDate(new Date().toISOString().split("T")[0]);
+        setPaymentDate(todayYmdMY());
         setPaymentReference("");
         setPaymentMethod("BANK_TRANSFER");
         setPayingInvoiceId(row.id);

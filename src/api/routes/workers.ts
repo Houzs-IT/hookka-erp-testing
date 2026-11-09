@@ -18,6 +18,7 @@ import { ensurePayrollTaxColumns } from "../lib/payroll-tax-columns";
 import { effectiveSalarySenForMonth } from "../../lib/labor-engine";
 import { emitAudit } from "../lib/audit";
 import { hashPin } from "../lib/auth-utils";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -357,7 +358,7 @@ app.post("/", async (c) => {
     }
 
     const id = genId();
-    const joinDate = new Date().toISOString().split("T")[0];
+    const joinDate = todayYmdMY();
     const resolvedHours =
       workingHoursPerDay ?? department.workingHoursPerDay;
 
@@ -796,7 +797,7 @@ app.put("/:id", async (c) => {
       merged.basicSalarySen !== existing.basicSalarySen
     ) {
       try {
-        const todayIso = new Date().toISOString().slice(0, 10);
+        const todayIso = todayYmdMY();
         const cur = await c.var.DB.prepare(
           "SELECT id FROM worker_salary_history WHERE workerId = ? AND effectiveFrom <= ? ORDER BY effectiveFrom DESC, createdAt DESC LIMIT 1",
         )
@@ -1163,7 +1164,7 @@ app.post("/bulk-generate-pins", async (c) => {
 /** Re-sync workers.basic_salary_sen to the row effective TODAY (newest
  *  effectiveFrom <= today), so the scalar everything else reads stays current. */
 async function resyncCurrentSalary(c: Context<Env>, workerId: string): Promise<void> {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = todayYmdMY();
   const cur = await c.var.DB.prepare(
     "SELECT basicSalarySen FROM worker_salary_history WHERE workerId = ? AND effectiveFrom <= ? ORDER BY effectiveFrom DESC, createdAt DESC LIMIT 1",
   )

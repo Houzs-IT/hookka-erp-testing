@@ -45,6 +45,7 @@ import {
   SheetsSyncNotConfiguredError,
   verifyWebhookSignature,
 } from "../lib/sheets-sync";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -272,7 +273,7 @@ app.post("/apps-script-webhook", async (c) => {
             : earliest;
         }, null);
       const currentDept = frontier?.departmentCode || "PACKING";
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayYmdMY();
       await db
         .prepare(
           `UPDATE production_orders SET progress = ?, currentDepartment = ?,

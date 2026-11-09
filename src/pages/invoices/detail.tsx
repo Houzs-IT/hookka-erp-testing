@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCache, invalidateCachePrefix, isUnknownOutcome } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { LockBanner } from "@/components/ui/lock-banner";
@@ -265,7 +265,7 @@ export default function InvoiceDetailPage() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("BANK_TRANSFER");
   const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().split("T")[0]
+    todayYmdMY()
   );
   const [paymentReference, setPaymentReference] = useState("");
 
@@ -610,7 +610,7 @@ export default function InvoiceDetailPage() {
                 size="sm"
                 onClick={() => {
                   setPaymentAmount(String(balanceSen / 100));
-                  setPaymentDate(new Date().toISOString().split("T")[0]);
+                  setPaymentDate(todayYmdMY());
                   setPaymentReference("");
                   setShowPayment(true);
                 }}
@@ -1315,7 +1315,7 @@ export default function InvoiceDetailPage() {
                   className="w-full"
                   onClick={() => {
                     setPaymentAmount(String(balanceSen / 100));
-                    setPaymentDate(new Date().toISOString().split("T")[0]);
+                    setPaymentDate(todayYmdMY());
                     setPaymentReference("");
                     setShowPayment(true);
                   }}

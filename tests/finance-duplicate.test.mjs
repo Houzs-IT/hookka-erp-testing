@@ -55,7 +55,7 @@ test("a copy is a NEW voucher: no editing id, dated today, the copy's source in 
 
 test("what a copy carries: an AP payment = creditor and paid from; never the knock-offs or the bills' description", () => {
   const copy = block(pvTab, "const openCopy = (", "const selCls =");
-  assert.match(copy, /date: new Date\(\)\.toISOString\(\)\.slice\(0, 10\), payFrom, partyKind: party\.kind, partyId: party\.id,\n\s+reference: "", description: "", advance: "", tfDue: "", tfInterest: "",/);
+  assert.match(copy, /date: todayYmdMY\(\), payFrom, partyKind: party\.kind, partyId: party\.id,\n\s+reference: "", description: "", advance: "", tfDue: "", tfInterest: "",/);
   assert.match(copy, /openCopy\(r\.pvNo, "AP", \{ ap: copyApForm\(\{ kind: r\.partyKind === "OTHER" \? "OTHER" : "SUPPLIER", id: r\.partyId \?\? "" \}, r\.payFrom \?\? ""\) \}\);/);
   // Supplier / other-creditor payments recorded on their own pages.
   assert.match(copy, /if \(g\.sp\) \{ openCopy\(g\.no, "AP", \{ ap: copyApForm\(\{ kind: "SUPPLIER", id: g\.sp\.supplierId \}, g\.sp\.bankAccount \?\? ""\) \}\); return; \}/);
@@ -98,7 +98,7 @@ test("a customer receipt copy: customer, method, amount — never the knock-offs
   assert.match(form, /useState<PaymentRecord\["method"\]>\(editing\?\.method \?\? copyFrom\?\.method \?\? "BANK_TRANSFER"\)/);
   assert.match(form, /const amountSeed = editing \?\? copyFrom;/);
   assert.match(form, /useState\(editing\?\.reference \?\? ""\)/, "the reference is the original's own");
-  assert.match(form, /\(editing\?\.date \|\| ""\)\.slice\(0, 10\) \|\| new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/, "a copy is dated today");
+  assert.match(form, /\(editing\?\.date \|\| ""\)\.slice\(0, 10\) \|\| todayYmdMY\(\)/, "a copy is dated today");
   assert.match(form, /\(\) => \(editing\?\.allocations \?\? \[\]\)\.map\(/, "allocations seed from an edit only");
   assert.doesNotMatch(form, /copyFrom\?\.allocations|copyFrom\?\.reference|copyFrom\?\.date/);
   assert.match(form, /afterWrite\(\);\n\s+if \(copyFrom\) onCancelEdit\(\);/, "the saved copy closes");
@@ -126,7 +126,7 @@ test("BUG-2026-10-20-346: after a post the picked party's bills reload", () => {
 test("an official receipt copy: from, description, bank, lines — dated today, posted as new", () => {
   const form = block(ui, "function OfficialReceiptForm(", "// =============== TAB: RECEIPTS HUB");
   assert.match(form, /const seed = editing \?\? copyFrom;/);
-  assert.match(form, /date: editing \? String\(editing\.date \?\? ""\)\.slice\(0, 10\) : new Date\(\)\.toISOString\(\)\.slice\(0, 10\),/);
+  assert.match(form, /date: editing \? String\(editing\.date \?\? ""\)\.slice\(0, 10\) : todayYmdMY\(\),/);
   assert.match(form, /seed && seed\.lines\.length > 0\n\s+\? seed\.lines\.map\(/);
   assert.match(form, /fetch\(editing \? `\/api\/accounting\/official-receipts\/\$\{encodeURIComponent\(editing\.id\)\}\/restate` : "\/api\/accounting\/official-receipts"/);
   assert.match(form, /copyFrom \? `copy of \$\{copyFrom\.orNo\} — check the date and the amounts`/);

@@ -13,6 +13,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureCnyCurrency } from "../lib/currency-checks";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -123,7 +124,7 @@ app.post("/", async (c) => {
       );
     }
     const id = genId();
-    const changedDate = body.changedDate ?? new Date().toISOString().slice(0, 10);
+    const changedDate = body.changedDate ?? todayYmdMY();
     const row = {
       id,
       bindingId: String(bindingId),

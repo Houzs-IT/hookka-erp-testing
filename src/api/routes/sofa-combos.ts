@@ -25,6 +25,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -47,7 +48,7 @@ type SofaComboRuleRow = {
 type JoinedRow = SofaComboRuleRow & { customerName: string | null };
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 
 function genId(): string {

@@ -21,7 +21,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { humanizeError } from "@/lib/humanize-error";
 import { Loader2, Plus, Trash2, X } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
 
@@ -44,7 +44,7 @@ export type SofaComboHistoryRule = {
 
 // Follows Maintenance → Sofa → Sizes (owner 2026-08-21).
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayYmdMY();
 
 const daysUntil = (iso: string): number => {
   const t = new Date(todayIso() + "T00:00:00Z").getTime();

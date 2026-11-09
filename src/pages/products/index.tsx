@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Link, useSearchParams } from "react-router-dom";
-import { bedframePrice3Sen, formatCurrency } from "@/lib/utils";
+import { bedframePrice3Sen, formatCurrency, todayYmdMY } from "@/lib/utils";
 import { isSetupField, SETUP_FIELD_LABEL, type SetupField } from "@/lib/kpi-drill";
 import { Plus, Trash2, Check, Calendar, History, Pencil, FileDown, Loader2, X as XIcon } from "lucide-react";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
@@ -965,7 +965,7 @@ type MaintenanceConfig = {
 
 // Variants live in D1 under kv_config('variants-config'); see src/lib/kv-config.ts.
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayYmdMY();
 
 const DEFAULT_MAINTENANCE_CONFIG: MaintenanceConfig = {
   divanHeights: [
@@ -2659,7 +2659,7 @@ export default function ProductsPage() {
   // Effective date defaults to today; past dates are allowed for backfill,
   // future dates park the row as Pending until that date passes.
   const [bulkEffectiveFrom, setBulkEffectiveFrom] = useState(() =>
-    new Date().toISOString().slice(0, 10),
+    todayYmdMY(),
   );
   const [bulkNotes, setBulkNotes] = useState("");
 
@@ -3091,7 +3091,7 @@ export default function ProductsPage() {
       const doc = generateProductCataloguePdf(entries, {
         categoryFilter: catFilter,
       });
-      const ts = new Date().toISOString().slice(0, 10);
+      const ts = todayYmdMY();
       const catTag = catFilter ? `-${catFilter}` : "";
       doc.save(`Product-Catalogue${catTag}-${ts}.pdf`);
     } catch (err) {
@@ -3134,7 +3134,7 @@ export default function ProductsPage() {
     try {
       // 1. Fetch the customer's assigned products (reuse the customer-quotation
       //    API which already resolves customer_products joined to products).
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayYmdMY();
       const res = await fetch(
         `/api/customer-quotation?customerId=${encodeURIComponent(customer.id)}&asOf=${today}`,
       );
@@ -3176,7 +3176,7 @@ export default function ProductsPage() {
         categoryFilter: catFilter,
       });
       const safeCode = (customer.code || customer.name).replace(/[^a-zA-Z0-9_-]+/g, "_");
-      const ts = new Date().toISOString().slice(0, 10);
+      const ts = todayYmdMY();
       const catTag = catFilter ? `-${catFilter}` : "";
       doc.save(`Product-Catalogue-${safeCode}${catTag}-${ts}.pdf`);
     } catch (err) {
@@ -3781,7 +3781,7 @@ export default function ProductsPage() {
                   costPriceSen: p.costPriceSen ? p.costPriceSen / 100 : "", // column is NOT NULL DEFAULT 0: 0 = never priced, exported blank
                   basePriceSen: p.basePriceSen == null ? "" : p.basePriceSen / 100, // null = no price; exporting 0 would re-import as a real RM 0
                 })),
-                `products-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                `products-${todayYmdMY()}.xlsx`,
               )
             }
             className="px-3 py-1.5 rounded-md text-xs font-medium bg-white text-[#6B7280] border border-[#E5E7EB] hover:bg-[#F3F4F6] transition-colors"
@@ -4680,7 +4680,7 @@ export default function ProductsPage() {
                               {p.pendingEffectiveFrom &&
                                 (() => {
                                   const t = new Date(
-                                    new Date().toISOString().slice(0, 10) +
+                                    todayYmdMY() +
                                       "T00:00:00Z",
                                   ).getTime();
                                   const d = new Date(

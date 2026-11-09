@@ -16,6 +16,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { capList } from "../lib/list-cap";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -231,7 +232,7 @@ async function replaceRackItems(
           it.sizeLabel ?? "",
           it.customerName ?? "",
           it.qty ?? 1,
-          it.stockedInDate ?? new Date().toISOString().split("T")[0],
+          it.stockedInDate ?? todayYmdMY(),
           it.notes ?? "",
         ),
     );
@@ -346,7 +347,7 @@ app.post("/", async (c) => {
       sizeLabel: body.sizeLabel ?? "",
       customerName: body.customerName ?? "",
       qty: body.qty ?? 1,
-      stockedInDate: new Date().toISOString().split("T")[0],
+      stockedInDate: todayYmdMY(),
       notes: body.notes ?? "",
     });
     await replaceRackItems(c.var.DB, rackLocationId, current, row.reserved);

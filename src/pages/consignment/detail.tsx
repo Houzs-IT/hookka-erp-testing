@@ -6,7 +6,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { formatCurrency, formatDate, formatDateTime, todayYmdMY } from "@/lib/utils";
 import {
   Trash2, Download, Edit, Copy,
   CheckCircle2, Truck, FileText, XCircle, PauseCircle, PlayCircle, X,
@@ -678,7 +678,7 @@ export default function SalesOrderDetailPage() {
       customerId: order.customerId,
       customerCOId: "",
       reference: `Clone of ${order.companyCOId}`,
-      companyCODate: new Date().toISOString().split("T")[0],
+      companyCODate: todayYmdMY(),
       customerDeliveryDate: order.customerDeliveryDate ? order.customerDeliveryDate.split("T")[0] : "",
       hookkaExpectedDD: order.hookkaExpectedDD ? order.hookkaExpectedDD.split("T")[0] : "",
       notes: order.notes || "",

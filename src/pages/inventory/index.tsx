@@ -63,6 +63,7 @@ import {
 // One money parser. NOTE: Unit M3 and Fabric Usage on this page are NOT money
 // and deliberately keep `parseFloat`.
 import { moneyFieldToSen } from "@/lib/money-field";
+import { todayYmdMY } from "@/lib/utils";
 
 // -- FIFO cost column helpers ----------------------------------------------
 // These USED to read from the module-scope `rmBatches`/`fgBatches` mock
@@ -2204,7 +2205,7 @@ export default function InventoryPage() {
                     costPriceSen: p.costPriceSen ? p.costPriceSen / 100 : "", // column is NOT NULL DEFAULT 0: 0 = never priced, exported blank
                     fabricUsage: p.fabricUsage,
                   })),
-                  `fg-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                  `fg-${todayYmdMY()}.xlsx`,
                 )
               }
             >
@@ -2662,7 +2663,7 @@ export default function InventoryPage() {
                     balanceQty: r.balanceQty,
                     isActive: r.isActive,
                   })),
-                  `rm-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                  `rm-${todayYmdMY()}.xlsx`,
                 )
               }
             >

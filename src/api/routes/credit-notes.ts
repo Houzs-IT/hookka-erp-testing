@@ -32,6 +32,7 @@ import {
   parseNoteItems,
 } from "../lib/note-edit";
 import { priceReturnLines, type InvoiceLineOfReturn, type InvoiceOfReturn, type ReturnLine } from "../../lib/cn-from-return";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -419,7 +420,7 @@ app.post("/", async (c) => {
 
     const id = genId();
     const noteNumber = await nextCNNo(c.var.DB);
-    const date = new Date().toISOString().split("T")[0];
+    const date = todayYmdMY();
     const now = new Date().toISOString();
 
     // Allow the client to create a CN already in APPROVED/POSTED (e.g. from

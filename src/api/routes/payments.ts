@@ -29,6 +29,7 @@ import { BankMatchedEditRefused } from "../../lib/bank-leg-carry";
 import type { DocState, LifecycleAction } from "../../lib/lifecycle-machine";
 import { parseDebtorCode } from "../../lib/debtor";
 import { issueDocNumber } from "../lib/doc-number-service";
+import { todayYmdMY } from "../../lib/utils";
 
 // Cash/bank account by payment method (CASH → cash-in-hand, else bank).
 function bankAcct(method: string | null | undefined): string {
@@ -728,7 +729,7 @@ app.post("/", async (c) => {
     const bodyDate = String(body.date ?? "").trim();
     const date = /^\d{4}-\d{2}-\d{2}$/.test(bodyDate)
       ? bodyDate
-      : new Date().toISOString().split("T")[0];
+      : todayYmdMY();
     const receiptNumber = body.receiptNumber || (await issueDocNumber(c.var.DB, {
       bankAccountCode: depositAcct,
       direction: "in",

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { calculateUnitPrice, calculateLineTotal } from "@/lib/pricing";
 import { distributeComboUnitPrices } from "@/api/lib/sofa-combo";
 import {
@@ -411,7 +411,7 @@ function CreateSalesOrderPage() {
   // Multi-Company Phase 2 — company this SO is booked under. Defaults to
   // HOOKKA so the default create behaviour is byte-identical to today.
   const [salesOrgCode, setSalesOrgCode] = useState<string>("HOOKKA");
-  const [companySODate, setCompanySODate] = useState(new Date().toISOString().split("T")[0]);
+  const [companySODate, setCompanySODate] = useState(todayYmdMY());
   const [customerDeliveryDate, setCustomerDeliveryDate] = useState("");
   const [hookkaExpectedDD, setHookkaExpectedDD] = useState("");
   const [notes, setNotes] = useState("");
@@ -946,7 +946,7 @@ function CreateSalesOrderPage() {
           setCustomerPOId(data.customerPOId || "");
           setCustomerSOId(data.customerSOId || "");
           setReference(data.reference || "");
-          setCompanySODate(data.companySODate || new Date().toISOString().split("T")[0]);
+          setCompanySODate(data.companySODate || todayYmdMY());
           setCustomerDeliveryDate(data.customerDeliveryDate || "");
           setHookkaExpectedDD(data.hookkaExpectedDD || "");
           setNotes(data.notes || "");
@@ -1648,7 +1648,7 @@ function CreateSalesOrderPage() {
     components: string[]; // for display
     affectedLineUids: string[];
   };
-  const todayDateStr = new Date().toISOString().slice(0, 10);
+  const todayDateStr = todayYmdMY();
   // Greedy subset matcher (Wei Siang 2026-05-05).
   //
   // Rule semantic:

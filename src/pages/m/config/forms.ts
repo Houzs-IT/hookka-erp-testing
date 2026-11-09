@@ -27,12 +27,13 @@
 // ===========================================================================
 import { type FormSpec, type FormValues, type SelectOption } from "./form-types";
 import { mutateJson, refreshList, refreshOne, newIdOf } from "./mutate";
+import { todayYmdMY } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Small shared helpers.
 // ---------------------------------------------------------------------------
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 function s(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);

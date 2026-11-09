@@ -7016,3 +7016,4 @@ Asks, in order:
 97. CSV exports: cells that start with = + - @ can no longer run as Excel formulas; every export carries the UTF-8 BOM (from the Conts / Houzs review, owner 2026-11-08).
 98. Capped lists (PV, OR, delivery returns, QC, stock adjustments, stock movements, penalties, service orders/cases, outsource piece) now flag when the newest-N cap cut rows off, and the page shows a one-time warning instead of looking complete (from the Houzs review, owner 2026-11-08).
 99. Invoices: search + filters paged server-side (were capped at 500 with a dead Prev/Next) — BUG-2026-11-09-432 (Houzs review list, owner 2026-11-08).
+100. Every "today" in src now uses Malaysia time (todayYmdMY): 189 UTC usages in 96 files returned yesterday before 08:00 MYT (Houzs review list, owner 2026-11-08).
