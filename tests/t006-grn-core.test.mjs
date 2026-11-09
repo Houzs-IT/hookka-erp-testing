@@ -73,9 +73,18 @@ function makeDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(SCHEMA);
   // Postgres raises on CAST('po_line_over_receipt:…' AS DOUBLE PRECISION).
+  // Some node:sqlite builds (seen on Node 22.14) swallow an exception thrown
+  // inside a user function and store NULL instead, which surfaced as
+  // "NOT NULL constraint failed: purchase_order_items.receivedQty" rather than
+  // the cast error the route maps to its 409. So the function records the
+  // Postgres message and run() re-raises it — the same on every Node version.
+  let castError = null;
   sqlite.function("pg_cast_double", (v) => {
     const n = Number(v);
-    if (Number.isNaN(n)) throw new Error(`invalid input syntax for type double precision: "${v}"`);
+    if (Number.isNaN(n)) {
+      castError = `invalid input syntax for type double precision: "${v}"`;
+      return null;
+    }
     return n;
   });
   const toSqlite = (sql) =>
@@ -100,7 +109,15 @@ function makeDb() {
       },
       async run() {
         if (isDdl(sql)) return { success: true, meta: { changes: 0 } };
-        const r = stmt().run(...params);
+        castError = null;
+        let r;
+        try {
+          r = stmt().run(...params);
+        } catch (e) {
+          if (castError) throw new Error(castError);
+          throw e;
+        }
+        if (castError) throw new Error(castError);
         return { success: true, meta: { changes: Number(r.changes) } };
       },
       async all() {
