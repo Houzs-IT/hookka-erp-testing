@@ -725,9 +725,12 @@ export default function SalesOrderDetailPage() {
   // backend 409 still hard-blocks on click as a defense-in-depth.
   const { data: eligibilityResp, refresh: refreshEligibility } = useCachedJson<{
     editable: boolean;
-    reason?: "status" | "production_window" | "dept_completed";
+    reason?: "status" | "production_window" | "dept_completed" | "production_started";
     completedDept?: string;
     completedAt?: string;
+    // reason="production_started": the first job card that left WAITING.
+    startedDept?: string;
+    jcStatus?: string;
     // Rule-3 fields: only present when reason="production_window".
     earliestJcDueDate?: string;
     cutoffDate?: string;
@@ -737,6 +740,13 @@ export default function SalesOrderDetailPage() {
     ? `Cannot cancel — ${eligibilityResp?.completedDept || "A department"} completed on ${formatDate(eligibilityResp?.completedAt || "")}`
     : "";
   const productionWindowLocked = eligibilityResp?.reason === "production_window";
+  // The server locks an IN_PRODUCTION SO once any job card has left WAITING.
+  // The Edit button used to vanish with no explanation (owner 2026-11-09:
+  // "production 还没开始 edit 不到"), so say which department holds it.
+  const productionStartedLocked = eligibilityResp?.reason === "production_started";
+  const productionStartedReason = productionStartedLocked
+    ? `Locked — ${eligibilityResp?.startedDept || "a department"} job card is ${(eligibilityResp?.jcStatus || "started").replace(/_/g, " ").toLowerCase()}${eligibilityResp?.completedAt ? ` (completed ${formatDate(eligibilityResp.completedAt)})` : ""}. Editing would rebuild production orders over that work.`
+    : "";
 
   // Override-Lock modal state. Only ADMIN / SUPER_ADMIN see the trigger
   // button — the role gate is below near `canOverride`. The modal collects a
@@ -1170,7 +1180,7 @@ export default function SalesOrderDetailPage() {
 
   return (
     <div className="space-y-6 max-md:space-y-4">
-      <LockBanner reason={lockReason} />
+      <LockBanner reason={lockReason ?? (productionStartedLocked ? productionStartedReason.replace(/^Locked — /, "") : null)} />
 
       {/* Confirmation Modal */}
       <ConfirmModal
@@ -1382,6 +1392,11 @@ export default function SalesOrderDetailPage() {
                 disabled "Edit (locked)" with a tooltip explaining the cutoff;
                 ADMIN / SUPER_ADMIN see the same disabled chip PLUS an amber
                 "Override Lock" button that opens the reason-capture modal. */}
+            {!canEdit && productionStartedLocked && (
+              <Button variant="outline" size="sm" disabled title={productionStartedReason}>
+                <Edit className="h-4 w-4" /> Edit (locked)
+              </Button>
+            )}
             {!canEdit && productionWindowLocked && (
               <>
                 <Button
