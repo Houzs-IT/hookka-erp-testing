@@ -181,6 +181,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     window.location.href = `/login?next=${encodeURIComponent(intended)}`;
   }
 
+  // ---- capped lists ------------------------------------------------------
+  // A list endpoint that stops at its newest N rows says so with
+  // X-List-Truncated (src/api/lib/list-cap.ts). Raised here so every capped
+  // list warns the operator without touching its page.
+  if (isApiRequest(url) && response.ok) {
+    const cap = Number(response.headers.get("X-List-Truncated") ?? "");
+    if (cap > 0) {
+      window.dispatchEvent(
+        new CustomEvent("hookka:list-truncated", { detail: { path: pathOf(url), cap } }),
+      );
+    }
+  }
+
   // ---- movementErrors --------------------------------------------------
   // Some writes commit the DOCUMENT and then fail a downstream MOVEMENT: a
   // job card saves but the raw-material consume and its cost-ledger row never

@@ -7014,3 +7014,4 @@ Asks, in order:
 95. From the Houzs / Conts review (owner 2026-11-08): do the approved list. Hookka allows over-receipt (no guard); PO price 0 is fine, stock cost follows the PI price. First: paged lists end their sort on the id.
 96. PO, GRN and PI create screens send an Idempotency-Key; PO create honours it (from the Houzs review, owner 2026-11-08).
 97. CSV exports: cells that start with = + - @ can no longer run as Excel formulas; every export carries the UTF-8 BOM (from the Conts / Houzs review, owner 2026-11-08).
+98. Capped lists (PV, OR, delivery returns, QC, stock adjustments, stock movements, penalties, service orders/cases, outsource piece) now flag when the newest-N cap cut rows off, and the page shows a one-time warning instead of looking complete (from the Houzs review, owner 2026-11-08).

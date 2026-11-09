@@ -45,6 +45,7 @@ import {
   type SpawnLineInput,
   type ValidatedLine,
 } from "../../lib/service-order-modes";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 
@@ -452,7 +453,7 @@ app.get("/", async (c) => {
 
   const [orderRes, lineRes, returnRes] = await Promise.all([
     c.var.DB.prepare(
-      `SELECT * FROM service_orders ${where} ORDER BY created_at DESC LIMIT 500`,
+      `SELECT * FROM service_orders ${where} ORDER BY created_at DESC LIMIT 501`,
     )
       .bind(...params)
       .all<ServiceOrderRow>(),
@@ -461,7 +462,7 @@ app.get("/", async (c) => {
   ]);
   const lines = lineRes.results ?? [];
   const returns = returnRes.results ?? [];
-  const data = (orderRes.results ?? []).map((r) => rowToApi(r, lines, returns));
+  const data = capList(c, orderRes.results, 500).map((r) => rowToApi(r, lines, returns));
   return c.json({ success: true, data, total: data.length });
 });
 

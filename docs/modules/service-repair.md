@@ -117,7 +117,7 @@ legacy path) plus component-level picks on `affectedProducts[].components`, all 
 | `STATUS_TRANSITIONS` (case) | `src/api/routes/service-cases.ts:60` | Legal case status moves |
 | `sanitizeRootCauses` / `synthesizeRootCauses` | `src/api/routes/service-cases.ts:178 / 208` | RCA normalization |
 | `app.post("/")` (SV-order create) | `src/api/routes/service-orders.ts:556` | Plural SV order create (`ensureServiceOrderMigrations` `:531`) |
-| `app.put("/:id/mode")` | `src/api/routes/service-orders.ts:1214` | Set SV-order mode/scope |
+| `app.put("/:id/mode")` | `src/api/routes/service-orders.ts:1222` | Set SV-order mode/scope |
 | `app.post("/:id/returns")` | `src/api/routes/service-orders.ts:1481` | Record a return line |
 | `app.post("/:id/returns/:rid/scrap")` | `src/api/routes/service-orders.ts:1682` | Scrap a return → `stock_movements`/`cost_ledger` |
 | `deriveTopLevelWipKey` | `src/api/lib/bom-wip-breakdown.ts:125` | THE shared WIP-key formula (repair scope + job cards) |

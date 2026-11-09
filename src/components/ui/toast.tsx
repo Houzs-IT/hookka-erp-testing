@@ -41,6 +41,8 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 const DURATION_MS = 4000;
 const MAX_TOASTS = 5;
+// Lists already warned about being capped this session (see onTruncated).
+const warnedTruncated = new Set<string>();
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -268,6 +270,24 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("hookka:movement-error", onMovementError);
     return () =>
       window.removeEventListener("hookka:movement-error", onMovementError);
+  }, [addToast]);
+
+  // A list that stopped at its newest N rows (X-List-Truncated). Warn once per
+  // list per session — the page re-fetches on every filter change and a toast
+  // each time would be noise.
+  useEffect(() => {
+    const onTruncated = (e: Event) => {
+      const d = (e as CustomEvent<{ path?: string; cap?: number }>).detail;
+      const path = d?.path ?? "";
+      if (!d?.cap || warnedTruncated.has(path)) return;
+      warnedTruncated.add(path);
+      addToast(
+        "warning",
+        `Only the newest ${d.cap} records are shown. Use the date range, status or search to find older ones.`,
+      );
+    };
+    window.addEventListener("hookka:list-truncated", onTruncated);
+    return () => window.removeEventListener("hookka:list-truncated", onTruncated);
   }, [addToast]);
 
   const toast = {

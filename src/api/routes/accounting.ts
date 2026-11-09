@@ -146,6 +146,7 @@ import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, buildSupplie
 // PV attachments ride the generic file store (Supabase Storage + file_assets)
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 
@@ -13203,7 +13204,7 @@ app.get("/payment-vouchers", async (c) => {
             AND payment_vouchers.pv_kind = 'AP'
           WHERE (dl.state IS NULL OR dl.state <> 'DELETED')
             AND (sdl.state IS NULL OR sdl.state <> 'DELETED')
-          ORDER BY date DESC, pvNo DESC LIMIT 500`,
+          ORDER BY date DESC, pvNo DESC LIMIT 501`,
       ).all(),
       c.var.DB.prepare(
         `SELECT * FROM payment_voucher_lines ORDER BY lineOrder`,
@@ -13236,7 +13237,8 @@ app.get("/payment-vouchers", async (c) => {
     }
     // Open (unapplied) advance per posted supplier AP voucher — the row's
     // "ADVANCE OPEN" state; knock-off decrements the advance row in place.
-    const apAdvanceNos = (pvRes.results ?? [])
+    const pvRows = capList(c, pvRes.results, 500);
+    const apAdvanceNos = pvRows
       .map((v) => v as Record<string, unknown>)
       .filter((r) => String(r.pvKind ?? r.pv_kind ?? "") === PV_KIND_AP && Math.round(Number(r.advanceSen ?? r.advance_sen) || 0) > 0)
       .map((r) => String(r.pvNo ?? r.pv_no ?? ""))
@@ -13262,7 +13264,7 @@ app.get("/payment-vouchers", async (c) => {
     // Resolve the ladder actors to display names so the printed voucher can
     // carry "Prepared by / Checked by / Approved by" with real names.
     const actorIds = new Set<string>();
-    for (const v of pvRes.results ?? []) {
+    for (const v of pvRows) {
       const r = v as Record<string, unknown>;
       for (const k of ["preparedBy", "prepared_by", "checkedBy", "checked_by", "approvedBy", "approved_by", "createdBy", "created_by", "fxBankConfirmedBy", "fx_bank_confirmed_by"]) {
         const id = r[k]; if (typeof id === "string" && id) actorIds.add(id);
@@ -13279,7 +13281,7 @@ app.get("/payment-vouchers", async (c) => {
     // Today's code for a renamed account (class C32), as the receipts read.
     const resolveCode = await loadAccountResolver(c.var.DB);
     const rc = (v: unknown) => (typeof v === "string" && v ? resolveCode(v) : v);
-    const data = (pvRes.results ?? []).map((v) => {
+    const data = pvRows.map((v) => {
       const r = v as Record<string, unknown>;
       const id = String(r.id);
       const isAp = String(r.pvKind ?? r.pv_kind ?? "") === PV_KIND_AP;
@@ -14128,7 +14130,7 @@ app.get("/official-receipts", async (c) => {
            ON dl.sourceType = 'official_receipt'
           AND dl.sourceId = official_receipts.id
          WHERE (dl.state IS NULL OR dl.state <> 'DELETED')
-         ORDER BY date DESC, orNo DESC LIMIT 500`,
+         ORDER BY date DESC, orNo DESC LIMIT 501`,
       ).all(),
       c.var.DB.prepare(
         `SELECT * FROM official_receipt_lines ORDER BY lineOrder`,
@@ -14140,7 +14142,7 @@ app.get("/official-receipts", async (c) => {
     // 440-0040, and the form showed an empty account).
     const resolve = await loadAccountResolver(c.var.DB);
     const lines = (lineRes.results ?? []) as { receiptId: string; accountCode: string }[];
-    const data = (orRes.results ?? []).map((r) => {
+    const data = capList(c, orRes.results, 500).map((r) => {
       const row = r as { id: string; payTo?: string | null };
       return {
         ...(r as object),

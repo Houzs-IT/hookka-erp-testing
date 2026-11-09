@@ -22,6 +22,7 @@ import { emitAudit } from "../lib/audit";
 import { freshAll, freshFirst, loadLockedPayrollPeriods } from "../lib/worker-penalties";
 import { ensureOutsourcePieceTables, findPieceDrift } from "../lib/outsource-piece";
 import { orderRate, pieceAmountSen, pieceItemCode, pieceItemsForOrder } from "../../lib/outsource-piece";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 const RES = "payroll";
@@ -185,9 +186,9 @@ app.get("/importable", async (c) => {
          LEFT JOIN outsource_piece_records r ON r.production_order_id = po.id
         WHERE po.org_id = ? AND ${finished} ${search}
         ORDER BY finished_date DESC NULLS LAST, po.po_no DESC
-        LIMIT 300`,
+        LIMIT 301`,
     ).bind(...binds),
-  );
+  ).then((r) => capList(c, r, 300));
   const rateMap = await loadRateMap(c, workerId);
   const sewLabels = await loadSewLabels(c, rows.map((o) => s(o.id)));
   const data = rows.map((o) => {

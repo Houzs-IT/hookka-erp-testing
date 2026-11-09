@@ -44,6 +44,7 @@ import {
   type PenaltyRow,
   type PenaltyRecord,
 } from "../lib/worker-penalties";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 const RES = "worker-penalties";
@@ -288,10 +289,10 @@ app.get("/", async (c) => {
     c.var.DB,
     c.var.DB.prepare(
       `SELECT ${PENALTY_HEADER_COLS} FROM worker_penalties${where}
-        ORDER BY penalty_date DESC, penalty_no DESC LIMIT 500`,
+        ORDER BY penalty_date DESC, penalty_no DESC LIMIT 501`,
     ).bind(...binds),
   );
-  const data = await loadPenaltiesWithLines(c.var.DB, headerRows);
+  const data = await loadPenaltiesWithLines(c.var.DB, capList(c, headerRows, 500));
 
   // Status counts over the whole table, so the filter chips can show them.
   const countRows = await freshAll<{ status: string; n: number | string }>(
