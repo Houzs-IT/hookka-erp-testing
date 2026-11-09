@@ -31,6 +31,16 @@ test("the page lists the customers under Sales and saves their cells", () => {
   assert.match(page, /label: `\$\{ym\} \$\{/);
 });
 
+test("a save drops the Cash Flow forecast the browser keeps, so the next look waits for the new figures (owner 2026-11-09 「好，改」)", () => {
+  // The Cash Flow forecast is read through useCachedJson, kept in
+  // localStorage: opened again after a save it painted the last copy for the
+  // ~6 s the new one takes, with no sign it was old. The Capex & financing
+  // save already drops it the same way.
+  assert.match(page, /import \{ invalidateCachePrefix \} from "@\/lib\/cached-fetch";/);
+  const ok = page.slice(page.indexOf("if (res.ok && j?.success) {"), page.indexOf("\n", page.indexOf("if (res.ok && j?.success) {")));
+  assert.match(ok, /invalidateCachePrefix\("\/api\/accounting\/cashflow-forecast"\)/, "only on a successful save");
+});
+
 test("snapshot: a customer cell is a change; keying and clearing it again is not", () => {
   const base = { "2026-12": { salesStr: "", pct: {} } };
   const snap = forecastSnapshot(base);
