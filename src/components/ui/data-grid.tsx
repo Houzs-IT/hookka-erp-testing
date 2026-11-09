@@ -29,6 +29,9 @@ import {
   columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
 import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
+import { useSearchParams } from "react-router-dom";
+import { browserOwnsCopy, rangeStats, rangeToTsv, rectCellCount, rectContains, rectFrom, rowsToTsv, writeClipboardText, type CellPos, type CellRect } from "@/lib/grid-clipboard";
+import { readGridUrlState, sameParams, writeGridUrlState } from "@/lib/grid-url-state";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -364,6 +367,20 @@ export type DataGridProps<T> = {
   checkboxSelectOnly?: boolean;
   // The search box's hint (default "Search...").
   searchPlaceholder?: string;
+  // Cell copy + range-sum (2026-11-08, src/lib/grid-clipboard.ts). Click a
+  // cell, Shift+click another → a highlighted cell range; Ctrl/Cmd+C copies it
+  // as tab-separated text (pastes cell-for-cell into Excel) and the status bar
+  // shows Sum / Count / Avg over its numeric cells (money as RM). With no
+  // range, Ctrl/Cmd+C copies the selected rows (header + visible columns).
+  // Default ON; pass `cellCopy={false}` to opt a grid out.
+  cellCopy?: boolean;
+  // Mirror the search text + column TEXT filters into the URL
+  // (`?<gridId>.q=` / `?<gridId>.f.<col>=`, src/lib/grid-url-state.ts) and
+  // read them back on mount, so a filtered view survives reload and can be
+  // shared. Needs `gridId`. Default: ON for a grid with a gridId that does NOT
+  // manage its own search (no `onSearchChange` / `initialSearch`); pass
+  // `urlFilters` to force it on, `urlFilters={false}` to opt out.
+  urlFilters?: boolean;
 };
 
 type SavedView = {
@@ -1797,6 +1814,8 @@ export function DataGrid<T extends Record<string, any>>({
   reorderableHeaders,
   checkboxSelectOnly,
   searchPlaceholder,
+  cellCopy = true,
+  urlFilters,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -2335,7 +2354,13 @@ export function DataGrid<T extends Record<string, any>>({
   // gone"). A visible search term explains its own empty result; an invisible
   // column filter does not.
   const seededFilters = null as typeof seeded;
-  const [searchText, setSearchText] = useState(initialSearch ?? seeded?.searchText ?? "");
+  // URL filters (2026-11-08): read once on mount. A shared / reloaded link
+  // wins over the sessionStorage tab-hop copy; a page's own initialSearch
+  // still wins over both. See src/lib/grid-url-state.ts.
+  const urlSyncOn = !!gridId && (urlFilters ?? (!onSearchChange && initialSearch === undefined));
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [urlSeed] = useState(() => (urlSyncOn && gridId ? readGridUrlState(searchParams, gridId) : null));
+  const [searchText, setSearchText] = useState(initialSearch ?? (urlSeed?.search || seeded?.searchText) ?? "");
   // Deferred copy of the search value. The <input> stays bound to searchText
   // (instant caret/echo), but the heavy filter+sort AND the parent
   // onSearchChange notification read deferredSearch — so a fast typist no
@@ -2344,8 +2369,28 @@ export function DataGrid<T extends Record<string, any>>({
   // Same data shown, just deferred a frame. (Wei Siang 2026-06-04 input-lag fix)
   const deferredSearch = useDeferredValue(searchText);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(
-    seededFilters?.columnFilters ?? {},
+    urlSeed && Object.keys(urlSeed.columnFilters).length > 0
+      ? urlSeed.columnFilters
+      : seededFilters?.columnFilters ?? {},
   );
+  // Write search + text filters back to the URL, replace-style (no history
+  // spam), 400 ms after the last change so typing never navigates per key.
+  // Compared against the live location first, so an unchanged state is a
+  // no-op. Every other query key (the page's ?tab=, another grid) is kept.
+  const setSearchParamsRef = useRef(setSearchParams);
+  useEffect(() => {
+    setSearchParamsRef.current = setSearchParams;
+  }, [setSearchParams]);
+  useEffect(() => {
+    if (!urlSyncOn || !gridId || typeof window === "undefined") return;
+    // eslint-disable-next-line no-restricted-syntax -- debounce of a URL write, cleared in this effect's cleanup
+    const t = window.setTimeout(() => {
+      const cur = new URLSearchParams(window.location.search);
+      const next = writeGridUrlState(cur, gridId, { search: searchText, columnFilters });
+      if (!sameParams(cur, next)) setSearchParamsRef.current(next, { replace: true, preventScrollReset: true });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [urlSyncOn, gridId, searchText, columnFilters]);
   const [columnValueFilters, setColumnValueFilters] = useState<Record<string, Set<string>>>(
     () => {
       if (!seededFilters?.columnValueFilters) return {};
@@ -2811,18 +2856,55 @@ export function DataGrid<T extends Record<string, any>>({
     else { setSortKey(null); setSortDir("asc"); }
   }, [sortKey, sortDir]);
 
+  // Cell range for copy / range-sum. Pinned to the displayedData array it
+  // was made against: any filter / sort / refresh produces a new array, and
+  // the stale range simply stops applying (no effect needed to clear it).
+  const [cellSel, setCellSel] = useState<{ anchor: CellPos; rect: CellRect; data: T[] } | null>(null);
+  const activeRect: CellRect | null = cellCopy && cellSel && cellSel.data === displayedData ? cellSel.rect : null;
+  const showRange = rectCellCount(activeRect) >= 2;
+  const rangeSummary = useMemo(
+    () => (showRange && activeRect ? rangeStats(displayedData, visibleColumns, activeRect) : null),
+    [showRange, activeRect, displayedData, visibleColumns],
+  );
+
   const handleRowClick = useCallback((e: React.MouseEvent, row: T, index: number) => {
+    // Cell range (2026-11-08): the clicked <td> carries data-dg-col. Plain
+    // click = new anchor; Shift+click = rectangle from the anchor; Ctrl/Cmd+
+    // click = row multi-select, so the range is dropped and Ctrl+C copies rows.
+    if (cellCopy) {
+      const td = (e.target as HTMLElement | null)?.closest?.("td[data-dg-col]");
+      const colIdx = td ? Number(td.getAttribute("data-dg-col")) : NaN;
+      if (Number.isFinite(colIdx)) {
+        const here: CellPos = { row: index, col: colIdx };
+        if (e.shiftKey && cellSel && cellSel.data === displayedData) {
+          setCellSel({ anchor: cellSel.anchor, rect: rectFrom(cellSel.anchor, here), data: displayedData });
+          // Shift+click also paints a native text selection, which would
+          // make Ctrl+C copy that text instead of the range.
+          window.getSelection()?.removeAllRanges();
+        } else if (e.ctrlKey || e.metaKey) {
+          setCellSel(null);
+        } else {
+          setCellSel({ anchor: here, rect: rectFrom(here, here), data: displayedData });
+        }
+      }
+    }
     if (checkboxSelectOnly) {
       lastClickedIndex.current = index;
       onRowClick?.(row);
       return;
     }
     const key = String(getNestedValue(row, keyField));
+    // Read the anchor NOW, not inside the updater: React may run the updater
+    // lazily on the next render (it does whenever another state update is
+    // already queued in this event — e.g. setCellSel above), by which time
+    // `lastClickedIndex.current` below has been moved to `index` and the
+    // Shift+click range collapsed to one row.
+    const anchorIndex = lastClickedIndex.current;
     setSelectedKeys(prev => {
       const next = new Set(prev);
-      if (e.shiftKey && lastClickedIndex.current !== null) {
-        const start = Math.min(lastClickedIndex.current, index);
-        const end = Math.max(lastClickedIndex.current, index);
+      if (e.shiftKey && anchorIndex !== null) {
+        const start = Math.min(anchorIndex, index);
+        const end = Math.max(anchorIndex, index);
         for (let i = start; i <= end; i++) {
           next.add(String(getNestedValue(displayedData[i], keyField)));
         }
@@ -2837,7 +2919,54 @@ export function DataGrid<T extends Record<string, any>>({
     });
     lastClickedIndex.current = index;
     onRowClick?.(row);
-  }, [keyField, sortedData, onRowClick, checkboxSelectOnly]);
+  }, [keyField, displayedData, onRowClick, checkboxSelectOnly, cellCopy, cellSel]);
+
+  // Ctrl/Cmd+C → tab-separated text. Active only after a mousedown inside
+  // this grid's table (so two grids on a page don't both copy), and never
+  // when focus is in an input or the user has highlighted text — the browser
+  // keeps its normal copy then. 2+ cell range → those cells; else selected
+  // rows (header + visible columns); else the single clicked cell.
+  const { toast: copyToast } = useToast();
+  const gridActiveRef = useRef(false);
+  const buildCopyRef = useRef<() => { text: string; what: string } | null>(() => null);
+  useEffect(() => {
+    buildCopyRef.current = () => {
+      if (activeRect && rectCellCount(activeRect) >= 2) {
+        const n = rectCellCount(activeRect);
+        return { text: rangeToTsv(displayedData, visibleColumns, activeRect), what: `${n} cells` };
+      }
+      const rows = sortedData.filter((r) => selectedKeys.has(String(getNestedValue(r, keyField))));
+      if (rows.length > 0) {
+        return { text: rowsToTsv(rows, visibleColumns), what: `${rows.length} row${rows.length === 1 ? "" : "s"}` };
+      }
+      if (activeRect) return { text: rangeToTsv(displayedData, visibleColumns, activeRect), what: "1 cell" };
+      return null;
+    };
+  });
+  useEffect(() => {
+    if (!cellCopy) return;
+    const onDown = (e: MouseEvent) => {
+      gridActiveRef.current = !!scrollRef.current?.contains(e.target as Node);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (!gridActiveRef.current) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "c") return;
+      if (browserOwnsCopy(document.activeElement, window.getSelection()?.toString() ?? "")) return;
+      const payload = buildCopyRef.current();
+      if (!payload) return;
+      e.preventDefault();
+      void writeClipboardText(payload.text).then((ok) => {
+        if (ok) copyToast.success(`Copied ${payload.what} — paste into Excel`);
+        else copyToast.error("Copy failed — your browser blocked clipboard access");
+      });
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [cellCopy, copyToast]);
 
   // The rows last handed to onSelectionChange — see the identity guard below.
   const lastEmittedSelection = useRef<T[] | null>(null);
@@ -3702,6 +3831,7 @@ export function DataGrid<T extends Record<string, any>>({
                           onDoubleClick={checkboxSelectOnly ? (e) => e.stopPropagation() : undefined}
                           onClick={(e) => {
                             e.stopPropagation();
+                            setCellSel(null);
                             setSelectedKeys(prev => {
                               const next = new Set(prev);
                               if (next.has(key)) next.delete(key);
@@ -3722,8 +3852,9 @@ export function DataGrid<T extends Record<string, any>>({
                           />
                         </td>
                       )}
-                      {visibleColumns.map(col => {
+                      {visibleColumns.map((col, colIdx) => {
                         const value = getNestedValue(row, col.key);
+                        const inRange = showRange && rectContains(activeRect, index, colIdx);
                         const stickyLeft = stickyOffsets.get(col.key);
                         const isSticky = stickyLeft !== undefined;
                         // Cell-content sizing ("fit fit", 2026-06-11). For a
@@ -3770,7 +3901,9 @@ export function DataGrid<T extends Record<string, any>>({
                               isSticky && isEven && "bg-[#FAFAFA]",
                               isSticky && rowClassName?.(row),
                               isSticky && isSelected && "!bg-[#CCE0FF]",
+                              inRange && "!bg-[#B9D3F5]",
                             )}
+                            data-dg-col={colIdx}
                             style={{
                               height: "26px",
                               lineHeight: "20px",
@@ -4098,6 +4231,15 @@ export function DataGrid<T extends Record<string, any>>({
                 : `Record 1 of ${sortedData.length.toLocaleString()}`;
             })()}
           </span>
+          {/* Range-sum readout (2026-11-08): 2+ numeric cells in the
+              Shift+click range. Money columns sum in sen → RM. */}
+          {rangeSummary && (
+            <span data-dg="range-sum" className="rounded bg-white border border-[#D8D2CB] px-2 py-0.5 font-medium text-[#1F1D1B]">
+              Sum {rangeSummary.money ? formatRM(rangeSummary.sum) : formatNumber(rangeSummary.sum)}
+              {" · "}Count {rangeSummary.count}
+              {" · "}Avg {rangeSummary.money ? formatRM(rangeSummary.avg) : formatNumber(rangeSummary.avg)}
+            </span>
+          )}
           {/* Row cap pill — filter / sort / search still act on the full
               sortedData; this only toggles how many rows are painted. */}
           {rowCapActive && (

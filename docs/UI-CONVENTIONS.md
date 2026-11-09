@@ -76,3 +76,12 @@ Search the git log for these to see worked examples:
 - Confirm dialog system: `86cb0f65`. MoneyInput: `3beaf14d`. Material picker: `5324025d`.
 - Detail-header unification onto `ObjectPageHeader`: `58a3e424`, `599eb94f`, `852c7e68`.
 - Scan-button placement next to Create: `063d1da2`, `43b835e0`.
+
+## Data grid: copy, range sum, URL filters (2026-11-09)
+
+`src/components/ui/data-grid.tsx` (helpers `src/lib/grid-clipboard.ts`, `src/lib/grid-url-state.ts`):
+
+- **Copy** — click a cell, Shift+click another to select a range; Ctrl/Cmd+C copies it as tab-separated text (pastes into Excel). With no range, the selected rows are copied with a header row.
+- **Range sum** — a numeric range shows `Sum / Count / Avg`; money columns are summed in sen and shown as RM.
+- **URL filters** — search text and column text filters are mirrored to `?<gridId>.q=` / `?<gridId>.f.<col>=` and read back on load, so a filtered view survives reload and can be shared. On by default only for grids with a `gridId` that don't run their own search; checkbox value filters are never put in the URL.
+- Opt out per grid with `cellCopy={false}` / `urlFilters={false}`.
