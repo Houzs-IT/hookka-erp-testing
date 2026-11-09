@@ -113,10 +113,9 @@ import { todayYmdMY } from "../../lib/utils";
 // never requested and warmed a snapshot nobody read; it was reverted. The only
 // way that cannot recur is for both sides to call the same function.
 //
-// NOTE the timezone: this key uses UTC (new Date().toISOString()), NOT the
-// MYT-shifted day the dept SHEET key uses. Different endpoints, different
-// existing behaviour - deliberately preserved rather than "harmonised", since
-// changing it here would silently orphan every stored snapshot row.
+// NOTE the timezone: since #1217 (every "today" in Malaysia time) this key
+// uses the MYT day, like the dept SHEET key. It used to be the UTC day; the
+// switch cost one cold snapshot. The name is kept so callers don't churn.
 // ---------------------------------------------------------------------------
 export function overdueTodayUtc(): string {
   return todayYmdMY();

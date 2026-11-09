@@ -50,9 +50,12 @@ const { default: productionOrders } = await import(
 // rewrite that turns them back.
 const toCamel = (s) => s.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
 
-const TODAY = new Date().toISOString().slice(0, 10);
+// Malaysia days: since #1217 every server "today" is todayYmdMY(). A UTC day
+// here made these tests fail between 00:00 and 08:00 MYT.
+const MYT_MS = 8 * 3600000;
+const TODAY = new Date(Date.now() + MYT_MS).toISOString().slice(0, 10);
 const daysAgo = (n) =>
-  new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  new Date(Date.now() + MYT_MS - n * 86400000).toISOString().slice(0, 10);
 
 function makeDb(orders, cards) {
   const db = new DatabaseSync(":memory:");

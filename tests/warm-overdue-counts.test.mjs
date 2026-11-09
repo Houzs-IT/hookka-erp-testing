@@ -58,19 +58,20 @@ test("the key helper is exported and stable in shape", async () => {
   );
 });
 
-test("the day is UTC here - NOT the MYT day the dept sheet key uses", async () => {
+test("the overdue-counts key day is the Malaysia day (since #1217)", async () => {
   const { overdueTodayUtc } = await import(
     "../src/api/routes/production-orders.ts"
   );
-  // Deliberately different from todayMytISO() in _helpers.ts. Harmonising them
-  // would silently orphan every stored overdue snapshot row, so the difference
-  // is pinned rather than "cleaned up" by a future reader.
-  assert.equal(overdueTodayUtc(), new Date().toISOString().slice(0, 10));
+  // #1217 (owner 2026-11-08: every "today" in Malaysia time) moved this key
+  // from the UTC day to todayYmdMY(). The route and the warm cron both call
+  // this one function, so they still agree; the only cost was one cold
+  // snapshot the day it shipped. Pinned so the two never drift apart again.
+  assert.equal(overdueTodayUtc(), new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
   const helpers = flat("src/api/routes/production-orders/_helpers.ts");
   assert.match(
     helpers,
     /8 \* 60 \* 60 \* 1000/,
-    "the dept-sheet helper still uses the MYT shift - the two are intentionally different",
+    "the dept-sheet helper uses the MYT shift too",
   );
 });
 
