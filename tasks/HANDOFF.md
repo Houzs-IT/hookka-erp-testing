@@ -1,6 +1,6 @@
 # Handoff — current state, what's next, what's blocked
 
-_Last updated: 2026-11-09 night (MacBook session: #1234 / #1235 merged, #1240 opened)._
+_Last updated: 2026-11-10 (MacBook session: #1241–#1243 merged, prod checks done, board report rebuilt)._
 Keep this file current in the same PR that changes state (global rule §6/§8).
 
 ## How to pick this up on another machine (MacBook)
@@ -24,11 +24,13 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs (at time of writing)
 
-None — #1234, #1235, #1240 and this handoff (#1239) were all merged on 2026-11-09.
+None — everything from 2026-11-09/10 is merged (#1234, #1235, #1239, #1240, #1241, #1242, #1243).
 
 If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONFLICTING (conflicts are almost always only `docs/WORK-TRACKER.md` — keep both sides).
 
-**Known local issue (MacBook):** `tests/t006-grn-core.test.mjs` has 4 failures locally (`NOT NULL constraint failed: purchase_order_items.receivedQty`), already on main before 2026-11-09's merges — the pre-commit hook therefore fails on this machine. Not caused by any open PR; worth a look (likely the local SQLite build vs the test's schema).
+~~Known local issue (MacBook): 4 GRN test failures~~ — fixed in #1242 (node:sqlite on Node 22.14 swallowed the test shim's thrown cast error; CI's Node 20 skips these tests). Two date tests that failed 00:00–08:00 MYT since #1217 were fixed in #1241.
+
+**Memory budget:** the owner runs a Houzs ERP session on the same MacBook — keep all sessions under **16 GB**. Run targeted tests locally and leave the full suite to CI.
 
 ## Merged in this run (2026-11-08/09) — from the Houzs / Conts review list
 
@@ -41,17 +43,19 @@ If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONF
 #1230 locked SO says which department holds it · #1231 in-app confirms, multi-word search, consolidated save blockers ·
 #1233 FE quality batch (real error reasons, PDF text clean-up, number-input wheel guard, dropdown flip, MRP sticky header, header wrap) ·
 #1234 security batch (default-deny RBAC test, text caps, signed-in devices, query-in-loop guard) · #1235 grid copy / range sum / URL filters ·
-#1240 batch B of saves that acted "saved" on a refusal (cash flow, employees/payroll/leave, PO mark-emailed, organisations, assistant; BOM migration data-loss guard).
+#1240 batch B of saves that acted "saved" on a refusal (cash flow, employees/payroll/leave, PO mark-emailed, organisations, assistant; BOM migration data-loss guard) ·
+#1241 `GET /api/products/new-models?from=&to=` — new models by product created date, one per family, Catalog cover photo inlined, bedframe Q/K/SK + sofa combo prices (no UI button, owner's choice) · #1242 GRN test shim fix · #1243 export polish (unpriced → "No price set yet", per-customer combo ranges, charge lines skipped).
 
 ## Still to verify on prod (not yet observed)
 
-- MRP page `/planning/mrp`: header row + Material column stay fixed while scrolling (#1233).
+- ~~MRP sticky header~~ — **checked 2026-11-10**: `thead` is `position: sticky; top: 0` inside the scroll box and the Material column is `sticky; left: 0` (#1233). The MRP has not been run since 28 Aug, so the table was empty; a real scroll is still unobserved.
 - ~~`GET /api/health` shows a commit~~ — **verified 2026-11-09**: returns `"commit": "095750132…"` (#1229).
-- #1234: signed-in devices list loads; signing one device out gives it 401; a 5,001-char SO note is refused with 400. Watch for errors from the throttled `last_seen_at` update.
+- #1234: ~~device list loads~~ **verified 2026-11-10** (4 sessions, current flagged, `lastSeenAt` set). Still unobserved (they write to prod — owner to try, or approve): signing one device out gives it 401; a 5,001-char SO note is refused with 400.
 - #1235: a real Ctrl/Cmd+C from a grid pastes into Excel.
 - #1240: a refused save (e.g. a leave request the server rejects) shows the server's reason and the form stays open.
 - Lead create with a phone already on a lead → "Possible duplicate lead" dialog (#1229).
-- Two-word grid search, e.g. "ivory 151" (#1231); save-blocker toast listing several problems (#1231).
+- ~~Two-word grid search~~ **verified 2026-11-10** on Products: "kabbin 1a" → only the two KABBIN 1A rows (#1231). Save-blocker toast listing several problems (#1231): still unobserved.
+- ~~#1241 new models export~~ **verified 2026-11-10** on prod: Nov = KABBIN, BANGGAU (5569), 5567 with photos; Oct = 5536, BC06, BC06-MF. 272 active products have no `created_at` (made before the column existed) and are never "new". Re-check after #1243 deployed: 5567 / 5569 read "No price set yet", SERVICE CHARGE gone.
 
 ## Follow-ups (approved, not done yet)
 
@@ -75,8 +79,12 @@ If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONF
 
 ## Board report (artifact)
 
-Monthly board report design artifact: pages Trend/PnL/Labour/Materials/Customers/Main/full statements are live-data driven.
-Trend was made live + elastic on 2026-11-09. Still static: Balance, Cash, Outlook, Notes — make them read the data JSON the same way. Charts still wanted on Materials and Customers.
+Claude artifact "Hookka Monthly Board Report" (https://claude.ai/artifact/GvMT67d19bgmqvHXQpSmDg, private to the owner). Rebuilt 2026-11-10:
+- 13 A4 pages + appendices A (3 pages), B, C (3 pages); every page fills to its footer (one elastic chart per page) and caps growing lists with an "Other" row.
+- New pages: **8 Cash flow forecast** (from the Cash Flow page with Forecast on: Docs vs P&L basis; data asset `cashforecast.json`, measured 2026-11-10) and **10 New models** (photo cards + prices; data asset `newmodels.json`).
+- Labour: share of direct labour + % of total production revenue (production revenue = value of work completed, not sales). Trend: Nov/Dec forecast columns + net profit chart.
+- Export: Share → Export → PDF (photos are stored in the artifact).
+- **To do:** New models page still lists the first-price-date models (Sep–Nov); refresh it from `GET /api/products/new-models` (created-date basis — October has 5536, BC06, BC06-MF). Photos come as data URLs: download the JSON through the owner's browser (ask first), split photos into artifact assets, upload. The main report data (`791e5…` asset) is still a hand-built October snapshot; each month it must be rebuilt.
 
 ## Housekeeping
 
@@ -86,7 +94,7 @@ Trend was made live + elastic on 2026-11-09. Still static: Balance, Cash, Outloo
 
 ## Working agreements with the owner (carried over — the Windows machine's Claude memory does not travel)
 
-- The owner is **not technical**: reply in plain Chinese (UI stays 100% English), say what shipped and how to use it, no code dumps. Only pull him in for real business decisions.
+- The owner is **not technical**: reply in plain Chinese — he asked again on 2026-11-10 (UI stays 100% English), say what shipped and how to use it, no code dumps. Only pull him in for real business decisions.
 - Low-risk docs / chore / navigation work may be finished and **merged autonomously**. Anything touching **money, inventory, payroll, auth or cascades**: propose → owner confirms → then code; do not auto-merge.
 - Production data writes need explicit owner approval each time. Salary figures only for accounts with Payroll permission. Never print `.dev.vars` or secrets.
 - Owner rulings already given: Hookka **may over-receive** against a PO; a PO price of 0 is fine — **stock is valued at the PI price**; raw-material UOM rows must not be merged across units ("UOM 你不要动她"); default supplier = cheapest by the **largest-quantity** PI price, and a supplier not ordered from in **4 months** counts as no longer supplying.
