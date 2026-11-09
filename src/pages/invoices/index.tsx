@@ -104,11 +104,17 @@ export default function InvoicesPage() {
     limit?: number;
     total?: number;
   }>(
-    gridSearch.trim()
-      ? `/api/invoices?search=${encodeURIComponent(gridSearch.trim())}&limit=2000`
-      : filterQs
-        ? `/api/invoices?${filterQs}&limit=2000`
-        : `/api/invoices?page=${page}&limit=${PAGE_SIZE}`,
+    // Search and filters run server-side over the WHOLE table and are paged
+    // like the plain browse view. They used to ask limit=2000 with no page:
+    // the server clamps to 500, so matches past 500 never showed, and Prev /
+    // Next changed the page number without changing the rows.
+    // Search and the filters combine, so a search inside a status tab stays
+    // inside that tab on every page.
+    `/api/invoices?${[
+      filterQs,
+      gridSearch.trim() ? `search=${encodeURIComponent(gridSearch.trim())}` : "",
+      `page=${page}&limit=${PAGE_SIZE}`,
+    ].filter(Boolean).join("&")}`,
   );
   // Whole-dataset KPI numbers — bucket counts AND money aggregates.
   // 2026-05-26 audit: outstandingSen / paidMTDSen were previously
@@ -206,7 +212,7 @@ export default function InvoicesPage() {
   useEffect(() => {
     setPage(1);
     setSelectedInvoices([]);
-  }, [filterStatus, filterCustomer, filterDateFrom, filterDateTo]);
+  }, [filterStatus, filterCustomer, filterDateFrom, filterDateTo, gridSearch]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Full customer list (id + name + email) for the filter dropdown AND the
@@ -842,7 +848,7 @@ export default function InvoicesPage() {
                 All Invoices
                 {(filterStatus || filterCustomer || filterDateFrom || filterDateTo) && (
                   <span className="text-sm font-normal text-[#6B7280]">
-                    ({filteredInvoices.length} of {invoices.length})
+                    ({totalInvoicesServer.toLocaleString()} matching)
                   </span>
                 )}
               </CardTitle>
@@ -918,13 +924,13 @@ export default function InvoicesPage() {
                   build: (rows) =>
                     buildInvoiceDetailRows(rows, { partyCodes: new Map(customers.map((cu) => [cu.id, cu.code ?? ""])) }),
                 }}
-                // The grid holds one page — and the filtered/search fetch asks
-                // limit=2000 but the server clamps to 500. Export every match.
+                // The grid holds one page of the matches. Export every match.
                 fetchAllRows={() =>
                   fetchAllPages<Invoice>(
-                    gridSearch.trim()
-                      ? `/api/invoices?search=${encodeURIComponent(gridSearch.trim())}`
-                      : `/api/invoices${filterQs ? `?${filterQs}` : ""}`,
+                    `/api/invoices?${[
+                      filterQs,
+                      gridSearch.trim() ? `search=${encodeURIComponent(gridSearch.trim())}` : "",
+                    ].filter(Boolean).join("&")}`,
                   )}
               />
 
