@@ -13,8 +13,55 @@ import { monthHasDeptForecast, forecastEntryKind } from "./salary-dept";
 /** One keyed cell as stored in kv `forecast_pnl`: a legacy bare basis-point
  *  number, `{ bp }` (a % of sales) or `{ amtSen }` (an RM amount). */
 export type FcEntry = number | { bp?: number; amtSen?: number };
-/** One month of kv `forecast_pnl.months`. */
-export type FcMonth = { salesSen?: number; pct?: Record<string, FcEntry> };
+/** One month of kv `forecast_pnl.months`. `salesByCustomer` (owner
+ *  2026-11-09): customer id (or FC_OTHER_CUSTOMER) → sen; when it has any
+ *  cell, the month's sales are their sum (forecastSalesSen). */
+export type FcMonth = { salesSen?: number; salesByCustomer?: Record<string, number>; pct?: Record<string, FcEntry> };
+
+/** The sales-by-customer row for customers not in the list yet. */
+export const FC_OTHER_CUSTOMER = "other";
+
+/** A month's sales: the sum of its customer rows once any is keyed (owner
+ *  2026-11-09 「根据 customer 去 key-in 他的预计 sales」, the total is their
+ *  sum), else the single keyed total. */
+export function forecastSalesSen(m: FcMonth | undefined): number {
+  const cells = Object.values(m?.salesByCustomer ?? {}).map((v) => Math.round(Number(v) || 0)).filter((v) => v > 0);
+  if (cells.length) return cells.reduce((s, v) => s + v, 0);
+  return Math.max(0, Math.round(Number(m?.salesSen) || 0));
+}
+
+/** A month's customer cells as stored: whole sen, positive only, a real key
+ *  (no longer than any id the system makes). Anything else reads as nothing. */
+export function cleanSalesByCustomer(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    const key = id.trim();
+    const sen = Math.round(Number(v));
+    if (!key || key.length > 64 || !Number.isSafeInteger(sen) || sen <= 0) continue;
+    out[key] = sen;
+  }
+  return out;
+}
+
+/** The Forecast page's customer rows: every active customer and any customer
+ *  keyed in some month (an inactive one stays while it carries a figure; an
+ *  id the master no longer knows is named as such), by name; Other last. */
+export function forecastCustomerRows(
+  master: readonly { id: string; name: string; isActive?: boolean | null }[],
+  keyedIds: Iterable<string>,
+): { id: string; name: string }[] {
+  const keyed = new Set([...keyedIds].filter((id) => id !== FC_OTHER_CUSTOMER));
+  const rows: { id: string; name: string }[] = [];
+  const known = new Set<string>();
+  for (const c of master) {
+    known.add(c.id);
+    if (c.isActive !== false || keyed.has(c.id)) rows.push({ id: c.id, name: c.name });
+  }
+  for (const id of keyed) if (!known.has(id)) rows.push({ id, name: `Unknown customer (${id})` });
+  rows.sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+  return [...rows, { id: FC_OTHER_CUSTOMER, name: "Other (new customers)" }];
+}
 export type FcAccount = { code: string; name: string; type: string; isPostable?: boolean };
 /** A department and the P&L bucket its row files under (GET /labor/departments). */
 export type FcDept = { code: string; bucket: string };
@@ -160,7 +207,7 @@ export function forecastMonthFigures(
   g: FcLineGroups,
   mappedAccounts: ReadonlySet<string>,
 ): FcMonthFigures {
-  const salesSen = Math.max(0, Math.round(Number(m?.salesSen) || 0));
+  const salesSen = forecastSalesSen(m);
   const amt = (code: string) => forecastEntryAmount(salesSen, m?.pct?.[code]);
   const sum = (rows: FcAccount[]) => rows.reduce((s, r) => s + amt(r.code), 0);
   // Supersede rule (salary-dept.ts): a month with any dept row ignores the

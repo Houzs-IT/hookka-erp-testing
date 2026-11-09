@@ -95,7 +95,10 @@ The owner's words: 「我认为应该是手动输入或调整」.
   - Repayment month: Trade Finance "Repaid to <lender>" − (principal + interest). [owner: 还款那个月银行才减]
 - **A plan meets the real draws** [found by the builder check, 2026-11-09]. A real draw shows up in the trade-finance aging with its own due date (base spec 6.1), and its repayment must not be counted twice:
   - **The plan's own month always shows the plan as keyed**, in both forecast columns, current month and past months alike; the Actual column shows what was really drawn. [owner, 2026-11-09: 「我看的是 forecast 啊？本身应该还是 remain 100k？」]
-  - **Repayments in later months**: the real draws on their own due dates (from today's aging), plus, for a plan of the current month, only the part not drawn yet (plan − the facility's real draws dated this month, floored at zero). A plan of a future month repays in full. A past month's plan produces no repayment: what was really drawn is in the aging. [my call]
+  - **Repayments in later months, by column** [owner, 2026-11-09: 「我是要对比我实际和预计啊…实际应该是 60k，预计 100k」]:
+    - *P&L forecast* is the plan: every planned drawdown repays in full (principal and interest) in its repayment month, whatever was really drawn, so plan and actual can be compared there. Draws made before the facility's first planned month repay on their own due dates; draws made from that month on are the plan coming true and are not added again. [my call on that cut-off]
+    - *Docs forecast* follows the real draws: they repay on their own due dates (from today's aging), plus, for a plan of the current month, only the part not drawn yet (plan − the facility's real draws dated this month, floored at zero). A plan of a future month repays in full. A past month's plan adds nothing here, because what was really drawn is in the aging. [my call]
+    - *Actual* is what was really drawn and repaid.
   - The popup shows the twelve months from the current month; past plans are kept, not shown, and need no clearing.
   - "Fill from bills" reads today's aging for every month, the current one included, so a bill already paid or drawn since the 1st is not filled again. [my call]
 - To roll a draw over, the owner keys a new drawdown in its repayment month. [my call; no separate roll-over control]

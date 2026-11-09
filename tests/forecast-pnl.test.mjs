@@ -96,6 +96,48 @@ test("forecastMonthFigures: a month with no department row counts its 750-x acco
   assert.equal(fp.forecastMonthFigures(undefined, g, new Set()).cogs, 0);
 });
 
+// ---- Sales by customer (spec 2026-11-09-forecast-three-columns-design.md 4) ----
+
+test("forecastSalesSen: the customer rows' sum wins once any is keyed; else the single total", () => {
+  assert.equal(fp.forecastSalesSen({ salesSen: 999, salesByCustomer: { c1: 600_000, other: 400_000 } }), 1_000_000);
+  assert.equal(fp.forecastSalesSen({ salesSen: 500_000, salesByCustomer: { c1: 0, c2: -5 } }), 500_000, "no real customer cell: the total stands");
+  assert.equal(fp.forecastSalesSen({ salesSen: 500_000 }), 500_000);
+  assert.equal(fp.forecastSalesSen({ salesSen: -1 }), 0);
+  assert.equal(fp.forecastSalesSen(undefined), 0);
+});
+
+test("forecastMonthFigures: % lines read the customer sum", () => {
+  const g = fp.forecastLineGroups(accounts, {}, depts);
+  const f = fp.forecastMonthFigures({ salesSen: 1, salesByCustomer: { c1: 600_000, other: 400_000 }, pct: { "cat:FABRIC": { bp: 3000 } } }, g, new Set());
+  assert.equal(f.salesSen, 1_000_000);
+  assert.equal(f.amt("cat:FABRIC"), 300_000);
+  assert.equal(f.gp, 700_000);
+});
+
+test("cleanSalesByCustomer: whole sen, positive only, a real key; junk reads as nothing", () => {
+  assert.deepEqual(fp.cleanSalesByCustomer({ c1: 600_000.4, " c2 ": 5, other: 0, c3: -1, c4: "x", "": 7 }), { c1: 600_000, c2: 5 });
+  assert.deepEqual(fp.cleanSalesByCustomer({ ["x".repeat(65)]: 1 }), {}, "an id longer than any real one is refused");
+  assert.deepEqual(fp.cleanSalesByCustomer("junk"), {});
+  assert.deepEqual(fp.cleanSalesByCustomer(null), {});
+});
+
+test("forecastCustomerRows: active customers and any keyed one, by name; Other last", () => {
+  const master = [
+    { id: "c2", name: "Beta", isActive: true },
+    { id: "c1", name: "alpha", isActive: true },
+    { id: "c3", name: "Gamma", isActive: false },
+    { id: "c4", name: "Delta", isActive: false },
+  ];
+  assert.deepEqual(fp.forecastCustomerRows(master, ["c3", "gone", fp.FC_OTHER_CUSTOMER]), [
+    { id: "c1", name: "alpha" },
+    { id: "c2", name: "Beta" },
+    { id: "c3", name: "Gamma" },
+    { id: "gone", name: "Unknown customer (gone)" },
+    { id: fp.FC_OTHER_CUSTOMER, name: "Other (new customers)" },
+  ], "an inactive customer stays while it is keyed; one never keyed is left out");
+  assert.deepEqual(fp.forecastCustomerRows([], []), [{ id: "other", name: "Other (new customers)" }]);
+});
+
 test("source guard: the Forecast page computes through forecast-pnl", () => {
   const src = readFileSync(resolve(process.cwd(), "src/pages/forecast.tsx"), "utf8");
   assert.match(src, /import \{[^}]*forecastLineGroups[^}]*\} from "@\/lib\/forecast-pnl"/);
