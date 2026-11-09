@@ -12,6 +12,7 @@ import {
   PDF,
 } from "@/lib/pdf-utils";
 import { COMPANY } from "@/lib/constants";
+import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import { hasLetterheadDetails } from "./org-letterhead-row";
 
 // Letterhead info passed in from the caller. Mirrors the COMPANY constant's
@@ -176,7 +177,7 @@ export function generatePurchaseOrderPdf(
     doc.text(k, x, yy);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(...PDF.ink);
-    const lines = doc.splitTextToSize(v || "-", maxW);
+    const lines = doc.splitTextToSize(pdfTextOr(v), maxW);
     doc.text(lines, x + labelW, yy);
     return yy + Math.max(1, lines.length) * 4.3 + 0.8;
   };
@@ -211,10 +212,10 @@ export function generatePurchaseOrderPdf(
     );
     return [
       String(idx + 1),
-      code,
-      item.supplierSKU || "-",
-      description,
-      item.unit,
+      pdfText(code),
+      pdfTextOr(item.supplierSKU),
+      pdfText(description),
+      pdfText(item.unit),
       String(item.quantity),
       fmtCurrency(item.unitPriceSen),
       fmtCurrency(item.totalSen),
@@ -310,8 +311,9 @@ export function generatePurchaseOrderPdf(
   sumLine("TOTAL", fmtRM(po.totalSen), true, true);
 
   // --- Notes ---
-  if (po.notes) {
-    const noteLines = doc.splitTextToSize(po.notes, cw);
+  const poNotes = pdfText(po.notes);
+  if (poNotes) {
+    const noteLines = doc.splitTextToSize(poNotes, cw);
     const blockH = 6 + noteLines.length * 3.6;
     if (y + blockH > pageH - 38) {
       doc.addPage();

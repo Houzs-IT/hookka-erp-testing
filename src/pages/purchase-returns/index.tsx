@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X, Undo2, Trash2 } from "lucide-react";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
+import { responseErrorMessage } from "@/lib/response-error";
 
 type PurchaseReturn = {
   id: string;
@@ -72,7 +73,8 @@ export default function PurchaseReturnsPage() {
 
   const del = async (id: string) => {
     if (!window.confirm("Delete this OPEN purchase return?")) return;
-    await fetch(`/api/purchase-returns/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/purchase-returns/${id}`, { method: "DELETE" });
+    if (!res.ok) { window.alert(await responseErrorMessage(res, "Delete failed")); return; }
     await reload();
   };
 

@@ -21,6 +21,7 @@ import { ChevronDown, Check, Search as SearchIcon, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nextIncrementalCount, optionSliceCount } from "@/lib/incremental-window";
 import { useEscapeClose } from "@/lib/escape-stack";
+import { useDropdownPlacement } from "@/lib/dropdown-placement";
 
 export type SearchableOption = {
   value: string;
@@ -56,6 +57,10 @@ const OPTION_PAGE = 60;
 const OPTION_KEYBOARD_LEAD = 15;
 // Extend once the scroll gets this close to the bottom.
 const OPTION_SCROLL_SLACK = 80;
+// The list's own cap (Tailwind max-h-60) plus the search box above it. The
+// panel asks for this much and opens upward when the space below is short.
+const LIST_MAX_PX = 240;
+const SEARCH_BOX_PX = 45;
 
 export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   value,
@@ -78,6 +83,14 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const listRef = React.useRef<HTMLDivElement>(null);
 
   const selected = options.find((o) => o.value === value);
+
+  // Flip above the trigger when there is no room below, and cap the panel to
+  // the room on the side it opens (src/lib/dropdown-placement.ts).
+  const placement = useDropdownPlacement(
+    wrapperRef,
+    open,
+    LIST_MAX_PX + (combobox ? 0 : SEARCH_BOX_PX),
+  );
 
   // Filter — case-insensitive substring on label (this is what users
   // actually want: type "hilton" finds "HILTON BEDFRAME"). We also
@@ -284,10 +297,17 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
       )}
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full min-w-[240px] rounded-md border border-[#E2DDD8] bg-white shadow-lg">
+        <div
+          data-side={placement.side}
+          style={{ maxHeight: placement.maxHeight }}
+          className={cn(
+            "absolute z-50 flex w-full min-w-[240px] flex-col rounded-md border border-[#E2DDD8] bg-white shadow-lg",
+            placement.side === "above" ? "bottom-full mb-1" : "top-full mt-1",
+          )}
+        >
           {/* Search input */}
           {!combobox && (
-          <div className="border-b border-[#E2DDD8] p-2">
+          <div className="shrink-0 border-b border-[#E2DDD8] p-2">
             <div className="relative">
               <SearchIcon className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#9CA3AF]" />
               <input
@@ -310,7 +330,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           <div
             ref={listRef}
             onScroll={onListScroll}
-            className="max-h-60 overflow-y-auto py-1"
+            // flex-auto + min-h-0: the list keeps its 240px cap but shrinks
+            // (and scrolls) when the panel is capped tighter by the viewport.
+            className="max-h-60 min-h-0 flex-auto overflow-y-auto py-1"
           >
             {allowClear && !combobox && (
               <button

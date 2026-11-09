@@ -685,7 +685,7 @@ function POFormDialog({
                               UI shows blank instead of "0" so the operator can type freely. */}
                           <Input
                             className="h-8 text-xs"
-                            type="number"
+                            type="number" inputMode="decimal"
                             onFocus={(e) => e.currentTarget.select()}
                             min={0}
                             value={item.quantity === 0 ? "" : item.quantity}

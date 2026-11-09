@@ -18,6 +18,8 @@
 //   └ signatures / footer                                               ┘
 // ---------------------------------------------------------------------------
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+// Null-ish / "null" / ragged-whitespace clean-up for every wrapped string.
+import { pdfText } from "../../lib/pdf-text";
 
 const PAGE_W = 595;
 const PAGE_H = 842;
@@ -130,7 +132,7 @@ export function winAnsi(s: string): string {
 // the wrapped lines — nothing is ever truncated or pushed under the next column
 // (owner 2026-07-02: "照我們的怎麼處理就怎麼處理" — wrap, don't ellipsis).
 function wrapHard(font: PDFFont, rawText: string, maxW: number, size: number, maxLines = 12): string[] {
-  const text = winAnsi(rawText);
+  const text = winAnsi(pdfText(rawText));
   if (!text) return [];
   const fits = (s: string) => font.widthOfTextAtSize(s, size) <= maxW;
   const out: string[] = [];
@@ -156,7 +158,7 @@ function wrapHard(font: PDFFont, rawText: string, maxW: number, size: number, ma
 }
 
 function wrap(font: PDFFont, rawText: string, maxW: number, size: number, maxLines = 4): string[] {
-  const text = winAnsi(rawText);
+  const text = winAnsi(pdfText(rawText));
   if (!text) return [];
   const words = text.split(/\s+/).filter(Boolean);
   const out: string[] = [];

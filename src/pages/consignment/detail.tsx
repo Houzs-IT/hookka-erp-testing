@@ -1,5 +1,6 @@
 ﻿import { useState, useMemo, useCallback } from "react";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { AuditHistoryPanel } from "@/components/audit/AuditHistoryPanel";
 import { useNavigate, useParams } from "react-router-dom";
@@ -612,7 +613,12 @@ export default function SalesOrderDetailPage() {
 
   const deleteOrder = async () => {
     if (!(await confirm({ title: "Delete order", message: "Delete this order?", danger: true }))) return;
-    await fetch(`/api/consignment-orders/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/consignment-orders/${id}`, { method: "DELETE" });
+    // A refused delete used to navigate away as if it had worked.
+    if (!res.ok) {
+      toast.error(await responseErrorMessage(res, "Couldn't delete the order"));
+      return;
+    }
     // Deleting an SO also cascades to its linked POs on the server. Invalidate
     // the SO list (one row gone) and the PO list (linked POs gone), plus the
     // per-id SO entry so any stale detail fetch doesn't resurrect a 404.

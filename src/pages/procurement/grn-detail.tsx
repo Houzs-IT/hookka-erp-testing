@@ -989,7 +989,7 @@ export default function GRNDetailPage() {
                             it.acceptedQty
                           ) : (
                             <Input
-                              type="number"
+                              type="number" inputMode="decimal"
                               min={0}
                               step="any"
                               className="h-8 w-24 text-right inline-block"
@@ -1277,7 +1277,7 @@ export default function GRNDetailPage() {
                     <div>
                       <label className="block text-xs font-medium text-[#6B7280] mb-1">Exchange Rate (to MYR)</label>
                       <Input
-                        type="number"
+                        type="number" inputMode="decimal"
                         step="0.0001"
                         min={0}
                         value={landedEdit.exchange_rate}

@@ -1005,7 +1005,7 @@ export default function PurchaseOrderDetailPage() {
                           <label className="block text-xs text-[#6B7280] mb-1">Qty</label>
                           <Input
                             className="h-8 text-xs"
-                            type="number"
+                            type="number" inputMode="decimal"
                             min={0}
                             onFocus={(e) => e.currentTarget.select()}
                             value={line.quantity}

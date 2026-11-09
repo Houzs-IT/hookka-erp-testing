@@ -64,6 +64,7 @@ import {
 // and deliberately keep `parseFloat`.
 import { moneyFieldToSen } from "@/lib/money-field";
 import { todayYmdMY } from "@/lib/utils";
+import { responseErrorMessage } from "@/lib/response-error";
 
 // -- FIFO cost column helpers ----------------------------------------------
 // These USED to read from the module-scope `rmBatches`/`fgBatches` mock
@@ -1876,7 +1877,7 @@ export default function InventoryPage() {
         return;
       }
       if (!res.ok) {
-        toast.error(`Delete failed (HTTP ${res.status}).`);
+        toast.error(await responseErrorMessage(res, "Delete failed"));
         return;
       }
       toast.success(`SKU ${row.code} deleted.`);

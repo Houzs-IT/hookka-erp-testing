@@ -1164,7 +1164,7 @@ function GRNCreatePage() {
                           </td>
                           <td className="px-3 py-2 text-right">
                             <Input
-                              type="number"
+                              type="number" inputMode="decimal"
                               onFocus={(e) => e.currentTarget.select()}
                               min={0}
                               className={`w-24 text-right ml-auto ${overReceipt ? "border-[#9A3A2D]" : ""}`}
@@ -1188,7 +1188,7 @@ function GRNCreatePage() {
                           </td>
                           <td className="px-3 py-2 text-right">
                             <Input
-                              type="number"
+                              type="number" inputMode="decimal"
                               onFocus={(e) => e.currentTarget.select()}
                               min={0}
                               max={entry.receivedQty}
@@ -1336,7 +1336,7 @@ function GRNCreatePage() {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <Input
-                          type="number"
+                          type="number" inputMode="decimal"
                           onFocus={(e) => e.currentTarget.select()}
                           min={0}
                           value={row.receivedQty}
@@ -1352,7 +1352,7 @@ function GRNCreatePage() {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <Input
-                          type="number"
+                          type="number" inputMode="decimal"
                           onFocus={(e) => e.currentTarget.select()}
                           min={0}
                           max={row.receivedQty}

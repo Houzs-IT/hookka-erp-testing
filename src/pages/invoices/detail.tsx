@@ -947,7 +947,7 @@ export default function InvoiceDetailPage() {
                             {label}
                           </span>
                           <input
-                            type="number"
+                            type="number" inputMode="decimal"
                             min="0"
                             step="0.01"
                             value={shownDraft[k]}
@@ -1450,7 +1450,7 @@ export default function InvoiceDetailPage() {
                   Payment Amount (RM)
                 </label>
                 <input
-                  type="number" onFocus={(e) => e.currentTarget.select()}
+                  type="number" inputMode="decimal" onFocus={(e) => e.currentTarget.select()}
                   step="0.01"
                   min="0"
                   className="w-full border border-[#E2DDD8] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/30"

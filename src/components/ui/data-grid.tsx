@@ -3180,7 +3180,7 @@ export function DataGrid<T extends Record<string, any>>({
               </button>
             )}
             {showGroupDropdown && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#DDD] rounded-lg shadow-lg p-2 min-w-[160px]">
+              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#DDD] rounded-lg shadow-lg p-2 min-w-[160px] max-h-[60vh] overflow-y-auto">
                 <div className="text-[10px] text-[#999] px-1 pb-1 border-b border-[#EEE] mb-1">Filter by group</div>
                 <label className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-[#333] hover:bg-[#F5F5F5] rounded cursor-pointer">
                   <input
@@ -3246,7 +3246,7 @@ export function DataGrid<T extends Record<string, any>>({
               )}
             </button>
             {showViewsDropdown && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#DDD] rounded-lg shadow-lg min-w-[200px]">
+              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#DDD] rounded-lg shadow-lg min-w-[200px] max-h-[60vh] overflow-y-auto">
                 <div className="text-[10px] text-[#999] px-3 py-1.5 border-b border-[#EEE] font-medium uppercase tracking-wide">
                   Saved Views
                 </div>

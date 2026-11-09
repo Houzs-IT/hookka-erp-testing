@@ -10,6 +10,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Phone, Mail, Trash2, CalendarClock } from "lucide-react";
 import { todayYmdMY } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 
 type Contact = {
   id: string;
@@ -80,6 +82,7 @@ export function CrmPanel({ customerId }: { customerId: string; customerName?: st
     contactName: "",
   });
   const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
 
   const reload = useCallback(async () => {
     const [c, a] = await Promise.all([
@@ -103,11 +106,16 @@ export function CrmPanel({ customerId }: { customerId: string; customerName?: st
     if (!cForm.name.trim()) return;
     setSaving(true);
     try {
-      await fetch("/api/customer-crm/contacts", {
+      const res = await fetch("/api/customer-crm/contacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customerId, ...cForm }),
       });
+      // Keep the form open with what was typed when the server refuses it.
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Couldn't add the contact"));
+        return;
+      }
       setCForm({ name: "", title: "", phone: "", email: "", role: "" });
       setShowContact(false);
       await reload();
@@ -117,7 +125,11 @@ export function CrmPanel({ customerId }: { customerId: string; customerName?: st
   };
 
   const delContact = async (id: string) => {
-    await fetch(`/api/customer-crm/contacts/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/customer-crm/contacts/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast.error(await responseErrorMessage(res, "Couldn't delete the contact"));
+      return;
+    }
     await reload();
   };
 
@@ -125,11 +137,15 @@ export function CrmPanel({ customerId }: { customerId: string; customerName?: st
     if (!aForm.summary.trim()) return;
     setSaving(true);
     try {
-      await fetch("/api/customer-crm/activities", {
+      const res = await fetch("/api/customer-crm/activities", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customerId, ...aForm }),
       });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Couldn't log the activity"));
+        return;
+      }
       setAForm({
         activityType: "CALL",
         occurredAt: todayIso(),
@@ -147,7 +163,11 @@ export function CrmPanel({ customerId }: { customerId: string; customerName?: st
   };
 
   const delActivity = async (id: string) => {
-    await fetch(`/api/customer-crm/activities/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/customer-crm/activities/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast.error(await responseErrorMessage(res, "Couldn't delete the activity"));
+      return;
+    }
     await reload();
   };
 

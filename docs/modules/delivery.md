@@ -162,6 +162,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 - **New DB columns = snake_case** + a `column-rename-map.json` entry or the write 400s "Invalid request body". Notify/incomplete
   columns are runtime self-applied (`ensureNotifyEmailColumns` / `ensureDeliveryIncompleteColumn`), not by migration file alone.
 - **QR sticker URLs encode `window.location.origin`** (print-time domain); scanning is path-based + domain-agnostic. See `tests/do-qr-public.test.mjs`.
+- **Delivery Return → Repair & Redeliver checks both calls (BUG-2026-11-09-435).** `delivery-returns/detail.tsx` used to toast "Service case opened" and navigate even when the service-case create or `/set-outcome` was refused; each now checks `res.ok` and shows the server's reason. Quantity / rate / box-size inputs on `delivery/index.tsx` carry `inputMode`, and the vehicle form's capacity / rate / box inputs gained `min={0}`. Test: `tests/fe-quality-batch-a.test.mjs`.
 
 ## Common tasks (mini-playbook)
 - **Add a field to a DO** → runtime `ALTER … ADD COLUMN IF NOT EXISTS` (pattern `ensureNotifyEmailColumns` `_helpers.ts:3567`)
