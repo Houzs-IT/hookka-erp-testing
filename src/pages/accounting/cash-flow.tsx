@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate, cn, todayYmdMY } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 
 type BankAccount = {
@@ -324,6 +325,7 @@ function ReconciliationTab({
   data: CashFlowData;
   onRefresh: () => void;
 }) {
+  const { toast } = useToast();
   const [selectedAccount, setSelectedAccount] = useState(data.bankAccounts[0]?.id || "");
   const [selectedBankTx, setSelectedBankTx] = useState<string | null>(null);
   const [selectedJE, setSelectedJE] = useState<string | null>(null);
@@ -353,7 +355,7 @@ function ReconciliationTab({
     if (!selectedBankTx || !selectedJE) return;
     setMatching(true);
     try {
-      await fetch("/api/cash-flow", {
+      const res = await fetch("/api/cash-flow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -362,6 +364,10 @@ function ReconciliationTab({
           journalEntryId: selectedJE,
         }),
       });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Could not match the transaction"));
+        return;
+      }
       setSelectedBankTx(null);
       setSelectedJE(null);
       onRefresh();
@@ -629,7 +635,7 @@ function BankAccountsTab({
     const amountSen = moneyFieldToSen(formAmount) as number;
     setSubmitting(true);
     try {
-      await fetch("/api/cash-flow", {
+      const res = await fetch("/api/cash-flow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -642,6 +648,10 @@ function BankAccountsTab({
           reference: formRef,
         }),
       });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Could not add the transaction"));
+        return;
+      }
       setFormDesc("");
       setFormAmount("");
       setFormRef("");

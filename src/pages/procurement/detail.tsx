@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import {
@@ -567,7 +568,10 @@ export default function PurchaseOrderDetailPage() {
   const markEmailed = async () => {
     if (!po) return;
     try {
-      await fetch(`/api/purchase-orders/${po.id}/mark-emailed`, { method: "POST" });
+      const res = await fetch(`/api/purchase-orders/${po.id}/mark-emailed`, { method: "POST" });
+      if (!res.ok) toast.error(await responseErrorMessage(res, "Could not mark the PO as emailed"));
+    } catch {
+      toast.error("Network error — the PO was not marked as emailed");
     } finally {
       invalidateCachePrefix("/api/purchase-orders");
       fetchPO();

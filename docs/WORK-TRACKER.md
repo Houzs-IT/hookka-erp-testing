@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-09**: item 110 added (branch `fix/unchecked-saves-batch-b`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-06**: customer overdue sets entry, item 9 added (branch `fix/overdue-sets-clear-on-dispatch`); nothing else re-checked.
 > **Last verified: 2026-11-06**: customer overdue sets entry, item 8 added (branch `feat/overdue-sets-production-filter`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry, item 7 added (branch `feat/overdue-sets-customer-po`, to `main`); nothing else re-checked.
@@ -7029,3 +7030,4 @@ Asks, in order:
 108. SO edit page and PO edit form: a save is refused (409) if someone else saved the order after it was opened — no more silent overwrite (Houzs review list, owner 2026-11-08).
 107. Duplicate supplier invoice / DO number: compared without case or spaces, and an edit that changes the number is checked too (Houzs review list, owner 2026-11-08).
 109. Platform batch: /api/health reports the deployed commit; Smart Placement on; announcements admin list capped (flags the cut); a new lead with a phone already on file is flagged (+60/0/spacing ignored) and a refused lead save now shows its error (Houzs review list, owner 2026-11-08).
+110. Batch B of the saves that ignored a refused response (BUG-2026-11-09-435 follow-up, approved in the 2026-11-09 handoff): cash flow match / add transaction, add employee, pay-rule save / delete, deduction undo and settle-from-punches payslip regenerate, leave add / approve, PO mark-emailed, organisation deactivate / inter-company config, assistant pin / delete now show the server's reason and stop instead of acting saved; the BOM master migration no longer deletes the local copy when the upload is refused.

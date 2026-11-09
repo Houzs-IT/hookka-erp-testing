@@ -13,6 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 
 // Letterhead override registry. The Inter-Company Configuration card below
 // is HOOKKA-OHANA-specific (transfer pricing %), but the top grid of cards
@@ -113,6 +115,7 @@ export default function OrganisationsPage() {
     refreshOrgHook();
   }, [refreshOrgHook]);
 
+  const { toast } = useToast();
   const flash = (msg: string) => {
     setSaveMsg(msg);
     // eslint-disable-next-line no-restricted-syntax -- one-shot banner timer
@@ -232,7 +235,11 @@ export default function OrganisationsPage() {
     }
     setSaving(true);
     try {
-      await fetch(`/api/organisations/${org.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/organisations/${org.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Could not deactivate the organisation"));
+        return;
+      }
       await fetchData();
       flash("Organisation deactivated");
     } finally {
@@ -242,14 +249,23 @@ export default function OrganisationsPage() {
 
   const saveConfig = async () => {
     setSaving(true);
-    await fetch("/api/organisations", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ interCompanyConfig: config }),
-    });
-    await fetchData();
-    setSaving(false);
-    flash("Inter-company config saved");
+    try {
+      const res = await fetch("/api/organisations", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interCompanyConfig: config }),
+      });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Could not save the inter-company config"));
+        return;
+      }
+      await fetchData();
+      flash("Inter-company config saved");
+    } catch {
+      toast.error("Network error — the inter-company config was not saved");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const exampleOhanaPrice = 1000;

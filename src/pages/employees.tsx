@@ -26,6 +26,7 @@ import {
   type PayRulesConfig,
 } from "@/lib/pay-rules";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -2614,16 +2615,22 @@ function EmployeeMasterTab({
         form.position === "Operator Leader"
           ? form
           : { ...form, categories: [] };
-      await fetch("/api/workers", {
+      const res = await fetch("/api/workers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (!res.ok) {
+        // Keep the form open with what was typed.
+        toast.error(await responseErrorMessage(res, "Could not add the employee"));
+        setSaving(false);
+        return;
+      }
       setShowAddForm(false);
       setForm({ ...emptyForm });
       refreshWorkers();
     } catch {
-      // handle error
+      toast.error("Network error — the employee was not added");
     }
     setSaving(false);
   };
@@ -6894,6 +6901,8 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
         setRuleDraftOpen(false);
         invalidateCachePrefix("/api/pay-rules");
         refreshPayRules?.();
+      } else {
+        toast.error(await responseErrorMessage(r, "Could not save the pay-rule version"));
       }
     } finally {
       setSavingRules(false);
@@ -6911,7 +6920,11 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
     ) {
       return;
     }
-    await fetch(`/api/pay-rules/${id}`, { method: "DELETE" });
+    const delRes = await fetch(`/api/pay-rules/${id}`, { method: "DELETE" });
+    if (!delRes.ok) {
+      toast.error(await responseErrorMessage(delRes, "Could not delete the pay-rule version"));
+      return;
+    }
     invalidateCachePrefix("/api/pay-rules");
     refreshPayRules?.();
   };
@@ -8788,6 +8801,7 @@ function LaborCostTab({
   const allDepts = departments.length > 0 ? departments : ALL_DEPARTMENTS;
   const prodCodes = productionDeptCodes.size > 0 ? productionDeptCodes : PRODUCTION_DEPT_CODES;
   const { confirm, confirmDialog } = useConfirm();
+  const { toast } = useToast();
   // Department CRUD lives on the Department Labor tab now (per user request -
   // a "Department Cost" management view). Labor Cost just consumes the
   // department list.
@@ -9048,12 +9062,19 @@ function LaborCostTab({
         const r = await fetch(`/api/payroll-hour-deductions/${id}`, {
           method: "DELETE",
         });
-        if (!r.ok) throw new Error(`undo ${r.status}`);
-        await fetch("/api/payslips", {
+        if (!r.ok) {
+          toast.error(await responseErrorMessage(r, "Could not undo the deduction"));
+          return;
+        }
+        const regen = await fetch("/api/payslips", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ period: payrollPeriod, regenerate: true }),
         });
+        if (!regen.ok) {
+          // The deduction IS undone; only the payslip refresh was refused.
+          toast.error(await responseErrorMessage(regen, "Deduction undone, but the payslips could not be regenerated — regenerate them before paying"));
+        }
         invalidateCachePrefix("/api/payslips");
         invalidateCachePrefix("/api/payroll-hour-deductions");
         refreshDeductions?.();
@@ -9064,7 +9085,7 @@ function LaborCostTab({
         setUndoBusy(null);
       }
     },
-    [payrollPeriod, refreshRecon, refreshDeductions, confirm],
+    [payrollPeriod, refreshRecon, refreshDeductions, confirm, toast],
   );
 
   // FULL-AUTO settle the whole month (owner 2026-07-04, A). Docks every
@@ -9118,11 +9139,15 @@ function LaborCostTab({
         );
       }
       // Regenerate once so the docks land in pay (same as a single dock).
-      await fetch("/api/payslips", {
+      const regen = await fetch("/api/payslips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ period: payrollPeriod, regenerate: true }),
       });
+      if (!regen.ok) {
+        // The docks ARE saved; only the payslip refresh was refused.
+        toast.error(await responseErrorMessage(regen, "Days settled, but the payslips could not be regenerated — regenerate them before paying"));
+      }
       invalidateCachePrefix("/api/payslips");
       invalidateCachePrefix("/api/payroll-hour-deductions");
       refreshDeductions?.();
@@ -9133,7 +9158,7 @@ function LaborCostTab({
     } finally {
       setSettleBusy(false);
     }
-  }, [payrollPeriod, payrollMonthLabel, confirm, refreshDeductions, refreshRecon]);
+  }, [payrollPeriod, payrollMonthLabel, confirm, toast, refreshDeductions, refreshRecon]);
 
   // Index departments by code once so the per-row / per-worker reconciliation
   // loops below do O(1) lookups instead of allDepts.find() on every iteration.
@@ -10569,11 +10594,16 @@ function LeaveManagementTab({ workers }: { workers: Worker[] }) {
     setSaving(true);
     const days = calculateDays(newLeave.startDate, newLeave.endDate);
     try {
-      await fetch("/api/leaves", {
+      const res = await fetch("/api/leaves", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...newLeave, days }),
       });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Could not create the leave request"));
+        setSaving(false);
+        return;
+      }
       setShowAddForm(false);
       setNewLeave({ workerId: workers[0]?.id || "", type: "ANNUAL", startDate: todayStr(), endDate: todayStr(), reason: "" });
       fetchLeaves();
@@ -10585,11 +10615,12 @@ function LeaveManagementTab({ workers }: { workers: Worker[] }) {
 
   const handleLeaveAction = async (id: string, status: "APPROVED" | "REJECTED") => {
     try {
-      await fetch("/api/leaves", {
+      const res = await fetch("/api/leaves", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status, approvedBy: "Admin" }),
       });
+      if (!res.ok) toast.error(await responseErrorMessage(res, "Could not update the leave request"));
       fetchLeaves();
     } catch {
       toast.error("Error updating leave request");

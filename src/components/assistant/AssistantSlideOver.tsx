@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { HookkaAILogo } from "@/components/assistant/HookkaAILogo";
 import { humanizeError } from "@/lib/humanize-error";
+import { responseErrorMessage } from "@/lib/response-error";
 
 // File upload limits — these match the server-side guard in
 // src/api/lib/attachment-parser.ts. Defined locally so the UI can refuse
@@ -600,12 +601,13 @@ export function AssistantSlideOver({ open, onClose }: AssistantSlideOverProps) {
   const togglePin = useCallback(
     async (id: string, pinned: boolean) => {
       try {
-        await fetch(`/api/assistant/conversations/${id}`, {
+        const res = await fetch(`/api/assistant/conversations/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({ pinned: !pinned }),
         });
+        if (!res.ok) setError(await responseErrorMessage(res, "Could not pin the conversation"));
         void loadConversations();
       } catch {
         /* ignore */
@@ -617,10 +619,14 @@ export function AssistantSlideOver({ open, onClose }: AssistantSlideOverProps) {
   const deleteConversation = useCallback(
     async (id: string) => {
       try {
-        await fetch(`/api/assistant/conversations/${id}`, {
+        const res = await fetch(`/api/assistant/conversations/${id}`, {
           method: "DELETE",
           credentials: "include",
         });
+        if (!res.ok) {
+          setError(await responseErrorMessage(res, "Could not delete the conversation"));
+          return;
+        }
         if (id === conversationIdRef.current) newChat();
         void loadConversations();
       } catch {
