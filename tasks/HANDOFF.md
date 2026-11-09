@@ -24,9 +24,7 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs (at time of writing)
 
-| PR | What | State |
-| --- | --- | --- |
-| #1240 | Batch B of saves that acted "saved" when the server refused (cash flow, employees/payroll/leave, PO mark-emailed, organisations, assistant; BOM migration data-loss guard) | Waiting for CI, then merge. **After merge:** a refused save shows the server's reason and the form stays open. |
+None — #1234, #1235, #1240 and this handoff (#1239) were all merged on 2026-11-09.
 
 If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONFLICTING (conflicts are almost always only `docs/WORK-TRACKER.md` — keep both sides).
 
@@ -42,7 +40,8 @@ If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONF
 #1228 stale SO/PO save refused (409) · #1229 /health commit stamp, Smart Placement, announcements cap, lead phone dedupe ·
 #1230 locked SO says which department holds it · #1231 in-app confirms, multi-word search, consolidated save blockers ·
 #1233 FE quality batch (real error reasons, PDF text clean-up, number-input wheel guard, dropdown flip, MRP sticky header, header wrap) ·
-#1234 security batch (default-deny RBAC test, text caps, signed-in devices, query-in-loop guard) · #1235 grid copy / range sum / URL filters.
+#1234 security batch (default-deny RBAC test, text caps, signed-in devices, query-in-loop guard) · #1235 grid copy / range sum / URL filters ·
+#1240 batch B of saves that acted "saved" on a refusal (cash flow, employees/payroll/leave, PO mark-emailed, organisations, assistant; BOM migration data-loss guard).
 
 ## Still to verify on prod (not yet observed)
 
@@ -50,12 +49,13 @@ If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONF
 - ~~`GET /api/health` shows a commit~~ — **verified 2026-11-09**: returns `"commit": "095750132…"` (#1229).
 - #1234: signed-in devices list loads; signing one device out gives it 401; a 5,001-char SO note is refused with 400. Watch for errors from the throttled `last_seen_at` update.
 - #1235: a real Ctrl/Cmd+C from a grid pastes into Excel.
+- #1240: a refused save (e.g. a leave request the server rejects) shows the server's reason and the form stays open.
 - Lead create with a phone already on a lead → "Possible duplicate lead" dialog (#1229).
 - Two-word grid search, e.g. "ivory 151" (#1231); save-blocker toast listing several problems (#1231).
 
 ## Follow-ups (approved, not done yet)
 
-- ~~~40 lesser saves ignore the server response~~ — done in #1240 (15 real fixes; the rest are deliberate best-effort or already checked, listed in `docs/bugs/BUG-2026-11-09-435.md`).
+- ~~~40 lesser saves ignore the server response~~ — done in #1240 (merged) (15 real fixes; the rest are deliberate best-effort or already checked, listed in `docs/bugs/BUG-2026-11-09-435.md`).
 - Backfill: system GRNs created by PI auto stock-in **before** #1218 are not linked back (still read "received, not billed"). Needs owner approval — production data write.
 
 ## Waiting on the OWNER (decide / provide)
