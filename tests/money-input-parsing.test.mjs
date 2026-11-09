@@ -311,7 +311,7 @@ test("a form with an unreadable amount does not STATE a total", () => {
 test("every `?? 0` on a money parse is a listed display fallback, not a payload", () => {
   const ALLOWED = new Map([
     ["src/pages/accounting/index.tsx", 8],   // 5 form `toSen` helpers + bank-CSV parseAmt + opening-balance toSen + AP-payment `apSen` (handleSaveAp refuses on apMoneyError first)
-    ["src/pages/forecast.tsx", 3],           // calc() sales + amt(), and the derived-% hint
+    ["src/pages/forecast.tsx", 4],           // calc() sales + amt(), the derived-% hint, and the customer cells' on-screen total (customerSen, 2026-11-09; save refuses on forecastMoneyError first and builds its own payload)
     ["src/pages/invoices/payments.tsx", 1],  // receivedSen preview; `canSubmit` blocks the post
     ["src/pages/invoices/index.tsx", 1],     // the Record Payment button predicate
     ["src/pages/invoices/detail.tsx", 1],    // the Record Payment button predicate

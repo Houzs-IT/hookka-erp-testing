@@ -56,7 +56,7 @@ import {
   type ScheduledDoc,
   type TermInfo,
 } from "../../lib/cashflow-forecast";
-import { forecastDepts, forecastLineGroups, type FcMonth } from "../../lib/forecast-pnl";
+import { cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, type FcMonth } from "../../lib/forecast-pnl";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
@@ -17001,7 +17001,7 @@ app.put("/forecast", async (c) => {
   if (denied) return denied;
   try {
     const body = (await c.req.json()) as {
-      months?: Record<string, { salesSen?: number; pct?: Record<string, number | { bp?: number; amtSen?: number }> }>;
+      months?: Record<string, { salesSen?: number; salesByCustomer?: unknown; pct?: Record<string, number | { bp?: number; amtSen?: number }> }>;
     };
     if (!body.months || typeof body.months !== "object") {
       return c.json({ success: false, error: "months required" }, 400);
@@ -17009,7 +17009,10 @@ app.put("/forecast", async (c) => {
     // A line entry is EITHER { bp } (percent of sales, basis points) OR
     // { amtSen } (fixed RM amount — owner 2026-07-29: rent-style lines are
     // keyed as money, not %). Bare numbers = legacy bp payloads.
-    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }> }> = {};
+    // Sales by customer (owner 2026-11-09, spec 2026-11-09-forecast-three-
+    // columns-design.md 4): kept as `salesByCustomer`, and `salesSen` is then
+    // their sum, so every reader of salesSen keeps reading the month's total.
+    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number> }> = {};
     for (const [ym, m] of Object.entries(body.months)) {
       if (!/^\d{4}-\d{2}$/.test(ym) || !m || typeof m !== "object") continue;
       const pct: Record<string, { bp?: number; amtSen?: number }> = {};
@@ -17024,7 +17027,12 @@ app.put("/forecast", async (c) => {
           else if (bp !== 0) pct[code] = { bp };
         }
       }
-      months[ym] = { salesSen: Math.max(0, Math.round(Number(m.salesSen) || 0)), pct };
+      const salesByCustomer = cleanSalesByCustomer(m.salesByCustomer);
+      months[ym] = {
+        salesSen: forecastSalesSen({ salesSen: m.salesSen, salesByCustomer }),
+        pct,
+        ...(Object.keys(salesByCustomer).length ? { salesByCustomer } : {}),
+      };
     }
     await c.var.DB.prepare(
       `INSERT INTO kv_config (key, value, updated_at) VALUES ('forecast_pnl', ?, ?)

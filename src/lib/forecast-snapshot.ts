@@ -9,7 +9,10 @@
 // ---------------------------------------------------------------------------
 
 export type ForecastCell = { p?: string; a?: string };
-export type ForecastMonth = { salesStr: string; pct: Record<string, ForecastCell> };
+/** `customers` (owner 2026-11-09): the sales keyed per customer, as typed. */
+export type ForecastMonth = { salesStr: string; pct: Record<string, ForecastCell>; customers?: Record<string, string> };
+
+const byKey = (x: string[], y: string[]) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
 
 export function forecastSnapshot(months: Record<string, ForecastMonth>): string {
   return JSON.stringify(
@@ -20,8 +23,14 @@ export function forecastSnapshot(months: Record<string, ForecastMonth>): string 
         const cells = Object.entries(m.pct)
           .filter(([, e]) => (e.a ?? "") !== "" || (e.p ?? "") !== "")
           .map(([code, e]) => [code, (e.a ?? "") !== "" ? `a:${e.a}` : `p:${e.p}`])
-          .sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
-        return [ym, (m.salesStr ?? "").trim(), cells];
+          .sort(byKey);
+        // Customer cells only when there are any, so a month keyed the old
+        // way reads exactly as before.
+        const customers = Object.entries(m.customers ?? {})
+          .map(([id, v]) => [id, (v ?? "").trim()])
+          .filter(([, v]) => v !== "")
+          .sort(byKey);
+        return customers.length ? [ym, (m.salesStr ?? "").trim(), cells, customers] : [ym, (m.salesStr ?? "").trim(), cells];
       }),
   );
 }

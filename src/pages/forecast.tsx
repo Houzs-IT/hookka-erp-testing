@@ -22,7 +22,7 @@ import { forecastSnapshot } from "@/lib/forecast-snapshot";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { monthHasDeptForecast } from "@/lib/salary-dept";
-import { forecastDepts, forecastLineGroups, forecastMonthFigures, type FcEntry, type FcMonth } from "@/lib/forecast-pnl";
+import { forecastCustomerRows, forecastDepts, forecastLineGroups, forecastMonthFigures, type FcEntry, type FcMonth } from "@/lib/forecast-pnl";
 // One money parser. NOTE `strToBp` below is a PERCENTAGE and deliberately
 // keeps `parseFloat` - it is not money and is not in this fix's scope.
 import { parseMoneyInput } from "@/lib/parse-money";
@@ -33,7 +33,11 @@ type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean 
 // sales ("15.4") OR a direct RM amount ("3000") — typing one clears the
 // other; the empty box shows the derived value as a grey placeholder.
 type CellEntry = { p?: string; a?: string };
-type MonthState = { salesStr: string; pct: Record<string, CellEntry> };
+// `customers` (owner 2026-11-09 「根据 customer 去 key-in 他的预计 sales」):
+// customer id (or "other") → RM as typed. Once any is keyed, the month's
+// sales are their sum and the single Sales box steps aside.
+type MonthState = { salesStr: string; pct: Record<string, CellEntry>; customers?: Record<string, string> };
+type CustomerLite = { id: string; name: string; isActive?: boolean };
 
 
 // Fixed column slots (owner 2026-07-29: 「amount 一个 column 对齐，percentage
@@ -114,7 +118,18 @@ function toFcMonth(m: MonthState | undefined): FcMonth | undefined {
   for (const [code, e] of Object.entries(m.pct)) {
     pct[code] = e.a !== undefined && e.a !== "" ? { amtSen: moneyFieldToSen(e.a) ?? 0 } : { bp: strToBp(e.p ?? "") };
   }
-  return { salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0), pct };
+  return { salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0), salesByCustomer: customerSen(m), pct };
+}
+// The month's customer cells in sen, for the screen only (the live total and
+// each customer's share). An unreadable cell shows as nothing here; Save
+// refuses it first (forecastMoneyError) and builds its own payload.
+function customerSen(m: MonthState | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [id, s] of Object.entries(m?.customers ?? {})) {
+    const sen = (s ?? "").trim() === "" ? 0 : moneyFieldToSen(s) ?? 0;
+    if (sen > 0) out[id] = sen;
+  }
+  return out;
 }
 
 export default function ForecastPage() {
@@ -139,6 +154,8 @@ export default function ForecastPage() {
   // mappedAccounts is the set a dept-mode month supersedes.
   const [deptInfo, setDeptInfo] = useState<{ code: string; bucket: string }[]>([]);
   const [mappedAccounts, setMappedAccounts] = useState<Set<string>>(new Set());
+  // The customers master, for the sales-by-customer rows (owner 2026-11-09).
+  const [customerMaster, setCustomerMaster] = useState<CustomerLite[]>([]);
 
   useEffect(() => {
     let stale = false;
@@ -148,13 +165,22 @@ export default function ForecastPage() {
       fetch("/api/accounting/pnl/section-map").then((r) => r.json() as Promise<Wrapped>),
       fetch("/api/accounting/forecast").then((r) => r.json() as Promise<Wrapped>),
       fetch("/api/accounting/labor/departments").then((r) => r.json() as Promise<Wrapped>).catch(() => ({}) as Wrapped),
+      fetch("/api/customers").then((r) => r.json() as Promise<Wrapped>).catch(() => ({}) as Wrapped),
     ])
-      .then(([coaJ, mapJ, fcJ, deptJ]) => {
+      .then(([coaJ, mapJ, fcJ, deptJ, custJ]) => {
         if (stale) return;
         const coa = (coaJ?.data ?? coaJ ?? []) as CoaAcct[];
         setAccounts(Array.isArray(coa) ? coa : []);
         setOverride(((mapJ?.data as { map?: Record<string, string> } | undefined)?.map ?? {}) as Record<string, string>);
-        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
+        const custs = custJ?.data;
+        setCustomerMaster(
+          Array.isArray(custs)
+            ? (custs as { id?: unknown; name?: unknown; isActive?: unknown }[])
+                .filter((x) => typeof x?.id === "string" && x.id !== "")
+                .map((x) => ({ id: String(x.id), name: String(x.name ?? x.id), isActive: x.isActive !== false }))
+            : [],
+        );
+        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; salesByCustomer?: Record<string, number>; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
         const next: Record<string, MonthState> = {};
         for (const [ym, m] of Object.entries(saved)) {
           const pct: Record<string, CellEntry> = {};
@@ -167,7 +193,10 @@ export default function ForecastPage() {
               else if (o.bp) pct[code] = { p: bpToStr(Number(o.bp) || 0) };
             }
           }
-          next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct };
+          const customers: Record<string, string> = {};
+          for (const [id, sen] of Object.entries(m.salesByCustomer ?? {}))
+            if (Number(sen) > 0) customers[id] = (Number(sen) / 100).toFixed(2);
+          next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct, customers };
         }
         setMonths(next);
         setSavedSnap(forecastSnapshot(next));
@@ -217,6 +246,21 @@ export default function ForecastPage() {
     setMonths((prev) => ({ ...prev, [ym]: { ...prev[ym], pct: { ...prev[ym].pct, [code]: v === "" ? {} : { a: v } } } }));
   const setSales = (ym: string, v: string) =>
     setMonths((prev) => ({ ...prev, [ym]: { ...prev[ym], salesStr: v } }));
+  const setCustomer = (ym: string, id: string, v: string) =>
+    setMonths((prev) => ({ ...prev, [ym]: { ...prev[ym], customers: { ...(prev[ym].customers ?? {}), [id]: v } } }));
+  // Sales by customer (owner 2026-11-09): every active customer plus any keyed
+  // one, by name, then Other. A month with any customer cell sums them.
+  const customerRows = useMemo(
+    () =>
+      forecastCustomerRows(
+        customerMaster,
+        Object.values(months).flatMap((m) => Object.entries(m.customers ?? {}).filter(([, v]) => (v ?? "").trim() !== "").map(([id]) => id)),
+      ),
+    [customerMaster, months],
+  );
+  const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
+  const customerKeyed = (ym: string) => Object.values(months[ym]?.customers ?? {}).some((v) => (v ?? "").trim() !== "");
+  const customerRowHasData = (id: string) => yms.some((ym) => (months[ym]?.customers?.[id] ?? "").trim() !== "");
 
   const addMonth = (ym: string) => {
     if (!/^\d{4}-\d{2}$/.test(ym)) {
@@ -231,7 +275,8 @@ export default function ForecastPage() {
     // the very first month starts blank — the owner keys every % himself.
     const prevYm = [...yms].filter((k) => k < ym).pop() ?? [...yms].pop();
     const inherited = prevYm ? { ...months[prevYm].pct } : {};
-    setMonths((prev) => ({ ...prev, [ym]: { salesStr: "", pct: inherited } }));
+    // The customer cells are not copied (spec 2026-11-09 section 4).
+    setMonths((prev) => ({ ...prev, [ym]: { salesStr: "", pct: inherited, customers: {} } }));
   };
 
   const { confirm } = useConfirm();
@@ -289,6 +334,9 @@ export default function ForecastPage() {
   const forecastMoneyError = firstMoneyFieldError(
     Object.entries(months).flatMap(([ym, m]) => [
       { label: `${ym} sales`, value: m.salesStr },
+      ...Object.entries(m.customers ?? {})
+        .filter(([, v]) => (v ?? "").trim() !== "")
+        .map(([id, v]) => ({ label: `${ym} ${customerName(id)} sales`, value: v })),
       ...Object.entries(m.pct)
         .filter(([, e]) => e.a !== undefined && e.a !== "")
         .map(([code, e]) => ({ label: `${ym} ${code} amount`, value: e.a as string })),
@@ -299,7 +347,7 @@ export default function ForecastPage() {
     if (forecastMoneyError) { toast.error(forecastMoneyError); return; }
     setSaving(true);
     try {
-      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }> }> = {};
+      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number> }> = {};
       for (const [ym, m] of Object.entries(months)) {
         const pct: Record<string, { bp?: number; amtSen?: number }> = {};
         for (const [code, e] of Object.entries(m.pct)) {
@@ -311,7 +359,19 @@ export default function ForecastPage() {
             if (bp !== 0) pct[code] = { bp };
           }
         }
-        payload[ym] = { salesSen: Math.max(0, moneyFieldToSen(m.salesStr) as number), pct };
+        // Customer cells: kept, and Sales is their sum (the server works it
+        // out the same way, forecastSalesSen). Every cell is readable here:
+        // forecastMoneyError refused the save above otherwise.
+        const salesByCustomer: Record<string, number> = {};
+        for (const [id, v] of Object.entries(m.customers ?? {})) {
+          if ((v ?? "").trim() === "") continue;
+          const sen = moneyFieldToSen(v) as number;
+          if (sen > 0) salesByCustomer[id] = sen;
+        }
+        const customerTotal = Object.values(salesByCustomer).reduce((s, v) => s + v, 0);
+        payload[ym] = customerTotal > 0
+          ? { salesSen: customerTotal, pct, salesByCustomer }
+          : { salesSen: Math.max(0, moneyFieldToSen(m.salesStr) as number), pct };
       }
       const res = await fetch("/api/accounting/forecast", {
         method: "PUT",
@@ -444,6 +504,90 @@ export default function ForecastPage() {
       </>
     );
   };
+  // SALES and its customer rows (owner 2026-11-09). A month keyed the old way
+  // keeps its one Sales box; once any customer cell of the month carries a
+  // figure, Sales is their sum and the box steps aside. Each customer's %
+  // column shows its share of the month's sales.
+  const salesBlock = () => {
+    const open = !collapsed.sales;
+    const visible = showEmpty ? customerRows : customerRows.filter((r) => customerRowHasData(r.id));
+    return (
+      <>
+        <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
+          <td className="px-3 py-1.5 sticky left-0 bg-[#F6F1E7] whitespace-nowrap">
+            <button
+              onClick={() => setCollapsed((p) => ({ ...p, sales: open }))}
+              title="Key one total, or key each customer and the total is their sum"
+              className="cursor-pointer inline-flex items-center gap-1 font-semibold"
+            >
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              SALES
+              {!showEmpty && visible.length < customerRows.length && (
+                <span className="font-normal text-[#9CA3AF]">({customerRows.length - visible.length} empty hidden)</span>
+              )}
+            </button>
+          </td>
+          {yms.map((ym) => (
+            <td key={ym} className="px-2 py-1.5 text-right border-l border-[#F0ECE9]">
+              {/* Sales carries its own 100% marker so the percent column
+                  reads continuously from the very first row. */}
+              {customerKeyed(ym) ? (
+                <span className="inline-flex items-center justify-end gap-1" title="The sum of the customer rows">
+                  <span className={`${AMT_SLOT} px-2 py-0.5 text-right font-semibold tabular-nums`}>{fmtRM(calc(ym).salesSen)}</span>
+                  <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>100.00%</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center justify-end gap-1">
+                  <AmountInput
+                    col={yms.indexOf(ym) * 2}
+                    onKeyDown={onCellKey}
+                    value={months[ym]?.salesStr ?? ""}
+                    onChange={(v) => setSales(ym, v)}
+                    placeholder="0.00"
+                    className={`${AMT_SLOT} rounded border border-[#E2DDD8] bg-[#FFFBF2] px-2 py-0.5 text-right tabular-nums`}
+                  />
+                  <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
+                    {(months[ym]?.salesStr ?? "") === "" ? "-" : "100.00%"}
+                  </span>
+                </span>
+              )}
+            </td>
+          ))}
+        </tr>
+        {open &&
+          visible.map((r) => (
+            <tr key={`cust-${r.id}`} className="border-b border-[#F0ECE9]">
+              <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7">
+                <span className="text-[#1F1D1B]">{r.name}</span>
+              </td>
+              {yms.map((ym) => {
+                const sen = customerSen(months[ym])[r.id] ?? 0;
+                return (
+                  <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
+                    <span className="inline-flex items-center justify-end gap-1">
+                      <span className={`${AMT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1`}>
+                        <span className="text-[10px] text-[#9CA3AF] mr-0.5">RM</span>
+                        <AmountInput
+                          col={yms.indexOf(ym) * 2}
+                          onKeyDown={onCellKey}
+                          value={months[ym]?.customers?.[r.id] ?? ""}
+                          onChange={(v) => setCustomer(ym, r.id, v)}
+                          placeholder="-"
+                          className="w-full min-w-0 bg-transparent py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
+                        />
+                      </span>
+                      <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
+                        {sen > 0 ? pctOfSales(sen, calc(ym).salesSen) : "-"}
+                      </span>
+                    </span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+      </>
+    );
+  };
   const totalRow = (label: string, val: (c: ReturnType<typeof calc>) => number, strong = false) => (
     <tr className={`border-b border-[#E2DDD8] ${strong ? "bg-[#EAF3DE] font-bold" : "bg-[#F0ECE9]/60 font-semibold"}`}>
       <td className="px-3 py-1.5 sticky left-0 whitespace-nowrap" style={{ background: strong ? "#EAF3DE" : "#F5F2EE" }}>
@@ -467,7 +611,7 @@ export default function ForecastPage() {
         <FinancePageTitle
           title="Forecast P&L"
           icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />}
-          explain="Planning only — nothing here touches the books. Key the sales per month; every line is a % of sales; a new month starts with the previous month's percentages."
+          explain="Planning only — nothing here touches the books. Key the sales per month, as one total or per customer (the total is then their sum); every line is a % of sales; a new month starts with the previous month's percentages."
         />
         <div className="ml-auto flex items-center gap-2">
           {/* Finance v2: one control — picking a month adds it (it starts
@@ -540,28 +684,7 @@ export default function ForecastPage() {
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-[#E2DDD8] bg-[#F6F1E7]">
-                  <td className="px-3 py-1.5 sticky left-0 bg-[#F6F1E7] font-semibold">SALES (keyed)</td>
-                  {yms.map((ym) => (
-                    <td key={ym} className="px-2 py-1.5 text-right border-l border-[#F0ECE9]">
-                      {/* Sales carries its own 100% marker so the percent column
-                          reads continuously from the very first row. */}
-                      <span className="inline-flex items-center justify-end gap-1">
-                        <AmountInput
-                          col={yms.indexOf(ym) * 2}
-                          onKeyDown={onCellKey}
-                          value={months[ym]?.salesStr ?? ""}
-                          onChange={(v) => setSales(ym, v)}
-                          placeholder="0.00"
-                          className={`${AMT_SLOT} rounded border border-[#E2DDD8] bg-[#FFFBF2] px-2 py-0.5 text-right tabular-nums`}
-                        />
-                        <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
-                          {(months[ym]?.salesStr ?? "") === "" ? "-" : "100.00%"}
-                        </span>
-                      </span>
-                    </td>
-                  ))}
-                </tr>
+                {salesBlock()}
                 {section("mat", "RAW MATERIALS / PURCHASES", [...lines.materials, ...lines.direct])}
                 {section("lab", "DIRECT LABOUR — BY DEPARTMENT", lines.labour)}
                 {/* Legacy account-keyed labour: visible only where it holds
