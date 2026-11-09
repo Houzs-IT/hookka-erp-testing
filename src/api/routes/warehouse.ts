@@ -15,6 +15,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 
@@ -484,12 +485,12 @@ app.get("/movements", async (c) => {
   // plenty for the history view (the UI windows/filters from there).
   const sql =
     where.length > 0
-      ? `${base} WHERE ${where.join(" AND ")} ORDER BY sm.created_at DESC LIMIT 500`
-      : `${base} ORDER BY sm.created_at DESC LIMIT 500`;
+      ? `${base} WHERE ${where.join(" AND ")} ORDER BY sm.created_at DESC LIMIT 501`
+      : `${base} ORDER BY sm.created_at DESC LIMIT 501`;
   const res = await c.var.DB.prepare(sql)
     .bind(...binds)
     .all<StockMovementRow>();
-  const data = (res.results ?? []).map(rowToMovement);
+  const data = capList(c, res.results, 500).map(rowToMovement);
   return c.json({ success: true, data, total: data.length });
 });
 

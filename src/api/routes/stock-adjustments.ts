@@ -38,6 +38,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 
@@ -182,11 +183,11 @@ app.get("/", async (c) => {
   const where = `WHERE ${clauses.join(" AND ")}`;
   const res = await c.var.DB
     .prepare(
-      `SELECT * FROM stock_adjustments ${where} ORDER BY adjustedAt DESC LIMIT 500`,
+      `SELECT * FROM stock_adjustments ${where} ORDER BY adjustedAt DESC LIMIT 501`,
     )
     .bind(...params)
     .all<StockAdjustmentRow>();
-  const data = (res.results ?? []).map(rowToApi);
+  const data = capList(c, res.results, 500).map(rowToApi);
   return c.json({ success: true, data, total: data.length });
 });
 

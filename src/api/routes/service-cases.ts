@@ -24,6 +24,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { customerScopeSql } from "../lib/customer-scope";
 import approvals from "./service-case-approvals";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 // Approval endpoints — registered first so "/approvals" wins over "/:id".
@@ -550,13 +551,13 @@ app.get("/", async (c) => {
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
 
   const [caseRes, orderRes, svOrders] = await Promise.all([
-    c.var.DB.prepare(`SELECT * FROM service_cases ${where} ORDER BY created_at DESC LIMIT 500`)
+    c.var.DB.prepare(`SELECT * FROM service_cases ${where} ORDER BY created_at DESC LIMIT 501`)
       .bind(...params)
       .all<ServiceCaseRow>(),
     c.var.DB.prepare("SELECT id, serviceOrderNo, caseId, sourceType, sourceId, sourceNo, customerId, customerName, mode, status, createdBy, createdByName, created_at as createdAt, closedAt, notes FROM service_orders").all<ServiceOrderRow>(),
     loadSvOrdersForCases(c.var.DB),
   ]);
-  const caseRows = caseRes.results ?? [];
+  const caseRows = capList(c, caseRes.results, 500);
   const poBySource = await loadCustomerPoBySource(c.var.DB, caseRows);
   const data = caseRows.map((r) => ({
     // omitPhotos: the list never renders full photos (only the detail page

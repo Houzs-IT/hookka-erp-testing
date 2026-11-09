@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 
@@ -204,10 +205,10 @@ app.get("/", async (c) => {
     params.push(status);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const sql = `SELECT * FROM qc_inspections ${where} ORDER BY created_at DESC LIMIT 500`;
+  const sql = `SELECT * FROM qc_inspections ${where} ORDER BY created_at DESC LIMIT 501`;
 
   const inspRes = await c.var.DB.prepare(sql).bind(...params).all<InspectionRow>();
-  const inspections = inspRes.results ?? [];
+  const inspections = capList(c, inspRes.results, 500);
   const ids = inspections.map((i) => i.id);
 
   const [defRes, itemRes] = await Promise.all([

@@ -31,6 +31,7 @@ import {
   loadReturnedQtyByPo,
 } from "../lib/delivery-return-create";
 import { returnableByLine } from "../../lib/delivery-return-qty";
+import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
 export default app;
@@ -180,11 +181,11 @@ app.get("/", async (c) => {
   const res = await c.var.DB
     .prepare(
       `SELECT ${HEADER_COLS} FROM delivery_returns
-        WHERE org_id = ?${scopeClause} ORDER BY created_at DESC LIMIT 500`,
+        WHERE org_id = ?${scopeClause} ORDER BY created_at DESC LIMIT 501`,
     )
     .bind(orgId, ...scope.binds)
     .all<ReturnHeaderRow>();
-  const headers = res.results ?? [];
+  const headers = capList(c, res.results, 500);
   // Attach a lightweight item summary per row (count + first problem).
   const data = [] as ReturnType<typeof rowToReturn>[];
   for (const h of headers) {
