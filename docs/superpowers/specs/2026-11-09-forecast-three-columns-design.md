@@ -34,6 +34,7 @@ Non-goals: no ledger entries, no documents, nothing posted by any of this; no ch
 - **Future months** (only on the current month's statement, as today) show Docs forecast and P&L forecast. Docs forecast stops where documents stop, as today; a month beyond that shows the P&L forecast alone. P&L forecast reaches as far as the Forecast P&L has months, plus the collection and payment delays of section 3, and at least as far as the Docs forecast (so the money both carry lands in both). Future months stop at twelve months ahead; only the repayment of a planned drawdown (section 5) may stretch them to fifteen. [my call on the caps and on not printing an empty Docs column; built in batch (b)]
 - **Bank b/f and c/f** chain per forecast kind, the same rule as today: a past or current month's forecast b/f is the actual b/f; a future month's Docs b/f is the previous month's Docs c/f, and the same for P&L.
 - Toggle off: the statement is exactly what it is today (the golden pin in `tests/cashflow-engine-forecast.test.mjs` stays).
+- **Colours, never red** [owner, 2026-11-09: 「forecast 的 background 可以不要红色吗？红色对我来说是 negative」「docs forecast 和 P&L forecast background colour 要不一样」「cash surplus 红色字体让人很容易误会是 negative」]: a forecast column is told by its background, the Docs forecast on blue, the P&L forecast on lavender (Monthly P&L's forecast too, being the Forecast P&L); headings in the same blue / purple over a dashed rule. The figures read like any other cell: black, a negative in the report's own negative colour and brackets, a zero pale. The pressed Forecast toggle is blue. [my call on the exact colours]
 - The drill under a line lists the P&L forecast items too: which Forecast P&L month and line fed the cell (for money in, which customer and term). [my call]
 - Implementation note [my call]: the P&L forecast gets its own column key (`fp:YYYY-MM`) beside `fc:YYYY-MM`, so `buildStatement` places both kinds of leg the way it places today's.
 
@@ -118,7 +119,7 @@ The owner's words: 「我认为应该是手动输入或调整」.
   - Net profit equals the Forecast P&L page's `np` for that month to the sen. Gross profit equals the page's `gp` plus the forecast of any department whose posting account is outside COGS; Total expenses changes by the same amount. [my call; this is the parity test]
   - A month with no Forecast P&L prints "-".
 - **Future months**, as on Cash Flow (「像 cash flow 一样」): with Forecast on, the months after the current one show Forecast only, as far as the Forecast P&L has months and at most twelve months ahead, also past the financial-year end. [owner's words; my call on the cap]
-- The Accumulated column gets an Actual and a Forecast part, over the same months (the start of the financial year to the current month), so the two compare like for like; future months are not in it. Forecast cells use the Cash Flow forecast's red. [my call]
+- The Accumulated column gets an Actual and a Forecast part, over the same months (the start of the financial year to the current month), so the two compare like for like; future months are not in it. Forecast cells use the P&L forecast's lavender (section 2, colours). [my call]
 - Toggle off: the view is exactly what it is today.
 
 ## 7. What must stay true
