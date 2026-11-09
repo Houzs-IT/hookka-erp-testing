@@ -126,6 +126,45 @@ test("a keyed capex or loan amount sits on its account's line beside the actual 
   assert.equal(loan.values[col(st, "fc:2026-11")], 25_000);
 });
 
+// ---- Three columns a month (spec 2026-11-09-forecast-three-columns-design.md 2) ----
+const fpCols = [
+  ...fcCols,
+  { ym: "2027-01", future: true, blank: false, kind: "pnl" },
+  { ym: "2026-12", future: true, blank: false, kind: "pnl" },
+  { ym: "2026-11", future: false, blank: false, kind: "pnl" },
+  { ym: "2026-10", future: false, blank: false, kind: "pnl" },
+  { ym: "2026-09", future: false, blank: true, kind: "pnl" },
+];
+const run3 = (legs) => cf.buildStatement(fx.statementOpts({ forecast: { columns: fpCols, legs, rmSplit: {} } }));
+const pnlItem = (ref) => ({ kind: "pnl", party: "P", ref });
+
+test("three columns a month: Actual, Docs forecast, P&L forecast; a month only the P&L forecast reaches shows it alone", () => {
+  const st = run3([]);
+  assert.deepEqual(st.columns.map((c) => c.key), [
+    "__accum__", "fp:2027-01", "fc:2026-12", "fp:2026-12",
+    "2026-11", "fc:2026-11", "fp:2026-11", "2026-10", "fc:2026-10", "fp:2026-10", "2026-09", "fc:2026-09", "fp:2026-09",
+  ]);
+  assert.deepEqual(st.columns.filter((c) => c.forecast).map((c) => c.forecastKind), ["pnl", "docs", "pnl", "docs", "pnl", "docs", "pnl", "docs", "pnl"]);
+  assert.equal(st.columns.find((c) => c.key === "fp:2026-09").blank, true);
+});
+
+test("bank chain per kind: each forecast kind runs on from its own previous month", () => {
+  const st = run3([
+    { col: "fc:2026-11", sen: 500, accountCode: "300-0000", item: item("A") },
+    { col: "fp:2026-11", sen: 900, accountCode: "300-0000", item: pnlItem("sales") },
+    { col: "fc:2026-12", sen: -100, accountCode: "900-0010", item: item("C") },
+    { col: "fp:2026-12", sen: -300, accountCode: "900-0010", item: pnlItem("x") },
+    { col: "fp:2027-01", sen: -50, accountCode: "900-0010", item: pnlItem("y") },
+  ]);
+  const v = (kind, key) => row(st, (x) => x.kind === kind).values[col(st, key)];
+  assert.deepEqual([v("bf", "fp:2026-11"), v("cf", "fp:2026-11")], [1_370_000, 1_370_900], "a month's P&L forecast starts from its actual b/f");
+  assert.deepEqual([v("bf", "fc:2026-12"), v("cf", "fc:2026-12")], [1_370_500, 1_370_400]);
+  assert.deepEqual([v("bf", "fp:2026-12"), v("cf", "fp:2026-12")], [1_370_900, 1_370_600], "the P&L chain never borrows the Docs chain");
+  assert.deepEqual([v("bf", "fp:2027-01"), v("cf", "fp:2027-01")], [1_370_600, 1_370_550]);
+  const r = row(st, (x) => x.kind === "line" && x.lineKey === "REVENUE_COLLECTION|TRADE DEBTORS");
+  assert.equal(r.values[col(st, "fp:2026-11")], 900, "a P&L forecast receipt on the same line as the actual");
+});
+
 test("forecast lines feed the operating result in their own columns", () => {
   const st = run([{ col: "fc:2026-11", sen: 500, accountCode: "300-0000", item: item("A") }]);
   const res = row(st, (x) => x.kind === "result");

@@ -107,8 +107,12 @@ export type ForecastLeg = {
   item: ForecastItem;
 };
 /** One forecast column: a month, whether it is after the current month, and
- *  whether it is at or before the opening month (no forecast, prints "-"). */
-export type ForecastColumn = { ym: string; future: boolean; blank: boolean };
+ *  whether it is at or before the opening month (no forecast, prints "-").
+ *  `kind` (spec 2026-11-09-forecast-three-columns-design.md 2): "docs" (the
+ *  default, key "fc:YYYY-MM") is built from documents; "pnl" (key
+ *  "fp:YYYY-MM") is the owner's Forecast P&L turned into cash. */
+export type ForecastKind = "docs" | "pnl";
+export type ForecastColumn = { ym: string; future: boolean; blank: boolean; kind?: ForecastKind };
 
 export function displaySign(section: CfSection): 1 | -1 {
   return OUTFLOW_SECTIONS.has(section) ? -1 : 1;
@@ -343,7 +347,7 @@ export type CfMap = Record<string, CfMapEntry>;
 // forecast: each month's Actual column carries its `ym`, its Forecast column
 // sits right after it (key "fc:YYYY-MM"); future months are Forecast only;
 // a blank Forecast column (at or before the opening month) is null throughout.
-export type CfColumn = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; future?: boolean; blank?: boolean };
+export type CfColumn = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; forecastKind?: ForecastKind; future?: boolean; blank?: boolean };
 export type CfRow = {
   kind: "section" | "group" | "line" | "subtotal" | "result" | "total" | "bf" | "cf" | "gap";
   label: string;
@@ -449,6 +453,7 @@ export function buildStatement(opts: {
   const months = fyMonths(period, fyeMonth, fyStartYm);        // newest first
   const fyStart = months[months.length - 1];        // FY start ym
   const fcKey = (ym: string) => `fc:${ym}`;
+  const fpKey = (ym: string) => `fp:${ym}`;
   let columns: CfColumn[];
   if (!forecast) {
     columns = [
@@ -458,16 +463,25 @@ export function buildStatement(opts: {
   } else {
     // Owner 2026-11-08 「一个月 oct 里面包括 actual 和 forecast，然后多月」: each
     // month's Actual and Forecast side by side; future months (Forecast only)
-    // first, so the order stays newest first.
-    const fcByYm = new Map(forecast.columns.filter((c) => !c.future).map((c) => [c.ym, c] as const));
+    // first, so the order stays newest first. Owner 2026-11-09 「每个月要有三个
+    // column」: a month's forecast is up to two columns, Docs then P&L; a
+    // future month shows whichever kinds reach it.
+    const kindOf = (c: ForecastColumn): ForecastKind => c.kind ?? "docs";
+    const byKindYm = new Map(forecast.columns.map((c) => [`${kindOf(c)}|${c.ym}`, c] as const));
+    const fcColsOf = (ym: string, future: boolean): CfColumn[] =>
+      (["docs", "pnl"] as const).flatMap((k): CfColumn[] => {
+        const c = byKindYm.get(`${k}|${ym}`);
+        if (!c || c.future !== future) return [];
+        return [{
+          key: k === "pnl" ? fpKey(ym) : fcKey(ym), label: monthLabel(ym), ym, forecast: true, forecastKind: k,
+          ...(future ? { future: true } : {}), ...(c.blank ? { blank: true } : {}),
+        }];
+      });
+    const futureYms = [...new Set(forecast.columns.filter((c) => c.future).map((c) => c.ym))].sort().reverse();
     columns = [
       { key: "__accum__", label: `Accumulated`, accum: true },
-      ...forecast.columns.filter((c) => c.future).map((c) => ({ key: fcKey(c.ym), label: monthLabel(c.ym), ym: c.ym, forecast: true, future: true })),
-      ...months.flatMap((m): CfColumn[] => {
-        const f = fcByYm.get(m);
-        const actual: CfColumn = { key: m, label: monthLabel(m), ym: m };
-        return f ? [actual, { key: fcKey(m), label: monthLabel(m), ym: m, forecast: true, ...(f.blank ? { blank: true } : {}) }] : [actual];
-      }),
+      ...futureYms.flatMap((ym) => fcColsOf(ym, true)),
+      ...months.flatMap((m): CfColumn[] => [{ key: m, label: monthLabel(m), ym: m }, ...fcColsOf(m, false)]),
     ];
   }
   const colIndex = new Map(columns.map((c, i) => [c.key, i] as const));
@@ -620,20 +634,20 @@ export function buildStatement(opts: {
   );
   const cfVals = columns.map((col, i) => bfVals[i] + surplusByCol[i]);
   // Bank c/f forecast (spec 8): a month's forecast starts from its ACTUAL b/f
-  // (above); a future month from the month before's forecast c/f, chained
-  // oldest first so each one sees the last.
+  // (above); a future month from the forecast c/f of the nearest earlier
+  // month OF THE SAME KIND (Docs and P&L never borrow each other's chain),
+  // chained oldest first so each one sees the last.
   if (forecast) {
-    const fcIndexByYm = new Map<string, number>();
-    columns.forEach((c, i) => { if (c.forecast && c.ym) fcIndexByYm.set(c.ym, i); });
-    const prevYm = (ym: string) => {
-      const [y, m] = ym.split("-").map(Number);
-      return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
-    };
-    for (const c of columns.filter((x) => x.future).sort((x, y) => x.ym!.localeCompare(y.ym!))) {
-      const i = colIndex.get(c.key)!;
-      const pi = fcIndexByYm.get(prevYm(c.ym!));
-      bfVals[i] = pi !== undefined ? cfVals[pi] : 0;
-      cfVals[i] = bfVals[i] + surplusByCol[i];
+    for (const kind of ["docs", "pnl"] as const) {
+      const ofKind = columns
+        .map((c, i) => ({ c, i }))
+        .filter(({ c }) => c.forecast && c.ym && (c.forecastKind ?? "docs") === kind)
+        .sort((x, y) => x.c.ym!.localeCompare(y.c.ym!));
+      ofKind.forEach(({ c, i }, n) => {
+        if (!c.future) return;
+        bfVals[i] = n > 0 ? cfVals[ofKind[n - 1].i] : 0;
+        cfVals[i] = bfVals[i] + surplusByCol[i];
+      });
     }
   }
 

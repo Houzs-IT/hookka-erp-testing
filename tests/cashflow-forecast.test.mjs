@@ -419,6 +419,107 @@ test("clearKeyedCode: a row's clear empties the months shown; an account no long
   assert.deepEqual(months["2026-11"], { "200-0030": -2 }, "the map passed in is left as it was");
 });
 
+// ---- The P&L forecast column (spec 2026-11-09-forecast-three-columns-design.md 3) ----
+
+const fpnl = await import(pathToFileURL(resolve(process.cwd(), "src/lib/forecast-pnl.ts")).href);
+const pAccts = [
+  { code: "701-0010", name: "PURCHASE - B.M FABRIC", type: "COST", isPostable: true },
+  { code: "700-1015", name: "CARRIAGE INWARDS", type: "COST", isPostable: true },
+  { code: "750-0010", name: "PRODUCTION - SALARY", type: "COST", isPostable: true },
+  { code: "780-0030", name: "FACTORY RENTAL", type: "COST", isPostable: true },
+  { code: "900-0010", name: "UPKEEP", type: "EXPENSE", isPostable: true },
+  { code: "900-D001", name: "DEPRECIATION", type: "EXPENSE", isPostable: true },
+  { code: "530-0010", name: "OTHER INCOME", type: "REVENUE", isPostable: true },
+];
+const pGroups = fpnl.forecastLineGroups(pAccts, {}, [{ code: "PROD-A", bucket: "DIRECT_LABOUR" }]);
+const pBase = (o = {}) => ({
+  today: "2026-11-09", period: "2026-11", months: ["2026-11", "2026-10"], openingYm: "2026-05",
+  fcMonths: {}, groups: pGroups, override: {}, mappedAccounts: new Set(),
+  salaryAccount: "410-0010", arAcct: "300-0000",
+  nonCash: (code, name) => /DEPRECIATION/.test(name),
+  customerTerm: (id) => ({ c30: 1, c60: 2, cCash: 0 })[id] ?? 1,
+  customerName: (id) => id.toUpperCase(),
+  receiptMix: [{ months: 1, weight: 1 }],
+  materialMix: () => [{ months: 1, weight: 1 }],
+  ...o,
+});
+const sumAt = (r, col, pred = () => true) => r.legs.filter((l) => l.col === col && pred(l)).reduce((s, l) => s + l.sen, 0);
+
+test("termMixOf / spreadByMix: weights by delay; parts add up; nothing known = one month", () => {
+  assert.deepEqual(fc.termMixOf([{ months: 2, sen: 100 }, { months: 1, sen: 300 }, { months: 2, sen: 100 }, { months: 0, sen: 0 }]), [{ months: 1, weight: 300 }, { months: 2, weight: 200 }]);
+  assert.deepEqual(fc.termMixOf([]), [{ months: 1, weight: 1 }]);
+  const parts = fc.spreadByMix(1000, [{ months: 1, weight: 1 }, { months: 2, weight: 2 }]);
+  assert.deepEqual(parts.map((p) => p.months), [1, 2]);
+  assert.equal(parts.reduce((s, p) => s + p.sen, 0), 1000);
+});
+
+test("P&L forecast money in: each customer by its own term, Other after a month; a total-only month by the invoices' term mix", () => {
+  const r = fc.buildPnlForecastLegs(pBase({
+    fcMonths: {
+      "2026-11": { salesSen: 1, salesByCustomer: { c30: 60_000, c60: 30_000, cCash: 5_000, other: 5_000 } },
+      "2026-10": { salesSen: 40_000 },
+    },
+    receiptMix: [{ months: 1, weight: 3 }, { months: 2, weight: 1 }],
+  }));
+  const recv = (col) => sumAt(r, col, (l) => l.accountCode === "300-0000");
+  assert.equal(recv("fp:2026-11"), 35_000, "the cash customer in its month; three quarters of October's total a month later");
+  assert.equal(recv("fp:2026-12"), 75_000, "30-day customer, Other, the rest of October");
+  assert.equal(recv("fp:2027-01"), 30_000, "the 60-day customer");
+  assert.ok(r.legs.every((l) => l.col.startsWith("fp:") && l.item.kind === "pnl"));
+  assert.ok(r.legs.some((l) => l.item.party === "C60" && l.col === "fp:2027-01"), "the drill names the customer");
+});
+
+test("P&L forecast money out: materials by their suppliers' terms, salaries the month after, the rest in the month; non-cash and superseded lines left out", () => {
+  const r = fc.buildPnlForecastLegs(pBase({
+    fcMonths: { "2026-11": { salesSen: 100_000, pct: {
+      "cat:FABRIC": { bp: 3000 }, "700-1015": { amtSen: 1_000 }, "dept:PROD-A": { bp: 1000 }, "750-0010": { bp: 500 },
+      "780-0030": { amtSen: 2_000 }, "900-0010": { bp: 300 }, "900-D001": { amtSen: 9_999 }, "530-0010": { amtSen: 700 },
+    } } },
+    materialMix: (type) => (type === "FABRIC" ? [{ months: 2, weight: 1 }] : [{ months: 1, weight: 1 }]),
+  }));
+  const fab = r.legs.filter((l) => l.label === "FABRIC");
+  assert.deepEqual(fab.map((l) => [l.col, l.sen, l.section]), [["fp:2027-01", -30_000, "RAW_MATERIALS"]], "on the type's own Raw Materials line, two months on");
+  assert.equal(sumAt(r, "fp:2026-11"), -5_300, "carriage, rent, upkeep out and other income in, all in the month");
+  const dept = r.legs.filter((l) => l.label === "PROD-A");
+  assert.deepEqual(dept.map((l) => [l.col, l.sen, l.accountCode]), [["fp:2026-12", -10_000, "410-0010"]]);
+  assert.ok(!r.legs.some((l) => l.accountCode === "750-0010"), "a department month supersedes the 750-x account");
+  assert.ok(!r.legs.some((l) => l.accountCode === "900-D001"), "depreciation moves no cash");
+  assert.equal(sumAt(r, "fp:2026-12", (l) => l.accountCode === "300-0000"), 100_000, "November's sales a month later");
+});
+
+test("P&L forecast columns: the statement's months, then future months as far as its money reaches (at most twelve ahead); nothing at or before the opening month; none ahead on an earlier period", () => {
+  const r = fc.buildPnlForecastLegs(pBase({
+    months: ["2026-11", "2026-10", "2026-05"],
+    fcMonths: { "2026-05": { salesSen: 10 }, "2026-11": { salesSen: 1, salesByCustomer: { c60: 100_000 } }, "2027-12": { salesSen: 50_000 } },
+  }));
+  assert.deepEqual(r.columns.map((c) => [c.ym, c.future, c.blank, c.kind]), [
+    ["2027-01", true, false, "pnl"], ["2026-12", true, false, "pnl"],
+    ["2026-11", false, false, "pnl"], ["2026-10", false, false, "pnl"], ["2026-05", false, true, "pnl"],
+  ]);
+  assert.ok(!r.legs.some((l) => l.col === "fp:2026-05" || l.col === "fp:2026-06" || l.col > "fp:2027-01"));
+  const earlier = fc.buildPnlForecastLegs(pBase({ period: "2026-10", months: ["2026-10"], fcMonths: { "2026-11": { salesSen: 100 } } }));
+  assert.deepEqual(earlier.columns.map((c) => c.ym), ["2026-10"]);
+  assert.deepEqual(earlier.legs, []);
+});
+
+test("sharedForecastLegs: trade finance, planned payments and keyed amounts appear in the P&L forecast too", () => {
+  const docs = [
+    { col: "fc:2026-11", sen: -100, accountCode: "310-0020", label: "Repaid to L", item: { kind: "tf", party: "L", ref: "D1" } },
+    { col: "fc:2026-11", sen: -50, section: "PLANNED", label: "Planned payments", item: { kind: "planned", party: "B", ref: "" } },
+    { col: "fc:2026-12", sen: -40, accountCode: "200-0040", item: { kind: "input", party: "K", ref: "200-0040" } },
+    { col: "fc:2026-11", sen: -70, accountCode: "400-0000", item: { kind: "pi", party: "S", ref: "PI-1" } },
+    { col: "fc:2026-10", sen: -10, accountCode: "310-0020", label: "Repaid to L", item: { kind: "tf", party: "L", ref: "D0" } },
+  ];
+  const cols = [
+    { ym: "2026-12", future: true, blank: false, kind: "pnl" },
+    { ym: "2026-11", future: false, blank: false, kind: "pnl" },
+    { ym: "2026-10", future: false, blank: true, kind: "pnl" },
+  ];
+  assert.deepEqual(fc.sharedForecastLegs(docs, cols).map((l) => [l.col, l.sen, l.item.kind]), [
+    ["fp:2026-11", -100, "tf"], ["fp:2026-11", -50, "planned"], ["fp:2026-12", -40, "input"],
+  ]);
+});
+
 test("buildForecastLegs names the parties whose term was guessed", () => {
   const r = fc.buildForecastLegs(base({ live: [{ ...inv("DEC", 80_000, "2026-12"), partyName: "Z1", termFlagged: true }] }));
   assert.deepEqual(r.termFlagged, ["Z1"]);

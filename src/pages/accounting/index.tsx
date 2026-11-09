@@ -18866,13 +18866,13 @@ function CfForecastDrillRows({ sources, cols, depth }: {
   depth: number;
 }) {
   const pad = { paddingLeft: `${34 + depth * 18}px` };
-  const rows = cols.filter((c) => c.forecast).flatMap((c) => (sources?.[c.key] ?? []).map((it, i) => ({ col: c.key, it, i })));
+  const rows = cols.filter((c) => c.forecast).flatMap((c) => (sources?.[c.key] ?? []).map((it, i) => ({ col: c.key, word: cfColWord(c), it, i })));
   if (!rows.length) return null;
   const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
   const dmy = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : "");
   return (
     <>
-      {rows.map(({ col, it, i }) => {
+      {rows.map(({ col, word, it, i }) => {
         const parts = it.kind === "pnl" || it.kind === "input"
           ? [it.party, it.note]
           : [it.party, it.ref, dmy(it.date), it.expectedYm ? `due ${cfYmLabel(it.expectedYm)}` : "", it.note];
@@ -18880,7 +18880,7 @@ function CfForecastDrillRows({ sources, cols, depth }: {
         return (
           <tr key={`${col}|${i}`} data-row="det" title={it.ofSen ? `This line's share of RM ${plDrillAmt(Math.abs(it.ofSen))}` : undefined}>
             <td data-cell="stick" style={pad}>
-              <div className="truncate max-w-[34rem]"><span className="text-[#C0392B]">Forecast</span> · {text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
+              <div className="truncate max-w-[34rem]"><span className="text-[#C0392B]">{word}</span> · {text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
             </td>
             {cols.map((c) => (
               <td key={c.key} data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`} data-neg={c.key === col && it.sen < 0 ? "" : undefined}>
@@ -19063,7 +19063,9 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
 
 // `ym` / `forecast` / `future` / `blank` come only with the Forecast toggle
 // (GET /cashflow-forecast): each month's Actual column, then its Forecast one.
-type CfApiCol = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; future?: boolean; blank?: boolean };
+type CfApiCol = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; forecastKind?: "docs" | "pnl"; future?: boolean; blank?: boolean };
+// A month's column, in words (owner 2026-11-09 「每个月要有三个 column」).
+const cfColWord = (c: CfApiCol): string => (!c.forecast ? "Actual" : c.forecastKind === "pnl" ? "P&L forecast" : "Docs forecast");
 type CfApiData = { period: string; columns: CfApiCol[]; rows: CfApiRow[] };
 type CfForecastData = CfApiData & {
   today?: string;
@@ -19703,8 +19705,8 @@ function CashFlowTab() {
   const visibleRows = (edit ? rows : cleanRows).filter((r) => !hiddenByCollapse(r));
 
   const buildExport = (): Aoa => {
-    // With the forecast on, each month has two columns: say which is which.
-    const head: (string | number)[] = ["ITEM", ...cols.map((c) => (fcData && !c.accum ? `${c.label} ${c.forecast ? "Forecast" : "Actual"}` : c.label))];
+    // With the forecast on, each month has up to three columns: say which is which.
+    const head: (string | number)[] = ["ITEM", ...cols.map((c) => (fcData && !c.accum ? `${c.label} ${cfColWord(c)}` : c.label))];
     const aoa: Aoa = [head];
     for (const r of cleanRows) {
       if (r.kind === "gap") { aoa.push([]); continue; }
@@ -19825,7 +19827,7 @@ function CashFlowTab() {
                   </tr>
                   <tr data-row="h2">
                     {cols.filter((c) => !c.accum).map((c) => (
-                      <th key={c.key} data-cell={`num split${c.forecast ? " fc" : ""}`}>{c.forecast ? "Forecast" : "Actual"}</th>
+                      <th key={c.key} data-cell={`num split${c.forecast ? " fc" : ""}`}>{cfColWord(c)}</th>
                     ))}
                   </tr>
                 </>
@@ -19920,10 +19922,16 @@ function CashFlowTab() {
             <p className="text-[#9A3412]">No forecast for this period.</p>
           )}
           <p>
-            <span className="text-[#C0392B]">Forecast (red)</span>: open documents by customer / supplier term as at the 1st of each month (amounts past their term count in that month);
+            <span className="text-[#C0392B]">Docs forecast (red)</span>: open documents by customer / supplier term as at the 1st of each month (amounts past their term count in that month);
             salaries and expenses from Forecast P&amp;L × that month's forecast receipts (salaries paid the month after, factory overhead as keyed); planned payments;
             capex and financing keyed under Capex &amp; financing (forecast only, nothing posted).
             Future months run as far as documents or keyed amounts reach. A month's forecast c/f starts from its actual b/f.
+          </p>
+          <p>
+            <span className="text-[#C0392B]">P&amp;L forecast (red)</span>: your Forecast P&amp;L as cash. Sales arrive after each customer&apos;s term
+            (a month keyed as one total: by the terms of the last three months&apos; invoices); materials are paid after their suppliers&apos; terms;
+            salaries the month after; carriage, SST, overhead and expenses in their month. Trade finance, planned payments and capex &amp; financing as in the Docs forecast.
+            Each forecast runs on from its own previous month.
           </p>
           {(fcData.termFlagged?.length ?? 0) > 0 && <p>Term blank or unreadable, taken as 1 month: {(fcData.termFlagged ?? []).join(", ")}.</p>}
           {(fcData.excluded?.length ?? 0) > 0 && <p>Not forecast (no cash moves): {[...new Set((fcData.excluded ?? []).map((e) => e.name))].join(", ")}.</p>}

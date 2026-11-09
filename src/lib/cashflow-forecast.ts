@@ -15,7 +15,7 @@ import {
   type ForecastItem,
   type ForecastLeg,
 } from "./cashflow-engine";
-import { forecastEntryRatio, forecastMonthFigures, type FcAccount, type FcLineGroups, type FcMonth } from "./forecast-pnl";
+import { FC_OTHER_CUSTOMER, forecastEntryRatio, forecastMonthFigures, forecastSalesSen, type FcAccount, type FcLineGroups, type FcMonth } from "./forecast-pnl";
 import { pnlBucketFor } from "./pnl-bucket";
 
 export type TermInfo = { months: number; flagged: boolean };
@@ -494,6 +494,171 @@ export function buildForecastLegs(input: ForecastInput): { columns: ForecastColu
   const flagged = new Set<string>();
   for (const docs of [...baselines.values(), live ?? []]) for (const d of docs) if (d.termFlagged && d.dueSen > 0) flagged.add(d.partyName);
   return { columns, legs, termFlagged: [...flagged].sort() };
+}
+
+// ---- The P&L forecast column (spec 2026-11-09-forecast-three-columns-design.md 3) ----
+
+/** The P&L forecast's column key of a month. */
+export const fpCol = (ym: string): string => `fp:${ym}`;
+/** How far past the current month the P&L forecast reaches (spec 2). */
+export const PNL_MONTHS_AHEAD = 12;
+
+/** Shares of money and the delay each comes with, in whole months. */
+export type TermMix = { months: number; weight: number }[];
+
+/** A term mix from (delay, amount) pairs, shortest delay first. Nothing to go
+ *  by = everything a month later (spec 3: the fallback). */
+export function termMixOf(rows: Iterable<{ months: number; sen: number }>): TermMix {
+  const by = new Map<number, number>();
+  for (const r of rows) if (r.sen > 0 && Number.isInteger(r.months) && r.months >= 0) by.set(r.months, (by.get(r.months) ?? 0) + r.sen);
+  const mix = [...by.entries()].sort(([a], [b]) => a - b).map(([months, weight]) => ({ months, weight }));
+  return mix.length ? mix : [{ months: 1, weight: 1 }];
+}
+
+/** An amount spread over a mix's delays; the parts add up to the amount. */
+export function spreadByMix(sen: number, mix: TermMix): { months: number; sen: number }[] {
+  const parts = splitByLargestRemainder(sen, mix.map((m) => ({ key: String(m.months), weight: m.weight })));
+  return Object.entries(parts)
+    .filter(([, v]) => v !== 0)
+    .map(([k, v]) => ({ months: Number(k), sen: v }))
+    .sort((a, b) => a.months - b.months);
+}
+
+const termWords = (months: number): string =>
+  months === 0 ? "same month" : months === 1 ? "a month later" : `${months} months later`;
+
+export type PnlForecastInput = {
+  /** Today, Malaysia time (YYYY-MM-DD). */
+  today: string;
+  /** The statement's period (YYYY-MM). */
+  period: string;
+  /** The statement's months, newest first. */
+  months: string[];
+  openingYm: string | null;
+  /** kv `forecast_pnl.months`, as stored. */
+  fcMonths: Record<string, FcMonth>;
+  groups: FcLineGroups;
+  override: Record<string, string>;
+  mappedAccounts: ReadonlySet<string>;
+  /** Where a department's salary lands (the statement's salary line). */
+  salaryAccount: string;
+  /** The debtor control: where forecast receipts land. */
+  arAcct: string;
+  nonCash: (code: string, name: string) => boolean;
+  resolveAcct?: (code: string) => string;
+  /** A customer's term in months (its `creditTerms`). */
+  customerTerm: (customerId: string) => number;
+  customerName: (customerId: string) => string;
+  /** The term mix of the customer invoices of the three complete months
+   *  before today: for a month keyed as one total (spec 3.1). */
+  receiptMix: TermMix;
+  /** A material type's term mix, from its suppliers' recent purchases (3.2). */
+  materialMix: (type: string) => TermMix;
+  /** The Docs forecast's last future month: the P&L forecast's months reach
+   *  at least that far, so the money both carry lands in both (3.3). */
+  minHorizon?: string;
+};
+
+/** The owner's Forecast P&L turned into cash (spec 3), in the P&L forecast
+ *  columns ("fp:YYYY-MM"): sales arrive after each customer's term (a month
+ *  keyed as a total, by the recent invoices' term mix); materials are paid
+ *  after their suppliers' terms; salaries the month after; carriage, SST,
+ *  overhead and expenses in their month; other income in its month. The
+ *  page's own figures (forecastMonthFigures), never scaled by receipts. */
+export function buildPnlForecastLegs(input: PnlForecastInput): { columns: ForecastColumn[]; legs: ForecastLeg[] } {
+  const { today, period, months, openingYm, fcMonths, groups, override, mappedAccounts, salaryAccount, arAcct, nonCash, customerTerm, customerName, receiptMix, materialMix } = input;
+  const resolveAcct = input.resolveAcct ?? ((c: string) => c);
+  const currentYm = today.slice(0, 7);
+  const isBlank = (ym: string) => !!openingYm && ym <= openingYm;
+  const raw: ForecastLeg[] = [];
+  const add = (target: string, sen: number, leg: Omit<ForecastLeg, "col" | "sen">) => {
+    if (sen) raw.push({ col: fpCol(target), sen, ...leg });
+  };
+  const item = (party: string, ref: string, expectedYm: string, note: string): ForecastItem => ({ kind: "pnl", party, ref, expectedYm, note });
+
+  for (const S of Object.keys(fcMonths).filter((k) => /^\d{4}-(0[1-9]|1[0-2])$/.test(k)).sort()) {
+    const m = fcMonths[S];
+    const from = `${monthLabel(S)} Forecast P&L`;
+    // Money in: each customer after its own term, Other after a month; a
+    // month keyed as one total, by the recent invoices' term mix.
+    const cells = Object.entries(m?.salesByCustomer ?? {}).map(([id, v]) => [id, Math.round(Number(v) || 0)] as const).filter(([, v]) => v > 0);
+    if (cells.length) {
+      for (const [id, sen] of cells) {
+        const other = id === FC_OTHER_CUSTOMER;
+        const delay = other ? 1 : customerTerm(id);
+        const to = addMonthsYm(S, delay);
+        add(to, sen, { accountCode: arAcct, item: item(other ? "Other (new customers)" : customerName(id), "sales", to, `${from} sales · ${termWords(delay)}`) });
+      }
+    } else {
+      for (const p of spreadByMix(forecastSalesSen(m), receiptMix)) {
+        const to = addMonthsYm(S, p.months);
+        add(to, p.sen, { accountCode: arAcct, item: item("Forecast sales", "sales", to, `${from} sales · ${termWords(p.months)} (recent invoices' terms)`) });
+      }
+    }
+    const f = forecastMonthFigures(m, groups, mappedAccounts);
+    for (const a of groups.otherIncome) {
+      const amt = f.amt(a.code);
+      if (amt) add(S, amt, { accountCode: resolveAcct(a.code), item: item(a.name, a.code, S, from) });
+    }
+    // Materials: on the type's own Raw Materials line, after its suppliers'
+    // terms.
+    for (const a of groups.materials) {
+      const amt = f.amt(a.code);
+      if (!amt) continue;
+      const type = a.code.startsWith("cat:") ? a.code.slice(4) : a.name;
+      for (const p of spreadByMix(amt, materialMix(type))) {
+        const to = addMonthsYm(S, p.months);
+        add(to, -p.sen, { section: "RAW_MATERIALS", label: type, item: item(type, a.code, to, `${from} · ${termWords(p.months)} (its suppliers' terms)`) });
+      }
+    }
+    for (const a of groups.direct) {
+      const amt = f.amt(a.code);
+      if (amt && !nonCash(a.code, a.name)) add(S, -amt, { accountCode: resolveAcct(a.code), item: item(a.name, a.code, S, from) });
+    }
+    // Salaries the month after; overhead and expenses in their month.
+    for (const l of forecastCashLines(m, groups, override, mappedAccounts, { salaryAccount, nonCash }).lines) {
+      const to = l.timing === "salary" ? addMonthsYm(S, 1) : S;
+      add(to, -l.amtSen, {
+        accountCode: resolveAcct(l.accountCode), ...(l.label ? { label: l.label } : {}),
+        item: item(l.name, l.code, to, l.timing === "salary" ? `${from} · paid the month after` : from),
+      });
+    }
+  }
+
+  // Future months only for this month's statement, as far as the plan's money
+  // (or the Docs forecast) reaches, at most PNL_MONTHS_AHEAD ahead.
+  const futureYms: string[] = [];
+  if (period === currentYm) {
+    const cap = addMonthsYm(currentYm, PNL_MONTHS_AHEAD);
+    let horizon = input.minHorizon && input.minHorizon > currentYm && input.minHorizon <= cap ? input.minHorizon : "";
+    for (const l of raw) {
+      const ym = l.col.slice(3);
+      if (ym > currentYm && ym <= cap && ym > horizon) horizon = ym;
+    }
+    for (let ym = addMonthsYm(currentYm, 1); horizon && ym <= horizon; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
+  }
+  const columns: ForecastColumn[] = [
+    ...[...futureYms].reverse().map((ym) => ({ ym, future: true, blank: false, kind: "pnl" as const })),
+    ...months.map((ym) => ({ ym, future: false, blank: isBlank(ym), kind: "pnl" as const })),
+  ];
+  const shown = new Set(columns.filter((c) => !c.blank).map((c) => c.ym));
+  return { columns, legs: raw.filter((l) => shown.has(l.col.slice(3))) };
+}
+
+const SHARED_KINDS = new Set<ForecastItem["kind"]>(["tf", "planned", "input"]);
+
+/** The money both forecasts carry (spec 3.3): trade-finance repayments,
+ *  planned payments and keyed capex / financing, copied from a Docs forecast
+ *  column into the P&L forecast column of the same month, where one shows. */
+export function sharedForecastLegs(docLegs: readonly ForecastLeg[], pnlColumns: readonly ForecastColumn[]): ForecastLeg[] {
+  const shown = new Set(pnlColumns.filter((c) => !c.blank).map((c) => c.ym));
+  const out: ForecastLeg[] = [];
+  for (const l of docLegs) {
+    if (!l.col.startsWith("fc:") || !SHARED_KINDS.has(l.item.kind)) continue;
+    const ym = l.col.slice(3);
+    if (shown.has(ym)) out.push({ ...l, col: fpCol(ym) });
+  }
+  return out;
 }
 
 /** (supplier, PI number) → PI id. An aging line names its PI by number only;
