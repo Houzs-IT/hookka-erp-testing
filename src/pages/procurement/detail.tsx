@@ -416,6 +416,8 @@ export default function PurchaseOrderDetailPage() {
     setSaving(true);
     try {
       const payload = {
+        // Refused (409) if someone else saved this PO after it was opened.
+        ...(po?.updatedAt ? { expectedUpdatedAt: po.updatedAt } : {}),
         supplierId: headerSupplierId,
         supplierName: editLines[0].supplierName || resolveSupplierName(headerSupplierId),
         expectedDate: editExpectedDate,
