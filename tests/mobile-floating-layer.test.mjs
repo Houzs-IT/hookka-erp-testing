@@ -133,10 +133,12 @@ test("screens keep no more fixed-position layers than the known full-screen ones
     .filter((f) => /position:\s*"fixed"/.test(readFileSync(f, "utf8")))
     .map((f) => f.replace(/\\/g, "/").replace(/^.*\/screens\//, ""))
     .sort();
-  // Intentional full-screen layer (a dialog). Production Orders v3 moved its
-  // desk-handoff sheet onto the shared Sheet. A new toast, bar or banner must use
-  // ResponsiveActionDock, not a fixed offset.
-  assert.deepEqual(found, ["procurement/parts.tsx"]);
+  // Intentional full-screen layers (dialogs). Production Orders v3 moved its
+  // desk-handoff sheet onto the shared Sheet. Service Cases adds one file, case-overlay.tsx, for the
+  // approved full-screen dialogs ("Report an issue", the section editors, the order / issue-part / Files overlays),
+  // the dark issue-photo viewer and the centred discard confirm.
+  // A new toast, bar or banner must use ResponsiveActionDock, not a fixed offset.
+  assert.deepEqual(found, ["cases/case-overlay.tsx", "procurement/parts.tsx"]);
 });
 
 test("screens do not size floating content from the viewport", () => {

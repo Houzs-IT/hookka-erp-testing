@@ -345,14 +345,20 @@ test("Generate Invoice only opens the Invoices module (desktop's button navigate
 
 test("the customer / hub / service-case sheets use the desktop requests and bodies", () => {
   const src = readFileSync(new URL("../src/pages/m/screens/so/so-change-sheets.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  assert.match(src, /"\/api\/service-cases", "POST", \{\n\s+sourceType: "SO",\n\s+sourceId: orderId,/);
-  assert.match(src, /rootCauseNotes: null,/);
+  // The Open Service Case sheet moved to the Service Cases rebuild (screens/cases/QuickReport.tsx): same POST, same body as
+  // desktop's CreateServiceCaseModal, preset to this order from Sales Order detail.
+  const qr = readFileSync(new URL("../src/pages/m/screens/cases/QuickReport.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(qr, /"\/api\/service-cases", "POST", \{\n\s+sourceType: effType,\n\s+sourceId: effType === "EXTERNAL" \? null : sourceId,/);
+  assert.match(qr, /rootCauseNotes: null,/);
+  assert.match(qr, /issuePhotos: photos\.photos,/, "photos are sent as compressed data URIs, optional (desktop; D-01 not applied)");
+  assert.doesNotMatch(qr, /Add a photo or describe the issue/, "no evidence rule: photo and description stay optional");
   assert.match(src, /\/customer`, "PATCH", \{ customerId, hubId: hubId \|\| undefined, reason: reason\.trim\(\) \|\| undefined \}/);
   assert.match(src, /\/hub`, "PATCH", \{ hubId, reason: reason\.trim\(\) \|\| undefined \}/);
   assert.match(src, /customerStage \?\? "CONFIRMED"\) !== "POTENTIAL"/, "a prospect cannot be picked, as on desktop");
   assert.match(src, /Pick a delivery hub for the new customer\./);
   const detail = readFileSync(new URL("../src/pages/m/screens/SalesOrderDetail.tsx", import.meta.url), "utf8");
   assert.match(detail, /navigate\(`\/m\/servicecases\/\$\{encodeURIComponent\(caseId\)\}`\)/, "the real route slug is servicecases");
+  assert.match(detail, /preset=\{\{ sourceType: "SO", sourceId: docId,/, "the case sheet is preset to this order");
   assert.match(detail, /const canChangeParty = hasPermission\("sales-orders", "update"\);/);
   assert.match(detail, /disabled=\{!!locks\.customer\}/);
   assert.match(detail, /disabled=\{!!locks\.hub\}/);

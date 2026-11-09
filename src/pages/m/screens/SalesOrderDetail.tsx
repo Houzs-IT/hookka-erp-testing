@@ -65,7 +65,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { useSalesOrderActions, type SoInfo } from "../lib/use-so-actions";
 import { soActionPlan, soEditLocks, type SoEligibility } from "../lib/so-actions";
-import { CustomerChangeSheet, HubChangeSheet, ServiceCaseSheet } from "./so/so-change-sheets";
+import { CustomerChangeSheet, HubChangeSheet } from "./so/so-change-sheets";
+import { QuickReport } from "./cases/QuickReport";
 import { hasBalanceDue, soFinancials, type SoFinancials } from "../lib/so-financials";
 import { useConfirmSheet, useMobileToast } from "./delivery/ui-hooks";
 import { SalesOrderActionBar } from "./SalesOrderActionBar";
@@ -1223,11 +1224,9 @@ export function SalesOrderDetail() {
           "delete-draft": actions.onDelete,
         }}
       />
-      <ServiceCaseSheet
+      <QuickReport
         open={actions.caseOpen}
-        orderId={docId}
-        companySO={companySOId}
-        items={items}
+        preset={{ sourceType: "SO", sourceId: docId, sourceNo: companySOId || docId, customerName: str(doc, "customerName") }}
         onClose={() => actions.setCaseOpen(false)}
         onCreated={(caseId) => { actions.setCaseOpen(false); toast.show("Service case opened", "success"); navigate(`/m/servicecases/${encodeURIComponent(caseId)}`); }}
       />

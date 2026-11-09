@@ -39,6 +39,7 @@ import { ProductDetailScreen } from "./screens/ProductDetailScreen";
 import { SalesDetailScreen } from "./screens/SalesDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
+import { CaseDetailScreen } from "./screens/cases/CaseDetailScreen";
 import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
 import { UpdatesScreen } from "./screens/UpdatesScreen";
 import { MailCenterScreen, MailThreadScreen } from "./screens/MailCenterScreen";
@@ -267,6 +268,8 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   // that route's right pane stays LineItemDetailScreen.
   invoices: InvoiceDetailRoute,
   customers: CustomerDetailRoute,
+  // Service Cases Phase 4 detail (six pages + relationship map + edit sheets).
+  servicecases: CaseDetailScreen,
 };
 
 /** True on /m/<module>/<id>[/…] when that module has a detail screen, i.e. when the split view

@@ -123,6 +123,7 @@ const CONSUMERS = [
   // --- hung on Loading, never said anything -------------------------------
   ["src/pages/service-cases/detail.tsx", "isUnknownOutcome", "eternal Loading…"],
   ["src/pages/service-orders/detail.tsx", "isUnknownOutcome", "eternal Loading…"],
+  ["src/pages/m/screens/cases/CaseDetailScreen.tsx", "isUnknownOutcome", '"Case not found" (mobile Service Case detail)'],
   ["src/pages/m/screens/LineItemDetailScreen.tsx", "failure", '"Line item not found."'],
   // Phone DO detail (2026-10-20): "not found" only on failure.kind === "notFound".
   ["src/pages/m/screens/delivery/DeliveryDetailPhone.tsx", "failure", '"Delivery order not found."'],
