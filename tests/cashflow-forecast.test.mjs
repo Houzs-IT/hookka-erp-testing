@@ -386,6 +386,39 @@ test("cleanKeyedInputs: whole sen, real months, allowed accounts only, zeros dro
   assert.deepEqual(fc.cleanKeyedInputs("junk", null), { months: {}, rejected: [] });
 });
 
+test("keyedInputGroups: every offered account is a row (CAPEX, then Loan, each by code); a keyed account no longer offered shows to be cleared", () => {
+  const accounts = [
+    { code: "440-0030", name: "L", section: "LOAN" },
+    { code: "910-0001", name: "D", section: "CAPEX" },
+    { code: "200-0030", name: "P", section: "CAPEX" },
+  ];
+  assert.deepEqual(fc.keyedInputGroups(accounts, {}), [
+    { group: "CAPEX", codes: ["200-0030", "910-0001"] },
+    { group: "LOAN", codes: ["440-0030"] },
+  ], "nothing keyed: every account is there to type into");
+  const months = { "2026-10": { "900-0010": -5 }, "2026-12": { "200-0030": -500_000, "900-0010": -1, "100-0001": 7, "300-0000": 0 } };
+  assert.deepEqual(fc.keyedInputGroups(accounts, months), [
+    { group: "CAPEX", codes: ["200-0030", "910-0001"] },
+    { group: "LOAN", codes: ["440-0030"] },
+    { group: "OTHER", codes: ["100-0001", "900-0010"] },
+  ], "a past month counts too (the server refuses the whole map while one is there); a zero does not");
+  assert.deepEqual(fc.keyedInputGroups([{ code: "200-0030", name: "P", section: "CAPEX" }], {}), [{ group: "CAPEX", codes: ["200-0030"] }], "an empty group is left out");
+});
+
+test("clearKeyedCode: a row's clear empties the months shown; an account no longer offered goes from every month", () => {
+  const months = { "2026-10": { "200-0030": -1, "900-0010": -5 }, "2026-11": { "200-0030": -2 }, "2026-12": { "200-0030": -3, "440-0030": 4 } };
+  assert.deepEqual(fc.clearKeyedCode(months, "200-0030", ["2026-11", "2026-12"]), {
+    "2026-10": { "200-0030": -1, "900-0010": -5 },
+    "2026-12": { "440-0030": 4 },
+  }, "an earlier month is kept; a month left empty goes");
+  assert.deepEqual(fc.clearKeyedCode(months, "900-0010", null), {
+    "2026-10": { "200-0030": -1 },
+    "2026-11": { "200-0030": -2 },
+    "2026-12": { "200-0030": -3, "440-0030": 4 },
+  });
+  assert.deepEqual(months["2026-11"], { "200-0030": -2 }, "the map passed in is left as it was");
+});
+
 test("buildForecastLegs names the parties whose term was guessed", () => {
   const r = fc.buildForecastLegs(base({ live: [{ ...inv("DEC", 80_000, "2026-12"), partyName: "Z1", termFlagged: true }] }));
   assert.deepEqual(r.termFlagged, ["Z1"]);
