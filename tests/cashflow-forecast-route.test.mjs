@@ -79,6 +79,19 @@ test("the forecast loader hands the keyed amounts to the engine, on the statemen
   assert.match(body, /buildForecastLegs\(\{ [^}]*\binputs\b[^}]*\}\)/);
 });
 
+test("the loader builds the P&L forecast from the Forecast P&L and the last three months' terms, and adds the money both forecasts carry", () => {
+  const start = src.indexOf("async function loadCashflowForecast(");
+  const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));
+  assert.match(body, /const mixFrom = `\$\{addMonthsYm\(curYm, -3\)\}-01`;/);
+  assert.match(body, /const mixTo = `\$\{curYm\}-01`;/, "complete months only");
+  assert.match(body, /FROM invoices WHERE status NOT IN \('DRAFT','CANCELLED'\) AND invoiceDate >= \? AND invoiceDate < \?/);
+  assert.match(body, /FROM purchase_invoices WHERE status IN \('CONFIRMED','APPROVED','PARTIAL_PAID','PAID'\) AND invoiceDate >= \? AND invoiceDate < \?/);
+  assert.match(body, /loadPiMaterialWeights\(db, new Set\(\[\.\.\.piWanted, \.\.\.piSup\.keys\(\)\]\), sgOverride\)/, "one read of the material weights");
+  assert.match(body, /const pnlBuilt = buildPnlForecastLegs\(\{/);
+  assert.match(body, /columns: \[\.\.\.built\.columns, \.\.\.pnlBuilt\.columns\]/);
+  assert.match(body, /legs: \[\.\.\.built\.legs, \.\.\.pnlBuilt\.legs, \.\.\.sharedForecastLegs\(built\.legs, pnlBuilt\.columns\)\]/);
+});
+
 test("the forecast loader reads master terms, Forecast P&L and planned payments, and writes nothing", () => {
   const start = src.indexOf("async function loadCashflowForecast(");
   const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));

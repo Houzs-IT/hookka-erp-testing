@@ -28,7 +28,7 @@ test("the toggle is off on every load, never in Edit, and fetches the forecast o
 test("forecast on: a month heading over Actual and Forecast; forecast cells carry the fc token; a blank month prints -", () => {
   assert.match(tab, /<tr data-row="h1">/);
   assert.match(tab, /<tr data-row="h2">/);
-  assert.match(tab, /\{c\.forecast \? "Forecast" : "Actual"\}/);
+  assert.match(tab, /\{cfColWord\(c\)\}<\/th>/, "the second heading row names each column");
   assert.match(tab, /\$\{cols\[j\]\?\.forecast \? " fc" : ""\}/);
   assert.match(tab, /\{blank \? "-" : fmt\(v\)\}/);
   assert.match(tab, /Could not load the forecast/);
@@ -69,6 +69,15 @@ test("Capex & financing: one scrollbar — the popup body makes room and the tab
   assert.match(dlg, /<DocDetailModal[^>]*?\bxwide\s+fill\b/);
   assert.match(dlg, /<div className="flex min-h-0 flex-col">\s*<div className="min-h-0 overflow-auto">/, "the card shrinks to the room left; its table scrolls");
   assert.doesNotMatch(dlg, /max-h-\[calc\(/, "no guessed height: at 1236×661 it left the body 5 px to scroll too (prod 2026-11-09)");
+});
+
+test("three columns a month: Actual, Docs forecast, P&L forecast — in the headings, the export and the drill (spec 2026-11-09 section 2)", () => {
+  assert.match(ui, /const cfColWord = \(c: CfApiCol\): string => \(!c\.forecast \? "Actual" : c\.forecastKind === "pnl" \? "P&L forecast" : "Docs forecast"\);/);
+  assert.match(tab, /`\$\{c\.label\} \$\{cfColWord\(c\)\}`/, "the export says which column is which");
+  const drill = slice("function CfForecastDrillRows(", "\nfunction ");
+  assert.match(drill, /word: cfColWord\(c\)/);
+  assert.match(drill, /<span className="text-\[#C0392B\]">\{word\}<\/span>/);
+  assert.match(tab, /P&amp;L forecast \(red\)<\/span>: your Forecast P&amp;L as cash\./, "the footnote says what the P&L forecast is");
 });
 
 test("a keyed amount reads in the forecast drill as who keyed it and that nothing was posted", () => {

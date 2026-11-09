@@ -41,6 +41,7 @@ import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection, Foreca
 import {
   addMonthsYm,
   buildForecastLegs,
+  buildPnlForecastLegs,
   cleanKeyedInputs,
   forecastCashLines,
   isNonCashAccount,
@@ -49,12 +50,15 @@ import {
   parseTermMonths,
   piIdIndex,
   scheduleOpenDocs,
+  sharedForecastLegs,
   splitOpeningCredits,
+  termMixOf,
   type FcCashLine,
   type OpenDoc,
   type PlannedPayment,
   type ScheduledDoc,
   type TermInfo,
+  type TermMix,
 } from "../../lib/cashflow-forecast";
 import { cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, type FcMonth } from "../../lib/forecast-pnl";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
@@ -10893,12 +10897,22 @@ async function loadCashflowForecast(
   for (let i = 0; i < jobs.length; i += 3) got.push(...(await Promise.all(jobs.slice(i, i + 3).map((f) => f()))));
   const liveSnap = wantLive ? got[got.length - 1] : null;
 
-  const [custRes, supRes, piRes, mixRes] = await Promise.all([
-    db.prepare("SELECT id, creditTerms FROM customers").all<Record<string, unknown>>(),
+  // The three complete months before today: where the P&L forecast takes its
+  // terms from (the invoices' and, per kind of material, the suppliers').
+  const curYm = today.slice(0, 7);
+  const mixFrom = `${addMonthsYm(curYm, -3)}-01`;
+  const mixTo = `${curYm}-01`;
+  const [custRes, supRes, piRes, mixRes, recentInv, recentPi] = await Promise.all([
+    db.prepare("SELECT id, name, creditTerms FROM customers").all<Record<string, unknown>>(),
     db.prepare("SELECT id, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
     db.prepare("SELECT id, piNo, supplierId FROM purchase_invoices").all<Record<string, unknown>>(),
     db.prepare("SELECT billId AS bill_id, counterAccount AS counter_account, amountSen AS amount_sen FROM other_party_bill_items").all<Record<string, unknown>>(),
+    db.prepare(`SELECT customerId, totalSen FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED') AND invoiceDate >= ? AND invoiceDate < ?`)
+      .bind(mixFrom, mixTo).all<Record<string, unknown>>(),
+    db.prepare(`SELECT id, supplierId FROM purchase_invoices WHERE status IN ('CONFIRMED','APPROVED','PARTIAL_PAID','PAID') AND invoiceDate >= ? AND invoiceDate < ?`)
+      .bind(mixFrom, mixTo).all<Record<string, unknown>>(),
   ]);
+  const piSup = new Map((recentPi.results ?? []).map((r) => [String(r.id), String(r.supplierId ?? r.supplier_id ?? "")] as const));
   // A term the master leaves empty reads as the screens show it (NET30).
   const termMap = (rows: Record<string, unknown>[], camel: string, snake: string) =>
     new Map(rows.map((r) => [String(r.id), String((r[camel] ?? r[snake]) ?? "NET30")] as const));
@@ -10990,7 +11004,8 @@ async function loadCashflowForecast(
 
   // Each open PI splits by its own materials, exactly as a payment of it
   // would (an opening PI with no lines → "Opening creditors — <supplier>").
-  const weightsFor = await loadPiMaterialWeights(db, piWanted, sgOverride);
+  // One read for those and the recent PIs the P&L forecast's terms come from.
+  const weightsFor = await loadPiMaterialWeights(db, new Set([...piWanted, ...piSup.keys()]), sgOverride);
   const rmSplit: RmSplit = {};
   for (const [key, supplier] of piSupplier) {
     const id = key.startsWith("fc:pi:?") ? null : key.slice("fc:pi:".length);
@@ -11059,9 +11074,47 @@ async function loadCashflowForecast(
       (inputs[ym] ??= {})[k] = (inputs[ym][k] ?? 0) + sen;
     }
   const built = buildForecastLegs({ today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl, inputs });
+
+  // The P&L forecast column (owner 2026-11-09 「根据我 forecast PNL 的数据反推」,
+  // spec 2026-11-09-forecast-three-columns-design.md 3): the Forecast P&L as
+  // cash. Terms come from the three complete months before today: the
+  // customer invoices' terms (for a month keyed as one total) and, per kind
+  // of material, the terms of the suppliers it was bought from.
+  const custName = new Map((custRes.results ?? []).map((r) => [String(r.id), String(r.name ?? r.id)] as const));
+  const custMonths = (id: string): number => (custTerm.has(id) ? parseTermMonths(custTerm.get(id)).months : 1);
+  const receiptMix = termMixOf((recentInv.results ?? []).map((r) => ({
+    months: custMonths(String(r.customerId ?? r.customer_id ?? "")),
+    sen: Math.round(Number(r.totalSen ?? r.total_sen) || 0),
+  })));
+  const byCategory = new Map<string, { months: number; sen: number }[]>();
+  for (const [piId, supId] of piSup) {
+    const delay = supTerm.has(supId) ? parseTermMonths(supTerm.get(supId)).months : 1;
+    for (const [line, w] of weightsFor(piId, supId)) {
+      if (line === "SST / TAX" || line.startsWith("Unallocated — ") || line.startsWith("Opening creditors")) continue;
+      const cat = rawMaterialLineFor(line, sgOverride);
+      const arr = byCategory.get(cat) ?? [];
+      arr.push({ months: delay, sen: Math.round(w) });
+      byCategory.set(cat, arr);
+    }
+  }
+  const catMix = new Map<string, TermMix>([...byCategory].map(([cat, rows]) => [cat, termMixOf(rows)] as const));
+  const futureDocs = built.columns.filter((c) => c.future).map((c) => c.ym).sort();
+  const pnlBuilt = buildPnlForecastLegs({
+    today, period, months, openingYm, fcMonths, groups, override, mappedAccounts: mapped,
+    salaryAccount: LABOUR_ACCRUAL_ACCT, arAcct, nonCash, resolveAcct,
+    customerTerm: custMonths,
+    customerName: (id) => custName.get(id) ?? id,
+    receiptMix,
+    materialMix: (type) => catMix.get(rawMaterialLineFor(type, sgOverride)) ?? termMixOf([]),
+    minHorizon: futureDocs[futureDocs.length - 1],
+  });
   const shown = new Set(built.columns.filter((c) => !c.blank).map((c) => c.ym));
   return {
-    forecast: { columns: built.columns, legs: built.legs, rmSplit },
+    forecast: {
+      columns: [...built.columns, ...pnlBuilt.columns],
+      legs: [...built.legs, ...pnlBuilt.legs, ...sharedForecastLegs(built.legs, pnlBuilt.columns)],
+      rmSplit,
+    },
     meta: {
       today, openingYm, termFlagged: built.termFlagged, excluded: excluded.filter((e) => shown.has(e.ym)),
       openingCredits: cutoffYm && openingLeftOut.length
