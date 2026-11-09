@@ -7017,3 +7017,4 @@ Asks, in order:
 98. Capped lists (PV, OR, delivery returns, QC, stock adjustments, stock movements, penalties, service orders/cases, outsource piece) now flag when the newest-N cap cut rows off, and the page shows a one-time warning instead of looking complete (from the Houzs review, owner 2026-11-08).
 99. Invoices: search + filters paged server-side (were capped at 500 with a dead Prev/Next) — BUG-2026-11-09-432 (Houzs review list, owner 2026-11-08).
 100. Every "today" in src now uses Malaysia time (todayYmdMY): 189 UTC usages in 96 files returned yesterday before 08:00 MYT (Houzs review list, owner 2026-11-08).
+101. PI auto stock-in now links its GRN back to the invoice (GRN lines marked billed, PI lines point at their GRN line) so the goods cannot be billed twice — BUG-2026-11-09-433 (Houzs review list, owner 2026-11-08).

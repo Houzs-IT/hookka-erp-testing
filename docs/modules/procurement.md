@@ -107,7 +107,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:2128` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
 | `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:747` | Ceiling on re-synced invoiced_qty |
 | `mapPurchaseLinesToAccounts` | `src/api/routes/purchase-invoices.ts:211` | PI lines → GL account buckets |
-| `autoReceivePiStock` | `src/api/lib/pi-auto-grn.ts:247` | PI confirm → system GRN → stock in |
+| `autoReceivePiStock` | `src/api/lib/pi-auto-grn.ts:284` | PI confirm → system GRN → stock in |
 | `planPiAutoGrn` | `src/api/lib/pi-auto-grn.ts:77` | Which PI lines match which PO line, how many |
 | `buildPiApprovalLegs` | `src/lib/pi-posting.ts:35` | PI AP GL legs on CONFIRMED (DR mapped buckets · CR 400-0000) |
 | `isPiEditable` / `checkGrnLineQtyEdit` | `src/lib/purchase-edit-rules.ts:34 / 135` | Shared FE+BE edit gates |

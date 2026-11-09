@@ -245,6 +245,43 @@ export interface AutoGrnResult {
 // Post the receipt for one CONFIRMED invoice. Never throws: the invoice is
 // already saved when this runs, and a failed receipt must not turn that save
 // into a 500 that invites a second invoice.
+// Link the system GRN back to the invoice that caused it (Houzs review,
+// owner 2026-11-08). Without this the GRN lines read "received, not billed",
+// so the same goods could be invoiced a second time off the GRN.
+//   • every GRN line's invoiced_qty = what this invoice billed on it;
+//   • a PI line that maps to exactly ONE GRN line points at it (grn_item_id),
+//     so voiding the invoice restores that line through the normal path. A PI
+//     line split across several PO lines keeps no pointer — one column cannot
+//     name two GRN lines, and a restore against just one would undercount.
+// The GRN lines are inserted in `lines` order in the same batch, so the i-th
+// row of this GRN (by id) is lines[i].
+export function buildPiGrnLinkStatements(
+  db: D1Database,
+  grnId: string,
+  lines: readonly { piLineId: string; qty: number }[],
+): D1PreparedStatement[] {
+  const nth = (i: number) => `(SELECT gi.id FROM grn_items gi WHERE gi.grnId = ? ORDER BY gi.id LIMIT 1 OFFSET ${i})`;
+  const perPiLine = new Map<string, number>();
+  for (const l of lines) perPiLine.set(l.piLineId, (perPiLine.get(l.piLineId) ?? 0) + 1);
+  const out: D1PreparedStatement[] = [];
+  lines.forEach((l, i) => {
+    out.push(
+      db.prepare(`UPDATE grn_items SET invoiced_qty = COALESCE(invoiced_qty, 0) + ? WHERE id = ${nth(i)}`).bind(l.qty, grnId),
+    );
+    if (perPiLine.get(l.piLineId) === 1) {
+      out.push(
+        db
+          .prepare(
+            `UPDATE purchase_invoice_items SET grn_item_id = CAST(${nth(i)} AS TEXT)
+              WHERE id = ? AND (grn_item_id IS NULL OR grn_item_id = '')`,
+          )
+          .bind(grnId, l.piLineId),
+      );
+    }
+  });
+  return out;
+}
+
 export async function autoReceivePiStock(db: D1Database, piId: string): Promise<AutoGrnResult> {
   const grnId = autoGrnIdForPi(piId);
   const empty = (note: string, skipped: AutoGrnSkippedLine[] = []): AutoGrnResult => ({
@@ -301,6 +338,7 @@ export async function autoReceivePiStock(db: D1Database, piId: string): Promise<
           )
           .bind(grnId, l.poId, l.poItemId, l.materialCode, l.stockName, l.qty, l.qty, l.qty, l.unitPriceSen),
       ),
+      ...buildPiGrnLinkStatements(db, grnId, lines),
     ];
     const stock = await buildGRNStockStatements(
       db,
