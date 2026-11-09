@@ -746,11 +746,56 @@ async function buildGrnReconsumeStatements(
 }
 
 // ---------------------------------------------------------------------------
+// A PI line drawn off a GRN line must bill the SAME material (Houzs review,
+// owner 2026-11-08). Otherwise "10 m of PC151-01" received could be billed as
+// 10 m of a dearer fabric and still pass the quantity ceiling. Codes compare
+// trimmed and case-blind; a PO line's code may live in the name as
+// "CODE - DESCRIPTION", so that prefix counts. When either side has no code
+// at all there is nothing to compare and the line passes.
+export function piGrnMaterialMismatch(
+  pi: { materialCode?: string | null; materialName?: string | null },
+  grn: { materialCode?: string | null; material_code?: string | null; materialName?: string | null },
+): string | null {
+  const codeOf = (code: string | null | undefined, name: string | null | undefined) => {
+    const c = (code ?? "").trim();
+    if (c) return c.toUpperCase();
+    const n = name ?? "";
+    const i = n.indexOf(" - ");
+    return i > 0 ? n.slice(0, i).trim().toUpperCase() : "";
+  };
+  const a = codeOf(pi.materialCode, pi.materialName);
+  const b = codeOf(grn.materialCode ?? grn.material_code, grn.materialName);
+  if (!a || !b || a === b) return null;
+  return `Line "${pi.materialName || a}" bills ${a}, but the goods-receipt line it draws from received ${b}. Pick the matching GRN line or correct the material.`;
+}
+
+// ---------------------------------------------------------------------------
 async function checkInvoicedQtyCeilingAfterEdit(
   db: D1Database,
   piId: string,
-  newRows: Array<{ grnItemId: string | null; qty: number; materialName: string }>,
+  newRows: Array<{ grnItemId: string | null; qty: number; materialName: string; materialCode?: string | null }>,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Same material as the GRN line, checked per row before the qty ceiling.
+  // A row the edit leaves as it was (same GRN line, same code) is not
+  // re-judged, so an older invoice saved before this rule stays editable.
+  const kept = new Set(
+    ((await db
+      .prepare("SELECT grn_item_id, material_code FROM purchase_invoice_items WHERE pi_id = ?")
+      .bind(piId)
+      .all<{ grn_item_id?: string | null; grnItemId?: string | null; material_code?: string | null; materialCode?: string | null }>())
+      .results ?? []
+    ).map((l) => `${l.grnItemId ?? l.grn_item_id ?? ""}|${(l.materialCode ?? l.material_code ?? "").trim().toUpperCase()}`),
+  );
+  for (const r of newRows) {
+    if (!r.grnItemId) continue;
+    if (kept.has(`${r.grnItemId}|${(r.materialCode ?? "").trim().toUpperCase()}`)) continue;
+    const g = await db
+      .prepare("SELECT materialCode, materialName FROM grn_items WHERE id = ?")
+      .bind(r.grnItemId)
+      .first<{ materialCode?: string | null; material_code?: string | null; materialName?: string | null }>();
+    const bad = g ? piGrnMaterialMismatch(r, g) : null;
+    if (bad) return { ok: false, error: bad };
+  }
   // New requested qty per GRN line.
   const newByGrnItem = new Map<string, { qty: number; name: string }>();
   for (const r of newRows) {
@@ -1494,6 +1539,8 @@ app.post("/", idempotent(), async (c) => {
             400,
           );
         }
+        const wrongMaterial = piGrnMaterialMismatch(r, gi);
+        if (wrongMaterial) return c.json({ success: false, error: wrongMaterial }, 400);
         lines.push({
           ref: gi.materialName ?? r.materialName,
           orderedQty: Number(gi.acceptedQty) || 0,
