@@ -45,6 +45,7 @@ import {
   readOrderPriority,
   type OrderPriority,
 } from "../../lib/order-notification";
+import { capList } from "../lib/list-cap";
 
 // ---- runtime schema self-apply (idempotent, once per isolate) ----
 let _announcementsMig: Promise<void> | null = null;
@@ -494,12 +495,14 @@ admin.get("/", async (c) => {
   if (denied) return denied;
   await ensureAnnouncementsTable(c.var.DB);
   const orgId = adminOrgId(c);
+  // Capped at the newest 300 (it grows forever); a cut list says so through
+  // X-List-Truncated like every other capped list (list-cap.ts).
   const res = await c.var.DB.prepare(
-    "SELECT * FROM announcements WHERE org_id = ? ORDER BY created_at DESC",
+    "SELECT * FROM announcements WHERE org_id = ? ORDER BY created_at DESC, id DESC LIMIT 301",
   )
     .bind(orgId)
     .all<AnnouncementRow>();
-  const rows = res.results ?? [];
+  const rows = capList(c, res.results, 300);
   // "Sent by" for the notification history: created_by holds a user id.
   const senderIds = [
     ...new Set(

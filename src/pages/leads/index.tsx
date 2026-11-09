@@ -18,6 +18,7 @@ import { familyOf } from "@/lib/product-family";
 import { useToast } from "@/components/ui/toast";
 import { responseErrorMessage } from "@/lib/response-error";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type Lead = {
   id: string;
@@ -100,6 +101,7 @@ async function getFollowUps(): Promise<FollowUp[]> {
 
 export default function LeadsPage() {
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -150,23 +152,39 @@ export default function LeadsPage() {
     if (err) { toast.error(err); return; }
     setSaving(true);
     try {
-      const res = await fetch("/api/sales-leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name,
-          company: form.company,
-          phone: form.phone,
-          email: form.email,
-          source: form.source,
-          nextFollowUp: form.nextFollowUp,
-          notes: form.notes,
-          estValueSen: moneyFieldToSen(form.estValue) as number,
-        }),
-      });
-      // Keep the dialog open with what was typed when the server refuses it.
-      if (!res.ok) {
-        toast.error(await responseErrorMessage(res, "Couldn't add the lead"));
+      const payload = {
+        name: form.name,
+        company: form.company,
+        phone: form.phone,
+        email: form.email,
+        source: form.source,
+        nextFollowUp: form.nextFollowUp,
+        notes: form.notes,
+        estValueSen: moneyFieldToSen(form.estValue) as number,
+      };
+      const post = (extra: Record<string, unknown> = {}) =>
+        fetch("/api/sales-leads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, ...extra }),
+        });
+      let res = await post();
+      let j = (await res.json().catch(() => null)) as { success?: boolean; error?: string; duplicateOf?: string } | null;
+      // Same phone already on a lead (+60 / 0 / spacing ignored): say who,
+      // and let the operator add it anyway if it is genuinely someone else.
+      if (res.status === 409 && j?.duplicateOf) {
+        const ok = await confirm({
+          title: "Possible duplicate lead",
+          message: `${j.error} Add this lead anyway?`,
+          confirmLabel: "Add anyway",
+        });
+        if (!ok) return;
+        res = await post({ allowDuplicatePhone: true });
+        j = (await res.json().catch(() => null)) as typeof j;
+      }
+      // The save used to ignore the response, so a refused save looked done.
+      if (!res.ok || j?.success === false) {
+        toast.error(j?.error || `Could not add the lead (HTTP ${res.status})`);
         return;
       }
       setForm({ ...EMPTY });

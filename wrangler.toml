@@ -229,6 +229,14 @@ service = "hookka-claude-forwarder"
 #   SECRETS (wrangler secret put …):
 #     OAUTH_GOOGLE_CLIENT_SECRET
 #     JWT_SECRET                     — HMAC secret for OAuth CSRF state token
+
+# Smart Placement (Houzs review list, owner 2026-11-08): Cloudflare runs the
+# API Function near the Supabase database when that is faster than running it
+# near the user, which cuts the per-query round trip of a DB-heavy request.
+# Cloudflare measures before moving anything and falls back on its own.
+[placement]
+mode = "smart"
+
 [vars]
 ENVIRONMENT = "production"
 

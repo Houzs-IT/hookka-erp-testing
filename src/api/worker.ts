@@ -371,6 +371,8 @@ app.get("/api/health", (c) =>
     env: c.env.ENVIRONMENT,
     isPreview: isPreviewHostname(c.req.url),
     host: new URL(c.req.url).hostname,
+    // The commit this deploy was built from (deploy.yml stamps it).
+    commit: BUILD_COMMIT,
     ts: Date.now(),
   }),
 );
@@ -1539,6 +1541,7 @@ app.route("/api/assistant", assistant);
 // for every agent. Mounted AFTER reports so ./routes/agent-console.ts can
 // import dispatchReport from ./routes/reports without a cycle at runtime.
 import agentConsole from "./routes/agent-console";
+import { BUILD_COMMIT } from "./build-stamp";
 app.route("/api/agents", agentConsole);
 app.route("/api/org-chart", orgChart);
 app.route("/api/user-permissions", userPermissions);

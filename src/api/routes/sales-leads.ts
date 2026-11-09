@@ -256,6 +256,24 @@ async function createPotentialCustomerForLead(
 }
 
 // POST /api/sales-leads — creates the lead AND its POTENTIAL customer account.
+// A phone already on a lead is a duplicate unless the caller says otherwise
+// (Houzs review, owner 2026-11-08). Numbers compare in their 60… form, so
+// "012-345 6789", "+60 12 345 6789" and "0060123456789" are one person — the
+// same key the bulk import already dedupes on.
+async function findLeadByPhone(db: D1Database, orgId: string, phone: string) {
+  const { normalizePhone } = await import("../../lib/lead-import");
+  const key = normalizePhone(phone);
+  if (!key) return null;
+  // Narrow by the last four digits in order (any separators between them),
+  // then confirm on the normalised key.
+  const like = `%${key.slice(-4).split("").join("%")}%`;
+  const rows = (await db
+    .prepare("SELECT id, name, company, phone, stage FROM sales_leads WHERE org_id = ? AND phone LIKE ?")
+    .bind(orgId, like)
+    .all<{ id: string; name: string | null; company: string | null; phone: string | null; stage: string | null }>()).results ?? [];
+  return rows.find((r) => normalizePhone(r.phone) === key) ?? null;
+}
+
 app.post("/", async (c) => {
   const denied = await requirePermission(c, "customers", "update");
   if (denied) return denied;
@@ -263,6 +281,20 @@ app.post("/", async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   if (!String(b.name ?? "").trim() && !String(b.company ?? "").trim()) {
     return c.json({ success: false, error: "name or company required" }, 400);
+  }
+  if (b.allowDuplicatePhone !== true && String(b.phone ?? "").trim()) {
+    const dup = await findLeadByPhone(c.var.DB, getOrgId(c), String(b.phone));
+    if (dup) {
+      const who = [dup.name, dup.company].filter(Boolean).join(" / ") || "a lead";
+      return c.json(
+        {
+          success: false,
+          error: `Phone ${dup.phone} is already on ${who} (${dup.stage ?? "NEW"}).`,
+          duplicateOf: dup.id,
+        },
+        409,
+      );
+    }
   }
   const id = genId();
   const now = new Date().toISOString();
