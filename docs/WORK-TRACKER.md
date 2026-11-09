@@ -7021,3 +7021,4 @@ Asks, in order:
 101. PI auto stock-in now links its GRN back to the invoice (GRN lines marked billed, PI lines point at their GRN line) so the goods cannot be billed twice — BUG-2026-11-09-433 (Houzs review list, owner 2026-11-08).
 103. A PI line drawn off a GRN line must bill the same material (create + edit; unchanged old rows exempt); the PI form shows GRN-drawn lines without the material picker (Houzs review list, owner 2026-11-08).
 104. POs now see goods receipts that span several POs (detail list, posted-receipt edit lock, mark-received, three-way match) — BUG-2026-11-09-434 (Houzs review list, owner 2026-11-08).
+105. Renaming a raw material code now carries its supplier bindings, BOM child lines and price history (documents keep their code); an ambiguous rename is not carried and the page says so (Houzs review list, owner 2026-11-08).
