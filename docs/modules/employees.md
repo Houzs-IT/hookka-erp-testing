@@ -1,6 +1,5 @@
 # Employees & Payroll — Module Guide
 
-> **Last verified: 2026-11-09** (branch `fix/unchecked-saves-batch-b`, to `main`): `EmployeesPage` / `EfficiencyOverviewTab` / `DepartmentLaborTab` / `PayrollTab` / `LeaveManagementTab` / `AttendanceTab` anchors re-derived after the save-error fixes shifted lines. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/resigned-month-absence`, to `main`, BUG-2026-10-16-301): `labor-engine.ts` anchors re-derived after `postEmploymentAbsentDates` was added. Nothing else re-checked.
 > **Last verified: 2026-10-12** (branch `feat/labor-cost-incl-payroll-card`): `EmployeesPage` / `LeaveManagementTab` / `AttendanceTab` anchors re-derived after the Labor Cost tab grew a card ("Labor Cost incl. EPF & Allowances"). Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `fix/ot-hourly-rate-display`): the hourly-rate gotcha now names the seeded ÷9 rule from 2026-10-01 (`seedHoursOnlyRule`). Nothing else re-checked.
