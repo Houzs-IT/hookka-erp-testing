@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
-import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups } from "@/lib/cashflow-forecast";
+import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, fillTfFromBills, keyedInputGroups, tfPlanSchedule } from "@/lib/cashflow-forecast";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -18900,11 +18900,20 @@ function CfForecastDrillRows({ sources, cols, depth }: {
 // lines. Forecast only: nothing is posted, no document. Saving sends the
 // whole map, so months outside the twelve are kept.
 type CfKeyableAccount = { code: string; name: string; section: "CAPEX" | "LOAN" };
+// Trade finance in the same popup (owner 2026-11-09 「手动输入或调整」, spec
+// 2026-11-09-forecast-three-columns-design.md 5): per facility, as at today.
+type CfTfFacility = {
+  accountCode: string; lender: string; limitSen: number | null; tenorDays: number; rateBp: number;
+  owedNowSen: number; drawnThisMonthSen: number; dueBy: Record<string, number>; billsDue: Record<string, number>;
+};
+type CfTfPlan = { tenorDays?: number; rateBp?: number; months: Record<string, number> };
 function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const firstYm = todayYmdMY().slice(0, 7);
   const yms = useMemo(() => Array.from({ length: KEYED_MONTHS }, (_, i) => addMonthsYm(firstYm, i)), [firstYm]);
   const [accounts, setAccounts] = useState<CfKeyableAccount[] | null>(null);
   const [months, setMonths] = useState<Record<string, Record<string, number>>>({});
+  const [tfFacilities, setTfFacilities] = useState<CfTfFacility[]>([]);
+  const [tfPlans, setTfPlans] = useState<Record<string, CfTfPlan>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -18913,11 +18922,13 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
     void (async () => {
       try {
         const r = await fetch("/api/accounting/cashflow-forecast-inputs", { cache: "no-store" });
-        const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string; data?: { months?: Record<string, Record<string, number>>; accounts?: CfKeyableAccount[] } } | null;
+        const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string; data?: { months?: Record<string, Record<string, number>>; accounts?: CfKeyableAccount[]; tf?: { facilities?: CfTfFacility[]; plans?: Record<string, CfTfPlan> } } } | null;
         if (!r.ok || !j?.success || !j.data) throw new Error(j?.error || `HTTP ${r.status}`);
         if (!live) return;
         setMonths(j.data.months ?? {});
         setAccounts(j.data.accounts ?? []);
+        setTfFacilities(j.data.tf?.facilities ?? []);
+        setTfPlans(j.data.tf?.plans ?? {});
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : String(e));
       }
@@ -18945,14 +18956,41 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   const stale = groups.find((g) => g.group === "OTHER")?.codes ?? [];
   const total = (codes: readonly string[], ym: string) => codes.reduce((s, code) => s + (months[ym]?.[code] ?? 0), 0);
   const hasAmount = (code: string) => yms.some((ym) => !!months[ym]?.[code]);
+  // Trade finance: a cell is the principal the lender is to pay for us that
+  // month; tenor and interest default to the facility's (spec 5).
+  const tfPlanOf = (acct: string): CfTfPlan => tfPlans[acct] ?? { months: {} };
+  const setTfCell = (acct: string, ym: string, rm: number | null) => {
+    const sen = rm === null ? 0 : roundSen(rm * 100);
+    setTfPlans((prev) => {
+      const p = prev[acct] ?? { months: {} };
+      const m = { ...p.months };
+      if (sen > 0) m[ym] = sen; else delete m[ym];
+      return { ...prev, [acct]: { ...p, months: m } };
+    });
+  };
+  const setTfSetting = (acct: string, patch: Partial<CfTfPlan>) =>
+    setTfPlans((prev) => ({ ...prev, [acct]: { ...(prev[acct] ?? { months: {} }), ...patch } }));
+  const replaceTfMonths = (acct: string, cells: Record<string, number>) =>
+    setTfPlans((prev) => {
+      const p = prev[acct] ?? { months: {} };
+      const m = { ...p.months };
+      for (const ym of yms) delete m[ym];
+      return { ...prev, [acct]: { ...p, months: { ...m, ...cells } } };
+    });
+  const tfInput = (f: CfTfFacility) => {
+    const p = tfPlanOf(f.accountCode);
+    return { yms, currentYm: firstYm, rateBp: p.rateBp ?? f.rateBp, tenorDays: p.tenorDays ?? f.tenorDays, owedNowSen: f.owedNowSen, drawnThisMonthSen: f.drawnThisMonthSen, dueBy: f.dueBy, limitSen: f.limitSen };
+  };
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
+      // Only the facilities that exist: the server refuses any other account.
+      const tf = Object.fromEntries(tfFacilities.map((f) => [f.accountCode, tfPlanOf(f.accountCode)]));
       const r = await fetch("/api/accounting/cashflow-forecast-inputs", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ months }),
+        body: JSON.stringify({ months, ...(tfFacilities.length ? { tf } : {}) }),
       });
       const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string } | null;
       if (!r.ok || !j?.success) throw new Error(j?.error || `HTTP ${r.status}`);
@@ -18986,7 +19024,8 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
       <p className="text-xs text-[#6B7280]">
         Forecast only: nothing is posted and no document is made. Money in +, money out − (the statement&apos;s way round).
         Each amount shows in that month&apos;s Forecast column, on its account&apos;s line. Money already in Planned payments
-        (Daily Cash Position) should not be keyed here too.
+        (Daily Cash Position) should not be keyed here too. Trade finance: key what the lender is to pay suppliers for us each month;
+        its interest and the repayment a tenor later are worked out (this month&apos;s cell is the month&apos;s whole use, what is drawn already included).
       </p>
       {loadError ? (
         <p className="text-xs text-[#9A3412]">Could not load the keyed amounts: {loadError}</p>
@@ -19052,6 +19091,78 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                   )}
                 </tbody>
               ))}
+              {tfFacilities.map((f) => {
+                const p = tfPlanOf(f.accountCode);
+                const inp = tfInput(f);
+                const sched = tfPlanSchedule({ ...inp, plan: p.months });
+                const computed: { label: string; key: "interestSen" | "repaySen" | "owedSen" | "roomSen" }[] = [
+                  { label: "Interest (est.)", key: "interestSen" },
+                  { label: "Repayment", key: "repaySen" },
+                  { label: "Owed at month end", key: "owedSen" },
+                  { label: f.limitSen === null ? "Room left (no limit set)" : `Room left (limit ${plDrillAmt(f.limitSen)})`, key: "roomSen" },
+                ];
+                return (
+                  <tbody key={`tf-${f.accountCode}`}>
+                    <tr className="bg-[#F7F5F2]">
+                      <td className="sticky left-0 z-10 bg-[#F7F5F2] px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[#6B7280] whitespace-nowrap">Trade finance — {f.lender}</td>
+                      <td colSpan={yms.length + 1} className="px-2 pb-1 pt-2">
+                        <span className="inline-flex flex-wrap items-center gap-3 text-[11px] text-[#6B7280]">
+                          <label className="inline-flex items-center gap-1">
+                            Tenor
+                            <input type="number" min={1} max={400} defaultValue={inp.tenorDays} key={`t-${inp.tenorDays}`}
+                              onBlur={(e) => setTfSetting(f.accountCode, { tenorDays: Math.min(400, Math.max(1, Math.round(Number(e.target.value) || f.tenorDays))) })}
+                              className="h-6 w-14 rounded border border-[#E2DDD8] bg-white px-1 text-right tabular-nums" />
+                            days
+                          </label>
+                          <label className="inline-flex items-center gap-1">
+                            Interest
+                            <input type="number" min={0} step="0.01" defaultValue={(inp.rateBp / 100).toFixed(2)} key={`r-${inp.rateBp}`}
+                              onBlur={(e) => setTfSetting(f.accountCode, { rateBp: Math.min(10_000, Math.max(0, Math.round((Number(e.target.value) || 0) * 100))) })}
+                              className="h-6 w-16 rounded border border-[#E2DDD8] bg-white px-1 text-right tabular-nums" />
+                            % per draw
+                          </label>
+                          <span>Owed today {plDrillAmt(f.owedNowSen)}</span>
+                          {f.drawnThisMonthSen > 0 && <span>Drawn this month {plDrillAmt(f.drawnThisMonthSen)}</span>}
+                          <Button variant="outline" size="sm" onClick={() => replaceTfMonths(f.accountCode, fillTfFromBills({ ...inp, billsDue: f.billsDue }))}
+                            title="Fill each month with the bills due from suppliers this facility has paid before, as far as the limit lets; then change any cell">
+                            Fill from bills
+                          </Button>
+                        </span>
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#F0ECE9]">
+                      <td className="sticky left-0 z-10 bg-white px-2 py-0.5 whitespace-nowrap">
+                        <span className="text-[#1F1D1B]">Drawdown</span> <span className="text-[#9CA3AF]">(paid to suppliers for us)</span>
+                      </td>
+                      {yms.map((ym) => (
+                        <td key={ym} className="px-1 py-0.5">
+                          <MoneyInput value={p.months[ym] ? p.months[ym] / 100 : null} onChange={(v) => setTfCell(f.accountCode, ym, v)} className="h-7 w-28 px-2 text-xs tabular-nums" />
+                        </td>
+                      ))}
+                      <td className="px-1 text-center">
+                        {yms.some((ym) => !!p.months[ym]) && (
+                          <button type="button" onClick={() => replaceTfMonths(f.accountCode, {})} title="Clear this row's twelve months" className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
+                        )}
+                      </td>
+                    </tr>
+                    {computed.map(({ label, key }) => (
+                      <tr key={key} className="border-b border-[#F0ECE9] text-[#6B7280]">
+                        <td className="sticky left-0 z-10 bg-white px-2 py-1 pl-4 whitespace-nowrap">{label}</td>
+                        {sched.map((r) => {
+                          const v = r[key];
+                          const over = key === "roomSen" && v !== null && v < 0;
+                          return (
+                            <td key={r.ym} className={`px-2 py-1 text-right tabular-nums ${over ? "font-semibold text-[#9A3A2D]" : ""}`}>
+                              {v === null ? "-" : key === "repaySen" ? (v ? `(${plDrillAmt(v)})` : "-") : amt(v)}
+                            </td>
+                          );
+                        })}
+                        <td />
+                      </tr>
+                    ))}
+                  </tbody>
+                );
+              })}
             </table>
           </div>
         </div>

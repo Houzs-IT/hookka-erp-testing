@@ -89,7 +89,31 @@ test("the loader builds the P&L forecast from the Forecast P&L and the last thre
   assert.match(body, /loadPiMaterialWeights\(db, new Set\(\[\.\.\.piWanted, \.\.\.piSup\.keys\(\)\]\), sgOverride\)/, "one read of the material weights");
   assert.match(body, /const pnlBuilt = buildPnlForecastLegs\(\{/);
   assert.match(body, /columns: \[\.\.\.built\.columns, \.\.\.pnlBuilt\.columns\]/);
-  assert.match(body, /legs: \[\.\.\.built\.legs, \.\.\.pnlBuilt\.legs, \.\.\.sharedForecastLegs\(built\.legs, pnlBuilt\.columns\)\]/);
+  assert.match(body, /legs: \[\.\.\.built\.legs, \.\.\.pnlBuilt\.legs, \.\.\.sharedForecastLegs\(built\.legs, pnlBuilt\.columns, firstPlanYm\)\]/);
+});
+
+test("trade-finance plans: GET gives the popup each facility as at today; PUT keeps facilities only, in its own kv, audited", () => {
+  const g = handler("get", "/cashflow-forecast-inputs");
+  assert.match(g, /loadTfPlanStore\(c\.var\.DB\)/);
+  assert.match(g, /cfForecastTfFacilities\(c\.var\.DB, getOrgId\(c\)\)/);
+  assert.match(g, /tf: \{ facilities: tfFacilities, plans: tfPlans \}/);
+  assert.doesNotMatch(g, /\b(INSERT|UPDATE|DELETE)\b/);
+  const p = handler("put", "/cashflow-forecast-inputs");
+  assert.match(p, /cleanTfPlans\(body\.tf, new Set\(\(await getTfSources\(c\.var\.DB\)\)\.map\(\(s\) => s\.accountCode\)\)\)/);
+  assert.match(p, /is not a trade-finance facility/);
+  assert.match(p, /VALUES \('cashflow_forecast_tf', \?, \?\)/);
+  assert.match(p, /resourceId: "cashflow_forecast_tf"/);
+  assert.match(p, /if \(body\.tf !== undefined\)/, "a body without tf leaves the plans as they are");
+});
+
+test("the loader hands the plans to both forecasts, nets this month's real draws, and keeps planned-for draws out of the P&L forecast", () => {
+  const start = src.indexOf("async function loadCashflowForecast(");
+  const body = src.slice(start, src.indexOf("\nasync function computeCashflowStatement(", start));
+  assert.match(body, /const tfStore = await loadTfPlanStore\(db\);/);
+  assert.match(body, /drawnOn: d\.drawDate/, "a draw carries the day it was drawn");
+  assert.match(body, /buildForecastLegs\(\{[^}]*tfPlans, tfDrawnThisMonth, tfInterestAccount \}\)/);
+  assert.match(body, /tfPlans, tfDrawnThisMonth, tfInterestAccount,\r?\n\s*\}\);/, "and to the P&L forecast");
+  assert.match(body, /sharedForecastLegs\(built\.legs, pnlBuilt\.columns, firstPlanYm\)/);
 });
 
 test("the forecast loader reads master terms, Forecast P&L and planned payments, and writes nothing", () => {

@@ -69,6 +69,8 @@ export type OpenDoc = {
   splitKey?: string;
   /** Trade finance: the line it repays ("Repaid to <lender>"). */
   label?: string;
+  /** Trade finance: the day the draw was made. */
+  drawnOn?: string;
 };
 
 export type ScheduledDoc = OpenDoc & { expectedYm: string; dueSen: number; termFlagged: boolean };
@@ -162,7 +164,7 @@ export function docLegsForColumn(
     const overdue = mode === "baseline" && d.expectedYm < colYm;
     if (!overdue && d.expectedYm !== colYm) continue;
     const sign = d.kind === "invoice" || d.kind === "odb" ? 1 : -1;
-    const item: ForecastItem = { kind: d.kind, party: d.partyName, ref: d.no, date: d.date, expectedYm: d.expectedYm };
+    const item: ForecastItem = { kind: d.kind, party: d.partyName, ref: d.no, date: d.date, expectedYm: d.expectedYm, ...(d.drawnOn ? { drawnOn: d.drawnOn } : {}) };
     const parts = (d.kind === "ocb" || d.kind === "odb") && d.mix?.length ? splitMix(d.dueSen, d.mix) : null;
     if (overdue) {
       if (parts) for (const [acct, sen] of parts) legs.push({ col, sen: sign * sen, accountCode: acct, label: OVERDUE_LABEL, order: OVERDUE_ORDER, item });
@@ -287,7 +289,177 @@ export type ForecastInput = {
   /** Keyed capex & financing (spec 6.4): month → account code → sen, the
    *  statement's way round (+ money in, − money out). Forecast only. */
   inputs?: Record<string, Record<string, number>>;
+  /** Planned trade-finance drawdowns (spec 2026-11-09-forecast-three-
+   *  columns-design.md 5), with what each facility really drew this month
+   *  and where a plan's interest is charged. */
+  tfPlans?: TfPlanFacility[];
+  tfDrawnThisMonth?: Record<string, number>;
+  tfInterestAccount?: string;
 };
+
+// ---- Trade-finance plans (spec 2026-11-09-forecast-three-columns-design.md 5) ----
+
+/** The line a planned drawdown sits on, under its facility. */
+export const TF_PLAN_LABEL = "Drawdown — planned";
+/** A plan's repayment may stretch the future months this far (spec 2). */
+export const TF_PLAN_MONTHS_AHEAD = 15;
+
+/** One facility's plan: month → the principal the lender is to pay for us. */
+export type TfPlanFacility = { accountCode: string; lender: string; tenorDays: number; rateBp: number; months: Record<string, number> };
+/** kv `cashflow_forecast_tf.facilities`: per facility account, the owner's
+ *  tenor and interest (absent = the defaults) and the months keyed. */
+export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; months: Record<string, number> }>;
+
+/** A stored plan, cleaned: trade-finance accounts only (with `allowed`), a
+ *  tenor of 1–400 days, a rate of 0–100 %, months as YYYY-MM, whole positive
+ *  sen. Anything unreadable reads as nothing. */
+export function cleanTfPlans(raw: unknown, allowed: ReadonlySet<string> | null): { facilities: TfPlanStore; rejected: string[] } {
+  const facilities: TfPlanStore = {};
+  const rejected = new Set<string>();
+  if (!raw || typeof raw !== "object") return { facilities, rejected: [] };
+  for (const [code, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== "object") continue;
+    if (allowed && !allowed.has(code)) { rejected.add(code); continue; }
+    const o = v as { tenorDays?: unknown; rateBp?: unknown; months?: unknown };
+    const out: TfPlanStore[string] = { months: {} };
+    const tenor = Math.round(Number(o.tenorDays));
+    if (Number.isFinite(tenor) && tenor >= 1 && tenor <= 400) out.tenorDays = tenor;
+    const rate = Math.round(Number(o.rateBp));
+    if (o.rateBp !== undefined && o.rateBp !== null && Number.isFinite(rate) && rate >= 0 && rate <= 10_000) out.rateBp = rate;
+    for (const [ym, s] of Object.entries((o.months ?? {}) as Record<string, unknown>)) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) continue;
+      const sen = Math.round(Number(s));
+      if (Number.isSafeInteger(sen) && sen > 0) out.months[ym] = sen;
+    }
+    facilities[code] = out;
+  }
+  return { facilities, rejected: [...rejected].sort() };
+}
+
+/** The month a draw made in `ym` is repaid: a tenor later, in whole months. */
+export const tfRepayYm = (ym: string, tenorDays: number): string => addMonthsYm(ym, Math.max(0, Math.round(tenorDays / 30)));
+/** The interest a draw is charged at `rateBp` (per draw, for the tenor). */
+export const tfInterestSen = (principalSen: number, rateBp: number): number => Math.round((principalSen * rateBp) / 10_000);
+
+/** The default interest per draw for `tenorDays`: the facility's last six
+ *  draws, each one's interest ÷ principal scaled to that tenor, averaged. */
+export function defaultTfRateBp(
+  draws: readonly { drawDate: string; dueDate: string; amountSen: number; interestSen: number; bankChargeSen?: number }[],
+  tenorDays: number,
+): number {
+  const rates: number[] = [];
+  for (const d of [...draws].sort((a, b) => b.drawDate.localeCompare(a.drawDate))) {
+    if (rates.length >= 6) break;
+    const principal = d.amountSen - d.interestSen - (d.bankChargeSen ?? 0);
+    const days = Math.round((Date.parse(`${d.dueDate}T00:00:00Z`) - Date.parse(`${d.drawDate}T00:00:00Z`)) / 86_400_000);
+    if (principal <= 0 || days <= 0 || d.interestSen <= 0) continue;
+    rates.push((d.interestSen / principal) * (tenorDays / days) * 10_000);
+  }
+  return rates.length ? Math.round(rates.reduce((s, r) => s + r, 0) / rates.length) : 0;
+}
+
+/** A plan as forecast legs (spec 5), the actual statement's way: the plan's
+ *  own month shows it as keyed (the drawdown on its facility; its interest on
+ *  Finance Cost and the same amount owed on Trade Finance, so the bank does
+ *  not move); the repayment, principal and interest, a tenor later. In the
+ *  P&L forecast every plan repays in full; in the Docs forecast a plan of the
+ *  current month repays only what is not drawn yet, and a past month's plan
+ *  not at all (what was really drawn is in the aging). */
+export function tfPlanLegs(
+  plans: readonly TfPlanFacility[],
+  o: { kind: "docs" | "pnl"; currentYm: string; drawnThisMonth: (accountCode: string) => number; interestAccount: string },
+): ForecastLeg[] {
+  const key = (ym: string) => (o.kind === "pnl" ? `fp:${ym}` : fcCol(ym));
+  const legs: ForecastLeg[] = [];
+  for (const f of plans) {
+    for (const ym of Object.keys(f.months).sort()) {
+      const sen = Math.round(Number(f.months[ym]) || 0);
+      if (sen <= 0) continue;
+      const it = (note: string, expectedYm = ym): ForecastItem => ({ kind: "tfplan", party: f.lender, ref: ym, expectedYm, note });
+      const interest = tfInterestSen(sen, f.rateBp);
+      legs.push({ col: key(ym), sen, accountCode: f.accountCode, label: TF_PLAN_LABEL, item: it("planned, forecast only") });
+      if (interest) {
+        legs.push({ col: key(ym), sen: -interest, accountCode: o.interestAccount, item: it("estimated interest on the planned drawdown") });
+        legs.push({ col: key(ym), sen: interest, accountCode: f.accountCode, label: `Interest charged by ${f.lender}`, item: it("estimated interest, owed with the drawdown") });
+      }
+      const repayBase = o.kind === "pnl" ? sen : ym < o.currentYm ? 0 : ym === o.currentYm ? Math.max(0, sen - o.drawnThisMonth(f.accountCode)) : sen;
+      if (repayBase > 0) {
+        const to = tfRepayYm(ym, f.tenorDays);
+        legs.push({ col: key(to), sen: -(repayBase + tfInterestSen(repayBase, f.rateBp)), accountCode: f.accountCode, label: `Repaid to ${f.lender}`, item: it(`repays the ${monthLabel(ym)} plan`, to) });
+      }
+    }
+  }
+  return legs;
+}
+
+/** What the Trade finance block of the Capex & financing popup works from. */
+export type TfScheduleInput = {
+  /** The months the block shows, from the current one. */
+  yms: string[];
+  currentYm: string;
+  rateBp: number;
+  tenorDays: number;
+  /** What the facility owes today. */
+  owedNowSen: number;
+  /** What it has really drawn this month (principal). */
+  drawnThisMonthSen: number;
+  /** The existing draws' outstanding by due month (past due in the current month). */
+  dueBy: Record<string, number>;
+  limitSen: number | null;
+};
+
+/** The block's computed rows a month: interest on the plan as keyed, the
+ *  repayments (existing draws by due date, plans a tenor later), what is owed
+ *  at month end and the room under the limit. Owed follows reality: a plan of
+ *  the current month counts only beyond what is drawn already. */
+export function tfPlanSchedule(o: TfScheduleInput & { plan: Record<string, number> }): { ym: string; interestSen: number; repaySen: number; owedSen: number; roomSen: number | null }[] {
+  const planRepay = new Map<string, number>();
+  const rows: { ym: string; interestSen: number; repaySen: number; owedSen: number; roomSen: number | null }[] = [];
+  let owed = o.owedNowSen;
+  for (const ym of o.yms) {
+    const keyed = Math.max(0, Math.round(o.plan[ym] ?? 0));
+    const eff = ym === o.currentYm ? Math.max(0, keyed - o.drawnThisMonthSen) : keyed;
+    const effInterest = tfInterestSen(eff, o.rateBp);
+    if (eff > 0) {
+      const to = tfRepayYm(ym, o.tenorDays);
+      planRepay.set(to, (planRepay.get(to) ?? 0) + eff + effInterest);
+    }
+    const repay = (o.dueBy[ym] ?? 0) + (planRepay.get(ym) ?? 0);
+    owed = owed + eff + effInterest - repay;
+    rows.push({ ym, interestSen: tfInterestSen(keyed, o.rateBp), repaySen: repay, owedSen: owed, roomSen: o.limitSen === null ? null : o.limitSen - owed });
+  }
+  return rows;
+}
+
+/** "Fill from bills" (spec 5, owner 「输入或调整」): each month the bills due
+ *  from suppliers the facility has paid before, as far as the limit lets
+ *  once that month's repayments are in. The current month's cell is the
+ *  month's whole use: what is already drawn plus what the bills add. */
+export function fillTfFromBills(o: TfScheduleInput & { billsDue: Record<string, number> }): Record<string, number> {
+  const out: Record<string, number> = {};
+  const planRepay = new Map<string, number>();
+  let owed = o.owedNowSen;
+  for (const ym of o.yms) {
+    owed -= (o.dueBy[ym] ?? 0) + (planRepay.get(ym) ?? 0);
+    const bills = Math.max(0, Math.round(o.billsDue[ym] ?? 0));
+    let extra = bills;
+    if (o.limitSen !== null) {
+      const avail = Math.max(0, o.limitSen - owed);
+      let cap = Math.floor((avail * 10_000) / (10_000 + o.rateBp));
+      while (cap > 0 && cap + tfInterestSen(cap, o.rateBp) > avail) cap -= 1;
+      extra = Math.min(bills, cap);
+    }
+    const drawn = ym === o.currentYm ? o.drawnThisMonthSen : 0;
+    if (extra + drawn > 0) out[ym] = extra + drawn;
+    if (extra > 0) {
+      const i = tfInterestSen(extra, o.rateBp);
+      owed += extra + i;
+      const to = tfRepayYm(ym, o.tenorDays);
+      planRepay.set(to, (planRepay.get(to) ?? 0) + extra + i);
+    }
+  }
+  return out;
+}
 
 /** How many months the Capex & financing table offers, from the current
  *  month: a keyed month reaches at most this far (spec 6.4). */
@@ -382,10 +554,15 @@ export function buildForecastLegs(input: ForecastInput): { columns: ForecastColu
   const currentYm = today.slice(0, 7);
   const isBlank = (ym: string) => !!openingYm && ym <= openingYm;
   const keyedSen = (v: unknown) => Math.round(Number(v) || 0);
+  // Planned trade-finance drawdowns (spec 2026-11-09 section 5), Docs way.
+  const tfLegs = input.tfPlans?.length
+    ? tfPlanLegs(input.tfPlans, { kind: "docs", currentYm, drawnThisMonth: (a) => input.tfDrawnThisMonth?.[a] ?? 0, interestAccount: input.tfInterestAccount ?? "" })
+    : [];
 
   // Future months only for this month's statement, as far as a document
   // reaches (owner 2026-11-08 「显示」: a month only a bill reaches is shown),
-  // or a keyed capex / financing amount within the input table's months.
+  // or a keyed capex / financing amount within the input table's months, or
+  // a planned drawdown's repayment.
   const futureYms: string[] = [];
   if (period === currentYm && live) {
     let horizon = "";
@@ -393,6 +570,11 @@ export function buildForecastLegs(input: ForecastInput): { columns: ForecastColu
     const lastKeyable = addMonthsYm(currentYm, KEYED_MONTHS - 1);
     for (const [ym, cells] of Object.entries(inputs))
       if (ym > currentYm && ym <= lastKeyable && ym > horizon && Object.values(cells ?? {}).some((v) => keyedSen(v) !== 0)) horizon = ym;
+    const lastPlanned = addMonthsYm(currentYm, TF_PLAN_MONTHS_AHEAD);
+    for (const l of tfLegs) {
+      const ym = l.col.slice(3);
+      if (ym > currentYm && ym <= lastPlanned && ym > horizon) horizon = ym;
+    }
     for (let ym = addMonthsYm(currentYm, 1); horizon && ym <= horizon; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
   }
   const columns: ForecastColumn[] = [
@@ -491,6 +673,9 @@ export function buildForecastLegs(input: ForecastInput): { columns: ForecastColu
       if (sen) legs.push({ col: fcCol(ym), sen, accountCode: code, item: { kind: "input", party: KEYED_PARTY, ref: code, expectedYm: ym, note: "forecast only, nothing posted" } });
     }
 
+  // Planned trade-finance drawdowns, wherever their month's column is shown.
+  for (const l of tfLegs) if (docLegs.has(l.col.slice(3))) legs.push(l);
+
   const flagged = new Set<string>();
   for (const docs of [...baselines.values(), live ?? []]) for (const d of docs) if (d.termFlagged && d.dueSen > 0) flagged.add(d.partyName);
   return { columns, legs, termFlagged: [...flagged].sort() };
@@ -557,6 +742,10 @@ export type PnlForecastInput = {
   /** The Docs forecast's last future month: the P&L forecast's months reach
    *  at least that far, so the money both carry lands in both (3.3). */
   minHorizon?: string;
+  /** Planned trade-finance drawdowns (section 5), the P&L way: in full. */
+  tfPlans?: TfPlanFacility[];
+  tfDrawnThisMonth?: Record<string, number>;
+  tfInterestAccount?: string;
 };
 
 /** The owner's Forecast P&L turned into cash (spec 3), in the P&L forecast
@@ -625,15 +814,21 @@ export function buildPnlForecastLegs(input: PnlForecastInput): { columns: Foreca
     }
   }
 
+  // Planned trade-finance drawdowns (section 5): every plan repays in full.
+  if (input.tfPlans?.length)
+    raw.push(...tfPlanLegs(input.tfPlans, { kind: "pnl", currentYm, drawnThisMonth: (a) => input.tfDrawnThisMonth?.[a] ?? 0, interestAccount: input.tfInterestAccount ?? "" }));
+
   // Future months only for this month's statement, as far as the plan's money
-  // (or the Docs forecast) reaches, at most PNL_MONTHS_AHEAD ahead.
+  // (or the Docs forecast) reaches, at most PNL_MONTHS_AHEAD ahead (a planned
+  // drawdown's repayment, TF_PLAN_MONTHS_AHEAD).
   const futureYms: string[] = [];
   if (period === currentYm) {
     const cap = addMonthsYm(currentYm, PNL_MONTHS_AHEAD);
-    let horizon = input.minHorizon && input.minHorizon > currentYm && input.minHorizon <= cap ? input.minHorizon : "";
+    const planCap = addMonthsYm(currentYm, TF_PLAN_MONTHS_AHEAD);
+    let horizon = input.minHorizon && input.minHorizon > currentYm && input.minHorizon <= planCap ? input.minHorizon : "";
     for (const l of raw) {
       const ym = l.col.slice(3);
-      if (ym > currentYm && ym <= cap && ym > horizon) horizon = ym;
+      if (ym > currentYm && ym <= (l.item.kind === "tfplan" ? planCap : cap) && ym > horizon) horizon = ym;
     }
     for (let ym = addMonthsYm(currentYm, 1); horizon && ym <= horizon; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
   }
@@ -650,11 +845,19 @@ const SHARED_KINDS = new Set<ForecastItem["kind"]>(["tf", "planned", "input"]);
 /** The money both forecasts carry (spec 3.3): trade-finance repayments,
  *  planned payments and keyed capex / financing, copied from a Docs forecast
  *  column into the P&L forecast column of the same month, where one shows. */
-export function sharedForecastLegs(docLegs: readonly ForecastLeg[], pnlColumns: readonly ForecastColumn[]): ForecastLeg[] {
+export function sharedForecastLegs(
+  docLegs: readonly ForecastLeg[],
+  pnlColumns: readonly ForecastColumn[],
+  /** Per facility, its first planned month: a real draw made since then is
+   *  the plan coming true, so the P&L forecast does not add it again (5). */
+  firstPlanYm: Readonly<Record<string, string>> = {},
+): ForecastLeg[] {
   const shown = new Set(pnlColumns.filter((c) => !c.blank).map((c) => c.ym));
   const out: ForecastLeg[] = [];
   for (const l of docLegs) {
     if (!l.col.startsWith("fc:") || !SHARED_KINDS.has(l.item.kind)) continue;
+    const first = l.item.kind === "tf" && l.accountCode ? firstPlanYm[l.accountCode] : undefined;
+    if (first && l.item.drawnOn && l.item.drawnOn.slice(0, 7) >= first) continue;
     const ym = l.col.slice(3);
     if (shown.has(ym)) out.push({ ...l, col: fpCol(ym) });
   }

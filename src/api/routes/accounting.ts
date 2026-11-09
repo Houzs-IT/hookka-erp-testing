@@ -43,6 +43,8 @@ import {
   buildForecastLegs,
   buildPnlForecastLegs,
   cleanKeyedInputs,
+  cleanTfPlans,
+  defaultTfRateBp,
   forecastCashLines,
   isNonCashAccount,
   keyableAccounts,
@@ -59,6 +61,8 @@ import {
   type ScheduledDoc,
   type TermInfo,
   type TermMix,
+  type TfPlanFacility,
+  type TfPlanStore,
 } from "../../lib/cashflow-forecast";
 import { cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, type FcMonth } from "../../lib/forecast-pnl";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
@@ -10973,7 +10977,7 @@ async function loadCashflowForecast(
       const acct = resolveAcct(f.accountCode);
       const lender = f.lender || "lender";
       for (const d of f.draws)
-        out.push({ kind: "tf", partyId: acct, partyName: lender, no: d.paidSupplier ? `${d.drawSourceId} · ${d.paidSupplier}` : d.drawSourceId, date: d.dueDate, sen: d.outstandingSen, accountCode: acct, label: `Repaid to ${lender}` });
+        out.push({ kind: "tf", partyId: acct, partyName: lender, no: d.paidSupplier ? `${d.drawSourceId} · ${d.paidSupplier}` : d.drawSourceId, date: d.dueDate, sen: d.outstandingSen, accountCode: acct, label: `Repaid to ${lender}`, ...(d.drawDate ? { drawnOn: d.drawDate } : {}) });
       // Repaid but not yet allocated to a draw: a credit on the facility.
       if (f.unallocatedSen < 0) out.push({ kind: "tf", partyId: acct, partyName: lender, no: "unallocated repayment", date: "", sen: f.unallocatedSen, accountCode: acct });
     }
@@ -11073,7 +11077,29 @@ async function loadCashflowForecast(
       const k = resolveAcct(code);
       (inputs[ym] ??= {})[k] = (inputs[ym][k] ?? 0) + sen;
     }
-  const built = buildForecastLegs({ today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl, inputs });
+  // Planned trade-finance drawdowns keyed on the Cash Flow page (owner
+  // 2026-11-09 「手动输入或调整」, spec 2026-11-09-forecast-three-columns-
+  // design.md 5), on the statement's own codes, with what each facility has
+  // really drawn this month (the Docs forecast repays only the rest).
+  const tfStore = await loadTfPlanStore(db);
+  const tfSecs = (liveSnap ?? got[got.length - 1])?.tf ?? [];
+  const tfPlans: TfPlanFacility[] = [];
+  const tfDrawnThisMonth: Record<string, number> = {};
+  const firstPlanYm: Record<string, string> = {};
+  for (const sec of tfSecs) {
+    const st = tfStore[sec.accountCode];
+    const yms = st ? Object.keys(st.months).sort() : [];
+    if (!st || !yms.length) continue;
+    const acct = resolveAcct(sec.accountCode);
+    const tenor = st.tenorDays ?? sec.tenorDays ?? 90;
+    tfPlans.push({ accountCode: acct, lender: sec.lender || "lender", tenorDays: tenor, rateBp: st.rateBp ?? defaultTfRateBp(sec.draws, tenor), months: st.months });
+    tfDrawnThisMonth[acct] = sec.draws
+      .filter((d) => String(d.drawDate ?? "").slice(0, 7) === curYm)
+      .reduce((t, d) => t + d.amountSen - d.interestSen - (d.bankChargeSen ?? 0), 0);
+    firstPlanYm[acct] = yms[0];
+  }
+  const tfInterestAccount = resolveAcct(TF_INTEREST_ACCT.code);
+  const built = buildForecastLegs({ today, period, months, openingYm, baselines, live, pnl, plans, isCreditorControl, inputs, tfPlans, tfDrawnThisMonth, tfInterestAccount });
 
   // The P&L forecast column (owner 2026-11-09 「根据我 forecast PNL 的数据反推」,
   // spec 2026-11-09-forecast-three-columns-design.md 3): the Forecast P&L as
@@ -11107,12 +11133,13 @@ async function loadCashflowForecast(
     receiptMix,
     materialMix: (type) => catMix.get(rawMaterialLineFor(type, sgOverride)) ?? termMixOf([]),
     minHorizon: futureDocs[futureDocs.length - 1],
+    tfPlans, tfDrawnThisMonth, tfInterestAccount,
   });
   const shown = new Set(built.columns.filter((c) => !c.blank).map((c) => c.ym));
   return {
     forecast: {
       columns: [...built.columns, ...pnlBuilt.columns],
-      legs: [...built.legs, ...pnlBuilt.legs, ...sharedForecastLegs(built.legs, pnlBuilt.columns)],
+      legs: [...built.legs, ...pnlBuilt.legs, ...sharedForecastLegs(built.legs, pnlBuilt.columns, firstPlanYm)],
       rmSplit,
     },
     meta: {
@@ -11753,11 +11780,73 @@ async function cfForecastInputAccounts(db: Env["Variables"]["DB"]): Promise<{ co
     ?? defaultSectionFor({ code: a.code, name: a.name, type: a.type, sat: a.specialAccountType ?? null, parentCode: a.parentCode ?? null }));
 }
 
+// Planned trade-finance drawdowns (owner 2026-11-09 「手动输入或调整」, spec
+// 2026-11-09-forecast-three-columns-design.md 5): forecast only. kv
+// `cashflow_forecast_tf` = { facilities: { "<facility account>": { tenorDays?,
+// rateBp?, months: { "YYYY-MM": principal sen } } } }.
+async function loadTfPlanStore(db: Env["Variables"]["DB"]): Promise<TfPlanStore> {
+  const row = await db.prepare("SELECT value FROM kv_config WHERE key = 'cashflow_forecast_tf'").first<{ value: string }>().catch(() => null);
+  let raw: unknown = null;
+  try {
+    raw = (JSON.parse(row?.value ?? "{}") as { facilities?: unknown }).facilities ?? null;
+  } catch { /* none yet */ }
+  return cleanTfPlans(raw, null).facilities;
+}
+
+// What the popup's Trade finance block works from, per facility, as at
+// today: the limit, the defaults, what is owed and drawn this month, the
+// existing draws' outstanding by due month, and the bills due by month from
+// the suppliers the facility has paid before (for "Fill from bills"). A due
+// month before this one counts in this one. Read only.
+async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string) {
+  const curYm = todayMyt().slice(0, 7);
+  const NO_COMPANY: CompanyFilter = { active: false, sql: "", param: null, orgId: null };
+  const [sources, ag, supRes] = await Promise.all([
+    getTfSources(db),
+    computeAgingData(db, orgId, null, NO_COMPANY),
+    db.prepare("SELECT id, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
+  ]);
+  const supTerm = new Map((supRes.results ?? []).map((r) => [String(r.id), String((r.paymentTerms ?? r.payment_terms) ?? "NET30")] as const));
+  const termOf = (d: OpenDoc): TermInfo => (supTerm.has(d.partyId) ? parseTermMonths(supTerm.get(d.partyId)) : { months: 1, flagged: true });
+  const atLeastNow = (ym: string) => (ym < curYm ? curYm : ym);
+  return sources.map((s) => {
+    const sec = ag.data.tf.find((t) => t.accountCode === s.accountCode);
+    const draws = sec?.draws ?? [];
+    const paid = new Set(draws.flatMap((d) => String(d.paidSupplier ?? "").split(",").map((x) => x.trim()).filter(Boolean)));
+    const dueBy: Record<string, number> = {};
+    for (const d of draws) if (d.outstandingSen > 0 && d.dueDate) { const ym = atLeastNow(d.dueDate.slice(0, 7)); dueBy[ym] = (dueBy[ym] ?? 0) + d.outstandingSen; }
+    const docs: OpenDoc[] = [];
+    for (const row of ag.data.ap) {
+      const name = String(row.supplierName ?? "").trim();
+      if (!paid.has(name)) continue;
+      for (const d of row.docs) docs.push({ kind: "pi", partyId: row.supplierId, partyName: name, no: d.no, date: d.date, sen: d.amountSen, accountCode: "" });
+    }
+    const billsDue: Record<string, number> = {};
+    for (const d of scheduleOpenDocs(docs, termOf)) if (d.dueSen > 0 && d.expectedYm) { const ym = atLeastNow(d.expectedYm); billsDue[ym] = (billsDue[ym] ?? 0) + d.dueSen; }
+    return {
+      accountCode: s.accountCode,
+      lender: s.lenderName,
+      limitSen: s.limitSen,
+      tenorDays: s.tenorDays,
+      rateBp: defaultTfRateBp(draws, s.tenorDays),
+      owedNowSen: sec?.accountNetSen ?? 0,
+      drawnThisMonthSen: draws.filter((d) => String(d.drawDate ?? "").slice(0, 7) === curYm).reduce((t, d) => t + d.amountSen - d.interestSen - (d.bankChargeSen ?? 0), 0),
+      dueBy,
+      billsDue,
+    };
+  });
+}
+
 app.get("/cashflow-forecast-inputs", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const [months, accounts] = await Promise.all([loadCfForecastInputs(c.var.DB), cfForecastInputAccounts(c.var.DB)]);
-  return c.json({ success: true, data: { months, accounts } });
+  const [months, accounts, tfPlans, tfFacilities] = await Promise.all([
+    loadCfForecastInputs(c.var.DB),
+    cfForecastInputAccounts(c.var.DB),
+    loadTfPlanStore(c.var.DB),
+    cfForecastTfFacilities(c.var.DB, getOrgId(c)).catch(() => []),
+  ]);
+  return c.json({ success: true, data: { months, accounts, tf: { facilities: tfFacilities, plans: tfPlans } } });
 });
 
 // Replaces the whole map (the table sends every month it holds, the ones
@@ -11765,9 +11854,9 @@ app.get("/cashflow-forecast-inputs", async (c) => {
 app.put("/cashflow-forecast-inputs", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
-  let body: { months?: unknown };
+  let body: { months?: unknown; tf?: unknown };
   try {
-    body = (await c.req.json()) as { months?: unknown };
+    body = (await c.req.json()) as { months?: unknown; tf?: unknown };
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -11776,13 +11865,29 @@ app.put("/cashflow-forecast-inputs", async (c) => {
   if (rejected.length) {
     return c.json({ success: false, error: `Account ${rejected[0]} is not a CAPEX or Loan account${rejected.length > 1 ? ` (nor ${rejected.slice(1).join(", ")})` : ""}` }, 400);
   }
+  // Planned trade-finance drawdowns (spec 2026-11-09 section 5), when sent:
+  // trade-finance facilities only.
+  let tf: TfPlanStore | null = null;
+  if (body.tf !== undefined) {
+    const r = cleanTfPlans(body.tf, new Set((await getTfSources(c.var.DB)).map((s) => s.accountCode)));
+    if (r.rejected.length) return c.json({ success: false, error: `Account ${r.rejected[0]} is not a trade-finance facility` }, 400);
+    tf = r.facilities;
+  }
   const before = await loadCfForecastInputs(c.var.DB);
   await c.var.DB.prepare(
     `INSERT INTO kv_config (key, value, updated_at) VALUES ('cashflow_forecast_inputs', ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).bind(JSON.stringify({ months }), new Date().toISOString()).run();
   await emitAudit(c, { resource: "accounting", resourceId: "cashflow_forecast_inputs", action: "update", before: { months: before }, after: { months } });
-  return c.json({ success: true, data: { months } });
+  if (tf) {
+    const tfBefore = await loadTfPlanStore(c.var.DB);
+    await c.var.DB.prepare(
+      `INSERT INTO kv_config (key, value, updated_at) VALUES ('cashflow_forecast_tf', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).bind(JSON.stringify({ facilities: tf }), new Date().toISOString()).run();
+    await emitAudit(c, { resource: "accounting", resourceId: "cashflow_forecast_tf", action: "update", before: { facilities: tfBefore }, after: { facilities: tf } });
+  }
+  return c.json({ success: true, data: { months, ...(tf ? { tf } : {}) } });
 });
 
 // GL-truth P&L + Balance Sheet, computed from the immutable
