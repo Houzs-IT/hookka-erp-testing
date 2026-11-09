@@ -63,7 +63,7 @@ test("the month control: picking a month adds it; the ✕ asks first and still w
 
 test("unsaved changes: a banner and a leave guard against the last loaded or saved sheet", () => {
   assert.match(src, /setMonths\(next\);\n\s*setSavedSnap\(forecastSnapshot\(next\)\);/, "the loaded sheet is the baseline");
-  assert.match(src, /if \(res\.ok && j\?\.success\) \{ toast\.success\("Forecast saved"\); setSavedSnap\(snap\); \}/, "a save is the new baseline");
+  assert.match(src, /if \(res\.ok && j\?\.success\) \{ toast\.success\("Forecast saved"\); setSavedSnap\(snap\); invalidateCachePrefix\("\/api\/accounting\/cashflow-forecast"\); \}/, "a save is the new baseline (and drops the Cash Flow forecast copy, 2026-11-09)");
   assert.match(src, /const dirty = loaded && savedSnap !== null && snap !== savedSnap;/);
   assert.match(src, /useNavGuard\(dirty, "You have unsaved forecast changes\. Leave without saving\?"\);/);
   assert.match(src, /\{dirty && \(\n\s*<div data-fin-banner="todo"/);

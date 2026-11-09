@@ -19,6 +19,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { nextCell, caretEdges, type CellPos } from "@/lib/grid-keys";
 import { forecastSnapshot } from "@/lib/forecast-snapshot";
+import { invalidateCachePrefix } from "@/lib/cached-fetch";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { monthHasDeptForecast } from "@/lib/salary-dept";
@@ -379,7 +380,9 @@ export default function ForecastPage() {
         body: JSON.stringify({ months: payload }),
       });
       const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
-      if (res.ok && j?.success) { toast.success("Forecast saved"); setSavedSnap(snap); }
+      // The Cash Flow forecast is worked out from this sheet: drop the copy
+      // the browser keeps, so it is never shown again while the new one loads.
+      if (res.ok && j?.success) { toast.success("Forecast saved"); setSavedSnap(snap); invalidateCachePrefix("/api/accounting/cashflow-forecast"); }
       else toast.error(j?.error || "Couldn't save the forecast — please try again.");
     } catch {
       toast.error("Couldn't save the forecast — connection hiccup, please try again.");
