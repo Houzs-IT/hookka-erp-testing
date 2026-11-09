@@ -64,6 +64,13 @@ test("Capex & financing: every account is a row from the start, nothing to pick 
   assert.match(dlg, /sticky top-0/, "the month heading");
 });
 
+test("Capex & financing: one scrollbar — the popup body makes room and the table scrolls inside it", () => {
+  const dlg = slice("function CfForecastInputsDialog(", "\nfunction ");
+  assert.match(dlg, /<DocDetailModal[^>]*?\bxwide\s+fill\b/);
+  assert.match(dlg, /<div className="flex min-h-0 flex-col">\s*<div className="min-h-0 overflow-auto">/, "the card shrinks to the room left; its table scrolls");
+  assert.doesNotMatch(dlg, /max-h-\[calc\(/, "no guessed height: at 1236×661 it left the body 5 px to scroll too (prod 2026-11-09)");
+});
+
 test("a keyed amount reads in the forecast drill as who keyed it and that nothing was posted", () => {
   const drill = slice("function CfForecastDrillRows(", "\nfunction ");
   assert.match(drill, /it\.kind === "pnl" \|\| it\.kind === "input"/);

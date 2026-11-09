@@ -8471,10 +8471,15 @@ function ApInvoicesTab({ accounts }: { accounts: ChartOfAccount[] }) {
 // 这些都要双击点开」): every document list opens its record on double-click
 // — the same shell for vouchers, receipts, transfers — while single click
 // keeps doing what it did (select / expand). Actions inside mirror the row.
-function DocDetailModal({ title, badges, onClose, children, actions, wide, xwide }: {
+function DocDetailModal({ title, badges, onClose, children, actions, wide, xwide, fill }: {
   title: string; badges?: React.ReactNode; onClose: () => void; children: React.ReactNode; actions?: React.ReactNode; wide?: boolean;
   /** Room for a twelve-month table (the Cash Flow Capex & financing input). */
   xwide?: boolean;
+  /** The body's blocks shrink to the room left (a block with `min-h-0`), so
+   *  a block that scrolls itself is the only scrollbar — the Capex & financing
+   *  table, whose month heading sticks. Measured on production 2026-11-09 at
+   *  1236×661: a guessed max-height left the body 5 px to scroll as well. */
+  fill?: boolean;
 }) {
   // Esc closes it (owner 2026-10-02 「点开后无法用esc 关闭」) — the ✕ always said so.
   useEscapeClose(onClose);
@@ -8491,7 +8496,7 @@ function DocDetailModal({ title, badges, onClose, children, actions, wide, xwide
           </div>
           <button onClick={onClose} aria-label="Close" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg leading-none text-[#9CA3AF] hover:bg-[#F0ECE9] hover:text-[#6B7280]" title="Close (Esc)">✕</button>
         </div>
-        <div data-fin-modal-body className="flex-1 space-y-3 overflow-y-auto p-5 text-sm">
+        <div data-fin-modal-body className={`${fill ? "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto" : "flex-1 space-y-3 overflow-y-auto"} p-5 text-sm`}>
           {children}
         </div>
         {actions && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#E2DDD8] bg-white px-5 py-3">{actions}</div>}
@@ -18968,7 +18973,7 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
     <DocDetailModal
       title="Capex & financing — forecast"
       onClose={onClose}
-      xwide
+      xwide fill
       actions={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
@@ -18990,8 +18995,8 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
       ) : groups.length === 0 ? (
         <p className="text-xs text-[#9CA3AF]">No CAPEX or Loan account in the chart of accounts.</p>
       ) : (
-        <div>
-          <div className="max-h-[calc(90vh-16rem)] overflow-auto">
+        <div className="flex min-h-0 flex-col">
+          <div className="min-h-0 overflow-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr>

@@ -14,8 +14,9 @@ const shell = ui.slice(ui.indexOf("function DocDetailModal("), ui.indexOf("funct
 const field = ui.slice(ui.indexOf("function DetailField("), ui.indexOf("\n}\n", ui.indexOf("function DetailField(")));
 
 test("same props, same Esc", () => {
-  // `xwide` (2026-11-09) only adds a width for the Cash Flow Capex & financing table.
-  assert.match(shell, /function DocDetailModal\(\{ title, badges, onClose, children, actions, wide, xwide \}/);
+  // `xwide` (2026-11-09) only adds a width for the Cash Flow Capex & financing
+  // table, and `fill` (same table) only changes how its body makes room.
+  assert.match(shell, /function DocDetailModal\(\{ title, badges, onClose, children, actions, wide, xwide, fill \}/);
   assert.match(shell, /useEscapeClose\(onClose\);/);
   assert.match(shell, /onClick=\{onClose\}/, "a click on the backdrop closes it");
   assert.match(shell, /onClick=\{\(e\) => e\.stopPropagation\(\)\}/);
@@ -31,6 +32,13 @@ test("the design's frame: overlay, 14px corners, deep shadow, white header and a
   assert.match(shell, /\{actions && <div className="[^"]*bg-white[^"]*">\{actions\}<\/div>\}/, "the actions sit in a white bar at the foot");
   const css = read("src/styles/finance-v2.css");
   assert.match(css, /\[data-fin-ui\] \[data-fin-modal-body\] > \* \{/, "each block in the body is a white card");
+});
+
+test("fill: the body's blocks shrink to the room left, so a block that scrolls itself is the only scrollbar", () => {
+  // Measured on production 2026-11-09 at 1236×661: with a guessed max-height
+  // on the Capex & financing table, the body scrolled 5 px as well (two
+  // scrollbars). Without `fill`, the body is exactly as before.
+  assert.ok(shell.includes('data-fin-modal-body className={`${fill ? "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto" : "flex-1 space-y-3 overflow-y-auto"} p-5 text-sm`}'));
 });
 
 test("field labels: small uppercase", () => {
