@@ -18,6 +18,7 @@
 // payments.ts imports the same helper so both paths stay in lock-step.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import { allWordsClause } from "../lib/search-words-sql";
 import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
@@ -1274,10 +1275,13 @@ app.get("/", async (c) => {
     // Match the operator's real lookup keys: invoice no, customer name, the
     // linked DO no, our company SO, and the customer's PO. All live on the
     // invoices row (camelCase columns). Fires only when a term is present.
-    where.push(
+    // Multi-word (2026-11-08): every word must match one of these keys.
+    const s = allWordsClause(
+      q,
       "(invoiceNo ILIKE ? OR COALESCE(customerName, '') ILIKE ? OR COALESCE(doNo, '') ILIKE ? OR COALESCE(companySOId, '') ILIKE ? OR COALESCE(customerPOId, '') ILIKE ?)",
     );
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    where.push(s.clause);
+    params.push(...s.binds);
   }
   const clause = `WHERE ${where.join(" AND ")}`;
 

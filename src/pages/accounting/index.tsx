@@ -16362,6 +16362,7 @@ function parseCsvLine(line: string): string[] {
 
 function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const bankCash = accounts.filter(
     (a) => a.specialAccountType === "SBK" || a.specialAccountType === "SCH",
   );
@@ -16403,7 +16404,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     return () => { dead = true; };
   }, [account, data]);
   const toggleStrictLock = async (on: boolean) => {
-    if (on && !window.confirm("Turn strict month lock ON?\n\nA month can then only be finalised when it tallies AND every bank line is booked, and re-opening needs a reason.")) return;
+    if (on && !(await confirm({ title: "Strict month lock", confirmLabel: "Turn ON", message: "Turn strict month lock ON?\n\nA month can then only be finalised when it tallies AND every bank line is booked, and re-opening needs a reason." }))) return;
     const res = await fetch("/api/accounting/bank-reco/strict-lock", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ strict: on }) });
     const j = asMutationResponse(await res.json());
     if (j?.success) { setStrictLock(on); toast.success(on ? "Strict lock ON" : "Strict lock off"); }
@@ -16723,7 +16724,7 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     if (!account) return;
     if (!reopen && report && !report.balanced) {
       const gap = formatCurrency(Math.abs((report.computedGlSen ?? 0) - report.glSen));
-      if (!window.confirm(`Still out by ${gap}. Finalise anyway? The saved record will carry the difference.`)) return;
+      if (!(await confirm({ title: "Not balanced", danger: true, confirmLabel: "Finalise anyway", message: `Still out by ${gap}. Finalise anyway? The saved record will carry the difference.` }))) return;
     }
     let reason = "";
     if (reopen) {

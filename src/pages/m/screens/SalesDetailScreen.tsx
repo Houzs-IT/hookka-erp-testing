@@ -36,6 +36,7 @@ import {
   shortDate,
 } from "../config/helpers";
 import { todayYmdMY } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { PRODUCTION_DEPTS } from "../config/departments";
 
 type RawRow = Record<string, unknown>;
@@ -48,6 +49,7 @@ function arr(v: unknown): RawRow[] {
 
 export function SalesDetailScreen() {
   const navigate = useNavigate();
+  const { confirm } = useConfirm();
   const { id = "" } = useParams();
   const url = `/api/sales-orders/${encodeURIComponent(id)}`;
   const { data, loading, error } = useCachedJson<Envelope>(url);
@@ -82,7 +84,7 @@ export function SalesDetailScreen() {
   };
   const onCancel = async () => {
     if (busy) return;
-    if (!window.confirm(`Cancel ${str(doc ?? {}, "companySO") || "this order"}? You can undo this from the order page.`)) return;
+    if (!(await confirm({ title: "Cancel order", danger: true, confirmLabel: "Cancel order", cancelLabel: "Keep order", message: `Cancel ${str(doc ?? {}, "companySO") || "this order"}? You can undo this from the order page.` }))) return;
     setBusy(true);
     const r = await mutateJson(url, "PUT", { status: "CANCELLED" });
     setBusy(false);
@@ -99,7 +101,7 @@ export function SalesDetailScreen() {
   const onUndoCancel = async () => {
     if (busy) return;
     const target = str(doc ?? {}, "preCancelStatus") || "IN_PRODUCTION";
-    if (!window.confirm(`Restore this order to ${target}? Cancelled production orders and job cards will be restored too.`)) return;
+    if (!(await confirm({ title: "Undo cancel", confirmLabel: "Restore", message: `Restore this order to ${target}? Cancelled production orders and job cards will be restored too.` }))) return;
     setBusy(true);
     const r = await mutateJson(url, "PUT", { status: target });
     setBusy(false);

@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState, useEffect, useMemo, useCallback, Suspense } from "react";
+import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -499,14 +500,11 @@ function CreatePurchaseInvoicePage() {
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!supplier) {
-      toast.error("Select a supplier");
-      return;
-    }
-    if (validLines.length === 0) {
-      toast.error("Add at least one item");
-      return;
-    }
+    // Both checks collected into one toast (src/lib/save-blockers.ts, 2026-11-08).
+    const blockers = new SaveBlockers();
+    if (!supplier) blockers.error("Select a supplier");
+    if (validLines.length === 0) blockers.error("Add at least one item");
+    if (reportSaveBlockers(toast, blockers) || !supplier) return;
     if (saving) return;
     setSaving(true);
     try {

@@ -934,13 +934,17 @@ export function ScanPOModal({ open, onClose, onCreated, target = "SO" }: Props) 
       if (!hub.hubId) hubless.push(po.poNo || "(no PO no.)");
     }
     if (hubless.length > 0) {
-      const ok = window.confirm(
-        `${hubless.length} PO(s) matched NO delivery hub:\n\n${hubless.join(", ")}\n\n` +
+      const ok = await confirm({
+        title: "No delivery hub",
+        danger: true,
+        confirmLabel: "Create without hub",
+        message:
+          `${hubless.length} PO(s) matched NO delivery hub:\n\n${hubless.join(", ")}\n\n` +
           `Their ${isCO ? "COs" : "SOs"} would be created WITHOUT a hub — State falls back to the raw PDF text, ` +
           `and DO grouping / 3PL rates won't resolve it. Pick a hub in the Delivery Hub ` +
           `dropdown (or add the hub under Customers, then re-open this scan) before creating.\n\n` +
           `Create WITHOUT hub anyway?`,
-      );
+      });
       if (!ok) return;
     }
 

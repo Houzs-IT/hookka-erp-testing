@@ -160,7 +160,9 @@ test("gap2: CN list endpoint filters noteNumber/customerName/branchName only whe
   );
   assert.match(
     ROUTE_SRC,
-    /if \(q\) \{\s*clauses\.push\("\(noteNumber ILIKE \? OR customerName ILIKE \? OR branchName ILIKE \?\)"\);/,
+    // 2026-11-08 multi-word search: the same OR-group now goes through
+    // allWordsClause (one copy per word, AND-joined; one word = old clause).
+    /if \(q\) \{[\s\S]{0,200}?allWordsClause\(q, "\(noteNumber ILIKE \? OR customerName ILIKE \? OR branchName ILIKE \?\)"\);/,
     "search clause must cover noteNumber + customerName + branchName and only fire when ?search= is present",
   );
 });

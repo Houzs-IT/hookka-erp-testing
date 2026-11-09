@@ -13,6 +13,7 @@
 // these as deferred but the work landed; only the comment was stale.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import { allWordsClause } from "../lib/search-words-sql";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import {
@@ -286,17 +287,21 @@ app.get("/", async (c) => {
   // term is present, so the unsearched list path is byte-identical to before.
   let dWhere = "";
   let dBinds: string[] = [];
+  // Multi-word (2026-11-08, ../lib/search-words-sql): every word must match
+  // one of these keys; a one-word term binds exactly as before.
   if (dq) {
-    const like = `%${dq}%`;
-    dWhere =
-      " AND (do_no ILIKE ? OR customer_name ILIKE ? OR company_so ILIKE ?" +
-      " OR company_so_id ILIKE ? OR customer_po_id ILIKE ? OR vehicle_no ILIKE ?" +
-      " OR EXISTS (SELECT 1 FROM delivery_order_items di" +
-      " LEFT JOIN sales_orders so2 ON so2.company_so_id = di.sales_order_no" +
-      " WHERE di.delivery_order_id = delivery_orders.id" +
-      " AND (di.sales_order_no ILIKE ? OR so2.customer_po_id ILIKE ?" +
-      " OR so2.customer_so_id ILIKE ? OR so2.reference ILIKE ?)))";
-    dBinds = [like, like, like, like, like, like, like, like, like, like];
+    const s = allWordsClause(
+      dq,
+      "(do_no ILIKE ? OR customer_name ILIKE ? OR company_so ILIKE ?" +
+        " OR company_so_id ILIKE ? OR customer_po_id ILIKE ? OR vehicle_no ILIKE ?" +
+        " OR EXISTS (SELECT 1 FROM delivery_order_items di" +
+        " LEFT JOIN sales_orders so2 ON so2.company_so_id = di.sales_order_no" +
+        " WHERE di.delivery_order_id = delivery_orders.id" +
+        " AND (di.sales_order_no ILIKE ? OR so2.customer_po_id ILIKE ?" +
+        " OR so2.customer_so_id ILIKE ? OR so2.reference ILIKE ?)))",
+    );
+    dWhere = ` AND ${s.clause}`;
+    dBinds = s.binds;
   }
   // ?status=DRAFT,LOADED — the delivery page's stage tabs fetch ONLY their own
   // statuses (2026-09-22). Before this, every tab paged through the newest 200

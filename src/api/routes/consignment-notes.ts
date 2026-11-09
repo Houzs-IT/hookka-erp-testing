@@ -12,6 +12,7 @@
 // so this file and consignments.ts stay in lock-step.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import { allWordsClause } from "../lib/search-words-sql";
 import type { Env } from "../worker";
 import {
   type ConsignmentNoteRow,
@@ -102,8 +103,10 @@ app.get("/", async (c) => {
     params.push(customerId);
   }
   if (q) {
-    clauses.push("(noteNumber ILIKE ? OR customerName ILIKE ? OR branchName ILIKE ?)");
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    // Multi-word (2026-11-08): every word must match one of the three keys.
+    const s = allWordsClause(q, "(noteNumber ILIKE ? OR customerName ILIKE ? OR branchName ILIKE ?)");
+    clauses.push(s.clause);
+    params.push(...s.binds);
   }
   // Owner 2026-08-05: "consignment order 也是这样。我想 consignment note、
   // return 等等都是."
