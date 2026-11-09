@@ -84,7 +84,8 @@ The owner's words: 「我认为应该是手动输入或调整」.
 
 - In the Capex & financing popup, below the CAPEX and Loan groups, one block per trade-finance facility (`getTfSources`): an input row **Drawdown**, one cell a month for the same twelve months. A cell is what the owner expects the lender to pay suppliers for us that month. [owner]
 - **Fill from bills** (a button): fills each month with the bills the Docs forecast expects that month from suppliers this facility has paid before (the draws' `paidSupplier`), capped so the facility's owed amount stays within its limit. The owner then changes any cell. [owner: 输入或调整]
-- **Settings** in the block, per facility: tenor in days (default the facility's `tenorDays`) and interest % (default the average of interest ÷ principal over the facility's last six draws). Both can be changed. [owner; my call on "last six"]
+- **Settings** in the block, per facility: tenor in days (default the facility's `tenorDays`) and interest % per draw (default: the facility's last six draws, each one's interest ÷ principal scaled to the tenor, averaged, `defaultTfRateBp`; a plain average was pulled down by the short early draws). Both can be changed. [owner; my call on "last six" and the scaling]
+- **This month's cell is the month's whole use**, what is already drawn included, so the Docs forecast can repay only the rest; "Fill from bills" fills it as drawn so far + the bills still due today. The block's Owed and Room rows follow reality the same way. [my call; built in batch (c)]
 - **Computed rows**, shown under the input row:
   - Interest (est.) = drawdown × interest %.
   - Repayment = the existing draws' outstanding on their due dates, plus each planned drawdown's principal and interest in the drawdown month + round(tenor ÷ 30) months.

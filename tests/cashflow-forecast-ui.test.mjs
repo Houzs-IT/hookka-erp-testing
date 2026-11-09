@@ -80,6 +80,15 @@ test("three columns a month: Actual, Docs forecast, P&L forecast — in the head
   assert.match(tab, /P&amp;L forecast \(red\)<\/span>: your Forecast P&amp;L as cash\./, "the footnote says what the P&L forecast is");
 });
 
+test("Capex & financing: a Trade finance block per facility — a Drawdown row, tenor and interest, Fill from bills, and the worked-out rows", () => {
+  const dlg = slice("function CfForecastInputsDialog(", "\nfunction ");
+  assert.match(dlg, /tfFacilities\.map\(\(f\) => \{/);
+  assert.match(dlg, /tfPlanSchedule\(\{ \.\.\.inp, plan: p\.months \}\)/);
+  assert.match(dlg, /fillTfFromBills\(\{ \.\.\.inp, billsDue: f\.billsDue \}\)/);
+  for (const w of ["Fill from bills", "Drawdown", "Interest (est.)", "Repayment", "Owed at month end", "Room left", "% per draw"]) assert.ok(dlg.includes(w), w);
+  assert.match(dlg, /body: JSON\.stringify\(\{ months, \.\.\.\(tfFacilities\.length \? \{ tf \} : \{\}\) \}\)/, "saved with the keyed amounts, facilities only");
+});
+
 test("a keyed amount reads in the forecast drill as who keyed it and that nothing was posted", () => {
   const drill = slice("function CfForecastDrillRows(", "\nfunction ");
   assert.match(drill, /it\.kind === "pnl" \|\| it\.kind === "input"/);

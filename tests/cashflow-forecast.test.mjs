@@ -520,6 +520,95 @@ test("sharedForecastLegs: trade finance, planned payments and keyed amounts appe
   ]);
 });
 
+// ---- Trade-finance plans (spec 2026-11-09-forecast-three-columns-design.md 5) ----
+
+test("cleanTfPlans: trade-finance accounts only, whole sen, a sane tenor and rate; junk reads as nothing", () => {
+  const raw = { "310-0020": { tenorDays: 90.4, rateBp: 120, months: { "2026-11": 100_000.4, "2026-13": 5, "2026-12": 0, "2027-01": -1 } }, "200-0040": { months: { "2026-11": 9 } }, "310-0030": { tenorDays: 9999, rateBp: -5, months: {} } };
+  const r = fc.cleanTfPlans(raw, new Set(["310-0020", "310-0030"]));
+  assert.deepEqual(r.facilities, { "310-0020": { tenorDays: 90, rateBp: 120, months: { "2026-11": 100_000 } }, "310-0030": { months: {} } });
+  assert.deepEqual(r.rejected, ["200-0040"]);
+  assert.deepEqual(fc.cleanTfPlans("junk", null), { facilities: {}, rejected: [] });
+});
+
+test("a plan repays a tenor later, interest on the principal", () => {
+  assert.equal(fc.tfRepayYm("2026-11", 90), "2027-02");
+  assert.equal(fc.tfRepayYm("2026-11", 45), "2027-01");
+  assert.equal(fc.tfInterestSen(10_000_000, 120), 120_000);
+  // The default rate: the last six draws, each scaled to the tenor.
+  const draws = [
+    { drawDate: "2026-10-01", dueDate: "2026-12-30", amountSen: 10_100, interestSen: 100, bankChargeSen: 0 },
+    { drawDate: "2026-09-01", dueDate: "2026-10-16", amountSen: 20_100, interestSen: 100, bankChargeSen: 0 },
+  ];
+  assert.equal(fc.defaultTfRateBp(draws, 90), 100);
+  assert.equal(fc.defaultTfRateBp([], 90), 0);
+});
+
+const tfPlan = { accountCode: "310-0020", lender: "L", tenorDays: 90, rateBp: 100, months: { "2026-10": 30_000, "2026-11": 100_000, "2026-12": 50_000 } };
+const tfPlanOpts = (kind) => ({ kind, currentYm: "2026-11", drawnThisMonth: () => 60_000, interestAccount: "900-I004" });
+const tfLegsAt = (legs, col) => legs.filter((l) => l.col === col).map((l) => [l.sen, l.label ?? l.accountCode]);
+
+test("a plan's own month shows it as keyed in both forecasts, with its interest on Finance Cost and on Trade Finance", () => {
+  for (const kind of ["docs", "pnl"]) {
+    const legs = fc.tfPlanLegs([tfPlan], tfPlanOpts(kind));
+    const p = kind === "docs" ? "fc" : "fp";
+    assert.deepEqual(tfLegsAt(legs, `${p}:2026-11`), [[100_000, fc.TF_PLAN_LABEL], [-1_000, "900-I004"], [1_000, "Interest charged by L"]], kind);
+    assert.deepEqual(tfLegsAt(legs, `${p}:2026-10`).map((x) => x[0]), [30_000, -300, 300], `${kind}: a past month keeps its plan for the comparison`);
+  }
+});
+
+test("repayments: the P&L forecast repays every plan in full; the Docs forecast only what is not drawn yet", () => {
+  const pnl = fc.tfPlanLegs([tfPlan], tfPlanOpts("pnl"));
+  assert.deepEqual(tfLegsAt(pnl, "fp:2027-01"), [[-30_300, "Repaid to L"]]);
+  assert.deepEqual(tfLegsAt(pnl, "fp:2027-02"), [[-101_000, "Repaid to L"]], "plan 100k repaid 100k + interest, whatever was really drawn");
+  assert.deepEqual(tfLegsAt(pnl, "fp:2027-03"), [[-50_500, "Repaid to L"]]);
+  const docs = fc.tfPlanLegs([tfPlan], tfPlanOpts("docs"));
+  assert.deepEqual(tfLegsAt(docs, "fc:2027-01"), [], "a past month's plan: what was drawn is in the aging");
+  assert.deepEqual(tfLegsAt(docs, "fc:2027-02"), [[-40_400, "Repaid to L"]], "this month: 100k planned, 60k already drawn");
+  assert.deepEqual(tfLegsAt(docs, "fc:2027-03"), [[-50_500, "Repaid to L"]]);
+});
+
+test("sharedForecastLegs leaves out of the P&L forecast a real draw made since the facility's first planned month", () => {
+  const tf = (drawnOn, sen) => ({ col: "fc:2026-12", sen, accountCode: "310-0020", label: "Repaid to L", item: { kind: "tf", party: "L", ref: drawnOn, drawnOn } });
+  const cols = [{ ym: "2026-12", future: true, blank: false, kind: "pnl" }];
+  const out = fc.sharedForecastLegs([tf("2026-10-20", -1), tf("2026-09-14", -2)], cols, { "310-0020": "2026-10" });
+  assert.deepEqual(out.map((l) => l.sen), [-2], "the plan stands for the October draw");
+  assert.deepEqual(fc.sharedForecastLegs([tf("2026-10-20", -1)], cols).map((l) => l.sen), [-1], "no plan: every real draw");
+});
+
+const tfSched = {
+  yms: ["2026-11", "2026-12", "2027-01", "2027-02"], currentYm: "2026-11", rateBp: 100, tenorDays: 90,
+  owedNowSen: 154_251, drawnThisMonthSen: 0, dueBy: { "2026-12": 30_377, "2027-01": 123_874 }, limitSen: 300_000,
+};
+
+test("fillTfFromBills: each month's bills from the facility's suppliers, as far as the limit lets", () => {
+  const filled = fc.fillTfFromBills({ ...tfSched, billsDue: { "2026-11": 122_926, "2026-12": 106_543, "2027-01": 11_650 } });
+  assert.deepEqual(filled, { "2026-11": 122_926, "2026-12": 51_456, "2027-01": 11_650 });
+  const withDrawn = fc.fillTfFromBills({ ...tfSched, drawnThisMonthSen: 20_000, owedNowSen: 174_251, billsDue: { "2026-11": 1_000 } });
+  assert.equal(withDrawn["2026-11"], 21_000, "this month's cell is the month's whole use, what is drawn already included");
+});
+
+test("tfPlanSchedule: interest, repayments, owed and room left a month", () => {
+  const rows = fc.tfPlanSchedule({ ...tfSched, plan: { "2026-11": 122_926, "2026-12": 51_456, "2027-01": 11_650 } });
+  assert.deepEqual(rows.map((r) => [r.ym, r.interestSen, r.repaySen, r.owedSen, r.roomSen]), [
+    ["2026-11", 1_229, 0, 278_406, 21_594],
+    ["2026-12", 515, 30_377, 300_000, 0],
+    ["2027-01", 117, 123_874, 187_893, 112_107],
+    ["2027-02", 0, 124_155, 63_738, 236_262],
+  ]);
+  const over = fc.tfPlanSchedule({ ...tfSched, plan: { "2026-11": 200_000 } });
+  assert.ok(over[0].roomSen < 0, "over the limit shows as negative room, still a plan");
+  assert.equal(fc.tfPlanSchedule({ ...tfSched, limitSen: null, plan: {} })[0].roomSen, null);
+});
+
+test("buildForecastLegs and buildPnlForecastLegs carry the plans and reach their repayment months", () => {
+  const docs = fc.buildForecastLegs(base({ tfPlans: [tfPlan], tfDrawnThisMonth: { "310-0020": 60_000 }, tfInterestAccount: "900-I004" }));
+  assert.ok(docs.columns.some((c) => c.ym === "2027-03" && c.future), "the Docs forecast reaches the last repayment");
+  assert.ok(docs.legs.some((l) => l.col === "fc:2026-11" && l.label === fc.TF_PLAN_LABEL));
+  const pnl = fc.buildPnlForecastLegs(pBase({ tfPlans: [tfPlan], tfDrawnThisMonth: { "310-0020": 60_000 }, tfInterestAccount: "900-I004" }));
+  assert.ok(pnl.columns.some((c) => c.ym === "2027-03"));
+  assert.equal(pnl.legs.filter((l) => l.col === "fp:2027-02").reduce((s, l) => s + l.sen, 0), -101_000);
+});
+
 test("buildForecastLegs names the parties whose term was guessed", () => {
   const r = fc.buildForecastLegs(base({ live: [{ ...inv("DEC", 80_000, "2026-12"), partyName: "Z1", termFlagged: true }] }));
   assert.deepEqual(r.termFlagged, ["Z1"]);

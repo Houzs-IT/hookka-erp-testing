@@ -85,12 +85,15 @@ export const OVERDUE_LABEL = "Overdue (past term)";
 export const PLANNED_LABEL = "Planned payments";
 /** What makes up one forecast amount — shown when the line is opened. */
 export type ForecastItem = {
-  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned" | "input";
+  kind: "invoice" | "pi" | "ocb" | "odb" | "tf" | "pnl" | "planned" | "input" | "tfplan";
   party: string;
   ref: string;
   date?: string;
   expectedYm?: string;
   note?: string;
+  /** A trade-finance draw: the day it was drawn (the P&L forecast leaves out
+   *  real draws its plan already stands for). */
+  drawnOn?: string;
 };
 /** One forecast amount. `sen`: + money in, − money out. `col` = "fc:YYYY-MM".
  *  Placed by `section` (forced), else by `accountCode` like a ledger leg; a
