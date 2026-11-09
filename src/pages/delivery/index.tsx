@@ -6115,7 +6115,7 @@ export default function DeliveryPage() {
                             </p>
                           </div>
                           <input
-                            type="number"
+                            type="number" inputMode="numeric"
                             min={0}
                             max={l.remainingQty}
                             step={1}
@@ -6368,7 +6368,7 @@ export default function DeliveryPage() {
                     <div>
                       <label className="text-xs text-[#6B7280] font-medium">Drop Points</label>
                       <input
-                        type="number" onFocus={(e) => e.currentTarget.select()}
+                        type="number" inputMode="decimal" onFocus={(e) => e.currentTarget.select()}
                         min={1}
                         value={editForm.dropPoints}
                         onChange={(e) => setEditForm((f) => ({ ...f, dropPoints: e.target.value }))}
@@ -7224,7 +7224,7 @@ export default function DeliveryPage() {
                                   </td>
                                   <td className="px-3 py-1.5 text-right">
                                     <input
-                                      type="number" min="0" step="0.01"
+                                      type="number" inputMode="decimal" min="0" step="0.01"
                                       onFocus={(e) => e.currentTarget.select()}
                                       value={row.trip}
                                       onChange={(e) => {
@@ -7241,7 +7241,7 @@ export default function DeliveryPage() {
                                   </td>
                                   <td className="px-3 py-1.5 text-right">
                                     <input
-                                      type="number" min="0" step="0.01"
+                                      type="number" inputMode="decimal" min="0" step="0.01"
                                       onFocus={(e) => e.currentTarget.select()}
                                       value={row.drop}
                                       onChange={(e) => {
@@ -7384,7 +7384,7 @@ export default function DeliveryPage() {
                           <div>
                             <label className="text-[10px] text-[#6B7280] font-medium">Cap (m³)</label>
                             <input
-                              type="number" onFocus={(e) => e.currentTarget.select()}
+                              type="number" inputMode="decimal" min={0} onFocus={(e) => e.currentTarget.select()}
                               value={vehicleForm.capacityM3}
                               onChange={(e) => setVehicleForm((f) => ({ ...f, capacityM3: e.target.value }))}
                               className="mt-1 w-full h-8 px-2 rounded border border-[#E2DDD8] text-xs focus:outline-none focus:border-[#6B5C32]"
@@ -7396,7 +7396,7 @@ export default function DeliveryPage() {
                           <div>
                             <label className="text-[10px] text-[#6B7280] font-medium">Override Rate/Trip (RM, legacy)</label>
                             <input
-                              type="number" onFocus={(e) => e.currentTarget.select()}
+                              type="number" inputMode="decimal" min={0} onFocus={(e) => e.currentTarget.select()}
                               step="0.01"
                               value={vehicleForm.ratePerTripRM}
                               onChange={(e) => setVehicleForm((f) => ({ ...f, ratePerTripRM: e.target.value }))}
@@ -7406,7 +7406,7 @@ export default function DeliveryPage() {
                           <div>
                             <label className="text-[10px] text-[#6B7280] font-medium">Override +Drop (RM, legacy)</label>
                             <input
-                              type="number" onFocus={(e) => e.currentTarget.select()}
+                              type="number" inputMode="decimal" min={0} onFocus={(e) => e.currentTarget.select()}
                               step="0.01"
                               value={vehicleForm.ratePerExtraDropRM}
                               onChange={(e) => setVehicleForm((f) => ({ ...f, ratePerExtraDropRM: e.target.value }))}
@@ -7428,7 +7428,7 @@ export default function DeliveryPage() {
                           <div>
                             <label className="text-[10px] text-[#6B7280] font-medium">Length (ft)</label>
                             <input
-                              type="number" onFocus={(e) => e.currentTarget.select()}
+                              type="number" inputMode="decimal" min={0} onFocus={(e) => e.currentTarget.select()}
                               step="0.01"
                               value={vehicleForm.boxLengthFt}
                               onChange={(e) => setVehicleForm((f) => withAutoCap({ ...f, boxLengthFt: e.target.value }))}
@@ -7438,7 +7438,7 @@ export default function DeliveryPage() {
                           <div>
                             <label className="text-[10px] text-[#6B7280] font-medium">Width (ft)</label>
                             <input
-                              type="number" onFocus={(e) => e.currentTarget.select()}
+                              type="number" inputMode="decimal" min={0} onFocus={(e) => e.currentTarget.select()}
                               step="0.01"
                               value={vehicleForm.boxWidthFt}
                               onChange={(e) => setVehicleForm((f) => withAutoCap({ ...f, boxWidthFt: e.target.value }))}
@@ -7448,7 +7448,7 @@ export default function DeliveryPage() {
                           <div>
                             <label className="text-[10px] text-[#6B7280] font-medium">Height (ft)</label>
                             <input
-                              type="number" onFocus={(e) => e.currentTarget.select()}
+                              type="number" inputMode="decimal" min={0} onFocus={(e) => e.currentTarget.select()}
                               step="0.01"
                               value={vehicleForm.boxHeightFt}
                               onChange={(e) => setVehicleForm((f) => withAutoCap({ ...f, boxHeightFt: e.target.value }))}

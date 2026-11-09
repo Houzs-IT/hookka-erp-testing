@@ -16,6 +16,7 @@ import { StateSelect } from "@/components/ui/state-select";
 import { isValidEmail } from "@/lib/contact-format";
 import { familyOf } from "@/lib/product-family";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 
 type Lead = {
@@ -149,7 +150,7 @@ export default function LeadsPage() {
     if (err) { toast.error(err); return; }
     setSaving(true);
     try {
-      await fetch("/api/sales-leads", {
+      const res = await fetch("/api/sales-leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -163,6 +164,11 @@ export default function LeadsPage() {
           estValueSen: moneyFieldToSen(form.estValue) as number,
         }),
       });
+      // Keep the dialog open with what was typed when the server refuses it.
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Couldn't add the lead"));
+        return;
+      }
       setForm({ ...EMPTY });
       setShowAdd(false);
       await reload();
@@ -179,16 +185,22 @@ export default function LeadsPage() {
     }
     // Optimistic move so the drag feels instant; reconcile from the server after.
     setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, stage, lost_reason: lostReason ?? l.lost_reason } : l)));
-    await fetch(`/api/sales-leads/${lead.id}/stage`, {
+    const res = await fetch(`/api/sales-leads/${lead.id}/stage`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ stage, lostReason }),
     });
+    // The reload below snaps the card back; say why it did not move.
+    if (!res.ok) toast.error(await responseErrorMessage(res, "Couldn't move the lead"));
     await reload();
-  }, [reload]);
+  }, [reload, toast]);
 
   const delLead = async (id: string) => {
-    await fetch(`/api/sales-leads/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/sales-leads/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast.error(await responseErrorMessage(res, "Couldn't delete the lead"));
+      return;
+    }
     if (openLeadId === id) setOpenLeadId(null);
     await reload();
   };
@@ -432,7 +444,7 @@ function LeadDetailDrawer({
     if (err) { toast.error(err); return; }
     setSaving(true);
     try {
-      await fetch(`/api/sales-leads/${lead.id}`, {
+      const res = await fetch(`/api/sales-leads/${lead.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -446,6 +458,10 @@ function LeadDetailDrawer({
           estValueSen: moneyFieldToSen(draft.estValue) as number,
         }),
       });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Couldn't save the lead"));
+        return;
+      }
       await onSaved();
     } finally {
       setSaving(false);
@@ -644,7 +660,7 @@ function ConvertLeadDialog({
 
       // 2) attach a delivery hub (optional) via the customer PUT.
       if (f.hubShortName.trim() && f.hubCode.trim()) {
-        await fetch(`/api/customers/${customerId}`, {
+        const hubRes = await fetch(`/api/customers/${customerId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -663,14 +679,27 @@ function ConvertLeadDialog({
             }],
           }),
         });
+        // The account is already confirmed by step 1 — a refused hub is a
+        // warning, not a reason to stop the conversion.
+        if (!hubRes.ok) {
+          toast.warning(
+            `Customer confirmed, but the delivery hub was not saved: ${await responseErrorMessage(hubRes, "hub save failed")}`,
+          );
+        }
       }
 
       // 3) re-point the lead's CRM record onto the new customer + mark WON.
-      await fetch(`/api/sales-leads/${lead.id}/convert`, {
+      const convRes = await fetch(`/api/sales-leads/${lead.id}/convert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customerId }),
       });
+      if (!convRes.ok) {
+        setErr(
+          `${f.code.trim()} is confirmed, but the lead was not marked won: ${await responseErrorMessage(convRes, "Could not update the lead")}`,
+        );
+        return;
+      }
 
       window.alert(`Confirmed. ${f.code.trim()} — ${f.name.trim()} is now a confirmed customer and can be used on sales orders. Its SKU assignments and quotations carried over.`);
       await onDone();
@@ -755,6 +784,7 @@ type LeadProduct = { id: string; product_code: string | null; product_name: stri
 type ProductLite = { id: string; code: string; name: string };
 
 function LeadCatalogPanel({ leadId }: { leadId: string }) {
+  const { toast } = useToast();
   const [items, setItems] = useState<LeadProduct[]>([]);
   const [products, setProducts] = useState<ProductLite[]>([]);
   // Owner 2026-08-02:「不能根据我的 catalog 去选吗？应该当我选了 catalog 之后,
@@ -844,8 +874,10 @@ function LeadCatalogPanel({ leadId }: { leadId: string }) {
     try {
       // Sequential, not Promise.all: the endpoint self-applies its DDL on first
       // write, and firing ten concurrent creates at a cold isolate races that.
+      let failed = 0;
+      let firstReason = "";
       for (const p of chosen) {
-        await fetch("/api/sales-leads/lead-products", {
+        const res = await fetch("/api/sales-leads/lead-products", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -859,6 +891,13 @@ function LeadCatalogPanel({ leadId }: { leadId: string }) {
             priceRm: priceRm.trim() === "" ? null : priceRm,
           }),
         });
+        if (!res.ok) {
+          failed++;
+          if (!firstReason) firstReason = await responseErrorMessage(res, "Couldn't add the SKU");
+        }
+      }
+      if (failed > 0) {
+        toast.error(`${failed} of ${chosen.length} SKUs were not added: ${firstReason}`);
       }
       setTicked(new Set());
       setPriceRm("");
@@ -867,7 +906,11 @@ function LeadCatalogPanel({ leadId }: { leadId: string }) {
   };
 
   const del = async (id: string) => {
-    await fetch(`/api/sales-leads/lead-products/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/sales-leads/lead-products/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast.error(await responseErrorMessage(res, "Couldn't remove the SKU"));
+      return;
+    }
     await reload();
   };
 

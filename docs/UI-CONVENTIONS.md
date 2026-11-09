@@ -1,5 +1,7 @@
 # UI Conventions — Hookka ERP
 
+> **Last verified: 2026-11-09** (branch `fix/fe-batch-a`): only the rows and bullets marked *FE batch A* — `PageHeader` / `ObjectPageHeader` wrap, `SearchableSelect` / `MaterialPicker` flip, the number-input wheel guard, `responseErrorMessage` and `pdfText` — checked against their source. Nothing else re-checked.
+
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
 > source by the prose audit; the row(s) touched here are itemised in
 > [`docs/DOCS-VS-CODE-AUDIT.md`](DOCS-VS-CODE-AUDIT.md). Only the claims listed there were
@@ -27,15 +29,17 @@ This doc is the reference for keeping this app consistent — and for mirroring 
 
 | Component | File | Use for |
 |---|---|---|
-| `PageHeader` | `src/components/ui/page-header.tsx` | **List / route-level page** header: title + subtitle + right-aligned action buttons. |
-| `ObjectPageHeader` | `src/components/ui/object-page-header.tsx` | **Record / detail page** header (SAP "object page" pattern): `backTo`/`onBack`, `title`, `subtitle`, `badges` (status/lock chips), `actions` (buttons), `pager` (prev/next record). Every document detail page (SO/CO/DO/SI/PO/PI/GRN/Service Case/Supplier/Service Order) uses this. |
+| `PageHeader` | `src/components/ui/page-header.tsx` | **List / route-level page** header: title + subtitle + right-aligned action buttons. *FE batch A:* the row is `flex-wrap` at every width — when the actions don't fit beside the title they drop under it (the title wraps, it is never truncated). |
+| `ObjectPageHeader` | `src/components/ui/object-page-header.tsx` | **Record / detail page** header (SAP "object page" pattern): `backTo`/`onBack`, `title`, `subtitle`, `badges` (status/lock chips), `actions` (buttons), `pager` (prev/next record). Every document detail page (SO/CO/DO/SI/PO/PI/GRN/Service Case/Supplier/Service Order) uses this. *FE batch A:* wraps at every width, so a long action row goes under the title instead of squeezing it. |
 | `useConfirm` / `ConfirmProvider` | `src/components/ui/confirm-dialog.tsx` | **All** confirmations. `const { confirm } = useConfirm()` then `if (!(await confirm({ message, title?, danger? }))) return;`. NEVER use `window.confirm`. Provider is mounted once in `src/main.tsx`. |
 | `DataGrid` | `src/components/ui/data-grid.tsx` | Sortable / filterable / selectable tables (list views, grids). Supports `groupBy`, type filters, `onSelectionChange`, per-cell `render`. |
 | `MoneyInput` | `src/components/ui/money-input.tsx` | RM amount entry. `value: number|null` (dollars), `onChange(next)`. Commits on blur/Enter, clear-to-blank → null, 2-decimal display, right-aligned. Keep the parent's sen math unchanged — this is only the entry UX. |
-| `MaterialPicker` | `src/components/material-picker.tsx` | Catalog autocomplete (raw-materials). Fills code+name on pick; still allows off-catalog free text. Never auto-fills price. |
-| `SearchableSelect` | `src/components/ui/searchable-select.tsx` | Searchable dropdown (suppliers, customers, etc.). |
+| `MaterialPicker` | `src/components/material-picker.tsx` | Catalog autocomplete (raw-materials). Fills code+name on pick; still allows off-catalog free text. Never auto-fills price. *FE batch A:* the portaled menu opens upward when there is no room below (`computeDropdownPlacement`, `src/lib/dropdown-placement.ts`). |
+| `SearchableSelect` | `src/components/ui/searchable-select.tsx` | Searchable dropdown (suppliers, customers, etc.). *FE batch A:* flips above the trigger when the space below is short and caps itself to the room on that side, max 60% of the viewport (`useDropdownPlacement`, `src/lib/dropdown-placement.ts`). A new dropdown should use the same helper. |
 | `Badge` / `StatusBadge` | `src/components/ui/badge.tsx`, `status-badge.tsx` | Status chips. Prefer `<StatusBadge kind="so" value={...} />` for backend enums — the `kind` picks the right map. **It is NOT compile-checked** (corrected 2026-08-14): the prop is `value: string` (`status-badge.tsx:63`) and the lookup casts to `Record<string, SemanticStyle>` (`:81`), so an unmapped value renders grey with a dev-console warning instead of failing the build. `<Badge variant="status" status={...} />` is the legacy path — `variant` accepts only `"default"` / `"status"`, and `variant="status"` needs the `status` prop as well. |
 | `Button`, `Input`, `LoadingButton`, toasts | `src/components/ui/*` | Primitives. **Corrected 2026-08-13:** there is no `toast` object export and no `toast.error/success`. `toast.tsx` exports `ToastProvider` + `useToast()`; call `const { ... } = useToast()` inside a component. |
+| Number inputs | `src/lib/number-input-wheel-guard.ts` (installed in `src/main.tsx`) | *FE batch A:* the mouse wheel over a FOCUSED `<input type="number">` blurs it instead of stepping the value — app-wide, no per-input code. Still give quantity inputs `inputMode="decimal"` (or `"numeric"` for whole units) and `min` where negatives are invalid; money stays `MoneyInput` / integer sen. |
+| Failed-request messages | `src/lib/response-error.ts` | *FE batch A:* `toast.error(await responseErrorMessage(res, "Couldn't save the X"))` shows the server's `error` sentence, else `"<fallback> (HTTP n)"` (which `toast.error`'s `humanizeError` turns into a friendly line). Check `res.ok` before any success path — never ignore the response of a save. |
 | `ScanPOModal` / `ScanSupplierModal` | `src/components/scan-po-modal.tsx`, `scan-supplier-modal.tsx` | OCR scan. Customer PO → SO (sales/consignment); supplier DO/invoice → GRN/PI (purchasing). **The scan button sits next to "Create"** in the page header (e.g. "Scan PO", "Scan GRN", "Scan PI"). |
 
 ## 2. Documents / PDFs
@@ -43,6 +47,7 @@ This doc is the reference for keeping this app consistent — and for mirroring 
 - **One shared letterhead for every PDF**: `drawLetterhead(doc, { docTitle, docNo, docDate?, statusText?, company?, companyInfo?, logo? })` in `src/lib/pdf-utils.ts`. Returns the body-start Y. NEVER hand-roll a PDF header.
 - **Shared body helpers** (same file): `drawSectionLabel`, `drawDocFooter`, `PDF` constants (margin/ink/muted/rule), `fmtCurrency`/`fmtRM`/`fmtDate`, `amountInWords`.
 - **Body style standard** = the Delivery Order / Invoice look: a `theme:"plain"` table (white header + black bottom-rule, hairline body lines, dashed per-row separators), `lblVal` two-column reference blocks, right-aligned `sumLine` totals. All generators (`src/lib/generate-*-pdf.ts`) follow it — `generate-do-pdf.ts` and `generate-invoice-pdf.ts` are the reference implementations. **Corrected 2026-08-13: `generate-order-pdf.ts` does not exist** and was removed from this list; the order-side references are `generate-so-pdf.ts` and `generate-purchase-order-pdf.ts`.
+- *FE batch A:* free text on a document PDF goes through `pdfText` / `pdfTextOr` (`src/lib/pdf-text.ts`): null-ish values and stray "null" / "undefined" parts print as nothing (or "-"), whitespace is tidied. Wrapping stays the caller's job. Wired into the unified SO / DO / Invoice renderer and the PO, PI and Credit Note generators.
 - "Borrow letterhead": a doc can print under a different company's letterhead (via the org registry) while the accounting entity stays the home company. See `letterheadForPurchaseOrg` in `generate-purchase-order-pdf.ts`.
 
 ## 3. Design tokens (colours + type)

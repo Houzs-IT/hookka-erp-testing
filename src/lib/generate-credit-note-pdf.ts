@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { COMPANY } from "@/lib/constants";
+import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import { fmtRM as fmtCurrency, fmtDate, amountInWords, drawLetterhead } from "@/lib/pdf-utils";
 
 // Company name for the signature / footer lines (header now via drawLetterhead).
@@ -46,9 +47,9 @@ export function generateCreditNotePdf(
   let yL = y + 5;
   doc.setFontSize(8);
   const customerFields: [string, string][] = [
-    ["Name", data.customerName ?? "-"],
-    ["Address", data.customerAddress ?? "-"],
-    ["Attn", data.attention ?? "-"],
+    ["Name", pdfTextOr(data.customerName)],
+    ["Address", pdfTextOr(data.customerAddress)],
+    ["Attn", pdfTextOr(data.attention)],
   ];
   for (const [label, value] of customerFields) {
     doc.setFont("helvetica", "normal");
@@ -70,9 +71,9 @@ export function generateCreditNotePdf(
   let yR = y + 5;
   doc.setFontSize(8);
   const cnFields: [string, string][] = [
-    ["CN No", data.cnNo ?? data.noteNumber ?? "-"],
+    ["CN No", pdfTextOr(data.cnNo ?? data.noteNumber)],
     ["Date", fmtDate(data.date)],
-    ["Invoice Ref", data.invoiceRef ?? data.invoiceNumber ?? "-"],
+    ["Invoice Ref", pdfTextOr(data.invoiceRef ?? data.invoiceNumber)],
     ["Invoice Date", data.invoiceDate ? fmtDate(data.invoiceDate) : "-"],
   ];
   for (const [label, value] of cnFields) {
@@ -81,14 +82,18 @@ export function generateCreditNotePdf(
     doc.text(label, colRight, yR);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(31, 29, 27);
-    doc.text(String(value), colRight + labelWRight, yR);
-    yR += 5;
+    // Wrap inside the column: a long invoice ref used to run off the page
+    // edge. A value that fits stays one line, so the usual layout is unchanged.
+    const valueLines = doc.splitTextToSize(String(value), pageW - margin - colRight - labelWRight);
+    doc.text(valueLines, colRight + labelWRight, yR);
+    yR += 5 + (valueLines.length - 1) * 4;
   }
 
   y = Math.max(yL, yR) + 6;
 
   // --- Reason ---
-  if (data.reason) {
+  const reason = pdfText(data.reason);
+  if (reason) {
     doc.setFontSize(8);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(31, 29, 27);
@@ -96,7 +101,7 @@ export function generateCreditNotePdf(
     y += 4;
     doc.setFont("helvetica", "normal");
     doc.setTextColor(80, 80, 80);
-    const reasonLines = doc.splitTextToSize(data.reason, pageW - margin * 2);
+    const reasonLines = doc.splitTextToSize(reason, pageW - margin * 2);
     doc.text(reasonLines, margin, y);
     y += reasonLines.length * 4 + 4;
   }
@@ -119,7 +124,7 @@ export function generateCreditNotePdf(
   const items: CreditNoteItem[] = data.items ?? [];
   const tableBody = items.map((item, idx) => [
     String(idx + 1),
-    item.description ?? "",
+    pdfText(item.description),
     String(item.qty ?? item.quantity ?? 0),
     fmtCurrency(item.unitPriceSen ?? 0),
     fmtCurrency(item.amountSen ?? item.totalSen ?? 0),

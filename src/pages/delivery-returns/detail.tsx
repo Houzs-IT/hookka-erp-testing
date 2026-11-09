@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useCachedJson, isUnknownOutcome } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Loader2, ArrowLeft, Printer } from "lucide-react";
 import { generateDeliveryReturnPdf } from "@/lib/generate-delivery-return-pdf";
@@ -335,14 +336,22 @@ export default function DeliveryReturnDetail() {
                           })),
                         }),
                       });
+                      if (!r.ok) {
+                        toast.error(await responseErrorMessage(r, "Couldn't open the service case"));
+                        return;
+                      }
                       const j = (await r.json()) as { data?: { id?: string } };
                       caseId = j?.data?.id ?? "";
                     }
-                    await fetch(`/api/delivery-returns/${id}/set-outcome`, {
+                    const so = await fetch(`/api/delivery-returns/${id}/set-outcome`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ returnType: "REPAIR_REDELIVER", serviceCaseId: caseId }),
                     });
+                    if (!so.ok) {
+                      toast.error(await responseErrorMessage(so, "Couldn't set the return outcome"));
+                      return;
+                    }
                     // Standard step is DR → Service Case → Service Order: land on
                     // the case so the operator spawns the SV order from there
                     // (the case detail's "Spawn Service Order" button).

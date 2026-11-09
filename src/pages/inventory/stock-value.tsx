@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatCurrency } from "@/lib/utils";
 import {
@@ -317,7 +318,7 @@ function EntryTab({
     const draftEntries = stockValues.filter((v) => v.status === "DRAFT");
     const now = new Date().toISOString();
 
-    await Promise.all(
+    const results = await Promise.all(
       draftEntries.map((sv) =>
         fetch(`/api/stock-value/${sv.id}`, {
           method: "PUT",
@@ -327,9 +328,19 @@ function EntryTab({
             postedDate: now,
             postedBy: "Current User",
           }),
-        })
+        }).catch(() => null)
       )
     );
+    // Each PUT used to be fired and forgotten — a refused row stayed DRAFT
+    // with no word to the operator. Say how many failed and why (first reason).
+    const failed = results.filter((r) => !r || !r.ok);
+    if (failed.length > 0) {
+      const first = failed.find((r): r is Response => !!r);
+      const reason = first
+        ? await responseErrorMessage(first, "Couldn't post the entry")
+        : "Network problem";
+      toast.error(`${failed.length} of ${draftEntries.length} entries were not posted: ${reason}`);
+    }
     invalidateCachePrefix("/api/stock-value");
     setPosting(false);
     onRefresh();
@@ -337,11 +348,18 @@ function EntryTab({
 
   const handleInitializeMonth = async () => {
     setInitializingMonth(true);
-    await fetch("/api/stock-value", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ period: selectedPeriod }),
-    });
+    try {
+      const res = await fetch("/api/stock-value", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ period: selectedPeriod }),
+      });
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Couldn't initialise the month"));
+      }
+    } catch {
+      toast.error("Couldn't initialise the month — please check your connection.");
+    }
     invalidateCachePrefix("/api/stock-value");
     setInitializingMonth(false);
     onRefresh();

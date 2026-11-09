@@ -887,7 +887,7 @@ function CreatePurchaseOrderPage() {
                           <td className="px-3 py-2 text-right">
                             <Input
                               className="h-8 text-sm text-right"
-                              type="number"
+                              type="number" inputMode="decimal"
                               onFocus={(e) => e.currentTarget.select()}
                               min={1}
                               value={item.quantity === 0 ? "" : item.quantity}

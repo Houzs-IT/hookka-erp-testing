@@ -1089,7 +1089,7 @@ export default function PurchaseInvoiceDetailPage() {
                         </td>
                         <td className="px-2 py-1.5">
                           <Input
-                            type="number"
+                            type="number" inputMode="decimal"
                             min="0"
                             step="any"
                             className="text-right"

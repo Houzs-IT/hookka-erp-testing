@@ -7,6 +7,8 @@
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { ShieldCheck, Send, Check } from "lucide-react";
+import { useToast } from "@/components/ui/toast";
+import { responseErrorMessage } from "@/lib/response-error";
 
 // The driver camelCases every column, so the row arrives as tinNumber etc.;
 // reading only the snake_case keys left the panel blank after every reload, and
@@ -26,6 +28,7 @@ export function KycPanel({ customerId }: { customerId: string }) {
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
+  const { toast } = useToast();
 
   const reload = useCallback(async () => {
     try {
@@ -57,13 +60,18 @@ export function KycPanel({ customerId }: { customerId: string }) {
   const save = async (extra?: { docsRequestedAt?: string }) => {
     setSaving(true);
     try {
-      await fetch("/api/customer-crm/onboarding", {
+      const res = await fetch("/api/customer-crm/onboarding", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         // The stored "docs requested" date rides along — a plain Save used to
         // send none and the upsert wrote null over it (BUG-2026-10-17-313).
         body: JSON.stringify({ customerId, ...form, docsRequestedAt: requestedAt, ...extra }),
       });
+      // A refused save used to flash the green "Saved" tick anyway.
+      if (!res.ok) {
+        toast.error(await responseErrorMessage(res, "Couldn't save the KYC details"));
+        return;
+      }
       if (extra?.docsRequestedAt) setRequestedAt(extra.docsRequestedAt);
       setSavedTick(true);
       // eslint-disable-next-line no-restricted-syntax -- transient "Saved" tick, not timing-critical

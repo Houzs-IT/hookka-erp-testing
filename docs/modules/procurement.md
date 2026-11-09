@@ -132,6 +132,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 - **Money = integer sen** (`amountSen`, `unit_cost_sen`); use `MoneyInput`/`roundSen`, never float RM.
 - **Migrations are inert** unless self-applied at runtime (`ensurePendingMigrations`/`ensureGrnMigrations`/`ensurePiMigrations` — `ALTER … ADD COLUMN IF NOT EXISTS`). **New columns = snake_case** + a `column-rename-map.json` entry or the route silently 400s; read dual-keyed `r.camelCase ?? r.snake_case`.
 - **OCR (`scan-supplier.ts`) is a catalog-snap back-door** — verify status-snap before trusting OCR-written prices.
+- **PO / PI PDF free text is cleaned before printing (FE batch A 2026-11-09).** `generate-purchase-order-pdf.ts` and `generate-purchase-invoice-pdf.ts` pass header values, supplier details, line code / SKU / description / unit and the notes / remarks through `pdfText` / `pdfTextOr` (`src/lib/pdf-text.ts`) — no "null" or ragged whitespace on a supplier's copy; layouts unchanged. Purchase Return delete (`purchase-returns/index.tsx`) now checks `res.ok` and shows the server's reason. Quantity inputs on PO create / detail, GRN create / detail and PI detail carry `inputMode`. Test: `tests/fe-quality-batch-a.test.mjs`.
 
 ## Common tasks (mini-playbook)
 - **Add a field to a PO/GRN/PI** → snake_case column + runtime `ALTER … ADD COLUMN IF NOT EXISTS` in the route's `ensure*Migrations` before the first write; add a `column-rename-map.json` entry; persist in POST/PUT; surface in the `rowTo*` mapper; render in the page. Read dual-keyed.

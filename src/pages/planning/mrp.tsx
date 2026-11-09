@@ -580,35 +580,40 @@ function RequirementsTab({
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          {/* Frozen header + first column (owner 2026-11-08). The table is 15
+              columns wide and often hundreds of rows long; the box scrolls on
+              both axes so the column names and the material name stay in view.
+              Sticky cells need OPAQUE backgrounds, so the tinted bucket colours
+              are pre-blended over the header colour rather than /alpha. */}
+          <div className="max-h-[70vh] overflow-auto" data-testid="mrp-requirements-scroll">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                  <th className="text-left p-3 font-medium text-[#6B7280]">Material</th>
-                  <th className="text-left p-3 font-medium text-[#6B7280]">Category</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280]">Unit</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#E0EDF0]/50">This Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#E0EDF0]/30">Next Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#E0EDF0]/20">2-4 Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#E0EDF0]/10">4+ Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280]">Total Req</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280]">On Hand</th>
+                  <th className="sticky left-0 z-10 text-left p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_-1px_-1px_0_#E2DDD8]">Material</th>
+                  <th className="text-left p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Category</th>
+                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Unit</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#ECF1F2] shadow-[inset_0_-1px_0_#E2DDD8]">This Wk</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F0F3F3] shadow-[inset_0_-1px_0_#E2DDD8]">Next Wk</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F2F3F3] shadow-[inset_0_-1px_0_#E2DDD8]">2-4 Wk</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F5F4F4] shadow-[inset_0_-1px_0_#E2DDD8]">4+ Wk</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Total Req</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">On Hand</th>
                   {/* BUG-2026-08-13-144. This column did not exist while the
                       server hard-coded `onOrder = 0`, so the operator could
                       not see that Net Req was ignoring every open PO. The
                       number is now real, and visible where it is subtracted. */}
                   <th
-                    className="text-right p-3 font-medium text-[#6B7280]"
+                    className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]"
                     title="Outstanding quantity on open purchase orders (status not RECEIVED / CANCELLED / CLOSED), per line: ordered − received. Same definition as the Fabric tab's PO Outstanding."
                   >
                     On Order
                   </th>
-                  <th className="text-right p-3 font-medium text-[#6B7280]">Net Req</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280]">Status</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280]">Sugg. PO</th>
-                  <th className="text-left p-3 font-medium text-[#6B7280]">Supplier</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280]">Order By</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280]">Action</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Net Req</th>
+                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Status</th>
+                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Sugg. PO</th>
+                  <th className="text-left p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Supplier</th>
+                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Order By</th>
+                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -632,7 +637,7 @@ function RequirementsTab({
                       req.status === "SHORTAGE" ? "bg-[#F9E1DA]/30" : ""
                     }`}
                   >
-                    <td className="p-3">
+                    <td className="sticky left-0 z-[5] bg-white p-3 shadow-[inset_-1px_0_0_#E2DDD8]">
                       <div className="flex items-center gap-2">
                         <div className={`h-2 w-2 rounded-full ${statusDotColor(req.status)}`} />
                         <span className="font-medium text-[#1F1D1B]">{req.materialName}</span>

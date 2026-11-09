@@ -1270,7 +1270,7 @@ export default function EditSalesOrderPage() {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div>
                       <label className="block text-xs text-[#9CA3AF] mb-1">Qty</label>
-                      <Input type="number" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => updateItem(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
+                      <Input type="number" inputMode="numeric" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => updateItem(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
                     </div>
                     <div>
                       <label className="block text-xs text-[#9CA3AF] mb-1">Seat Size *</label>
@@ -1363,7 +1363,7 @@ export default function EditSalesOrderPage() {
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                       <div>
                         <label className="block text-xs text-[#9CA3AF] mb-1">Qty</label>
-                        <Input type="number" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => updateItem(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
+                        <Input type="number" inputMode="numeric" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => updateItem(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
                       </div>
                       <div>
                         <label className="block text-xs text-[#9CA3AF] mb-1">Base Price (RM)</label>
@@ -1371,15 +1371,15 @@ export default function EditSalesOrderPage() {
                       </div>
                       <div>
                         <label className="block text-xs text-[#9CA3AF] mb-1">Gap (&quot;)</label>
-                        <Input type="number" onFocus={(e) => e.currentTarget.select()} min={0} value={item.gapInches ?? ""} onChange={(e) => updateItem(idx, { gapInches: e.target.value ? parseFloat(e.target.value) : null })} className="h-8" placeholder="-" />
+                        <Input type="number" inputMode="decimal" onFocus={(e) => e.currentTarget.select()} min={0} value={item.gapInches ?? ""} onChange={(e) => updateItem(idx, { gapInches: e.target.value ? parseFloat(e.target.value) : null })} className="h-8" placeholder="-" />
                       </div>
                       <div>
                         <label className="block text-xs text-[#9CA3AF] mb-1">Divan H (&quot;)</label>
-                        <Input type="number" onFocus={(e) => e.currentTarget.select()} min={0} value={item.divanHeightInches ?? ""} onChange={(e) => updateItem(idx, { divanHeightInches: e.target.value ? parseFloat(e.target.value) : null })} className="h-8" placeholder="-" />
+                        <Input type="number" inputMode="decimal" onFocus={(e) => e.currentTarget.select()} min={0} value={item.divanHeightInches ?? ""} onChange={(e) => updateItem(idx, { divanHeightInches: e.target.value ? parseFloat(e.target.value) : null })} className="h-8" placeholder="-" />
                       </div>
                       <div>
                         <label className="block text-xs text-[#9CA3AF] mb-1">Leg H (&quot;)</label>
-                        <Input type="number" onFocus={(e) => e.currentTarget.select()} min={0} value={item.legHeightInches ?? ""} onChange={(e) => updateItem(idx, { legHeightInches: e.target.value ? parseFloat(e.target.value) : null })} className="h-8" placeholder="-" />
+                        <Input type="number" inputMode="decimal" onFocus={(e) => e.currentTarget.select()} min={0} value={item.legHeightInches ?? ""} onChange={(e) => updateItem(idx, { legHeightInches: e.target.value ? parseFloat(e.target.value) : null })} className="h-8" placeholder="-" />
                       </div>
                     </div>
 

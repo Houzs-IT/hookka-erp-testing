@@ -53,13 +53,15 @@ export function ObjectPageHeader({
   const handleBack = onBack ?? (backTo ? () => navigate(backTo) : undefined);
 
   return (
-    <div className="flex items-center gap-4 max-md:flex-wrap max-md:gap-2">
+    // flex-wrap at every width: on a narrow desktop/tablet a long action row
+    // used to squeeze the title to an ellipsis instead of wrapping under it.
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 max-md:gap-2">
       {handleBack && (
         <Button variant="ghost" size="icon" onClick={handleBack} aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </Button>
       )}
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0 flex-[1_1_14rem]">
         <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-xl font-bold text-[#1F1D1B] doc-number truncate">{title}</h1>
           {badges}
@@ -70,7 +72,7 @@ export function ObjectPageHeader({
       </div>
       {pager && <div className="flex items-center max-md:order-last max-md:w-full">{pager}</div>}
       {actions && (
-        <div className="flex items-center gap-2 flex-wrap justify-end max-md:w-full max-md:justify-start">
+        <div className="flex max-w-full items-center gap-2 flex-wrap justify-end max-md:w-full max-md:justify-start">
           {actions}
         </div>
       )}

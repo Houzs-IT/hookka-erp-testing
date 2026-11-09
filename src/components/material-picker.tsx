@@ -20,6 +20,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { computeDropdownPlacement, DROPDOWN_GAP } from "@/lib/dropdown-placement";
+
+// The menu's own cap (Tailwind max-h-56). It opens upward when the space
+// below the input is shorter than this and above has more room.
+const MENU_MAX_PX = 224;
 
 export type MaterialOption = {
   itemCode: string;
@@ -80,7 +85,15 @@ export function MaterialPicker({
   // any overflow-hidden ancestor — the PI/GRN create pages wrap the line table in
   // a rounded `overflow-hidden` div, which was clipping the suggestions list.
   // `coords` = the input's on-screen rect; null = closed.
-  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
+  // `top` is set when the menu opens below the input, `bottom` when it flips
+  // above it; `maxHeight` caps it to the room on that side.
+  const [coords, setCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
 
   // Suggestions — match on code OR description, code-prefix matches first.
   // Unfiltered (no search text): cap at 100 rows with a "refine to narrow" hint.
@@ -140,7 +153,13 @@ export function MaterialPicker({
   // Measure the input's on-screen rect for the portaled dropdown's fixed position.
   const measure = useCallback(() => {
     const r = wrapRef.current?.getBoundingClientRect();
-    if (r) setCoords({ top: r.bottom + 4, left: r.left, width: r.width });
+    if (!r) return;
+    const p = computeDropdownPlacement(r, window.innerHeight, MENU_MAX_PX);
+    setCoords(
+      p.side === "above"
+        ? { bottom: window.innerHeight - r.top + DROPDOWN_GAP, left: r.left, width: r.width, maxHeight: p.maxHeight }
+        : { top: r.bottom + DROPDOWN_GAP, left: r.left, width: r.width, maxHeight: p.maxHeight },
+    );
   }, []);
 
   // Close the dropdown on outside click and commit the typed value. The menu is
@@ -212,7 +231,14 @@ export function MaterialPicker({
         createPortal(
           <div
             ref={menuRef}
-            style={{ position: "fixed", top: coords.top, left: coords.left, width: coords.width }}
+            style={{
+              position: "fixed",
+              top: coords.top,
+              bottom: coords.bottom,
+              left: coords.left,
+              width: coords.width,
+              maxHeight: coords.maxHeight,
+            }}
             className="z-[60] max-h-56 overflow-y-auto rounded-md border border-[#E2DDD8] bg-white shadow-lg"
           >
           {suggestions.length === 0 ? (

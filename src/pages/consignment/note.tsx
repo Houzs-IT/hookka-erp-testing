@@ -64,6 +64,7 @@ import type { ConsignmentNote, Customer } from "@/types";
 // lazily (its own chunk) via the await import() in the print handlers.
 import type { CNPdfData, CNPdfItem } from "@/lib/generate-cn-pdf";
 import { csvBlob } from "@/lib/csv-cell";
+import { responseErrorMessage } from "@/lib/response-error";
 
 // Per-line rich detail from GET /api/consignment-notes/:id/print-extras —
 // the CN twin of DO's print-extras. Keyed by consignment_items.id, merged
@@ -2782,7 +2783,7 @@ export default function ConsignmentNotePage() {
               body: JSON.stringify({ id: row.id, status: "IN_TRANSIT" }),
             });
             if (!res.ok) {
-              toast.error("Failed to mark in transit");
+              toast.error(await responseErrorMessage(res, "Failed to mark in transit"));
             } else {
               toast.success(`${row.cnNo} marked in transit`);
               fetchData();
@@ -2804,7 +2805,7 @@ export default function ConsignmentNotePage() {
               body: JSON.stringify({ id: row.id, status: "FULLY_SOLD" }),
             });
             if (!res.ok) {
-              toast.error("Failed to mark delivered");
+              toast.error(await responseErrorMessage(res, "Failed to mark delivered"));
             } else {
               fetchData();
             }
@@ -2825,7 +2826,7 @@ export default function ConsignmentNotePage() {
               body: JSON.stringify({ id: row.id, status: "CLOSED" }),
             });
             if (!res.ok) {
-              toast.error("Failed to mark acknowledged");
+              toast.error(await responseErrorMessage(res, "Failed to mark acknowledged"));
             } else {
               fetchData();
             }
@@ -4460,7 +4461,7 @@ export default function ConsignmentNotePage() {
                             body: JSON.stringify({ id: detailCN.id, status: "IN_TRANSIT" }),
                           });
                           if (!res.ok) {
-                            toast.error("Failed to mark in transit");
+                            toast.error(await responseErrorMessage(res, "Failed to mark in transit"));
                           } else {
                             toast.success(`${detailCN.cnNo} marked in transit`);
                             setDetailCN(null);
@@ -4492,7 +4493,7 @@ export default function ConsignmentNotePage() {
                             body: JSON.stringify({ id: detailCN.id, status: "FULLY_SOLD" }),
                           });
                           if (!res.ok) {
-                            toast.error("Failed to mark delivered");
+                            toast.error(await responseErrorMessage(res, "Failed to mark delivered"));
                           } else {
                             toast.success(`${detailCN.cnNo} marked delivered`);
                             setDetailCN(null);
@@ -4520,7 +4521,7 @@ export default function ConsignmentNotePage() {
                               body: JSON.stringify({ id: detailCN.id, status: "CLOSED" }),
                             });
                             if (!res.ok) {
-                              toast.error("Failed to mark acknowledged");
+                              toast.error(await responseErrorMessage(res, "Failed to mark acknowledged"));
                             } else {
                               toast.success(`${detailCN.cnNo} acknowledged`);
                               setDetailCN(null);

@@ -25,9 +25,13 @@ import { initMonitoring } from './lib/monitoring'
 // Companion to backend observability in src/api/lib/observability.ts.
 import { initFeRum } from './lib/fe-rum'
 import { purgeServiceWorkerAndCaches } from './lib/stale-chunk-recovery'
+// Mouse wheel over a focused number input scrolls the page instead of
+// silently stepping the value (src/lib/number-input-wheel-guard.ts).
+import { installNumberInputWheelGuard } from './lib/number-input-wheel-guard'
 
 initMonitoring()
 initFeRum()
+installNumberInputWheelGuard()
 
 // A dynamically imported chunk failed to load — almost always a stale chunk
 // hash after a fresh deploy replaced the file the still-open page references

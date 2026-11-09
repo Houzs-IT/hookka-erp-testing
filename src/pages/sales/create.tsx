@@ -2969,7 +2969,7 @@ function CopyFromSourceModal({
                         <td className="px-2 py-2 text-right text-[#1F1D1B] align-top">
                           <div className="inline-flex items-center gap-1 justify-end">
                             <input
-                              type="number"
+                              type="number" inputMode="numeric"
                               min={1}
                               max={line.quantity}
                               step={1}
@@ -3446,7 +3446,7 @@ function LineItemCard({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs text-[#9CA3AF] mb-1">Qty</label>
-            <Input type="number" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => onUpdate(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
+            <Input type="number" inputMode="numeric" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => onUpdate(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
           </div>
           <div>
             <label className="block text-xs text-[#9CA3AF] mb-1">Base Price (RM)</label>
@@ -3457,7 +3457,7 @@ function LineItemCard({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div>
             <label className="block text-xs text-[#9CA3AF] mb-1">Qty</label>
-            <Input type="number" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => onUpdate(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
+            <Input type="number" inputMode="numeric" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => onUpdate(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
           </div>
           <div>
             <label className="block text-xs text-[#9CA3AF] mb-1">Seat Size *</label>
@@ -3491,7 +3491,7 @@ function LineItemCard({
         <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
           <div>
             <label className="block text-xs text-[#9CA3AF] mb-1">Qty</label>
-            <Input type="number" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => onUpdate(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
+            <Input type="number" inputMode="numeric" onFocus={(e) => e.currentTarget.select()} min={1} value={item.quantity} onChange={(e) => onUpdate(idx, { quantity: parseInt(e.target.value) || 1 })} className="h-8" />
           </div>
           <div>
             <label className="block text-xs text-[#9CA3AF] mb-1">Base Price (RM)</label>

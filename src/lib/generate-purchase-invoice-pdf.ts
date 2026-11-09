@@ -12,6 +12,7 @@ import {
   splitCodeName,
 } from "@/lib/pdf-utils";
 import { COMPANY } from "@/lib/constants";
+import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
 
 // ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ export function generatePurchaseInvoicePdf(
     doc.text(k, x, yy);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(...PDF.ink);
-    const lines = doc.splitTextToSize(v || "-", maxW);
+    const lines = doc.splitTextToSize(pdfTextOr(v), maxW);
     doc.text(lines, x + lw, yy);
     return yy + Math.max(1, lines.length) * 4.3 + 0.8;
   };
@@ -145,13 +146,13 @@ export function generatePurchaseInvoicePdf(
   ly = lblVal(leftX, ly, "Supplier", pi.supplierName, leftMaxW);
   // Supplier party details — mirror the Sales Invoice "Bill To" block. Each
   // line only renders when present so the block stays tidy.
-  const supAddr = (pi.supplierAddress ?? "").toString().trim();
+  const supAddr = pdfText(pi.supplierAddress);
   if (supAddr) ly = lblVal(leftX, ly, "Address", supAddr, leftMaxW);
-  const supContact = (pi.supplierContact ?? "").toString().trim();
+  const supContact = pdfText(pi.supplierContact);
   if (supContact) ly = lblVal(leftX, ly, "Contact", supContact, leftMaxW);
-  const supPhone = (pi.supplierPhone ?? "").toString().trim();
+  const supPhone = pdfText(pi.supplierPhone);
   if (supPhone) ly = lblVal(leftX, ly, "Phone", supPhone, leftMaxW);
-  const supEmail = (pi.supplierEmail ?? "").toString().trim();
+  const supEmail = pdfText(pi.supplierEmail);
   if (supEmail) ly = lblVal(leftX, ly, "Email", supEmail, leftMaxW);
 
   const rightX = pageW / 2 + 12;
@@ -162,9 +163,9 @@ export function generatePurchaseInvoicePdf(
   // Dual-key supplier reference numbers (API returns snake_case; toCamel
   // converts on some paths — accept both spellings, same as the GRN).
   const supplierInvoiceNo =
-    (pi.supplierInvoiceNo ?? pi.supplier_invoice_no ?? "").trim() || "-";
+    pdfTextOr(pi.supplierInvoiceNo ?? pi.supplier_invoice_no);
   const supplierDoNo =
-    (pi.supplierDoNo ?? pi.supplier_do_no ?? "").trim() || "-";
+    pdfTextOr(pi.supplierDoNo ?? pi.supplier_do_no);
   let ry = 40;
   ry = lblVal(rightX, ry, "PI No.", pi.piNo || "-", rightMaxW, RLW);
   ry = lblVal(rightX, ry, "Supplier Invoice No.", supplierInvoiceNo, rightMaxW, RLW);
@@ -200,9 +201,9 @@ export function generatePurchaseInvoicePdf(
     }
     return [
       String(idx + 1),
-      code,
-      description,
-      item.supplierSku || "-",
+      pdfTextOr(code),
+      pdfText(description),
+      pdfTextOr(item.supplierSku),
       String(item.qty),
       fmtCurrency(item.unitPriceSen),
       // Gross, as the supplier prints it; the invoice discount is in the totals.
@@ -329,8 +330,9 @@ export function generatePurchaseInvoicePdf(
   y += words.length * 4 + 6;
 
   // --- Remarks ---
-  if (pi.remarks) {
-    const noteLines = doc.splitTextToSize(pi.remarks, cw);
+  const piRemarks = pdfText(pi.remarks);
+  if (piRemarks) {
+    const noteLines = doc.splitTextToSize(piRemarks, cw);
     const blockH = 6 + noteLines.length * 3.6;
     if (y + blockH > pageH - 38) {
       doc.addPage();
