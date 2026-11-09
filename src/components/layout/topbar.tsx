@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { ChevronDown, LogOut, User, Building2 } from "lucide-react";
+import { useCallback, useState } from "react";
+import { ChevronDown, LogOut, User, Building2, MonitorSmartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlobalSearch } from "./global-search";
 import { NotificationBell } from "./notification-bell";
 import { WorkspaceTabs } from "./workspace-tabs";
 import { clearAuth, getCurrentUser } from "@/lib/auth";
+import { SignedInDevicesDialog } from "./signed-in-devices-dialog";
 
 interface TopbarProps {
   user?: {
@@ -37,6 +38,8 @@ const organisations = [
 export function Topbar({ user }: TopbarProps) {
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const closeDevices = useCallback(() => setDevicesOpen(false), []);
   const currentOrg = user?.organisationCode || "HOOKKA";
 
   // Prefer the real signed-in user for the avatar label + dropdown.
@@ -54,8 +57,12 @@ export function Topbar({ user }: TopbarProps) {
         .replace(/\b\w/g, (c) => c.toUpperCase())
     : "—";
 
+  // z-[35], not z-30: page-level sticky bars (e.g. the dashboard tab strip)
+  // are z-30 and come later in the DOM, so at an equal z they painted over
+  // this header's user menu and hid its lower items. Still below the mobile
+  // sidebar backdrop (z-40) and every modal (z-50+).
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-[#E2DDD8] bg-white px-6">
+    <header className="sticky top-0 z-[35] flex h-16 items-center gap-4 border-b border-[#E2DDD8] bg-white px-6">
       {/* Workspace tab strip (open pages persist as browser-style tabs).
           Renders a plain flex spacer until a 2nd tab exists. */}
       <WorkspaceTabs />
@@ -119,6 +126,13 @@ export function Topbar({ user }: TopbarProps) {
               <User className="h-4 w-4" />
               Profile
             </button>
+            <button
+              className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[#4B5563] hover:bg-[#F0ECE9]"
+              onClick={() => { setUserDropdownOpen(false); setDevicesOpen(true); }}
+            >
+              <MonitorSmartphone className="h-4 w-4" />
+              Signed-in Devices
+            </button>
             <hr className="my-1 border-[#E2DDD8]" />
             <button
               className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
@@ -130,6 +144,7 @@ export function Topbar({ user }: TopbarProps) {
           </div>
         )}
       </div>
+      {devicesOpen && <SignedInDevicesDialog onClose={closeDevices} />}
     </header>
   );
 }

@@ -1007,6 +1007,7 @@ export default function PurchaseInvoiceDetailPage() {
                 <label className="block text-xs text-[#9CA3AF] mb-1">Remarks</label>
                 <Input
                   value={dRemarks}
+                  maxLength={5000}
                   onChange={(e) => { setDRemarks(e.target.value); setDirty(true); }}
                   placeholder="Optional notes"
                 />

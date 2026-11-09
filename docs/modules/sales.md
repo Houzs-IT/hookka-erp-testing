@@ -80,7 +80,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1766` | SO create + combo pass + snapshot invalidation |
 | `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3281` | SO edit + re-run combo pass |
 | `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2555` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
-| `app.patch("/:id/dates")` | `src/api/routes/sales-orders.ts:5888` | Customer DD / Hookka Expected DD pencil (HK-0121); bypasses the PUT production lock, frozen from DELIVERED; re-dates POs/JCs via `redateProductionFromSODates` (`:5647`) |
+| `app.patch("/:id/dates")` | `src/api/routes/sales-orders.ts:5896` | Customer DD / Hookka Expected DD pencil (HK-0121); bypasses the PUT production lock, frozen from DELIVERED; re-dates POs/JCs via `redateProductionFromSODates` (`:5769`) |
 | `createProductionOrdersForSO` | `sales-orders/_helpers.ts:591` | One production_orders row per SO item |
 | `cascadeSOStatusToPOs` | `sales-orders/_helpers.ts:788` | Propagate SO status change to POs/JCs |
 | `rowToSO` / `rowToSOList` | `sales-orders/_helpers.ts:243 / 307` | Row → API shape (dual-keyed) |
@@ -94,6 +94,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `ConsignmentNotePage` | `src/pages/consignment/note.tsx:462` | CN workspace, all 3 tabs inline |
 
 ## Gotchas
+- **Free-text length caps (2026-11-08).** `POST /` and `PUT /:id` run `textCapError(body, SO_HEADER_CAPS, SO_ITEM_CAPS)` (`src/api/lib/text-caps.ts`) right after parsing the body: notes / status notes / hold reason ≤ 5000, references (customer PO / SO, company SO, Hookka DO) ≤ 200, line notes / repair scope ≤ 5000, product name / line suffix ≤ 200 — a 400 names the field. `customerPOImageB64` and `customSpecials` are deliberately NOT capped. The Notes and Hold-reason textareas carry `maxLength={5000}`. Test: `tests/text-caps.test.mjs`.
 - **Combo pricing is backend-unified.** Never re-implement it in the frontend. Note the map's `applySofaCombos`-in-sales-orders wiring is now **indirect**: sales-orders imports `runSofaComboPass` (`sofa-combo-pass.ts`, moved 2026-06-11), which calls `applySofaCombos`. Piece code = productCode (stored sizeCode is the SEAT size); a null tier disqualifies the group; `discount <= 0` is an idempotent no-op. Old full-price combo SOs re-price down on next edit.
 - **Status changes are cascades, not labels.** `so_status_changes` / `co_status_changes` carry an `autoActions` JSON blob and drive fan-out to production_orders / job_cards / fg_units / DO / invoices.
 - **item-catalog-snap OCR back-door.** SO POST enriches via `_shared/item-catalog-snap` (import at `sales-orders.ts:42`); SO PUT + CO POST/PUT are historically less covered — a scan/OCR path can inject un-snapped items.

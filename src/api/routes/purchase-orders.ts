@@ -14,6 +14,7 @@ import { runSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { textCapError, PO_HEADER_CAPS, PO_ITEM_CAPS } from "../lib/text-caps";
 import { getOrgId } from "../lib/tenant";
 import { poLineUnit, rmUnitMap } from "../../lib/material-variants";
 import { emitAudit } from "../lib/audit";
@@ -475,6 +476,9 @@ app.post("/", idempotent(), async (c) => {
   await ensurePendingMigrations(c.var.DB);
   try {
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, PO_HEADER_CAPS, PO_ITEM_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     const { supplierId, supplierName } = body;
     const rawItems = Array.isArray(body.items) ? body.items : [];
     if (!supplierId || !supplierName || rawItems.length === 0) {
@@ -819,6 +823,9 @@ app.put("/:id", async (c) => {
       );
     }
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, PO_HEADER_CAPS, PO_ITEM_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     const now = new Date().toISOString();
     // Two people saving the same PO: the edit form sends the updatedAt it loaded.
     const staleMsg = editConflictMessage(existing as { updated_at?: unknown; updatedAt?: unknown }, body?.expectedUpdatedAt, "purchase order");

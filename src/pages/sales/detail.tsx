@@ -1220,6 +1220,7 @@ export default function SalesOrderDetailPage() {
                 autoFocus
                 rows={3}
                 value={holdModal.reason}
+                maxLength={5000}
                 onChange={(e) => setHoldModal(prev => ({ ...prev, reason: e.target.value, error: "" }))}
                 placeholder="e.g. Waiting on customer fabric confirmation"
                 className="w-full rounded-md border border-[#D9D4CE] px-3 py-2 text-sm text-[#1F1D1B] focus:outline-none focus:ring-2 focus:ring-[#E2C66B] resize-none"

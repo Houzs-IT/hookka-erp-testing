@@ -223,6 +223,27 @@ async function constantTimeEqualStr(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
+// Refresh user_sessions.last_seen_at for the "Signed-in devices" list
+// (lib/user-sessions.ts), skipping the write when it is under 15 minutes old.
+// Every error is swallowed — including "column does not exist" before
+// ensureSessionDeviceColumns has run on this database: a stale "last active"
+// is cosmetic, a failed request is not. Lives here (not in user-sessions.ts)
+// because that module imports this one.
+const LAST_SEEN_STALE_MS = 15 * 60 * 1000;
+async function touchLastSeen(db: D1Database, token: string): Promise<void> {
+  const now = Date.now();
+  try {
+    await db
+      .prepare(
+        "UPDATE user_sessions SET last_seen_at = ? WHERE token = ? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+      )
+      .bind(new Date(now).toISOString(), token, new Date(now - LAST_SEEN_STALE_MS).toISOString())
+      .run();
+  } catch {
+    /* cosmetic — see comment above */
+  }
+}
+
 export async function sessionCacheKey(token: string): Promise<string> {
   const buf = await crypto.subtle.digest(
     "SHA-256",
@@ -441,6 +462,10 @@ export const authMiddleware: MiddlewareHandler<Env> = async (c, next) => {
       c.executionCtx.waitUntil(
         kv.put(cacheKey, JSON.stringify(row), { expirationTtl: ttl }),
       );
+      // "Signed-in devices" last-active time (lib/user-sessions.ts). Only on a
+      // cache miss, so at most once per SESSION_CACHE_TTL_S per session, and
+      // never awaited — it cannot slow or fail this request.
+      c.executionCtx.waitUntil(touchLastSeen(c.var.DB, token));
     }
   }
 

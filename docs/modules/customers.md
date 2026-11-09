@@ -79,6 +79,8 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 | `app.post("/login")` | `src/api/routes/worker-auth.ts:124` | Factory-worker PIN login (separate system) |
 
 ## Gotchas
+- **Free-text length caps (2026-11-08).** Customers `POST /` + `PUT /:id` run `textCapError(body, CUSTOMER_CAPS)` (`src/api/lib/text-caps.ts`): name / contact name / email / bank account ≤ 200, phone / SSM no. ≤ 100, company address ≤ 1000 — a 400 names the field. `deliveryHubs` and `oemMarking` (JSON) are not capped. Test: `tests/text-caps.test.mjs`.
+- **Signed-in devices (2026-11-08).** Any signed-in user can list and end their own sessions (top-bar user menu → Signed-in Devices; `src/api/routes/auth-sessions.ts`). See `docs/context-packs/security.md` → "Hardening batch 2026-11-08".
 - **Snapshot copy, not a live join.** Per-customer config lives in `kv_config` under `variants-config:<customerId>` — a POINT-IN-TIME copy of the master blob, so later master edits do NOT reach a seeded customer. `customer-maintenance.ts` refuses to write when the master blob is missing or malformed JSON, and separately mirrors every master `maintenance_config_history` row into the customer scope. Don't bypass that guard or write per-customer config directly.
 - **RBAC is a hard gate.** `users.ts` calls `requireSuperAdmin(c)` on all account mutations — rejects any role != SUPER_ADMIN even with `*:*`. `Users.tsx` hides Disable/Reset/Delete/invite unless SUPER_ADMIN. ADMIN deliberately cannot manage accounts.
 - **Two separate auth systems.** `auth.ts` / `auth-oauth.ts` / `auth-totp.ts` (office users) vs `worker-auth.ts` (factory workers) — NOT interchangeable; worker-auth has a 'default-protect' invariant with its own test.

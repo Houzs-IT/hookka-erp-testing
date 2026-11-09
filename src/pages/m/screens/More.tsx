@@ -7,8 +7,9 @@
 // chevron). Real user identity comes from the signed-in session
 // (getCurrentUser); sign-out reuses the SAME POST /api/auth/logout + clearAuth
 // flow as the desktop top bar. No fabricated profile data.
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight, LogOut, Moon, Sun } from "lucide-react";
+import { ChevronRight, LogOut, Moon, MonitorSmartphone, Sun } from "lucide-react";
 import { MobileHeader, MobileCard, InstallAppCard } from "../components";
 import { MORE_GROUPS } from "../nav";
 import { M } from "../theme";
@@ -16,6 +17,7 @@ import { useMobileThemeMode } from "../lib/theme-mode";
 import { getCurrentUser, clearAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { setPreferDesktop } from "@/lib/prefer-desktop";
+import { SignedInDevicesDialog } from "@/components/layout/signed-in-devices-dialog";
 
 // POST /api/auth/logout, then clear local state and bounce to /login — the same
 // best-effort flow the desktop top bar uses (a network hiccup must not trap the
@@ -52,6 +54,8 @@ function prettyRole(role: string): string {
 export default function MobileMore() {
   const navigate = useNavigate();
   const { mode, toggle } = useMobileThemeMode();
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const closeDevices = useCallback(() => setDevicesOpen(false), []);
   const { isNavAllowed } = usePermissions();
   const user = getCurrentUser();
   const name = user?.displayName || user?.email || "—";
@@ -212,6 +216,52 @@ export default function MobileMore() {
             </span>
           </button>
         </MobileCard>
+
+        {/* Signed-in devices (hardening batch 2026-11-08) — same dialog as the
+            desktop top-bar user menu; lists and ends this account's sessions. */}
+        <MobileCard radius={14} style={{ padding: 0, marginBottom: 18, overflow: "hidden" }}>
+          <button
+            onClick={() => setDevicesOpen(true)}
+            aria-label="Signed-in devices"
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "13px 16px",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              color: M.raisin,
+              textAlign: "left",
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            <span
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                background: "#F0ECE9",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "none",
+              }}
+            >
+              <MonitorSmartphone size={18} color="#6B5C32" strokeWidth={1.9} />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: M.raisin }}>Signed-in devices</div>
+              <div style={{ fontSize: 12, color: M.muted, marginTop: 1 }}>
+                See where you are signed in and sign out other devices
+              </div>
+            </div>
+            <ChevronRight size={18} color={M.muted} />
+          </button>
+        </MobileCard>
+        {devicesOpen && <SignedInDevicesDialog onClose={closeDevices} />}
 
         <InstallAppCard />
 

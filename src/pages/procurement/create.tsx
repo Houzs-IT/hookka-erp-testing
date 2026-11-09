@@ -709,6 +709,7 @@ function CreatePurchaseOrderPage() {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
+                maxLength={5000}
                 className="w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#6B5C32]/20 focus:border-[#6B5C32]"
                 placeholder="Order notes (delivery instructions, payment terms, special handling)..."
               />
