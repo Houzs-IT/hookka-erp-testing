@@ -13,6 +13,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { textCapError, SO_HEADER_CAPS, SO_ITEM_CAPS } from "../lib/text-caps";
 import { customerScopeSql, isCustomerScoped } from "../lib/customer-scope";
 import { lateToCustomerOrders } from "../lib/kpi-metrics";
 import { assertCustomerBillable } from "../lib/customer-stage";
@@ -1779,6 +1780,9 @@ app.post("/", async (c) => {
   return withIdempotency(c, "sales-orders", idemKey, async () => {
   try {
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, SO_HEADER_CAPS, SO_ITEM_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     // HK-0080: a date we cannot read is a 400, never silently blanked.
     const dateErr = normaliseBodyDates(body, ["customerDeliveryDate", "hookkaExpectedDD"]);
     if (dateErr) return c.json({ success: false, error: dateErr }, 400);
@@ -3307,6 +3311,9 @@ app.put("/:id", async (c) => {
     // Two people saving the same order: the form sends the updatedAt it loaded.
     const staleMsg = editConflictMessage(existing as { updated_at?: unknown; updatedAt?: unknown }, body?.expectedUpdatedAt, "sales order");
     if (staleMsg) return c.json({ success: false, error: staleMsg, conflict: true }, 409);
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, SO_HEADER_CAPS, SO_ITEM_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     // Only a CHANGED date is validated: an edit that echoes back a legacy
     // stored value must not be blocked by it.
     const dateErr = normaliseBodyDates(

@@ -97,7 +97,7 @@ is enforced by hand in the handler, not by the middleware.
 | `ensurePiecePicsRackingColumn` | `src/api/lib/packing-rack-write.ts:35` | Shared mig-0192 DDL self-apply |
 | `packingPieceIdentity` | `src/api/lib/packing-piece-identity.ts:48` | Shared description + notes move-match key |
 | `POST /login` | `src/api/routes/auth.ts:148` | Session + CSRF cookie issue (TOTP-aware) |
-| `GET /me/permissions` | `src/api/routes/auth.ts:521` | Effective permission set for the FE |
+| `GET /me/permissions` | `src/api/routes/auth.ts:529` | Effective permission set for the FE |
 | `authMiddleware` | `src/api/lib/auth-middleware.ts` | Auth gate + double-submit CSRF |
 | `PUBLIC_PREFIXES` | `src/api/lib/auth-middleware.ts:66` | Prefix allow-list that bypasses the gate |
 | `requirePermission` | `src/api/lib/rbac.ts:212` | Per-resource:action RBAC (ADMIN/SUPER_ADMIN bypass; an account's own list from `user_permissions` before its role; fails CLOSED on a thrown lookup) |

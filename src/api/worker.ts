@@ -1120,6 +1120,8 @@ import auth from "./routes/auth";
 import authOauth from "./routes/auth-oauth";
 // Phase C.6 — TOTP 2FA enrollment + verify.
 import authTotp from "./routes/auth-totp";
+// Hardening batch 2026-11-08 — "Signed-in devices" (list / revoke own sessions).
+import authSessions from "./routes/auth-sessions";
 import users from "./routes/users";
 import presence from "./routes/presence";
 import bomMasterTemplates from "./routes/bom-master-templates";
@@ -1357,6 +1359,7 @@ app.route("/api/price-history", priceHistory);
 // 404 the OAuth/TOTP paths.
 app.route("/api/auth/oauth", authOauth);
 app.route("/api/auth/totp", authTotp);
+app.route("/api/auth/sessions", authSessions);
 app.route("/api/auth", auth);
 app.route("/api/users", users);
 app.route("/api/presence", presence);

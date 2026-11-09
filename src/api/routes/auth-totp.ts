@@ -47,6 +47,7 @@ import {
   clearLoginRateLimit,
 } from "../lib/rate-limit";
 import { emitAudit } from "../lib/audit";
+import { stampSessionDevice } from "../lib/user-sessions";
 import {
   sessionCookieHeader,
   csrfCookieHeader,
@@ -328,6 +329,10 @@ app.post("/login-verify", async (c) => {
       .prepare("UPDATE users SET lastLoginAt = ? WHERE id = ?")
       .bind(now.toISOString(), userId),
   ]);
+
+  // "Signed-in devices" — record browser + IP on the new session (best-effort,
+  // never blocks sign-in). See lib/user-sessions.ts.
+  await stampSessionDevice(c, sessionToken);
 
   // Burn the pending token (and any sibling left by an earlier password
   // attempt) now that the session exists — one password step, one session.

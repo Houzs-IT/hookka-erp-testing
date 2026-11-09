@@ -1,5 +1,6 @@
 # RBAC Remediation — current state and the way through
 
+> **Last verified: 2026-11-09** (branch `fix/security-batch`, to `main`): re-read `src/api/lib/rbac.ts` — every unresolved path still denies; added `tests/rbac-default-deny.test.mjs` (see the line under "Two fail-open paths"). Nothing else re-checked.
 > **Last verified: 2026-10-13** (branch `feat/it-support-to-main`, staging to `main`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `feat/permissions-tab-main`, ported from staging): added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
 >
@@ -35,6 +36,11 @@ account, and let every gate elsewhere be walked around. Verified closed by readi
 
 `/me/permissions` returns `[]` for this case too, so the menu and the gate now agree. The fix
 for a role that holds nothing is to seed its grants — never to widen these two lines again.
+
+**Default-deny regression test (2026-11-08 hardening batch).** `tests/rbac-default-deny.test.mjs` pins the
+plain "nothing configured" cases: an unknown resource (DB-backed role with other grants, and every
+code-defined role), a role with no grant / no grants at all / the legacy `USER` role, and a request with no
+role or an empty role (401 from the gate, `false` from `hasPermission`, no dashboard-tab escape).
 
 **One thing this changes that the tests cannot see.** In the sandbox no account rides the old
 fallback, so the suite passes either way. On staging or production an account on an

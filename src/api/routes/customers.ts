@@ -15,6 +15,7 @@ import type { Context } from "hono";
 import type { Env } from "../worker";
 import { checkCustomerDeleteLocked, lockedResponse } from "../lib/lock-helpers";
 import { requirePermission } from "../lib/rbac";
+import { textCapError, CUSTOMER_CAPS } from "../lib/text-caps";
 import { ensureCustomerStageColumns } from "../lib/customer-stage";
 import { getOrgId } from "../lib/tenant";
 import {
@@ -384,6 +385,9 @@ app.post("/", async (c) => {
   await ensureCustomerFinanceColumns(c.var.DB);
   try {
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, CUSTOMER_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     const { code, name } = body;
     // POTENTIAL accounts are born in the Sales Pipeline, where the salesperson
     // has a company name and a contact but no creditor code yet — demanding one
@@ -560,6 +564,9 @@ app.put("/:id", async (c) => {
       return c.json({ success: false, error: "Customer not found" }, 404);
     }
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, CUSTOMER_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
 
     // Only re-validate the debtor code when it's actually changing — don't
     // block edits to other fields on a customer whose code predates this

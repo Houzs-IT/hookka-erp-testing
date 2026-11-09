@@ -33,6 +33,7 @@ import {
   clientIp,
 } from "../lib/rate-limit";
 import { emitAudit } from "../lib/audit";
+import { stampSessionDevice } from "../lib/user-sessions";
 import { provisionPersonalMailbox } from "../lib/mail-provision";
 import { issuePendingTotpToken } from "../lib/totp-pending";
 import {
@@ -309,6 +310,10 @@ app.post("/login", async (c) => {
       user.id,
     ),
   ]);
+
+  // "Signed-in devices" — record browser + IP on the new session (best-effort,
+  // never blocks sign-in). See lib/user-sessions.ts.
+  await stampSessionDevice(c, token);
 
   // P6.3 — count successful logins for the dashboard.
   emitCounter(c, "auth.login_success", { resource: user.role });
@@ -1320,6 +1325,10 @@ app.post("/accept-invite", async (c) => {
       "INSERT INTO user_sessions (token, userId, createdAt, expiresAt) VALUES (?, ?, ?, ?)",
     ).bind(sessionToken, userId, nowIso, sessionExpires),
   ]);
+
+  // "Signed-in devices" — record browser + IP on the new session (best-effort,
+  // never blocks sign-in). See lib/user-sessions.ts.
+  await stampSessionDevice(c, sessionToken);
 
   // T-012 R5: link (or create) the personal mailbox the invite reserved.
   // Best-effort — the account and session above are already committed.

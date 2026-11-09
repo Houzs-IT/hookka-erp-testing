@@ -16,6 +16,7 @@ import { runSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission, requireFinance } from "../lib/rbac";
+import { textCapError, PI_HEADER_CAPS, PI_ITEM_CAPS } from "../lib/text-caps";
 import { idempotent } from "../lib/idempotency";
 import { emitAudit } from "../lib/audit";
 import { learnSupplierBindings } from "../lib/supplier-binding-learn";
@@ -1392,6 +1393,9 @@ app.post("/", idempotent(), async (c) => {
     // status is now ALWAYS DRAFT on create regardless of OCR vs manual.
     ocrUsed?: boolean;
   };
+  // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+  const tooLong = textCapError(body, PI_HEADER_CAPS, PI_ITEM_CAPS);
+  if (tooLong) return c.json({ success: false, error: tooLong }, 400);
 
   if (!body.supplierId || !body.supplierName) {
     return c.json(
@@ -2250,6 +2254,9 @@ app.put("/:id", async (c) => {
     purchaseOrgCode?: string;
     items?: PurchaseInvoiceItemInput[];
   };
+  // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+  const tooLong = textCapError(body, PI_HEADER_CAPS, PI_ITEM_CAPS);
+  if (tooLong) return c.json({ success: false, error: tooLong }, 400);
 
   // Same guard as on create — an edit is exactly where a month digit gets
   // fixed, and exactly where a new one gets introduced.

@@ -33,6 +33,7 @@ import {
 } from "../lib/oauth-google";
 import { checkLoginRateLimit, clientIp } from "../lib/rate-limit";
 import { emitAudit } from "../lib/audit";
+import { stampSessionDevice } from "../lib/user-sessions";
 import { CSRF_COOKIE } from "../lib/auth-middleware";
 
 const app = new Hono<Env>();
@@ -185,6 +186,10 @@ app.get("/google/callback", async (c) => {
       .prepare("UPDATE users SET lastLoginAt = ? WHERE id = ?")
       .bind(now.toISOString(), linked.userId),
   ]);
+
+  // "Signed-in devices" — record browser + IP on the new session (best-effort,
+  // never blocks sign-in). See lib/user-sessions.ts.
+  await stampSessionDevice(c, sessionToken);
 
   // Sprint 2 task 5 — audit the OAuth link/login. We snapshot the linked
   // userId + email so the journal shows which Google identity attached

@@ -3536,7 +3536,10 @@
     "expires_at",
     "org_id",
     "token",
-    "user_id"
+    "user_id",
+    "user_agent",
+    "ip_address",
+    "last_seen_at"
   ],
   "users": [
     "active_org_id",

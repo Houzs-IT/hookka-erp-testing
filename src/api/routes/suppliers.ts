@@ -23,6 +23,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { textCapError, SUPPLIER_CAPS } from "../lib/text-caps";
 import { getOrgId } from "../lib/tenant";
 import {
   propagateSupplierName,
@@ -335,6 +336,9 @@ app.post("/", async (c) => {
   await ensureSupplierFinanceColumns(c.var.DB);
   try {
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, SUPPLIER_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     const { code, name } = body;
     if (!code || !name) {
       return c.json(
@@ -527,6 +531,9 @@ app.put("/:id", async (c) => {
   }
   try {
     const body = await c.req.json();
+    // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
+    const tooLong = textCapError(body, SUPPLIER_CAPS);
+    if (tooLong) return c.json({ success: false, error: tooLong }, 400);
     const pick = <T>(fresh: T, current: T): T =>
       fresh === undefined ? current : fresh;
 
