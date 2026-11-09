@@ -101,6 +101,15 @@ export const FC_SST = "706-0000";
 
 const byCode = (a: FcAccount, b: FcAccount) => a.code.localeCompare(b.code);
 
+/** A purchase account's material TYPE, the Forecast P&L's way (owner
+ *  2026-07-29: "PURCHASE - B.M FABRIC" / "S FABRIC" / "S.M FABRIC" are one
+ *  FABRIC row). Also how the Monthly P&L forecast groups its purchase groups. */
+export function forecastMaterialType(name: string): string {
+  const stripped = name.replace(/^PURCHASE\s*-\s*/i, "").trim();
+  const cat = stripped.replace(/^(B\.M|S\.M|B|S)[.\s]+/i, "").trim();
+  return cat || stripped;
+}
+
 /** The Forecast page's line structure (same classification as the real P&L,
  *  the owner's section-map overrides included). */
 export function forecastLineGroups(
@@ -124,12 +133,7 @@ export function forecastLineGroups(
   // FABRIC row (likewise FILLER / WEBBING / …). Percentages store under a
   // stable `cat:<TYPE>` key, so a future sofa/bedframe split can add
   // per-line rows without clashing with what was keyed here.
-  const catOf = (name: string): string => {
-    const stripped = name.replace(/^PURCHASE\s*-\s*/i, "").trim();
-    const cat = stripped.replace(/^(B\.M|S\.M|B|S)[.\s]+/i, "").trim();
-    return cat || stripped;
-  };
-  const catNames = [...new Set(materialAccts.map((a) => catOf(a.name)))].sort();
+  const catNames = [...new Set(materialAccts.map((a) => forecastMaterialType(a.name)))].sort();
   const materials = catNames.map((n) => ({ code: `cat:${n}`, name: n, type: "COST" }) as FcAccount);
   const byBucket = (bucket: string) =>
     postable.filter((a) => pnlBucketFor(a.code, a.type, override) === bucket).sort(byCode);

@@ -58,11 +58,19 @@ export interface PnlMatrixRow {
 }
 export interface PnlMatrix { columns: { key: string; label: string; accum: boolean }[]; rows: PnlMatrixRow[] }
 
-export function buildPnlMatrix(cols: PnlMatrixCol[]): PnlMatrix {
+/** A raw-material group that stands for a Forecast P&L material TYPE, not a
+ *  stock group (src/lib/pnl-forecast.ts). Never a row of its own. */
+export const FORECAST_TYPE_GROUP_PREFIX = "type:";
+
+/** `spine`: the window whose line lists make the rows (default: the first
+ *  column). `rmTypeOf` (the Monthly P&L forecast, spec 2026-11-09-forecast-
+ *  three-columns-design.md 6): each raw-material TYPE gets a row over its
+ *  purchase groups, so a type's forecast compares with its groups' sum. */
+export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLike; rmTypeOf?: (rg: PnlRmGroup) => string } = {}): PnlMatrix {
   const columns = cols.map((c) => ({ key: c.key, label: c.label, accum: c.accum }));
   const windows = cols.map((c) => c.window);
   const rows: PnlMatrixRow[] = [];
-  const spine = windows[0];
+  const spine = opts.spine ?? windows[0];
   if (!spine) return { columns, rows };
 
   const netSales = windows.map((w) => w.netSalesSen);
@@ -105,13 +113,23 @@ export function buildPnlMatrix(cols: PnlMatrixCol[]): PnlMatrix {
   group("COST OF GOODS SOLD", 0, (w) => w.cogsSen, "TOTAL COST OF GOODS SOLD");
   line("OPENING STOCK - FINISHED GOODS", 1, (w) => w.fgOpen);
   group("RAW MATERIALS", 1, (w) => w.rmConsumedSen, "TOTAL RAW MATERIALS");
-  for (const rg of spine.rmGroups) {
+  const consumed = (x: PnlRmGroup) => x.openingSen + x.purchasesSen - x.closingSen;
+  const rmGroupRows = (rg: PnlRmGroup, depth: number) => {
     const find = (w: PnlWindowLike) => w.rmGroups.find((q) => q.group === rg.group);
-    group(rg.description, 2, (w) => { const x = find(w); return x ? x.openingSen + x.purchasesSen - x.closingSen : 0; }, `TOTAL ${rg.description}`);
-    line("OPENING STOCK", 3, (w) => find(w)?.openingSen ?? 0);
-    line("PURCHASE", 3, (w) => find(w)?.purchasesSen ?? 0, undefined, rg.group);
-    line("CLOSING STOCK", 3, (w) => -(find(w)?.closingSen ?? 0));
-  }
+    group(rg.description, depth, (w) => { const x = find(w); return x ? consumed(x) : 0; }, `TOTAL ${rg.description}`);
+    line("OPENING STOCK", depth + 1, (w) => find(w)?.openingSen ?? 0);
+    line("PURCHASE", depth + 1, (w) => find(w)?.purchasesSen ?? 0, undefined, rg.group);
+    line("CLOSING STOCK", depth + 1, (w) => -(find(w)?.closingSen ?? 0));
+  };
+  if (opts.rmTypeOf) {
+    const typeOf = opts.rmTypeOf;
+    const types: string[] = [];
+    for (const rg of spine.rmGroups) { const t = typeOf(rg); if (!types.includes(t)) types.push(t); }
+    for (const t of types) {
+      group(t, 2, (w) => w.rmGroups.filter((q) => typeOf(q) === t).reduce((s, q) => s + consumed(q), 0), `TOTAL ${t}`);
+      for (const rg of spine.rmGroups) if (typeOf(rg) === t && !rg.group.startsWith(FORECAST_TYPE_GROUP_PREFIX)) rmGroupRows(rg, 3);
+    }
+  } else for (const rg of spine.rmGroups) rmGroupRows(rg, 2);
   line("CARRIAGE INWARDS", 1, (w) => w.carriageSen, undefined, "700-1015");
   line("SST CHARGES", 1, (w) => w.sstSen, undefined, "706-0000");
   group("DIRECT LABOUR", 1, (w) => w.labourSen, "TOTAL DIRECT LABOUR");

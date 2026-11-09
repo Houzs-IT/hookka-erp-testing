@@ -20,7 +20,8 @@ const cs = slice("function CostStructureTab(");
 const css = read("src/styles/finance-v2.css");
 
 test("Monthly P&L: same call, the server's columns in their order, figures and % as sent", () => {
-  assert.match(mo, /fetch\(`\/api\/accounting\/pl-monthly\?line=\$\{line\}&anchor=\$\{anchor\}`\)/);
+  // The same call; with the Forecast on (2026-11-09) it adds forecast=1.
+  assert.match(mo, /fetch\(`\/api\/accounting\/pl-monthly\?line=\$\{line\}&anchor=\$\{anchor\}\$\{fcOn \? "&forecast=1" : ""\}`\)/);
   assert.match(mo, /const cols = data\?\.columns \?\? \[\];/);
   assert.doesNotMatch(mo, /cols\.(sort|reverse)\(/, "the column order is the server's (Accumulated first, newest month first)");
   assert.match(mo, /const shown = foldStatementRows\(rows, collapsed\);/);
