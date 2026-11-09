@@ -30,7 +30,7 @@ import { pickCat, type RevCat, type RevenueSplitResp } from "../../../dashboard-
 export const DASHBOARD_VIEWS = [
   { key: "sales", label: "Sales", blurb: "Orders, invoices, pipeline, forecast", built: true },
   { key: "operations", label: "Operations", blurb: "Production, backlog, plant load", built: true },
-  { key: "people", label: "Employees", blurb: "Efficiency and attendance", built: false },
+  { key: "people", label: "Employees", blurb: "Efficiency and attendance", built: true },
   { key: "service", label: "Service", blurb: "Cases, report, to do", built: false },
   { key: "finance", label: "Finance", blurb: "Per head, returns, outlook", built: false },
   { key: "ocr", label: "OCR", blurb: "Accuracy of the PO scanner", built: false },
@@ -90,7 +90,8 @@ export const viewAllowsDay = (view: DashView): boolean => DAY_VIEWS.includes(vie
  * page); the URL keeps whatever was there.
  */
 export function effectivePeriod(view: DashView, raw: Period): Period {
-  if (view === "operations") return opsPeriod(raw);
+  // Operations and Employees are the two Day views (DAY_VIEWS); both read the same period shape.
+  if (view === "operations" || view === "people") return opsPeriod(raw);
   if (viewAllowsDay(view)) return raw;
   if (raw.mode === "range" && !quarterOfPeriod(raw)) return { mode: "monthly", month: raw.month };
   return raw.day ? { ...raw, day: undefined } : raw;
