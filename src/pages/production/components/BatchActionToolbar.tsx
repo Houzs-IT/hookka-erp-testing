@@ -20,6 +20,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { X, Calendar, CalendarClock, User, FolderPlus, Trash2 } from "lucide-react";
+import { todayYmdMY } from "@/lib/utils";
 
 export type BatchActionToolbarProps = {
   count: number;
@@ -105,7 +106,7 @@ type ApplyBatchDateDialogProps = {
 
 export function ApplyBatchDateDialog({ open, count, onCancel, onApply }: ApplyBatchDateDialogProps) {
   const { confirm } = useConfirm();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const [date, setDate] = useState<string>(today);
   if (!open) return null;
   return (
@@ -175,7 +176,7 @@ type ApplyBatchDueDateDialogProps = {
 
 export function ApplyBatchDueDateDialog({ open, count, onCancel, onApply }: ApplyBatchDueDateDialogProps) {
   const { confirm } = useConfirm();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const [date, setDate] = useState<string>(today);
   if (!open) return null;
   return (

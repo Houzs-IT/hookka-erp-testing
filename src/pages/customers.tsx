@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { bedframePrice3Sen, formatCurrency, formatRM } from "@/lib/utils";
+import { bedframePrice3Sen, formatCurrency, formatRM, todayYmdMY } from "@/lib/utils";
 import { humanizeError } from "@/lib/humanize-error";
 import { parseDebtorCode } from "@/lib/debtor";
 import { useCachedJson, invalidateCache, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -200,7 +200,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   // grid AND the Export Quotation PDF — plumbed into both
   // /api/customer-products?asOf= and /api/customer-quotation?asOf=.
   const [quotationAsOf, setQuotationAsOf] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10),
+    todayYmdMY(),
   );
   const seatHeights = useSofaSeatHeights();
   const { data: resp, refresh } = useCachedJson<{ success?: boolean; data?: CustomerProduct[] }>(
@@ -267,7 +267,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   const [showBulkSaveDialog, setShowBulkSaveDialog] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkEffectiveFrom, setBulkEffectiveFrom] = useState(() =>
-    new Date().toISOString().slice(0, 10),
+    todayYmdMY(),
   );
   const [bulkNotes, setBulkNotes] = useState("");
 
@@ -280,7 +280,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
   const [editingSeatKey, setEditingSeatKey] = useState<string | null>(null);
   const [seatInput, setSeatInput] = useState("");
 
-  const todayIso = () => new Date().toISOString().slice(0, 10);
+  const todayIso = () => todayYmdMY();
 
   function recordDirty(cpId: string, patch: Partial<DirtyCustomerEdit>) {
     setDirtyEdits((prev) => {
@@ -486,7 +486,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
     if (rows.length === 0) return;
     setExportingCatalogue(true);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayYmdMY();
       const res = await fetch(
         `/api/customer-quotation?customerId=${encodeURIComponent(customerId)}&asOf=${today}`,
       );
@@ -2280,7 +2280,7 @@ function CustomerMaintenancePanel({ customerId, customerName }: { customerId: st
           // kv_config('variants-config:<id>') key so sales/create.tsx etc.
           // see the same values immediately. Future-dated snapshots stay
           // only in the history table until their day arrives.
-          const today = new Date().toISOString().slice(0, 10);
+          const today = todayYmdMY();
           if (config && effectiveFrom <= today) {
             try {
               await fetch(`/api/kv-config/${encodeURIComponent(customerKey)}`, {
@@ -2354,7 +2354,7 @@ function custComboGroupKey(r: CustSofaComboRule): string {
 }
 
 function custPickRepresentative(rs: CustSofaComboRule[]): CustSofaComboRule {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const sorted = rs.slice().sort((a, b) => {
     if (a.effectiveFrom !== b.effectiveFrom) {
       return b.effectiveFrom.localeCompare(a.effectiveFrom);
@@ -2375,7 +2375,7 @@ type CustComboGroup = {
 };
 
 function custGroupByCombo(rules: CustSofaComboRule[]): CustComboGroup[] {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const buckets: Record<string, CustSofaComboRule[]> = {};
   for (const r of rules) {
     const k = custComboGroupKey(r);
@@ -2596,7 +2596,7 @@ function CustomerSofaCombosPanel({ customerId, customerName }: { customerId: str
                 <tbody className="divide-y divide-[#F3F4F6]">
                   {comboGroups.map((g) => {
                     const r = g.representative;
-                    const isPending = r.effectiveFrom > new Date().toISOString().slice(0, 10);
+                    const isPending = r.effectiveFrom > todayYmdMY();
                     return (
                       <tr key={g.key} className="hover:bg-[#FAF9F7]">
                         <td className="px-3 py-2 font-mono text-[#1F1D1B]">{r.baseModel}</td>
@@ -2713,7 +2713,7 @@ function CustomerPriceHistoryDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const todayIso = () => new Date().toISOString().slice(0, 10);
+  const todayIso = () => todayYmdMY();
   const daysUntil = (iso: string): number => {
     const t = new Date(todayIso() + "T00:00:00Z").getTime();
     const d = new Date(iso + "T00:00:00Z").getTime();

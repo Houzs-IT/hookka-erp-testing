@@ -41,6 +41,7 @@ import {
   computeMonthlyEfficiencyByWorker,
   type EfficiencyScope,
 } from "./efficiency-allowance";
+import { todayYmdMY } from "../../lib/utils";
 
 /** Categories a production_efficiency scope may name (DEV-36). */
 export const EFFICIENCY_CATEGORIES = ["SOFA", "BEDFRAME"] as const;
@@ -480,7 +481,7 @@ async function invoiceLag(
   const { start, end } = periodBounds(period);
   const def = kpiByKey("documents_not_stuck");
   const grace = Number(def?.graceDays ?? 3);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const asAt = today < end ? today : end;
 
   // DISPATCH, in the owner's word — the day the goods left. (The on-time
@@ -866,7 +867,7 @@ export async function serviceCaseResolution(
   period: string,
 ): Promise<MetricResult> {
   const { start, end } = periodBounds(period);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const asAt = today < end ? today : end;
 
   const res = await c.var.DB.prepare(

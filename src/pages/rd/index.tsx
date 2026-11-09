@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import {
   Lightbulb,
   Users,
@@ -813,7 +813,7 @@ function ReportsView({ projects }: { projects: RDProject[] }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `rd-projects-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `rd-projects-report-${todayYmdMY()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

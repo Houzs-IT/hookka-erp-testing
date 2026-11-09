@@ -38,6 +38,7 @@ import {
   grnLineInvoicedQty,
 } from "../../lib/purchase-edit-rules";
 import { PO_ITEMS_ORDER, ensurePoItemLineNo } from "./purchase-orders";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -1459,7 +1460,7 @@ app.post("/", idempotent(), async (c) => {
     const grnId = genGrnId();
     const grnNumber = await generateGrnNumber(c.var.DB);
     const receiveDate =
-      body.receiveDate || new Date().toISOString().split("T")[0];
+      body.receiveDate || todayYmdMY();
     const finalQcStatus = (qcStatus as string) || "PENDING";
 
     // Arrival state: caller may override; otherwise apply the default rule.

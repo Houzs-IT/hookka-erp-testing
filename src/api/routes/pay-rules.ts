@@ -17,6 +17,7 @@ import {
   ensurePayRuleVersions,
   loadPayRuleVersions,
 } from "../lib/pay-rules-store";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -49,7 +50,7 @@ app.get("/", async (c) => {
   const denied = await requirePermission(c, "payslips", "read");
   if (denied) return denied;
   const versions = await loadPayRuleVersions(c.var.DB);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   versions.sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
   return c.json({
     success: true,
@@ -108,7 +109,7 @@ app.delete("/:id", async (c) => {
   const denied = await requirePermission(c, "payslips", "update");
   if (denied) return denied;
   const id = c.req.param("id");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   await ensurePayRuleVersions(c.var.DB);
   // Only future-dated versions can be removed — in-force history is the
   // audit trail for already-computed payrolls.

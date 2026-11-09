@@ -5,7 +5,7 @@ import { humanizeError } from "@/lib/humanize-error";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatDate, formatCurrency } from "@/lib/utils";
+import { formatDate, formatCurrency, todayYmdMY } from "@/lib/utils";
 import { asArray } from "@/lib/safe-json";
 import type { Equipment, MaintenanceLog } from "@/types";
 import {
@@ -166,7 +166,7 @@ export default function MaintenancePage() {
       purchasePriceRM: Number(fd.get("purchasePriceRM")) || 0,
       warrantyExpiry: fd.get("warrantyExpiry") ?? "",
       notes: fd.get("notes"),
-      lastMaintenanceDate: new Date().toISOString().split("T")[0],
+      lastMaintenanceDate: todayYmdMY(),
       nextMaintenanceDate: (() => {
         const d = new Date();
         d.setDate(d.getDate() + (Number(fd.get("maintenanceCycleDays")) || 30));

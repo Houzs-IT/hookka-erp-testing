@@ -23,6 +23,7 @@
 // ---------------------------------------------------------------------------
 import jsPDF from "jspdf";
 import { drawLetterhead, drawSectionLabel, PDF } from "@/lib/pdf-utils";
+import { todayYmdMY } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -286,7 +287,7 @@ export default function generateProductCataloguePdf(
 ): jsPDF {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
 
-  const today = opts.exportDate ?? new Date().toISOString().slice(0, 10);
+  const today = opts.exportDate ?? todayYmdMY();
   const { customerName, categoryFilter } = opts;
 
   // Apply category pre-filter

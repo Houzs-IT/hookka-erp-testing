@@ -3,7 +3,7 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import { formatCurrency, formatDate, cn, todayYmdMY } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 
@@ -607,7 +607,7 @@ function BankAccountsTab({
   const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [formAccount, setFormAccount] = useState(data.bankAccounts[0]?.id || "");
-  const [formDate, setFormDate] = useState(new Date().toISOString().split("T")[0]);
+  const [formDate, setFormDate] = useState(todayYmdMY());
   const [formDesc, setFormDesc] = useState("");
   const [formAmount, setFormAmount] = useState("");
   const [formType, setFormType] = useState<"DEPOSIT" | "WITHDRAWAL" | "TRANSFER">("DEPOSIT");

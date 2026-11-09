@@ -40,6 +40,7 @@ import {
   Printer,
   X,
 } from "lucide-react";
+import { todayYmdMY } from "@/lib/utils";
 
 // ── API response types (mirror src/api/lib/compliance-report.ts) ────────────
 
@@ -993,7 +994,7 @@ function ArticleRecords({ records, total, moreTo }: { records: NewsRecord[]; tot
 // Period navigation helpers for the Weekly/Monthly editions (Daily is always
 // "today" — its SOP exceptions are live state, not a historical snapshot).
 function ymdToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 function shiftYmd(ymd: string, days: number): string {
   const d = new Date(ymd + "T00:00:00Z");

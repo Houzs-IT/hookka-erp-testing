@@ -30,6 +30,7 @@ import {
   notDeletedSql,
   parseNoteItems,
 } from "../lib/note-edit";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -221,7 +222,7 @@ app.post("/", async (c) => {
 
     const id = genId();
     const noteNumber = await nextDNNo(c.var.DB);
-    const date = new Date().toISOString().split("T")[0];
+    const date = todayYmdMY();
 
     await c.var.DB.prepare(
       // PR 5 — INSERT carries customerState / customerAddress /

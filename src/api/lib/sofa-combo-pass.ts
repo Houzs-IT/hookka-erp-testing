@@ -23,6 +23,7 @@ import {
   calculateLineTotalWithDiscount,
 } from "../../lib/pricing";
 import { resolveCustomerPriceAsOf } from "../routes/customer-products";
+import { todayYmdMY } from "../../lib/utils";
 
 export type ComboPassItem = {
   id: string;
@@ -170,7 +171,7 @@ export async function runSofaComboPass(
     }
     // Applicable rules: ALL of this customer's + company-wide, effective today
     // (UTC — same clock the create page used). The helper picks the best.
-    const todayDateStr = new Date().toISOString().slice(0, 10);
+    const todayDateStr = todayYmdMY();
     const rulesRes = await db
       .prepare(
         "SELECT * FROM sofa_combo_rules WHERE (customerId = ? OR customerId IS NULL) AND effectiveFrom <= ?",

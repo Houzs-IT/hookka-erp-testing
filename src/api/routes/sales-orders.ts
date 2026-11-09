@@ -128,6 +128,7 @@ import type {
   SOListDueLike,
   SOCascadeResult,
 } from "./sales-orders/_helpers";
+import { todayYmdMY } from "../../lib/utils";
 
 // Re-export the helpers that external modules / tests import from this route
 // module, so importers of ".../sales-orders" keep working with no changes.
@@ -2007,7 +2008,7 @@ app.post("/", async (c) => {
     const priceAsOf =
       typeof body.companySODate === "string" && body.companySODate
         ? body.companySODate.slice(0, 10)
-        : new Date().toISOString().slice(0, 10);
+        : todayYmdMY();
 
     // Service orders price at EXACTLY what the operator typed — 0 means 0
     // (free / goodwill repair). The price-resolution chain below treats 0 as
@@ -3700,7 +3701,7 @@ app.put("/:id", async (c) => {
       const priceAsOf =
         typeof merged.companySODate === "string" && merged.companySODate
           ? merged.companySODate.slice(0, 10)
-          : new Date().toISOString().slice(0, 10);
+          : todayYmdMY();
       // OCR back-door closure (BUG-001 fix): catalog wins on every PUT just
       // like POST. Loaded once here, reused for every line via snapItemToCatalog.
       const productByCodeForPut = await loadProductCatalog(c.var.DB);
@@ -6368,7 +6369,7 @@ app.post("/copy-for-service-order", async (c) => {
       );
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
 
     // EX-prefix the operator-facing reference fields so the destination
     // Service Order is visibly tagged as a copy. The original SO/CO id

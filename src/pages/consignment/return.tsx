@@ -64,7 +64,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { useCachedJson } from "@/lib/cached-fetch";
 import {
   Package,
@@ -331,7 +331,7 @@ export default function ConsignmentReturnPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `consignment-returns-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `consignment-returns-${todayYmdMY()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

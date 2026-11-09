@@ -16,6 +16,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -120,7 +121,7 @@ app.post("/", async (c) => {
     );
   }
   const id = genId();
-  const createdDate = new Date().toISOString().split("T")[0];
+  const createdDate = todayYmdMY();
   const confidence = Math.max(0, Math.min(100, Number(body.confidence)));
 
   await c.var.DB.prepare(

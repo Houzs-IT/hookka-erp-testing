@@ -7,6 +7,7 @@ import {
   calculateLineTotalWithDiscount,
 } from "../../../lib/pricing";
 import { PRICE_BASELINE_DATE, type BaselineCandidate, MODEL_MAP_HOUZS, priceFor, HEIGHTS_TO_FILL, SOFA_TARGET_BASES, type SoiRow, type SoRow } from "./_shared";
+import { todayYmdMY } from "../../../lib/utils";
 
 
 // A row's effectiveFrom alone does not identify the winner: a same-day
@@ -340,7 +341,7 @@ app.post("/queen-price-correction-rm5", async (c) => {
 
   const db = c.var.DB;
   const dryRun = c.req.query("dryRun") === "true";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
 
   // 1. Queen-class BEDFRAME product ids. The "Queen" cohort isn't just
   // sizeCode='Q' — three other sizeCodes are functionally Queen too
@@ -721,7 +722,7 @@ app.post("/recompute-so-sofa-prices", async (c) => {
   const statusFilter = (c.req.query("statuses") || "").trim()
     ? c.req.query("statuses")!.split(",").map(s => s.trim()).filter(Boolean)
     : ["IN_PRODUCTION", "READY_TO_SHIP", "CONFIRMED", "DRAFT"];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
 
   // 1. Fabric → tier map. Table is `fabric_trackings` (plural) per
   //    routes/fabric-tracking.ts. Split tiers (sofa vs bedframe) live in
@@ -1429,7 +1430,7 @@ app.post("/recompute-co-sofa-prices", async (c) => {
   const statusFilter = (c.req.query("statuses") || "").trim()
     ? c.req.query("statuses")!.split(",").map(s => s.trim()).filter(Boolean)
     : ["IN_PRODUCTION", "READY_TO_SHIP", "CONFIRMED", "DRAFT"];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
 
   // Fabric → tier maps (same as SO version).
   const ftRes = await db

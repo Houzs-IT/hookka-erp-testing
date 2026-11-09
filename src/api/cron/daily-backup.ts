@@ -36,6 +36,7 @@
 // ---------------------------------------------------------------------------
 
 import { putFile, listFiles, deleteFile } from "../lib/supabase-storage";
+import { todayYmdMY } from "../../lib/utils";
 
 /** Minimum env surface this handler needs. Imported lazily so the
  * scheduled handler doesn't pull in the full Hono Env. */
@@ -82,7 +83,7 @@ export async function runDailyBackup(env: DailyBackupEnv): Promise<{
     return { ok: false, error: "no database connection string" };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const key = `${PREFIX}${today}.json.gz`;
 
   try {

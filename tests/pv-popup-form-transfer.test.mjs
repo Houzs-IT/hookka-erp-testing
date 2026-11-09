@@ -86,7 +86,7 @@ test("the form is a popup: Payment | Transfer, the voucher's own fields, lines a
   assert.match(tab, /\? \{ \.\.\.common, kind: "TRANSFER", payFrom: form\.payFrom \|\| defaultBankCode\(bankCash\), transferTo: form\.transferTo, amountSen: transferSen \}/);
   assert.match(tab, /billNo: form\.billNo,\n\s+billDate: form\.billDate \|\| undefined,/);
   // A scanned bill: the voucher is dated today, the bill keeps its own no. and date.
-  assert.match(tab, /date: new Date\(\)\.toISOString\(\)\.slice\(0, 10\),\n\s+billNo: docNos\.join\(", "\) \|\| f\.billNo,\n\s+billDate: d\.docDate \?\? f\.billDate,/);
+  assert.match(tab, /date: todayYmdMY\(\),\n\s+billNo: docNos\.join\(", "\) \|\| f\.billNo,\n\s+billDate: d\.docDate \?\? f\.billDate,/);
 });
 
 test("the list: no single-click expand; transfers and old fund transfers are doors; the popup shows everything", () => {

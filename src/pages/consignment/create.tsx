@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { calculateUnitPrice, calculateLineTotalWithDiscount } from "@/lib/pricing";
 import {
   hasMixedSofaBedframe,
@@ -216,7 +216,7 @@ function CreateConsignmentOrderPage() {
   const [deliveryHubId, setDeliveryHubId] = useState("");
   const [customerCOId, setCustomerCOId] = useState("");
   const [reference, setReference] = useState("");
-  const [companyCODate, setCompanyCODate] = useState(new Date().toISOString().split("T")[0]);
+  const [companyCODate, setCompanyCODate] = useState(todayYmdMY());
   const [customerDeliveryDate, setCustomerDeliveryDate] = useState("");
   const [hookkaExpectedDD, setHookkaExpectedDD] = useState("");
   const [notes, setNotes] = useState("");
@@ -370,7 +370,7 @@ function CreateConsignmentOrderPage() {
           setCustomerId(data.customerId || "");
           setCustomerCOId(data.customerCOId || "");
           setReference(data.reference || "");
-          setCompanyCODate(data.companyCODate || new Date().toISOString().split("T")[0]);
+          setCompanyCODate(data.companyCODate || todayYmdMY());
           setCustomerDeliveryDate(data.customerDeliveryDate || "");
           setHookkaExpectedDD(data.hookkaExpectedDD || "");
           setNotes(data.notes || "");

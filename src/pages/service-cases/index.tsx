@@ -37,7 +37,7 @@ import { DataGrid, type Column } from "@/components/ui/data-grid";
 import { getCurrentUser } from "@/lib/auth";
 import { compressImage } from "@/lib/image-compress";
 import { exportToCsv } from "@/lib/export-csv";
-import { formatDateDMY } from "@/lib/utils";
+import { formatDateDMY, todayYmdMY } from "@/lib/utils";
 import { Plus, X, AlertCircle, Loader2, Download } from "lucide-react";
 
 type CaseStatus = "OPEN" | "IN_PROGRESS" | "CLOSED" | "CANCELLED";
@@ -652,7 +652,7 @@ export default function ServiceCasesListPage() {
   // filters + sort all applied) with plain text values for every column.
   function handleExportCsv() {
     exportToCsv<CaseRow>({
-      filename: `service-cases-${new Date().toISOString().slice(0, 10)}`,
+      filename: `service-cases-${todayYmdMY()}`,
       // Mirrors the grid columns one-for-one so the download reads like the
       // screen. Plain values: Stage label, Department string, Days Open /
       // Status Days as numbers the spreadsheet can sort / average.

@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { capList } from "../lib/list-cap";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -268,7 +269,7 @@ app.post("/", async (c) => {
     const inspectionNo = await getNextQCNo(c.var.DB);
     const createdAt = new Date().toISOString();
     const inspectionDate =
-      body.inspectionDate || new Date().toISOString().split("T")[0];
+      body.inspectionDate || todayYmdMY();
 
     await c.var.DB.prepare(
       `INSERT INTO qc_inspections (id, inspectionNo, productionOrderId, poNo, productCode,

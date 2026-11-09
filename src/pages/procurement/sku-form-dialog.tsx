@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { X } from "lucide-react";
 import { unitPriceFieldToSen } from "@/lib/money-field";
 import { formatUnitPriceInput } from "@/lib/unit-price";
+import { todayYmdMY } from "@/lib/utils";
 
 export type SupplierSKU = {
   id: string;
@@ -156,7 +157,7 @@ export function SKUFormDialog({
   // A new mapping defaults to TODAY ("today's price effective today"); editing
   // keeps the stored effective date until the operator changes the price.
   const [effectiveFrom, setEffectiveFrom] = useState(
-    editData?.effectiveFrom || new Date().toISOString().slice(0, 10),
+    editData?.effectiveFrom || todayYmdMY(),
   );
   // Validation message for the Internal Material fields. The Internal Code /
   // Description inputs CANNOT use the native HTML `required` attribute: their

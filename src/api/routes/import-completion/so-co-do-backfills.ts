@@ -6,6 +6,7 @@ import { loadHookkaDDBuffer, hookkaDDBufferFor, addDays } from "../../lib/lead-t
 import { createProductionOrdersForOrder } from "../_shared/production-builder";
 import { getOrgId } from "../../lib/tenant";
 import { ensureJobCardCompletedAt } from "../../lib/job-card-completed-at";
+import { todayYmdMY } from "../../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -35,7 +36,7 @@ app.post("/migrate-do-from-excel", async (c) => {
   // stamps below mention completed_at.
   await ensureJobCardCompletedAt(db);
   const dryRun = c.req.query("dryRun") === "true";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   let body: { entries?: Array<{ custPO: string; doNo: string; dispatchDate?: string }>; deliveryDate?: string };
   try { body = await c.req.json(); } catch { return c.json({ success: false, error: "Invalid JSON" }, 400); }
   const entries = (body?.entries ?? []).filter(e => typeof e?.custPO === "string" && typeof e?.doNo === "string" && e.custPO && e.doNo);
@@ -726,7 +727,7 @@ app.post("/backfill-complete-stray-jc-co2606002", async (c) => {
     .prepare('SELECT MAX(completed_date) AS "maxDate" FROM job_cards WHERE production_order_id = ? AND completed_date IS NOT NULL')
     .bind(PO_ID)
     .first<{ maxDate: string | null }>();
-  const doneDate = maxRow?.maxDate || new Date().toISOString().slice(0, 10);
+  const doneDate = maxRow?.maxDate || todayYmdMY();
 
   await db
     // completed_at travels with completed_date. The date is borrowed from a

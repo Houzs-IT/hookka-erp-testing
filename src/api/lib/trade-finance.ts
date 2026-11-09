@@ -2,6 +2,7 @@ import type { Env } from "../worker";
 import { addDays, deriveDraws } from "../../lib/trade-finance";
 import type { TfAlloc, TfDraw, TfDrawMeta, TfLegRow } from "../../lib/trade-finance";
 import { timedFn } from "./step-timing";
+import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Trade-finance storage (owner 2026-08-11) — the DB half of the feature whose
@@ -244,7 +245,7 @@ async function loadTfDrawsUntimed(
     } catch {
       /* not a supplier payment — fall through to today */
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(drawDate)) drawDate = new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(drawDate)) drawDate = todayYmdMY();
     const dueDate = addDays(drawDate, source.tenorDays);
     await db
       .prepare(

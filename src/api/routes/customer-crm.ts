@@ -21,6 +21,7 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { sendMail } from "../lib/email";
 import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -314,7 +315,7 @@ app.post("/activities", async (c) => {
       (b.outcome as string) ?? null,
       // Falls back to today rather than to null: an activity with no date at
       // all sorts to the bottom of the timeline forever.
-      (b.occurredAt as string) ?? (b.occurred_at as string) ?? new Date().toISOString().slice(0, 10),
+      (b.occurredAt as string) ?? (b.occurred_at as string) ?? todayYmdMY(),
       actingUserId(c),
       getOrgId(c),
       new Date().toISOString(),
@@ -342,7 +343,7 @@ app.get("/follow-ups", async (c) => {
   const denied = await requirePermission(c, "customers", "read");
   if (denied) return denied;
   await ensureTables(c.var.DB);
-  const through = c.req.query("through") ?? new Date().toISOString().slice(0, 10);
+  const through = c.req.query("through") ?? todayYmdMY();
   const res = await c.var.DB.prepare(
     `SELECT a.*, cu.name AS customer_name
        FROM customer_activities a

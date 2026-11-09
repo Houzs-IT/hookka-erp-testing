@@ -1385,7 +1385,7 @@ export default function ProcurementPage() {
   // 4.2 — overdue predicate. Reused both by the widget aggregation below
   // and the filter pipeline so "click widget to filter" matches the widget
   // count exactly.
-  const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const todayStr = useMemo(() => todayYmdMY(), []);
   // HK-0114 — POs billed in full straight from the PO (no GRN) never leave
   // CONFIRMED. /stats flags them; the list rows don't carry the flag, so the
   // filter reads it from here by id.

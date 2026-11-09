@@ -76,6 +76,7 @@ import { resolveSpecialOrderPriceSen } from "../../lib/special-order-surcharge";
 import { resolveTotalHeightPriceSen } from "../../lib/total-height-surcharge";
 import { loadHeightsConfig, loadSpecialsConfig } from "../lib/specials-config";
 import { calculateUnitPrice, calculateLineTotalWithDiscount } from "../../lib/pricing";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -796,7 +797,7 @@ app.post("/", async (c) => {
     // matched sofa sets exactly like SO.
     const coPostAsOf =
       (typeof body.companyCODate === "string" && body.companyCODate) ||
-      new Date().toISOString().slice(0, 10);
+      todayYmdMY();
     // BUG-CLASS C1 — the owner's own price lists, so a component the client
     // omits is DERIVED here rather than stored as 0. Same two loaders the SO
     // POST uses; both degrade to null without throwing.
@@ -2103,7 +2104,7 @@ app.put("/:id", async (c) => {
         (typeof body.customerId === "string" && body.customerId) ||
         existing.customerId ||
         "";
-      const coPutAsOf = new Date().toISOString().slice(0, 10);
+      const coPutAsOf = todayYmdMY();
       const rawPutItems = body.items as Array<Record<string, unknown>>;
       // BUG-CLASS C1 — see the POST. A fix applied only to create leaves every
       // EDIT of an already-correct order re-storing the short price.

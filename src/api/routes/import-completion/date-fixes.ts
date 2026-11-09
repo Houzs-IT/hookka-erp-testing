@@ -8,6 +8,7 @@ import { autofillWorkingHoursFromPunch } from "../../lib/punch-autofill";
 // dropped, never rewritten — see src/api/lib/job-card-completed-at.ts.
 import { ensureJobCardCompletedAt } from "../../lib/job-card-completed-at";
 import { FIX_DATE_TODAY_CLAMP, type SuspiciousDateRow, type SwapPlan, type FixDatesCandidateRow, type FixDatesPlan } from "./_shared";
+import { todayYmdMY } from "../../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -31,7 +32,7 @@ app.post("/sync-maintenance-history-from-kv", async (c) => {
 
   const db = c.var.DB;
   const dryRun = c.req.query("dryRun") === "true";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
 
   // Load every kv_config row that's a maintenance blob.
   const kvRes = await db

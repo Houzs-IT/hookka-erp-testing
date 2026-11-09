@@ -1,3 +1,4 @@
+import { todayYmdMY } from "./utils";
 // ---------------------------------------------------------------------------
 // Payment terms — owner rule: term is a fixed 1 MONTH, by calendar MONTH not
 // by day. An invoice issued in month M is due "next month" (M+1) — the whole
@@ -26,7 +27,7 @@ function ym(d: string | null | undefined): { y: number; m: number } | null {
  */
 export function nextMonthDueDate(invoiceDate: string | null | undefined): string {
   const p = ym(invoiceDate);
-  if (!p) return new Date().toISOString().slice(0, 10);
+  if (!p) return todayYmdMY();
   // Date.UTC(y, m, 0): m is the 0-based index of the month AFTER the
   // invoice month, day 0 = its last day → last day of (invoice month + 1).
   return new Date(Date.UTC(p.y, p.m + 1, 0)).toISOString().slice(0, 10);

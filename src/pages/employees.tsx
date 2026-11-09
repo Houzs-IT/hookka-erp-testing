@@ -276,7 +276,7 @@ type LeaveRecord = {
 // display without re-implementing.
 
 function todayStr(): string {
-  return new Date().toISOString().split("T")[0];
+  return todayYmdMY();
 }
 
 // Local (Malaysia, UTC+8) calendar date "YYYY-MM-DD". toISOString() above is in

@@ -29,6 +29,7 @@ import {
   EMPTY_ON_TIME,
   type OnTimeDelivery,
 } from "./on-time-delivery";
+import { todayYmdMY } from "../../lib/utils";
 
 // Fabric / foam item-group keys (mirror dashboard-overview.ts:43 + the foam
 // split the material section uses). Kept local so this file is self-contained.
@@ -665,7 +666,7 @@ function daysBetweenYmd(fromYmd: string, toYmd: string): number {
 async function collectInventory(db: Db, orgId: string): Promise<InventorySection> {
   // Live snapshot — reorder status has no time dimension. Reference "today"
   // (UTC date is close enough for idle-day bucketing).
-  const todayYmd = new Date().toISOString().slice(0, 10);
+  const todayYmd = todayYmdMY();
 
   // Raw-material stock value = Σ remaining FIFO layers × unit cost.
   const valueRow = await db

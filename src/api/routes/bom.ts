@@ -17,6 +17,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { buildAuditStatement, recordAuditCreatedMetric } from "../lib/audit";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -175,7 +176,7 @@ app.post("/", async (c) => {
       productCode: String(productCode),
       version: version || "v1.0",
       status: status || "DRAFT",
-      effectiveFrom: effectiveFrom || new Date().toISOString().slice(0, 10),
+      effectiveFrom: effectiveFrom || todayYmdMY(),
       effectiveTo: effectiveTo ?? null,
       tree: JSON.stringify(tree),
       totalMinutes: Number(totalMinutes) || 0,

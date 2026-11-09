@@ -26,7 +26,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { roundUnitPriceSen, allocateDiscountSen } from "@/lib/unit-price";
 import { DiscountInput } from "@/components/ui/discount-input";
 import type { Supplier, RawMaterial, SupplierMaterialBinding, PurchaseOrder } from "@/types";
@@ -201,7 +201,7 @@ function CreatePurchaseInvoicePage() {
   // ── Form state ────────────────────────────────────────────────────────────
   const [supplierId, setSupplierId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(
-    () => new Date().toISOString().split("T")[0],
+    () => todayYmdMY(),
   );
   const [remarks, setRemarks] = useState("");
   // Supplier reference numbers (owner 2026-06-21): the supplier's own invoice

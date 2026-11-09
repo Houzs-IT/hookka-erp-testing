@@ -9,6 +9,7 @@ import {
   UNIT_PRICE_DECIMALS,
 } from "../../lib/unit-price-precision";
 import { type SuppliersFromHistoryBody, type BindingsFromHistoryBody, type BackfillBody, type BackfillBindingsBody, type BackfillBindingsMultiBody, type BackfillPhantomGrnsBody, type BackfillExpectedUnit, type LinenoFixRow } from "./_shared";
+import { todayYmdMY } from "../../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -336,7 +337,7 @@ app.post("/supplier-bindings-from-history", async (c) => {
             materialName,
             supplierSKU,
             unitPrice,
-            new Date().toISOString().slice(0, 10),
+            todayYmdMY(),
             isMain,
           )
           .run();
@@ -987,7 +988,7 @@ app.post("/backfill-supplier-material-bindings", async (c) => {
             // refine per real supplier catalog later.
             hit.supplierSKU || rm.itemCode,
             hit.unitPriceSen || 0,
-            new Date().toISOString().slice(0, 10),
+            todayYmdMY(),
           )
           .run();
       }
@@ -1249,7 +1250,7 @@ app.post("/backfill-supplier-bindings-multi", async (c) => {
               rm.description,
               latest?.supplierSKU || rm.itemCode,
               latest?.unitPriceSen || 0,
-              new Date().toISOString().slice(0, 10),
+              todayYmdMY(),
               isMain,
             )
             .run();
@@ -1441,7 +1442,7 @@ app.post("/backfill-historical-grns", async (c) => {
       // Receive date defaults to the PO's receivedDate, then orderDate,
       // then today — keep the timeline coherent for downstream reports.
       const receiveDate =
-        cand.receivedDate || cand.orderDate || new Date().toISOString().slice(0, 10);
+        cand.receivedDate || cand.orderDate || todayYmdMY();
       const totalAmount = items.reduce(
         (s, it) => s + (it.quantity || 0) * (it.unitPriceSen || 0),
         0,
@@ -1633,7 +1634,7 @@ app.post("/recompute-po-status-progress", async (c) => {
           dates.length > 0
             ? dates[dates.length - 1]
             : (po.completedDate ??
-              new Date().toISOString().slice(0, 10));
+              todayYmdMY());
       }
       const sChanged = po.status !== derivedStatus;
       const pChanged = (po.progress ?? 0) !== newProgress;

@@ -16,7 +16,7 @@ import React, {
   useDeferredValue,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { cn, formatDateDMY, formatNumber, formatRM, getStatusColor } from "@/lib/utils";
+import { cn, formatDateDMY, formatNumber, formatRM, getStatusColor, todayYmdMY } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { useToast } from "@/components/ui/toast";
@@ -2993,7 +2993,7 @@ export function DataGrid<T extends Record<string, any>>({
   const exportBase = exportName || gridId || "export";
   const exportTitle = exportSheetLabel || exportName || gridId || "Listing";
   const runExport = (kind: "xlsx" | "pdf" | "print") => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
     const { aoa, subtotalRows } = exportSheet();
     if (kind === "xlsx") {
       void exportReportXlsx(exportFilename(exportBase, "listing", "xlsx", today), exportTitle, aoa);
@@ -3342,7 +3342,7 @@ export function DataGrid<T extends Record<string, any>>({
                 <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
                 <div className="absolute right-0 z-50 mt-1 w-64 rounded-md border border-[#E2DDD8] bg-white py-1 shadow-lg text-sm">
                   {(() => {
-                    const today = new Date().toISOString().slice(0, 10);
+                    const today = todayYmdMY();
                     const label = exportSheetLabel || exportName;
                     // All matching rows (fetchAllRows) or the loaded ones.
                     const exportRows = async (): Promise<T[]> =>

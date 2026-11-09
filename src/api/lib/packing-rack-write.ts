@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { packingPieceIdentity } from "./packing-piece-identity";
+import { todayYmdMY } from "../../lib/utils";
 
 // Runtime self-apply for the per-PIECE rack column (mig 0192). A migration file
 // is INERT on prod (deploys do NOT replay migrations-postgres/*.sql) — the
@@ -244,7 +245,7 @@ export async function applyPackingRack(
               );
               affected.add(curRow.rackLocationId);
             }
-            const today = new Date().toISOString().split("T")[0];
+            const today = todayYmdMY();
             stmts.push(
               db
                 .prepare(
@@ -377,7 +378,7 @@ export async function applyPackingRack(
             );
             affected.add(curRow.rackLocationId);
           }
-          const today = new Date().toISOString().split("T")[0];
+          const today = todayYmdMY();
           stmts.push(
             db
               .prepare(

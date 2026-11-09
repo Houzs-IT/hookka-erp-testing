@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -735,7 +736,7 @@ app.put("/:id", async (c) => {
             (p.feedback as string | null) ?? "",
             (p.improvements as string | null) ?? "",
             (p.defects as string | null) ?? "",
-            (p.createdDate as string | null) ?? new Date().toISOString().slice(0, 10),
+            (p.createdDate as string | null) ?? todayYmdMY(),
             "hookka",
           )
           .run();

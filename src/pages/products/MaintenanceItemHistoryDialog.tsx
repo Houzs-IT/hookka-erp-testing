@@ -16,8 +16,9 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import type { MaintenanceHistoryRow } from "./MaintenanceConfigHistoryDialog";
+import { todayYmdMY } from "@/lib/utils";
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayYmdMY();
 
 const daysUntil = (iso: string): number => {
   const t = new Date(todayIso() + "T00:00:00Z").getTime();

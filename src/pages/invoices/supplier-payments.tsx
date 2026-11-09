@@ -8,7 +8,7 @@ import { useRowMenu, lifecycleMenuItems, type RowMenuGroups } from "@/components
 import { useEscapeClose } from "@/lib/escape-stack";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { defaultBankCode } from "@/lib/default-bank";
-import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { fmtFxRate, fxMonthOf, fxRateFor, type FxSettings } from "@/lib/fx";
 import { printVouchers } from "@/lib/print-voucher";
@@ -152,7 +152,7 @@ export default function SupplierPaymentsPage() {
   const [selectedSupplierId, setSelectedSupplierId] = useState(
     () => new URLSearchParams(window.location.search).get("supplier") ?? "",
   );
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
   const [date, setDate] = useState(today);
   // Currency & FX (owner 2026-10-20): the payment month's rate from Setup is
   // the default a foreign row's rate box takes — it can be changed, and the

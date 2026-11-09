@@ -17,7 +17,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { humanizeError } from "@/lib/humanize-error";
 import { Input } from "@/components/ui/input";
 import { AlertTriangle, Loader2, Plus, Trash2, X } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import { OLD_SO_SAFE_BANNER } from "./MaintenanceConfigHistoryDialog";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
@@ -52,7 +52,7 @@ type ProductLite = {
   seatHeightPrices?: SeatHeightTier[];
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayYmdMY();
 
 const daysUntil = (iso: string): number => {
   const t = new Date(todayIso() + "T00:00:00Z").getTime();

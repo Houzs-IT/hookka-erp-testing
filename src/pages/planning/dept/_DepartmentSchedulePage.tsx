@@ -28,7 +28,7 @@
 // cell renders as-is.
 // ---------------------------------------------------------------------------
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { formatDate } from "@/lib/utils";
+import { formatDate, todayYmdMY } from "@/lib/utils";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -84,7 +84,7 @@ function isDateSeparator(row: Cell[]): boolean {
   return nonEmpty.length === 1 && row[0] !== "" && row[0] != null;
 }
 
-const todayISO = new Date().toISOString().slice(0, 10);
+const todayISO = todayYmdMY();
 
 // Is a Customer-DD cell a real date that's already past today? Used to tint
 // overdue promise dates so the operator spots them at a glance.

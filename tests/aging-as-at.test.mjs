@@ -141,7 +141,7 @@ test("/aging: a past asOf builds fresh; PAID items count, later items don't; age
   // Flow forecast), right above the route that serves it.
   const at = api.indexOf("async function computeAgingData(");
   const block = api.slice(at, api.indexOf('app.post("/aging"', at));
-  assert.match(block, /const asOf = \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(asOfQ\) && asOfQ < new Date\(\)\.toISOString\(\)\.slice\(0, 10\) \? asOfQ : null;/);
+  assert.match(block, /const asOf = \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\/\.test\(asOfQ\) && asOfQ < todayYmdMY\(\) \? asOfQ : null;/);
   assert.match(block, /const data = asOf\n\s*\? await buildAging\(\)\n\s*: await withSnapshot\(c\.var\.DB, snapshotConfig, orgId, buildAging, cacheKey\);/);
   assert.equal((block.match(/\["DRAFT", "CANCELLED", \.\.\.\(asOf \? \[\] : \["PAID"\]\)\]\.includes/g) ?? []).length, 2, "invoices and purchase invoices");
   assert.match(block, /\(arBack\?\.get\(i\.id\) \?\? 0\) \+ \(notesBack\?\.get\(i\.id\) \?\? 0\)/);

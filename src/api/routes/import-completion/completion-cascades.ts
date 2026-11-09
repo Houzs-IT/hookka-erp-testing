@@ -8,6 +8,7 @@ import { loadLeadTimes, type LeadTimeMap } from "../../lib/lead-times";
 import { getOrgId } from "../../lib/tenant";
 import { ensureJobCardCompletedAt } from "../../lib/job-card-completed-at";
 import { type RequestBody, type PicWarning, type ErrorEntry, type WorkerCache, findJobCardsByPO, loadProductionOrderById, processRow, CASCADE_DATE_CLAMP, cascadeAllowed, type CandidateRow, type AnchorRow, type CandidatePlan, addDaysISO, type LeakAnchorRow, type LeakCandidatePlan } from "./_shared";
+import { todayYmdMY } from "../../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -136,7 +137,7 @@ app.post("/clear-future-completions", async (c) => {
   // below clears the column.
   await ensureJobCardCompletedAt(db);
   const dryRun = c.req.query("dryRun") === "true";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmdMY();
 
   // Find all jcs with completedDate strictly > today.
   const sel = await db

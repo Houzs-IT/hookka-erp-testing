@@ -24,11 +24,12 @@ import { requirePermission } from "../lib/rbac";
 import type { Env } from "../worker";
 import { resolveCustomerPricesAsOfBatch } from "./customer-products";
 import { resolveMaintenanceConfigAsOf } from "./maintenance-config";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 
 type CustomerRow = {

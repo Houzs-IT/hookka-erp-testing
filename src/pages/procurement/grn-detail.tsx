@@ -33,7 +33,7 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useCachedJson, invalidateCachePrefix, isUnknownOutcome } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { fetchFxRate } from "@/lib/fx-client";
 import { fmtFxRate } from "@/lib/fx";
 import {
@@ -545,7 +545,7 @@ export default function GRNDetailPage() {
     if (currency !== "MYR") {
       // The box opens on this month's rate from Setup › Currency & FX (owner
       // 2026-10-20: a default only — the invoice keeps what is typed).
-      const setup = await fetchFxRate(currency, new Date().toISOString().split("T")[0]);
+      const setup = await fetchFxRate(currency, todayYmdMY());
       const r = parseFloat(
         window.prompt(`Booking exchange rate — MYR per 1 ${currency} (invoice-date rate):`, setup !== null ? fmtFxRate(setup) : "") || "",
       );
@@ -557,7 +557,7 @@ export default function GRNDetailPage() {
     }
     setBusy(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayYmdMY();
       const piItems = items
         .filter((it) => it.acceptedQty > 0)
         .map((it) => ({

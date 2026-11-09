@@ -25,6 +25,7 @@ import {
   parseSofaSeatHeightInches,
   type ProductionDimensions,
 } from "./material-scaling";
+import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Pre-load every ACTIVE bom_templates row's wipComponents JSON into a
@@ -701,4 +702,4 @@ export async function computeFabricNext30ByCategory(
 }
 
 // Re-export for callers that don't want to recompute date arithmetic.
-export const FABRIC_METRICS_TODAY = () => new Date().toISOString().slice(0, 10);
+export const FABRIC_METRICS_TODAY = () => todayYmdMY();

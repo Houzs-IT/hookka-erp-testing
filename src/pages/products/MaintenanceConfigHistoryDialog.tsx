@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
+import { todayYmdMY } from "@/lib/utils";
 
 // Single source of truth for the "old SOs are unaffected" copy. Every
 // catalog Save modal renders this so the operator hears the same promise
@@ -43,7 +44,7 @@ export type MaintenanceHistoryRow = {
   isPending: boolean;
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayYmdMY();
 
 const daysUntil = (iso: string): number => {
   const t = new Date(todayIso() + "T00:00:00Z").getTime();

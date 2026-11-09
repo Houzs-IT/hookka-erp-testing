@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
 import { getPrimarySoCategory } from "@/lib/so-category";
 import { buildCoDetailListingAoa } from "@/lib/doc-detail-listings";
 import { Plus, ShoppingCart, Download, Filter, X, Eye, Pencil, Printer, Truck, FileText, ClipboardList, RefreshCw, CheckCircle, ScanLine } from "lucide-react";
@@ -390,7 +390,7 @@ export default function SalesPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `sales-orders-${new Date().toISOString().split("T")[0]}.csv`;
+    link.download = `sales-orders-${todayYmdMY()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };

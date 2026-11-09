@@ -26,6 +26,7 @@ import {
   MAX_EXPORT_ROWS,
   type ExportResult,
 } from "./assistant-exports";
+import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -257,7 +258,7 @@ const customerOutstandingPos: ReportTemplate = {
     const filename =
       typeof params.filename === "string" && params.filename.trim()
         ? String(params.filename)
-        : `customer-outstanding-pos-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        : `customer-outstanding-pos-${todayYmdMY()}.xlsx`;
     const uploaded = await uploadExportAndSign(
       c.env,
       orgId,
@@ -288,7 +289,7 @@ const employeeEfficiencyWeekly: ReportTemplate = {
   },
   execute: async (c, params) => {
     const orgId = getOrgId(c);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmdMY();
     const weekAgo = new Date(Date.now() - 7 * 86_400_000)
       .toISOString()
       .slice(0, 10);
@@ -406,7 +407,7 @@ const productionOverdueReport: ReportTemplate = {
   },
   execute: async (c, params) => {
     const orgId = getOrgId(c);
-    const asOf = ymd(params.asOf as string | undefined) || new Date().toISOString().slice(0, 10);
+    const asOf = ymd(params.asOf as string | undefined) || todayYmdMY();
 
     const rows = await c.var.DB.prepare(
       `SELECT poNo, salesOrderNo, customerName, currentDepartment, progress,
@@ -444,7 +445,7 @@ const productionOverdueReport: ReportTemplate = {
       columns: ["PO", "SO", "Customer", "Dept", "Progress", "Target End"],
       rows: tableRows,
       totals: [`Total: ${results.length}`, "", "", "", "", ""],
-      footer: `Hookka AI · production_overdue_report · generated ${new Date().toISOString().slice(0, 10)}`,
+      footer: `Hookka AI · production_overdue_report · generated ${todayYmdMY()}`,
     });
     const filename =
       typeof params.filename === "string" && params.filename.trim()

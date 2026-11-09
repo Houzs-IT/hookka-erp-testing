@@ -343,7 +343,7 @@ export default function PurchaseInvoicesPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `purchase-invoices-${new Date().toISOString().split("T")[0]}.csv`;
+    link.download = `purchase-invoices-${todayYmdMY()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -358,7 +358,7 @@ export default function PurchaseInvoicesPage() {
     const s = normalizePiStatus(pi.status);
     return s !== "PAID" && s !== "CANCELLED";
   }).length;
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayYmdMY();
   const overdue = filteredByUserFilters.filter(pi => normalizePiStatus(pi.status) !== "PAID" && pi.dueDate < today).length;
   const totalValueSen = filteredByUserFilters.reduce((sum, pi) => sum + pi.amountSen, 0);
 

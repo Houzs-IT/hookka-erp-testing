@@ -26,6 +26,7 @@ import {
   type LeadTimeMap,
   type HookkaDDBuffer,
 } from "../lib/lead-times";
+import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -87,7 +88,7 @@ function genHookkaBufferRowId(): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayYmdMY();
 }
 
 const RECALC_BATCH_SIZE = 50;
