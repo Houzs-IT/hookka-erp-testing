@@ -51,6 +51,7 @@ import {
   accountDiff,
   type StockGroupAccounts,
 } from "../lib/stock-group-accounts";
+import { buildRmRenameStatements } from "../lib/rm-rename";
 
 const app = new Hono<Env>();
 
@@ -574,6 +575,16 @@ app.put("/:id", async (c) => {
     );
   }
 
+  // A code rename carries the material's standing references (supplier
+  // bindings, BOM child lines, price history) in the same batch — see
+  // rm-rename.ts. Documents keep the code they were issued with.
+  let renameNote: string | null = null;
+  if (existing.itemCode !== merged.itemCode) {
+    const plan = await buildRmRenameStatements(c.var.DB, id, existing.itemCode, merged.itemCode);
+    if (plan.carried) cascadeStmts.push(...plan.statements);
+    else if (plan.reason !== "code unchanged") renameNote = plan.reason;
+  }
+
   if (cascadeStmts.length > 0) {
     await c.var.DB.batch([updateStmt, ...cascadeStmts]);
   } else {
@@ -639,7 +650,7 @@ app.put("/:id", async (c) => {
     });
   }
 
-  return c.json({ success: true, data: rowToApi(updated) });
+  return c.json({ success: true, data: rowToApi(updated), ...(renameNote ? { warning: `Code renamed, but ${renameNote}.` } : {}) });
 });
 
 // DELETE /api/raw-materials/:id

@@ -3498,7 +3498,7 @@ export default function InventoryPage() {
                         },
                       );
                       const j = (await res.json().catch(() => null)) as
-                        | { success?: boolean; error?: string }
+                        | { success?: boolean; error?: string; warning?: string }
                         | null;
                       if (!res.ok || !j?.success) {
                         // Surface the backend message verbatim (e.g. the
@@ -3508,6 +3508,9 @@ export default function InventoryPage() {
                         );
                         return;
                       }
+                      // A rename whose supplier bindings / BOM lines / price
+                      // history could not move with it (rm-rename.ts).
+                      if (j.warning) toast.warning(j.warning);
                       toast.success(
                         renamed
                           ? `Renamed ${editRM.itemCode} -> ${newCode}`
