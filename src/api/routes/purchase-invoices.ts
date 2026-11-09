@@ -603,6 +603,45 @@ function supplierPairKey(materialCode: string | null, supplierSku: string | null
   return `${(materialCode ?? "").trim().toUpperCase()}\u0000${(supplierSku ?? "").trim().toUpperCase()}`;
 }
 
+// Duplicate supplier document (owner 2026-07; widened 2026-11-08 from the Houzs
+// review). The same supplier invoice / DO number on two live PIs of one
+// supplier is a re-scan or double entry — paying it twice is the risk. The
+// numbers compare with case and spaces ignored ("INV 001" = "inv001"), and
+// BOTH fields are searched because OCR sometimes files one under the other.
+// `excludeId` leaves the invoice being edited out of its own check.
+export const normSupplierDocNo = (v: string | null | undefined) =>
+  (v ?? "").toUpperCase().replace(/\s+/g, "");
+
+export async function findDuplicateSupplierDoc(
+  db: D1Database,
+  supplierId: string,
+  nums: readonly (string | null | undefined)[],
+  excludeId: string | null = null,
+): Promise<{ piNo: string; matched: string } | null> {
+  const wanted = [...new Set(nums.map(normSupplierDocNo).filter(Boolean))];
+  if (!supplierId || wanted.length === 0) return null;
+  const ph = wanted.map(() => "?").join(", ");
+  const N = (col: string) => `REPLACE(UPPER(TRIM(COALESCE(${col}, ''))), ' ', '')`;
+  const row = await db
+    .prepare(
+      `SELECT piNo, supplier_invoice_no AS "supplierInvoiceNo", supplier_do_no AS "supplierDoNo"
+         FROM purchase_invoices
+        WHERE supplierId = ?
+          AND status <> 'CANCELLED'
+          ${excludeId ? "AND id <> ?" : ""}
+          AND (${N("supplier_invoice_no")} IN (${ph}) OR ${N("supplier_do_no")} IN (${ph}))
+        LIMIT 1`,
+    )
+    .bind(supplierId, ...(excludeId ? [excludeId] : []), ...wanted, ...wanted)
+    .first<{ piNo: string; supplierInvoiceNo: string | null; supplierDoNo: string | null }>();
+  if (!row) return null;
+  const hit = [row.supplierInvoiceNo, row.supplierDoNo].find((n) => n && wanted.includes(normSupplierDocNo(n)));
+  return { piNo: row.piNo, matched: hit ?? String(nums.find(Boolean) ?? "") };
+}
+
+export const duplicateSupplierDocMessage = (d: { piNo: string; matched: string }) =>
+  `Supplier document "${d.matched}" is already on ${d.piNo} for this supplier — looks like a duplicate. Void that PI first, or change the number if it's genuinely a different document.`;
+
 async function loadItemsForPI(
   db: D1Database,
   piId: string,
@@ -1415,35 +1454,10 @@ app.post("/", idempotent(), async (c) => {
     const isHistoricalImport =
       typeof (body as { piNo?: unknown }).piNo === "string";
     if (dupNums.length > 0 && !isHistoricalImport) {
-      const ph = dupNums.map(() => "?").join(", ");
-      const dup = await db
-        .prepare(
-          `SELECT piNo,
-                  supplier_invoice_no AS "supplierInvoiceNo",
-                  supplier_do_no AS "supplierDoNo"
-             FROM purchase_invoices
-            WHERE supplierId = ?
-              AND status <> 'CANCELLED'
-              AND (supplier_invoice_no IN (${ph}) OR supplier_do_no IN (${ph}))
-            LIMIT 1`,
-        )
-        .bind(body.supplierId, ...dupNums, ...dupNums)
-        .first<{
-          piNo: string;
-          supplierInvoiceNo: string | null;
-          supplierDoNo: string | null;
-        }>();
+      const dup = await findDuplicateSupplierDoc(db, String(body.supplierId ?? ""), dupNums);
       if (dup) {
-        const matched =
-          dupNums.find(
-            (n) => n === dup.supplierInvoiceNo || n === dup.supplierDoNo,
-          ) ?? dupNums[0];
         return c.json(
-          {
-            success: false,
-            error: `Supplier document "${matched}" is already on ${dup.piNo} for this supplier — looks like a duplicate. Void that PI first, or change the number if it's genuinely a different document.`,
-            duplicateOf: dup.piNo,
-          },
+          { success: false, error: duplicateSupplierDocMessage(dup), duplicateOf: dup.piNo },
           409,
         );
       }
@@ -2450,6 +2464,20 @@ app.put("/:id", async (c) => {
         ? body.purchaseOrgCode.trim()
         : existingOrgCode || "HOOKKA",
   };
+  // An edit that CHANGES the supplier invoice / DO number is held to the same
+  // duplicate rule as a new invoice; an untouched number is not re-judged.
+  {
+    const before = [existingRefs.supplierInvoiceNo ?? existingRefs.supplier_invoice_no, existingRefs.supplierDoNo ?? existingRefs.supplier_do_no].map(normSupplierDocNo);
+    const changed = [merged.supplierInvoiceNo, merged.supplierDoNo].filter(
+      (n): n is string => !!n && !before.includes(normSupplierDocNo(n)),
+    );
+    if (changed.length > 0 && merged.status !== "CANCELLED") {
+      const dup = await findDuplicateSupplierDoc(db, String(existing.supplierId ?? ""), changed, id);
+      if (dup) {
+        return c.json({ success: false, error: duplicateSupplierDocMessage(dup), duplicateOf: dup.piNo }, 409);
+      }
+    }
+  }
   const now = new Date().toISOString();
 
   const statements: D1PreparedStatement[] = [

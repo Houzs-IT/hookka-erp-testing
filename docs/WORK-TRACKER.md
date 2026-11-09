@@ -7027,3 +7027,4 @@ Asks, in order:
 106. Monthly Stock Value: a failed load shows an error with Retry instead of RM 0.00 totals (Houzs review list, owner 2026-11-08).
 102. PI detail shows the PO line unit price under the billed price when they differ (display only; stock stays at PI price) (Houzs review list, owner 2026-11-08).
 108. SO edit page and PO edit form: a save is refused (409) if someone else saved the order after it was opened — no more silent overwrite (Houzs review list, owner 2026-11-08).
+107. Duplicate supplier invoice / DO number: compared without case or spaces, and an edit that changes the number is checked too (Houzs review list, owner 2026-11-08).
