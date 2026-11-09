@@ -100,10 +100,10 @@ Money is integer sen; many product columns are legacy camelCase.
 | `ProductionConfig` / `CategoryBadge` | `src/pages/products/index.tsx:386 / 373` | Per-dept config display helpers |
 | `ProductCatalog` | `src/pages/products/catalog.tsx:138` | Model-based photo grid (inline catalog view) |
 | `rowToProduct` | `src/api/routes/products.ts:166` | Re-nests children + parses JSON columns on read |
-| `app.post("/")` / `app.put("/:id")` | `src/api/routes/products.ts:589 / 933` | Product create / edit (full-replace children) |
-| `app.post("/bulk-import")` | `src/api/routes/products.ts:726` | Batch create/update by `code`, one D1 transaction, blank-safe merge |
-| `resolveProductPriceAsOf` | `src/api/routes/products.ts:1211` | Master price effective-dated resolver |
-| `app.post("/:productId/prices")` | `src/api/routes/products.ts:1300` | Append master price history row |
+| `app.post("/")` / `app.put("/:id")` | `src/api/routes/products.ts:712 / 1069` | Product create / edit (full-replace children) |
+| `app.post("/bulk-import")` | `src/api/routes/products.ts:849` | Batch create/update by `code`, one D1 transaction, blank-safe merge |
+| `resolveProductPriceAsOf` | `src/api/routes/products.ts:1337` | Master price effective-dated resolver |
+| `app.post("/:productId/prices")` | `src/api/routes/products.ts:1426` | Append master price history row |
 | `resolvePrices` | `src/api/routes/customer-products.ts:95` | Inherit-or-override price resolution |
 | `app.put("/templates")` | `src/api/routes/bom.ts:377` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
 | `app.put("/templates/:id")` | `src/api/routes/bom.ts:484` | Single-template upsert |
