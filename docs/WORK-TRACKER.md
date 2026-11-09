@@ -7022,3 +7022,4 @@ Asks, in order:
 103. A PI line drawn off a GRN line must bill the same material (create + edit; unchanged old rows exempt); the PI form shows GRN-drawn lines without the material picker (Houzs review list, owner 2026-11-08).
 104. POs now see goods receipts that span several POs (detail list, posted-receipt edit lock, mark-received, three-way match) — BUG-2026-11-09-434 (Houzs review list, owner 2026-11-08).
 105. Renaming a raw material code now carries its supplier bindings, BOM child lines and price history (documents keep their code); an ambiguous rename is not carried and the page says so (Houzs review list, owner 2026-11-08).
+106. Monthly Stock Value: a failed load shows an error with Retry instead of RM 0.00 totals (Houzs review list, owner 2026-11-08).

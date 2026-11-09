@@ -82,12 +82,12 @@ export default function StockValuePage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
 
-  const { data: accountsResp, loading: accountsLoading, refresh: refreshAccounts } =
-    useCachedJson<{ success?: boolean; data?: StockAccount[] }>("/api/stock-accounts");
-  const { data: stockValuesResp, loading: stockValuesLoading, refresh: refreshStockValues } =
-    useCachedJson<{ success?: boolean; data?: MonthlyStockValue[] }>(`/api/stock-value?period=${selectedPeriod}`);
-  const { data: allStockValuesResp, loading: allStockValuesLoading, refresh: refreshAllStockValues } =
-    useCachedJson<{ success?: boolean; data?: MonthlyStockValue[] }>("/api/stock-value");
+  const { data: accountsResp, loading: accountsLoading, error: accountsError, refresh: refreshAccounts } =
+    useCachedJson<{ success?: boolean; data?: StockAccount[]; error?: string }>("/api/stock-accounts");
+  const { data: stockValuesResp, loading: stockValuesLoading, error: stockValuesError, refresh: refreshStockValues } =
+    useCachedJson<{ success?: boolean; data?: MonthlyStockValue[]; error?: string }>(`/api/stock-value?period=${selectedPeriod}`);
+  const { data: allStockValuesResp, loading: allStockValuesLoading, error: allStockValuesError, refresh: refreshAllStockValues } =
+    useCachedJson<{ success?: boolean; data?: MonthlyStockValue[]; error?: string }>("/api/stock-value");
 
   const accounts: StockAccount[] = useMemo(
     () => (accountsResp?.success ? accountsResp.data ?? [] : Array.isArray(accountsResp) ? accountsResp : []),
@@ -103,6 +103,16 @@ export default function StockValuePage() {
   );
 
   const loading = accountsLoading || stockValuesLoading || allStockValuesLoading;
+  // A failed load used to fall through to an empty list, and every total on
+  // the page then read RM 0.00 — indistinguishable from "no stock". Say it
+  // failed instead (Houzs review, owner 2026-11-08). A body with
+  // success:false is a failure too, not an empty month.
+  const failedOf = (resp: { success?: boolean; error?: string } | null | undefined, err: unknown) =>
+    err ? String(err) : resp && resp.success === false ? resp.error || "the server refused the request" : null;
+  const loadError =
+    failedOf(accountsResp, accountsError) ??
+    failedOf(stockValuesResp, stockValuesError) ??
+    failedOf(allStockValuesResp, allStockValuesError);
 
   const fetchAll = useCallback(() => {
     refreshAccounts();
@@ -147,6 +157,18 @@ export default function StockValuePage() {
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-[#6B7280]">Loading stock value data...</div>
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+          <div className="text-sm font-medium text-[#9A3A2D]">Stock values could not be loaded — the figures are not shown rather than shown as RM 0.</div>
+          <div className="text-xs text-[#6B7280]">{loadError}</div>
+          <button
+            type="button"
+            onClick={fetchAll}
+            className="rounded border border-[#E2DDD8] px-3 py-1.5 text-sm text-[#1F1D1B] hover:bg-[#FAF9F7]"
+          >
+            Retry
+          </button>
         </div>
       ) : (
         <>
