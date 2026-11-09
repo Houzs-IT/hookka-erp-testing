@@ -1,6 +1,6 @@
 # Handoff — current state, what's next, what's blocked
 
-_Last updated: 2026-11-09 (Windows session → owner moving to a MacBook)._
+_Last updated: 2026-11-09 night (MacBook session: #1234 / #1235 merged, #1240 opened)._
 Keep this file current in the same PR that changes state (global rule §6/§8).
 
 ## How to pick this up on another machine (MacBook)
@@ -26,10 +26,11 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 | PR | What | State |
 | --- | --- | --- |
-| #1234 | Security batch: default-deny RBAC test, text-length caps, **signed-in devices** (list / sign out one / sign out others), query-in-loop guard | Owner approved merge 2026-11-09. Rebased; waiting for CI, then merge. **After merge verify on prod:** device list loads; signing one device out makes it get 401; a 5,001-char SO note is refused with 400. Auth middleware now updates `last_seen_at` (throttled) — watch for errors. |
-| #1235 | Data grid: Ctrl/Cmd+C copy, range Sum/Count/Avg, filters in the URL | Doc note added; waiting for CI, then merge. **After merge:** test a real Ctrl+C into Excel. |
+| #1240 | Batch B of saves that acted "saved" when the server refused (cash flow, employees/payroll/leave, PO mark-emailed, organisations, assistant; BOM migration data-loss guard) | Waiting for CI, then merge. **After merge:** a refused save shows the server's reason and the form stays open. |
 
-If either is still open, check `gh pr checks <n>`; rebase onto main if it says CONFLICTING (conflicts are almost always only `docs/WORK-TRACKER.md` — keep both sides).
+If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONFLICTING (conflicts are almost always only `docs/WORK-TRACKER.md` — keep both sides).
+
+**Known local issue (MacBook):** `tests/t006-grn-core.test.mjs` has 4 failures locally (`NOT NULL constraint failed: purchase_order_items.receivedQty`), already on main before 2026-11-09's merges — the pre-commit hook therefore fails on this machine. Not caused by any open PR; worth a look (likely the local SQLite build vs the test's schema).
 
 ## Merged in this run (2026-11-08/09) — from the Houzs / Conts review list
 
@@ -40,18 +41,21 @@ If either is still open, check `gh pr checks <n>`; rebase onto main if it says C
 #1225 stock value load error instead of RM 0 · #1226 duplicate supplier invoice check (edits + spacing) ·
 #1228 stale SO/PO save refused (409) · #1229 /health commit stamp, Smart Placement, announcements cap, lead phone dedupe ·
 #1230 locked SO says which department holds it · #1231 in-app confirms, multi-word search, consolidated save blockers ·
-#1233 FE quality batch (real error reasons, PDF text clean-up, number-input wheel guard, dropdown flip, MRP sticky header, header wrap).
+#1233 FE quality batch (real error reasons, PDF text clean-up, number-input wheel guard, dropdown flip, MRP sticky header, header wrap) ·
+#1234 security batch (default-deny RBAC test, text caps, signed-in devices, query-in-loop guard) · #1235 grid copy / range sum / URL filters.
 
 ## Still to verify on prod (not yet observed)
 
 - MRP page `/planning/mrp`: header row + Material column stay fixed while scrolling (#1233).
-- `GET /api/health` shows `"commit": "<sha>"` after the #1229 deploy (not "dev").
+- ~~`GET /api/health` shows a commit~~ — **verified 2026-11-09**: returns `"commit": "095750132…"` (#1229).
+- #1234: signed-in devices list loads; signing one device out gives it 401; a 5,001-char SO note is refused with 400. Watch for errors from the throttled `last_seen_at` update.
+- #1235: a real Ctrl/Cmd+C from a grid pastes into Excel.
 - Lead create with a phone already on a lead → "Possible duplicate lead" dialog (#1229).
 - Two-word grid search, e.g. "ivory 151" (#1231); save-blocker toast listing several problems (#1231).
 
 ## Follow-ups (approved, not done yet)
 
-- ~40 lesser saves still ignore the server response (employees, settings, assistant, cash-flow…). List in `docs/bugs/BUG-2026-11-09-435.md`. Same fix pattern as #1233 (`src/lib/response-error.ts`).
+- ~~~40 lesser saves ignore the server response~~ — done in #1240 (15 real fixes; the rest are deliberate best-effort or already checked, listed in `docs/bugs/BUG-2026-11-09-435.md`).
 - Backfill: system GRNs created by PI auto stock-in **before** #1218 are not linked back (still read "received, not billed"). Needs owner approval — production data write.
 
 ## Waiting on the OWNER (decide / provide)
@@ -77,7 +81,8 @@ Trend was made live + elastic on 2026-11-09. Still static: Balance, Cash, Outloo
 ## Housekeeping
 
 - Local worktrees on the Windows machine (`../hookka-erp-testing-worktrees/{checklist,tmp-rebase,sec-batch,fe-batch-a,fe-batch-b,fe-grid-copy-sum}`) can be removed once #1234/#1235 merge; they hold no unpushed work.
-- `CLAUDE.md` still points at `docs/context-packs/NAVIGATION-MAP.md`; the map now lives at `docs/CODEBASE-MAP.md`.
+- ~~`CLAUDE.md` NAVIGATION-MAP pointer~~ — already points at `docs/CODEBASE-MAP.md` on main.
+- The repo is now `Houzs-IT/hookka-erp-testing` (GitHub redirects from `weisiang329-eng/…`).
 
 ## Working agreements with the owner (carried over — the Windows machine's Claude memory does not travel)
 
