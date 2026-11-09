@@ -366,6 +366,28 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   font-weight: 600;
 }
 
+/* A forecast column keeps its colour down to the totals (prod 2026-11-09: on
+   Cash Surplus / (Deficit), the row the owner reads most, the row's own beige
+   won and the two forecasts looked alike): on a subtotal or a result row, a
+   shade deeper of the same blue / lavender, so the row still reads as a total.
+   The row in the selector outranks the row kind whatever the order; lavender
+   after blue, as a P&L cell carries both tokens. */
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sub"] > td[data-cell~="fc"] {
+  background-color: #E2EBF6;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="sub"] > td[data-cell~="fp"] {
+  background-color: #EAE4F6;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"] > td[data-cell~="fc"] {
+  background-color: #D7E3F2;
+}
+
+[data-fin-ui] table[data-fin-report] > tbody > tr[data-row="res"] > td[data-cell~="fp"] {
+  background-color: #E1D8F1;
+}
+
 /* After the row kinds, so they win: an estimate (a cell, or a whole row), a
    drop target in Edit Layout, % cells, a negative amount. */
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="est"],
