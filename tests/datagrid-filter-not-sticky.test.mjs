@@ -26,7 +26,9 @@ const SALES = readFileSync("src/pages/sales/index.tsx", "utf8");
 test("column filters are NOT seeded from storage on mount", () => {
   assert.match(
     GRID,
-    /const \[columnFilters, setColumnFilters\] = useState<Record<string, string>>\(\s*seededFilters\?\.columnFilters/,
+    // 2026-11-08: an explicit URL filter (?<gridId>.f.<col>=, a shared or
+    // reloaded link) may seed it; sessionStorage still may not.
+    /const \[columnFilters, setColumnFilters\] = useState<Record<string, string>>\(\s*urlSeed && Object\.keys\(urlSeed\.columnFilters\)\.length > 0\s*\? urlSeed\.columnFilters\s*: seededFilters\?\.columnFilters/,
     "columnFilters must not read the persisted state",
   );
   assert.match(
@@ -42,7 +44,9 @@ test("the search box still survives a tab hop", () => {
   // Removing this would regress the 2026-04-26 fix.
   assert.match(
     GRID,
-    /useState\(initialSearch \?\? seeded\?\.searchText \?\? ""\)/,
+    // 2026-11-08: a URL search (?<gridId>.q=) sits between initialSearch and
+    // the tab-hop copy.
+    /useState\(initialSearch \?\? \(urlSeed\?\.search \|\| seeded\?\.searchText\) \?\? ""\)/,
     "search text must still be restored",
   );
 });

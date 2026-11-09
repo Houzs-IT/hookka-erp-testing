@@ -25,7 +25,9 @@ test("the props exist and default off", () => {
 });
 
 test("a row click leaves the ticks alone when asked", () => {
-  const h = fn("const handleRowClick = useCallback(");
+  // 2026-11-08: the cell-range bookkeeping for copy / range-sum now runs
+  // first in handleRowClick (it never touches the ticks), so read further in.
+  const h = fn("const handleRowClick = useCallback(", 3000);
   assert.match(h, /if \(checkboxSelectOnly\) \{\s*lastClickedIndex\.current = index;\s*onRowClick\?\.\(row\);\s*return;\s*\}/);
   assert.match(h, /next\.clear\(\);\s*next\.add\(key\);/, "the default path is unchanged");
 });
