@@ -93,3 +93,24 @@ test("route: registered before /:id, read-gated, prices and combos behind their 
   // No write path.
   assert.doesNotMatch(body, /\b(INSERT|UPDATE|DELETE)\b/);
 });
+
+// Polish after the first prod read (2026-11-10): unpriced models said nothing,
+// one combo priced differently per customer showed as two look-alike lines, and
+// SERVICE CHARGE (filed as ACCESSORY) appeared as a "model".
+test("a model with no price says so, but only when prices were included", () => {
+  const unpriced = { ...sofa("1NA", 0), seatHeightPrices: [] };
+  assert.equal(buildNewModels([unpriced], [], new Map(), OCT)[0].price, "No price set yet");
+  assert.equal(buildNewModels([unpriced], [], new Map(), OCT, { pricesIncluded: false })[0].price, "");
+});
+
+test("the same combo priced differently per customer is one line with ranges", () => {
+  const c = (cust, p28, p35) => ({ baseModel: "5568", componentSizes: [["1A(LHF)", "1A(RHF)"], ["2A(LHF)", "2A(RHF)"]], pricesByHeight: { 28: p28, 35: p35 }, fabricTier: "PRICE_2", customerName: cust });
+  const [m] = buildNewModels([sofa("1A(LHF)", 68000)], [c("A", 157500, 200200), c("B", 175200, 228000)], new Map(), OCT);
+  assert.equal(m.price, "Combo 1A + 2A: 1,575–1,752 (28″) · 2,002–2,280 (35″)");
+});
+
+test("charge lines are not models", () => {
+  const svc = { code: "SERVICE CHARGE ", name: "SERVICE CHARGE", category: "ACCESSORY", sizeLabel: null, sizeCode: null, createdAt: "2026-10-03", basePriceSen: 10000, seatHeightPrices: [] };
+  const pillow = { ...svc, code: "SQUARE PILLOW RDM", name: "SQUARE PILLOW", basePriceSen: 1000 };
+  assert.deepEqual(buildNewModels([svc, pillow], [], new Map(), OCT).map((m) => m.code), ["SQUARE PILLOW RDM"]);
+});

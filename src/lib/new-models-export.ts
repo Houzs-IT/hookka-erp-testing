@@ -61,6 +61,11 @@ const rm = (sen: number): string => {
   return (Number.isInteger(v) ? v : Math.round(v)).toLocaleString("en-MY");
 };
 
+export const NO_PRICE = "No price set yet";
+
+// Charge lines live in Products (as ACCESSORY) but are not models to show.
+const NOT_A_MODEL = /^(SERVICE|DELIVERY|TRANSPORT|INSTALL\w*)\b|\bCHARGES?\b/i;
+
 const SIZE_TOKEN = /^(\d+(\.\d+)?FT|\d[A-Z]{0,2}|CNR|CSL|L|NA|S|SK|K|Q|SS|SP)$/;
 
 /** A readable model name from the first SKU's name: drops sizes, dimensions,
@@ -101,7 +106,9 @@ function bedPrices(ps: NmProduct[]): [string, string] {
 }
 
 function comboLines(family: string, combos: NmCombo[]): string[] {
-  const seen = new Map<string, { label: string; prices: [number, number][] }>();
+  // One line per combo (same pieces). Customers priced differently for the
+  // same pieces become a range per seat height, not two look-alike lines.
+  const byLabel = new Map<string, Map<number, [number, number]>>();
   for (const c of combos) {
     if (familyOf(c.baseModel) !== family) continue;
     const parts: string[] = [];
@@ -116,15 +123,23 @@ function comboLines(family: string, combos: NmCombo[]): string[] {
       .sort((a, b) => a[0] - b[0]);
     if (!prices.length) continue;
     const label = parts.join(" + ");
-    const key = label + "|" + prices.map((p) => p.join(":")).join(",");
-    if (!seen.has(key)) seen.set(key, { label, prices });
+    const heights = byLabel.get(label) ?? new Map<number, [number, number]>();
+    for (const [h, v] of prices) {
+      const cur = heights.get(h);
+      heights.set(h, cur ? [Math.min(cur[0], v), Math.max(cur[1], v)] : [v, v]);
+    }
+    byLabel.set(label, heights);
   }
-  return [...seen.values()]
-    .sort((a, b) => a.prices[0][1] - b.prices[0][1])
-    .map(({ label, prices }) => {
-      const lo = prices[0], hi = prices[prices.length - 1];
-      const ends = lo === hi ? [lo] : [lo, hi];
-      return `Combo ${label}: ` + ends.map(([h, v]) => `${rm(v)} (${h}″)`).join(" · ");
+  const money = ([lo, hi]: [number, number]) => (lo === hi ? rm(lo) : `${rm(lo)}–${rm(hi)}`);
+  return [...byLabel.entries()]
+    .map(([label, heights]) => {
+      const hs = [...heights.entries()].sort((a, b) => a[0] - b[0]);
+      return { label, first: hs[0][1][0], hs };
+    })
+    .sort((a, b) => a.first - b.first)
+    .map(({ label, hs }) => {
+      const ends = hs.length > 1 ? [hs[0], hs[hs.length - 1]] : [hs[0]];
+      return `Combo ${label}: ` + ends.map(([h, r]) => `${money(r)} (${h}″)`).join(" · ");
     });
 }
 
@@ -169,11 +184,13 @@ export function buildNewModels(
   combos: NmCombo[],
   photos: Map<string, string | null>,
   range: { from: string; to: string },
+  opts: { pricesIncluded?: boolean } = {},
 ): NewModel[] {
+  const pricesIncluded = opts.pricesIncluded !== false;
   const families = new Map<string, NmProduct[]>();
   for (const p of products) {
     const k = familyOf(p.code);
-    if (!k) continue;
+    if (!k || NOT_A_MODEL.test(p.code.trim()) || NOT_A_MODEL.test((p.name || "").trim())) continue;
     const arr = families.get(k);
     if (arr) arr.push(p); else families.set(k, [p]);
   }
@@ -202,6 +219,9 @@ export function buildNewModels(
       const base = ps.map((p) => p.basePriceSen).filter((v): v is number => v != null && v > 0).sort((a, b) => a - b);
       price = base.length ? (base.length > 1 && base[0] !== base[base.length - 1] ? `${rm(base[0])} – ${rm(base[base.length - 1])}` : rm(base[0])) : "";
     }
+    // "No price" only when prices were looked at — a login without
+    // product-pricing gets blank lines, not a claim that nothing is priced.
+    if (pricesIncluded && !price && !price2) price = NO_PRICE;
     const photo = photos.get(family) ?? null;
     out.push({
       code: family,
