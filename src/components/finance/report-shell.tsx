@@ -28,7 +28,14 @@ function usePopover() {
   return { open, setOpen, boxRef };
 }
 
-const CTRL = "h-8 rounded-lg border border-[#D9D3CA] bg-white text-[12.5px] font-semibold text-[#1F1D1B]";
+// A toolbar control: its shape, and its resting colours. A control that
+// changes colour takes the shape and ONE colour set. CTRL's white beside a
+// pressed colour left the stylesheet to choose, and bg-white / text-white are
+// written last there: the pressed Forecast and Edit Layout buttons read white
+// on white (owner 2026-11-09 screenshot, BUG-2026-11-09-430).
+const CTRL_SHAPE = "h-8 rounded-lg border text-[12.5px] font-semibold";
+const CTRL_IDLE = "border-[#D9D3CA] bg-white text-[#1F1D1B]";
+const CTRL = `${CTRL_SHAPE} ${CTRL_IDLE}`;
 
 /** A 1×22px divider between toolbar groups. */
 export function ToolbarDivider() {
@@ -204,7 +211,7 @@ export function EditLayoutToggle({ on, onToggle }: { on: boolean; onToggle: () =
       type="button"
       aria-pressed={on}
       onClick={onToggle}
-      className={`${CTRL} px-3 ${on ? "border-[#1F1D1B] bg-[#1F1D1B] text-white hover:bg-black" : "hover:bg-[#F4F6F8]"}`}
+      className={`${CTRL_SHAPE} px-3 ${on ? "border-[#1F1D1B] bg-[#1F1D1B] text-white hover:bg-black" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
     >
       {on ? "Done" : "Edit Layout"}
     </button>
@@ -220,7 +227,7 @@ export function ForecastToggle({ on, onToggle }: { on: boolean; onToggle: () => 
       aria-pressed={on}
       onClick={onToggle}
       title={on ? "Hide the forecast" : "Show the forecast beside each month's actual figures"}
-      className={`${CTRL} px-3 ${on ? "border-[#C0392B] bg-[#C0392B] text-white hover:bg-[#A93226]" : "hover:bg-[#F4F6F8]"}`}
+      className={`${CTRL_SHAPE} px-3 ${on ? "border-[#C0392B] bg-[#C0392B] text-white hover:bg-[#A93226]" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
     >
       Forecast
     </button>
@@ -239,7 +246,7 @@ export function DownloadMenu({ items }: { items: { label: string; onSelect: () =
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className={`inline-flex w-8 items-center justify-center text-[#4B5563] hover:bg-[#F4F6F8] hover:text-[#1F1D1B] ${CTRL}`}
+        className={`inline-flex w-8 items-center justify-center hover:bg-[#F4F6F8] hover:text-[#1F1D1B] ${CTRL_SHAPE} border-[#D9D3CA] bg-white text-[#4B5563]`}
       >
         <Download className="h-4 w-4" />
       </button>
