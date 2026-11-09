@@ -29,7 +29,7 @@ test("forecast on: a month heading over Actual and Forecast; forecast cells carr
   assert.match(tab, /<tr data-row="h1">/);
   assert.match(tab, /<tr data-row="h2">/);
   assert.match(tab, /\{cfColWord\(c\)\}<\/th>/, "the second heading row names each column");
-  assert.match(tab, /\$\{cols\[j\]\?\.forecast \? " fc" : ""\}/);
+  assert.match(tab, /\$\{cfColTok\(cols\[j\]\)\}/, "a forecast cell carries its kind's token");
   assert.match(tab, /\{blank \? "-" : fmt\(v\)\}/);
   assert.match(tab, /Could not load the forecast/);
   assert.match(tab, /No forecast for this period\./);
@@ -76,8 +76,9 @@ test("three columns a month: Actual, Docs forecast, P&L forecast — in the head
   assert.match(tab, /`\$\{c\.label\} \$\{cfColWord\(c\)\}`/, "the export says which column is which");
   const drill = slice("function CfForecastDrillRows(", "\nfunction ");
   assert.match(drill, /word: cfColWord\(c\)/);
-  assert.match(drill, /<span className="text-\[#C0392B\]">\{word\}<\/span>/);
-  assert.match(tab, /P&amp;L forecast \(red\)<\/span>: your Forecast P&amp;L as cash\./, "the footnote says what the P&L forecast is");
+  assert.match(drill, /<span className=\{wordCls\}>\{word\}<\/span>/);
+  assert.match(tab, /P&amp;L forecast \(purple\)<\/span>: your Forecast P&amp;L as cash\./, "the footnote says what the P&L forecast is");
+  assert.match(tab, /Docs forecast \(blue\)<\/span>/);
 });
 
 test("Capex & financing: a Trade finance block per facility — a Drawdown row, tenor and interest, Fill from bills, and the worked-out rows", () => {
@@ -102,14 +103,23 @@ test("the drill: forecast items under the line; the payment drill keeps out of f
   assert.match(drill, /if \(c\.forecast\) return <td key=\{c\.key\} data-cell=\{`num split\$\{acc\(c\)\}`\} \/>;/);
 });
 
-test("the forecast colour: red on a tint, zero cells stay grey", () => {
-  assert.match(css, /th\[data-cell~="fc"\] \{\n  color: #C0392B;\n  border-bottom: 1\.5px dashed #C0392B;/);
-  assert.match(css, /td\[data-cell~="fc"\]:not\(\[data-zero\]\) \{\n  color: #C0392B;/);
+test("forecast colours: no red (owner 2026-11-09 「红色对我来说是 negative」); Docs forecast on blue, P&L forecast on lavender (「background colour 要不一样」)", () => {
+  assert.doesNotMatch(css, /data-cell~="fc"\][^{]*\{[^}]*#C0392B/, "no forecast red, in a cell or a heading");
+  assert.match(css, /> tbody > tr > td\[data-cell~="fc"\] \{\n  background-color: #EEF4FB;\n\}/);
+  assert.match(css, /> tbody > tr > td\[data-cell~="fp"\] \{\n  background-color: #F3EFFA;\n\}/);
+  assert.ok(css.indexOf('td[data-cell~="fp"] {') > css.indexOf('td[data-cell~="fc"] {'), "a P&L cell carries both tokens: lavender after blue, so it wins");
+  // The figures read like any other: a negative keeps the report's own
+  // negative colour (data-neg), a zero stays pale (data-zero).
+  assert.doesNotMatch(css, /td\[data-cell~="(fc|fp)"\]:not\(\[data-zero\]\)/);
+  assert.match(css, /th\[data-cell~="fc"\] \{\n  color: #2F5F9E;\n  border-bottom: 1\.5px dashed #2F5F9E;/);
+  assert.match(css, /th\[data-cell~="fp"\] \{\n  color: #6B4FA0;\n  border-bottom: 1\.5px dashed #6B4FA0;/);
   // Prod 2026-11-08: the two-row header rules (same specificity, later in the
-  // file) overrode the heading's red and dashed rule. It must come after them.
+  // file) overrode the heading's rule. The forecast headings come after them.
   const fcHead = css.indexOf('> thead > tr > th[data-cell~="fc"] {');
   assert.ok(fcHead > css.indexOf('> thead > tr[data-row="h1"] > th {'), "after the h1 rule");
   assert.ok(fcHead > css.indexOf('> thead > tr[data-row="h2"] > th {'), "after the h2 rule");
+  assert.ok(css.indexOf('> thead > tr > th[data-cell~="fp"] {') > fcHead, "the P&L heading after the Docs one");
+  assert.match(ui, /const cfColTok = \(c: \{ forecast\?: boolean; forecastKind\?: string \} \| undefined\): string => \(!c\?\.forecast \? "" : c\.forecastKind === "pnl" \? " fc fp" : " fc"\);/);
 });
 
 test("Daily Cash Position: Mark paid, and the Planned payments hint", () => {

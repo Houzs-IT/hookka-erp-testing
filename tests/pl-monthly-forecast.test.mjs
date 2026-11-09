@@ -46,7 +46,8 @@ test("the page: a Forecast switch for Overall, off on every load; a month over i
   assert.match(tab, /\{line === "all" && <ForecastToggle on=\{forecast\} onToggle=\{\(\) => setForecast\(\(v\) => !v\)\} \/>\}/);
   assert.match(tab, /plMonthHeads\(cols\)\.map/);
   assert.match(tab, /\{c\.forecast \? "Forecast" : "Actual"\}/);
-  assert.match(tab, /\$\{c\.forecast \? " fc" : ""\}/);
+  assert.match(tab, /\$\{c\.forecast \? " fc fp" : ""\}/, "the Forecast P&L's colour, lavender as on Cash Flow (2026-11-09: no red)");
+  assert.match(tab, /Forecast \(purple\)<\/span>/);
   assert.match(tab, /c\.forecast \? `\$\{c\.label\} Forecast` : c\.label/, "the export says which column is which");
   assert.match(tab, /Net profit is the Forecast P&amp;L&apos;s/, "the footnote");
   const drill = slice(ui, "function PlMonthlyDrillRows(", "\nfunction ");

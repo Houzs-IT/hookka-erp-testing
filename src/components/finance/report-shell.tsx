@@ -219,7 +219,7 @@ export function EditLayoutToggle({ on, onToggle }: { on: boolean; onToggle: () =
 }
 
 /** The Cash Flow forecast switch (owner 2026-11-08): off on every load;
- *  pressed, it takes the forecast red. */
+ *  pressed, it takes the forecast blue (2026-11-09: red read as a negative). */
 export function ForecastToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
     <button
@@ -227,7 +227,7 @@ export function ForecastToggle({ on, onToggle }: { on: boolean; onToggle: () => 
       aria-pressed={on}
       onClick={onToggle}
       title={on ? "Hide the forecast" : "Show the forecast beside each month's actual figures"}
-      className={`${CTRL_SHAPE} px-3 ${on ? "border-[#C0392B] bg-[#C0392B] text-white hover:bg-[#A93226]" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
+      className={`${CTRL_SHAPE} px-3 ${on ? "border-[#2F5F9E] bg-[#2F5F9E] text-white hover:bg-[#264D80]" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
     >
       Forecast
     </button>

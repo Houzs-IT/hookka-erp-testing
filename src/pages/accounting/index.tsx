@@ -6315,7 +6315,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
     cols.map((c, j) => {
       const v = r.values[j] ?? 0;
       const est = (r.estValues?.[j] ?? 0) !== 0;
-      const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}${c.forecast ? " fc" : ""}`;
+      const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}${c.forecast ? " fc fp" : ""}`;
       return (
         <React.Fragment key={c.key}>
           <td data-cell={`num split${tag}`} data-neg={show && v < 0 ? "" : undefined} data-zero={c.forecast && v === 0 ? "" : undefined} title={est ? estTitle(r.estFrom) : undefined}>
@@ -6354,14 +6354,14 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
                   <tr data-row="h1">
                     <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
                     {plMonthHeads(cols).map((h) => (
-                      <th key={h.key} colSpan={h.span} data-cell={`split center${h.accum ? " acc" : ""}${h.forecastOnly ? " fc" : ""}`}>{h.label}</th>
+                      <th key={h.key} colSpan={h.span} data-cell={`split center${h.accum ? " acc" : ""}${h.forecastOnly ? " fc fp" : ""}`}>{h.label}</th>
                     ))}
                   </tr>
                   <tr data-row="h2">
                     {cols.map((c) => (
                       <React.Fragment key={c.key}>
-                        <th data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`}>{c.forecast ? "Forecast" : "Actual"}</th>
-                        <th data-cell={`num pct${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`}>%</th>
+                        <th data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`}>{c.forecast ? "Forecast" : "Actual"}</th>
+                        <th data-cell={`num pct${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`}>%</th>
                       </React.Fragment>
                     ))}
                   </tr>
@@ -6446,7 +6446,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       )}
       {data?.forecast && (
         <p className="text-[11px] text-[#9CA3AF]">
-          <span className="text-[#C0392B]">Forecast (red)</span>: your Forecast P&amp;L, each line on the line its money is booked to — a material type over its
+          <span className="text-[#6B4FA0]">Forecast (purple)</span>: your Forecast P&amp;L, each line on the line its money is booked to — a material type over its
           purchase groups, a department&apos;s salary on the account its wages post to. Net profit is the Forecast P&amp;L&apos;s; Gross profit differs only by any
           department booked outside cost of goods sold. Accumulated covers the same months for both; months ahead show the forecast alone.
         </p>
@@ -18838,7 +18838,7 @@ function CfMonthlyDrillRows({ period, lineKey, cols, depth, accountCode }: {
   }, [period, lineKey]);
   const pad = { paddingLeft: `${34 + depth * 18}px` };
   // Forecast columns (the Forecast toggle) carry no payments: left empty.
-  const acc = (c: CfApiCol) => (c.accum ? " acc" : "") + (c.forecast ? " fc" : "");
+  const acc = (c: CfApiCol) => (c.accum ? " acc" : "") + cfColTok(c);
   if (!data || !data.found) {
     const msg = err ?? (data ? "This line is not on the statement any more — reload the page." : "Loading the payments…");
     return <tr data-row="det"><td data-cell="stick" className={err ? "text-[#9A3412]" : "text-[#9CA3AF]"} style={pad}>{msg}</td><td colSpan={cols.length} /></tr>;
@@ -18917,13 +18917,15 @@ function CfForecastDrillRows({ sources, cols, depth }: {
   depth: number;
 }) {
   const pad = { paddingLeft: `${34 + depth * 18}px` };
-  const rows = cols.filter((c) => c.forecast).flatMap((c) => (sources?.[c.key] ?? []).map((it, i) => ({ col: c.key, word: cfColWord(c), it, i })));
+  const rows = cols.filter((c) => c.forecast).flatMap((c) => (sources?.[c.key] ?? []).map((it, i) => ({
+    col: c.key, word: cfColWord(c), wordCls: c.forecastKind === "pnl" ? "text-[#6B4FA0]" : "text-[#2F5F9E]", it, i,
+  })));
   if (!rows.length) return null;
   const amt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
   const dmy = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : "");
   return (
     <>
-      {rows.map(({ col, word, it, i }) => {
+      {rows.map(({ col, word, wordCls, it, i }) => {
         const parts = it.kind === "pnl" || it.kind === "input"
           ? [it.party, it.note]
           : [it.party, it.ref, dmy(it.date), it.expectedYm ? `due ${cfYmLabel(it.expectedYm)}` : "", it.note];
@@ -18931,10 +18933,10 @@ function CfForecastDrillRows({ sources, cols, depth }: {
         return (
           <tr key={`${col}|${i}`} data-row="det" title={it.ofSen ? `This line's share of RM ${plDrillAmt(Math.abs(it.ofSen))}` : undefined}>
             <td data-cell="stick" style={pad}>
-              <div className="truncate max-w-[34rem]"><span className="text-[#C0392B]">{word}</span> · {text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
+              <div className="truncate max-w-[34rem]"><span className={wordCls}>{word}</span> · {text}{it.ofSen ? <span className="text-[#9CA3AF]"> · share</span> : null}</div>
             </td>
             {cols.map((c) => (
-              <td key={c.key} data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`} data-neg={c.key === col && it.sen < 0 ? "" : undefined}>
+              <td key={c.key} data-cell={`num split${c.accum ? " acc" : ""}${cfColTok(c)}`} data-neg={c.key === col && it.sen < 0 ? "" : undefined}>
                 {c.key === col ? amt(it.sen) : ""}
               </td>
             ))}
@@ -19228,6 +19230,9 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
 type CfApiCol = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; forecastKind?: "docs" | "pnl"; future?: boolean; blank?: boolean };
 // A month's column, in words (owner 2026-11-09 「每个月要有三个 column」).
 const cfColWord = (c: CfApiCol): string => (!c.forecast ? "Actual" : c.forecastKind === "pnl" ? "P&L forecast" : "Docs forecast");
+// Its cell token (finance-v2.css): fc = Docs forecast (blue), fc fp = P&L
+// forecast (lavender) — never red (owner 2026-11-09 「红色对我来说是 negative」).
+const cfColTok = (c: { forecast?: boolean; forecastKind?: string } | undefined): string => (!c?.forecast ? "" : c.forecastKind === "pnl" ? " fc fp" : " fc");
 type CfApiData = { period: string; columns: CfApiCol[]; rows: CfApiRow[] };
 type CfForecastData = CfApiData & {
   today?: string;
@@ -19984,12 +19989,12 @@ function CashFlowTab() {
                     <th data-cell="stick" rowSpan={2} className="min-w-[280px]">Item</th>
                     {cfMonthHeads(cols).map((h) => (
                       <th key={h.key} colSpan={h.span} rowSpan={h.accum ? 2 : undefined}
-                        data-cell={`${h.accum ? "num " : ""}split center${h.accum ? " acc" : ""}${h.future ? " fc" : ""}`}>{h.label}</th>
+                        data-cell={`${h.accum ? "num " : ""}split center${h.accum ? " acc" : ""}`}>{h.label}</th>
                     ))}
                   </tr>
                   <tr data-row="h2">
                     {cols.filter((c) => !c.accum).map((c) => (
-                      <th key={c.key} data-cell={`num split${c.forecast ? " fc" : ""}`}>{cfColWord(c)}</th>
+                      <th key={c.key} data-cell={`num split${cfColTok(c)}`}>{cfColWord(c)}</th>
                     ))}
                   </tr>
                 </>
@@ -20061,7 +20066,7 @@ function CashFlowTab() {
                       // no forecast at all: "-" in every row.
                       const blank = !!cols[j]?.blank;
                       return (
-                        <td key={j} data-cell={`num split${cols[j]?.accum ? " acc" : ""}${cols[j]?.forecast ? " fc" : ""}`} data-neg={!blank && typeof v === "number" && v < 0 ? "" : undefined} data-zero={blank || v === 0 ? "" : undefined}>{blank ? "-" : fmt(v)}</td>
+                        <td key={j} data-cell={`num split${cols[j]?.accum ? " acc" : ""}${cfColTok(cols[j])}`} data-neg={!blank && typeof v === "number" && v < 0 ? "" : undefined} data-zero={blank || v === 0 ? "" : undefined}>{blank ? "-" : fmt(v)}</td>
                       );
                     })}
                   </tr>
@@ -20084,13 +20089,13 @@ function CashFlowTab() {
             <p className="text-[#9A3412]">No forecast for this period.</p>
           )}
           <p>
-            <span className="text-[#C0392B]">Docs forecast (red)</span>: open documents by customer / supplier term as at the 1st of each month (amounts past their term count in that month);
+            <span className="text-[#2F5F9E]">Docs forecast (blue)</span>: open documents by customer / supplier term as at the 1st of each month (amounts past their term count in that month);
             salaries and expenses from Forecast P&amp;L × that month's forecast receipts (salaries paid the month after, factory overhead as keyed); planned payments;
             capex and financing keyed under Capex &amp; financing (forecast only, nothing posted).
             Future months run as far as documents or keyed amounts reach. A month's forecast c/f starts from its actual b/f.
           </p>
           <p>
-            <span className="text-[#C0392B]">P&amp;L forecast (red)</span>: your Forecast P&amp;L as cash. Sales arrive after each customer&apos;s term
+            <span className="text-[#6B4FA0]">P&amp;L forecast (purple)</span>: your Forecast P&amp;L as cash. Sales arrive after each customer&apos;s term
             (a month keyed as one total: by the terms of the last three months&apos; invoices); materials are paid after their suppliers&apos; terms;
             salaries the month after; carriage, SST, overhead and expenses in their month. Trade finance, planned payments and capex &amp; financing as in the Docs forecast.
             Each forecast runs on from its own previous month.

@@ -280,16 +280,20 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   background-color: #F7F5F1;
 }
 
-/* Cash Flow forecast (owner 2026-11-08): a Forecast column reads in the
-   forecast red on a faint tint; "-" and zero cells keep the quiet grey (the
-   data-zero rule below wins on :not). Its heading's rule sits after the
-   two-row header rules, which would otherwise override it. */
+/* Forecast columns (owner 2026-11-09 「forecast 的 background 可以不要红色吗？
+   红色对我来说是 negative」「docs forecast 和 P&L forecast background colour
+   要不一样」): a tint, never red. The Docs forecast (token fc) on blue; the
+   P&L forecast (fc fp — the Forecast P&L, on Cash Flow and Monthly P&L) on
+   lavender, after the blue so it wins. The figures read like any other: a
+   negative keeps the report's own negative colour, a zero stays pale. Their
+   headings' rules sit after the two-row header rules, which would otherwise
+   override them. */
 [data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="fc"] {
-  background-color: #FCF5F4;
+  background-color: #EEF4FB;
 }
 
-[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="fc"]:not([data-zero]) {
-  color: #C0392B;
+[data-fin-ui] table[data-fin-report] > tbody > tr > td[data-cell~="fp"] {
+  background-color: #F3EFFA;
 }
 
 /* Row kinds. */
@@ -426,12 +430,18 @@ body:has([data-fin-ui]) [data-dg="menu"] {
   color: #374151;
 }
 
-/* A Forecast heading (Cash Flow forecast): the forecast red over a dashed
-   rule. After the two header-row rules above, which set the same properties
-   at the same specificity. */
+/* A forecast heading: its kind's colour over a dashed rule — Docs forecast
+   blue, P&L forecast purple (after the blue, so it wins on a P&L heading).
+   After the two header-row rules above, which set the same properties at the
+   same specificity. */
 [data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="fc"] {
-  color: #C0392B;
-  border-bottom: 1.5px dashed #C0392B;
+  color: #2F5F9E;
+  border-bottom: 1.5px dashed #2F5F9E;
+}
+
+[data-fin-ui] table[data-fin-report] > thead > tr > th[data-cell~="fp"] {
+  color: #6B4FA0;
+  border-bottom: 1.5px dashed #6B4FA0;
 }
 
 /* A report that keeps to its content's width (owner 2026-10-01: the month
