@@ -6227,7 +6227,22 @@ function MonthlyTrendTab() {
 }
 
 type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; depth: number; label: string; groupId?: string; totalLabel?: string; accountCode?: string; drillCode?: string; values: number[]; pctValues: number[]; estValues?: number[]; estFrom?: string };
-type PlMonthlyData = { fyLabel: string; line: string; anchor: string; columns: { key: string; label: string; accum: boolean }[]; rows: PlMatrixRow[] };
+// `forecast` (owner 2026-11-09 「我的 PNL 我也是想要把 forecast 和 live 的对
+// 比」): each month's Actual then its Forecast; a future month Forecast only.
+type PlMonthlyCol = { key: string; label: string; accum: boolean; forecast?: boolean; future?: boolean; ym?: string };
+type PlMonthlyData = { fyLabel: string; line: string; anchor: string; forecast?: boolean; columns: PlMonthlyCol[]; rows: PlMatrixRow[] };
+// The forecast view's first heading row: a month over its Actual and
+// Forecast, Accumulated over both of its own.
+function plMonthHeads(cols: PlMonthlyCol[]): { key: string; label: string; span: number; accum: boolean; forecastOnly: boolean }[] {
+  const out: { key: string; label: string; span: number; accum: boolean; forecastOnly: boolean }[] = [];
+  for (const c of cols) {
+    const key = c.accum ? "acc" : `m:${c.ym ?? c.key}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) { last.span += 2; last.forecastOnly = last.forecastOnly && !!c.forecast; continue; }
+    out.push({ key, label: c.label, span: 2, accum: c.accum, forecastOnly: !!c.forecast });
+  }
+  return out;
+}
 
 function MonthlyPlTab({ line }: { line: PlLine }) {
   const today = todayYmdMY();
@@ -6238,15 +6253,19 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
   const [level, setLevel] = useState<number | null>(null);
   // Rows opened to their ledger lines (owner 2026-10-01), by account code.
   const [drillOpen, setDrillOpen] = useState<Set<string>>(new Set());
+  // The Forecast beside the Actual (spec 2026-11-09-forecast-three-columns-
+  // design.md 6): off on every load, Overall only.
+  const [forecast, setForecast] = useState(false);
+  const fcOn = forecast && line === "all";
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setData(null);
-    fetch(`/api/accounting/pl-monthly?line=${line}&anchor=${anchor}`)
+    fetch(`/api/accounting/pl-monthly?line=${line}&anchor=${anchor}${fcOn ? "&forecast=1" : ""}`)
       .then((r) => r.json() as Promise<{ success?: boolean; data?: PlMonthlyData }>)
       .then((j) => { if (j?.success && j.data) setData(j.data); })
       .catch(() => {});
-  }, [line, anchor]);
+  }, [line, anchor, fcOn]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
@@ -6272,7 +6291,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
   const buildExport = (): (string | number)[][] => {
     // Each column → two cells: RM amount + % of net sales (beside, not below).
     const header: (string | number)[] = ["Item"];
-    for (const c of cols) { header.push(c.label, "%"); }
+    for (const c of cols) { header.push(c.forecast ? `${c.label} Forecast` : c.label, "%"); }
     const aoa: (string | number)[][] = [header];
     for (const r of rows) {
       if (r.kind === "gap") continue;
@@ -6296,10 +6315,10 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
     cols.map((c, j) => {
       const v = r.values[j] ?? 0;
       const est = (r.estValues?.[j] ?? 0) !== 0;
-      const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}`;
+      const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}${c.forecast ? " fc" : ""}`;
       return (
         <React.Fragment key={c.key}>
-          <td data-cell={`num split${tag}`} data-neg={show && v < 0 ? "" : undefined} title={est ? estTitle(r.estFrom) : undefined}>
+          <td data-cell={`num split${tag}`} data-neg={show && v < 0 ? "" : undefined} data-zero={c.forecast && v === 0 ? "" : undefined} title={est ? estTitle(r.estFrom) : undefined}>
             {show ? amt(v) : ""}{show && est && <span className="ml-1 text-[9px] font-semibold">est.</span>}
           </td>
           <td data-cell={`num pct${tag}`}>{show ? pctTxt(r.pctValues[j] ?? 0) : ""}</td>
@@ -6314,6 +6333,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
         {data && maxLevel > 1 && (
           <DetailLevels levels={Array.from({ length: maxLevel }, (_, i) => i + 1)} value={level ?? -1} onChange={applyLevel} />
         )}
+        {line === "all" && <ForecastToggle on={forecast} onToggle={() => setForecast((v) => !v)} />}
         {data && <DownloadMenu items={downloads} />}
       </ReportToolbar>
 
@@ -6328,18 +6348,40 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
         ) : (
           <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
-              <tr data-row="h1">
-                <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
-                {cols.map((c) => <th key={c.key} colSpan={2} data-cell={`split center${c.accum ? " acc" : ""}`}>{c.label}</th>)}
-              </tr>
-              <tr data-row="h2">
-                {cols.map((c) => (
-                  <React.Fragment key={c.key}>
-                    <th data-cell={`num split${c.accum ? " acc" : ""}`}>RM</th>
-                    <th data-cell={`num pct${c.accum ? " acc" : ""}`}>%</th>
-                  </React.Fragment>
-                ))}
-              </tr>
+              {data.forecast ? (
+                <>
+                  {/* Forecast on: a month over its Actual and Forecast (as Cash Flow). */}
+                  <tr data-row="h1">
+                    <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
+                    {plMonthHeads(cols).map((h) => (
+                      <th key={h.key} colSpan={h.span} data-cell={`split center${h.accum ? " acc" : ""}${h.forecastOnly ? " fc" : ""}`}>{h.label}</th>
+                    ))}
+                  </tr>
+                  <tr data-row="h2">
+                    {cols.map((c) => (
+                      <React.Fragment key={c.key}>
+                        <th data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`}>{c.forecast ? "Forecast" : "Actual"}</th>
+                        <th data-cell={`num pct${c.accum ? " acc" : ""}${c.forecast ? " fc" : ""}`}>%</th>
+                      </React.Fragment>
+                    ))}
+                  </tr>
+                </>
+              ) : (
+                <>
+                  <tr data-row="h1">
+                    <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
+                    {cols.map((c) => <th key={c.key} colSpan={2} data-cell={`split center${c.accum ? " acc" : ""}`}>{c.label}</th>)}
+                  </tr>
+                  <tr data-row="h2">
+                    {cols.map((c) => (
+                      <React.Fragment key={c.key}>
+                        <th data-cell={`num split${c.accum ? " acc" : ""}`}>RM</th>
+                        <th data-cell={`num pct${c.accum ? " acc" : ""}`}>%</th>
+                      </React.Fragment>
+                    ))}
+                  </tr>
+                </>
+              )}
             </thead>
             <tbody>
               {shown.map(({ row: r, close }, i) => {
@@ -6402,6 +6444,13 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
           month, shown at last month&apos;s amount. They turn into the real figure as soon as one is recorded.
         </p>
       )}
+      {data?.forecast && (
+        <p className="text-[11px] text-[#9CA3AF]">
+          <span className="text-[#C0392B]">Forecast (red)</span>: your Forecast P&amp;L, each line on the line its money is booked to — a material type over its
+          purchase groups, a department&apos;s salary on the account its wages post to. Net profit is the Forecast P&amp;L&apos;s; Gross profit differs only by any
+          department booked outside cost of goods sold. Accumulated covers the same months for both; months ahead show the forecast alone.
+        </p>
+      )}
     </div>
   );
 }
@@ -6418,12 +6467,13 @@ const glHref = (account: string, fromYm: string, toYm: string) =>
 const drillCellAmt = (sen: number) => (sen < 0 ? `(${plDrillAmt(-sen)})` : plDrillAmt(sen));
 function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   account: string;
-  cols: { key: string; label: string; accum: boolean }[];
+  cols: PlMonthlyCol[];
   line: "all" | "sofa" | "bedframe";
   rowValues: number[];
   depth: number;
 }) {
-  const months = cols.filter((c) => !c.accum).map((c) => c.key).sort();
+  // Forecast columns have no ledger lines behind them: left empty.
+  const months = cols.filter((c) => !c.accum && !c.forecast).map((c) => c.key).sort();
   const from = months[0] ?? "";
   const to = months[months.length - 1] ?? "";
   const [data, setData] = useState<(PlDrillData & { openingMonth?: string | null }) | null>(null);
@@ -6469,7 +6519,7 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
   const oldBooks = (ym: string) => !!data.openingMonth && ym < data.openingMonth;
   // The lines must make the row, month by month (the All view only — the
   // Sofa / Bedframe rows carry a share of each line).
-  const tied = line !== "all" || cols.every((c, j) => c.accum || oldBooks(c.key) || (perMonth.get(c.key) ?? 0) === (rowValues[j] ?? 0));
+  const tied = line !== "all" || cols.every((c, j) => c.accum || c.forecast || oldBooks(c.key) || (perMonth.get(c.key) ?? 0) === (rowValues[j] ?? 0));
   // Finance v2: a material group's PURCHASE line is not one account, so it
   // has no ledger to open.
   const glOk = /^\d{3}-/.test(account);
@@ -6481,7 +6531,7 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
             <div className="truncate max-w-[34rem]">{e.text}</div>
           </td>
           {cols.map((c) => {
-            const on = c.accum || c.key === e.ym;
+            const on = !c.forecast && (c.accum || c.key === e.ym);
             return (
               <React.Fragment key={c.key}>
                 <td data-cell="num split" data-neg={on && e.sen < 0 ? "" : undefined}>{on ? drillCellAmt(e.sen) : ""}</td>
@@ -6499,6 +6549,7 @@ function PlMonthlyDrillRows({ account, cols, line, rowValues, depth }: {
           {!tied && <span className="font-normal text-[#9A3412]"> · these lines do not add up to the row — please report it</span>}
         </td>
         {cols.map((c) => {
+          if (c.forecast) return <React.Fragment key={c.key}><td data-cell="num split" /><td data-cell="num pct" /></React.Fragment>;
           const sen = c.accum ? total : (perMonth.get(c.key) ?? 0);
           const old = !c.accum && oldBooks(c.key);
           return (

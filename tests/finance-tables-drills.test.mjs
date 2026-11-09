@@ -70,7 +70,7 @@ test("Monthly P&L: a row's ledger lines under it, in their month's column; the l
   const rows = slice(ui, "function PlMonthlyDrillRows(", "\nfunction ");
   assert.match(rows, /fetch\(`\/api\/accounting\/pl-drill\?account=\$\{encodeURIComponent\(account\)\}&from=\$\{from\}&to=\$\{to\}`\)/);
   assert.match(rows, /\$\{l\.description \|\| "—"\}\$\{l\.ref2 \? ` · \$\{l\.ref2\}` : ""\} — \$\{l\.ref1\}/, "date · description · who — document no.");
-  assert.match(rows, /const on = c\.accum \|\| c\.key === e\.ym;/, "the amount in its month and in Accumulated");
+  assert.match(rows, /const on = !c\.forecast && \(c\.accum \|\| c\.key === e\.ym\);/, "the amount in its month and in Accumulated, never in a forecast column (2026-11-09)");
   assert.match(rows, /const tied = line !== "all" \|\| cols\.every\(/, "each month's lines make the row");
   // Finance v2: "Open In GL →", only where the row is one account (a material
   // group's PURCHASE line has no single ledger).
@@ -78,7 +78,8 @@ test("Monthly P&L: a row's ledger lines under it, in their month's column; the l
   assert.match(rows, /const glOk = \/\^\\d\{3\}-\/\.test\(account\);/);
   // Computed lines that are one account's figure open too (as on the statement).
   const mx = read("src/lib/pnl-matrix.ts");
-  assert.match(mx, /line\("PURCHASE", 3, \(w\) => find\(w\)\?\.purchasesSen \?\? 0, undefined, rg\.group\);/);
+  // One level deeper under a material type when the forecast is on (2026-11-09).
+  assert.match(mx, /line\("PURCHASE", depth \+ 1, \(w\) => find\(w\)\?\.purchasesSen \?\? 0, undefined, rg\.group\);/);
   assert.match(mx, /line\("CARRIAGE INWARDS", 1, \(w\) => w\.carriageSen, undefined, "700-1015"\);/);
 });
 

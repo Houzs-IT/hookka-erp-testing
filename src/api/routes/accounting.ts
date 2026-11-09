@@ -122,6 +122,7 @@ import {
 } from "../../lib/other-party-payment";
 import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
 import { buildPnlMatrix, type PnlMatrixCol } from "../../lib/pnl-matrix";
+import { forecastPnlWindow, rmTypeOf, sumPnlWindowLikes } from "../../lib/pnl-forecast";
 import { lastMonths, sumByMonth, topModelsByMonth, overviewPnl, type OverviewMonth } from "../../lib/overview-trend";
 import { selectHistoricalWindow, sumPnlWindows, buildHistoricalMap } from "../../lib/pnl-historical";
 import { buildHistIdentityRemap } from "../../lib/pnl-hist-remap";
@@ -10420,10 +10421,77 @@ async function plMonthlyResponse(c: AccountingCtx) {
     ? { ...sumPnlWindows(perMonthWindows), materialWarnings: computedAccWindow.materialWarnings }
     : computedAccWindow;
 
+  // Forecast beside the actual (owner 2026-11-09 「我的 PNL 我也是想要把
+  // forecast 和 live 的对比」, spec 2026-11-09-forecast-three-columns-
+  // design.md 6): Overall only, on request. Each month's Actual then its
+  // Forecast (the Forecast P&L month as a P&L window, src/lib/pnl-forecast.ts);
+  // Accumulated Actual then Accumulated Forecast over the same months; the
+  // months after the current one, Forecast only, as far as the Forecast P&L
+  // reaches (twelve at most).
+  if (c.req.query("forecast") === "1" && line === "all") {
+    const fc = await loadMonthlyPlForecast(c.var.DB, orgId, override);
+    const fw = (ym: string) => forecastPnlWindow(fc.months[ym], fc.groups, fc.opts);
+    const curYm = todayMyt().slice(0, 7);
+    const futureYms: string[] = [];
+    if (anchorYm === curYm) {
+      const reach = Object.keys(fc.months).filter((ym) => /^\d{4}-\d{2}$/.test(ym) && ym > curYm && ym <= addMonthsYm(curYm, 12)).sort().pop();
+      for (let ym = addMonthsYm(curYm, 1); reach && ym <= reach; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
+    }
+    const fcMonthCols = new Map(months.map((ym) => [ym, fw(ym)] as const));
+    const mcols: PnlMatrixCol[] = [
+      { key: "acc", label: "Accumulated", accum: true, window: accWindow },
+      { key: "fc:acc", label: "Accumulated", accum: true, window: sumPnlWindowLikes([...fcMonthCols.values()]) },
+      ...[...futureYms].reverse().map((ym) => ({ key: `fc:${ym}`, label: monthLabel(ym), accum: false, window: fw(ym) })),
+      ...cols.flatMap((col) => [col, { key: `fc:${col.key}`, label: col.label, accum: false, window: fcMonthCols.get(col.key)! }]),
+    ];
+    const spine = sumPnlWindowLikes([accWindow, ...mcols.filter((m) => m.key.startsWith("fc:")).map((m) => m.window)]);
+    const fm = buildPnlMatrix(mcols, { spine, rmTypeOf });
+    const future = new Set(futureYms.map((ym) => `fc:${ym}`));
+    const columns = fm.columns.map((col) => {
+      if (!col.key.startsWith("fc:")) return { ...col, ...(col.accum ? {} : { ym: col.key }) };
+      const ym = col.key === "fc:acc" ? undefined : col.key.slice(3);
+      return { ...col, forecast: true, ...(ym ? { ym } : {}), ...(future.has(col.key) ? { future: true } : {}) };
+    });
+    return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, forecast: true, columns, rows: fm.rows } });
+  }
+
   cols.unshift({ key: "acc", label: "Accumulated", accum: true, window: accWindow });
 
   const matrix = buildPnlMatrix(cols);
   return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, columns: matrix.columns, rows: matrix.rows } });
+}
+
+// What the Monthly P&L forecast reads (spec 2026-11-09 section 6): the
+// Forecast P&L months, its line structure (the page's own, the owner's
+// section map included), and where each department's wages post (the labour
+// map) — so a forecast sits on the line its actual money is booked to.
+async function loadMonthlyPlForecast(db: Env["Variables"]["DB"], orgId: string, override: Record<string, string>) {
+  const fcRow = await db.prepare("SELECT value FROM kv_config WHERE key = 'forecast_pnl'").first<{ value: string }>().catch(() => null);
+  let months: Record<string, FcMonth> = {};
+  try {
+    months = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
+  } catch { /* none yet */ }
+  const [coaList, labour] = await Promise.all([
+    loadCoaList(db, false),
+    loadLabourDepartments(db, orgId).catch(() => ({ departments: [] as { code: string; account: string; bucket: string }[], mappedAccounts: [] as string[] })),
+  ]);
+  const groups = forecastLineGroups(
+    coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
+    override,
+    forecastDepts(labour.departments, Object.values(months).map((m) => m.pct)),
+  );
+  const deptAcct = new Map(labour.departments.map((d) => [d.code, d.account] as const));
+  const coaBy = new Map(coaList.map((a) => [a.code, { name: a.name, type: a.type }] as const));
+  return {
+    months,
+    groups,
+    opts: {
+      override,
+      mappedAccounts: new Set(labour.mappedAccounts),
+      deptAccount: (d: string) => deptAcct.get(d) ?? null,
+      accountOf: (code: string) => coaBy.get(code),
+    },
+  };
 }
 
 // Finance Overview, month by month (owner 2026-10-14 「overview 主要显示…」→「做」;
