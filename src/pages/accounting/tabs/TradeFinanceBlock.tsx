@@ -19,6 +19,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { moneyFieldToRinggit, firstMoneyFieldError } from "@/lib/money-field";
 import { CalendarDays, ChevronDown, ChevronRight, Landmark } from "lucide-react";
 import { tfPrincipalSen } from "@/lib/trade-finance";
@@ -275,6 +276,7 @@ export function TfRepaidRows({ draws, colSpan, editable, onSaved }: { draws: TfR
 // out — nothing here happens silently. Lives in Settings › Trade Finance Lines.
 export function TfSetupCard({ existing, onSaved }: { existing: TfSourceRow | null; onSaved: () => void }) {
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [accountCode, setAccountCode] = useState(existing?.accountCode ?? "310-0020");
   const [lenderSupplierId, setLenderSupplierId] = useState(existing?.lenderSupplierId ?? "");
@@ -301,9 +303,11 @@ export function TfSetupCard({ existing, onSaved }: { existing: TfSourceRow | nul
       toast.error("Account, lender and the new account name are all required");
       return;
     }
-    const ok = window.confirm(
-      `Set up trade finance?\n\nAccount ${accountCode} becomes a LIABILITY named "${effectiveAccountName}" and leaves the bank / cash-book lists. The ledger itself is not touched — history reads correctly at every date.\n\nDraws (money ${lenderName} paid suppliers for us) will be tracked with due dates; repay with an AP Payment to ${lenderName} on Payment Vouchers.`,
-    );
+    const ok = await confirm({
+      title: "Set up trade finance",
+      confirmLabel: "Set up",
+      message: `Set up trade finance?\n\nAccount ${accountCode} becomes a LIABILITY named "${effectiveAccountName}" and leaves the bank / cash-book lists. The ledger itself is not touched — history reads correctly at every date.\n\nDraws (money ${lenderName} paid suppliers for us) will be tracked with due dates; repay with an AP Payment to ${lenderName} on Payment Vouchers.`,
+    });
     if (!ok) return;
     setSaving(true);
     const res = await fetch("/api/accounting/trade-finance/setup", {

@@ -40,6 +40,15 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DURATION_MS = 4000;
+// A multi-line toast (e.g. the "Fix N problems before saving:" list from
+// src/lib/save-blockers.ts, 2026-11-08) stays up longer: +1.5 s per extra
+// line, capped at 12 s. A one-line toast keeps exactly DURATION_MS.
+const EXTRA_LINE_MS = 1500;
+const MAX_DURATION_MS = 12000;
+function toastDurationMs(message: string): number {
+  const lines = String(message ?? "").split("\n").length;
+  return Math.min(MAX_DURATION_MS, DURATION_MS + (lines - 1) * EXTRA_LINE_MS);
+}
 const MAX_TOASTS = 5;
 // Lists already warned about being capped this session (see onTruncated).
 const warnedTruncated = new Set<string>();
@@ -155,6 +164,7 @@ function SingleToast({ item, onDismiss }: SingleToastProps) {
   const [progress, setProgress] = useState(100);
   const [dismissing, setDismissing] = useState(false);
   const startTimeRef = useRef(Date.now());
+  const durationMs = toastDurationMs(item.message);
 
   // Trigger enter animation on mount
   useEffect(() => {
@@ -167,7 +177,7 @@ function SingleToast({ item, onDismiss }: SingleToastProps) {
   useInterval(
     () => {
       const elapsed = Date.now() - startTimeRef.current;
-      const remaining = Math.max(0, 100 - (elapsed / DURATION_MS) * 100);
+      const remaining = Math.max(0, 100 - (elapsed / durationMs) * 100);
       setProgress(remaining);
     },
     dismissing ? null : 50,
@@ -179,7 +189,7 @@ function SingleToast({ item, onDismiss }: SingleToastProps) {
     () => {
       handleDismiss();
     },
-    dismissing ? null : DURATION_MS,
+    dismissing ? null : durationMs,
   );
 
   function handleDismiss() {
@@ -209,7 +219,7 @@ function SingleToast({ item, onDismiss }: SingleToastProps) {
       <span className="mt-0.5">{iconMap[item.variant]}</span>
 
       {/* Message */}
-      <p className="flex-1 text-sm leading-snug text-stone-800">
+      <p className="flex-1 whitespace-pre-line text-sm leading-snug text-stone-800">
         {item.message}
       </p>
 

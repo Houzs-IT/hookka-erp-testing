@@ -116,6 +116,7 @@ read-only/append-only. Money is integer sen throughout.
 - **Opening-month P&L slice** is a report-layer injection (zero ledger rows) — `applyOpeningSlice` in `src/lib/opening-slice.ts`; opening legs are netted, not dropped.
 - **Multi-company scoping** appends `&orgId=<code-lowercased>`; `/pl-statement` deliberately does NOT accept `orgId` (would need FIFO threaded through — out of scope).
 - **`e-invoices.invoiceId` is intentionally not FK-enforced** (legacy standalone e-invoices). Service-order invoices price RM 0 by owner ruling.
+- **Cash Book strict-lock switch, Finalise-while-unbalanced and Trade Finance setup confirm in the ERP dialog (2026-11-08)** — `CashBookTab` and `TfSetupCard` call `useConfirm()` instead of `window.confirm`; a new native confirm under `src/pages` / `src/components` fails `tests/no-native-confirm.test.mjs` (allowlist: `confirm-dialog.tsx` fallback, `/m/config/modules.ts` non-component actions). `GET /api/invoices?search=` is now AND-of-words (`allWordsClause`, `src/api/lib/search-words-sql.ts`).
 
 ## Common tasks (mini-playbook)
 - **Add a money field to an invoice/PI** → snake_case column + runtime `ALTER … ADD COLUMN IF NOT EXISTS` before the INSERT (pattern `invoices.ts:1463`); add a `column-rename-map.json` entry; read dual-keyed `r.camelCase ?? r.snake_case`; store integer sen via `MoneyInput`/`roundSen`.

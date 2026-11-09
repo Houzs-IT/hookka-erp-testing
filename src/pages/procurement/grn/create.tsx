@@ -35,6 +35,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
+import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -536,38 +537,30 @@ function GRNCreatePage() {
   const handleSave = async () => {
     if (saving) return;
 
+    // Same checks, collected into one toast (src/lib/save-blockers.ts,
+    // 2026-11-08) instead of stopping at the first.
+    const blockers = new SaveBlockers();
     if (isPoLinked) {
-      if (!selectedPO) {
-        toast.error("Select a purchase order");
-        return;
-      }
+      if (!selectedPO) blockers.error("Select a purchase order");
       if (!receivedBy.trim()) {
-        toast.error("Enter the name of the person who received the goods");
-        return;
+        blockers.error("Enter the name of the person who received the goods");
       }
-      if (!hasItems) {
-        toast.error("Enter received quantities for at least one item");
-        return;
-      }
+      if (!hasItems) blockers.error("Enter received quantities for at least one item");
     } else {
-      if (!supplierId) {
-        toast.error("Select a supplier");
-        return;
-      }
+      if (!supplierId) blockers.error("Select a supplier");
       if (!receivedBy.trim()) {
-        toast.error("Enter the name of the person who received the goods");
-        return;
+        blockers.error("Enter the name of the person who received the goods");
       }
       const validLines = manualItems.filter(
         (m) => m.materialName.trim() && m.receivedQty > 0,
       );
       if (validLines.length === 0) {
-        toast.error(
+        blockers.error(
           "Add at least one line with a material name and received quantity",
         );
-        return;
       }
     }
+    if (reportSaveBlockers(toast, blockers)) return;
 
     setSaving(true);
     try {

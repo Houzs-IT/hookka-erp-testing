@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { bindingIdForLine, cheapestBinding, sortCheapestFirst, uniqueSkuOptions } from "@/lib/cheapest-binding";
+import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { todayYmdMY } from "@/lib/utils";
 import React, { useState, useCallback, useEffect, useMemo, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
@@ -411,22 +412,21 @@ function CreatePurchaseOrderPage() {
 
   const handleSave = async () => {
     if (saving) return;
-    if (items.length === 0) {
-      toast.error("Add at least one item");
-      return;
-    }
+    // Same four checks, collected into one toast (src/lib/save-blockers.ts,
+    // 2026-11-08). "Mixed suppliers" is only listed when every line is bound
+    // (an unbound line also reads as "mixed" until it gets a supplier), and
+    // "Supplier missing" only when nothing else explains it — it can only
+    // fail via no items / an unbound first line, already named above.
+    const blockers = new SaveBlockers();
+    if (items.length === 0) blockers.error("Add at least one item");
     if (hasUnboundLines) {
-      toast.error(`Pick supplier for unbound material${unboundCount === 1 ? "" : "s"}`);
-      return;
+      blockers.error(`Pick supplier for unbound material${unboundCount === 1 ? "" : "s"}`);
     }
-    if (hasMixedSuppliers) {
-      toast.error("Lines belong to multiple suppliers — use Split by Supplier");
-      return;
+    if (hasMixedSuppliers && !hasUnboundLines) {
+      blockers.error("Lines belong to multiple suppliers — use Split by Supplier");
     }
-    if (!headerSupplierId) {
-      toast.error("Supplier missing");
-      return;
-    }
+    if (!headerSupplierId && blockers.size === 0) blockers.error("Supplier missing");
+    if (reportSaveBlockers(toast, blockers)) return;
     setSaving(true);
     try {
       const res = await poIdem.withKey("single", (key) =>

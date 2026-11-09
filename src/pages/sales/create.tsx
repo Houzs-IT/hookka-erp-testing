@@ -37,6 +37,7 @@ import {
   HB_DIVAN_TOP_COMBO_DISCOUNT_SEN,
 } from "@/lib/special-order-surcharge";import { fetchVariantsConfig, getVariantsConfigSync, subscribeKvConfig, VARIANTS_CONFIG_KEY } from "@/lib/kv-config";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { useUnsavedChanges } from "@/lib/use-unsaved-changes";
 import { useFormDraft, clearFormDraft } from "@/lib/use-form-draft";
 import {
@@ -1786,21 +1787,24 @@ function CreateSalesOrderPage() {
   const subtotal = subtotalBeforeCombo - totalComboDiscountSen;
 
   const handleSubmit = async (status: "DRAFT" | "CONFIRMED" = "DRAFT") => {
-    if (!customerId) { toast.warning("Please select a customer"); return; }
-    if (items.some(l => !l.productId)) { toast.warning("Please select a product for all line items"); return; }
-    if (items.some(l => !l.fabricCode)) { toast.warning("Please select a fabric for all line items"); return; }
+    // Every check below still blocks the save; they are COLLECTED and shown in
+    // one toast (src/lib/save-blockers.ts, 2026-11-08) instead of stopping at
+    // the first, so the operator fixes everything in one pass.
+    const blockers = new SaveBlockers();
+    if (!customerId) blockers.warn("Please select a customer");
+    if (items.some(l => !l.productId)) blockers.warn("Please select a product for all line items");
+    if (items.some(l => !l.fabricCode)) blockers.warn("Please select a fabric for all line items");
     // Sofa lines must have model + seat size chosen from dropdowns (no free text / blanks)
     if (items.some(l => l.itemCategory === "SOFA" && !l.baseModel)) {
-      toast.warning("Please select a model for all sofa items"); return;
+      blockers.warn("Please select a model for all sofa items");
     }
     if (items.some(l => l.itemCategory === "SOFA" && !l.seatHeight)) {
-      toast.warning("Please select a seat size for all sofa items"); return;
+      blockers.warn("Please select a seat size for all sofa items");
     }
     // Hard restriction: SOFA + BEDFRAME may NOT coexist on a single SO.
     // Server enforces this too — client check just gives instant feedback.
     if (hasMixedSofaBedframe(items)) {
-      toast.error(SO_MIXED_CATEGORY_ERROR);
-      return;
+      blockers.error(SO_MIXED_CATEGORY_ERROR);
     }
     // Sofa qty>1 — must use 1 unit per line. Server enforces too.
     {
@@ -1813,8 +1817,7 @@ function CreateSalesOrderPage() {
         })),
       );
       if (offending) {
-        toast.error(formatSofaQtyError(offending));
-        return;
+        blockers.error(formatSofaQtyError(offending));
       }
     }
     // Repair Scope (0160) — same shared validator the backend POST runs, so
@@ -1823,10 +1826,10 @@ function CreateSalesOrderPage() {
     for (let i = 0; i < items.length; i++) {
       const scopeCheck = validateRepairScopeInput(items[i].repairScope ?? null);
       if (!scopeCheck.ok) {
-        toast.error(`Line ${i + 1}: ${scopeCheck.error}`);
-        return;
+        blockers.error(`Line ${i + 1}: ${scopeCheck.error}`);
       }
     }
+    if (reportSaveBlockers(toast, blockers)) return;
 
     setPendingStatus(status);
     setSaving(true);

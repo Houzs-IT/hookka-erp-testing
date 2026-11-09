@@ -17,6 +17,7 @@ import React, {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn, formatDateDMY, formatNumber, formatRM, getStatusColor, todayYmdMY } from "@/lib/utils";
+import { searchWords, rowMatchesSearch, matchRanges } from "@/lib/grid-search";
 import { getCurrentUser } from "@/lib/auth";
 import { fetchJson, passthrough } from "@/lib/fetch-json";
 import { useToast } from "@/components/ui/toast";
@@ -1669,27 +1670,25 @@ function ColumnCustomizer<T>({
 // 2026-06-15: "搜了没 bold 起来,不知道哪个是我要找的"). Mirrors the global
 // command-palette's highlighter; returns the raw text untouched when there's
 // no query, so non-search rendering is byte-identical.
+// Multi-word (2026-11-08): each whitespace-separated word of the query is
+// highlighted on its own, matching the all-words filter in `filterRows`.
 function highlightMatch(text: string, query: string): React.ReactNode {
-  const q = (query || "").trim();
-  if (!q || !text) return text;
-  const lower = text.toLowerCase();
-  const ql = q.toLowerCase();
-  let from = 0;
-  let i = lower.indexOf(ql, from);
-  if (i === -1) return text;
+  if (!text) return text;
+  const ranges = matchRanges(text, searchWords(query));
+  if (ranges.length === 0) return text;
   const parts: React.ReactNode[] = [];
-  while (i !== -1) {
-    if (i > from) parts.push(text.slice(from, i));
+  let from = 0;
+  for (const [s, e] of ranges) {
+    if (s > from) parts.push(text.slice(from, s));
     parts.push(
       <mark
-        key={i}
+        key={s}
         className="rounded-[2px] bg-[#FBEFB8] px-0.5 font-semibold text-inherit"
       >
-        {text.slice(i, i + q.length)}
+        {text.slice(s, e)}
       </mark>,
     );
-    from = i + q.length;
-    i = lower.indexOf(ql, from);
+    from = e;
   }
   if (from < text.length) parts.push(text.slice(from));
   return <>{parts}</>;
@@ -2643,19 +2642,16 @@ export function DataGrid<T extends Record<string, any>>({
     let result = rows;
 
     // Global search (deferred — see deferredSearch above)
-    if (deferredSearch) {
-      const lower = deferredSearch.toLowerCase();
+    // Multi-word (2026-11-08, src/lib/grid-search.ts): the query is split on
+    // whitespace and EVERY word must appear in some searched column, so
+    // "ivory 151" finds "PC151-01 ... IVORY SAND". One word = the old rule.
+    const words = searchWords(deferredSearch);
+    if (words.length > 0) {
       // Search visible columns PLUS any alwaysSearchKeys, so an identifier
       // stays findable even when its column is hidden via the "Columns" menu.
       const searchKeys = new Set<string>(visibleColumns.map(c => c.key));
       for (const k of alwaysSearchKeys) searchKeys.add(k);
-      result = result.filter(row => {
-        for (const key of searchKeys) {
-          const val = getNestedValue(row, key);
-          if (String(val ?? "").toLowerCase().includes(lower)) return true;
-        }
-        return false;
-      });
+      result = result.filter(row => rowMatchesSearch(row, searchKeys, words, getNestedValue));
     }
 
     // forceShowKeys exemption (see prop doc): a row whose keyField is in the
@@ -4141,13 +4137,11 @@ export function DataGrid<T extends Record<string, any>>({
         const dropdownKey = filterDropdown.key;
         // Apply all filters except the current dropdown's column.
         let scopedData = data;
-        if (searchText) {
-          const lower = searchText.toLowerCase();
+        const scopeWords = searchWords(searchText);
+        if (scopeWords.length > 0) {
+          const scopeKeys = visibleColumns.map((col) => col.key);
           scopedData = scopedData.filter((row) =>
-            visibleColumns.some((col) => {
-              const val = getNestedValue(row, col.key);
-              return String(val ?? "").toLowerCase().includes(lower);
-            }),
+            rowMatchesSearch(row, scopeKeys, scopeWords, getNestedValue),
           );
         }
         const otherTextFilters = Object.entries(columnFilters).filter(

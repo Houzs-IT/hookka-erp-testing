@@ -10,6 +10,7 @@ import { Plus, X, Undo2, Trash2 } from "lucide-react";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { responseErrorMessage } from "@/lib/response-error";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type PurchaseReturn = {
   id: string;
@@ -50,6 +51,7 @@ async function getJson<T>(url: string): Promise<T | null> {
 }
 
 export default function PurchaseReturnsPage() {
+  const { confirm } = useConfirm();
   const [rows, setRows] = useState<PurchaseReturn[]>([]);
   const [loaded, setLoaded] = useState(false);
   // ?pi=<id> / ?grn=<id> (from the "Create Purchase Return" button on a PI or a
@@ -72,14 +74,14 @@ export default function PurchaseReturnsPage() {
   /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
   const del = async (id: string) => {
-    if (!window.confirm("Delete this OPEN purchase return?")) return;
+    if (!(await confirm({ title: "Delete purchase return", danger: true, confirmLabel: "Delete", message: "Delete this OPEN purchase return?" }))) return;
     const res = await fetch(`/api/purchase-returns/${id}`, { method: "DELETE" });
     if (!res.ok) { window.alert(await responseErrorMessage(res, "Delete failed")); return; }
     await reload();
   };
 
   const confirmStock = async (r: PurchaseReturn) => {
-    if (!window.confirm(`Confirm ${r.return_no} and REMOVE the returned goods from stock?\n\nThis reverses inventory (FIFO). The supplier Debit Note is the next step.`)) return;
+    if (!(await confirm({ title: "Confirm purchase return", danger: true, confirmLabel: "Remove from stock", message: `Confirm ${r.return_no} and REMOVE the returned goods from stock?\n\nThis reverses inventory (FIFO). The supplier Debit Note is the next step.` }))) return;
     const res = await fetch(`/api/purchase-returns/${r.id}/confirm`, { method: "POST" });
     const j = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
     if (!res.ok || !j.success) { window.alert(j.error || `Confirm failed (HTTP ${res.status})`); return; }
@@ -87,7 +89,7 @@ export default function PurchaseReturnsPage() {
   };
 
   const issueDn = async (r: PurchaseReturn) => {
-    if (!window.confirm(`Issue the supplier Debit Note for ${r.return_no}?\n\nThis reduces our Accounts Payable to the supplier AND posts a balanced GL journal. Verify the books after.`)) return;
+    if (!(await confirm({ title: "Issue Debit Note", danger: true, confirmLabel: "Issue Debit Note", message: `Issue the supplier Debit Note for ${r.return_no}?\n\nThis reduces our Accounts Payable to the supplier AND posts a balanced GL journal. Verify the books after.` }))) return;
     const res = await fetch(`/api/purchase-returns/${r.id}/issue-dn`, { method: "POST" });
     const j = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; data?: { noteNumber?: string } };
     if (!res.ok || !j.success) { window.alert(j.error || `Issue failed (HTTP ${res.status})`); return; }
