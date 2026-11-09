@@ -113,6 +113,8 @@ type PurchaseInvoiceItem = {
   grnItemId?: string | number | null;
   poId?: string | null;
   poItemId?: string | null;
+  /** Ordered unit price on the PO line (detail view only). */
+  poUnitPriceSen?: number | null;
 };
 
 // Linked documents, returned by GET /api/purchase-invoices/:id alongside the
@@ -894,7 +896,19 @@ export default function PurchaseInvoiceDetailPage() {
                           </td>
                           <td className="h-12 px-3 text-[#4B5563]">{it.supplierSku || "-"}</td>
                           <td className="h-12 px-3 text-right text-[#4B5563]">{it.qty}</td>
-                          <td className="h-12 px-3 text-right text-[#4B5563]">{formatCurrency(it.unitPriceSen)}</td>
+                          <td className="h-12 px-3 text-right text-[#4B5563]">
+                            {formatCurrency(it.unitPriceSen)}
+                            {/* Ordered price from the PO line, shown only when it differs. */}
+                            {it.poUnitPriceSen != null && it.poUnitPriceSen !== it.unitPriceSen && (
+                              <div
+                                className={`text-[11px] leading-tight ${it.unitPriceSen > it.poUnitPriceSen ? "text-[#9A3A2D]" : "text-[#3E7A4F]"}`}
+                                title="Unit price on the purchase order line"
+                              >
+                                PO {formatCurrency(it.poUnitPriceSen)} ({it.unitPriceSen > it.poUnitPriceSen ? "+" : "−"}
+                                {formatCurrency(Math.abs(it.unitPriceSen - it.poUnitPriceSen))})
+                              </div>
+                            )}
+                          </td>
                           <td className="h-12 px-3 text-right text-[#4B5563]">{formatCurrency(Number(it.taxSen) || 0)}</td>
                           {/* Gross line amount, as the supplier prints it — the
                               invoice discount is shown once, in the footer. */}

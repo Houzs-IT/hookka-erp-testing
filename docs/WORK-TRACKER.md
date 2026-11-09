@@ -7023,3 +7023,4 @@ Asks, in order:
 104. POs now see goods receipts that span several POs (detail list, posted-receipt edit lock, mark-received, three-way match) — BUG-2026-11-09-434 (Houzs review list, owner 2026-11-08).
 105. Renaming a raw material code now carries its supplier bindings, BOM child lines and price history (documents keep their code); an ambiguous rename is not carried and the page says so (Houzs review list, owner 2026-11-08).
 106. Monthly Stock Value: a failed load shows an error with Retry instead of RM 0.00 totals (Houzs review list, owner 2026-11-08).
+102. PI detail shows the PO line unit price under the billed price when they differ (display only; stock stays at PI price) (Houzs review list, owner 2026-11-08).

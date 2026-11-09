@@ -319,6 +319,9 @@ export type PurchaseInvoiceItem = {
   poId: string | null;
   /** The PO LINE this line bills (T-006 R8); null for fee / manual lines. */
   poItemId: string | null;
+  /** The PO line's unit price, read live on the detail view only (Houzs
+   *  review 2026-11-08) so the operator sees billed vs ordered price. */
+  poUnitPriceSen?: number | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -611,6 +614,39 @@ async function loadItemsForPI(
     .bind(piId)
     .all<PurchaseInvoiceItemRow>();
   return (res.results ?? []).map(rowToItem);
+}
+
+// The ordered price next to the billed price (Houzs review, owner 2026-11-08).
+// Read live from the PO line the PI line names (po_item_id); a line without
+// one falls back to the PO's line with the same material code when exactly
+// one such line exists. Stock is valued at the PI price either way (owner:
+// "入库应该根据PI 的价格") — this is display only.
+export async function attachPoPrices(db: D1Database, items: PurchaseInvoiceItem[]): Promise<PurchaseInvoiceItem[]> {
+  const poIds = [...new Set(items.map((i) => i.poId).filter((x): x is string => !!x))];
+  if (poIds.length === 0) return items;
+  try {
+    const ph = poIds.map(() => "?").join(",");
+    const res = await db
+      .prepare(
+        `SELECT poi.id, poi.purchaseOrderId AS "poId", poi.material_code AS "mc", poi.unitPriceSen AS "price"
+           FROM purchase_order_items poi WHERE poi.purchaseOrderId IN (${ph})`,
+      )
+      .bind(...poIds)
+      .all<{ id: string | number; poId: string; mc: string | null; price: number | null }>();
+    const rows = res.results ?? [];
+    const byId = new Map(rows.map((r) => [String(r.id), Number(r.price) || 0]));
+    const norm = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
+    return items.map((it) => {
+      if (!it.poId) return it;
+      if (it.poItemId && byId.has(String(it.poItemId))) return { ...it, poUnitPriceSen: byId.get(String(it.poItemId)) };
+      const code = norm(it.materialCode);
+      const same = code ? rows.filter((r) => r.poId === it.poId && norm(r.mc) === code) : [];
+      return same.length === 1 ? { ...it, poUnitPriceSen: Number(same[0].price) || 0 } : it;
+    });
+  } catch (e) {
+    console.warn("[purchase-invoices] PO price lookup failed:", e instanceof Error ? e.message : e);
+    return items;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -947,7 +983,7 @@ app.get("/:id", async (c) => {
   if (!row) return c.json({ success: false, error: "PI not found" }, 404);
   const projected = rowToPI(row);
   const [items, linkedPayments, linkedGRNs] = await Promise.all([
-    loadItemsForPI(db, id),
+    loadItemsForPI(db, id).then((its) => attachPoPrices(db, its)),
     (async () => {
       const res = await db
         .prepare(
