@@ -122,6 +122,24 @@ test("forecast colours: no red (owner 2026-11-09 「红色对我来说是 negati
   assert.match(ui, /const cfColTok = \(c: \{ forecast\?: boolean; forecastKind\?: string \} \| undefined\): string => \(!c\?\.forecast \? "" : c\.forecastKind === "pnl" \? " fc fp" : " fc"\);/);
 });
 
+test("forecast colours run down to the totals: a subtotal or result row keeps its kind's colour, a shade deeper (prod 2026-11-09: Cash Surplus / (Deficit) printed both forecasts on the row's beige)", () => {
+  // The row kinds' own fill (sub, res) sat at the same specificity after the
+  // plain tint and won, so on the row the owner reads most the two forecasts
+  // looked alike. One more attribute in the selector wins over the row kind
+  // whatever the order; a P&L cell carries both tokens, so its rule comes after
+  // the Docs one.
+  const rule = (row, tok, bg) => new RegExp(`> tbody > tr\\[data-row="${row}"\\] > td\\[data-cell~="${tok}"\\] \\{\\n  background-color: ${bg};\\n\\}`);
+  assert.match(css, rule("sub", "fc", "#E2EBF6"));
+  assert.match(css, rule("sub", "fp", "#EAE4F6"));
+  assert.match(css, rule("res", "fc", "#D7E3F2"));
+  assert.match(css, rule("res", "fp", "#E1D8F1"));
+  for (const row of ["sub", "res"]) {
+    const fc = css.indexOf(`tr[data-row="${row}"] > td[data-cell~="fc"] {`);
+    const fp = css.indexOf(`tr[data-row="${row}"] > td[data-cell~="fp"] {`);
+    assert.ok(fc >= 0 && fp > fc, `${row}: lavender after blue`);
+  }
+});
+
 test("Daily Cash Position: Mark paid, and the Planned payments hint", () => {
   const daily = slice("function DailyCashTab(", "\nfunction ");
   assert.match(daily, /fetch\(`\/api\/accounting\/cash-position\/planned\/\$\{p\.id\}\/paid`/);
