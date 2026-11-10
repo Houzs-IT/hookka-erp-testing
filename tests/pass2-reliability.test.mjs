@@ -180,3 +180,70 @@ test("C1-7: every create screen sends an Idempotency-Key", () => {
   assert.match(cn, /disabled=\{creating \|\|/);
   assert.match(dn, /disabled=\{creating \|\|/);
 });
+
+// ── C2-11: System Health checks each outside key with a harmless read ─────
+import { classifyKeyProbe, keyProblems } from "../src/lib/key-probe.ts";
+import { computeHealthStatus } from "../src/lib/health-status.ts";
+
+test("C2-11: probe answers map to ok / refused / no-answer", () => {
+  assert.equal(classifyKeyProbe({ status: 200 }).verdict, "ok");
+  assert.equal(classifyKeyProbe({ status: 429 }).verdict, "ok");
+  assert.equal(classifyKeyProbe({ status: 401 }).verdict, "refused");
+  assert.equal(classifyKeyProbe({ status: 403 }).verdict, "refused");
+  assert.equal(classifyKeyProbe({ status: 400, marker: "invalid_grant" }).verdict, "refused");
+  assert.equal(classifyKeyProbe({ status: 401, marker: "restricted_api_key" }).verdict, "ok", "send-only Resend key");
+  assert.equal(classifyKeyProbe({ status: 503 }).verdict, "no-answer");
+  assert.equal(classifyKeyProbe({ status: 404 }).verdict, "no-answer");
+  assert.equal(classifyKeyProbe({ error: true }).verdict, "no-answer");
+});
+
+const calm = { p50: 100, p95: 300, longTaskCount: 0, cacheHitRatio: 0.9, fiveXX: 0, feErrCount: 0 };
+test("C2-11: a refused key turns the banner red; no answer only amber; none changes nothing", () => {
+  assert.equal(computeHealthStatus(calm).tone, "green");
+  assert.equal(computeHealthStatus({ ...calm, keysRefused: [], keysNoAnswer: [] }).tone, "green");
+  const red = computeHealthStatus({ ...calm, keysRefused: ["Mail (Brevo)"] });
+  assert.equal(red.tone, "red");
+  assert.match(red.detail, /Key refused: Mail \(Brevo\)/);
+  const amber = computeHealthStatus({ ...calm, keysNoAnswer: ["Anthropic (scans, assistant)"] });
+  assert.equal(amber.tone, "amber");
+  assert.deepEqual(
+    keyProblems([
+      { key: "a", label: "A", verdict: "refused", note: "" },
+      { key: "b", label: "B", verdict: "no-answer", note: "" },
+      { key: "c", label: "C", verdict: "not-set", note: "" },
+      { key: "d", label: "D", verdict: "ok", note: "" },
+    ]),
+    { refused: ["A"], noAnswer: ["B"] },
+  );
+});
+
+test("C2-11: probes read only, skip unset keys, never echo a key, and cache", async () => {
+  const { runKeyProbes, _resetKeyProbeCache } = await import("../src/api/lib/key-probes.ts");
+  _resetKeyProbeCache();
+  const calls = [];
+  const fakeFetch = async (url, init) => {
+    calls.push({ url, method: init?.method });
+    if (url.startsWith("https://api.brevo.com")) return new Response(JSON.stringify({ message: "Key not found", code: "unauthorized" }), { status: 401 });
+    if (url.startsWith("https://api.anthropic.com")) throw new Error("timeout");
+    return new Response("{}", { status: 200 });
+  };
+  const env = { BREVO_API_KEY: "xkeysib-SECRET", ANTHROPIC_API_KEY: "sk-ant-SECRET" };
+  const res = await runKeyProbes(env, { fresh: true, fetch: fakeFetch, now: 1000 });
+  const by = Object.fromEntries(res.map((r) => [r.key, r.verdict]));
+  assert.deepEqual(by, { brevo: "refused", resend: "not-set", anthropic: "no-answer", "google-sheets": "not-set" });
+  assert.ok(calls.every((c) => c.method === "GET"), "harmless reads only");
+  assert.doesNotMatch(JSON.stringify(res), /SECRET/);
+  await runKeyProbes(env, { fetch: fakeFetch, now: 2000 });
+  assert.equal(calls.length, 2, "second call within 10 minutes served from cache");
+});
+
+test("C2-11: the health banner (page + alert email) carries the key verdicts", () => {
+  const route = read("src/api/routes/admin-health.ts");
+  assert.match(route, /app\.get\("\/key-probes", async \(c\) => \{/);
+  assert.match(route, /const keys = keyProblems\(await runKeyProbes\(env\)\.catch\(\(\) => \[\]\)\);/);
+  assert.match(route, /keysRefused: keys\.refused,\s*keysNoAnswer: keys\.noAnswer,/);
+  const page = read("src/pages/admin/health.tsx");
+  assert.match(page, /`\/api\/admin\/health\/key-probes`/);
+  assert.match(page, /keysRefused: keyProblems\(keyResults\)\.refused,/);
+  assert.match(page, /<KeyProbesCard results=\{keyResults\} \/>/);
+});

@@ -131,6 +131,55 @@ export function getSheetsClient(env: GoogleSheetsEnv): SheetsClient | null {
   };
 }
 
+/**
+ * System Health key check (review pass 2, C2-11): one token exchange with the
+ * service-account key — the same harmless read every Sheets call starts with.
+ * Never cached and never touches tokenCache; returns only a status and a short
+ * error marker ("invalid_grant"), never the token or the body.
+ */
+export async function checkSheetsServiceAccount(
+  rawKey: string,
+  doFetch: (url: string, init?: RequestInit) => Promise<Response> = (u, i) => fetch(u, i),
+  timeoutMs = 6000,
+): Promise<{ status?: number; error?: boolean; marker?: string; unreadable?: boolean }> {
+  let saKey: ServiceAccountKey;
+  try {
+    saKey = JSON.parse(rawKey);
+  } catch {
+    return { unreadable: true };
+  }
+  if (!saKey.client_email || !saKey.private_key) return { unreadable: true };
+  let jwt: string;
+  try {
+    jwt = await mintServiceAccountJwt(saKey);
+  } catch {
+    return { unreadable: true };
+  }
+  try {
+    const res = await doFetch(saKey.token_uri || TOKEN_URI_DEFAULT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: jwt,
+      }).toString(),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    let marker: string | undefined;
+    if (!res.ok) {
+      try {
+        const j = (await res.json()) as { error?: unknown };
+        if (typeof j.error === "string" && /^[a-z_]{3,40}$/.test(j.error)) marker = j.error;
+      } catch {
+        /* no JSON body */
+      }
+    }
+    return { status: res.status, marker };
+  } catch {
+    return { error: true };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // JWT mint + access-token retrieval (cached)
 // ---------------------------------------------------------------------------

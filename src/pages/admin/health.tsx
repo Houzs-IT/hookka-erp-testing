@@ -18,6 +18,7 @@ import { formatTimestampMY } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { computeHealthStatus } from "@/lib/health-status";
+import { keyProblems, type KeyProbeResult } from "@/lib/key-probe";
 import {
   Activity,
   AlertTriangle,
@@ -482,6 +483,36 @@ function HealthStatusCard({
   );
 }
 
+// C2-11: one line per outside key — refused is red (and turns the banner
+// red), no answer is amber, not configured is grey.
+const KEY_VERDICT_STYLE: Record<KeyProbeResult["verdict"], { dot: string; word: string }> = {
+  ok: { dot: "bg-[#4F8A3A]", word: "Working" },
+  refused: { dot: "bg-[#B3392A]", word: "Refused" },
+  "no-answer": { dot: "bg-[#C9922E]", word: "No answer" },
+  "not-set": { dot: "bg-[#C8C2BC]", word: "Not configured" },
+};
+
+function KeyProbesCard({ results }: { results: KeyProbeResult[] | null }) {
+  if (!results) return null;
+  return (
+    <div className="rounded-md border border-[#E2DDD8] bg-white p-3">
+      <div className="text-xs font-semibold text-[#1F1D1B] mb-2">Outside keys</div>
+      <ul className="grid gap-1.5 sm:grid-cols-2">
+        {results.map((r) => {
+          const st = KEY_VERDICT_STYLE[r.verdict];
+          return (
+            <li key={r.key} className="flex items-center gap-2 text-[12px] text-[#3D3935]">
+              <span className={`inline-block h-2 w-2 rounded-full ${st.dot}`} aria-hidden />
+              <span className="font-medium">{r.label}</span>
+              <span className="text-[#8B8580]">— {st.word}{r.verdict === "ok" || r.verdict === "not-set" ? "" : `: ${r.note}`}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export default function AdminHealthPage() {
   // Active time range. Defaulting to 24h matches the historical
   // "Last 24 hours" copy + is the cheapest scan over AE.
@@ -547,6 +578,12 @@ export default function AdminHealthPage() {
     success: boolean;
     data: FeApiRow[];
   }>(`/api/admin/health/fe-api${rangeQS}`, 60);
+  // C2-11: each outside key checked with a harmless read (server caches 10 min).
+  const { data: keyProbesResp } = useCachedJson<{
+    success: boolean;
+    data: { results: KeyProbeResult[]; checkedAt: string };
+  }>(`/api/admin/health/key-probes`, 300);
+  const keyResults = keyProbesResp?.data?.results ?? null;
   const { data: feStuckResp } = useCachedJson<{
     success: boolean;
     data: FeStuckRow[];
@@ -718,8 +755,10 @@ export default function AdminHealthPage() {
         .filter((s) => s.status.startsWith("5"))
         .reduce((a, b) => a + b.count, 0),
       feErrCount: feErrors.reduce((a, b) => a + b.n, 0),
+      keysRefused: keyProblems(keyResults).refused,
+      keysNoAnswer: keyProblems(keyResults).noAnswer,
     });
-  }, [kpis, statusBreakdown, feErrors]);
+  }, [kpis, statusBreakdown, feErrors, keyResults]);
 
   return (
     <div className="p-6 space-y-5">
@@ -759,6 +798,8 @@ export default function AdminHealthPage() {
         label={healthStatus.label}
         detail={healthStatus.detail}
       />
+
+      <KeyProbesCard results={keyResults} />
 
       {kpis?._mock && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
