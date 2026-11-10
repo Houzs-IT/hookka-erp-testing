@@ -10,6 +10,7 @@
 // touches child orders or stock; nothing auto-closes the case).
 // ===========================================================================
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SV_NEW_PATH } from "../orders/order-model";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpRight, Ban, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Clock, Ellipsis, Eye, FileDown, Hourglass, Info,
@@ -98,7 +99,6 @@ function CaseDetailInner({ id }: { id: string }) {
   const [filesOpen, setFilesOpen] = useState(false);
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
-  const [svInfo, setSvInfo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stagesOpen, setStagesOpen] = useState(false);
   const [viewer, setViewer] = useState<number | null>(null);
@@ -428,7 +428,7 @@ function CaseDetailInner({ id }: { id: string }) {
                 ) : null}
                 {active && c.sourceType !== "EXTERNAL" && perms.createSalesOrder ? (
                   <div style={{ background: M.card, borderRadius: 16, boxShadow: SH_CARD, padding: "13px 15px", marginTop: 10 }}>
-                    <PrimaryButton icon={<Plus size={16} strokeWidth={2.2} />} onClick={() => setSvInfo(true)}>New SV service order</PrimaryButton>
+                    <PrimaryButton icon={<Plus size={16} strokeWidth={2.2} />} onClick={() => navigate(`${SV_NEW_PATH}?fromCase=${encodeURIComponent(c.id)}`)}>New SV service order</PrimaryButton>
                     <div style={{ fontSize: 12, lineHeight: 1.45, color: M.ink, marginTop: 8 }}>Phone and tablet creation isn’t available yet. Tap to see how to create it for now.</div>
                   </div>
                 ) : null}
@@ -535,23 +535,6 @@ function CaseDetailInner({ id }: { id: string }) {
           <ActionRow icon={FileDown} title="Download PDF" sub="Case report with photos, causes and orders" onClick={() => void pdf()} />
           <ActionRow icon={Paperclip} title="Files" sub="Separate from issue photos" onClick={() => { setActions(false); setFilesOpen(true); }} divider />
           {canWrite && ALLOWED_TRANSITIONS[st].includes("CANCELLED") ? <ActionRow icon={Ban} title="Cancel case" sub="You can undo this later" danger divider onClick={() => { setActions(false); setConfirm("cancel"); }} /> : null}
-        </div>
-      </Sheet>
-
-      {/* SV order creation: no native mobile form yet, and the desktop form is not reachable on phones / tablets
-          (the desktop shell sends them back to /m), so explain instead of navigating. */}
-      <Sheet open={svInfo} onClose={() => setSvInfo(false)} title="New SV service order">
-        <div style={{ background: M.card, borderRadius: 16, boxShadow: SH_CARD, padding: 15 }}>
-          <div style={{ fontSize: 13.5, lineHeight: 1.55, color: M.raisin }}>Creating an SV service order isn’t available on phone or tablet yet.</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8, fontSize: 12.5, lineHeight: 1.45, color: M.ink }}>
-            <Info size={14} strokeWidth={2} color={CC.brownSoft} style={{ flex: "none", marginTop: 1 }} /><span>Open {c.caseNo} in the desktop app and choose Spawn Service Order. It copies this case’s items; set the prices before saving.</span>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8, fontSize: 12.5, lineHeight: 1.45, color: M.ink }}>
-            <Info size={14} strokeWidth={2} color={CC.brownSoft} style={{ flex: "none", marginTop: 1 }} /><span>This case, its orders and everything else on this screen are unchanged.</span>
-          </div>
-        </div>
-        <div style={{ margin: "14px 0 24px" }}>
-          <button type="button" onClick={() => setSvInfo(false)} style={{ width: "100%", height: 46, border: "none", borderRadius: 12, background: M.taupe, color: "var(--m-text-on-accent)", fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Got it</button>
         </div>
       </Sheet>
 

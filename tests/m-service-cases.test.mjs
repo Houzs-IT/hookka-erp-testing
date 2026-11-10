@@ -143,11 +143,12 @@ test("status transitions mirror the server: Closed is terminal, Cancel can be un
   assert.deepEqual(ALLOWED_TRANSITIONS.CANCELLED, ["OPEN", "IN_PROGRESS"]);
 });
 
-test("New SV service order never navigates to the desktop route (phones / tablets are redirected to /m from it)", () => {
+test("New SV service order opens the mobile SV form and never navigates to the desktop route", () => {
   const src = readFileSync(resolve(process.cwd(), "src/pages/m/screens/cases/CaseDetailScreen.tsx"), "utf8");
   assert.doesNotMatch(src, /\/service-order\/create/, "no navigation to the desktop SV create route");
   assert.match(src, /New SV service order/, "the action stays visible");
-  assert.match(src, /isn’t available on phone or tablet yet/, "an unavailable-state explanation is shown");
+  assert.doesNotMatch(src, /isn’t available on phone or tablet yet/, "the stale unavailable sheet is gone");
+  assert.match(src, /SV_NEW_PATH\}\?fromCase=/, "hands the case off to the mobile SV form");
   assert.match(src, /perms\.createSalesOrder/, "the sales-orders:create gate is kept");
   const hooks = readFileSync(resolve(process.cwd(), "src/pages/m/screens/cases/case-hooks.tsx"), "utf8");
   assert.match(hooks, /createSalesOrder: hasPermission\("sales-orders", "create"\)/);

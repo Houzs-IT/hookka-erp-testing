@@ -3795,10 +3795,9 @@ const serviceCaseDetail: DetailConfig = {
       label: "Spawn SO",
       icon: "receipt",
       // Desktop service-cases creates a SV-prefixed sales-order seeded from
-      // the case (caseid → /api/sales-orders POST). Mobile deep-links to the
-      // existing /sales/create route with ?fromCase=<id> — desktop SO create
-      // recognises that and prefills from the case payload.
-      to: `/sales/create?fromCase=${encodeURIComponent(id)}`,
+      // the case (caseid → /api/sales-orders POST). Mobile opens its own SV
+      // form, which hydrates ?fromCase=<id> like desktop and keeps the case link.
+      to: `/m/serviceorders/sv/new?fromCase=${encodeURIComponent(id)}`,
     },
   ],
   // CHANGELOG G.5: Issue Photos upload section. Backend /api/files accepts

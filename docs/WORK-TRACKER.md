@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-10**: mobile Service Orders entry added (branch `mobile/design-service-order`, frontend only, uncommitted); nothing else re-checked.
 > **Last verified: 2026-11-09**: mobile Service Cases entry added and updated for the visual-fidelity pass and the New SV action change (branch `feat/mobile-service-cases-v4`, frontend only, uncommitted); nothing else re-checked.
 > **Last verified: 2026-11-06**: mobile Home Operations entry added (branch `design/mobile-home-operationv3`, frontend only); nothing else re-checked.
 > **Last verified: 2026-11-05**: customer overdue sets entry, item 5 added (branch `feat/overdue-sets-order-progress`, to `staging`); nothing else re-checked.
@@ -9,6 +10,15 @@
 > **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+
+## Mobile Service Orders (Claude Design "Service Orders", mobile/design-service-order, 2026-11-10)
+Ask: mobile SV list / detail / create-edit and legacy repair orders from the approved prototype; desktop code / APIs / permissions are the source of truth; no backend, pricing or permission change. Uncommitted, never pushed.
+1. DONE (mocked + local only): SV list, detail, create / edit, legacy list / detail / flows; defects D1-D4, C1-C3, G1-G2, stale New SV messaging, operational copy / back navigation, invented "Set repairable" removed.
+2. DONE (2026-11-10, desktop parity): Clone follows desktop `handleClone` (PO / SO ids, hub, company, discount, custom specials, scope not carried; reference "Clone of <no>"); Company select from `/api/organisations`, default from the customer's `defaultCompanyCode`, create only; sofa seat size picker from variants-config `sofaSizes`, required, `sizeLabel` / `sizeCode` / `seatHeight` as desktop `selectSeatHeight`. Tests: `tests/sv-desktop-parity.test.mjs`.
+3. LIMITATION (documented, no new backend contract): the case link on an SV order comes only from `GET /api/service-cases`, which returns the 500 newest cases with no truncation flag. With 500+ cases the Standalone filter cannot be proven and orders of older cases may be missing from Linked; the list says so.
+4. UNVERIFIED: sofa size accepted by the live backend (`validateSofaSizeLabels` checks the live `sofaSizes` list, UNMEASURED); a sofa product with no `defaultVariants.seatHeight` makes the person choose a size; live permissions, real product / customer data, PDF output, and any real backend workflow.
+5. KEPT DISABLED: Stock Swap and Scrap. Contradictory findings (desktop picker sends catalogue ids; Scrap needs a real `fg_batches.id`; the mode handler picks FIFO batches itself) are in `order-model.ts`; nothing enabled.
+6. KNOWN VISUAL DIFFERENCES: shared Overlay (X not back arrow), shared Sheet at 820 (centred dialog), shared HoldSheet copy, pickers are full-screen with a line step, locked order is a full-screen card, legacy 409 sheet has no Open-approvals button, legacy list says "N loaded". Not compared: loading / error states, most 820 states. The SV detail / list gap-comparison agent never reported.
 
 ## Mobile Service Cases (Claude Design "Service Cases Phase 4", feat/mobile-service-cases-v4, 2026-11-09)
 Ask: rebuild /m Service Cases list, detail, Quick Report, edit and operations from the approved Phase 4 prototype; desktop code / API / `case-pipeline.ts` are the business-logic source; no backend, permission, schema or desktop change.
