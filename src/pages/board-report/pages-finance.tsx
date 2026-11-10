@@ -173,10 +173,10 @@ export function LabourPage({ r }: P) {
               <tr className="strong"><td>Production total</td><td><Money v={d.total} /></td><td>100.0%</td><td>{pctText(pct(d.total, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={d.forecastTotal} /></td><td><Delta p={changePct(d.total, d.forecastTotal)} invert /></td></tr>
               {/* Non-production departments (owner review 2026-11-10). */}
               <tr className="brp-subhead"><td colSpan={8}>Non-production</td></tr>
-              {d.nonProd.length === 0 ? (
+              {(d.nonProd ?? []).length === 0 ? (
                 <tr><td colSpan={8} className="brp-muted">No non-production salary recorded this month.</td></tr>
               ) : (
-                d.nonProd.map((x) => (
+                (d.nonProd ?? []).map((x) => (
                   <tr key={x.dept}>
                     <td>{deptName(x.dept)}</td>
                     <td><Money v={x.cost} /></td>
@@ -187,7 +187,7 @@ export function LabourPage({ r }: P) {
                   </tr>
                 ))
               )}
-              <tr className="strong"><td>All labour</td><td><Money v={d.total + d.nonProdTotal} /></td><td /><td /><td /><td /><td /><td /></tr>
+              <tr className="strong"><td>All labour</td><td><Money v={d.total + (d.nonProdTotal ?? 0)} /></td><td /><td /><td /><td /><td /><td /></tr>
             </tbody>
           </table>
           <h3>Production salary by month</h3>
