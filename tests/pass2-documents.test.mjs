@@ -398,3 +398,14 @@ test("H3-8: the POD write and the DO read use the history helpers; the detail pa
   const d = read("src/pages/delivery/detail.tsx");
   assert.match(d, /Earlier delivery attempt/);
 });
+
+// ── H1-1 (partial): accented Latin keeps its letter on the pdf-lib documents ─
+import { winAnsi } from "../src/api/lib/unified-do-invoice-pdf.ts";
+
+test("H1-1 partial: KŌRI prints KORI, not K?RI; Latin-1 untouched; CJK still guarded", () => {
+  assert.equal(winAnsi("KŌRI"), "KORI");
+  assert.equal(winAnsi("Łódź Şişli Ăn"), "Lódz Sisli An");
+  assert.equal(winAnsi("Café Müller"), "Café Müller");
+  assert.equal(winAnsi("广州 Supplier"), "?? Supplier");
+  assert.equal(winAnsi("A — B"), "A - B");
+});

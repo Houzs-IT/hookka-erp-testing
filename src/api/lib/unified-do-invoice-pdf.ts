@@ -150,6 +150,12 @@ function money(sen: number): string {
 // outside Latin-1 with "?" so no stray glyph can ever crash the document.
 // Exported so the simple-table fallback (assistant-exports.ts) shares the
 // exact same guard — the last-resort render must be crash-proof too.
+// Letters NFD cannot split into base + mark.
+const LATIN_EXTRA: Record<string, string> = {
+  "\u0141": "L", "\u0142": "l", "\u0110": "D", "\u0111": "d", "\u0126": "H", "\u0127": "h",
+  "\u0131": "i", "\u0152": "OE", "\u0153": "oe", "\u00D8": "\u00D8", "\u0166": "T", "\u0167": "t",
+};
+
 export function winAnsi(s: string): string {
   if (!s) return s;
   return s
@@ -159,6 +165,14 @@ export function winAnsi(s: string): string {
     .replace(/\u2026/g, "...")
     .replace(/[\u2022\u00B7]/g, "-")
     .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+    // Accented Latin outside Latin-1 (Ō, Ł, Ş, ă…) keeps its base letter
+    // instead of turning into "?" — KŌRI prints KORI (review H1-1, partial:
+    // an embedded Noto font needs @pdf-lib/fontkit, not in the bundle yet).
+    // Latin-1 letters (é, ü, ñ) are left alone; Helvetica draws them.
+    .replace(/[\u0100-\uFFFF]/g, (ch) => {
+      const base = ch.normalize("NFD").replace(/[\u0300-\u036F]/g, "");
+      return LATIN_EXTRA[ch] ?? (/^[\x20-\x7E]+$/.test(base) ? base : ch);
+    })
     .replace(/[^\x20-\x7E\u00A1-\u00FF\n]/g, "?");
 }
 
