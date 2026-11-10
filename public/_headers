@@ -67,3 +67,13 @@
   ! Pragma
   ! Expires
   Cache-Control: public, max-age=31536000, immutable
+
+# The CJK font for Chinese names on PDFs (review H1-1; src/lib/pdf-cjk-font.ts).
+# ~10 MB and only fetched when a document has Chinese text, so cache it for a
+# year. The name is not hashed: if the font file is ever replaced, give it a
+# NEW file name (and update CJK_FONT_PATH) so nobody keeps the old one.
+/fonts/*
+  ! Cache-Control
+  ! Pragma
+  ! Expires
+  Cache-Control: public, max-age=31536000, immutable
