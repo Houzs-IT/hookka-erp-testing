@@ -55,7 +55,8 @@ import {
   sharedForecastLegs,
   splitOpeningCredits,
   termMixOf,
-  tfForecastDue,
+  tfForecastDueBySupplier,
+  type TfForecastSupplier,
   type FcCashLine,
   type OpenDoc,
   type PlannedPayment,
@@ -11880,10 +11881,17 @@ async function loadTfPlanStore(db: Env["Variables"]["DB"]): Promise<TfPlanStore>
 
 // What the popup's Trade finance block works from, per facility, as at
 // today: the limit, the defaults, what is owed and drawn this month, the
-// existing draws' outstanding by due month, and the bills due by month from
-// the suppliers the facility has paid before (for "Fill from bills"). A due
-// month before this one counts in this one. Read only.
-async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string) {
+// existing draws' outstanding by due month, the bills due by month from the
+// suppliers the facility has paid before (for "Fill from bills") and those
+// suppliers' ids (the default ticks). A due month before this one counts in
+// this one. And, once for every facility, each supplier's Forecast P&L dues
+// with its name (for the Suppliers ticks, owner 2026-11-10). Read only.
+type CfTfFacilityInput = {
+  accountCode: string; lender: string; limitSen: number | null; tenorDays: number; rateBp: number;
+  owedNowSen: number; drawnThisMonthSen: number; dueBy: Record<string, number>; billsDue: Record<string, number>;
+  paidSupplierIds: string[];
+};
+async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string, plans: TfPlanStore): Promise<{ facilities: CfTfFacilityInput[]; forecastSuppliers: TfForecastSupplier[] }> {
   const curYm = todayMyt().slice(0, 7);
   const NO_COMPANY: CompanyFilter = { active: false, sql: "", param: null, orgId: null };
   const [sources, ag, supRes, fcRow] = await Promise.all([
@@ -11896,9 +11904,10 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
   const termOf = (d: OpenDoc): TermInfo => (supTerm.has(d.partyId) ? parseTermMonths(supTerm.get(d.partyId)) : { months: 1, flagged: true });
   const atLeastNow = (ym: string) => (ym < curYm ? curYm : ym);
   // "Fill from Forecast P&L" (owner 2026-11-10 「从forecast P&L 那边capture
-  // supplier 买的」): the Forecast P&L's supplier figures, matched to the
-  // facility's suppliers by name as the bills are, each due by its own term —
-  // the same term the P&L forecast column pays it after.
+  // supplier 买的」): every supplier's Forecast P&L figures, each due by its
+  // own term — the same term the P&L forecast column pays it after. The popup
+  // adds up the ticked ones; by default the facility's own suppliers, matched
+  // by name as the bills are.
   let fcMonths: Record<string, FcMonth> = {};
   try {
     fcMonths = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
@@ -11909,7 +11918,8 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
     if (name) supIdsByName.set(name, [...(supIdsByName.get(name) ?? []), String(r.id)]);
   }
   const termMonthsOf = (id: string) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1);
-  return sources.map((s) => {
+  const dueBySupplier = tfForecastDueBySupplier({ months: fcMonths, termMonths: termMonthsOf, fromYm: curYm });
+  const facilities = sources.map((s): CfTfFacilityInput => {
     const sec = ag.data.tf.find((t) => t.accountCode === s.accountCode);
     const draws = sec?.draws ?? [];
     const paid = new Set(draws.flatMap((d) => String(d.paidSupplier ?? "").split(",").map((x) => x.trim()).filter(Boolean)));
@@ -11923,12 +11933,7 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
     }
     const billsDue: Record<string, number> = {};
     for (const d of scheduleOpenDocs(docs, termOf)) if (d.dueSen > 0 && d.expectedYm) { const ym = atLeastNow(d.expectedYm); billsDue[ym] = (billsDue[ym] ?? 0) + d.dueSen; }
-    const forecastDue = tfForecastDue({
-      months: fcMonths,
-      supplierIds: new Set([...paid].flatMap((name) => supIdsByName.get(name) ?? [])),
-      termMonths: termMonthsOf,
-      fromYm: curYm,
-    });
+    const paidSupplierIds = [...new Set([...paid].flatMap((name) => supIdsByName.get(name) ?? []))].sort();
     return {
       accountCode: s.accountCode,
       lender: s.lenderName,
@@ -11939,21 +11944,34 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
       drawnThisMonthSen: draws.filter((d) => String(d.drawDate ?? "").slice(0, 7) === curYm).reduce((t, d) => t + d.amountSen - d.interestSen - (d.bankChargeSen ?? 0), 0),
       dueBy,
       billsDue,
-      forecastDue,
+      paidSupplierIds,
     };
   });
+  // Every supplier with Forecast P&L dues, plus every default or saved tick
+  // (named even with nothing keyed).
+  const nameOf = new Map((supRes.results ?? []).map((r) => [String(r.id), String(r.name ?? "").trim()] as const));
+  const listed = new Set([
+    ...Object.keys(dueBySupplier),
+    ...facilities.flatMap((f) => f.paidSupplierIds),
+    ...Object.values(plans).flatMap((p) => p.supplierIds ?? []),
+  ]);
+  const forecastSuppliers = [...listed]
+    .filter((id) => nameOf.has(id) || dueBySupplier[id])
+    .map((id) => ({ id, name: nameOf.get(id) || id, dueBy: dueBySupplier[id] ?? {} }));
+  return { facilities, forecastSuppliers };
 }
 
 app.get("/cashflow-forecast-inputs", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
-  const [months, accounts, tfPlans, tfFacilities] = await Promise.all([
+  const plansP = loadTfPlanStore(c.var.DB);
+  const [months, accounts, tfPlans, tf] = await Promise.all([
     loadCfForecastInputs(c.var.DB),
     cfForecastInputAccounts(c.var.DB),
-    loadTfPlanStore(c.var.DB),
-    cfForecastTfFacilities(c.var.DB, getOrgId(c)).catch(() => []),
+    plansP,
+    plansP.then((plans) => cfForecastTfFacilities(c.var.DB, getOrgId(c), plans)).catch(() => ({ facilities: [], forecastSuppliers: [] })),
   ]);
-  return c.json({ success: true, data: { months, accounts, tf: { facilities: tfFacilities, plans: tfPlans } } });
+  return c.json({ success: true, data: { months, accounts, tf: { facilities: tf.facilities, plans: tfPlans, forecastSuppliers: tf.forecastSuppliers } } });
 });
 
 // Replaces the whole map (the table sends every month it holds, the ones

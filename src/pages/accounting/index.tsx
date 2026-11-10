@@ -15,10 +15,11 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
-import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfPlanSchedule } from "@/lib/cashflow-forecast";
+import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfPlanSchedule, tfSupplierRows, tfTickedDue, tfTickedIds, type TfForecastSupplier } from "@/lib/cashflow-forecast";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { plPastForecastCol } from "@/lib/pl-forecast-edit";
 import { MonthlyPlForecastEditor } from "./monthly-pl-forecast-editor";
+import { TfSupplierPicker } from "./tf-supplier-picker";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -19011,14 +19012,15 @@ function CfForecastDrillRows({ sources, cols, depth }: {
 type CfKeyableAccount = { code: string; name: string; section: "CAPEX" | "LOAN" };
 // Trade finance in the same popup (owner 2026-11-09 「手动输入或调整」, spec
 // 2026-11-09-forecast-three-columns-design.md 5): per facility, as at today.
-// `forecastDue` (owner 2026-11-10): the Forecast P&L figures of the suppliers
-// the facility has paid before, each in the month it falls due by its term.
+// `paidSupplierIds` (owner 2026-11-10): the suppliers the facility has paid
+// before, the default ticks for Fill from Forecast P&L; `supplierIds` in the
+// plan, the owner's ticks once changed (「我要能选…就是tick」).
 type CfTfFacility = {
   accountCode: string; lender: string; limitSen: number | null; tenorDays: number; rateBp: number;
   owedNowSen: number; drawnThisMonthSen: number; dueBy: Record<string, number>; billsDue: Record<string, number>;
-  forecastDue?: Record<string, number>;
+  paidSupplierIds?: string[];
 };
-type CfTfPlan = { tenorDays?: number; rateBp?: number; months: Record<string, number> };
+type CfTfPlan = { tenorDays?: number; rateBp?: number; supplierIds?: string[]; months: Record<string, number> };
 function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const firstYm = todayYmdMY().slice(0, 7);
   const yms = useMemo(() => Array.from({ length: KEYED_MONTHS }, (_, i) => addMonthsYm(firstYm, i)), [firstYm]);
@@ -19026,6 +19028,8 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   const [months, setMonths] = useState<Record<string, Record<string, number>>>({});
   const [tfFacilities, setTfFacilities] = useState<CfTfFacility[]>([]);
   const [tfPlans, setTfPlans] = useState<Record<string, CfTfPlan>>({});
+  // Every supplier's Forecast P&L dues, for the Suppliers ticks.
+  const [tfSuppliers, setTfSuppliers] = useState<TfForecastSupplier[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -19034,13 +19038,14 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
     void (async () => {
       try {
         const r = await fetch("/api/accounting/cashflow-forecast-inputs", { cache: "no-store" });
-        const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string; data?: { months?: Record<string, Record<string, number>>; accounts?: CfKeyableAccount[]; tf?: { facilities?: CfTfFacility[]; plans?: Record<string, CfTfPlan> } } } | null;
+        const j = (await r.json().catch(() => null)) as { success?: boolean; error?: string; data?: { months?: Record<string, Record<string, number>>; accounts?: CfKeyableAccount[]; tf?: { facilities?: CfTfFacility[]; plans?: Record<string, CfTfPlan>; forecastSuppliers?: TfForecastSupplier[] } } } | null;
         if (!r.ok || !j?.success || !j.data) throw new Error(j?.error || `HTTP ${r.status}`);
         if (!live) return;
         setMonths(j.data.months ?? {});
         setAccounts(j.data.accounts ?? []);
         setTfFacilities(j.data.tf?.facilities ?? []);
         setTfPlans(j.data.tf?.plans ?? {});
+        setTfSuppliers(j.data.tf?.forecastSuppliers ?? []);
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : String(e));
       }
@@ -19107,7 +19112,7 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   // the bank pays that part. Nothing counts until Save.
   const fillTf = (f: CfTfFacility, due: Record<string, number>, source: "bills" | "forecast") => {
     if (source === "forecast" && !yms.some((ym) => (due[ym] ?? 0) > 0)) {
-      setTfNote((prev) => ({ ...prev, [f.accountCode]: "Nothing to fill: no Forecast P&L figures for this facility's suppliers falling due in these months. Key them per supplier under each material (▸) on the Forecast P&L." }));
+      setTfNote((prev) => ({ ...prev, [f.accountCode]: "Nothing to fill: the ticked suppliers have no Forecast P&L figures falling due in these months. Key them per supplier under each material (▸) on the Forecast P&L, or tick others under Suppliers." }));
       return;
     }
     const r = planTfFill(tfInput(f), due);
@@ -19120,6 +19125,19 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
         : "",
     }));
   };
+  // A tick (owner 2026-11-10 「我要能选…就是tick」) changes which suppliers Fill
+  // from Forecast P&L takes; the Drawdown row waits for the next fill, so a
+  // cell changed by hand is never overwritten unasked. Save keeps the ticks.
+  const toggleTfSupplier = (f: CfTfFacility, id: string) => {
+    setTfNote((prev) => ({ ...prev, [f.accountCode]: "Ticks changed: press Fill from Forecast P&L to fill with them." }));
+    setTfPlans((prev) => {
+      const p = prev[f.accountCode] ?? { months: {} };
+      const cur = tfTickedIds(p.supplierIds, f.paidSupplierIds ?? []);
+      if (cur.has(id)) cur.delete(id); else cur.add(id);
+      return { ...prev, [f.accountCode]: { ...p, supplierIds: [...cur].sort() } };
+    });
+  };
+  const tfMonthsLabel = `${cfYmLabel(yms[0])} – ${cfYmLabel(yms[yms.length - 1])}`;
   const save = async () => {
     setSaving(true);
     setSaveError(null);
@@ -19234,6 +19252,8 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                 const p = tfPlanOf(f.accountCode);
                 const inp = tfInput(f);
                 const sched = tfPlanSchedule({ ...inp, plan: p.months });
+                const ticked = tfTickedIds(p.supplierIds, f.paidSupplierIds ?? []);
+                const pick = tfSupplierRows({ suppliers: tfSuppliers, ticked, yms });
                 const computed: { label: string; key: "interestSen" | "repaySen" | "owedSen" | "roomSen" }[] = [
                   { label: "Interest (est.)", key: "interestSen" },
                   { label: "Repayment", key: "repaySen" },
@@ -19266,8 +19286,9 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                             title="Fill each month with the bills due from suppliers this facility has paid before, as far as the limit lets; then change any cell">
                             Fill from bills
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => fillTf(f, f.forecastDue ?? {}, "forecast")}
-                            title="Fill each month with the Forecast P&L figures of the suppliers this facility has paid before, each in the month it falls due by its term, as far as the limit lets; then change any cell">
+                          <TfSupplierPicker rows={pick.rows} tickedTotalSen={pick.tickedTotalSen} monthsLabel={tfMonthsLabel} onToggle={(id) => toggleTfSupplier(f, id)} />
+                          <Button variant="outline" size="sm" onClick={() => fillTf(f, tfTickedDue(tfSuppliers, ticked), "forecast")}
+                            title="Fill each month with the Forecast P&L figures of the suppliers ticked under Suppliers, each in the month it falls due by its term, as far as the limit lets; then change any cell">
                             Fill from Forecast P&L
                           </Button>
                         </span>
