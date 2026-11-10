@@ -31,6 +31,7 @@ import {
   newlyAddedCodes,
   type RmActiveRow,
 } from "../../lib/po-inactive-material";
+import { pickSupplierDateSlot, readSupplierDates } from "../../lib/po-supplier-dates";
 import { summarizePoGrns, type GrnHeaderLite, type GrnLineLink } from "../../lib/po-grn-refs";
 
 const app = new Hono<Env>();
@@ -154,6 +155,8 @@ function rowToPO(row: PurchaseOrderRow, items: PurchaseOrderItemRow[] = []) {
     // Dual-keyed read — Postgres folds snake_case to camelCase on some adapters
     // but raw rows stay snake_case. Default to HOOKKA when both are null.
     purchaseOrgCode: row.purchaseOrgCode ?? row.purchase_org_code ?? "HOOKKA",
+    // Review H2-8: supplier delivery Date 1 + revised 2/3/4 (null = not given).
+    supplierDates: readSupplierDates(row as unknown as Record<string, unknown>),
     createdAt: row.createdAt ?? "",
     updatedAt: row.updatedAt ?? "",
   };
@@ -1265,6 +1268,84 @@ function ensurePendingMigrations(db: D1Database): Promise<void> {
   });
   return pendingMigrations;
 }
+
+// Review H2-8 — supplier delivery dates (Date 1, revised 2/3/4). Own memo so
+// the four columns land even when the main self-apply round already ran.
+let supplierDateColumnsEnsured: Promise<void> | null = null;
+export function ensureSupplierDateColumns(db: D1Database): Promise<void> {
+  if (supplierDateColumnsEnsured) return supplierDateColumnsEnsured;
+  supplierDateColumnsEnsured = runSelfApply(db, "purchase-orders:supplier-dates", [
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_1 TEXT",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_2 TEXT",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_3 TEXT",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_4 TEXT",
+  ]).catch((err) => {
+    supplierDateColumnsEnsured = null;
+    throw err;
+  });
+  return supplierDateColumnsEnsured;
+}
+
+// POST /api/purchase-orders/:id/supplier-date — review H2-8. Body
+// { date: "YYYY-MM-DD", slot?: 1|2|3|4|"next" } records a delivery date the
+// supplier gave into the next empty slot (or the named one). A recorded slot
+// is never overwritten or cleared: 409. The write is compare-and-set
+// (`WHERE supplier_date_N IS NULL`), so two clicks cannot both fill a slot;
+// the same date sent again is a no-op. Dates only — nothing is recomputed.
+app.post("/:id/supplier-date", async (c) => {
+  const denied = await requirePermission(c, "purchase-orders", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  let body: { date?: unknown; slot?: unknown };
+  try {
+    body = (await c.req.json()) as { date?: unknown; slot?: unknown };
+  } catch {
+    return c.json({ success: false, error: "Invalid JSON in request body" }, 400);
+  }
+  // Columns first, before the read that judges the slots and the write.
+  await ensureSupplierDateColumns(c.var.DB);
+  const row = await c.var.DB
+    .prepare("SELECT * FROM purchase_orders WHERE id = ?")
+    .bind(id)
+    .first<Record<string, unknown>>();
+  if (!row) return c.json({ success: false, error: "Purchase order not found" }, 404);
+  if (String(row.status ?? "") === "CANCELLED") {
+    return c.json({ success: false, error: "This purchase order is cancelled." }, 409);
+  }
+  const date = String(body.date ?? "").trim();
+  const pick = pickSupplierDateSlot(readSupplierDates(row), date, body.slot);
+  if (!pick.ok) {
+    return c.json({ success: false, code: pick.status === 409 ? "supplier_date_recorded" : undefined, error: pick.error }, pick.status);
+  }
+  if (pick.unchanged) {
+    return c.json({ success: true, unchanged: true, data: await fetchPOWithItems(c.var.DB, id) });
+  }
+  const col = `supplier_date_${pick.slot}`; // slot is 1..4, validated above
+  const now = new Date().toISOString();
+  const res = await c.var.DB
+    .prepare(`UPDATE purchase_orders SET ${col} = ?, updated_at = ? WHERE id = ? AND ${col} IS NULL`)
+    .bind(date, now, id)
+    .run();
+  if (!res.meta?.changes) {
+    return c.json(
+      {
+        success: false,
+        code: "supplier_date_recorded",
+        error: "Someone recorded this supplier date a moment ago. Reload the PO to see it.",
+      },
+      409,
+    );
+  }
+  const updated = await fetchPOWithItems(c.var.DB, id);
+  await emitAudit(c, {
+    resource: "purchase-orders",
+    resourceId: id,
+    action: "update",
+    before: { [col]: null },
+    after: { [col]: date },
+  });
+  return c.json({ success: true, slot: pick.slot, data: updated });
+});
 
 // POST /api/purchase-orders/:id/mark-emailed — stamps lastEmailedAt after the
 // PO detail page sent the PO through Mail Center (HK-0113). The mail itself

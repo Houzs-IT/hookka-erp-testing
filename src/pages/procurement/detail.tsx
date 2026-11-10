@@ -3,6 +3,7 @@ import { todayYmdMY } from "@/lib/utils";
 import { useMemo, useState, useCallback, lazy, Suspense } from "react";
 import { AuditHistoryPanel } from "@/components/audit/AuditHistoryPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PoSupplierDatesCard } from "@/components/po-supplier-dates-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -861,6 +862,17 @@ export default function PurchaseOrderDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Review H2-8: supplier delivery Date 1 + revised 2/3/4 (never overwritten). */}
+      <PoSupplierDatesCard
+        poId={po.id}
+        dates={po.supplierDates}
+        cancelled={isCancelled}
+        onRecorded={() => {
+          invalidateCachePrefix("/api/purchase-orders");
+          fetchPO();
+        }}
+      />
 
       {/* Edit-mode form (editable until goods land — see isEditable). Replaces
           the read-only details/items cards while editing — the operator sees

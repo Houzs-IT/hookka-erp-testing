@@ -436,3 +436,97 @@ test("C2-6: GRN and PI create offer Back to the source after save; from scratch 
   assert.match(pi, /await leaveAfterSave\(j\.data\?\.id \?\? null\)/);
   assert.match(pi, /if \(!saveSource\) \{\s*navigate\("\/procurement\/pi"\);/);
 });
+
+// ── H2-8: supplier delivery Date 1 + revised 2/3/4, never overwritten ────
+import { pickSupplierDateSlot, readSupplierDates, supplierDateLabel, latestSupplierDate } from "../src/lib/po-supplier-dates.ts";
+import poRoutesApp from "../src/api/routes/purchase-orders.ts";
+
+test("H2-8: next empty slot; a recorded slot is refused; same date is a no-op", () => {
+  const none = [null, null, null, null];
+  assert.deepEqual(pickSupplierDateSlot(none, "2026-11-20"), { ok: true, slot: 1 });
+  const two = ["2026-11-20", "2026-11-25", null, null];
+  assert.deepEqual(pickSupplierDateSlot(two, "2026-12-01", "next"), { ok: true, slot: 3 });
+  assert.deepEqual(pickSupplierDateSlot(two, "2026-11-25", "next"), { ok: true, unchanged: true });
+  const over = pickSupplierDateSlot(two, "2026-12-01", 2);
+  assert.equal(over.ok, false);
+  assert.equal(over.status, 409);
+  assert.match(over.error, /Revised date 2 is already recorded \(2026-11-25\) and can't be overwritten/);
+  const full = pickSupplierDateSlot(["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"], "2026-02-01");
+  assert.equal(full.status, 409);
+  assert.equal(pickSupplierDateSlot(none, "20/11/2026").status, 400);
+  assert.equal(pickSupplierDateSlot(none, "2026-11-20", 5).status, 400);
+  assert.deepEqual(readSupplierDates({ supplier_date_1: "2026-11-20", supplierDate2: "2026-11-25T00:00:00Z" }), ["2026-11-20", "2026-11-25", null, null]);
+  assert.equal(supplierDateLabel(1), "Date 1");
+  assert.equal(latestSupplierDate(two), "2026-11-25");
+});
+
+function supplierDateHarness(row, { changes = 1 } = {}) {
+  const runs = [];
+  const stmt = (sql, args = []) => ({
+    sql,
+    args,
+    bind: (...a) => stmt(sql, a),
+    async first() {
+      if (/FROM purchase_orders WHERE id = \?/.test(sql)) return row ? { ...row } : null;
+      return null;
+    },
+    async all() {
+      return { results: [] };
+    },
+    async run() {
+      runs.push({ sql, args });
+      if (/^UPDATE purchase_orders SET supplier_date_/.test(sql)) return { success: true, meta: { changes } };
+      return { success: true, meta: { changes: 0 } };
+    },
+  });
+  const DB = { prepare: (sql) => stmt(sql.replace(/\s+/g, " ").trim()), async batch(l) { return l.map(() => ({ success: true })); } };
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("DB", DB);
+    c.set("orgId", "org-1");
+    c.set("userId", "u-1");
+    c.set("userRole", "SUPER_ADMIN");
+    await next();
+  });
+  app.route("/", poRoutesApp);
+  return { app, runs };
+}
+
+test("H2-8: the route self-applies the columns, fills the next slot compare-and-set, refuses overwrite", async () => {
+  const row = { id: "po-1", status: "CONFIRMED", supplier_date_1: "2026-11-20", supplier_date_2: null };
+  const h = supplierDateHarness(row);
+  const res = await send(h.app, "POST", "/po-1/supplier-date", { date: "2026-11-28" });
+  assert.equal(res.status, 200, await res.clone().text());
+  const alters = h.runs.filter((r) => /ADD COLUMN IF NOT EXISTS supplier_date_/.test(r.sql));
+  const upd = h.runs.find((r) => /^UPDATE purchase_orders SET supplier_date_2 = \?/.test(r.sql));
+  assert.ok(upd, "slot 2 written");
+  assert.match(upd.sql, /WHERE id = \? AND supplier_date_2 IS NULL/);
+  // First call in this process: the four ALTERs ran, before the write.
+  assert.equal(alters.length, 4);
+  assert.ok(h.runs.indexOf(upd) > h.runs.indexOf(alters[3]));
+
+  const over = supplierDateHarness(row);
+  const res2 = await send(over.app, "POST", "/po-1/supplier-date", { date: "2026-12-01", slot: 1 });
+  assert.equal(res2.status, 409);
+  assert.equal((await res2.json()).code, "supplier_date_recorded");
+  assert.ok(!over.runs.some((r) => /^UPDATE purchase_orders SET supplier_date_/.test(r.sql)), "no write");
+
+  // Lost race: the compare-and-set matched nothing → 409, not a silent success.
+  const race = supplierDateHarness(row, { changes: 0 });
+  const res3 = await send(race.app, "POST", "/po-1/supplier-date", { date: "2026-11-29" });
+  assert.equal(res3.status, 409);
+
+  const cancelled = supplierDateHarness({ ...row, status: "CANCELLED" });
+  assert.equal((await send(cancelled.app, "POST", "/po-1/supplier-date", { date: "2026-11-29" })).status, 409);
+});
+
+test("H2-8: the PO edit PUT never writes the supplier dates; detail page shows the card", () => {
+  const route = read("src/api/routes/purchase-orders.ts");
+  const put = route.slice(route.indexOf('app.put("/:id"'), route.indexOf("let pendingMigrations"));
+  assert.doesNotMatch(put, /supplier_date_/);
+  assert.match(route, /ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_4 TEXT/);
+  const schema = JSON.parse(read("tests/db-schema.json"));
+  for (const n of [1, 2, 3, 4]) assert.ok(schema.purchase_orders.includes(`supplier_date_${n}`));
+  const detail = read("src/pages/procurement/detail.tsx");
+  assert.match(detail, /<PoSupplierDatesCard/);
+});
