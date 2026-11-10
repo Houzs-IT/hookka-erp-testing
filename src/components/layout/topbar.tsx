@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { ChevronDown, LogOut, User, Building2, MonitorSmartphone } from "lucide-react";
+import { ChevronDown, LogOut, User, Building2, MonitorSmartphone, Sun, Moon, Laptop } from "lucide-react";
+import { readThemePref, setThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { GlobalSearch } from "./global-search";
 import { NotificationBell } from "./notification-bell";
@@ -40,6 +41,8 @@ export function Topbar({ user }: TopbarProps) {
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const closeDevices = useCallback(() => setDevicesOpen(false), []);
+  const [themePref, setThemePrefState] = useState<ThemePref>(() => readThemePref());
+  const pickTheme = (p: ThemePref) => { setThemePref(p); setThemePrefState(p); };
   const currentOrg = user?.organisationCode || "HOOKKA";
 
   // Prefer the real signed-in user for the avatar label + dropdown.
@@ -121,7 +124,7 @@ export function Topbar({ user }: TopbarProps) {
           <ChevronDown className="h-3 w-3 text-[#9CA3AF] hidden sm:block" />
         </button>
         {userDropdownOpen && (
-          <div className="absolute right-0 top-full mt-1 w-48 rounded-md border border-[#E2DDD8] bg-white shadow-lg py-1 z-50">
+          <div className="absolute right-0 top-full mt-1 w-56 rounded-md border border-[#E2DDD8] bg-white shadow-lg py-1 z-50">
             <button className="flex w-full items-center gap-2 px-4 py-2 text-sm text-[#4B5563] hover:bg-[#F0ECE9]">
               <User className="h-4 w-4" />
               Profile
@@ -133,6 +136,34 @@ export function Topbar({ user }: TopbarProps) {
               <MonitorSmartphone className="h-4 w-4" />
               Signed-in Devices
             </button>
+            <hr className="my-1 border-[#E2DDD8]" />
+            {/* Theme (src/lib/theme.ts). Default Light; System follows the OS. */}
+            <div className="px-4 pt-1 pb-2" role="group" aria-label="Theme">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[#9CA3AF] mb-1.5">Theme</p>
+              <div className="grid grid-cols-3 gap-1">
+                {([
+                  ["light", "Light", Sun],
+                  ["dark", "Dark", Moon],
+                  ["system", "System", Laptop],
+                ] as const).map(([value, label, Icon]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={themePref === value}
+                    onClick={() => pickTheme(value)}
+                    className={cn(
+                      "flex flex-col items-center gap-0.5 rounded-md border px-1 py-1.5 text-[11px]",
+                      themePref === value
+                        ? "border-[#6B5C32] bg-[#F5F2ED] text-[#6B5C32] font-medium"
+                        : "border-[#E2DDD8] text-[#4B5563] hover:bg-[#F0ECE9]",
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <hr className="my-1 border-[#E2DDD8]" />
             <button
               className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"

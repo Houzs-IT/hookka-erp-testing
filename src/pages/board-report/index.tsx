@@ -122,7 +122,7 @@ export default function BoardReportPage() {
   }, [month, toast, setData]);
 
   return (
-    <div className="brp-root">
+    <div className="brp-root" data-theme="light">
       <div className="print:hidden">
         <FinancePageTitle
           title="Board Report"
