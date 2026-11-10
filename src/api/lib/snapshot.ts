@@ -325,6 +325,14 @@ function flightKey(tableName: string, orgId: string, cacheKey: string): string {
   return `${tableName}::${orgId}::${cacheKey}`;
 }
 
+// A watermark as ISO, or null. The values may arrive as Date objects
+// (TIMESTAMP columns) or strings (TEXT columns) — see isSnapshotFresh.
+function isoOrNull(v: unknown): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  const t = new Date(v as string).getTime();
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+
 // computeFresh() + write-back, single-flighted by flightKey. Concurrent callers
 // share one in-flight promise; the entry clears when it settles.
 async function computeAndStore<T extends Record<string, unknown>>(
@@ -414,6 +422,12 @@ export async function withSnapshot<T extends Record<string, unknown>>(
     // Return false to hand the result back without saving it, e.g. a payload
     // with a failed section that must not outlive this request.
     shouldStore?: (data: T) => boolean;
+    // Called when this request is answered with the stale copy (the
+    // staleWhileRevalidate path), with the source watermark that copy was
+    // built from and the newest source change now, both ISO (null when
+    // unreadable). Lets a route tell its page to ask again once the
+    // rebuild has landed (owner 2026-11-10, src/lib/stale-refresh.ts).
+    onServedStale?: (copy: { builtFrom: string | null; sourceMax: string | null }) => void;
   },
 ): Promise<T> {
   const [snap, signature] = await Promise.all([
@@ -482,6 +496,7 @@ export async function withSnapshot<T extends Record<string, unknown>>(
             ),
         );
       }
+      opts.onServedStale?.({ builtFrom: isoOrNull(snap.builtFrom), sourceMax: isoOrNull(currentMax) });
       return snap.data as T;
     }
   }

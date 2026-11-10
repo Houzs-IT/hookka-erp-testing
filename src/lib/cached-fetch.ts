@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildTraceparent } from "./trace";
 import { humanizeError } from "./humanize-error";
+import { NO_STALE_RUN, planStaleRetry, type StaleRun } from "./stale-refresh";
 
 // Per-build cache namespace. `__BUILD_ID__` is injected by Vite (see
 // vite.config.ts `define`) as a unique-per-build string. Every new
@@ -565,6 +566,11 @@ type UseCachedJsonResult<T> = {
    * before `refresh()`, because a refresh cancels the running request.
    */
   isFetching: () => boolean;
+  /**
+   * With `retryStale`: true while the server's last answer was its older copy
+   * and the hook is waiting to ask again. Always false otherwise.
+   */
+  updating: boolean;
 };
 
 export type UseCachedJsonOptions = {
@@ -582,6 +588,13 @@ export type UseCachedJsonOptions = {
    * returns unchanged data.
    */
   reuseUnchanged?: boolean;
+  /**
+   * A snapshot endpoint (e.g. /api/accounting/dashboard) may answer with the
+   * copy it had before the data changed, marked `stale` beside data, while it
+   * rebuilds behind. With this on, the hook asks again on the schedule in
+   * stale-refresh.ts and reports `updating` meanwhile. Off by default.
+   */
+  retryStale?: boolean;
 };
 
 /**
@@ -622,6 +635,10 @@ export function useCachedJson<T = unknown>(
   const lastUrl = useRef<string | null>(null);
   const fetchingRef = useRef(false);
   const reuseUnchanged = options.reuseUnchanged === true;
+  const retryStale = options.retryStale === true;
+  const [updating, setUpdating] = useState(false);
+  const staleRun = useRef<StaleRun>(NO_STALE_RUN);
+  const staleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!url) {
@@ -646,7 +663,24 @@ export function useCachedJson<T = unknown>(
       setLoading(cached === null);
       setError(null);
       setFailure(null);
+      staleRun.current = NO_STALE_RUN;
     }
+
+    // retryStale: after each answer, ask again while the server says it
+    // served its older copy (stale-refresh.ts decides when to stop).
+    const settleStale = (body: unknown) => {
+      if (!retryStale) return;
+      const next = planStaleRetry(staleRun.current, body);
+      staleRun.current = next.run;
+      setUpdating(next.retryInMs !== null);
+      if (next.retryInMs !== null) {
+        // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in the effect's cleanup
+        staleTimer.current = setTimeout(() => {
+          staleTimer.current = null;
+          setTick((t) => t + 1);
+        }, next.retryInMs);
+      }
+    };
 
     // Stale-while-revalidate: ALWAYS fire a network refetch on mount /
     // url-change. The TTL check used to skip the refetch when the cache
@@ -694,6 +728,7 @@ export function useCachedJson<T = unknown>(
             // "not found" branch can never reach it off the back of a
             // route that simply isn't mounted.
             setFailure({ kind: "degraded", status: 200, message: stale });
+            settleStale(null);
             return;
           }
         }
@@ -707,6 +742,7 @@ export function useCachedJson<T = unknown>(
         setData(raw);
         setError(null);
         setFailure(null);
+        settleStale(raw);
       })
       .catch((err) => {
         // A consumer that cancelled itself (unmount / URL change) stays
@@ -720,6 +756,7 @@ export function useCachedJson<T = unknown>(
         const f = classifyFetchFailure(err);
         setFailure(f);
         setError(f.message);
+        settleStale(null);
       })
       .finally(() => {
         // A cancelled run leaves the flag alone: the run that replaced it owns it now.
@@ -731,8 +768,14 @@ export function useCachedJson<T = unknown>(
     return () => {
       cancelled = true;
       releaseInflight(joinedUrl);
+      // A pending stale retry dies with this run (URL change, unmount, or a
+      // refetch from elsewhere — whose answer decides again).
+      if (staleTimer.current) {
+        clearTimeout(staleTimer.current);
+        staleTimer.current = null;
+      }
     };
-  }, [url, ttlSec, tick, reuseUnchanged]);
+  }, [url, ttlSec, tick, reuseUnchanged, retryStale]);
 
   const refresh = useCallback(() => {
     setTick((t) => t + 1);
@@ -768,7 +811,7 @@ export function useCachedJson<T = unknown>(
     };
   }, [url, revalidateOnFocus]);
 
-  return { data, loading, error, failure, refresh, isFetching };
+  return { data, loading, error, failure, refresh, isFetching, updating };
 }
 
 /**

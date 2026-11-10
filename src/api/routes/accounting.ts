@@ -16575,6 +16575,9 @@ app.get("/dashboard", async (c) => {
   // ranges would share one cached copy.
   const dashRangeKey = `${String(c.req.query("from") ?? "")}~${String(c.req.query("to") ?? "")}`;
   const dashCacheKey = `${DASH_PAYLOAD_V}:${quarterly ? "q" : "m"}:${wanted}:${dashRangeKey}:${nowYm}:${dashOrgId}`;
+  // Set by withSnapshot when it answers with the stale copy (a holder, so the
+  // callback's write is not narrowed away at the return below).
+  const dashServed: { stale: { builtFrom: string | null; sourceMax: string | null } | null } = { stale: null };
   const dashPayload = await withSnapshot(
     c.var.DB,
     {
@@ -17312,9 +17315,14 @@ app.get("/dashboard", async (c) => {
     },
     dashCacheKey,
     c,
-    { staleWhileRevalidate: true },
+    // A stale copy is still served at once; `stale` beside data tells the page
+    // to ask again once the rebuild has landed (owner 2026-11-10 「要，改」:
+    // the first open after a Forecast save showed the old figures;
+    // src/lib/stale-refresh.ts). Outside the stored payload, so no
+    // DASH_PAYLOAD_V bump.
+    { staleWhileRevalidate: true, onServedStale: (copy) => { dashServed.stale = copy; } },
   );
-  return c.json({ success: true, data: dashPayload });
+  return c.json({ success: true, data: dashPayload, ...(dashServed.stale ? { stale: dashServed.stale } : {}) });
 });
 
 // ---------------------------------------------------------------------------

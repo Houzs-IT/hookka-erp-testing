@@ -30,8 +30,13 @@ type DashRow = DashFullRow & {
 export function DashScreen() {
   const [line, setLine] = useState<DashLine>("sales");
   const [pick, setPick] = useState<number | null>(null);
-  const { data: resp, loading, error } = useCachedJson<{ success?: boolean; error?: string; data?: { rows: DashRow[] } }>(
+  // retryStale: when the server first answers with its older copy (e.g. right
+  // after a Forecast save), keep it up with "Updating…" and ask again until the
+  // new figures arrive (owner 2026-11-10; src/lib/stale-refresh.ts).
+  const { data: resp, loading, error, updating } = useCachedJson<{ success?: boolean; error?: string; data?: { rows: DashRow[] } }>(
     "/api/accounting/dashboard?granularity=month&periods=12",
+    undefined,
+    { retryStale: true },
   );
   const rows = resp?.success ? resp.data?.rows ?? [] : [];
   // The months shown: the last four that have happened (the rows after the
@@ -62,9 +67,16 @@ export function DashScreen() {
           <FinanceNote>No months to show.</FinanceNote>
         ) : (
           <>
-            <p style={{ margin: "10px 16px 0", minHeight: 16, fontSize: 11, color: "#9C6F1E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {last.partial ? `* ${monthName(last).replace(" *", "")} is still running — figures are so far.` : ""}
-            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 16px 0", minHeight: 16, fontSize: 11 }}>
+              <p style={{ margin: 0, flex: 1, minWidth: 0, color: "#9C6F1E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {last.partial ? `* ${monthName(last).replace(" *", "")} is still running — figures are so far.` : ""}
+              </p>
+              {/* Always laid out, shown only while newer figures are on their way. */}
+              <span role="status" aria-live="polite" data-testid="m-dash-updating"
+                style={{ flexShrink: 0, color: "#6B7280", visibility: updating ? "visible" : "hidden" }}>
+                Updating…
+              </span>
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "12px 14px" }}>
               <DashCard title="Income Statement" note="RM · % of sales">
                 <ShowSelect caption="Show" label="Income statement line" value={line} options={MOBILE_DASH_LINES} onChange={setLine} />

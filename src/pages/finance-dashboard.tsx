@@ -47,7 +47,8 @@ import {
   csForecastAmt as csForecastAmtOf,
   salaryDeptSplit,
 } from "@/lib/finance-dashboard-calc";
-import { BarChart3, ChevronDown, ChevronRight } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 
@@ -614,14 +615,42 @@ export default function FinanceDashboardPage() {
 
   // The loading state is cleared by the toggle handler (a user action), not
   // here — setting state synchronously inside an effect cascades renders.
+  // When the server answers with its older copy (it rebuilds the snapshot
+  // behind; owner 2026-11-10: the first open after a Forecast save showed the
+  // old figures), those stay up with "Updating…" and the page asks again on
+  // the shared schedule until the new figures arrive (src/lib/stale-refresh.ts).
+  const [updating, setUpdating] = useState(false);
   useEffect(() => {
-    let stale = false;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let run = NO_STALE_RUN;
     const range = fromYm && toYm && fromYm <= toYm ? `&from=${fromYm}&to=${toYm}` : "";
-    fetch(`/api/accounting/dashboard?granularity=${granularity}&periods=${granularity === "quarter" ? 8 : 12}${range}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: { rows: Row[] } }>)
-      .then((j) => { if (!stale && j?.success && j.data) setRows(j.data.rows); })
-      .catch(() => { if (!stale) setRows([]); });
-    return () => { stale = true; };
+    const url = `/api/accounting/dashboard?granularity=${granularity}&periods=${granularity === "quarter" ? 8 : 12}${range}`;
+    const load = () => {
+      fetch(url)
+        .then((r) => r.json() as Promise<{ success?: boolean; data?: { rows: Row[] }; stale?: unknown }>)
+        .then((j) => {
+          if (cancelled) return;
+          if (j?.success && j.data) setRows(j.data.rows);
+          const next = planStaleRetry(run, j);
+          run = next.run;
+          setUpdating(next.retryInMs !== null);
+          // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in this effect's cleanup
+          if (next.retryInMs !== null) timer = setTimeout(load, next.retryInMs);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // A failed retry keeps the figures already on screen; only a failed
+          // first load shows the empty state.
+          setRows((prev) => prev ?? []);
+          setUpdating(false);
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [granularity, fromYm, toYm]);
 
   // The periods drawn: only those that have happened, the last 6 / 12 (or the
@@ -975,6 +1004,18 @@ export default function FinanceDashboardPage() {
           explain="The books' figures against the Forecast P&L, month by month or by quarter."
         />
         <span className="text-xs text-[#9CA3AF]">* = period still running / not a full quarter</span>
+        {/* Always laid out, shown only while newer figures are on their way,
+            so the header never jumps. */}
+        <span
+          role="status"
+          aria-live="polite"
+          data-testid="dash-updating"
+          title="These are the figures from before the latest change. The new figures are being worked out and will replace them by themselves."
+          className={`inline-flex items-center gap-1 text-xs text-[#6B7280] ${updating && rows !== null ? "" : "invisible"}`}
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          Updating…
+        </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-[#6B7280]">Period</span>
           <input type="month" value={fromYm} onChange={(e) => { setRows(null); setFromYm(e.target.value); }}
