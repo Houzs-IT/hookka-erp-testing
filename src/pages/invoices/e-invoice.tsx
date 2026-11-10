@@ -23,7 +23,6 @@ import {
 } from "lucide-react";
 import type { EInvoice } from "@/types";
 import { useResizableTables } from "@/lib/use-resizable-tables";
-import { useEscapeClose } from "@/lib/escape-stack";
 import {
   E_INVOICE_STATUS_NAME,
   E_INVOICE_WHERE,
@@ -33,6 +32,7 @@ import {
   mytMonth,
   type EInvoiceStatus,
 } from "@/lib/e-invoice";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // An issued sales invoice with no e-Invoice yet (GET /api/e-invoices/candidates).
 type Candidate = {
@@ -76,8 +76,13 @@ export default function EInvoicePage() {
   const [reason, setReason] = useState("");
   const [selectedXmlId, setSelectedXmlId] = useState<string | null>(null);
   // Esc closes the open step (owner 2026-10-02: every finance popup closes on
-  // Esc); not while it is being saved.
-  useEscapeClose(() => { if (!busy) setDialog(null); }, !!dialog);
+  // Esc); not while it is being saved, and after "Discard your changes?"
+  // once something was typed or picked (review pass 2 C2-1 follow-up).
+  useFormDiscardGuard({ submissionId, result, uuid, reason, selectedXmlId }, {
+    open: !!dialog,
+    busy,
+    onClose: () => setDialog(null),
+  });
 
   const fetchData = async () => {
     invalidateCachePrefix("/api/e-invoices");

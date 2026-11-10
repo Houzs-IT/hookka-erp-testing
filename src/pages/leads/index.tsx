@@ -22,6 +22,8 @@ import { useToast } from "@/components/ui/toast";
 import { responseErrorMessage } from "@/lib/response-error";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { figureOrDash } from "@/lib/loading-figure";
 
 type Lead = {
   id: string;
@@ -136,6 +138,9 @@ export default function LeadsPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
   const [saving, setSaving] = useState(false);
+  // Esc or a backdrop click on a half-filled New Lead asks "Discard your
+  // changes?" first (review pass 2 C2-1 follow-up).
+  const addGuard = useFormDiscardGuard(form, { open: showAdd, busy: saving, onClose: () => setShowAdd(false) });
   const [openLeadId, setOpenLeadId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
@@ -416,11 +421,11 @@ export default function LeadsPage() {
           </div>
           <div className="text-right">
             <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">Open pipeline</div>
-            <div className="text-lg font-semibold text-[#1F1D1B]">{formatCurrency(openValueSen / 100)}</div>
+            <div className="text-lg font-semibold text-[#1F1D1B]">{figureOrDash(!loaded, openValueSen, formatCurrency)}</div>
           </div>
           <div className="text-right">
             <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">Confirmed</div>
-            <div className="text-lg font-semibold text-[#15803D]">{formatCurrency(wonValueSen / 100)}</div>
+            <div className="text-lg font-semibold text-[#15803D]">{figureOrDash(!loaded, wonValueSen, formatCurrency)}</div>
           </div>
           <button
             onClick={() => setShowAdd(true)}
@@ -500,7 +505,7 @@ export default function LeadsPage() {
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: s.accent }} />
                 <span className="text-sm font-semibold text-[#1F1D1B]">{s.label}</span>
               </div>
-              <span className="text-xs text-[#9CA3AF] tabular-nums">{byStage[s.key].length}</span>
+              <span className="text-xs text-[#9CA3AF] tabular-nums">{figureOrDash(!loaded, byStage[s.key].length)}</span>
             </div>
             <div
               className="rounded-xl p-2 min-h-[120px] space-y-2 transition-all"
@@ -568,7 +573,7 @@ export default function LeadsPage() {
 
       {/* Add-lead modal */}
       {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowAdd(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={addGuard.onBackdrop}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-[#1F1D1B]">New potential customer</h2>
@@ -651,6 +656,9 @@ function LeadDetailDrawer({
   });
   const [saving, setSaving] = useState(false);
   const [showConvert, setShowConvert] = useState(false);
+  // Esc or a click beside the drawer asks "Discard your changes?" while an
+  // edit is unsaved; a save re-bases it (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard(draft, { onClose, busy: saving });
   const stageMeta = STAGES.find((s) => s.key === lead.stage) ?? STAGES[0];
   const alreadyCustomer = !!lead.won_customer_id;
 
@@ -680,6 +688,7 @@ function LeadDetailDrawer({
         toast.error(await responseErrorMessage(res, "Couldn't save the lead"));
         return;
       }
+      guard.markClean();
       await onSaved();
     } finally {
       setSaving(false);
@@ -687,7 +696,7 @@ function LeadDetailDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onMouseDown={guard.onBackdrop}>
       <div
         className="w-full max-w-[560px] h-full bg-[#FAF9F7] shadow-2xl overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
@@ -821,6 +830,7 @@ function ConvertLeadDialog({
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const guard = useFormDiscardGuard(f, { onClose, busy });
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
   const canSubmit = f.code.trim() && f.name.trim() && emailValid(f.email);
 
@@ -927,7 +937,7 @@ function ConvertLeadDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onMouseDown={guard.onBackdrop}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-lg font-semibold text-[#1F1D1B]">Confirm customer</h2>
@@ -1217,7 +1227,7 @@ function LeadCatalogPanel({ leadId }: { leadId: string }) {
                 {it.product_code ? <span className="font-mono text-[#6B5C32]">{it.product_code}</span> : null}
                 {it.product_code && it.product_name ? " · " : ""}{it.product_name}
               </span>
-              {it.price_sen != null ? <span className="text-xs text-[#3E6570] font-medium">{formatCurrency(it.price_sen / 100)}</span> : null}
+              {it.price_sen != null ? <span className="text-xs text-[#3E6570] font-medium">{formatCurrency(it.price_sen)}</span> : null}
               <button onClick={() => void del(it.id)} className="ml-auto p-1 text-[#9A3A2D] hover:bg-[#F9E1DA] rounded" title="Remove"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
           ))}

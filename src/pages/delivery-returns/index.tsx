@@ -14,6 +14,9 @@ import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { useToast } from "@/components/ui/toast";
 import { Undo2, Plus, X, Loader2 } from "lucide-react";
 import { deliveryReturnStatus } from "@/lib/delivery-return-status";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
+import { useNavGuard } from "@/lib/use-nav-guard";
+import { figureOrDash } from "@/lib/loading-figure";
 
 interface ReturnItem {
   problem: string;
@@ -59,6 +62,8 @@ export default function DeliveryReturnsPage() {
     if (createFrom) setShowCreate(true);
   }, [createFrom]);
 
+  // "—" until the list has arrived, not "0" (review pass 2 C1-11).
+  const countsLoading = loading && !raw;
   const counts = useMemo(() => {
     const c = { open: 0, inService: 0, closed: 0 };
     for (const r of rows) {
@@ -158,9 +163,9 @@ export default function DeliveryReturnsPage() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#1F1D1B]">{counts.open}</div><div className="text-xs text-[#6B7280]">Open</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#6B5C32]">{counts.inService}</div><div className="text-xs text-[#6B7280]">Service in progress</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#1F1D1B]">{counts.closed}</div><div className="text-xs text-[#6B7280]">Resolved</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(countsLoading, counts.open)}</div><div className="text-xs text-[#6B7280]">Open</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#6B5C32]">{figureOrDash(countsLoading, counts.inService)}</div><div className="text-xs text-[#6B7280]">Service in progress</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(countsLoading, counts.closed)}</div><div className="text-xs text-[#6B7280]">Resolved</div></CardContent></Card>
       </div>
 
       <DataGrid<DeliveryReturn>
@@ -232,6 +237,14 @@ function CreateReturnModal({
   const [loadingItems, setLoadingItems] = useState(false);
   const [ticked, setTicked] = useState<TickState>({});
   const [creating, setCreating] = useState(false);
+  // Esc or a backdrop click asks "Discard your changes?" once a line is
+  // ticked or a different DO picked; a deep-linked DO loading by itself does
+  // not count (review pass 2 C2-1 follow-up).
+  const dirty = Object.values(ticked).some((t) => t.on) || (doId !== "" && doId !== (initialDoId ?? ""));
+  const guard = useDiscardGuard({ open: true, dirty, busy: creating, onClose });
+  // Menu, link, Back or phone swipe ask "Leave without saving?" too (review
+  // pass 2 H3-1 follow-up); the jump to the new return after a create doesn't.
+  const nav = useNavGuard(dirty, "You have an unsaved delivery return. Leave without saving?");
   // T-006 R10 — the create route is wrapped in withIdempotency server-side; a
   // retry after a lost response must not raise a second return for the same
   // goods (which the R7 cap would then reject as an over-return).
@@ -353,6 +366,7 @@ function CreateReturnModal({
         toast.error(json?.error || "Failed to create the return");
         return;
       }
+      nav.allowNext();
       onCreated(json.data.id);
     } catch {
       toast.error("Network error");
@@ -364,7 +378,7 @@ function CreateReturnModal({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      onClick={onClose}
+      onMouseDown={guard.onBackdrop}
     >
       <div
         className="bg-white rounded-xl w-full max-w-lg max-h-[85vh] overflow-auto"

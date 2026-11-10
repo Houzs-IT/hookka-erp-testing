@@ -28,6 +28,7 @@ import { formatCurrency } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
 import { useIdempotencyKeys } from "@/lib/idempotency-key";
 import { Plus, Trash2, History, Save } from "lucide-react";
+import { useNavGuard } from "@/lib/use-nav-guard";
 
 type AdjustmentType = "RM" | "WIP" | "FG";
 type AdjustmentReason =
@@ -187,6 +188,13 @@ export default function StockAdjustmentsPage() {
 
   const [rows, setRows] = useState<DraftRow[]>([newDraftRow()]);
   const [submitting, setSubmitting] = useState(false);
+  // Leaving by menu, link, Back or phone swipe with a row typed but not
+  // posted asks "Leave without saving?" (review pass 2 H3-1 follow-up). A
+  // post that went through leaves one blank row, which does not count.
+  useNavGuard(
+    rows.some((r) => r.status !== "saved" && Boolean(r.itemId || r.qty.trim() || r.unitCost.trim() || r.notes.trim())),
+    "You have stock adjustments that are not posted. Leave without saving?",
+  );
   // C1-7 (review pass 2): one key per row, so a retried row replays its own
   // adjustment instead of making a second one.
   const adjIdem = useIdempotencyKeys();

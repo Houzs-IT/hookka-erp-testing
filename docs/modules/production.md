@@ -72,7 +72,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `ProductionPage` | `src/pages/production/index.tsx:600` | WIP board; every column/row branches on `activeTab` |
 | `filteredOrders` (memo) | `src/pages/production/index.tsx:2881` | Dept-narrow + overdue-set grid filter |
 | `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5594 / 5553` | FG sticker set (immediate paint → /p/ token upgrade) |
-| `BOMManagementPage` | `src/pages/bom.tsx:5980` | BOM page shell (tabs, list) |
+| `BOMManagementPage` | `src/pages/bom.tsx:5988` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2974 / 3864` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
 | `applyWipInventoryChange` | `production-orders/_helpers.ts:2574` | WIP inventory change; idempotent ONLY when `orgId` passed |

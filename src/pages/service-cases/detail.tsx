@@ -41,6 +41,7 @@ import {
   ArrowLeft, CheckCircle2, XCircle, RotateCcw, Plus, X, Wrench, AlertCircle, Loader2,
   Pencil, Check, Download,
 } from "lucide-react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 type CaseStatus = "OPEN" | "IN_PROGRESS" | "CLOSED" | "CANCELLED";
 type SourceType = "SO" | "CO" | "EXTERNAL";
@@ -3189,6 +3190,10 @@ function SpawnServiceOrderModal({
     }>
   >([]);
   const [submitting, setSubmitting] = useState(false);
+  // Esc or a backdrop click asks "Discard your changes?" once a mode, line
+  // or quantity was picked; nothing happens mid-submit (review pass 2 C2-1
+  // follow-up). Cancel / ✕ still close at once.
+  const guard = useFormDiscardGuard({ mode, linePicks, freeLines }, { onClose, busy: submitting });
 
   // The catalogue the picker offers AND the rule-check runs against — one
   // list, so "the picker showed it" and "the server accepted it" cannot
@@ -3348,7 +3353,7 @@ function SpawnServiceOrderModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b border-[#E2DDD8]">
           <h3 className="text-lg font-semibold text-[#1F1D1B]">Spawn Service Order</h3>

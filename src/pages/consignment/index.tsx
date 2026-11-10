@@ -37,6 +37,7 @@ import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
 import { z } from "zod";
 import { csvBlob } from "@/lib/csv-cell";
+import { figureOrDash } from "@/lib/loading-figure";
 
 const DOListSchema = z
   .object({
@@ -356,6 +357,9 @@ export default function SalesPage() {
   ]);
 
   const statsTotal = kpiSource.total;
+  // Neither the stats nor the list has arrived yet: the KPI tiles show "—",
+  // not "0" (review pass 2 C1-11). A real zero after loading is unchanged.
+  const kpiLoading = !statsResp && !ordersResp;
   const draftCount = kpiSource.byStatus.DRAFT ?? 0;
   const confirmedCount = Math.max(0, statsTotal - draftCount);
   // Tab money — consignment order value (each CO's own totalSen, the grid's
@@ -628,7 +632,7 @@ export default function SalesPage() {
       </div>
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-5">
-        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Total Orders</p><p className="text-2xl font-bold">{statsTotal}</p></CardContent></Card>
+        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Total Orders</p><p className="text-2xl font-bold">{figureOrDash(kpiLoading, statsTotal)}</p></CardContent></Card>
         <Card>
           <CardContent className="p-2.5">
             <p className="text-xs text-[#6B7280]">
@@ -638,13 +642,13 @@ export default function SalesPage() {
               "text-xl font-bold truncate",
               hasActiveFilters && "text-[#6B5C32]"
             )}>
-              {formatCurrency(hasActiveFilters ? filteredRevenue : totalRevenue)}
+              {figureOrDash(kpiLoading, hasActiveFilters ? filteredRevenue : totalRevenue, formatCurrency)}
             </p>
           </CardContent>
         </Card>
-        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Outstanding</p><p className="text-xl font-bold text-[#9C6F1E]">{outstandingCount}</p></CardContent></Card>
-        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Pending Delivery</p><p className="text-xl font-bold text-[#3E6570]">{pendingDeliveryCount}</p></CardContent></Card>
-        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Completed</p><p className="text-xl font-bold text-[#4F7C3A]">{completedCount}</p></CardContent></Card>
+        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Outstanding</p><p className="text-xl font-bold text-[#9C6F1E]">{figureOrDash(kpiLoading, outstandingCount)}</p></CardContent></Card>
+        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Pending Delivery</p><p className="text-xl font-bold text-[#3E6570]">{figureOrDash(kpiLoading, pendingDeliveryCount)}</p></CardContent></Card>
+        <Card><CardContent className="p-2.5"><p className="text-xs text-[#6B7280]">Completed</p><p className="text-xl font-bold text-[#4F7C3A]">{figureOrDash(kpiLoading, completedCount)}</p></CardContent></Card>
       </div>
 
       {/* Filters */}

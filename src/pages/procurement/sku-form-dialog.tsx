@@ -11,6 +11,8 @@ import { X } from "lucide-react";
 import { unitPriceFieldToSen } from "@/lib/money-field";
 import { formatUnitPriceInput } from "@/lib/unit-price";
 import { todayYmdMY } from "@/lib/utils";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { useNavGuard } from "@/lib/use-nav-guard";
 
 export type SupplierSKU = {
   id: string;
@@ -211,22 +213,21 @@ export function SKUFormDialog({
     });
   };
 
-  // Close on Escape key — operators expect dialog dismissal even when focus
-  // is trapped inside an Input.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Esc (even with focus in an Input) or a backdrop click closes — asking
+  // "Discard your changes?" first once anything was typed or picked (review
+  // pass 2 C2-1 follow-up). ✕ / Cancel still close at once.
+  const guard = useFormDiscardGuard(
+    { internalRMCode, materialName, supplierId, supplierSku, supplierDescription, unitPrice, leadTimeDays, moq, isMainSupplier, effectiveFrom },
+    { onClose },
+  );
+  // Menu, link, Back or phone swipe ask "Leave without saving?" too
+  // (review pass 2 H3-1 follow-up).
+  useNavGuard(guard.dirty, "You have an unsaved supplier material mapping. Leave without saving?");
 
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      onMouseDown={guard.onBackdrop}
     >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-[#E2DDD8]">

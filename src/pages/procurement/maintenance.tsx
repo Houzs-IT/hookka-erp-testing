@@ -32,6 +32,8 @@ import {
   ChevronUp,
   ChevronDown,
 } from "lucide-react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { figureOrDash } from "@/lib/loading-figure";
 
 // ============================================================
 // Types
@@ -667,6 +669,9 @@ function SupplierBatchEditDialog({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // Esc or a backdrop click asks "Discard your changes?" once something was
+  // typed or picked; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard({ field, value }, { onClose, busy });
 
   // Reset value when field changes so stale values don't carry over.
   function handleFieldChange(f: BatchField) {
@@ -726,7 +731,7 @@ function SupplierBatchEditDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={() => !busy && onClose()} />
+      <div className="absolute inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
@@ -1168,6 +1173,8 @@ export default function SupplierMaintenancePage() {
   const { confirm } = useConfirm();
 
   // KPIs
+  // "—" until the list has arrived, not "0" (review pass 2 C1-11).
+  const kpiLoading = !suppliersResp;
   const activeSuppliers = suppliers.filter((s) => s.status === "ACTIVE").length;
   const blacklisted = suppliers.filter((s) => s.status === "BLACKLISTED").length;
   const totalSuppliers = suppliers.length;
@@ -1228,7 +1235,7 @@ export default function SupplierMaintenancePage() {
               <Building2 className="h-5 w-5 text-[#4F7C3A]" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-[#4F7C3A]">{activeSuppliers}</p>
+              <p className="text-2xl font-bold text-[#4F7C3A]">{figureOrDash(kpiLoading, activeSuppliers)}</p>
               <p className="text-xs text-[#6B7280]">Active Suppliers</p>
             </div>
           </CardContent>
@@ -1239,7 +1246,7 @@ export default function SupplierMaintenancePage() {
               <Building2 className="h-5 w-5 text-[#6B5C32]" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-[#1F1D1B]">{totalSuppliers}</p>
+              <p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(kpiLoading, totalSuppliers)}</p>
               <p className="text-xs text-[#6B7280]">Total Suppliers</p>
             </div>
           </CardContent>
@@ -1250,7 +1257,7 @@ export default function SupplierMaintenancePage() {
               <X className="h-5 w-5 text-[#9A3A2D]" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-[#9A3A2D]">{blacklisted}</p>
+              <p className="text-2xl font-bold text-[#9A3A2D]">{figureOrDash(kpiLoading, blacklisted)}</p>
               <p className="text-xs text-[#6B7280]">Blacklisted</p>
             </div>
           </CardContent>
@@ -1261,7 +1268,7 @@ export default function SupplierMaintenancePage() {
               <Star className="h-5 w-5 text-amber-500 fill-amber-500" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-amber-600">{avgRating}</p>
+              <p className="text-2xl font-bold text-amber-600">{figureOrDash(kpiLoading, avgRating)}</p>
               <p className="text-xs text-[#6B7280]">Avg Rating</p>
             </div>
           </CardContent>

@@ -29,6 +29,7 @@
 import { useRef, useState } from "react";
 import { X, Trash2, Ban, CheckCircle2, Save, Camera, Loader2 } from "lucide-react";
 import { uploadFileAsset } from "@/lib/upload-file";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 export type DrawerUser = {
   id: string;
@@ -106,6 +107,10 @@ export function UserDetailDrawer({
   // render, and the fix for that is not to suppress the rule.
 
   const isSelf = user.id === currentUserId;
+
+  // Esc or a click beside the drawer asks "Discard your changes?" while an
+  // edit is not saved yet; a save re-bases it (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard({ displayName, department, position, role, reportsTo }, { onClose, busy });
 
   async function send(body: Record<string, unknown>, done: string) {
     setBusy(true);
@@ -206,6 +211,7 @@ export function UserDetailDrawer({
     if (Object.keys(body).length > 0) {
       const okSave = await send(body, "Saved");
       if (!okSave) return;
+      if (!uplineChanged) guard.markClean();
     }
     if (uplineChanged) {
       // The reporting line lives in org_reporting, keyed (source, id), because
@@ -229,6 +235,7 @@ export function UserDetailDrawer({
           return;
         }
         setOk("Saved");
+        guard.markClean();
         onSaved();
       } catch {
         setError("Could not reach the server.");
@@ -268,7 +275,7 @@ export function UserDetailDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
-      <div className="flex-1 bg-black/20" onClick={onClose} aria-hidden />
+      <div className="flex-1 bg-black/20" onMouseDown={guard.onBackdrop} aria-hidden />
       <div className="flex h-full w-full max-w-md flex-col bg-white shadow-xl">
         <div className="flex items-start justify-between border-b border-[#E2DDD8] px-5 py-4">
           <div className="min-w-0">

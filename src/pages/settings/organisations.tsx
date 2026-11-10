@@ -15,6 +15,7 @@ import {
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { responseErrorMessage } from "@/lib/response-error";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // Letterhead override registry. The Inter-Company Configuration card below
 // is HOOKKA-OHANA-specific (transfer pricing %), but the top grid of cards
@@ -620,13 +621,9 @@ function OrganisationFormModal({
   onSave: () => void;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Esc or a backdrop click asks "Discard your changes?" once a field was
+  // changed; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard(form, { onClose, busy: saving });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -640,9 +637,7 @@ function OrganisationFormModal({
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      onMouseDown={guard.onBackdrop}
     >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-[#E2DDD8]">

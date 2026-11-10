@@ -47,6 +47,7 @@ import {
   type SourceSelection,
 } from "@/components/from-source-modal";
 import { csvBlob } from "@/lib/csv-cell";
+import { figureOrDash } from "@/lib/loading-figure";
 
 // ============================================================
 // Types
@@ -327,6 +328,8 @@ export default function PurchaseInvoicesPage() {
   // ---- Summary stats — reflect the user's active filters so the cards
   // ---- always match the table below. Owner ruling 2026-06-30: if I filter
   // ---- to a date range, the totals must follow.
+  // "—" until the list has arrived, not "0" (review pass 2 C1-11).
+  const kpiLoading = loading && !piResp;
   const totalPIs = filteredByUserFilters.length;
   // "Pending payment" = anything not yet PAID and not cancelled. DRAFT +
   // CONFIRMED (incl. legacy PENDING_APPROVAL / APPROVED) all count.
@@ -601,7 +604,7 @@ export default function PurchaseInvoicesPage() {
               <FileText className="h-5 w-5 text-[#6B5C32]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#1F1D1B]">{totalPIs}</p>
+              <p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(kpiLoading, totalPIs)}</p>
               <p className="text-xs text-[#6B7280]">Total PIs</p>
             </div>
           </CardContent>
@@ -612,7 +615,7 @@ export default function PurchaseInvoicesPage() {
               <Clock className="h-5 w-5 text-[#9C6F1E]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#9C6F1E]">{pendingPayment}</p>
+              <p className="text-2xl font-bold text-[#9C6F1E]">{figureOrDash(kpiLoading, pendingPayment)}</p>
               <p className="text-xs text-[#6B7280]">Pending Payment</p>
             </div>
           </CardContent>
@@ -623,7 +626,7 @@ export default function PurchaseInvoicesPage() {
               <AlertTriangle className="h-5 w-5 text-[#9A3A2D]" />
             </div>
             <div className="min-w-0">
-              <p className="text-2xl font-bold text-[#9A3A2D]">{overdue}</p>
+              <p className="text-2xl font-bold text-[#9A3A2D]">{figureOrDash(kpiLoading, overdue)}</p>
               <p className="text-xs text-[#6B7280]">Overdue</p>
             </div>
           </CardContent>
@@ -634,7 +637,7 @@ export default function PurchaseInvoicesPage() {
               <DollarSign className="h-5 w-5 text-[#6B5C32]" />
             </div>
             <div className="min-w-0">
-              <p className="text-xl font-bold text-[#1F1D1B] truncate">{formatCurrency(totalValueSen)}</p>
+              <p className="text-xl font-bold text-[#1F1D1B] truncate">{figureOrDash(kpiLoading, totalValueSen, formatCurrency)}</p>
               <p className="text-xs text-[#6B7280]">Total Value</p>
             </div>
           </CardContent>

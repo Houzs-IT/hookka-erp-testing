@@ -46,6 +46,7 @@ import {
 } from "@/lib/repair-scope";
 import { RepairScopePicker, RepairScopeBadge } from "@/components/sales/repair-scope-picker";
 import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 type SeatHeightTier = { height: string; priceSen: number };
 
@@ -2470,6 +2471,10 @@ function CopyFromSourceModal({
   const [matchChoices, setMatchChoices] = useState<
     Array<{ id: string; label: string; customerName: string; matched: string }>
   >([]);
+  // Esc or a backdrop click asks "Discard your changes?" once an order
+  // number is typed or its lines are on screen; nothing happens mid-lookup
+  // (review pass 2 C2-1 follow-up). Cancel / ✕ still close at once.
+  const guard = useDiscardGuard({ open: true, dirty: step === 2 || sourceLookup.trim() !== "", busy, onClose });
 
   // Step 1 → Step 2: look up the typed order number, then fetch its lines.
   // The SO lookup accepts FOUR document numbers (Wei Siang 2026-06-11/12:
@@ -2735,7 +2740,7 @@ function CopyFromSourceModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className={`relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full mx-4 p-5 space-y-4 max-h-[90vh] overflow-y-auto ${step === 2 ? "max-w-3xl" : "max-w-md"}`}>
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-[#1F1D1B]">

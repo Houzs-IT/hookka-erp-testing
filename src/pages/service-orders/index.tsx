@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { compressImage } from "@/lib/image-compress";
 import { Plus, X, AlertCircle, Loader2 } from "lucide-react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // SO-only set; CO has the additional consignment-specific terminal states.
 // Kept aligned with the backend SHIPPED_STATUSES_SO / SHIPPED_STATUSES_CO
@@ -367,6 +368,13 @@ function CreateServiceOrderModal({
   const [rootCauseNotes, setRootCauseNotes] = useState("");
   const [preventionAction, setPreventionAction] = useState("");
   const [preventionOwner, setPreventionOwner] = useState("");
+  // Esc or a backdrop click asks "Discard your changes?" once anything was
+  // typed or picked; nothing happens mid-submit (review pass 2 C2-1
+  // follow-up). Cancel / ✕ still close at once.
+  const formGuard = useFormDiscardGuard(
+    { kind, sourceType, sourceId, externalCustomerName, externalRef, mode, issueDescription, photos, linePicks, freeLines, rootCauseCategory, rootCauseNotes, preventionAction, preventionOwner },
+    { onClose, busy: submitting },
+  );
 
   // List of shipped SO/CO orders to choose from.
   const { data: soResp } = useCachedJson<{ data?: SalesOrderApi[] }>(
@@ -611,7 +619,7 @@ function CreateServiceOrderModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={formGuard.onBackdrop} />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b border-[#E2DDD8]">
           <h3 className="text-lg font-semibold text-[#1F1D1B]">

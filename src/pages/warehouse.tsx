@@ -11,6 +11,7 @@ import {
   ArrowDownToLine, ArrowUpFromLine, History, X, ArrowRightLeft,
   Loader2, RefreshCw, QrCode, Download, Search, Plus, ChevronDown,
 } from "lucide-react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // ---------- Types ----------
 // A rack can hold any number of items — no limit (per user request
@@ -165,6 +166,10 @@ export default function WarehousePage() {
   const [historyTo, setHistoryTo] = useState("");
 
   const [actionLoading, setActionLoading] = useState(false);
+  // Esc or a backdrop click on a half-filled Item QR / New Rack form asks
+  // "Discard your changes?" first (review pass 2 C2-1 follow-up).
+  const itemQrGuard = useFormDiscardGuard({ itemQrName, itemQrCode }, { open: showItemQrForm, onClose: () => setShowItemQrForm(false) });
+  const createRackGuard = useFormDiscardGuard({ newRackName, newRackPosition }, { open: showCreateRack, busy: creatingRack, onClose: () => setShowCreateRack(false) });
   const { toast } = useToast();
 
   // Small helper to assert a fetch succeeded before trusting its JSON body.
@@ -1085,7 +1090,7 @@ ${tilesHtml}
           the name is encoded in the QR (itemQrValue) and can be scanned later
           during rack stock-in. */}
       {showItemQrForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowItemQrForm(false)}>
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onMouseDown={itemQrGuard.onBackdrop}>
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-[#1F1D1B]">Create Item QR</h3>
@@ -1138,7 +1143,7 @@ ${tilesHtml}
 
       {/* ===== Create Rack Modal ===== */}
       {showCreateRack && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setShowCreateRack(false)}>
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onMouseDown={createRackGuard.onBackdrop}>
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-[#1F1D1B]">Create Rack</h3>

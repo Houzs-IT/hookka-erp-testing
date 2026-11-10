@@ -151,10 +151,15 @@ export function useFormDirty(snapshot: unknown, ready = true): [boolean, () => v
     else if (!ready && baseline !== null) setBaseline(null);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [ready, baseline, key]);
-  const latest = useRef(key);
+  // markClean re-bases on the NEXT render, so a save handler that also
+  // resets fields in the same tick (setNotes("")) re-bases on the reset form,
+  // not on the value it had when the handler started (C2-1 follow-up).
+  const [rebase, setRebase] = useState(0);
   useEffect(() => {
-    latest.current = key;
-  }, [key]);
-  const markClean = useCallback(() => setBaseline(latest.current), []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-base follows markClean
+    if (rebase > 0 && ready) setBaseline(key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on markClean
+  }, [rebase]);
+  const markClean = useCallback(() => setRebase((n) => n + 1), []);
   return [ready && baseline !== null && baseline !== key, markClean];
 }

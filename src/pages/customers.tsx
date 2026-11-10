@@ -14,7 +14,7 @@ import { humanizeError } from "@/lib/humanize-error";
 import { parseDebtorCode } from "@/lib/debtor";
 import { useCachedJson, invalidateCache, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
-import { useNavGuard } from "@/lib/use-nav-guard";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
 import type { Customer } from "@/types";
 // generateCustomerQuotationPdf is dynamic-imported at the click handler so
 // the 1MB jspdf vendor chunk only ships when the user actually exports.
@@ -77,6 +77,8 @@ import { moneyFieldToSen } from "@/lib/money-field";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
+import { useDiscardGuard, useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { figureOrDash } from "@/lib/loading-figure";
 
 type CustomerMutationResponse =
   | { success: true; data: Customer }
@@ -2793,13 +2795,10 @@ function CustomerPriceHistoryDialog({
   /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
   // ESC closes the dialog.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Esc or a backdrop click asks "Discard your changes?" while a new price
+  // is typed but not saved; a save re-bases it (review pass 2 C2-1
+  // follow-up). ✕ still closes at once.
+  const guard = useFormDiscardGuard({ effectiveFrom, baseRm, price1Rm, notes, seatGrid }, { onClose, busy: saving });
 
   const save = async () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
@@ -2848,6 +2847,7 @@ function CustomerPriceHistoryDialog({
       onChanged();
       void load();
       setNotes("");
+      guard.markClean();
     } finally {
       setSaving(false);
     }
@@ -2872,7 +2872,7 @@ function CustomerPriceHistoryDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onClose}
+      onMouseDown={guard.onBackdrop}
     >
       <div
         className="bg-white rounded-lg shadow-xl flex flex-col w-[80vw] h-[85vh] max-w-4xl mx-4"
@@ -3265,14 +3265,9 @@ function AssignSkuModal({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // ESC closes the modal.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // Esc or a backdrop click asks "Discard your changes?" once a product is
+  // ticked (review pass 2 C2-1 follow-up); Cancel still closes at once.
+  const guard = useDiscardGuard({ open, dirty: picked.size > 0, busy: saving, onClose });
 
   const tabs: { key: ModalCategory; label: string }[] = [
     { key: "ALL", label: "All" },
@@ -3312,7 +3307,7 @@ function AssignSkuModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onClose}
+      onMouseDown={guard.onBackdrop}
     >
       <div
         className="bg-white rounded-lg shadow-xl flex flex-col w-[80vw] h-[80vh] max-w-6xl mx-4"
@@ -3490,6 +3485,13 @@ export default function CustomersPage() {
   const [showAddHub, setShowAddHub] = useState(false);
   const [editHubId, setEditHubId] = useState<string | null>(null);
   const [hubForm, setHubForm] = useState({ shortName: "", code: "", state: "KL", contactName: "", phone: "", email: "", address: "" });
+  // Leaving by menu, link, Back or phone swipe with a half-filled New
+  // Customer, Edit Customer or hub form asks "Leave without saving?" (review
+  // pass 2 H3-1 follow-up). A save closes the form, which clears it.
+  const [addDirty] = useFormDirty(addForm, showAdd);
+  const [editCustDirty] = useFormDirty(editCustForm, !!editCustomer);
+  const [hubDirty] = useFormDirty(hubForm, showAddHub || editHubId !== null);
+  useNavGuard(addDirty || editCustDirty || hubDirty, "You have an unsaved customer form. Leave without saving?");
 
   // ---------- Fetch ----------
   const fetchCustomers = () => {
@@ -3713,6 +3715,8 @@ export default function CustomersPage() {
     [data],
   );
 
+  // "—" until the list has arrived, not "0" (review pass 2 C1-11).
+  const kpiLoading = loading && !customersResp;
   const totalCustomers = stageScoped.length;
   const totalHubs = stageScoped.reduce((s, c) => s + (c.deliveryHubs?.length || 0), 0);
   const totalOutstanding = stageScoped.reduce((s, c) => s + c.outstandingSen, 0);
@@ -3997,7 +4001,7 @@ export default function CustomersPage() {
               <Building2 className="h-5 w-5 text-[#6B5C32]" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-[#1F1D1B]">{totalCustomers}</p>
+              <p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(kpiLoading, totalCustomers)}</p>
               <p className="text-xs text-[#6B7280]">Total Customers</p>
             </div>
           </CardContent>
@@ -4008,7 +4012,7 @@ export default function CustomersPage() {
               <Warehouse className="h-5 w-5 text-[#6B5C32]" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-[#1F1D1B]">{totalHubs}</p>
+              <p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(kpiLoading, totalHubs)}</p>
               <p className="text-xs text-[#6B7280]">Delivery Hubs</p>
             </div>
           </CardContent>
