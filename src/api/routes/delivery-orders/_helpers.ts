@@ -19,6 +19,7 @@ import {
 import { loadSoLinePriceIndex, priceForItem } from "../../lib/do-value";
 import { getOrgId } from "../../lib/tenant";
 import { emitAudit } from "../../lib/audit";
+import { casGuardSql, isCasMiss, staleStatusMessage } from "../../lib/status-cas";
 import { checkDeliveryOrderLocked, lockedResponse } from "../../lib/lock-helpers";
 import { nextInvoiceNo, buildInvoiceLedgerLegs } from "../invoices";
 import { buildJournalEntryStatements } from "../../lib/journal-hash";
@@ -4972,7 +4973,7 @@ export async function applyDeliveryOrderUpdate(
            lorryName = ?, status = ?, overdue = ?, dispatchedAt = ?,
            deliveredAt = ?, proofOfDelivery = ?, totalM3 = ?, totalItems = ?,
            delivery_incomplete = ?, updated_at = ?
-         WHERE id = ?`,
+         WHERE id = ? AND status = ?`,
       ).bind(
         merged.deliveryDate,
         merged.driverId,
@@ -5006,7 +5007,13 @@ export async function applyDeliveryOrderUpdate(
         nextDeliveryIncomplete,
         now,
         id,
+        // H3 B1 (review pass 2): compare-and-set on the status this request
+        // read. A late Delivered / Dispatched tap (or any edit) that lands
+        // after a cancel matches nothing, and the guard below rolls back the
+        // whole batch (stock-out, COGS, invoice) instead of reviving the DO.
+        existing.status,
       ),
+      c.var.DB.prepare(casGuardSql("delivery_orders")).bind(id, nextStatus, now),
     ];
 
     // Wei Siang 2026-05-16: invoice-number collision guard. The
@@ -5557,6 +5564,23 @@ export async function applyDeliveryOrderUpdate(
           await c.var.DB.batch(statements);
           break;
         } catch (e) {
+          if (isCasMiss(e)) {
+            const now2 = await c.var.DB.prepare(
+              "SELECT status FROM delivery_orders WHERE id = ?",
+            )
+              .bind(id)
+              .first<{ status: string }>()
+              .catch(() => null);
+            return c.json(
+              {
+                success: false,
+                error: staleStatusMessage("delivery order", now2?.status, existing.status),
+                code: "status_changed",
+                currentStatus: now2?.status ?? null,
+              },
+              409,
+            );
+          }
           const msg = e instanceof Error ? e.message : String(e);
           const isInvoiceDup =
             /ux_invoices_invoice_no|invoices_invoice_no|duplicate key/i.test(
