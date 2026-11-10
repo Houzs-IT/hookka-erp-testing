@@ -25,8 +25,17 @@ app.get("/", async (c) => {
   const orgId = getOrgId(c);
 
   const myNow = new Date(Date.now() + 8 * 3600_000);
-  const today = myNow.toISOString().slice(0, 10);
-  const nowMin = myNow.getUTCHours() * 60 + myNow.getUTCMinutes();
+  const realToday = myNow.toISOString().slice(0, 10);
+  // ?date=YYYY-MM-DD picks a past day (owner 2026-11-10: the dashboard's Day
+  // picker). A past day is shown as it ended: hours from the punch-out
+  // entries only, no live clock, nobody turns red.
+  const asked = c.req.query("date") ?? "";
+  if (asked && (!/^\d{4}-\d{2}-\d{2}$/.test(asked) || asked > realToday)) {
+    return c.json({ success: false, error: "date must be YYYY-MM-DD, today or earlier" }, 400);
+  }
+  const today = asked || realToday;
+  const isToday = today === realToday;
+  const nowMin = isToday ? myNow.getUTCHours() * 60 + myNow.getUTCMinutes() : 0;
   // Efficiency's "worked so far" steps every 5 minutes, matching the refresh.
   const nowSlotMin = Math.floor(nowMin / 5) * 5;
 
@@ -92,7 +101,7 @@ app.get("/", async (c) => {
     }
     const homeDept = new Map(workers.map((w) => [w.id, w.departmentCode]));
     const punches = attendance
-      .filter((a) => a.employeeId && a.clockIn && !a.clockOut && !keyed.has(a.employeeId))
+      .filter((a) => isToday && a.employeeId && a.clockIn && !a.clockOut && !keyed.has(a.employeeId))
       .map((a) => ({ workerId: a.employeeId!, clockIn: a.clockIn!, homeDeptCode: homeDept.get(a.employeeId!) ?? a.departmentCode }));
     const live = await liveOpenPunchRows(db, { date: today, nowMin: nowSlotMin, punches, nonProdHoursByWorker: nonProdByWorker });
 
@@ -114,7 +123,8 @@ app.get("/", async (c) => {
     return c.json({
       success: true,
       date: today,
-      asOf: `${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`,
+      live: isToday,
+      asOf: isToday ? `${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}` : "end of day",
       ...data,
     });
   } catch (e) {
