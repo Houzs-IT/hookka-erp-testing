@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { formatCurrency } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/auth";
+import { useIdempotencyKeys } from "@/lib/idempotency-key";
 import { Plus, Trash2, History, Save } from "lucide-react";
 
 type AdjustmentType = "RM" | "WIP" | "FG";
@@ -186,6 +187,9 @@ export default function StockAdjustmentsPage() {
 
   const [rows, setRows] = useState<DraftRow[]>([newDraftRow()]);
   const [submitting, setSubmitting] = useState(false);
+  // C1-7 (review pass 2): one key per row, so a retried row replays its own
+  // adjustment instead of making a second one.
+  const adjIdem = useIdempotencyKeys();
 
   // ---- always fetch all 3 lists so any row can switch type freely ----
   // FG comes from /api/inventory's finishedProducts (the product master),
@@ -353,20 +357,22 @@ export default function StockAdjustmentsPage() {
       ready.map(async (row) => {
         const sel = rowSelected(row);
         try {
-          const res = await fetch("/api/stock-adjustments", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: row.type,
-              itemId: row.itemId,
-              qtyDelta: rowSignedDelta(row),
-              unitCostSen: Number(row.unitCost) || 0,
-              reason: row.reason,
-              notes: row.notes || null,
-              adjustedBy: user?.id ?? null,
-              adjustedByName: user?.displayName ?? user?.email ?? null,
+          const res = await adjIdem.withKey(`row:${row.uid}`, (key) =>
+            fetch("/api/stock-adjustments", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+              body: JSON.stringify({
+                type: row.type,
+                itemId: row.itemId,
+                qtyDelta: rowSignedDelta(row),
+                unitCostSen: Number(row.unitCost) || 0,
+                reason: row.reason,
+                notes: row.notes || null,
+                adjustedBy: user?.id ?? null,
+                adjustedByName: user?.displayName ?? user?.email ?? null,
+              }),
             }),
-          });
+          );
           const data = (await res.json()) as { success?: boolean; error?: string };
           if (!res.ok || !data?.success) {
             return { uid: row.uid, ok: false, msg: humanizeError({ status: res.status, message: data?.error }, "Couldn't save. Please try again."), code: sel?.code };

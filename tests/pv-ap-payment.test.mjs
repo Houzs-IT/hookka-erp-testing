@@ -94,7 +94,7 @@ test("an AP voucher posts through the settlement builders, never through pvPosti
   const apBranch = core.indexOf('=== PV_KIND_AP) {');
   const expensePost = core.indexOf("await pvPostingStatements(");
   assert.ok(apBranch !== -1 && apBranch < expensePost, "AP branch must come before the expense posting in approve");
-  assert.match(core, /approval_state = 'APPROVED', status = 'POSTED', totalSen = \?, approved_at = \?, approved_by = \?, reject_reason = NULL, updated_at = \? WHERE id = \?",\s*\)\.bind\(built\.totalSen/);
+  assert.match(core, /approval_state = 'APPROVED', status = 'POSTED', totalSen = \?, approved_at = \?, approved_by = \?, reject_reason = NULL, updated_at = \? WHERE id = \? AND approval_state = \?",\s*\)\.bind\(built\.totalSen/);
 });
 
 test("create: AP kind writes allocs (no lines); Post now adds the settlement in the same batch", () => {

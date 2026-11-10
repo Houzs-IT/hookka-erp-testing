@@ -60,9 +60,10 @@ test("CLASS SWEEP: every grid using the mechanism separates its segments", () =>
     "Production must keep the department in gridId",
   );
 
-  // Service Cases — statusFilter is its ONLY segmenting state and it is the key.
+  // Service Cases — statusFilter and (since review pass 2, H1-7) the Overdue
+  // toggle segment the rows, and both are in the key.
   const cases = readFileSync("src/pages/service-cases/index.tsx", "utf8");
-  assert.match(cases, /valueFilterKey=\{statusFilter\}/);
+  assert.match(cases, /valueFilterKey=\{`\$\{statusFilter\}\$\{overdueOnly \? ":overdue" : ""\}`\}/);
   const otherSegments = cases.match(/const \[(tab|view|activeTab)\b/g) ?? [];
   assert.deepEqual(
     otherSegments,

@@ -22,10 +22,12 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { emitAudit } from "../lib/audit";
 import { customerScopeSql } from "../lib/customer-scope";
 import approvals from "./service-case-approvals";
 import { capList } from "../lib/list-cap";
 import { mytYymm } from "../../lib/doc-number";
+import { SERVICE_CASE_TARGETS_KEY, TARGET_STAGES, parseStageTargets, validateStageTargets } from "../../lib/service-case-sla";
 
 const app = new Hono<Env>();
 // Approval endpoints — registered first so "/approvals" wins over "/:id".
@@ -603,6 +605,36 @@ export async function loadCustomerPoBySource(
 // ---------------------------------------------------------------------------
 // GET /api/service-cases/:id
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Stage targets (review pass 2, H1-7): a target number of days per pipeline
+// stage, one kv_config row; the list flags a case past its stage's target as
+// overdue (src/lib/service-case-sla.ts). Read live, so a changed target
+// applies to open cases straight away. Registered before "/:id".
+// ---------------------------------------------------------------------------
+app.get("/stage-targets", async (c) => {
+  const denied = await requirePermission(c, "service-cases", "read");
+  if (denied) return denied;
+  const row = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = ?")
+    .bind(SERVICE_CASE_TARGETS_KEY)
+    .first<{ value: string | null }>();
+  return c.json({ success: true, data: { targets: parseStageTargets(row?.value ?? null), stages: TARGET_STAGES } });
+});
+
+app.put("/stage-targets", async (c) => {
+  const denied = await requirePermission(c, "service-cases", "update");
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => null)) as { targets?: unknown } | null;
+  const v = validateStageTargets(body?.targets);
+  if (!v.ok) return c.json({ success: false, error: v.error }, 400);
+  const now = new Date().toISOString();
+  await c.var.DB.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(SERVICE_CASE_TARGETS_KEY, JSON.stringify(v.targets), now).run();
+  await emitAudit(c, { resource: "service-cases", resourceId: SERVICE_CASE_TARGETS_KEY, action: "update", after: v.targets });
+  return c.json({ success: true, data: { targets: v.targets } });
+});
+
 app.get("/:id", async (c) => {
   const id = c.req.param("id");
   const [caseRow, orders, svOrders] = await Promise.all([

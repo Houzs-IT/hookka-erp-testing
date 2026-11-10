@@ -29,6 +29,13 @@ import {
   caseDaysOpen,
   caseStageDays,
 } from "@/lib/case-pipeline";
+import {
+  isStageOverdue,
+  overdueLabel,
+  TARGET_STAGES,
+  MAX_TARGET_DAYS,
+  type StageTargets,
+} from "@/lib/service-case-sla";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -220,6 +227,8 @@ type CaseRow = ServiceCaseListItem & {
   daysOpen: number | null; // null = CANCELLED (no meaningful age)
   stageDays: number; // whole days in the CURRENT stage (frozen at close)
   ordersCount: number;
+  overdue: boolean; // past the current stage's target (H1-7); never for closed / cancelled
+  overdueText: string; // "3d over the 2d target for Investigating" or ""
 };
 
 // Display labels shared by the cell render, the column's value-filter
@@ -333,6 +342,13 @@ export default function ServiceCasesListPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "ALL">("ALL");
+  // H1-7 (review pass 2): target days per stage, edited from "Stage targets".
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [targetsOpen, setTargetsOpen] = useState(false);
+  const { data: targetsResp, refresh: refreshTargets } = useCachedJson<{
+    data?: { targets: StageTargets };
+  }>("/api/service-cases/stage-targets");
+  const stageTargets = useMemo<StageTargets>(() => targetsResp?.data?.targets ?? {}, [targetsResp]);
   // Rows currently visible in the grid (post search / column filters /
   // sort), mirrored back via onFilteredDataChange — Export CSV downloads
   // exactly what the operator sees. Same pattern as the Employees print
@@ -378,13 +394,6 @@ export default function ServiceCasesListPage() {
       kpiPeriod ? cases.filter((c) => serviceCaseCountedIn(c, kpiPeriod)) : cases,
     [cases, kpiPeriod],
   );
-  const filtered = useMemo(
-    () =>
-      statusFilter === "ALL"
-        ? casesInPeriod
-        : casesInPeriod.filter((c) => c.status === statusFilter),
-    [casesInPeriod, statusFilter],
-  );
 
   // Index DOs / POs by salesOrderId once, so each row is an O(1) lookup
   // rather than scanning the full lists per case.
@@ -416,8 +425,10 @@ export default function ServiceCasesListPage() {
   // Status Days computes against this same instant.
   const [nowMs] = useState(() => Date.now());
 
-  const rows = useMemo<CaseRow[]>(() => {
-    return filtered.map((c) => {
+  // Every case in the period gets its pipeline row (so the status chips can
+  // count overdue cases); the chip / Overdue toggle then pick what the grid shows.
+  const allRows = useMemo<CaseRow[]>(() => {
+    return casesInPeriod.map((c) => {
       const svOrderIds = c.orders.filter((o) => o.isSv).map((o) => o.id);
       const caseDos = svOrderIds.flatMap((so) => dosBySo.get(so) ?? []);
       const casePos = svOrderIds.flatMap((so) => posBySo.get(so) ?? []);
@@ -464,9 +475,21 @@ export default function ServiceCasesListPage() {
           c.status === "CANCELLED" ? null : caseDaysOpen(c.createdAt, frozenClose, nowMs),
         stageDays: caseStageDays(pipe.enteredAt, frozenClose, nowMs),
         ordersCount: c.orders.length,
+        overdue: false,
+        overdueText: "",
       };
+    }).map((r) => {
+      const overdue = isStageOverdue(r, stageTargets);
+      return overdue ? { ...r, overdue, overdueText: overdueLabel(r, stageTargets) } : r;
     });
-  }, [filtered, dosBySo, posBySo, nowMs]);
+  }, [casesInPeriod, dosBySo, posBySo, nowMs, stageTargets]);
+  const rows = useMemo(
+    () =>
+      allRows.filter(
+        (r) => (statusFilter === "ALL" || r.status === statusFilter) && (!overdueOnly || r.overdue),
+      ),
+    [allRows, statusFilter, overdueOnly],
+  );
 
   const columns = useMemo<Column<CaseRow>[]>(
     () => [
@@ -614,7 +637,7 @@ export default function ServiceCasesListPage() {
         label: "Status Days",
         width: "100px",
         sortable: true,
-        filterAccessor: (row) => stageDaysLabel(row),
+        filterAccessor: (row) => (row.overdue ? `${stageDaysLabel(row)} (overdue)` : stageDaysLabel(row)),
         render: (_value, row) => {
           // No meaningful "current stage age" for a cancelled case.
           if (row.status === "CANCELLED") {
@@ -622,6 +645,16 @@ export default function ServiceCasesListPage() {
           }
           if (row.status === "CLOSED") {
             return <span className="text-[#9CA3AF]">{row.stageDays}d</span>;
+          }
+          // H1-7: past the stage's target -> red Overdue flag (the target
+          // replaces the old fixed 7-day rule for stages that have one).
+          if (row.overdue) {
+            return (
+              <span className="inline-flex items-center gap-1 text-[#9A3A2D]" title={row.overdueText}>
+                {row.stageDays}d
+                <span className="text-[9px] font-semibold px-1 py-px rounded bg-[#F5DCDC] text-[#7A2E24]">Overdue</span>
+              </span>
+            );
           }
           // Stuck-in-stage flag mirrors Days Open: ≥ 7 days = red.
           const color = row.stageDays >= 7 ? "text-[#9A3A2D]" : "text-[#6B7280]";
@@ -669,6 +702,7 @@ export default function ServiceCasesListPage() {
         { header: "Days Open", accessor: (r) => r.daysOpen ?? "" },
         // Numeric days-in-current-stage; blank = cancelled (no stage age).
         { header: "Status Days", accessor: (r) => (r.status === "CANCELLED" ? "" : r.stageDays) },
+        { header: "Overdue", accessor: (r) => (r.overdue ? r.overdueText : "") },
         { header: "Orders", accessor: (r) => ordersLabel(r) },
         { header: "Created", accessor: (r) => formatDateDMY(r.createdAt) },
       ],
@@ -688,6 +722,14 @@ export default function ServiceCasesListPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTargetsOpen(true)}
+            title="Set a target number of days for each stage; cases past it are flagged Overdue"
+          >
+            Stage targets
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -745,8 +787,24 @@ export default function ServiceCasesListPage() {
             {s !== "ALL"
               ? `(${casesInPeriod.filter((c) => c.status === s).length})`
               : `(${casesInPeriod.length})`}
+            {(() => {
+              const n = allRows.filter((r) => r.overdue && (s === "ALL" || r.status === s)).length;
+              return n > 0 ? <span className="ml-1 text-[#9A3A2D] font-semibold">· {n} overdue</span> : null;
+            })()}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setOverdueOnly((v) => !v)}
+          className={`px-2 py-1 rounded border ${
+            overdueOnly
+              ? "border-[#9A3A2D] bg-[#F5DCDC] text-[#7A2E24]"
+              : "border-[#E2DDD8] hover:bg-[#FAF9F7]"
+          }`}
+          title="Show only cases past their stage's target"
+        >
+          Overdue only ({allRows.filter((r) => r.overdue).length})
+        </button>
       </div>
 
       {/* Standard DataGrid (same component as Delivery / Sales / Employees)
@@ -770,12 +828,25 @@ export default function ServiceCasesListPage() {
                 ? "No service cases yet — click 'New Service Case' to log the first one."
                 : "No cases in this status."
             }
-            valueFilterKey={statusFilter}
+            valueFilterKey={`${statusFilter}${overdueOnly ? ":overdue" : ""}`}
             onRowClick={(row) => navigate(`/service-cases/${row.id}`)}
             onFilteredDataChange={setExportRows}
           />
         </CardContent>
       </Card>
+
+      {targetsOpen && (
+        <StageTargetsModal
+          initial={stageTargets}
+          onClose={() => setTargetsOpen(false)}
+          onSaved={() => {
+            setTargetsOpen(false);
+            invalidateCachePrefix("/api/service-cases/stage-targets");
+            refreshTargets();
+            toast.success("Stage targets saved — applied to open cases now");
+          }}
+        />
+      )}
 
       {createOpen && (
         <CreateServiceCaseModal
@@ -853,6 +924,98 @@ type SourceOrderDetailApi = {
     items?: SourceOrderItemApi[];
   };
 };
+
+// H1-7 (review pass 2): one number of days per stage; empty = no target.
+// Saved with PUT /api/service-cases/stage-targets; the list re-reads it, so
+// open cases are flagged against the new targets straight away.
+function StageTargetsModal({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: StageTargets;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(TARGET_STAGES.map((st) => [st, initial[st] != null ? String(initial[st]) : ""])),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const targets = Object.fromEntries(
+        TARGET_STAGES.map((st) => [st, draft[st]?.trim() ? Number(draft[st].trim()) : null]),
+      );
+      const res = await fetch("/api/service-cases/stage-targets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targets }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
+      if (!res.ok || !j.success) {
+        setError(j.error || `Could not save the targets (HTTP ${res.status})`);
+        return;
+      }
+      onSaved();
+    } catch {
+      setError("Network problem — the targets were not saved. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-4 border-b border-[#E2DDD8]">
+          <h3 className="text-lg font-semibold text-[#1F1D1B]">Stage targets</h3>
+          <button onClick={onClose} className="text-[#9CA3AF] hover:text-[#374151]" aria-label="Close">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-xs text-[#6B7280]">
+            Days a case may spend in each stage. A case past its stage&apos;s target is flagged Overdue.
+            Leave a stage empty for no target. Changes apply to open cases at once.
+          </p>
+          {TARGET_STAGES.map((st) => (
+            <label key={st} className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-[#1F1D1B]">{st}</span>
+              <span className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_TARGET_DAYS}
+                  step={1}
+                  inputMode="numeric"
+                  value={draft[st] ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, [st]: e.target.value }))}
+                  className="w-20 h-8 text-right"
+                  aria-label={`Target days for ${st}`}
+                />
+                <span className="text-xs text-[#6B7280]">days</span>
+              </span>
+            </label>
+          ))}
+          {error && (
+            <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-900">{error}</div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-[#E2DDD8]">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving..." : "Save targets"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function CreateServiceCaseModal({
   onClose,

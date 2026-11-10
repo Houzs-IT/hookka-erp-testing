@@ -13,6 +13,7 @@
 // migrations-postgres/0207_delivery_returns.sql for the record copy).
 // ---------------------------------------------------------------------------
 
+import { docNoGuardStatements, withDocNoRetry } from "./doc-no-guard";
 import { mytYymm } from "../../lib/doc-number";
 export type DRCreateItem = {
   /** The source delivery_order_items.id (picker only; not stored). */
@@ -440,16 +441,12 @@ export async function createDeliveryReturnRecord(
     }
 
     const id = genDeliveryReturnId();
-    const returnNo = await nextReturnNo(db);
+    // H3 B2: the number is re-read on each try; the batch opens with the
+    // numbering lock + "still free" check (doc-no-guard.ts).
+    let returnNo = await nextReturnNo(db);
     const now = new Date().toISOString();
 
-    const statements: D1PreparedStatement[] = [
-      // Serialise returns against the same DO (released at COMMIT) so the
-      // over-return guard at the end of this batch sees any return that
-      // committed while this one was being checked above.
-      db
-        .prepare(`SELECT pg_advisory_xact_lock(hashtext('delivery_return:' || ?)::bigint)`)
-        .bind(doId),
+    const rebindHeader = (no: string): D1PreparedStatement =>
       db
         .prepare(
           `INSERT INTO delivery_returns
@@ -460,7 +457,7 @@ export async function createDeliveryReturnRecord(
         )
         .bind(
           id,
-          returnNo,
+          no,
           doId,
           doNo,
           salesOrderId,
@@ -474,7 +471,17 @@ export async function createDeliveryReturnRecord(
           now,
           now,
           orgId,
-        ),
+        );
+
+    const statements: D1PreparedStatement[] = [
+      ...docNoGuardStatements(db, "delivery_returns", returnNo),
+      // Serialise returns against the same DO (released at COMMIT) so the
+      // over-return guard at the end of this batch sees any return that
+      // committed while this one was being checked above.
+      db
+        .prepare(`SELECT pg_advisory_xact_lock(hashtext('delivery_return:' || ?)::bigint)`)
+        .bind(doId),
+      rebindHeader(returnNo),
     ];
     for (const it of items) {
       statements.push(
@@ -535,7 +542,16 @@ export async function createDeliveryReturnRecord(
           .bind(doId, ...poIds, doId),
       );
     }
-    await db.batch(statements);
+    // statements[1] is the "number still free" check and statements[3] the
+    // header INSERT (both carry the number); swap them on a retry.
+    await withDocNoRetry(async (tryNo) => {
+      if (tryNo > 0) {
+        returnNo = await nextReturnNo(db);
+        statements.splice(0, 2, ...docNoGuardStatements(db, "delivery_returns", returnNo));
+        statements[3] = rebindHeader(returnNo);
+      }
+      await db.batch(statements);
+    });
     return { ok: true, id, returnNo };
   } catch (err) {
     console.error("[delivery-return-create] create failed:", err);

@@ -54,6 +54,7 @@ import { requirePermission } from "../lib/rbac";
 import { idempotent } from "../lib/idempotency";
 import { customerScopeSql } from "../lib/customer-scope";
 import { enqueueEmail } from "../lib/email-outbox";
+import { staleStatusMessage } from "../lib/status-cas";
 import {
   cnDispatchNoticeTemplate,
   resolveDispatchRecipient,
@@ -1108,6 +1109,8 @@ app.post("/", async (c) => {
 // Raised (via a failing CAST) by the row-locked guards in /return and
 // /convert-to-invoice when the CN was converted or changed after it was read.
 const CN_CONVERT_CONFLICT = "CN_CONVERT_CONFLICT";
+// H3 B1: a status change or another return landed between read and write.
+const CN_RETURN_RACE = "CN_RETURN_RACE";
 
 app.post("/:id/return", async (c) => {
   const denied = await requirePermission(c, "consignment-notes", "create");
@@ -1195,12 +1198,30 @@ app.post("/:id/return", async (c) => {
 
     const now = new Date().toISOString();
     // Row-locked: a convert committed since the read above aborts the return.
+    // H3 B1 (review pass 2): so does a status change, and — checked in the
+    // next statement, which starts after the lock is held and so sees the
+    // other request's commit — a second return of the same goods (the
+    // quantity still out has moved). A double tap returns stock once.
+    const qtyOut = cnItems.reduce(
+      (s, it) => s + (it.status === "RETURNED" ? 0 : Number(it.quantity) || 0),
+      0,
+    );
     const statements: D1PreparedStatement[] = [
       c.var.DB.prepare(
-        `SELECT CASE WHEN convertedInvoiceId IS NULL THEN 1
+        `SELECT CASE WHEN convertedInvoiceId IS NULL THEN
+                       CASE WHEN status IS NOT DISTINCT FROM ? THEN 1
+                            ELSE CAST('${CN_RETURN_RACE} ' || id AS INTEGER) END
                      ELSE CAST('${CN_CONVERT_CONFLICT} ' || id AS INTEGER) END AS ok
            FROM consignment_notes WHERE id = ? FOR UPDATE`,
-      ).bind(id),
+      ).bind(cn.status ?? null, id),
+      // The ELSE names a column (cn.id) so the planner cannot fold the CAST
+      // into an error that fires whichever branch is taken.
+      c.var.DB.prepare(
+        `SELECT CASE WHEN (SELECT COALESCE(SUM(CASE WHEN ci.status = 'RETURNED' THEN 0 ELSE ci.quantity END), 0)
+                             FROM consignment_items ci WHERE ci.consignmentNoteId = cn.id) = ?
+                     THEN 1 ELSE CAST('${CN_RETURN_RACE} ' || cn.id AS INTEGER) END AS ok
+           FROM consignment_notes cn WHERE cn.id = ?`,
+      ).bind(qtyOut, id),
     ];
 
     // ----------- consignment_items updates -----------
@@ -1433,6 +1454,16 @@ app.post("/:id/return", async (c) => {
     if (msg.includes(CN_CONVERT_CONFLICT)) {
       return c.json(
         { success: false, error: "Consignment note was invoiced by another request. Reload and try again." },
+        409,
+      );
+    }
+    if (msg.includes(CN_RETURN_RACE)) {
+      return c.json(
+        {
+          success: false,
+          error: "This consignment note was changed by someone else just now (a status change or another return). Nothing was returned. Refresh and check before trying again.",
+          code: "status_changed",
+        },
         409,
       );
     }
@@ -2120,6 +2151,18 @@ function mapUpdateCNError(
     return {
       status: 409,
       body: { success: false, error: res.message, reason: "po_conflict" },
+    };
+  }
+  if (res.reason === "status_changed") {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        error: staleStatusMessage("consignment note", res.current, res.from),
+        reason: "status_changed",
+        code: "status_changed",
+        currentStatus: res.current,
+      },
     };
   }
   // Exhaustiveness guard.

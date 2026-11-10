@@ -81,6 +81,7 @@ import {
   PCB_STATUS_NOTE,
 } from "@/lib/pcb";
 import { CSV_BOM, csvBlob, csvCell as sharedCsvCell } from "@/lib/csv-cell";
+import { useIdempotencyKeys } from "@/lib/idempotency-key";
 
 // --------------- TYPES ---------------
 
@@ -10975,6 +10976,9 @@ function AdvancesTab({ workers }: { workers: Worker[] }) {
   // one, so there is no second code path that can drift out of step with this.
   const [formDate, setFormDate] = useState(todayLocalStr());
   const [saving, setSaving] = useState(false);
+  // C1-7 (review pass 2): one key per worker row, so a retried row replays
+  // its own advance instead of recording a second one.
+  const advIdem = useIdempotencyKeys();
 
   /** Employees ticked for this batch, in the order they were ticked. */
   const [batchIds, setBatchIds] = useState<string[]>([]);
@@ -11018,16 +11022,18 @@ function AdvancesTab({ workers }: { workers: Worker[] }) {
     let ok = 0;
     for (const row of batchReady) {
       try {
-        const res = await fetch("/api/employee-advances", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            workerId: row.id,
-            date: formDate,
-            amountSen: row.amountSen,
-            note: row.note,
+        const res = await advIdem.withKey(`worker:${row.id}`, (key) =>
+          fetch("/api/employee-advances", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+            body: JSON.stringify({
+              workerId: row.id,
+              date: formDate,
+              amountSen: row.amountSen,
+              note: row.note,
+            }),
           }),
-        });
+        );
         if (res.ok) ok += 1;
         else failed.push(workerById.get(row.id)?.name ?? row.id);
       } catch {

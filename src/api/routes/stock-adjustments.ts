@@ -35,11 +35,13 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../worker";
+import { idempotent } from "../lib/idempotency";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { capList } from "../lib/list-cap";
 import { mytYymm } from "../../lib/doc-number";
+import { docNoGuardStatements, withDocNoRetry } from "../lib/doc-no-guard";
 
 const app = new Hono<Env>();
 
@@ -205,7 +207,7 @@ app.get("/", async (c) => {
 //   caseId?: string,        // service_cases.id — SERVICE_REPLACEMENT backlink
 // }
 // ---------------------------------------------------------------------------
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "inventory", "create");
   if (denied) return denied;
   await ensureStockAdjustmentColumns(c.var.DB);
@@ -312,7 +314,7 @@ app.post("/", async (c) => {
 
     // ---- compose all writes ----
     const id = genId();
-    const adjNo = await nextAdjNo(c.var.DB);
+    let adjNo = await nextAdjNo(c.var.DB);
     const direction: "IN" | "OUT" = qtyDelta > 0 ? "IN" : "OUT";
     const nowIso = new Date().toISOString();
     const today = nowIso.split("T")[0];
@@ -388,7 +390,9 @@ app.post("/", async (c) => {
     // 1. stock_adjustments — the canonical record. unitCostSen reflects the
     // FIFO-derived effective cost for RM OUT (vs the operator's claimed
     // pre-fill); totalCostSen is the true cost out of stock.
-    stmts.push(
+    // H3 B2: the batch opens with the numbering lock + "still free" check
+    // (doc-no-guard.ts); on a clash the number is re-read and both swapped.
+    const headerInsert = (no: string): D1PreparedStatement =>
       c.var.DB.prepare(
         `INSERT INTO stock_adjustments (id, adjNo, type, itemId, itemCode, itemName,
            qtyDelta, unitCostSen, totalCostSen, direction, reason, notes,
@@ -396,7 +400,7 @@ app.post("/", async (c) => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
-        adjNo,
+        no,
         type,
         itemId,
         itemCode,
@@ -412,8 +416,8 @@ app.post("/", async (c) => {
         nowIso,
         caseId,
         nowIso,
-      ),
-    );
+      );
+    stmts.push(...docNoGuardStatements(c.var.DB, "stock_adjustments", adjNo), headerInsert(adjNo));
 
     // 2. stock_movements — audit ledger ("what physically moved")
     const movementType = direction === "IN" ? "STOCK_IN" : "STOCK_OUT";
@@ -541,7 +545,13 @@ app.post("/", async (c) => {
       );
     }
 
-    await c.var.DB.batch(stmts);
+    await withDocNoRetry(async (tryNo) => {
+      if (tryNo > 0) {
+        adjNo = await nextAdjNo(c.var.DB);
+        stmts.splice(0, 3, ...docNoGuardStatements(c.var.DB, "stock_adjustments", adjNo), headerInsert(adjNo));
+      }
+      await c.var.DB.batch(stmts);
+    });
 
     const created = await c.var.DB
       .prepare(`SELECT * FROM stock_adjustments WHERE id = ?`)

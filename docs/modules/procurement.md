@@ -92,9 +92,9 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `POFormDialog` | `src/pages/procurement/index.tsx:71` | Create/edit PO modal (deep-link prefill) |
 | `PurchaseOrderDetailPage` | `src/pages/procurement/detail.tsx:122` | PO detail; status actions, 412-requiresGrn guard |
 | `ThreeWayMatchPanel` | `src/pages/procurement/detail.tsx:1461` | PO↔GRN↔PI variance panel (derived) |
-| `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:461` | PO create; `body.status` verbatim |
+| `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:470` | PO create; `body.status` verbatim |
 | `app.put("/:id")` (PO edit) | `src/api/routes/purchase-orders.ts:802` | PO edit + status lifecycle |
-| `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1107` | Runtime column self-apply |
+| `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1144` | Runtime column self-apply |
 | `buildGRNStockStatements` | `src/api/routes/grn.ts:533` | Stock + cost_ledger statements for the post's own batch (T-006 R3) |
 | `buildPoReceiptStatements` | `src/api/routes/grn.ts:980` | Guarded PO counter bump + PO status → RECEIVED/PARTIAL_RECEIVED, in the post's batch |
 | `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:673` | Compensating DELTA for POSTED-line edit |

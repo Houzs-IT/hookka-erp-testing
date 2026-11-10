@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
-import { requirePermission, requireFinance, hasPermission } from "../lib/rbac";
+import { requirePermission, requireFinance, hasPermission, getRolePermissions } from "../lib/rbac";
 import { monthsOverdue, nextMonthDueDate } from "../../lib/terms";
 import { getOrgId, companyFilter, type CompanyFilter } from "../lib/tenant";
 import {
@@ -158,6 +158,9 @@ import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, buildSupplie
 // through its ONE upload/delete path, behind the voucher's own rules.
 import { storeUploadedFile, removeStoredFile } from "./files";
 import { capList } from "../lib/list-cap";
+import { casGuardSql, isCasMiss } from "../lib/status-cas";
+import { grantsApprove, pvRemindLink, pvRemindNotificationId, remindTooSoonMessage, remindWaitMinutes } from "../lib/pv-remind";
+import { getUserOverride } from "../lib/user-permissions";
 import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
@@ -13826,7 +13829,7 @@ async function pvApprovalCore(
   id: string,
   action: PvApprovalAction,
   reason: string,
-): Promise<{ ok: true; pvNo: string; state: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; pvNo: string; state: string } | { ok: false; error: string; status?: 409 }> {
   const pv = await db.prepare("SELECT * FROM payment_vouchers WHERE id = ?").bind(id)
     .first<Record<string, unknown>>();
   if (!pv) return { ok: false, error: "Voucher not found" };
@@ -13835,27 +13838,49 @@ async function pvApprovalCore(
   const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
   const now = new Date().toISOString();
   const fail = (error: string) => ({ ok: false as const, error });
+  // H3 B3 (review pass 2): every rung is compare-and-set on the state read
+  // above (`AND approval_state = ?`). Two presses at the same moment: the
+  // second matches nothing and is refused — for approve, the guard after the
+  // UPDATE rolls back the postings it would otherwise have built twice.
+  const raced = () => ({
+    ok: false as const,
+    status: 409 as const,
+    error: `This voucher was changed by someone else just now (it was ${state}). Nothing was done. Refresh and check before trying again.`,
+  });
+  const changed = (r: unknown) => Number((r as { meta?: { changes?: number } } | null)?.meta?.changes ?? 1) === 0;
+  const runGuarded = async (stmts: D1PreparedStatement[]) => {
+    try {
+      await db.batch([...stmts.slice(0, 1), db.prepare(casGuardSql("payment_vouchers", "approval_state")).bind(id, "APPROVED", now), ...stmts.slice(1)]);
+      return null;
+    } catch (err) {
+      if (isCasMiss(err)) return raced();
+      throw err;
+    }
+  };
 
   if (action === "prepare") {
     if (state !== "DRAFT") return fail(`Only a draft can be prepared (this one is ${state})`);
-    await db.prepare(
-      "UPDATE payment_vouchers SET approval_state = 'PREPARED', prepared_at = ?, prepared_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ?",
-    ).bind(now, actorUserId, now, id).run();
+    const r = await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'PREPARED', prepared_at = ?, prepared_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ? AND approval_state = ?",
+    ).bind(now, actorUserId, now, id, state).run();
+    if (changed(r)) return raced();
     return { ok: true, pvNo, state: "PREPARED" };
   }
   if (action === "withdraw") {
     if (state !== "PREPARED") return fail(`Only a prepared voucher can be withdrawn (this one is ${state})`);
-    await db.prepare(
-      "UPDATE payment_vouchers SET approval_state = 'DRAFT', prepared_at = NULL, prepared_by = NULL, updated_at = ? WHERE id = ?",
-    ).bind(now, id).run();
+    const r = await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'DRAFT', prepared_at = NULL, prepared_by = NULL, updated_at = ? WHERE id = ? AND approval_state = ?",
+    ).bind(now, id, state).run();
+    if (changed(r)) return raced();
     return { ok: true, pvNo, state: "DRAFT" };
   }
   if (action === "reject") {
     if (state !== "PREPARED" && state !== "CHECKED") return fail(`Only a prepared or checked voucher can be rejected (this one is ${state})`);
     if (!reason.trim()) return fail("A reject needs a reason");
-    await db.prepare(
-      "UPDATE payment_vouchers SET approval_state = 'DRAFT', prepared_at = NULL, prepared_by = NULL, checked_at = NULL, checked_by = NULL, reject_reason = ?, updated_at = ? WHERE id = ?",
-    ).bind(reason.trim(), now, id).run();
+    const r = await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'DRAFT', prepared_at = NULL, prepared_by = NULL, checked_at = NULL, checked_by = NULL, reject_reason = ?, updated_at = ? WHERE id = ? AND approval_state = ?",
+    ).bind(reason.trim(), now, id, state).run();
+    if (changed(r)) return raced();
     return { ok: true, pvNo, state: "DRAFT" };
   }
   if (action === "check") {
@@ -13870,9 +13895,10 @@ async function pvApprovalCore(
         dateIso: String(pv.date ?? "").slice(0, 10),
       });
     }
-    await db.prepare(
-      "UPDATE payment_vouchers SET approval_state = 'CHECKED', pvNo = ?, checked_at = ?, checked_by = ?, updated_at = ? WHERE id = ?",
-    ).bind(formalNo, now, actorUserId, now, id).run();
+    const r = await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'CHECKED', pvNo = ?, checked_at = ?, checked_by = ?, updated_at = ? WHERE id = ? AND approval_state = ?",
+    ).bind(formalNo, now, actorUserId, now, id, state).run();
+    if (changed(r)) return raced();
     return { ok: true, pvNo: formalNo, state: "CHECKED" };
   }
   // approve — the posting moment.
@@ -13895,12 +13921,13 @@ async function pvApprovalCore(
       fxRate: Number(pv.fxRate ?? pv.fx_rate) || null,
     }, allocs);
     if (!built.ok) return fail(built.error);
-    await db.batch([
+    const lostAp = await runGuarded([
       db.prepare(
-        "UPDATE payment_vouchers SET approval_state = 'APPROVED', status = 'POSTED', totalSen = ?, approved_at = ?, approved_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ?",
-      ).bind(built.totalSen, now, actorUserId, now, id),
+        "UPDATE payment_vouchers SET approval_state = 'APPROVED', status = 'POSTED', totalSen = ?, approved_at = ?, approved_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ? AND approval_state = ?",
+      ).bind(built.totalSen, now, actorUserId, now, id, state),
       ...built.statements,
     ]);
+    if (lostAp) return lostAp;
     return { ok: true, pvNo, state: "APPROVED" };
   }
   const lineRes = await db.prepare(
@@ -13918,12 +13945,13 @@ async function pvApprovalCore(
     payFrom: (pv.payFrom ?? pv.pay_from) as string | null,
     totalSen,
   }, lines);
-  await db.batch([
+  const lost = await runGuarded([
     db.prepare(
-      "UPDATE payment_vouchers SET approval_state = 'APPROVED', status = 'POSTED', totalSen = ?, approved_at = ?, approved_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ?",
-    ).bind(totalSen, now, actorUserId, now, id),
+      "UPDATE payment_vouchers SET approval_state = 'APPROVED', status = 'POSTED', totalSen = ?, approved_at = ?, approved_by = ?, reject_reason = NULL, updated_at = ? WHERE id = ? AND approval_state = ?",
+    ).bind(totalSen, now, actorUserId, now, id, state),
     ...posting,
   ]);
+  if (lost) return lost;
   return { ok: true, pvNo, state: "APPROVED" };
 }
 
@@ -13942,7 +13970,7 @@ app.post("/payment-vouchers/:id/approval", async (c) => {
   await ensurePvApprovalCols(c.var.DB);
   const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
   const r = await pvApprovalCore(c.var.DB, getOrgId(c), actorUserId, c.req.param("id"), action, reason);
-  if (!r.ok) return c.json({ success: false, error: r.error }, 400);
+  if (!r.ok) return c.json({ success: false, error: r.error, ...(r.status === 409 ? { code: "status_changed" } : {}) }, r.status ?? 400);
   await emitAudit(c, { resource: "payment-vouchers", resourceId: c.req.param("id"), action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   return c.json({ success: true, data: { pvNo: r.pvNo, state: r.state } });
 });
@@ -13980,6 +14008,76 @@ app.post("/payment-vouchers/approval-batch", async (c) => {
     if (r.ok) await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   }
   return c.json({ success: true, data: { results, done: results.filter((r) => r.ok).length } });
+});
+
+// "Remind approver" (review pass 2, H3-7): the preparer of a CHECKED voucher
+// sends everyone holding accounting:approve an in-app notification — at most
+// once an hour per voucher (lib/pv-remind.ts). The voucher is not touched.
+let pvRemindUserColumn: Promise<void> | null = null;
+app.post("/payment-vouchers/:id/remind", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  await ensurePvApprovalCols(c.var.DB);
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  const pv = await c.var.DB.prepare("SELECT * FROM payment_vouchers WHERE id = ?").bind(id)
+    .first<Record<string, unknown>>();
+  if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+  const state = String((pv.approvalState ?? pv.approval_state) ?? "APPROVED");
+  if (String(pv.status) === "VOID") return c.json({ success: false, error: "This voucher is cancelled" }, 400);
+  if (state !== "CHECKED") {
+    return c.json({ success: false, error: `Only a checked voucher waits for the approver (this one is ${state})` }, 400);
+  }
+  const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
+  const nowMs = Date.now();
+  const link = pvRemindLink(id);
+  if (!pvRemindUserColumn) {
+    pvRemindUserColumn = runSelfApply(c.var.DB, "notifications.user_id", [
+      "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id TEXT",
+    ]).catch((e) => { pvRemindUserColumn = null; throw e; });
+  }
+  await pvRemindUserColumn;
+  const last = await c.var.DB.prepare(
+    "SELECT MAX(created_at) AS \"lastAt\" FROM notifications WHERE link = ? AND id LIKE 'pv-remind-%'",
+  ).bind(link).first<{ lastAt?: string | null; lastat?: string | null }>();
+  const lastRaw = last?.lastAt ?? last?.lastat ?? null;
+  const wait = remindWaitMinutes(lastRaw == null ? null : new Date(lastRaw).toISOString(), nowMs);
+  if (wait > 0) return c.json({ success: false, error: remindTooSoonMessage(wait), code: "too_soon" }, 429);
+
+  // Everyone in this org whose permissions (own list, else role) grant
+  // accounting:approve — never the person pressing the button.
+  const usersRes = await c.var.DB.prepare(
+    "SELECT id, role FROM users WHERE isActive = 1 AND (orgId = ? OR orgId IS NULL)",
+  ).bind(orgId).all<{ id: string; role: string | null }>();
+  const roleCache = new Map<string, Set<string>>();
+  const approvers: string[] = [];
+  for (const u of usersRes.results ?? []) {
+    if (!u.id || u.id === actorUserId) continue;
+    let perms = await getUserOverride(c, String(u.id)).catch(() => null);
+    if (!perms) {
+      const role = String(u.role ?? "");
+      if (!roleCache.has(role)) roleCache.set(role, await getRolePermissions(c, role).catch(() => new Set<string>()));
+      perms = roleCache.get(role) ?? new Set<string>();
+    }
+    if (grantsApprove(perms)) approvers.push(String(u.id));
+    if (approvers.length >= 50) break;
+  }
+  if (approvers.length === 0) {
+    return c.json({ success: false, error: "Nobody else holds the Approve right for payment vouchers, so there is no one to remind." }, 400);
+  }
+  const nowIso = new Date(nowMs).toISOString();
+  const amount = (Math.round(Number(pv.totalSen ?? pv.total_sen) || 0) / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const title = `Payment voucher ${pvNo} is waiting for your approval`;
+  const message = `${String(pv.payee ?? "").trim() || "Payment"} · RM ${amount} — checked and waiting to be approved.`;
+  await c.var.DB.batch(approvers.map((uid) =>
+    c.var.DB.prepare(
+      `INSERT INTO notifications (id, type, title, message, severity, is_read, link, created_at, org_id, user_id)
+       VALUES (?, 'SYSTEM', ?, ?, 'WARNING', 0, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+    ).bind(pvRemindNotificationId(id, uid, nowMs), title, message, link, nowIso, orgId, uid),
+  ));
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "remind", after: { pvNo, approvers: approvers.length } });
+  return c.json({ success: true, data: { reminded: approvers.length } });
 });
 
 // Clear an accrued voucher against the bank: DR accrual, CR bank/cash.

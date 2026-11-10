@@ -113,7 +113,11 @@ test("race-safe: the write batch locks the DO first and re-checks the cap last, 
   const db = fakeDb();
   await create(db, [line({ quantity: 1 })]);
   const sqls = db.batches[0];
-  assert.match(sqls[0], /^SELECT pg_advisory_xact_lock\(hashtext\('delivery_return:' \|\| \?\)::bigint\)$/);
+  // [0]/[1] are the document-number guard (H3 B2, doc-no-guard.ts); the DO
+  // lock follows straight after, before any write.
+  assert.match(sqls[0], /^SELECT pg_advisory_xact_lock\(hashtext\(\?\)::bigint\)$/);
+  assert.match(sqls[1], /^SELECT CAST\('DOC_NO_TAKEN ' \|\| return_no AS INTEGER\)/);
+  assert.match(sqls[2], /^SELECT pg_advisory_xact_lock\(hashtext\('delivery_return:' \|\| \?\)::bigint\)$/);
   assert.match(sqls.at(-1), /^SELECT 1 \/ CASE WHEN EXISTS \(.*HAVING SUM\(dri\.quantity\) > \(.*SELECT COALESCE\(SUM\(doi\.quantity\),0\) FROM delivery_order_items doi/);
 });
 

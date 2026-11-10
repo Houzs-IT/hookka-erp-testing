@@ -41,6 +41,8 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
 import { computeHealthStatus, type HealthInputs } from "../../lib/health-status";
+import { keyProblems } from "../../lib/key-probe";
+import { runKeyProbes } from "../lib/key-probes";
 
 const app = new Hono<Env>();
 
@@ -2352,6 +2354,18 @@ app.post("/db-fix-superking-2038", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/admin/health/key-probes — does each outside key still work?
+// (cross-system review pass 2, C2-11). One harmless read per configured key;
+// verdicts ok / refused / no-answer / not-set (src/lib/key-probe.ts). The page
+// feeds them into the same banner verdict the alert email reads. `?fresh=1`
+// skips the 10-minute cache. SUPER_ADMIN only (the app.use gate above).
+// ---------------------------------------------------------------------------
+app.get("/key-probes", async (c) => {
+  const results = await runKeyProbes(c.env, { fresh: c.req.query("fresh") === "1" });
+  return c.json({ success: true, data: { results, checkedAt: new Date().toISOString() } });
+});
+
+// ---------------------------------------------------------------------------
 // The System Health banner, measured on the server (cross-system review P4).
 // Same inputs as the page's banner over the page's default 24 h window, fed to
 // the same computeHealthStatus — the red-alert email (lib/health-alert.ts)
@@ -2374,6 +2388,9 @@ export async function measureHealthBanner(env: unknown): Promise<
       feErrorRows(e.CF_ACCOUNT_ID, e.AE_QUERY_TOKEN, WINDOW),
     ]);
     if (kpis._mock) return { live: false, reason: "metrics are mock" };
+    // C2-11: each outside key checked with a harmless read (cached 10 min).
+    // A probe failure must never stop the banner, so it degrades to "none".
+    const keys = keyProblems(await runKeyProbes(env).catch(() => []));
     const inputs: HealthInputs = {
       p50: kpis.p50,
       p95: kpis.p95,
@@ -2381,6 +2398,8 @@ export async function measureHealthBanner(env: unknown): Promise<
       cacheHitRatio: kpis.cacheHitRatio,
       fiveXX: statuses.filter((s) => s.status.startsWith("5")).reduce((a, b) => a + b.count, 0),
       feErrCount: feErrors.reduce((a, b) => a + b.n, 0),
+      keysRefused: keys.refused,
+      keysNoAnswer: keys.noAnswer,
     };
     return { live: true, inputs, status: computeHealthStatus(inputs) };
   } catch (err) {

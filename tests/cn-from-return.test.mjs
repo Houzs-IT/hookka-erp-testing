@@ -61,7 +61,7 @@ test("GET /from-returns: reachable before /:id, gated like creating a note, link
 
 test("POST: one note per return, the link stored and written back to the return", () => {
   const api = read("src/api/routes/credit-notes.ts");
-  const post = api.slice(api.indexOf('app.post("/", async (c) => {'), api.indexOf('app.get("/:id"'));
+  const post = api.slice(api.indexOf('app.post("/", idempotent(), async (c) => {'), api.indexOf('app.get("/:id"'));
   assert.match(post, /await ensureCreditNoteReturnColumn\(c\.var\.DB\);/);
   assert.match(post, /SELECT noteNumber FROM credit_notes WHERE delivery_return_id = \?/);
   assert.match(post, /This delivery return already has credit note/);

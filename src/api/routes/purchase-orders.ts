@@ -274,6 +274,9 @@ const generatePoNo = nextPoNoCandidate;
 
 const PO_NO_RETRY_LIMIT = 5;
 
+// H3 B4: raised inside the PUT batch when the PO moved after it was read.
+const PO_EDIT_CONFLICT = "PO_EDIT_CONFLICT";
+
 function isPoNoUniqueViolation(err: unknown): boolean {
   if (!err) return false;
   const msg = err instanceof Error ? err.message : String(err);
@@ -1064,7 +1067,34 @@ app.put("/:id", async (c) => {
     // cascade was a no-op in practice and misleading in code: removed
     // to keep the receipt path single-sourced through grn.ts.
 
-    await c.var.DB.batch(statements);
+    // H3 B4 (review pass 2): the stale-edit check above compares in memory,
+    // so two saves a few ms apart could both pass it. When the form sent
+    // the updatedAt it loaded, the batch now opens by row-locking the PO and
+    // re-checking updated_at against what this request read — the second
+    // save waits for the first, sees the moved stamp and is refused (409).
+    const stampRow = existing as { updated_at?: unknown; updatedAt?: unknown };
+    const readStamp = stampRow.updatedAt ?? stampRow.updated_at;
+    const readIso = readStamp == null || readStamp === "" ? null : new Date(readStamp as string).toISOString();
+    if (body?.expectedUpdatedAt != null && body.expectedUpdatedAt !== "" && readIso && !Number.isNaN(Date.parse(readIso))) {
+      statements.unshift(
+        c.var.DB.prepare(
+          `SELECT CASE WHEN date_trunc('milliseconds', updated_at::timestamptz) = date_trunc('milliseconds', ?::timestamptz)
+                       THEN 1 ELSE CAST('${PO_EDIT_CONFLICT} ' || id AS INTEGER) END AS ok
+             FROM purchase_orders WHERE id = ? FOR UPDATE`,
+        ).bind(readIso, id),
+      );
+    }
+    try {
+      await c.var.DB.batch(statements);
+    } catch (e) {
+      if (String(e instanceof Error ? e.message : e).includes(PO_EDIT_CONFLICT)) {
+        return c.json(
+          { success: false, error: editConflictMessage({ updated_at: "moved" }, "read", "purchase order"), conflict: true },
+          409,
+        );
+      }
+      throw e;
+    }
 
     // No supplier email on → SUBMITTED any more (HK-0113): the PO now goes out
     // from the operator's own mailbox via Mail Center with the PDF attached,

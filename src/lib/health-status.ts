@@ -19,6 +19,14 @@ export interface HealthInputs {
   fiveXX: number;
   /** Front-end errors in the window (top groups, as the page lists them). */
   feErrCount: number;
+  /**
+   * Outside keys the provider REFUSED (C2-11, src/lib/key-probe.ts). Any one
+   * turns the banner red, so the existing alert email fires. Optional: a
+   * caller that did not probe changes nothing.
+   */
+  keysRefused?: string[];
+  /** Outside keys that got no answer (timeout / 5xx) — amber only. */
+  keysNoAnswer?: string[];
 }
 
 export function computeHealthStatus(k: HealthInputs): {
@@ -31,6 +39,10 @@ export function computeHealthStatus(k: HealthInputs): {
   if (k.longTaskCount > 500) issues.push(`${k.longTaskCount} long tasks`);
   if (k.fiveXX > 0) issues.push(`${k.fiveXX} server errors`);
   if (k.feErrCount > 10) issues.push(`${k.feErrCount} FE errors`);
+  const refused = k.keysRefused ?? [];
+  const noAnswer = k.keysNoAnswer ?? [];
+  if (refused.length) issues.push(`Key refused: ${refused.join(", ")}`);
+  if (noAnswer.length) issues.push(`No answer: ${noAnswer.join(", ")}`);
   if (issues.length === 0) {
     return {
       tone: "green",
@@ -39,7 +51,8 @@ export function computeHealthStatus(k: HealthInputs): {
     };
   }
   // Critical thresholds — any of these alone is enough to escalate.
-  const critical = k.p95 >= 2000 || k.fiveXX > 10 || k.feErrCount > 50 || issues.length >= 3;
+  const critical =
+    k.p95 >= 2000 || k.fiveXX > 10 || k.feErrCount > 50 || refused.length > 0 || issues.length >= 3;
   return {
     tone: critical ? "red" : "amber",
     label: critical ? "Critical — investigate now" : "Investigate",

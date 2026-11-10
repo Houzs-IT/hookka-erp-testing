@@ -19,6 +19,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
+import { idempotent } from "../lib/idempotency";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import {
@@ -173,7 +174,7 @@ app.get("/payout-listing", async (c) => {
 // ---------------------------------------------------------------------------
 // POST /  — record one advance. Body: { workerId, amountSen, date, note? }
 // ---------------------------------------------------------------------------
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "payslips", "update");
   if (denied) return denied;
   let body: {

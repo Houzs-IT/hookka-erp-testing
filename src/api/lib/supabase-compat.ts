@@ -218,14 +218,20 @@ const emptyMeta: D1Meta = {
 // MID-statement, and retrying an INSERT that may already have applied is how
 // you get a silent double-write. The narrow matcher is the correct call and
 // stays narrow.
+// 2026-11-10 (review pass 2, H3 B8; sister Conts#610 / Houzs#5402 B1.7):
+// Supavisor in SESSION mode answers a full pool with "max clients reached in
+// session mode" (code EMAXCONNSESSION) — also refused before any SQL is sent,
+// so it is retried like the others. Whether Hyperdrive ever surfaces that
+// exact message is UNVERIFIED; matching it costs nothing if it never does.
 const CONN_CREATE_RE =
-  /creating a new server connection|connect[_ ]?timeout|connection timed out|remaining connection slots|too many clients|too many connections/i
+  /creating a new server connection|connect[_ ]?timeout|connection timed out|remaining connection slots|too many clients|too many connections|max clients reached|EMAXCONNSESSION/i
 
 function isConnCreateError(e: unknown): boolean {
   const code = (e as { code?: string } | null)?.code ?? ''
   if (code === 'CONNECT_TIMEOUT') return true
   // 53300 = too_many_connections, 53400 = configuration_limit_exceeded.
   if (code === '53300' || code === '53400') return true
+  if (code === 'EMAXCONNSESSION') return true
   const msg = e instanceof Error ? e.message : String(e)
   return CONN_CREATE_RE.test(msg)
 }

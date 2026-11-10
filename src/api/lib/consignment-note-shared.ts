@@ -622,7 +622,8 @@ export type UpdateCNResult =
       reason: "items_locked";
       currentStatus: string | null;
     }
-  | { ok: false; reason: "po_conflict"; message: string };
+  | { ok: false; reason: "po_conflict"; message: string }
+  | { ok: false; reason: "status_changed"; from: string | null; current: string | null };
 
 // ----------------------------------------------------------------------------
 // validatePOMutex (latent gap 1, 2026-04-29).
@@ -953,7 +954,10 @@ export async function updateConsignmentNoteById(
       ? existing.sentDate
       : ((body.sentDate as string | null) ?? null);
 
-  await db
+  // H3 B1 (review pass 2): compare-and-set on the status read above. A late
+  // status tap that lands after a return / convert matches nothing and is
+  // refused before any cascade below runs (this is the helper's first write).
+  const headerWrite = await db
     .prepare(
       `UPDATE consignment_notes SET
          status = ?, notes = ?, branchName = ?, sentDate = ?,
@@ -961,7 +965,7 @@ export async function updateConsignmentNoteById(
          vehicleId = ?, vehicleNo = ?, vehicleType = ?,
          dispatchedAt = ?, inTransitAt = ?, deliveredAt = ?, acknowledgedAt = ?,
          consignmentOrderId = ?, hubId = ?
-       WHERE id = ?`,
+       WHERE id = ? AND status IS NOT DISTINCT FROM ?`,
     )
     .bind(
       nextStatus,
@@ -982,8 +986,16 @@ export async function updateConsignmentNoteById(
       consignmentOrderId,
       hubId,
       id,
+      existing.status ?? null,
     )
     .run();
+  if (Number(headerWrite?.meta?.changes ?? 1) === 0) {
+    const cur = await db
+      .prepare("SELECT status FROM consignment_notes WHERE id = ?")
+      .bind(id)
+      .first<{ status: string | null }>();
+    return { ok: false, reason: "status_changed", from: existing.status ?? null, current: cur?.status ?? null };
+  }
 
   // -------------------------------------------------------------------
   // Phase-4 inventory cascade on dispatch (ACTIVE → PARTIALLY_SOLD,
