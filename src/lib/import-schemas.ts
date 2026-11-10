@@ -48,7 +48,7 @@ export const RM_IMPORT_COLUMNS: ImportColumn[] = [
   { key: "itemCode", label: "Item Code", aliases: ["Code", "Material Code", "Internal Code"], required: true, example: "PC151-01", help: "Unique item code" },
   { key: "description", label: "Description", required: true, example: "Fabric PC151-01 Grey" },
   { key: "baseUOM", label: "Base UOM", aliases: ["UOM", "Unit"], required: true, example: "MTR", help: "One of the units in RM Settings → Units." },
-  { key: "itemGroup", label: "Item Group", aliases: ["Group", "Stock Group"], required: true, example: "FABRIC", help: "FABRIC / PLYWOOD / FOAM etc." },
+  { key: "itemGroup", label: "Item Group", aliases: ["Group", "Stock Group"], required: true, example: "S.M-FABR", help: "Type it exactly as on the Raw Materials page. Fabrics: B.M-FABR / S.M-FABR / S-FABRIC (only these reach the Fabrics list)." },
   { key: "balanceQty", label: "Balance Qty", aliases: ["Balance", "Qty"], type: "number", example: 0 },
   { key: "isActive", label: "Active", aliases: ["Is Active"], type: "boolean", example: "TRUE" },
   { key: "notes", label: "Notes", help: "Blank keeps the stored note. Type [CLEAR] to empty it." },
