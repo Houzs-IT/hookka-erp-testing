@@ -48,3 +48,10 @@ test("page: polls while building, Refresh rebuilds, says you can leave", () => {
   assert.match(page, /if \(json\.success && json\.building\)/);
   assert.match(page, /you can leave this page/);
 });
+
+test("month start: the last closed month is pre-built daily and kept (never rebuilt unless forced)", () => {
+  const w = readFileSync("src/api/worker.ts", "utf8");
+  assert.match(w, /app\.post\("\/api\/internal\/board-report-prebuild"/);
+  assert.match(w, /if \(!body\.force && \(await cache\.readBoardCache\(db, month\)\)\)/);
+  assert.match(readFileSync(".github/workflows/board-report-prebuild.yml", "utf8"), /cron: '30 16 \* \* \*'/);
+});
