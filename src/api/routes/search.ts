@@ -40,6 +40,8 @@ import {
   SEARCH_SOURCES,
   buildSourceSql,
   isSourceUsable,
+  resultHref,
+  searchTerms,
   type SearchSource,
 } from "../lib/search-sources";
 
@@ -125,13 +127,20 @@ app.get("/", async (c) => {
     allowed.push(s);
   }
 
-  const like = `%${term}%`;
+  // The term in three forms (review pass 2 C2-9 / H3-11): as typed, as a
+  // document number without spaces / dashes, and as phone digits with +60
+  // read as 0. A form the term has nothing for is left out of the SQL.
+  const terms = searchTerms(term);
   const settled = await Promise.all(
     allowed.map(async (s) => {
       const cols = columns.get(s.table)!;
-      const { sql } = buildSourceSql(s, cols, perSource);
-      const binds: unknown[] = s.searchCols.map(() => like);
-      if (s.orgCol && cols.has(s.orgCol)) binds.push(orgId);
+      const { sql, binds: bindKinds } = buildSourceSql(s, cols, perSource, {
+        compact: terms.compact !== null,
+        phone: terms.phone !== null,
+      });
+      const binds: unknown[] = bindKinds.map((k) =>
+        k === "org" ? orgId : k === "compact" ? terms.compact : k === "phone" ? terms.phone : terms.like,
+      );
       try {
         const res = await c.var.DB.prepare(sql).bind(...binds).all<Row>();
         const items = (res.results ?? []).map((r) => {
@@ -140,7 +149,7 @@ app.get("/", async (c) => {
             id,
             label: String(r.label ?? "") || id,
             sub: [r.sub1, r.sub2, r.sub3].filter((x) => x != null && String(x) !== "").map(String),
-            href: `${s.hrefPrefix}${encodeURIComponent(id)}`,
+            href: resultHref(s, id, String(r.label ?? "")),
           };
         }).filter((x) => x.id);
         return { kind: s.kind, group: s.groupLabel, items };

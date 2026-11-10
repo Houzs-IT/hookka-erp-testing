@@ -49,7 +49,10 @@ type ResultCategory =
   // modules were never findable from search before.
   | "purchase_orders" | "purchase_invoices" | "goods_receipts" | "suppliers"
   | "production_orders" | "service_orders" | "service_cases"
-  | "employees" | "leads" | "journal_entries";
+  | "employees" | "leads" | "journal_entries"
+  // Review pass 2 (C2-10 / H3-11): returns, notes, receipts, vouchers.
+  | "delivery_returns" | "credit_notes" | "debit_notes" | "purchase_returns"
+  | "stock_adjustments" | "payment_receipts" | "official_receipts" | "payment_vouchers";
 
 type StatusTone = "green" | "amber" | "blue" | "red" | "neutral";
 
@@ -198,6 +201,14 @@ const CATEGORY_CONFIG: Record<ResultCategory, { label: string; icon: LucideIcon 
   employees: { label: "Employees", icon: Users },
   leads: { label: "Sales Pipeline", icon: TrendingUp },
   journal_entries: { label: "Journal Entries", icon: FileText },
+  delivery_returns: { label: "Delivery Returns", icon: FileX },
+  credit_notes: { label: "Credit Notes", icon: CreditCard },
+  debit_notes: { label: "Debit Notes", icon: CreditCard },
+  purchase_returns: { label: "Purchase Returns", icon: FileX },
+  stock_adjustments: { label: "Stock Adjustments", icon: Layers },
+  payment_receipts: { label: "Payment Receipts", icon: Wallet },
+  official_receipts: { label: "Official Receipts", icon: Wallet },
+  payment_vouchers: { label: "Payment Vouchers", icon: Wallet },
 };
 
 // Server /api/search `kind` → the palette's category + icon. A kind the UI
@@ -220,6 +231,14 @@ const SERVER_KIND_MAP: Record<string, { category: ResultCategory; icon: LucideIc
   employee: { category: "employees", icon: Users },
   lead: { category: "leads", icon: TrendingUp },
   journal_entry: { category: "journal_entries", icon: FileText },
+  delivery_return: { category: "delivery_returns", icon: FileX },
+  credit_note: { category: "credit_notes", icon: CreditCard },
+  debit_note: { category: "debit_notes", icon: CreditCard },
+  purchase_return: { category: "purchase_returns", icon: FileX },
+  stock_adjustment: { category: "stock_adjustments", icon: Layers },
+  payment_receipt: { category: "payment_receipts", icon: Wallet },
+  official_receipt: { category: "official_receipts", icon: Wallet },
+  payment_voucher: { category: "payment_vouchers", icon: Wallet },
 };
 
 // ---------------------------------------------------------------------------
@@ -429,6 +448,14 @@ export function GlobalSearch() {
       "leads",
       "employees",
       "journal_entries",
+      "delivery_returns",
+      "credit_notes",
+      "debit_notes",
+      "purchase_returns",
+      "stock_adjustments",
+      "payment_receipts",
+      "official_receipts",
+      "payment_vouchers",
     ];
 
     for (const cat of categoryOrder) {
