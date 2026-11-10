@@ -519,5 +519,9 @@ test("the DO page's bucket money goes through the honesty rule", () => {
 test("loading hides the money rather than showing a placeholder zero", () => {
   const html = render({ tabs: VALUED_TABS, loading: true });
   assert.ok(!html.includes("RM"), "no half-computed figure while loading");
-  assert.ok(html.includes("369"), "counts still render");
+  // Review pass 2 C1-11: pages pass `loading` only while the list has not
+  // arrived, so a count then is a placeholder too — it reads "—", never "0".
+  assert.ok(!html.includes("369"), "no count before the list arrives");
+  assert.ok(html.includes("—"), "a dash stands in for each count");
+  assert.ok(render({ tabs: VALUED_TABS }).includes("369"), "counts render once loaded");
 });

@@ -798,6 +798,7 @@ export default function InvoicesPage() {
               what they are worth. Replaces the old Status dropdown: one control,
               one set of numbers. */}
           <StatusTabStrip
+            loading={loading && !invResp}
             variant="underline"
             value={filterStatus}
             onChange={setFilterStatus}

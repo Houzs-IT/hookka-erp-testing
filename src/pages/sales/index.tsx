@@ -1550,6 +1550,7 @@ export default function SalesPage() {
                 </Button>
               )}
               <StatusTabStrip
+                loading={loading && !ordersResp}
                 value={tab}
                 onChange={(k) => { setTab(k as "DRAFT" | "CONFIRMED"); setSelectedRows([]); }}
                 moneyLabel="Order value"

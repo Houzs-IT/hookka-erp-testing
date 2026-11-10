@@ -781,6 +781,7 @@ export default function SalesPage() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-[#6B5C32]" /> Consignment Orders</CardTitle>
             <StatusTabStrip
+              loading={loading && !ordersResp}
               value={tab}
               onChange={(k) => { setTab(k as "DRAFT" | "CONFIRMED"); setSelectedRows([]); }}
               moneyLabel="Order value"
