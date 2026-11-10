@@ -1244,6 +1244,8 @@ export default function GRNPage() {
             // Stable id — the column picker / drag / resize state persists
             // under it. Renaming it silently discards saved layouts.
             gridId="goods-receipts-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
             // Review G4: the Total row leaves cancelled rows out (still listed).
             totalsSkipRow={isCancelledStatusRow}
             totalRows={!grnFiltersActive && grnTotalPages > 1 ? grnTotalCount : undefined}

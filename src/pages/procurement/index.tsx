@@ -2173,6 +2173,8 @@ export default function ProcurementPage() {
             onColumnViewChange={setGridColumnView}
             alwaysSearchKeys={PO_ALWAYS_SEARCH_KEYS}
             gridId="purchase-orders-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
             // Review G4: the Total row leaves cancelled rows out (still listed).
             totalsSkipRow={isCancelledStatusRow}
             totalRows={!poFiltersActive && poTotalPages > 1 ? poTotalCount : undefined}

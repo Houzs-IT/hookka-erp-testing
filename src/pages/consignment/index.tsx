@@ -902,6 +902,8 @@ export default function SalesPage() {
             // Stable id — the column picker / drag / resize state persists
             // under it. Renaming it silently discards saved layouts.
             gridId="consignment-orders-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
             // Review G4: the Total row leaves cancelled rows out (still listed).
             totalsSkipRow={isCancelledStatusRow}
             // Review G7: a failed load says so, with Retry, instead of an empty list.

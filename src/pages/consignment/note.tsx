@@ -32,6 +32,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
 import { listLoadError } from "@/lib/list-load-error";
 import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -3318,6 +3319,8 @@ export default function ConsignmentNotePage() {
               data={filteredCNs}
               keyField="id"
               gridId="consignment-notes-list"
+              // Review G5: a cancelled document is faded, its number struck through.
+              cancelledRow={isCancelledStatusRow}
               // Review G7: a failed load says so, with Retry, instead of an empty list.
               error={listLoadError(cnRaw, cnError)}
               onRetry={refreshCNs}

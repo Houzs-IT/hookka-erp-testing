@@ -415,6 +415,10 @@ export type DataGridProps<T> = {
   // `listLoadError(resp, error)` (src/lib/list-load-error.ts) builds it.
   error?: string | null;
   onRetry?: () => void;
+  // A cancelled document row (review G5, Houzs#4493): the row is faded and
+  // its document number (`type: "docno"` columns) struck through, so a void
+  // record reads as void at a glance. Display only.
+  cancelledRow?: (row: T) => boolean;
 };
 
 type SavedView = {
@@ -1857,6 +1861,7 @@ export function DataGrid<T extends Record<string, any>>({
   totalsSkipNoun,
   error,
   onRetry,
+  cancelledRow,
 }: DataGridProps<T>) {
   // Review G1 (2026-11-10): the header menu and header drag are ON for every
   // grid that persists a layout (has a gridId), so new list pages get them
@@ -3931,10 +3936,12 @@ export function DataGrid<T extends Record<string, any>>({
                   const key = String(getNestedValue(row, keyField));
                   const isSelected = selectedKeys.has(key);
                   const isEven = index % 2 === 1;
+                  const isCancelled = !!cancelledRow?.(row);
                   return (
                     <tr
                       key={key}
                       data-dg="row"
+                      data-cancelled={isCancelled || undefined}
                       className={cn(
                         // Tablet: min-h-[40px] for finger-friendly row height
                         // when selectable=true; otherwise keep the dense default
@@ -3942,6 +3949,8 @@ export function DataGrid<T extends Record<string, any>>({
                         "border-b border-[#E2DDD8] text-[12px] text-[#111]",
                         selectable && "min-h-[40px]",
                         isEven && "bg-[#FAFAFA]",
+                        // Review G5: a cancelled document reads as void.
+                        isCancelled && "!text-[#9CA3AF]",
                         rowClassName?.(row),
                         isSelected && "!bg-[#CCE0FF] border-l-2 border-l-[#3366CC]",
                         !isSelected && "hover:bg-[#F0ECE9]",
@@ -4044,6 +4053,7 @@ export function DataGrid<T extends Record<string, any>>({
                               isSticky && isSelected && "!bg-[#CCE0FF]",
                               inRange && "!bg-[#B9D3F5]",
                               col.cellClassName?.(row),
+                              isCancelled && col.type === "docno" && "line-through",
                             )}
                             data-dg-col={colIdx}
                             style={{

@@ -276,11 +276,25 @@ test("G7: DataGrid shows a load error instead of the empty message, with Retry",
   assert.match(GRID, /Couldn&apos;t refresh this list: \{error\}/, "rows still shown → a banner, not a blank grid");
 });
 
+// ── G5 — cancelled documents read as void ────────────────────────────────
+test("G5: DataGrid fades a cancelled row and strikes its document number", () => {
+  assert.match(GRID, /cancelledRow\?: \(row: T\) => boolean;/);
+  assert.match(GRID, /const isCancelled = !!cancelledRow\?\.\(row\);/);
+  assert.match(GRID, /data-cancelled=\{isCancelled \|\| undefined\}/);
+  assert.match(GRID, /isCancelled && col\.type === "docno" && "line-through"/);
+});
+
 for (const [file, gridId] of [
   ...DOC_LISTS.map(([f, id]) => [f, id]),
   ["src/pages/delivery/index.tsx", "delivery-orders-list"],
   ["src/pages/consignment/note.tsx", "consignment-notes-list"],
 ]) {
+  test(`G5: ${file} marks cancelled rows`, () => {
+    const src = read(file);
+    const at = src.indexOf(`gridId="${gridId}"`);
+    const grid = src.slice(src.lastIndexOf("<DataGrid", at), src.indexOf("/>", at));
+    assert.match(grid, /cancelledRow=\{isCancelledStatusRow\}/);
+  });
   test(`G7: ${file} hands its list error and refresh to the grid`, () => {
     const src = read(file);
     const at = src.indexOf(`gridId="${gridId}"`);
