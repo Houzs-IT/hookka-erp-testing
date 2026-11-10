@@ -16,6 +16,7 @@ import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
+import { fitCodeColumn } from "./pdf-code-column";
 
 // ---------------------------------------------------------------------------
 // Purchase Invoice (supplier invoice) PDF.
@@ -213,6 +214,9 @@ export function generatePurchaseInvoicePdf(
       fmtCurrency((Number(item.lineTotalSen) || 0) + (Number(item.discountSen) || 0)),
     ];
   });
+  // D5: the item code stays on one line — the column fits the longest code
+  // (26 mm floor, 40 mm cap; Description absorbs it), font shrinks last.
+  const codeCol = fitCodeColumn(doc, tableBody.map((r) => r[1]), { minWidth: 26, maxWidth: 40 });
 
   autoTable(doc, {
     startY: y,
@@ -250,7 +254,7 @@ export function generatePurchaseInvoicePdf(
     },
     columnStyles: {
       0: { cellWidth: 10, halign: "center" },
-      1: { cellWidth: 26, fontStyle: "bold" },
+      1: { cellWidth: codeCol.cellWidth, fontStyle: "bold", fontSize: codeCol.fontSize },
       2: { cellWidth: "auto" },
       3: { cellWidth: 26 },
       4: { cellWidth: 16, halign: "right" },
