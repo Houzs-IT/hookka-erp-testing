@@ -19238,6 +19238,10 @@ const cfColWord = (c: CfApiCol): string => (!c.forecast ? "Actual" : c.forecastK
 // Its cell token (finance-v2.css): fc = Docs forecast (blue), fc fp = P&L
 // forecast (lavender) — never red (owner 2026-11-09 「红色对我来说是 negative」).
 const cfColTok = (c: { forecast?: boolean; forecastKind?: string } | undefined): string => (!c?.forecast ? "" : c.forecastKind === "pnl" ? " fc fp" : " fc");
+// What Hide past months takes away (owner 2026-11-10 「是把 docs forecast 和
+// P&L forecast hide 起来，actual 要 remain」): a forecast column of a month
+// before the statement's own. Never an Actual column, never Accumulated.
+const pastForecastCol = (c: CfApiCol, period: string): boolean => !c.accum && !!c.forecast && !!c.ym && c.ym < period;
 type CfApiData = { period: string; columns: CfApiCol[]; rows: CfApiRow[] };
 type CfForecastData = CfApiData & {
   today?: string;
@@ -19298,16 +19302,18 @@ function CashFlowTab() {
   const fcFailed = fcOn && !fcLoading && !fcData && (!!fcErr || (!!fcResp && !fcResp.success));
   const allCols: CfApiCol[] = (fcData ?? data)?.columns ?? [];
   // Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不显示 past
-  // month」): with the forecast on, the months before the statement's own go,
-  // every column of them; Accumulated, the statement's month and the months
-  // ahead stay. Off on every load, and again with any press of Forecast.
+  // month」, then 「是把 docs forecast 和 P&L forecast hide 起来，actual 要
+  // remain」): with the forecast on, the Docs and P&L forecast columns of the
+  // months before the statement's own go; their Actual stays, and so do
+  // Accumulated, the statement's month and the months ahead. Off on every
+  // load, and again with any press of Forecast.
   const [hidePast, setHidePast] = useState(false);
-  const pastMonths = !!fcData && fcData.columns.some((c) => !c.accum && !!c.ym && c.ym < period);
+  const pastMonths = !!fcData && fcData.columns.some((c) => pastForecastCol(c, period));
   const hiddenIdx = useMemo(() => {
     if (!hidePast || !fcData) return null;
     const s = new Set<number>();
     fcData.columns.forEach((c, i) => {
-      if (!c.accum && c.ym && c.ym < period) s.add(i);
+      if (pastForecastCol(c, period)) s.add(i);
     });
     return s.size ? s : null;
   }, [hidePast, fcData, period]);
@@ -19914,7 +19920,7 @@ function CashFlowTab() {
   const fileBase = `CashFlow-${period}`;
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Statement of Cash Flow", buildExport()); } },
-    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}${hiddenIdx ? " · past months hidden" : ""}`, buildExport(), { print: true }); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}${hiddenIdx ? " · past months' forecasts hidden" : ""}`, buildExport(), { print: true }); } },
   ];
 
   return (
@@ -19997,7 +20003,7 @@ function CashFlowTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title="Statement Of Cash Flow"
-        note={`Prepared on cash basis · all figures RM · ${fcData ? `Actual and Forecast per month${hiddenIdx ? " · past months hidden" : ""}` : "Accumulated + trailing 12 months"} · view ${periodLabel(period, "")}`}
+        note={`Prepared on cash basis · all figures RM · ${fcData ? `Actual and Forecast per month${hiddenIdx ? " · past months' forecasts hidden" : ""}` : "Accumulated + trailing 12 months"} · view ${periodLabel(period, "")}`}
         maxHeight="calc(100vh - 280px)"
       >
         {!data ? (

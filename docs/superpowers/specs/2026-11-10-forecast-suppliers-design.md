@@ -44,11 +44,11 @@ Separately, on Cash Flow with Forecast on: a button that hides the months alread
 
 ## 7. Cash Flow: Hide past months [owner]
 
-- With Forecast on, a **Hide past months** toggle beside Forecast. Pressed: the months before the statement's month go, all their columns. Accumulated, the statement's month and the months ahead stay. Excel and Print follow the screen.
+- With Forecast on, a **Hide past months** toggle beside Forecast. Pressed: the **Docs forecast and P&L forecast columns** of the months before the statement's month go, and **their Actual column stays**. Accumulated, the statement's month and the months ahead stay whole. Excel and Print follow the screen. [owner, 2026-11-10, after the first build hid the whole month: 「我的 hide past month 是把 docs forecast 和 P&L forecast hide 起来，actual 要 remain」]
 - Off on every load and whenever Forecast is switched off. [my call]
 
 ## 8. What must stay true
 
 - A month without supplier cells reads exactly as before on every screen.
 - Nothing here writes to the ledger or to any document.
-- With Hide past months off, the Cash Flow forecast is exactly as before.
+- With Hide past months off, the Cash Flow forecast is exactly as before; with it on, every Actual column is still there.
