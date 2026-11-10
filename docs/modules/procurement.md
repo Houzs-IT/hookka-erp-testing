@@ -56,6 +56,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
   - PI list/create/detail → `src/pages/procurement/pi.tsx:96` (`PurchaseInvoicesPage`), `pi/create.tsx:135` (`CreatePurchaseInvoicePage`, wrapper `:121`), `PurchaseInvoiceDetail.tsx:160` (`PurchaseInvoiceDetailPage`; editable DRAFT/CONFIRMED)
   - Bindings mgmt → `src/pages/procurement/maintenance.tsx:858` (`SupplierMaintenancePage`); SKU/supplier modals `sku-form-dialog.tsx` / `supplier-form-dialog.tsx`
   - Supplier profile/scorecard/price-history → `src/pages/suppliers/detail.tsx:157` (`SupplierDetailPage`)
+  - `/procurement/reports` → `src/pages/procurement/reports.tsx:61` (`ProcurementReportsPage`; `SupplierDelayTab` `:87` — 0–100 delay score, last 90 days; `OutstandingLinesTab` `:186` — outstanding PO lines by days late). Read-only (review pass 2, H2-5 / H2-6)
 - API routes
   - PO CRUD + status lifecycle → `src/api/routes/purchase-orders.ts` (1,190)
   - GRN CRUD + arrival + Post-to-Stock cascade → `src/api/routes/grn.ts` (2592)
@@ -64,6 +65,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
   - GIT → `src/api/routes/goods-in-transit.ts`; effective-date pricing → `src/api/routes/price-history.ts`
   - Three-Way-Match → `src/api/routes/three-way-match.ts`; supplier payments → `src/api/routes/supplier-payments.ts`
   - Supplier CN/DN → `src/api/routes/credit-notes.ts` / `debit-notes.ts`; scorecards (read-only) → `src/api/routes/supplier-scorecards.ts`; OCR extract → `src/api/routes/scan-supplier.ts`
+  - Procurement reports (read-only, purchase-orders:read) → `src/api/routes/procurement-reports.ts`; rules `src/lib/procurement-reports.ts`
 
 ## Data model
 - `purchase_orders` / `purchase_order_items` — PO header + lines (`receivedQty` per line drives convert-chain availability).

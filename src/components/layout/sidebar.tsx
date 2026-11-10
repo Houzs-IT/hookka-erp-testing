@@ -175,6 +175,8 @@ export const navigationGroups: NavGroup[] = [
       { name: "Purchase Return", href: "/purchase-returns", icon: Undo2 },
       { name: "MRP", href: "/planning/mrp", icon: Layers },
       { name: "Suppliers", href: "/procurement/maintenance", icon: Building2 },
+      // Supplier delay score + outstanding PO lines (review pass 2, H2-5 / H2-6).
+      { name: "Procurement Reports", href: "/procurement/reports", icon: BarChart3 },
     ],
   },
   {
@@ -704,6 +706,9 @@ export function Sidebar({
     if (href === "/procurement/pi") {
       return pathname === "/procurement/pi" || pathname.startsWith("/procurement/pi/");
     }
+    if (href === "/procurement/reports") {
+      return pathname === "/procurement/reports" || pathname.startsWith("/procurement/reports/");
+    }
     if (href === "/procurement/maintenance") {
       return pathname === "/procurement/maintenance" || pathname.startsWith("/procurement/maintenance/");
     }
@@ -713,7 +718,7 @@ export function Sidebar({
     // pathname exclusion below stays: the URL IS that path for the one render
     // before the redirect fires, and "Purchase Order" must not flash active.
     if (href === "/procurement") {
-      return pathname === "/procurement" || (pathname.startsWith("/procurement/") && !pathname.startsWith("/procurement/grn") && !pathname.startsWith("/procurement/pi") && !pathname.startsWith("/procurement/maintenance") && !pathname.startsWith("/procurement/in-transit"));
+      return pathname === "/procurement" || (pathname.startsWith("/procurement/") && !pathname.startsWith("/procurement/grn") && !pathname.startsWith("/procurement/pi") && !pathname.startsWith("/procurement/maintenance") && !pathname.startsWith("/procurement/reports") && !pathname.startsWith("/procurement/in-transit"));
     }
     if (href === "/consignment/note") {
       return pathname === "/consignment/note" || pathname.startsWith("/consignment/note/");

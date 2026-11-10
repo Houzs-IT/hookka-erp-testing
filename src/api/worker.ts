@@ -1234,6 +1234,7 @@ import goodsInTransit from "./routes/goods-in-transit";
 import suppliers from "./routes/suppliers";
 import supplierMaterials from "./routes/supplier-materials";
 import supplierScorecards from "./routes/supplier-scorecards";
+import procurementReports from "./routes/procurement-reports";
 import priceHistory from "./routes/price-history";
 // Auth — login portal + admin user CRUD
 import auth from "./routes/auth";
@@ -1474,6 +1475,8 @@ app.all("/api/supplier-material-bindings/*", (c) => {
   return c.redirect(`/api/supplier-materials${suffix}`, 308);
 });
 app.route("/api/supplier-scorecards", supplierScorecards);
+// Procurement › Reports (review pass 2, H2-5 / H2-6) — read-only.
+app.route("/api/procurement-reports", procurementReports);
 app.route("/api/price-history", priceHistory);
 // Auth
 // MUST mount /api/auth/oauth and /api/auth/totp BEFORE /api/auth so the
