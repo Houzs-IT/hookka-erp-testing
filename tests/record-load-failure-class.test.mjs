@@ -139,6 +139,9 @@ const CONSUMERS = [
   ["src/components/ui/document-chain-map.tsx", "failure", '"No job cards on this production order yet."'],
   // --- already gated on the hook's error; correct the moment the primitive
   //     stopped swallowing the abort. Tracked, not exempt.
+  // Mobile Service Orders (2026-11): SV detail + legacy repair-order detail. "not found" only on failure.kind === "notFound".
+  ["src/pages/m/screens/orders/SvOrderDetail.tsx", "failure", "\"Order not found\" (mobile SV order detail)"],
+  ["src/pages/m/screens/orders/LegacyOrderDetail.tsx", "isUnknownOutcome", "\"Repair order not found\" (mobile legacy detail)"],
   ["src/pages/m/screens/SalesDetailScreen.tsx", "hook-error-gate", '"Order not found."'],
   ["src/pages/m/screens/SalesOrderDetail.tsx", "hook-error-gate", "Order not found."],
   ["src/pages/m/screens/ProductionDetailScreen.tsx", "hook-error-gate", '"Production order not found."'],

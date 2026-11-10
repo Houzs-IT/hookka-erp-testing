@@ -91,6 +91,8 @@ export function ConfirmDialog({
   goLabel = "Discard",
   onKeep,
   onGo,
+  danger = true,
+  busy,
 }: {
   open: boolean;
   title: string;
@@ -99,6 +101,9 @@ export function ConfirmDialog({
   goLabel?: string;
   onKeep: () => void;
   onGo: () => void;
+  /** Red confirm button (default). Pass false for a non-destructive confirm. */
+  danger?: boolean;
+  busy?: boolean;
 }) {
   if (!open) return null;
   return (
@@ -107,8 +112,8 @@ export function ConfirmDialog({
         <div style={{ fontSize: 16, fontWeight: 700, color: M.raisin }}>{title}</div>
         <div style={{ fontSize: 13, lineHeight: 1.5, color: M.ink, marginTop: 6 }}>{text}</div>
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-          <button type="button" onClick={onKeep} style={{ flex: 1, height: 44, border: "none", borderRadius: 12, background: "#F4EFE6", color: "#6B5C32", fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{keepLabel}</button>
-          <button type="button" onClick={onGo} style={{ flex: 1, height: 44, border: "none", borderRadius: 12, background: "#7A2E24", color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{goLabel}</button>
+          <button type="button" onClick={onKeep} disabled={busy} style={{ flex: 1, height: 44, border: "none", borderRadius: 12, background: "#F4EFE6", color: "#6B5C32", fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{keepLabel}</button>
+          <button type="button" onClick={onGo} disabled={busy} style={{ flex: 1, height: 44, border: "none", borderRadius: 12, background: danger ? "#7A2E24" : M.taupe, color: "#fff", fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{goLabel}</button>
         </div>
       </div>
     </div>
