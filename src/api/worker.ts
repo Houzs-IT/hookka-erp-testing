@@ -215,7 +215,8 @@ app.use("/api/*", timingMiddleware);
 // catch regressions.
 app.use("/api/*", async (c, next) => {
   await next();
-  // An ETag reply (the production-orders list) may be kept by this browser
+  // An ETag reply (the production-orders list, and the polled lists tagged by
+  // lib/poll-etag.ts) may be kept by this browser
   // only, and must be revalidated every time: the server answers 304 when it
   // is unchanged. Everything else stays no-store.
   c.res.headers.set(
@@ -1017,6 +1018,13 @@ app.use("/api/*", tenantMiddleware);
 // allow the request (we never lock real users out on a KV blip).
 app.use("/api/*", apiRateLimit({ exempt: ["/api/health", "/api/pg-ping"] }));
 
+// ETag / 304 on the GET lists the screens poll (notifications bell, IT
+// Support, presence, scan queue, dashboard — list in lib/poll-etag.ts). An
+// unchanged poll costs headers, not the list; bodies are never changed.
+// AFTER auth + tenant (the tag includes userId / orgId), before every route.
+// Cross-system review P3 (Houzs#5484, itself ported from #888).
+app.use("/api/*", pollEtag);
+
 // ---------------------------------------------------------------------------
 // Auth-gated routes (registered AFTER authMiddleware)
 // ---------------------------------------------------------------------------
@@ -1155,6 +1163,7 @@ import files from "./routes/files";
 import push from "./routes/push";
 import { authMiddleware } from "./lib/auth-middleware";
 import { tenantMiddleware } from "./lib/tenant";
+import { pollEtag } from "./lib/poll-etag";
 import { timingMiddleware } from "./lib/observability";
 import { reportWorkerError } from "./lib/monitoring";
 import { apiRateLimit } from "./lib/api-rate-limit";
