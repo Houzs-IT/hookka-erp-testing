@@ -431,3 +431,169 @@ export async function previewPiAutoGrn(db: D1Database, orgId: string, from: stri
     invoices,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Backfill the #1218 link for system GRNs made BEFORE it (owner approved
+// 2026-11-10). Those GRNs ("grn-pi-<piId>") read "received, not billed": their
+// lines kept invoiced_qty = 0 and the PI lines had no grn_item_id.
+//
+// The whole system GRN came from its one invoice, so each untouched line's
+// invoiced_qty is simply its received quantity — no matching needed for that.
+// The PI line → GRN line pointer is only set when the pairing is unambiguous
+// (exactly one GRN line for the PI line and one PI line for the GRN line),
+// the same rule #1218 uses for split lines.
+//
+// A line that already has invoiced_qty > 0 was billed by ANOTHER invoice
+// after the fact — the double-billing #1218 exists to stop. It is never
+// touched; it is reported so the owner can check it.
+// ---------------------------------------------------------------------------
+export interface LinkGrnLine {
+  id: string;
+  poId: string | null;
+  poItemId: string | null;
+  materialCode: string | null;
+  qty: number;
+  invoicedQty: number;
+}
+
+export interface LinkPiLine {
+  id: string;
+  poId: string | null;
+  poItemId: string | null;
+  materialCode: string | null;
+  grnItemId: string | null;
+}
+
+export interface LinkBackfillPlan {
+  setInvoiced: { grnItemId: string; qty: number }[];
+  setPointer: { piLineId: string; grnItemId: string }[];
+  alreadyLinked: boolean;
+  billedElsewhere: { grnItemId: string; materialCode: string | null; qty: number; invoicedQty: number }[];
+  noPointer: number;
+}
+
+export function planAutoGrnLinkBackfill(grnLines: LinkGrnLine[], piLines: LinkPiLine[]): LinkBackfillPlan {
+  const plan: LinkBackfillPlan = { setInvoiced: [], setPointer: [], alreadyLinked: false, billedElsewhere: [], noPointer: 0 };
+  if (grnLines.length && grnLines.every((g) => g.invoicedQty >= g.qty && g.qty > 0)) {
+    plan.alreadyLinked = true;
+    return plan;
+  }
+  const candidatesFor = (g: LinkGrnLine) => {
+    const byItem = piLines.filter((p) => p.poItemId && g.poItemId && String(p.poItemId) === String(g.poItemId));
+    if (byItem.length) return byItem;
+    return piLines.filter((p) => p.poId && g.poId && String(p.poId) === String(g.poId) && norm(p.materialCode) && norm(p.materialCode) === norm(g.materialCode));
+  };
+  const pairs: { g: LinkGrnLine; pis: LinkPiLine[] }[] = [];
+  for (const g of grnLines) {
+    if (g.qty <= 0) continue;
+    if (g.invoicedQty > 0) {
+      plan.billedElsewhere.push({ grnItemId: g.id, materialCode: g.materialCode, qty: g.qty, invoicedQty: g.invoicedQty });
+      continue;
+    }
+    plan.setInvoiced.push({ grnItemId: g.id, qty: g.qty });
+    pairs.push({ g, pis: candidatesFor(g) });
+  }
+  const grnLinesPerPi = new Map<string, number>();
+  for (const { pis } of pairs) for (const p of pis) grnLinesPerPi.set(p.id, (grnLinesPerPi.get(p.id) ?? 0) + 1);
+  for (const { g, pis } of pairs) {
+    const p = pis.length === 1 ? pis[0] : null;
+    if (p && grnLinesPerPi.get(p.id) === 1 && !p.grnItemId) plan.setPointer.push({ piLineId: p.id, grnItemId: g.id });
+    else plan.noPointer++;
+  }
+  return plan;
+}
+
+const ACTIVE_PI = new Set(["CONFIRMED", "PAID", "PARTIAL_PAID"]);
+
+// Reads every system GRN with its lines and its invoice's lines, plans each,
+// and with `apply` writes the plan. Writes are guarded so a re-run, or a line
+// billed between the read and the write, is never overwritten.
+export async function backfillAutoGrnLinks(db: D1Database, orgId: string, apply: boolean) {
+  await ensureGrnMigrations(db);
+  const grns =
+    (await db
+      .prepare(
+        `SELECT g.id, g.grnNumber AS "grnNumber", g.status AS "status", g.receiveDate AS "receiveDate",
+                pi.id AS "piId", pi.piNo AS "piNo", pi.status AS "piStatus", pi.supplierName AS "supplierName"
+           FROM grns g
+           JOIN purchase_invoices pi ON g.id = 'grn-pi-' || pi.id
+          WHERE g.id LIKE 'grn-pi-%' AND pi.orgId = ?
+          ORDER BY g.receiveDate ASC, g.id ASC`,
+      )
+      .bind(orgId)
+      .all<{ id: string; grnNumber: string; status: string; receiveDate: string | null; piId: string; piNo: string | null; piStatus: string; supplierName: string | null }>())
+      .results ?? [];
+  const ids = grns.map((g) => g.id);
+  const piIds = grns.map((g) => g.piId);
+  const gLines = new Map<string, LinkGrnLine[]>();
+  const pLines = new Map<string, LinkPiLine[]>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const rows =
+      (await db
+        .prepare(
+          `SELECT gi.id, gi.grnId AS "grnId", gi.po_id AS "poId", gi.po_item_id AS "poItemId", gi.materialCode AS "mc",
+                  COALESCE(gi.acceptedQty, gi.receivedQty, 0) AS "qty", COALESCE(gi.invoiced_qty, 0) AS "inv"
+             FROM grn_items gi WHERE gi.grnId IN (${chunk.map(() => "?").join(",")}) ORDER BY gi.id ASC`,
+        )
+        .bind(...chunk)
+        .all<{ id: string | number; grnId: string; poId: string | null; poItemId: string | number | null; mc: string | null; qty: number; inv: number }>())
+        .results ?? [];
+    for (const r of rows) {
+      const arr = gLines.get(r.grnId) ?? [];
+      arr.push({ id: String(r.id), poId: r.poId ? String(r.poId) : null, poItemId: r.poItemId == null || r.poItemId === "" ? null : String(r.poItemId), materialCode: r.mc, qty: Number(r.qty) || 0, invoicedQty: Number(r.inv) || 0 });
+      gLines.set(r.grnId, arr);
+    }
+    const piChunk = piIds.slice(i, i + 200);
+    const prow =
+      (await db.prepare(`${PI_LINE_SQL} WHERE pii.pi_id IN (${piChunk.map(() => "?").join(",")})`).bind(...piChunk).all<PiLineRow>()).results ?? [];
+    for (const r of prow) {
+      const l = toPiLine(r);
+      const arr = pLines.get(String(r.piId)) ?? [];
+      arr.push({ id: l.id, poId: l.poId, poItemId: l.poItemId, materialCode: l.materialCode, grnItemId: l.grnItemId });
+      pLines.set(String(r.piId), arr);
+    }
+  }
+
+  const summary = { systemGrns: grns.length, alreadyLinked: 0, skippedInactive: 0, toLink: 0, grnLinesBilled: 0, piLinesPointed: 0, linesWithoutPointer: 0 };
+  const toLink: Array<{ grnNumber: string; piNo: string | null; supplierName: string | null; receiveDate: string | null; lines: number; pointers: number }> = [];
+  const doubleBillingCheck: Array<{ grnNumber: string; piNo: string | null; materialCode: string | null; qty: number; invoicedQty: number }> = [];
+  const skipped: Array<{ grnNumber: string; piNo: string | null; reason: string }> = [];
+  const statements: D1PreparedStatement[] = [];
+  for (const g of grns) {
+    if (String(g.status).toUpperCase() === "CANCELLED" || !ACTIVE_PI.has(String(g.piStatus).toUpperCase())) {
+      summary.skippedInactive++;
+      skipped.push({ grnNumber: g.grnNumber, piNo: g.piNo, reason: `GRN ${g.status}, invoice ${g.piStatus}` });
+      continue;
+    }
+    const plan = planAutoGrnLinkBackfill(gLines.get(g.id) ?? [], pLines.get(g.piId) ?? []);
+    for (const b of plan.billedElsewhere) doubleBillingCheck.push({ grnNumber: g.grnNumber, piNo: g.piNo, materialCode: b.materialCode, qty: b.qty, invoicedQty: b.invoicedQty });
+    if (plan.alreadyLinked) { summary.alreadyLinked++; continue; }
+    if (!plan.setInvoiced.length) continue;
+    summary.toLink++;
+    summary.grnLinesBilled += plan.setInvoiced.length;
+    summary.piLinesPointed += plan.setPointer.length;
+    summary.linesWithoutPointer += plan.noPointer;
+    toLink.push({ grnNumber: g.grnNumber, piNo: g.piNo, supplierName: g.supplierName, receiveDate: g.receiveDate, lines: plan.setInvoiced.length, pointers: plan.setPointer.length });
+    for (const s of plan.setInvoiced) {
+      statements.push(
+        db.prepare(`UPDATE grn_items SET invoiced_qty = ? WHERE id = ? AND COALESCE(invoiced_qty, 0) = 0`).bind(s.qty, s.grnItemId),
+      );
+    }
+    for (const p of plan.setPointer) {
+      statements.push(
+        db
+          .prepare(`UPDATE purchase_invoice_items SET grn_item_id = ? WHERE id = ? AND (grn_item_id IS NULL OR grn_item_id = '')`)
+          .bind(p.grnItemId, p.piLineId),
+      );
+    }
+  }
+  let written = 0;
+  if (apply && statements.length) {
+    for (let i = 0; i < statements.length; i += 100) {
+      const res = await db.batch(statements.slice(i, i + 100));
+      for (const r of res as Array<{ meta?: { changes?: number } }>) written += Number(r?.meta?.changes ?? 0);
+    }
+  }
+  return { applied: apply, rowsWritten: apply ? written : 0, statementsPlanned: statements.length, summary, toLink, doubleBillingCheck, skipped };
+}

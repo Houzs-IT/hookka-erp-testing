@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-10**: item 112 added (branch `feat/backfill-auto-grn-links`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-10**: item 111 added (branch `feat/catalog-new-models-export`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-09**: item 110 added (branch `fix/unchecked-saves-batch-b`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-06**: customer overdue sets entry, item 9 added (branch `fix/overdue-sets-clear-on-dispatch`); nothing else re-checked.
@@ -7033,3 +7034,4 @@ Asks, in order:
 109. Platform batch: /api/health reports the deployed commit; Smart Placement on; announcements admin list capped (flags the cut); a new lead with a phone already on file is flagged (+60/0/spacing ignored) and a refused lead save now shows its error (Houzs review list, owner 2026-11-08).
 110. Batch B of the saves that ignored a refused response (BUG-2026-11-09-435 follow-up, approved in the 2026-11-09 handoff): cash flow match / add transaction, add employee, pay-rule save / delete, deduction undo and settle-from-punches payslip regenerate, leave add / approve, PO mark-emailed, organisation deactivate / inter-company config, assistant pin / delete now show the server's reason and stop instead of acting saved; the BOM master migration no longer deletes the local copy when the upload is refused.
 111. New models export for the monthly board report: `GET /api/products/new-models?from=&to=` — models whose first SKU was created in the range (products.created_at, owner's choice), one per family, Catalog cover photo inside, bedframe Q/K/SK and sofa combo prices; no button in the Catalog, the report is refreshed from it (owner 2026-11-10).
+112. Backfill the PI auto-GRN link (#1218) for system GRNs made before it: preview, then apply on the owner's go (owner approved 2026-11-10).
