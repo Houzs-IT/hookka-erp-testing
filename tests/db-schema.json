@@ -683,7 +683,10 @@
     "org_id",
     "updated_at",
     "updated_by",
-    "visible_cols"
+    "visible_cols",
+    "name",
+    "created_by",
+    "created_by_name"
   ],
   "debit_notes": [
     "approved_by",
