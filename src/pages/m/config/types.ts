@@ -109,6 +109,13 @@ export type DataSource = {
    * are searched only when their own tab is active.
    */
   crossSearch?: boolean;
+  /**
+   * Amount of one row in sen, for the total line above the cards (review G4
+   * on the phone, item 121). Cancelled rows are left out and the line says
+   * when it covers only the loaded rows — src/pages/m/lib/list-total.ts.
+   * Document lists with an amount set it (SO, PO, GRN, PI, Invoices).
+   */
+  amountSen?: (row: RawRow) => number;
 };
 
 // ===========================================================================

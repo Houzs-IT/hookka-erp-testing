@@ -276,6 +276,7 @@ const PROD_STATUSES = [
 const salesSource: DataSource = {
   url: "/api/sales-orders",
   select: selectData,
+  amountSen: (r) => num(r, "totalSen"),
   // dc13 card shape (Hookka ERP Mobile.dc.html line ~1714):
   //   code · customer · items summary · [Cust PO · Cust SO · Hub · Exp DD]
   toVM: (r): RowVM => ({
@@ -790,6 +791,7 @@ export const deliveryConfig: ModuleConfig = {
 const invoicesSource: DataSource = {
   url: "/api/invoices",
   select: selectData,
+  amountSen: (r) => num(r, "totalSen"),
   // dc13 card shape (line ~1739):
   //   code · customer · SO/DO ref · [Due · Balance/Amount]
   toVM: (r): RowVM => ({
@@ -1065,6 +1067,7 @@ function summariseOutstanding(r: RawRow, limit = 60): string {
 const poSource: DataSource = {
   url: "/api/purchase-orders",
   select: selectData,
+  amountSen: (r) => num(r, "totalSen"),
   // code · supplier · items (outstanding lines while owed) · [Issued · ETA / Received · Amount]
   toVM: (r): RowVM => {
     const status = str(r, "status");
@@ -1111,6 +1114,7 @@ const GRN_STATUSES = ["DRAFT", "CONFIRMED", "POSTED", "CANCELLED"];
 const grnSource: DataSource = {
   url: "/api/grn",
   select: selectData,
+  amountSen: (r) => num(r, "totalAmount"),
   // code · supplier · "PO-... · full/partial" · [Received · Lines]
   toVM: (r): RowVM => {
     const items = Array.isArray(r.items) ? (r.items as RawRow[]) : [];
@@ -1145,6 +1149,7 @@ const grnSource: DataSource = {
 const piSource: DataSource = {
   url: "/api/purchase-invoices",
   select: selectData,
+  amountSen: (r) => num(r, "amountSen", "totalSen"),
   // code · supplier · "PO-... · GRN linked" · [Invoice · Due · Amount]
   toVM: (r): RowVM => {
     const po = str(r, "poRef", "poNo");

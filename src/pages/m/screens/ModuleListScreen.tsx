@@ -23,6 +23,9 @@ import { FilterSheet } from "../components/FilterSheet";
 import { M } from "../theme";
 import { type ModuleConfig, type ActiveFilter, type DataSource, type RawRow } from "../config/types";
 import { useDebounced } from "../lib/use-debounced";
+import { listLoadError } from "@/lib/list-load-error";
+import { money } from "../config/helpers";
+import { isCappedResponse, mobileListTotal, serverTotalOf, type MobileListTotal } from "../lib/list-total";
 import { type FormSpec } from "../config/form-types";
 import { createSpecFor } from "../config/forms";
 import {
@@ -222,7 +225,11 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
   const tab = resolved?.tab ?? source.subTabs[0];
   const panelOnly = !!tab?.panelOnly;
 
-  const { data, loading, error } = useCachedJson<unknown>(source.url);
+  const { data, loading, error, refresh } = useCachedJson<unknown>(source.url);
+  // Review G7 on the phone (item 121): a failed request, or a 200 with
+  // { success: false }, is an error with the server's reason and a Retry —
+  // never an empty list that reads as "nothing here".
+  const loadError = listLoadError(data, error);
 
   const filters = useMemo(
     () => filtersByUrl[source.url] ?? {},
@@ -339,6 +346,22 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
   }, [source, sourceRows]);
 
   const fCount = activeFilterCount(filters);
+
+  // Review G4 on the phone (item 121): the total line above the cards — the
+  // same rules as the desktop footer (cancelled rows not counted, "loaded rows
+  // only" when the phone holds part of the list). Lists without an amount, and
+  // a cross-source search (rows from several sources), show none.
+  const listTotal = useMemo(() => {
+    const amountSen = source.amountSen;
+    if (!amountSen || crossActive || results.length === 0) return null;
+    return mobileListTotal({
+      rows: results.map((r) => r.row),
+      all: sourceRows.length,
+      amountSen,
+      serverTotal: serverTotalOf(data),
+      capped: isCappedResponse(data),
+    });
+  }, [source, crossActive, results, sourceRows.length, data]);
 
   return (
     <>
@@ -533,16 +556,18 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
           gap: 11,
         }}
       >
+        {loadError && results.length > 0 ? (
+          <LoadErrorBanner reason={loadError} onRetry={refresh} />
+        ) : null}
+        {listTotal ? <TotalLine total={listTotal} /> : null}
         {loading && results.length === 0 ? (
           <Msg text="Loading…" />
         ) : results.length === 0 ? (
-          <Msg
-            text={
-              error
-                ? "Couldn’t load — pull to refresh or use the desktop app."
-                : "No records match."
-            }
-          />
+          loadError ? (
+            <LoadErrorCard reason={loadError} onRetry={refresh} />
+          ) : (
+            <Msg text="No records match." />
+          )
         ) : (
           visibleResults.map(({ row, src }) => {
             const vm = src.toVM(row);
@@ -882,6 +907,108 @@ function SourceSubscriber({
     onRows(source.url, rows);
   }, [source, rows, onRows]);
   return null;
+}
+
+// "Couldn't load this list" + the server's reason + Retry, in place of the
+// cards (no rows to show). Review G7 on the phone (item 121).
+function LoadErrorCard({ reason, onRetry }: { reason: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        backgroundColor: M.card,
+        border: `1px solid ${M.border}`,
+        borderRadius: 16,
+        padding: "24px 16px",
+        textAlign: "center",
+        color: M.muted,
+        fontSize: 13,
+      }}
+    >
+      <div style={{ color: M.raisin, fontSize: 14, fontWeight: 700 }}>Couldn’t load this list</div>
+      <div style={{ marginTop: 6, overflowWrap: "anywhere" }}>{reason}</div>
+      <button
+        onClick={onRetry}
+        style={{
+          marginTop: 14,
+          padding: "10px 22px",
+          borderRadius: 12,
+          border: "none",
+          backgroundColor: M.taupe,
+          color: "#fff",
+          fontSize: 14,
+          fontWeight: 700,
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
+// The same, as a strip above cards that are still shown (an older copy).
+function LoadErrorBanner({ reason, onRetry }: { reason: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        backgroundColor: M.card,
+        border: `1px solid ${M.border}`,
+        borderRadius: 12,
+        padding: "9px 12px",
+        fontSize: 12.5,
+        color: M.muted,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+        <b style={{ color: M.raisin }}>Couldn’t load this list.</b> {reason}
+      </span>
+      <button
+        onClick={onRetry}
+        style={{
+          flexShrink: 0,
+          padding: "6px 12px",
+          borderRadius: 10,
+          border: `1px solid ${M.hairline}`,
+          backgroundColor: M.card,
+          color: M.ink,
+          fontSize: 12.5,
+          fontWeight: 700,
+          cursor: "pointer",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
+// The total line above the cards (review G4 on the phone, item 121).
+function TotalLine({ total }: { total: MobileListTotal }) {
+  return (
+    <div
+      data-testid="m-list-total"
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: 10,
+        padding: "2px 4px",
+        fontSize: 12,
+        color: M.muted,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0 }}>{total.text}</span>
+      <span style={{ flexShrink: 0, color: M.raisin, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+        {money(total.sumSen)}
+      </span>
+    </div>
+  );
 }
 
 function Msg({ text }: { text: string }) {
