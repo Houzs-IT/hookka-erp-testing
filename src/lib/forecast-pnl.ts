@@ -9,7 +9,6 @@
 // ---------------------------------------------------------------------------
 import { pnlBucketFor } from "./pnl-bucket";
 import { monthHasDeptForecast, forecastEntryKind } from "./salary-dept";
-import { splitByLargestRemainder } from "./cashflow-engine";
 
 /** One keyed cell as stored in kv `forecast_pnl`: a legacy bare basis-point
  *  number, `{ bp }` (a % of sales) or `{ amtSen }` (an RM amount). */
@@ -17,13 +16,14 @@ export type FcEntry = number | { bp?: number; amtSen?: number };
 /** One month of kv `forecast_pnl.months`. `salesByCustomer` (owner
  *  2026-11-09): customer id (or FC_OTHER_CUSTOMER) → sen; when it has any
  *  cell, the month's sales are their sum (forecastSalesSen).
- *  `purchasesBySupplier` (owner 2026-11-10): supplier id (or
- *  FC_OTHER_SUPPLIER) → sen; when it has any cell, the month's materials are
- *  their sum, spread over the material rows (forecastSupplierSplit). */
+ *  `purchasesByType` (owner 2026-11-10 「让他在每个categories 出现相关的
+ *  supplier, 我从那边填」): material type → supplier id (or
+ *  FC_OTHER_SUPPLIER) → sen; a material with any cell that month is their
+ *  sum, one without keeps its own % / RM (forecastMonthFigures). */
 export type FcMonth = {
   salesSen?: number;
   salesByCustomer?: Record<string, number>;
-  purchasesBySupplier?: Record<string, number>;
+  purchasesByType?: Record<string, Record<string, number>>;
   pct?: Record<string, FcEntry>;
 };
 
@@ -56,23 +56,37 @@ function cleanPartyCells(raw: unknown): Record<string, number> {
   return out;
 }
 export const cleanSalesByCustomer = (raw: unknown): Record<string, number> => cleanPartyCells(raw);
-export const cleanPurchasesBySupplier = (raw: unknown): Record<string, number> => cleanPartyCells(raw);
 
-/** The keyed supplier cells, positive whole sen only (as cleanPurchasesBySupplier keeps them). */
-function supplierCells(m: FcMonth | undefined): [string, number][] {
-  return Object.entries(m?.purchasesBySupplier ?? {})
+/** A month's supplier figures per material as stored: each material (a real
+ *  key) with its supplier cells cleaned as above; a material left with no
+ *  cell is dropped. Anything else reads as nothing. */
+export function cleanPurchasesByType(raw: unknown): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [t, cells] of Object.entries(raw as Record<string, unknown>)) {
+    const type = t.trim();
+    if (!type || type.length > 64) continue;
+    const clean = cleanPartyCells(cells);
+    if (Object.keys(clean).length) out[type] = clean;
+  }
+  return out;
+}
+
+/** A material's supplier figures in a month, positive whole sen only. */
+export function forecastTypeSupplierCells(m: FcMonth | undefined, type: string): [string, number][] {
+  return Object.entries(m?.purchasesByType?.[type] ?? {})
     .map(([id, v]) => [id, Math.round(Number(v) || 0)] as [string, number])
     .filter(([, v]) => v > 0);
 }
-/** A month's purchases keyed by supplier (0 when it is keyed the ratio way). */
-export function forecastPurchasesSen(m: FcMonth | undefined): number {
-  return supplierCells(m).reduce((s, [, v]) => s + v, 0);
+/** A material's supplier figures added up (0 when it is keyed by its %). */
+export function forecastTypeSupplierSen(m: FcMonth | undefined, type: string): number {
+  return forecastTypeSupplierCells(m, type).reduce((s, [, v]) => s + v, 0);
 }
 
-/** What each supplier sold us lately, by material type (sen weights), and all
- *  suppliers together (spec 2026-11-10-forecast-suppliers-design.md 4). */
+/** What each supplier sold us lately, by material type (sen), and all
+ *  suppliers together (spec 2026-11-10-forecast-suppliers-design.md 4): which
+ *  suppliers the page lists under each material. */
 export type FcSupplierMix = { bySupplier: Record<string, Record<string, number>>; all: Record<string, number> };
-export const EMPTY_SUPPLIER_MIX: FcSupplierMix = { bySupplier: {}, all: {} };
 
 /** The weights from the recent purchase invoices' ledger legs: debit minus
  *  credit on the material purchase accounts (`typeOf` names an account's
@@ -102,55 +116,19 @@ export function supplierMixFromLegs(
   return { bySupplier, all };
 }
 
-/** A supplier-keyed month spread over the material rows: per supplier and in
- *  total, by material type. */
-export type FcSupplierSplit = {
-  totalSen: number;
-  byType: Record<string, number>;
-  suppliers: { id: string; sen: number; byType: Record<string, number> }[];
-};
-
-/** Owner 2026-11-10 「根据 ratio 也可以，一个个也可以」: a month with any
- *  supplier cell has the suppliers' sum as its materials. Each supplier's
- *  amount spreads over the material types (`types`, the page's material rows)
- *  by what it sold us lately; Other, and a supplier with nothing lately, by
- *  all suppliers' weights; with nothing to go by at all, on the OTHERS row
- *  (else the first), so the month's total is never lost. Parts add up to each
- *  cell to the sen. Null for a month keyed the ratio way, or with no rows. */
-export function forecastSupplierSplit(
-  m: FcMonth | undefined,
-  types: readonly string[],
-  mix: FcSupplierMix,
-): FcSupplierSplit | null {
-  const cells = supplierCells(m);
-  if (!cells.length || !types.length) return null;
-  const allowed = new Set(types);
-  const weightsOf = (w: Record<string, number> | undefined) =>
-    Object.entries(w ?? {})
-      .filter(([t, v]) => allowed.has(t) && v > 0)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, weight]) => ({ key, weight }));
-  const everyone = weightsOf(mix.all);
-  const lastResort = [{ key: allowed.has("OTHERS") ? "OTHERS" : types[0], weight: 1 }];
-  const byType: Record<string, number> = {};
-  const suppliers = cells.map(([id, sen]) => {
-    const own = id === FC_OTHER_SUPPLIER ? [] : weightsOf(mix.bySupplier[id]);
-    const parts = splitByLargestRemainder(sen, own.length ? own : everyone.length ? everyone : lastResort);
-    const mine: Record<string, number> = {};
-    for (const [t, v] of Object.entries(parts)) {
-      if (!v) continue;
-      mine[t] = v;
-      byType[t] = (byType[t] ?? 0) + v;
-    }
-    return { id, sen, byType: mine };
-  });
-  return { totalSen: cells.reduce((s, [, v]) => s + v, 0), byType, suppliers };
+/** The suppliers that sold us a material lately (the page lists them under
+ *  that material's row). */
+export function forecastTypeSuppliers(mix: FcSupplierMix, type: string): string[] {
+  return Object.entries(mix.bySupplier)
+    .filter(([, w]) => (w[type] ?? 0) > 0)
+    .map(([id]) => id);
 }
 
-/** The Forecast page's supplier rows (owner 2026-11-10: 太久没使用的 supplier
- *  就不在选项): active suppliers bought from lately (`recentIds`), and any
- *  supplier keyed in some month, active or not (an id the master no longer
- *  knows is named as such), by name; Other last. */
+/** A material row's supplier rows on the Forecast page (owner 2026-11-10: 太久
+ *  没使用的 supplier 就不在选项): active suppliers that sold us that material
+ *  lately (`recentIds`), and any supplier keyed under it in some month, active
+ *  or not (an id the master no longer knows is named as such), by name; Other
+ *  last. */
 export function forecastSupplierRows(
   master: readonly { id: string; name: string; isActive?: boolean | null }[],
   recentIds: Iterable<string>,
@@ -334,8 +312,8 @@ export type FcMonthFigures = {
   salesSen: number;
   amt: (code: string) => number;
   superseded: (code: string) => boolean;
-  /** The month's materials keyed by supplier, spread; null when keyed by ratio. */
-  supplierSplit: FcSupplierSplit | null;
+  /** A material row keyed by supplier this month: its amount is their sum. */
+  supplierKeyed: (code: string) => boolean;
   cogs: number;
   gp: number;
   oi: number;
@@ -346,26 +324,23 @@ export type FcMonthFigures = {
 /** A material row's type: `cat:<TYPE>`, or an account's by its name. */
 export const materialRowType = (a: FcAccount): string => (a.code.startsWith("cat:") ? a.code.slice(4) : forecastMaterialType(a.name));
 
-/** One month's figures, exactly as the Forecast page prints them. `mix`:
- *  what each supplier sold us lately, for a month keyed by supplier (without
- *  it such a month keeps its total, on the OTHERS row). */
+/** One month's figures, exactly as the Forecast page prints them. A material
+ *  with supplier figures that month is their sum (owner 2026-11-10); its own
+ *  % / RM stays stored and counts again once they are cleared. Supplier
+ *  figures under a material the page has no row for count nowhere. */
 export function forecastMonthFigures(
   m: FcMonth | undefined,
   g: FcLineGroups,
   mappedAccounts: ReadonlySet<string>,
-  mix: FcSupplierMix = EMPTY_SUPPLIER_MIX,
 ): FcMonthFigures {
   const salesSen = forecastSalesSen(m);
-  // A month keyed by supplier: its material rows are the suppliers' spread,
-  // their own % / RM set aside (kept, and read again once the supplier cells
-  // are cleared).
-  const supplierSplit = forecastSupplierSplit(m, g.materials.map(materialRowType), mix);
-  const materialType = new Map(g.materials.map((a) => [a.code, materialRowType(a)] as const));
-  const amt = (code: string) => {
-    const type = supplierSplit ? materialType.get(code) : undefined;
-    if (type !== undefined) return supplierSplit?.byType[type] ?? 0;
-    return forecastEntryAmount(salesSen, m?.pct?.[code]);
-  };
+  const bySupplier = new Map<string, number>();
+  for (const a of g.materials) {
+    const cells = forecastTypeSupplierCells(m, materialRowType(a));
+    if (cells.length) bySupplier.set(a.code, cells.reduce((s, [, v]) => s + v, 0));
+  }
+  const supplierKeyed = (code: string) => bySupplier.has(code);
+  const amt = (code: string) => bySupplier.get(code) ?? forecastEntryAmount(salesSen, m?.pct?.[code]);
   const sum = (rows: FcAccount[]) => rows.reduce((s, r) => s + amt(r.code), 0);
   // Supersede rule (salary-dept.ts): a month with any dept row ignores the
   // 750-x accounts AND every account the labour map posts to — keying both
@@ -378,5 +353,5 @@ export function forecastMonthFigures(
   const oi = sum(g.otherIncome);
   const exp = sumGuard(g.expenses);
   const gp = salesSen - cogs;
-  return { salesSen, amt, superseded, supplierSplit, cogs, gp, oi, exp, np: gp + oi - exp };
+  return { salesSen, amt, superseded, supplierKeyed, cogs, gp, oi, exp, np: gp + oi - exp };
 }
