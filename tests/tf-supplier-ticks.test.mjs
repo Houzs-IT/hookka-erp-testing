@@ -74,6 +74,20 @@ test("tfSupplierRows: the amount due in the months shown; listed when it has one
   assert.equal(r.rows[0].name, "A TRADING SDN. BHD.", "the full name; the label shortens it");
 });
 
+test("tfSupplierRows: a kept supplier stays listed unticked, so it can be ticked again (BUG-2026-11-10-491)", () => {
+  // Prod 2026-11-10: unticking a default supplier with no Forecast P&L figure made its row vanish,
+  // with no way to tick it back. The facility's own suppliers and the saved ticks are kept.
+  const suppliers = [
+    { id: "sup-a", name: "A SDN BHD", dueBy: { "2027-01": 100 } },
+    { id: "sup-b", name: "B SDN BHD", dueBy: {} },
+    { id: "sup-c", name: "C SDN BHD", dueBy: {} },
+  ];
+  const yms = ["2026-11", "2026-12", "2027-01"];
+  const r = fc.tfSupplierRows({ suppliers, ticked: new Set(["sup-a"]), yms, keep: new Set(["sup-b"]) });
+  assert.deepEqual(r.rows.map((x) => [x.id, x.totalSen, x.ticked]), [["sup-a", 100, true], ["sup-b", 0, false]], "C: not kept, not ticked, nothing keyed");
+  assert.equal(r.tickedTotalSen, 100);
+});
+
 test("tfSupplierLabel: the name without its SDN BHD", () => {
   assert.equal(fc.tfSupplierLabel("A TRADING SDN. BHD."), "A TRADING");
   assert.equal(fc.tfSupplierLabel("B INDUSTRIES SDN BHD"), "B INDUSTRIES");
@@ -115,6 +129,9 @@ test("the popup: a Suppliers box per facility; the fill takes the ticked supplie
   const dlg = page.slice(page.indexOf("function CfForecastInputsDialog("), page.indexOf("\nfunction ", page.indexOf("function CfForecastInputsDialog(") + 10));
   assert.match(dlg, /<TfSupplierPicker /);
   assert.match(dlg, /const ticked = tfTickedIds\(p\.supplierIds, f\.paidSupplierIds \?\? \[\]\);/);
+  // BUG-2026-11-10-491: the facility's own suppliers and the ticks it opened with stay listed unticked.
+  assert.match(dlg, /keep: new Set\(\[\.\.\.\(f\.paidSupplierIds \?\? \[\]\), \.\.\.\(tfOpenedTicks\[f\.accountCode\] \?\? \[\]\)\]\)/);
+  assert.match(dlg, /setTfOpenedTicks\(Object\.fromEntries\(Object\.entries\(j\.data\.tf\?\.plans \?\? \{\}\)\.map\(\(\[k, p\]\) => \[k, p\.supplierIds \?\? \[\]\]\)\)\);/);
   assert.match(dlg, /fillTf\(f, tfTickedDue\(tfSuppliers, ticked\), "forecast"\)/);
   assert.match(dlg, /fillTf\(f, f\.billsDue, "bills"\)/, "Fill from bills is unchanged");
   assert.match(dlg, /Ticks changed: press Fill from Forecast P&L/);

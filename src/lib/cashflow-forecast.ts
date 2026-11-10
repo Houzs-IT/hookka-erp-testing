@@ -526,15 +526,17 @@ export function tfTickedIds(saved: readonly string[] | undefined, paidBefore: re
 }
 
 /** The picker's rows: each supplier's amount due in the months shown; a
- *  supplier is listed when it has one or is ticked; biggest first, then by
- *  name. And what the ticked ones add up to. */
-export function tfSupplierRows(o: { suppliers: readonly TfForecastSupplier[]; ticked: ReadonlySet<string>; yms: readonly string[] }): {
+ *  supplier is listed when it has one, is ticked, or is kept (`keep`: the
+ *  facility's own suppliers and the ticks the popup opened with, so one
+ *  unticked with nothing keyed can be ticked again, BUG-2026-11-10-491);
+ *  biggest first, then by name. And what the ticked ones add up to. */
+export function tfSupplierRows(o: { suppliers: readonly TfForecastSupplier[]; ticked: ReadonlySet<string>; yms: readonly string[]; keep?: ReadonlySet<string> }): {
   rows: { id: string; name: string; totalSen: number; ticked: boolean }[];
   tickedTotalSen: number;
 } {
   const rows = o.suppliers
     .map((s) => ({ id: s.id, name: s.name, totalSen: o.yms.reduce((t, ym) => t + Math.max(0, s.dueBy[ym] ?? 0), 0), ticked: o.ticked.has(s.id) }))
-    .filter((r) => r.totalSen > 0 || r.ticked)
+    .filter((r) => r.totalSen > 0 || r.ticked || !!o.keep?.has(r.id))
     .sort((a, b) => b.totalSen - a.totalSen || a.name.localeCompare(b.name));
   return { rows, tickedTotalSen: rows.reduce((t, r) => t + (r.ticked ? r.totalSen : 0), 0) };
 }
