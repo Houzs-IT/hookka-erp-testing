@@ -14,6 +14,7 @@ import {
   type LedgerEntryInput,
 } from "./journal-hash";
 import { roundUnitPriceSen } from "../../lib/unit-price";
+import { mytYymm } from "../../lib/doc-number";
 
 export type PRCreateItem = {
   purchaseInvoiceItemId?: string;
@@ -117,10 +118,8 @@ function genItemId(): string {
 
 // PR-YYMM-NNN, sequential within the current year-month (mirrors DR numbering).
 export async function nextPurchaseReturnNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear()).slice(2);
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const prefix = `PR-${yy}${mm}-`;
+  // The Malaysia month, like every other document number (#1247, P2).
+  const prefix = `PR-${mytYymm()}-`;
   const row = await db
     .prepare(
       `SELECT return_no AS "returnNo" FROM purchase_returns
@@ -352,10 +351,8 @@ async function ensureSupplierDebitNoteTable(db: D1Database): Promise<void> {
 }
 
 async function nextSupplierDnNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear()).slice(2);
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const prefix = `SDN-${yy}${mm}-`;
+  // The Malaysia month, like every other document number (#1247, P2).
+  const prefix = `SDN-${mytYymm()}-`;
   const row = await db
     .prepare(
       `SELECT note_number AS "noteNumber" FROM supplier_debit_notes

@@ -27,6 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { computeChainWithAssignments } from "../routes/planning-schedule";
+import { todayYmdMY } from "../../lib/utils";
 
 // ── Runtime self-apply (ensureNonprodRequests pattern) ───────────────────────
 
@@ -106,12 +107,10 @@ interface Candidate {
   reason: string;
 }
 
-/** Local YYYY-MM-DD (never toISOString — that shifts by timezone). */
+/** Today in Malaysia, YYYY-MM-DD. The local getters read the Worker's clock,
+ *  which is UTC — yesterday before 08:00 MYT (P2, check-clock-dates). */
 function localToday(): string {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${dd}`;
+  return todayYmdMY();
 }
 
 // Bind-parameter budget per statement is 65535; at 11 params per inserted row

@@ -1,0 +1,230 @@
+{
+  "_note": "Sites in src/api allowed to read a calendar day off the UTC server clock (scripts/check-clock-dates.mjs). Matched by file + trimmed line text. Every entry needs a reason; remove it when the site is fixed. One entry covers every identical line in that file.",
+  "entries": [
+    {
+      "file": "src/api/lib/agent-console.ts",
+      "src": "const month = new Date().toISOString().slice(0, 7);",
+      "reason": "must match the UTC month key the LLM usage rows are written with; not an ERP figure"
+    },
+    {
+      "file": "src/api/lib/assistant-tools.ts",
+      "src": "const due = r.dueDate ?? r.invoiceDate ?? today.toISOString().slice(0, 10);",
+      "reason": "money: AR ageing days in the assistant (UTC today) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/lib/customer-notify.ts",
+      "src": "${escapeHtml(COMPANY_NAME)} &middot; ${new Date().getFullYear()}",
+      "reason": "harmless: year in an email footer (8 h off on 1 January)"
+    },
+    {
+      "file": "src/api/lib/email.ts",
+      "src": "&copy; ${new Date().getFullYear()} ${escapeHtml(appName)}. Sent to you because an admin invited you.",
+      "reason": "harmless: copyright year in an email footer (8 h off on 1 January)"
+    },
+    {
+      "file": "src/api/lib/email.ts",
+      "src": "Hookka &middot; ${new Date().getFullYear()}",
+      "reason": "harmless: copyright year in an email footer (8 h off on 1 January)"
+    },
+    {
+      "file": "src/api/lib/fabric-fifo-data.ts",
+      "src": "const nowYm = new Date().toISOString().slice(0, 7);",
+      "reason": "stock value: fabric FIFO current month (UTC) — needs the owner yes (inventory value)"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const since = month && /^\\d{4}-\\d{2}$/.test(month) ? `${month}-01` : new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const lastYm = endYm ?? new Date().toISOString().slice(0, 7);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const today = new Date().toISOString().slice(0, 7);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "nowYm: new Date().toISOString().slice(0, 7),",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const nowYm = new Date().toISOString().slice(0, 7);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const anchor = c.req.query(\"anchor\") || new Date().toISOString().slice(0, 7);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const period = c.req.query(\"period\") || new Date().toISOString().slice(0, 7);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const endForFy = new Date(`${endYm ?? new Date().toISOString().slice(0, 7)}-15T00:00:00Z`);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const matData = await loadMaterialCostData(c.var.DB, orgId, endYm ?? new Date().toISOString().slice(0, 7));",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/accounting.ts",
+      "src": "const anchorYm = /^\\d{4}-\\d{2}$/.test(anchor ?? \"\") ? (anchor as string) : new Date().toISOString().slice(0, 7);",
+      "reason": "money: accounting period / as-of defaults (UTC month). Moving them moves which month a finance report picks in the first 8 h of a month — needs the owner yes (money), fix as one batch"
+    },
+    {
+      "file": "src/api/routes/cash-flow.ts",
+      "src": "const day = today.getDay();",
+      "reason": "money: cash-flow week buckets (UTC week) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/cash-flow.ts",
+      "src": "const diff = today.getDate() - day + (day === 0 ? -6 : 1);",
+      "reason": "money: cash-flow week buckets (UTC week) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/consignment-notes.ts",
+      "src": "Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),",
+      "reason": "money/stock: consignment invoice due date, sent date and month-to-date (UTC) — needs the owner yes"
+    },
+    {
+      "file": "src/api/routes/consignment-notes.ts",
+      "src": "body.sentDate ?? now.toISOString().split(\"T\")[0],",
+      "reason": "money/stock: consignment invoice due date, sent date and month-to-date (UTC) — needs the owner yes"
+    },
+    {
+      "file": "src/api/routes/consignment-notes.ts",
+      "src": "due.setDate(due.getDate() + 30);",
+      "reason": "money/stock: consignment invoice due date, sent date and month-to-date (UTC) — needs the owner yes"
+    },
+    {
+      "file": "src/api/routes/consignment-notes.ts",
+      "src": "const dueDate = due.toISOString().split(\"T\")[0];",
+      "reason": "money/stock: consignment invoice due date, sent date and month-to-date (UTC) — needs the owner yes"
+    },
+    {
+      "file": "src/api/routes/consignments.ts",
+      "src": "body.sentDate ?? now.toISOString().split(\"T\")[0],",
+      "reason": "stock: consignment sent-date default (UTC day) — same batch as consignment-notes.ts"
+    },
+    {
+      "file": "src/api/routes/cost-ledger.ts",
+      "src": "const cacheKey = new Date().toISOString().slice(0, 7);",
+      "reason": "money: cost-ledger month cache key / this-month filter (UTC) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/cost-ledger.ts",
+      "src": "d.getFullYear() === now.getFullYear() &&",
+      "reason": "money: cost-ledger month cache key / this-month filter (UTC) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/cost-ledger.ts",
+      "src": "d.getMonth() === now.getMonth()",
+      "reason": "money: cost-ledger month cache key / this-month filter (UTC) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/dashboard-finance.ts",
+      "src": "const nowYm = new Date().toISOString().slice(0, 7);",
+      "reason": "money: finance dashboard current month (UTC) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/dashboard-overview.ts",
+      "src": "const mon = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));",
+      "reason": "UTC week grid built from an injected today; follow-up: pass the Malaysia day in"
+    },
+    {
+      "file": "src/api/routes/delivery-orders.ts",
+      "src": "due.setDate(due.getDate() + 30);",
+      "reason": "money: invoice due date (+30 days from the UTC day) — needs the owner yes (money)"
+    },
+    {
+      "file": "src/api/routes/delivery-orders.ts",
+      "src": "const dueDate = due.toISOString().split(\"T\")[0];",
+      "reason": "money: invoice due date (+30 days from the UTC day) — needs the owner yes (money)"
+    },
+    {
+      "file": "src/api/routes/inventory.ts",
+      "src": "d.setDate(d.getDate() + 14);",
+      "reason": "stock: 14-day shortage horizon (UTC day) — needs the owner yes (inventory)"
+    },
+    {
+      "file": "src/api/routes/inventory.ts",
+      "src": "return d.toISOString().slice(0, 10);",
+      "reason": "stock: 14-day shortage horizon (UTC day) — needs the owner yes (inventory)"
+    },
+    {
+      "file": "src/api/routes/invoices.ts",
+      "src": "const currentMonthLike = `${new Date().toISOString().slice(0, 7)}%`;",
+      "reason": "money: invoice month filter (UTC month) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/kpi.ts",
+      "src": "return /^\\d{4}-\\d{2}$/.test(p) ? p : new Date().toISOString().slice(0, 7);",
+      "reason": "money: KPI period default (UTC month) — same batch as accounting.ts"
+    },
+    {
+      "file": "src/api/routes/planning-schedule.ts",
+      "src": "start.setDate(start.getDate() + 1);",
+      "reason": "local getters through fmtLocalIso; needs a UTC-getter rewrite together with the scheduler tests — follow-up"
+    },
+    {
+      "file": "src/api/routes/planning-schedule.ts",
+      "src": "freezeEndDate.setDate(freezeEndDate.getDate() + FREEZE_WINDOW_DAYS);",
+      "reason": "local getters through fmtLocalIso; needs a UTC-getter rewrite together with the scheduler tests — follow-up"
+    },
+    {
+      "file": "src/api/routes/production-orders/_helpers.ts",
+      "src": "completedCutoffDate.setDate(completedCutoffDate.getDate() - 35);",
+      "reason": "coarse 35-day look-back filter; one day either way is inside its margin"
+    },
+    {
+      "file": "src/api/routes/production-orders/_helpers.ts",
+      "src": "const completedCutoffIso = completedCutoffDate.toISOString().slice(0, 10);",
+      "reason": "coarse 35-day look-back filter; one day either way is inside its margin"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "const snapPeriod = `${snapNow.getFullYear()}-${String(snapNow.getMonth() + 1).padStart(2, \"0\")}`;",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, \"0\")}`;",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "now.getFullYear(),",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "now.getMonth() + 1,",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "resolvePayRulesAsOf(workerPayRules, now.toISOString().slice(0, 10))",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "year: now.getFullYear(),",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    },
+    {
+      "file": "src/api/routes/worker.ts",
+      "src": "month: now.getMonth() + 1,",
+      "reason": "payroll: the worker portal live pay estimate must use the SAME clock as the office payroll engine; moving only the phone makes phone != payslip for 8 h a day. Fix with payroll (owner yes)"
+    }
+  ]
+}

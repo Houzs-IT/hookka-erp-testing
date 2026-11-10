@@ -35,7 +35,7 @@ test("tables are runtime self-applied (header + items)", () => {
 
 test("PR numbering is PR-YYMM-NNN, sequential", () => {
   const f = flat(CREATE);
-  assert.match(f, /`PR-\$\{yy\}\$\{mm\}-`/);
+  assert.match(f, /`PR-\$\{mytYymm\(\)\}-`/); // the Malaysia month (P2)
   assert.match(f, /FROM purchase_returns WHERE return_no LIKE \? ORDER BY return_no DESC/);
 });
 
@@ -186,7 +186,7 @@ test("issue-DN reduces the supplier AP subledger + writes the DN document", () =
   const f = flat(CREATE);
   assert.match(f, /UPDATE suppliers SET outstandingSen = outstandingSen - \? WHERE id = \?/);
   assert.match(f, /CREATE TABLE IF NOT EXISTS supplier_debit_notes/);
-  assert.match(f, /`SDN-\$\{yy\}\$\{mm\}-`/);
+  assert.match(f, /`SDN-\$\{mytYymm\(\)\}-`/); // the Malaysia month (P2)
   assert.match(f, /INSERT INTO supplier_debit_notes/);
 });
 

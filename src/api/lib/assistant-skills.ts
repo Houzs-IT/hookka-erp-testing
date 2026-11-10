@@ -26,7 +26,7 @@ import {
   MAX_EXPORT_ROWS,
   type ExportResult,
 } from "./assistant-exports";
-import { todayYmdMY } from "../../lib/utils";
+import { todayYmdMY, mytWallClock } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,7 +49,7 @@ function defaultMonthBounds(periodFrom?: string, periodTo?: string): {
   to: string;
   label: string;
 } {
-  const now = new Date();
+  const now = mytWallClock(); // the Malaysia month, not the Worker's UTC one (P2)
   const monthStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
   // Last day of this month at 23:59:59 — use day 0 of NEXT month.
   const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));

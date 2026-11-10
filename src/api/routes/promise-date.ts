@@ -37,6 +37,7 @@
 import { Hono } from "hono";
 import { requirePermission } from "../lib/rbac";
 import type { Env } from "../worker";
+import { mytWallClock } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -154,8 +155,9 @@ function materialAvailability(stock: StockRow): MaterialAvailability {
 }
 
 function isoDateInDays(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + Math.max(0, Math.ceil(days)));
+  // Counted from today in Malaysia, not the Worker's UTC day (P2).
+  const d = mytWallClock();
+  d.setUTCDate(d.getUTCDate() + Math.max(0, Math.ceil(days)));
   return d.toISOString().split("T")[0];
 }
 
