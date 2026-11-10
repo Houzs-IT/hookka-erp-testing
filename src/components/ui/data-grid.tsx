@@ -29,7 +29,8 @@ import {
   columnTotals, columnViewActive, decodeRange, headerMenuItems, splitForTotals, totalFooterText, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
 import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigationType, useSearchParams } from "react-router-dom";
+import { gridReturnKey, recallGridRow, rememberGridRow, rowKeySelector, shouldReturnToRow } from "@/lib/grid-return";
 import { browserOwnsCopy, rangeStats, rangeToTsv, rectCellCount, rectFrom, rowsToTsv, writeClipboardText, type CellPos, type CellRect } from "@/lib/grid-clipboard";
 import { readGridUrlState, sameParams, writeGridUrlState } from "@/lib/grid-url-state";
 import { GridSharedLayouts } from "@/components/ui/grid-shared-layouts";
@@ -3119,6 +3120,47 @@ export function DataGrid<T extends Record<string, any>>({
     overscan: 8,
   });
 
+  // ── Back returns to the row you opened (review pass 2 C1-8) ──
+  // The last row clicked / double-clicked is remembered per page + grid; on a
+  // Back / Forward the grid scrolls it into view once the data has it and
+  // marks it for a moment. See src/lib/grid-return.ts.
+  const location = useLocation();
+  const navigationType = useNavigationType();
+  const returnStoreKey = gridReturnKey(location.pathname, gridId);
+  const sessionStore = typeof window !== "undefined" ? (() => { try { return window.sessionStorage; } catch { return null; } })() : null;
+  const [returnToKey] = useState<string | null>(() =>
+    shouldReturnToRow(navigationType) ? recallGridRow(sessionStore, returnStoreKey) : null,
+  );
+  const returnDoneRef = useRef(false);
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const rememberRow = useCallback((row: T) => {
+    rememberGridRow(sessionStore, returnStoreKey, String(getNestedValue(row, keyField)));
+  }, [sessionStore, returnStoreKey, keyField]);
+  useEffect(() => {
+    if (!returnToKey || returnDoneRef.current) return;
+    const idx = displayedData.findIndex((r) => String(getNestedValue(r, keyField)) === returnToKey);
+    if (idx < 0) return;
+    returnDoneRef.current = true;
+    if (virtualizationActive && displayedData.length >= 30) {
+      rowVirtualizer.scrollToIndex(idx, { align: "center" });
+    }
+    // The windowed row is drawn a frame after scrollToIndex; the plain body
+    // has it already. Either way bring it (and the grid) into view. Not
+    // cancelled by a re-render (a poll landing meanwhile must not stop it);
+    // after an unmount the ref is simply empty.
+    // eslint-disable-next-line no-restricted-syntax -- one-shot, one frame for the windowed row
+    window.setTimeout(() => {
+      scrollRef.current?.querySelector(rowKeySelector(returnToKey))?.scrollIntoView({ block: "center" });
+    }, 60);
+    setFlashKey(returnToKey);
+  }, [returnToKey, displayedData, keyField, virtualizationActive, rowVirtualizer]);
+  useEffect(() => {
+    if (!flashKey) return;
+    // eslint-disable-next-line no-restricted-syntax -- clears the mark; cleared in this effect's cleanup
+    const t = window.setTimeout(() => setFlashKey(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [flashKey]);
+
   // ── Handlers ──
   const handleSort = useCallback((col: Column<T>) => {
     if (col.sortable === false) return;
@@ -3160,6 +3202,7 @@ export function DataGrid<T extends Record<string, any>>({
         }
       }
     }
+    rememberRow(row);
     if (checkboxSelectOnly) {
       lastClickedIndex.current = index;
       onRowClick?.(row);
@@ -3191,7 +3234,7 @@ export function DataGrid<T extends Record<string, any>>({
     });
     lastClickedIndex.current = index;
     onRowClick?.(row);
-  }, [keyField, displayedData, onRowClick, checkboxSelectOnly, cellCopy, cellSel]);
+  }, [keyField, displayedData, onRowClick, checkboxSelectOnly, cellCopy, cellSel, rememberRow]);
 
   // Ctrl/Cmd+C → tab-separated text. Active only after a mousedown inside
   // this grid's table (so two grids on a page don't both copy), and never
@@ -4164,6 +4207,8 @@ export function DataGrid<T extends Record<string, any>>({
                     <tr
                       key={key}
                       data-dg="row"
+                      data-row-key={key}
+                      data-returned={flashKey === key || undefined}
                       data-cancelled={isCancelled || undefined}
                       className={cn(
                         // Tablet: min-h-[40px] for finger-friendly row height
@@ -4180,10 +4225,12 @@ export function DataGrid<T extends Record<string, any>>({
                         // The row whose menu is open, when a right-click no
                         // longer selects it (checkboxSelectOnly).
                         checkboxSelectOnly && ctxMenu?.row === row && "bg-[#F0ECE9]",
-                        (onDoubleClick || onRowClick) && "cursor-pointer"
+                        (onDoubleClick || onRowClick) && "cursor-pointer",
+                        // The row Back returned to (C1-8), marked for a moment.
+                        flashKey === key && !isSelected && "!bg-[#FFF3D6] transition-colors"
                       )}
                       onClick={e => handleRowClick(e, row, index)}
-                      onDoubleClick={() => onDoubleClick?.(row)}
+                      onDoubleClick={() => { rememberRow(row); onDoubleClick?.(row); }}
                       onContextMenu={e => handleContextMenu(e, row)}
                     >
                       {selectable && (

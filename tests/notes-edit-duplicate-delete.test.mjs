@@ -298,7 +298,9 @@ test("the debit note's price box keeps what is typed, as the credit note's", () 
 
 test("the popup is the finance document frame", () => {
   const popup = read("src/components/finance/doc-popup.tsx");
-  assert.match(popup, /useEscapeClose\(onClose\);/);
+  // Esc still closes it — through the discard guard since review pass 2 C2-1
+  // (asks only when the popup is handed `dirty`).
+  assert.match(popup, /useDiscardGuard\(\{ open: true, dirty, busy, onClose \}\);/);
   assert.match(popup, /bg-\[rgba\(31,29,27,0\.42\)\]/);
   assert.match(popup, /rounded-\[14px\]/);
   assert.match(popup, /data-fin-modal-body/);

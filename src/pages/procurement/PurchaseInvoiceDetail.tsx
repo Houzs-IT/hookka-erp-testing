@@ -45,6 +45,7 @@ import {
   allocateDiscountSen,
   formatUnitPriceInput,
 } from "@/lib/unit-price";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 const VALID_LINE_TYPES: LineType[] = ["STOCKED", "FEE", "TAX", "REBATE", "DISCOUNT", "OTHER"];
 
@@ -1036,7 +1037,7 @@ export default function PurchaseInvoiceDetailPage() {
 
             {/* Line items editor */}
             <div className="rounded-md border border-[#E2DDD8] overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm" {...LINE_GRID_PROPS}>
                 <thead>
                   <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
                     <th className="h-10 px-2 text-left font-medium text-[#374151]">#</th>

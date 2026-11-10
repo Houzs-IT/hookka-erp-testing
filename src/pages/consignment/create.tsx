@@ -28,8 +28,9 @@ import {
 import { calcSpecialsSurchargeSen, specialNameForCode, HB_DIVAN_TOP_COMBO_DISCOUNT_SEN } from "@/lib/special-order-surcharge";
 import { fetchVariantsConfig, getVariantsConfigSync } from "@/lib/kv-config";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
-import { useUnsavedChanges } from "@/lib/use-unsaved-changes";
+import { useNavGuard } from "@/lib/use-nav-guard";
 import { useFormDraft, clearFormDraft } from "@/lib/use-form-draft";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 type SeatHeightTier = { height: string; priceSen: number };
 
@@ -232,7 +233,8 @@ function CreateConsignmentOrderPage() {
     !!customerDeliveryDate || !!hookkaExpectedDD || !!notes ||
     items.some((it) => !!it.productId)
   );
-  useUnsavedChanges(isDirty);
+  // In-app leave asks too (review pass 2 H3-1 / C2-2); post-save redirects call allowNext().
+  const navGuard = useNavGuard(isDirty, "This consignment order is not saved. Leave without saving?");
 
   // Form draft — auto-save the in-progress form to localStorage every 500ms
   // (debounced inside the hook). If the user navigates away mid-edit and
@@ -837,6 +839,7 @@ function CreateConsignmentOrderPage() {
         }
         if (!confirmRes.ok || !confirmData.success) {
           toast.error(confirmData.error || `Order created as DRAFT but confirm failed (HTTP ${confirmRes.status})`);
+          navGuard.allowNext();
           navigate(`/consignment/${newId}`);
           return;
         }
@@ -846,6 +849,7 @@ function CreateConsignmentOrderPage() {
         // starts fresh. Failure paths (DRAFT-only saves, BOM-incomplete) keep
         // the draft alive in case the user wants to retry.
         clearFormDraft(draftKey);
+        navGuard.allowNext();
         navigate(`/consignment/${newId}`);
         return;
       }
@@ -855,6 +859,7 @@ function CreateConsignmentOrderPage() {
         // Saved as DRAFT — also clear the draft since the form is now
         // persisted server-side under a real SO id.
         clearFormDraft(draftKey);
+        navGuard.allowNext();
         navigate(`/consignment/${newId}`);
       }
     } catch (e) {
@@ -899,6 +904,7 @@ function CreateConsignmentOrderPage() {
                   size="sm"
                   onClick={() => {
                     const code = bomError.incompleteProducts[0].productCode;
+                    navGuard.allowNext();
                     navigate(`/products/bom?sku=${encodeURIComponent(code)}`);
                   }}
                 >
@@ -911,7 +917,7 @@ function CreateConsignmentOrderPage() {
                 onClick={() => {
                   const coId = bomError.coId;
                   setBomError({ open: false, incompleteProducts: [], coId: null });
-                  if (coId) navigate(`/consignment/${coId}`);
+                  if (coId) { navGuard.allowNext(); navigate(`/consignment/${coId}`); }
                 }}
               >
                 Open CO as Draft
@@ -1087,7 +1093,7 @@ function CreateConsignmentOrderPage() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4" {...LINE_GRID_PROPS}>
           {items.map((item, idx) => (
             <LineItemCard
               key={item._uid}
@@ -1283,7 +1289,7 @@ function LineItemCard({
   const selectClass = "w-full rounded border border-[#E2DDD8] px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#6B5C32]/20";
 
   return (
-    <div className="rounded-md border border-[#E2DDD8] p-4 space-y-3">
+    <div data-line-row="" className="rounded-md border border-[#E2DDD8] p-4 space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

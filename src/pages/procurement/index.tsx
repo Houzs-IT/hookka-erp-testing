@@ -2113,6 +2113,7 @@ export default function ProcurementPage() {
                 POs are all Confirmed (no DRAFT workflow); the Draft tab shows
                 the real count so if any slip through they're visible. */}
             <StatusTabStrip
+              loading={poLoading && !poResp}
               value={tab}
               onChange={(k) => { setTab(k as "DRAFT" | "CONFIRMED"); setSelectedPOs([]); }}
               moneyLabel="Ordered value"

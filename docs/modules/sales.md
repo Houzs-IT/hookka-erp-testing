@@ -74,8 +74,8 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `soStageLabel` | `src/pages/sales/index.tsx:165` | Maps SO status → display stage label |
 | `CreateSalesOrderPageWrapper` | `src/pages/sales/create.tsx:205` | Default export; providers shell |
 | `CreateSalesOrderPage` | `src/pages/sales/create.tsx:213` | Main create form (parties, items, totals) |
-| `CopyFromSourceModal` | `src/pages/sales/create.tsx:2435` | 2-step copy-draft picker |
-| `LineItemCard` | `src/pages/sales/create.tsx:3075` | Per-line item editor |
+| `CopyFromSourceModal` | `src/pages/sales/create.tsx:2446` | 2-step copy-draft picker |
+| `LineItemCard` | `src/pages/sales/create.tsx:3086` | Per-line item editor |
 | `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:583` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1766` | SO create + combo pass + snapshot invalidation |
 | `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3281` | SO edit + re-run combo pass |

@@ -1169,6 +1169,7 @@ export default function GRNPage() {
             </CardTitle>
             {/* Draft / Confirmed toggle — mirrors SO list shell. */}
             <StatusTabStrip
+              loading={grnLoading && !grnResp}
               value={tab}
               onChange={(k) => { setTab(k as "DRAFT" | "CONFIRMED"); setSelectedGrns([]); }}
               moneyLabel="Received value at cost"

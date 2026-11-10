@@ -774,7 +774,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
   // Whole-dataset per-status value sums (valueByStatus) — the SAME aggregate
   // the Delivery list page reads. The dispatch-chain KPIs (pending-dispatch /
   // in-transit) sum from this so they reflect ALL DOs, not the 200-row page.
-  const { data: doStatsRaw } = useCachedJson<{
+  const { data: doStatsRaw, loading: doStatsL } = useCachedJson<{
     valueByStatus?: Record<string, number>;
   }>(needs("kpis", "pipeline") ? "/api/delivery-orders/stats" : null);
   // Worker-Efficiency window follows the selected month: a specific month →
@@ -1236,7 +1236,9 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           sub="made / on DO, not yet delivered"
           icon={Package}
           accent={C_GREEN}
-          loading={pendingL}
+          // The DO money (pending dispatch + on the road) is part of this sum —
+          // a dash until it is here too, not a part-total (review pass 2 C1-11).
+          loading={pendingL || (doStatsL && !doStatsRaw)}
           tag="live"
           onClick={() => setDrill({ title: "Pending Delivery — by stage", subtitle: "Live: everything made but not yet delivered", node: <PendingDeliveryDrill pendingSen={pendingDeliveryValueSen} dispatchSen={dispatchChain.pendingDispatchSen} transitSen={dispatchChain.inTransitSen} /> })}
         />

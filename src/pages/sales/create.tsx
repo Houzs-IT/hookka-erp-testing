@@ -38,13 +38,14 @@ import {
 } from "@/lib/special-order-surcharge";import { fetchVariantsConfig, getVariantsConfigSync, subscribeKvConfig, VARIANTS_CONFIG_KEY } from "@/lib/kv-config";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
-import { useUnsavedChanges } from "@/lib/use-unsaved-changes";
+import { useNavGuard } from "@/lib/use-nav-guard";
 import { useFormDraft, clearFormDraft } from "@/lib/use-form-draft";
 import {
   REPAIR_DEPT_CODES,
   validateRepairScopeInput,
 } from "@/lib/repair-scope";
 import { RepairScopePicker, RepairScopeBadge } from "@/components/sales/repair-scope-picker";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 type SeatHeightTier = { height: string; priceSen: number };
 
@@ -691,7 +692,9 @@ function CreateSalesOrderPage() {
     !!customerDeliveryDate || !!hookkaExpectedDD || !!notes ||
     items.some((it) => !!it.productId)
   );
-  useUnsavedChanges(isDirty);
+  // In-app leave (menu, link, Back, phone swipe) asks too, not only tab close
+  // (review pass 2 H3-1 / C2-2). The redirects after a save call allowNext().
+  const navGuard = useNavGuard(isDirty, "This sales order is not saved. Leave without saving?");
 
   // Form draft — auto-save the in-progress form to localStorage every 500ms
   // (debounced inside the hook). If the user navigates away mid-edit and
@@ -1962,6 +1965,7 @@ function CreateSalesOrderPage() {
           // a draft and let them retry confirm from the list/detail page.
           const reason = confirmData.error || `HTTP ${confirmRes.status}`;
           toast.warning(`Order saved as draft - confirm manually from list. Reason: ${reason}`);
+          navGuard.allowNext();
           navigate(`${basePath}/${newId}`);
           return;
         }
@@ -1976,6 +1980,7 @@ function CreateSalesOrderPage() {
             ? `Order created and in production: ${newSoNumber}`
             : "Order created and in production",
         );
+        navGuard.allowNext();
         navigate(`${basePath}/${newId}`);
         return;
       }
@@ -1988,6 +1993,7 @@ function CreateSalesOrderPage() {
         toast.success(
           newSoNumber ? `Draft saved: ${newSoNumber}` : "Draft saved",
         );
+        navGuard.allowNext();
         navigate(`${basePath}/${newId}`);
       }
     } catch (e) {
@@ -2032,6 +2038,7 @@ function CreateSalesOrderPage() {
                   size="sm"
                   onClick={() => {
                     const code = bomError.incompleteProducts[0].productCode;
+                    navGuard.allowNext();
                     navigate(`/products/bom?sku=${encodeURIComponent(code)}`);
                   }}
                 >
@@ -2044,7 +2051,7 @@ function CreateSalesOrderPage() {
                 onClick={() => {
                   const soId = bomError.soId;
                   setBomError({ open: false, incompleteProducts: [], soId: null });
-                  if (soId) navigate(`${basePath}/${soId}`);
+                  if (soId) { navGuard.allowNext(); navigate(`${basePath}/${soId}`); }
                 }}
               >
                 Open SO as Draft
@@ -2285,7 +2292,7 @@ function CreateSalesOrderPage() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4" {...LINE_GRID_PROPS}>
           {items.map((item, idx) => (
             <LineItemCard
               key={item._uid}
@@ -3228,6 +3235,7 @@ function LineItemCard({
   return (
     <div
       id={`line-item-card-${idx}`}
+      data-line-row=""
       className="rounded-md border border-[#E2DDD8] p-4 space-y-3"
     >
       {/* Header */}

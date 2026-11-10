@@ -40,7 +40,8 @@ import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
 import { LockBanner } from "@/components/ui/lock-banner";
 import { usePresence } from "@/lib/use-presence";
 import { PresenceBanner } from "@/components/presence-banner";
-import { useUnsavedChanges } from "@/lib/use-unsaved-changes";
+import { useNavGuard } from "@/lib/use-nav-guard";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 type CustomSpecial = { description: string; surchargeSen: number };
 
@@ -227,7 +228,8 @@ export default function EditSalesOrderPage() {
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   const isDirty =
     !saving && !loading && initialSig !== null && initialSig !== formSig;
-  useUnsavedChanges(isDirty);
+  // In-app leave asks too (review pass 2 H3-1 / C2-2).
+  const navGuard = useNavGuard(isDirty, "Your changes to this consignment order are not saved. Leave without saving?");
 
   useEffect(() => {
     fetchVariantsConfig().then(setMaintenanceConfig).catch(() => { /* ignore */ });
@@ -637,6 +639,7 @@ export default function EditSalesOrderPage() {
       }
       if (id) invalidateCache(`/api/consignment-orders/${id}`);
       invalidateCachePrefix("/api/production-orders");
+      navGuard.allowNext();
       navigate(`/consignment/${id}`);
     } catch (e) {
       setSaving(false);
@@ -823,10 +826,10 @@ export default function EditSalesOrderPage() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4" {...LINE_GRID_PROPS}>
           {items.map((item, idx) => {
             return (
-              <div key={item.id ?? item._uid ?? idx} className="rounded-md border border-[#E2DDD8] p-4 space-y-3">
+              <div key={item.id ?? item._uid ?? idx} data-line-row="" className="rounded-md border border-[#E2DDD8] p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-[#6B5C32]">Line {idx + 1}</span>

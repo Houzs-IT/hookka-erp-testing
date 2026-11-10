@@ -763,6 +763,7 @@ export default function PurchaseInvoicesPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Draft / Confirmed toggle — mirrors SO list shell. */}
                   <StatusTabStrip
+                    loading={loading && !piResp}
                     value={tab}
                     onChange={(k) => { setTab(k as "DRAFT" | "CONFIRMED"); setSelectedRows([]); }}
                     moneyLabel="Supplier-invoiced amount"

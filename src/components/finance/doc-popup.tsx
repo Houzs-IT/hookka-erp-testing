@@ -5,17 +5,23 @@
 // the accounting page's DocDetailModal: white header and action bar, a light
 // body whose blocks read as white cards ([data-fin-modal-body] in
 // finance-v2.css, under the page's data-fin-ui); Esc or a click outside
-// closes it.
+// closes it. A popup holding a form passes `dirty`: then Esc or a click
+// outside asks "Discard your changes?" first (review pass 2 C2-1); ✕ still
+// closes at once.
 // ---------------------------------------------------------------------------
 import type { ReactNode } from "react";
-import { useEscapeClose } from "@/lib/escape-stack";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
-export function DocPopup({ title, badges, onClose, children, actions }: {
+export function DocPopup({ title, badges, onClose, children, actions, dirty = false, busy = false }: {
   title: string; badges?: ReactNode; onClose: () => void; children: ReactNode; actions?: ReactNode;
+  /** The popup holds unsaved edits — Esc / backdrop ask before closing. */
+  dirty?: boolean;
+  /** A save is in flight — Esc / backdrop do nothing. */
+  busy?: boolean;
 }) {
-  useEscapeClose(onClose);
+  const guard = useDiscardGuard({ open: true, dirty, busy, onClose });
   return (
-    <div data-fin-backdrop="" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={onClose}>
+    <div data-fin-backdrop="" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,29,27,0.42)] p-4" onClick={guard.onBackdrop}>
       <div data-fin-pop="" className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-[14px] bg-[#F7F5F2] shadow-[0_24px_60px_rgba(31,29,27,0.28)]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3 border-b border-[#E2DDD8] bg-white px-5 py-3.5">
           <div className="flex flex-wrap items-center gap-2">

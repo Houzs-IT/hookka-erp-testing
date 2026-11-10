@@ -36,7 +36,8 @@ import { LockBanner } from "@/components/ui/lock-banner";
 import { RepairScopePicker, RepairScopeBadge } from "@/components/sales/repair-scope-picker";
 import { usePresence } from "@/lib/use-presence";
 import { PresenceBanner } from "@/components/presence-banner";
-import { useUnsavedChanges } from "@/lib/use-unsaved-changes";
+import { useNavGuard } from "@/lib/use-nav-guard";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 // Free-text custom special order on a SO line (migration 0074). Operator-typed
 // description + surcharge for edge cases not in the master Specials config.
@@ -284,7 +285,8 @@ export default function EditSalesOrderPage() {
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   const isDirty =
     !saving && !loading && initialSig !== null && initialSig !== formSig;
-  useUnsavedChanges(isDirty);
+  // In-app leave asks too (review pass 2 H3-1 / C2-2).
+  const navGuard = useNavGuard(isDirty, "Your changes to this sales order are not saved. Leave without saving?");
 
   // Customer-aware variants-config — read-time merge (added 2026-05-06,
   // same fix as sales/create.tsx):
@@ -941,6 +943,7 @@ export default function EditSalesOrderPage() {
       // cascade to regenerating linked POs on the server.
       if (id) invalidateCache(`/api/sales-orders/${id}`);
       invalidateCachePrefix("/api/production-orders");
+      navGuard.allowNext();
       navigate(`${basePath}/${id}`);
     } catch (e) {
       setSaving(false);
@@ -1158,12 +1161,13 @@ export default function EditSalesOrderPage() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4" {...LINE_GRID_PROPS}>
           {items.map((item, idx) => {
             return (
               <div
                 key={item.id ?? item._uid ?? idx}
                 id={`line-item-card-${idx}`}
+                data-line-row=""
                 className="rounded-md border border-[#E2DDD8] p-4 space-y-3"
               >
                 <div className="flex items-center justify-between">

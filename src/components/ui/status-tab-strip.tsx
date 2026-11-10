@@ -46,7 +46,10 @@ export interface StatusTabStripProps {
    *   (the Delivery Order layout; used by Invoices).
    */
   variant?: "segmented" | "underline";
-  /** Hides the RM lines while the numbers are still loading. */
+  /** The list has not arrived yet: counts read "—" and the RM lines hide,
+   *  so a page still loading never shows "All (0)" (review pass 2 C1-11).
+   *  Pass it only while there is NO data — a background refresh keeps the
+   *  last counts on screen. */
   loading?: boolean;
   className?: string;
   /** Accessible name for the tab list. */
@@ -118,7 +121,7 @@ export function StatusTabStrip({
                       active ? "bg-[#6B5C32] text-white" : "bg-[#F0ECE9] text-[#6B7280]",
                     )}
                   >
-                    {tab.count}
+                    {loading ? "—" : tab.count}
                   </span>
                 </span>
                 {showMoney && (
@@ -165,7 +168,7 @@ export function StatusTabStrip({
               )}
             >
               <span className="tabular-nums">
-                {tab.label} ({tab.count})
+                {tab.label} ({loading ? "—" : tab.count})
               </span>
               {showMoney && (
                 <MoneyLine
