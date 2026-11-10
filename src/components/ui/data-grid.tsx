@@ -30,8 +30,17 @@ import {
 } from "@/lib/grid-layout";
 import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
 import { useSearchParams } from "react-router-dom";
-import { browserOwnsCopy, rangeStats, rangeToTsv, rectCellCount, rectContains, rectFrom, rowsToTsv, writeClipboardText, type CellPos, type CellRect } from "@/lib/grid-clipboard";
+import { browserOwnsCopy, rangeStats, rangeToTsv, rectCellCount, rectFrom, rowsToTsv, writeClipboardText, type CellPos, type CellRect } from "@/lib/grid-clipboard";
 import { readGridUrlState, sameParams, writeGridUrlState } from "@/lib/grid-url-state";
+import { GridSharedLayouts } from "@/components/ui/grid-shared-layouts";
+import {
+  flattenGroupedRows,
+  flatItemHeight,
+  flatTotalHeight,
+  rowRangeCols,
+  GROUP_ROW_PX,
+  type FlatGroupItem,
+} from "@/lib/grid-virtual-groups";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -1453,6 +1462,7 @@ function ColumnCustomizer<T>({
   printPresetLabel,
   onSaveAsPrintPreset,
   onResetPrintPreset,
+  sharedLayouts,
 }: {
   columns: Column<T>[];
   visibleKeys: Set<string>;
@@ -1472,6 +1482,8 @@ function ColumnCustomizer<T>({
   printPresetLabel?: string;
   onSaveAsPrintPreset?: () => Promise<boolean>;
   onResetPrintPreset?: () => Promise<boolean>;
+  // Team layouts block (review G6) — only for a grid with a gridId.
+  sharedLayouts?: React.ReactNode;
 }) {
   const { toast } = useToast();
   // SUPER_ADMIN is the only role allowed to publish an org-wide default.
@@ -1637,6 +1649,7 @@ function ColumnCustomizer<T>({
           Show All
         </button>
       </div>
+      {sharedLayouts}
       {(onSaveAsOrgDefault || onResetToOrgDefault || onSaveAsPrintPreset) && (
         <div className="border-t border-[#E5E5E5] px-3 py-2 space-y-1.5 bg-[#FAF8F5]">
           {onSaveAsPrintPreset && printPresetLabel && (
@@ -1799,6 +1812,143 @@ function DefaultCellRenderer<T>({
       return <>{value != null ? hl(String(value)) : ""}</>;
   }
 }
+
+// ---------------------------------------------------------------------------
+// One row's data cells, memoised (review G9; Houzs#4823). A re-render of the
+// grid — a scroll step of the windowed body, a row ticked, the copy range
+// moved, the context menu opened — used to re-run every visible row's cell
+// renderers even when nothing in that row changed. The props below are
+// exactly what the cells read; each is a primitive or an identity the grid
+// already memoises (row object, visibleColumns, colWidths, stickyOffsets),
+// plus `data` (the grid's rows prop) so a page that hands in a new data array
+// repaints every row exactly as before. Same columns identity + same row =>
+// the same column.render closures on the same input => the same cells, so
+// skipping is output-identical. A page whose `columns` prop is a fresh array
+// every render simply gets no skip (as before), never a stale cell.
+// The <tr>, its checkbox and its handlers stay in the grid (they carry the
+// per-row state that changes often).
+// ---------------------------------------------------------------------------
+function cellAlignClass<T>(col: Column<T>): string {
+  if (col.align === "right" || col.type === "currency" || col.type === "number") return "text-right";
+  if (col.align === "center") return "text-center";
+  return "text-left";
+}
+
+type DataRowCellsProps<T> = {
+  row: T;
+  index: number;
+  visibleColumns: Column<T>[];
+  colWidths: Record<string, string>;
+  stickyOffsets: Map<string, number>;
+  isEven: boolean;
+  isSelected: boolean;
+  isCancelled: boolean;
+  rowCls: string | undefined;
+  /** Columns of the copy range on this row; -1 / -1 when outside it. */
+  rangeLo: number;
+  rangeHi: number;
+  search: string;
+  /** The grid's `data` prop: a new array repaints every row, as before. */
+  data: readonly T[];
+};
+
+function DataRowCellsImpl<T>({
+  row,
+  index,
+  visibleColumns,
+  colWidths,
+  stickyOffsets,
+  isEven,
+  isSelected,
+  isCancelled,
+  rowCls,
+  rangeLo,
+  rangeHi,
+  search,
+}: DataRowCellsProps<T>) {
+  return (
+    <>
+      {visibleColumns.map((col, colIdx) => {
+        const value = getNestedValue(row, col.key);
+        const inRange = colIdx >= rangeLo && colIdx <= rangeHi;
+        const stickyLeft = stickyOffsets.get(col.key);
+        const isSticky = stickyLeft !== undefined;
+        // Cell-content sizing ("fit fit", 2026-06-11). For a
+        // column WITH a resolved width (declared `width` or a
+        // user resize) the content div clips via width:0 +
+        // min-width:100%: it contributes ~nothing to the auto
+        // table layout's intrinsic widths (the <col> width
+        // stays the column's floor), then renders at 100% of
+        // the LIVE cell width. When the declared widths sum to
+        // less than the container, the browser flexes every
+        // column proportionally — and the content now USES
+        // that flexed width instead of staying clamped at the
+        // declared px. The previous maxWidth clamp left the
+        // right side of every stretched column as permanent
+        // dead space and kept long values ellipsized even when
+        // the column had room (Wei Siang: the grid never "fit"
+        // the page). Narrow viewports are unchanged: the <col>
+        // width floors the column, the table overflows into
+        // the horizontal scrollbar exactly as before, and the
+        // div truncates at that floor. Columns with NO width
+        // keep the legacy 300px cap — they have no <col> floor,
+        // so the fill trick would let them collapse to header
+        // width. Opt out per column with `noClip` (cells that
+        // must wrap / go multi-line).
+        const resolvedWidth = colWidths[col.key] || col.width;
+        return (
+          <td
+            key={col.key}
+            className={cn(
+              "whitespace-nowrap px-2 py-[3px]",
+              cellAlignClass(col),
+              // Sticky body cells must paint an opaque
+              // background that mirrors the row's bg state
+              // (zebra / rowClassName / selected) — <tr>
+              // backgrounds do not paint into child <td>
+              // boxes, so without this the cells go
+              // transparent and non-sticky cells scroll
+              // visibly underneath. We deliberately skip
+              // hover bg-tint on the sticky cell because
+              // hover styles target the <tr>, not its
+              // children; the static row colors are enough
+              // to keep the column readable during scroll.
+              isSticky && "sticky z-10 bg-white",
+              isSticky && isEven && "bg-[#FAFAFA]",
+              isSticky && rowCls,
+              isSticky && isSelected && "!bg-[#CCE0FF]",
+              inRange && "!bg-[#B9D3F5]",
+              col.cellClassName?.(row),
+              isCancelled && col.type === "docno" && "line-through",
+            )}
+            data-dg-col={colIdx}
+            style={{
+              height: "26px",
+              lineHeight: "20px",
+              ...(isSticky ? { left: `${stickyLeft}px` } : {}),
+            }}
+          >
+            {col.noClip ? (
+              <DefaultCellRenderer column={col} value={value} row={row} index={index} search={search} />
+            ) : (
+              <div
+                className="truncate"
+                style={
+                  resolvedWidth
+                    ? { width: 0, minWidth: "100%" }
+                    : { maxWidth: "300px" }
+                }
+              >
+                <DefaultCellRenderer column={col} value={value} row={row} index={index} search={search} />
+              </div>
+            )}
+          </td>
+        );
+      })}
+    </>
+  );
+}
+const DataRowCells = React.memo(DataRowCellsImpl) as typeof DataRowCellsImpl;
 
 // ---------------------------------------------------------------------------
 // DataGrid Component
@@ -2047,6 +2197,23 @@ export function DataGrid<T extends Record<string, any>>({
     // SUPER_ADMIN, or offline) so the toast can warn it stayed local-only.
     return putOrgLayout(gridId, "org-default", cols, columnOrder, colWidths);
   }, [gridId, visibleKeys, columnOrder, colWidths, widthStoreId]);
+
+  // Switch to a layout shared with the team (review G6): it becomes this
+  // user's own layout on this browser, exactly as if they had set the columns
+  // by hand. The shared row itself never changes.
+  const applySharedLayout = useCallback((l: { visibleCols: string[]; colOrder: string[]; colWidths: Record<string, string> | null }) => {
+    if (!gridId) return;
+    const widths = l.colWidths ?? {};
+    setVisibleKeys(new Set(l.visibleCols));
+    setColumnOrder(l.colOrder);
+    setColWidths(widths);
+    try {
+      localStorage.setItem(`datagrid-cols-${gridId}-${userKey()}`, JSON.stringify(l.visibleCols));
+      localStorage.setItem(`datagrid-colorder-${gridId}-${userKey()}`, JSON.stringify(l.colOrder));
+      localStorage.setItem(`datagrid-colw-${widthStoreId}-${userKey()}`, JSON.stringify(widths));
+    } catch { /* ignore */ }
+    markLocalLayout();
+  }, [gridId, widthStoreId, markLocalLayout]);
 
   // Snapshot the CURRENT layout into a dedicated PRINT preset
   // (`datagrid-cols-${gridId}-print`) — a printout reads this instead of the
@@ -2897,6 +3064,29 @@ export function DataGrid<T extends Record<string, any>>({
   // stable across renders is non-negotiable.
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizationActive = virtualize && !groupOn;
+  // Review G8: a grouped grid keeps windowing. Its body (group headers, rows,
+  // subtotals) is flattened in render order and the virtualizer windows that
+  // list instead (src/lib/grid-virtual-groups.ts). null when not grouped or
+  // not opted in to `virtualize`.
+  const groupedFlat = useMemo<FlatGroupItem[] | null>(() => {
+    if (!virtualize || !groupOn) return null;
+    if (userGroupCol) {
+      return flattenGroupedRows(
+        displayedData,
+        (row) => String(userGroupValue(row)),
+        userFolded,
+        visibleColumns.some((c) => c.total),
+      );
+    }
+    return flattenGroupedRows(
+      displayedData,
+      (row) => String(getNestedValue(row, groupBy!) ?? "—"),
+      collapsedGroups,
+      false,
+    );
+  }, [virtualize, groupOn, userGroupCol, displayedData, userGroupValue, userFolded, visibleColumns, groupBy, collapsedGroups]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- identity follows groupedFlat on purpose (see getItemKey below)
+  const groupedItemKey = useCallback((i: number) => i, [groupedFlat]);
   // Single source of truth for the per-row height. Used by both the
   // virtualizer's estimateSize and the body padding math below — without
   // sharing one constant, the padding calc could fall out of sync with
@@ -2905,9 +3095,13 @@ export function DataGrid<T extends Record<string, any>>({
   // `style={{ height: "26px" }}` on each row's <td>.
   const ROW_HEIGHT_PX = 26;
   const rowVirtualizer = useVirtualizer({
-    count: virtualizationActive ? displayedData.length : 0,
+    count: virtualizationActive ? displayedData.length : groupedFlat ? groupedFlat.length : 0,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT_PX,
+    estimateSize: (i) => (groupedFlat?.[i] ? flatItemHeight(groupedFlat[i], ROW_HEIGHT_PX) : ROW_HEIGHT_PX),
+    // A new identity per flat list makes the virtualizer re-measure in the
+    // same pass when a fold / refresh reshuffles headers and rows without
+    // changing the count. Stable (never changes) for an ungrouped grid.
+    getItemKey: groupedItemKey,
     overscan: 8,
   });
 
@@ -3662,6 +3856,13 @@ export function DataGrid<T extends Record<string, any>>({
               printPresetLabel={gridId ? printPresetLabel : undefined}
               onSaveAsPrintPreset={gridId && printPresetLabel ? saveAsPrintPreset : undefined}
               onResetPrintPreset={gridId && printPresetLabel ? resetPrintPreset : undefined}
+              sharedLayouts={gridId ? (
+                <GridSharedLayouts
+                  gridId={gridId}
+                  current={() => ({ visibleCols: [...visibleKeys], colOrder: columnOrder, colWidths })}
+                  onApply={applySharedLayout}
+                />
+              ) : undefined}
             />
           )}
         </div>
@@ -3940,6 +4141,7 @@ export function DataGrid<T extends Record<string, any>>({
                   const isSelected = selectedKeys.has(key);
                   const isEven = index % 2 === 1;
                   const isCancelled = !!cancelledRow?.(row);
+                  const rangeCols = rowRangeCols(activeRect, showRange, index);
                   return (
                     <tr
                       key={key}
@@ -4005,83 +4207,21 @@ export function DataGrid<T extends Record<string, any>>({
                           />
                         </td>
                       )}
-                      {visibleColumns.map((col, colIdx) => {
-                        const value = getNestedValue(row, col.key);
-                        const inRange = showRange && rectContains(activeRect, index, colIdx);
-                        const stickyLeft = stickyOffsets.get(col.key);
-                        const isSticky = stickyLeft !== undefined;
-                        // Cell-content sizing ("fit fit", 2026-06-11). For a
-                        // column WITH a resolved width (declared `width` or a
-                        // user resize) the content div clips via width:0 +
-                        // min-width:100%: it contributes ~nothing to the auto
-                        // table layout's intrinsic widths (the <col> width
-                        // stays the column's floor), then renders at 100% of
-                        // the LIVE cell width. When the declared widths sum to
-                        // less than the container, the browser flexes every
-                        // column proportionally — and the content now USES
-                        // that flexed width instead of staying clamped at the
-                        // declared px. The previous maxWidth clamp left the
-                        // right side of every stretched column as permanent
-                        // dead space and kept long values ellipsized even when
-                        // the column had room (Wei Siang: the grid never "fit"
-                        // the page). Narrow viewports are unchanged: the <col>
-                        // width floors the column, the table overflows into
-                        // the horizontal scrollbar exactly as before, and the
-                        // div truncates at that floor. Columns with NO width
-                        // keep the legacy 300px cap — they have no <col> floor,
-                        // so the fill trick would let them collapse to header
-                        // width. Opt out per column with `noClip` (cells that
-                        // must wrap / go multi-line).
-                        const resolvedWidth = colWidths[col.key] || col.width;
-                        return (
-                          <td
-                            key={col.key}
-                            className={cn(
-                              "whitespace-nowrap px-2 py-[3px]",
-                              alignClass(col),
-                              // Sticky body cells must paint an opaque
-                              // background that mirrors the row's bg state
-                              // (zebra / rowClassName / selected) — <tr>
-                              // backgrounds do not paint into child <td>
-                              // boxes, so without this the cells go
-                              // transparent and non-sticky cells scroll
-                              // visibly underneath. We deliberately skip
-                              // hover bg-tint on the sticky cell because
-                              // hover styles target the <tr>, not its
-                              // children; the static row colors are enough
-                              // to keep the column readable during scroll.
-                              isSticky && "sticky z-10 bg-white",
-                              isSticky && isEven && "bg-[#FAFAFA]",
-                              isSticky && rowClassName?.(row),
-                              isSticky && isSelected && "!bg-[#CCE0FF]",
-                              inRange && "!bg-[#B9D3F5]",
-                              col.cellClassName?.(row),
-                              isCancelled && col.type === "docno" && "line-through",
-                            )}
-                            data-dg-col={colIdx}
-                            style={{
-                              height: "26px",
-                              lineHeight: "20px",
-                              ...(isSticky ? { left: `${stickyLeft}px` } : {}),
-                            }}
-                          >
-                            {col.noClip ? (
-                              <DefaultCellRenderer column={col} value={value} row={row} index={index} search={deferredSearch} />
-                            ) : (
-                              <div
-                                className="truncate"
-                                style={
-                                  resolvedWidth
-                                    ? { width: 0, minWidth: "100%" }
-                                    : { maxWidth: "300px" }
-                                }
-                              >
-                                <DefaultCellRenderer column={col} value={value} row={row} index={index} search={deferredSearch} />
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
+                      <DataRowCells
+                        row={row}
+                        index={index}
+                        visibleColumns={visibleColumns}
+                        colWidths={colWidths}
+                        stickyOffsets={stickyOffsets}
+                        isEven={isEven}
+                        isSelected={isSelected}
+                        isCancelled={isCancelled}
+                        rowCls={rowClassName?.(row)}
+                        rangeLo={rangeCols[0]}
+                        rangeHi={rangeCols[1]}
+                        search={deferredSearch}
+                        data={data}
+                      />
                       {hasContextMenu && (
                         <td
                           className="px-1 text-center"
@@ -4206,101 +4346,172 @@ export function DataGrid<T extends Record<string, any>>({
                   return out;
                 }
 
-                // ── "Group By This Column": each group's header (click folds
+                // ── Grouped body ──
+                // Header / subtotal markup lives in these builders so the
+                // render-everything path and the windowed path (review G8)
+                // paint exactly the same rows. `fixed` pins a header to
+                // GROUP_ROW_PX while windowed, so the virtualizer's
+                // arithmetic matches the painted height.
+                const groupSpan = visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0);
+                // "Group By This Column": each group's header (click folds
                 // it), its rows, then its subtotal row when the grid has
                 // totals — shown folded too, so a folded group still says
                 // what it adds up to. The rows come grouped from sortedData.
-                if (userGroupCol) {
-                  const span = visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0);
-                  const groups = new Map(groupRows(sortedData, userGroupValue).map((g) => [g.key, g]));
-                  const labelAt = Math.max(0, visibleColumns.findIndex((c) => !c.total));
-                  const out: React.ReactNode[] = [];
-                  const subtotal = (key: string) => {
-                    const g = groups.get(key);
-                    if (!g || !showFooter) return;
-                    const t = columnTotals(splitForTotals(g.rows, totalsSkipRow).counted, visibleColumns, (row, k) => getNestedValue(row, k));
-                    const name = groupValueLabel(userGroupCol.type, g.value);
-                    out.push(
-                      <tr key={`__usub__${key}`} data-dg="subtotal" className="bg-[#F1EEE8] text-[12px] font-semibold text-[#1F1D1B]">
-                        {selectable && (
-                          <td className="sticky left-0 z-10 bg-[#F1EEE8]" style={{ width: "32px", minWidth: "32px", maxWidth: "32px" }} />
-                        )}
-                        {(() => {
-                          // The label spans the empty columns after it, so a
-                          // long group name never widens its column (never
-                          // across a sticky column — that one stays put).
-                          const cells: React.ReactNode[] = [];
-                          for (let i = 0; i < visibleColumns.length; i++) {
-                            const col = visibleColumns[i];
-                            const stickyLeft = stickyOffsets.get(col.key);
-                            const isSticky = stickyLeft !== undefined;
-                            const v = t[col.key];
-                            let span = 1;
-                            if (i === labelAt && !isSticky) {
-                              while (i + span < visibleColumns.length && t[visibleColumns[i + span].key] === undefined && !stickyOffsets.has(visibleColumns[i + span].key)) span++;
-                            }
-                            cells.push(
-                              <td
-                                key={col.key}
-                                colSpan={span > 1 ? span : undefined}
-                                className={cn("whitespace-nowrap px-2 py-1 bg-[#F1EEE8]", i === labelAt ? "text-left" : alignClass(col), isSticky && "sticky z-10")}
-                                style={isSticky ? { left: `${stickyLeft}px` } : undefined}
-                              >
-                                {v !== undefined
-                                  ? (col.totalFormat ? col.totalFormat(v) : col.type === "currency" ? formatRM(v) : formatNumber(v))
-                                  : i === labelAt
-                                    ? <>{name} subtotal <span className="font-normal text-[#6B7280]">· {g.rows.length} {g.rows.length === 1 ? "row" : "rows"}</span></>
-                                    : null}
-                              </td>,
-                            );
-                            i += span - 1;
+                const userGroups = userGroupCol
+                  ? new Map(groupRows(sortedData, userGroupValue).map((g) => [g.key, g]))
+                  : null;
+                const userLabelAt = Math.max(0, visibleColumns.findIndex((c) => !c.total));
+                const userSubtotalRow = (key: string): React.ReactNode => {
+                  const g = userGroups?.get(key);
+                  if (!g || !showFooter || !userGroupCol) return null;
+                  const t = columnTotals(splitForTotals(g.rows, totalsSkipRow).counted, visibleColumns, (row, k) => getNestedValue(row, k));
+                  const name = groupValueLabel(userGroupCol.type, g.value);
+                  return (
+                    <tr key={`__usub__${key}`} data-dg="subtotal" className="bg-[#F1EEE8] text-[12px] font-semibold text-[#1F1D1B]">
+                      {selectable && (
+                        <td className="sticky left-0 z-10 bg-[#F1EEE8]" style={{ width: "32px", minWidth: "32px", maxWidth: "32px" }} />
+                      )}
+                      {(() => {
+                        // The label spans the empty columns after it, so a
+                        // long group name never widens its column (never
+                        // across a sticky column — that one stays put).
+                        const cells: React.ReactNode[] = [];
+                        for (let i = 0; i < visibleColumns.length; i++) {
+                          const col = visibleColumns[i];
+                          const stickyLeft = stickyOffsets.get(col.key);
+                          const isSticky = stickyLeft !== undefined;
+                          const v = t[col.key];
+                          let span = 1;
+                          if (i === userLabelAt && !isSticky) {
+                            while (i + span < visibleColumns.length && t[visibleColumns[i + span].key] === undefined && !stickyOffsets.has(visibleColumns[i + span].key)) span++;
                           }
-                          return cells;
-                        })()}
-                        {hasContextMenu && <td className="bg-[#F1EEE8]" />}
+                          cells.push(
+                            <td
+                              key={col.key}
+                              colSpan={span > 1 ? span : undefined}
+                              className={cn("whitespace-nowrap px-2 py-1 bg-[#F1EEE8]", i === userLabelAt ? "text-left" : alignClass(col), isSticky && "sticky z-10")}
+                              style={isSticky ? { left: `${stickyLeft}px` } : undefined}
+                            >
+                              {v !== undefined
+                                ? (col.totalFormat ? col.totalFormat(v) : col.type === "currency" ? formatRM(v) : formatNumber(v))
+                                : i === userLabelAt
+                                  ? <>{name} subtotal <span className="font-normal text-[#6B7280]">· {g.rows.length} {g.rows.length === 1 ? "row" : "rows"}</span></>
+                                  : null}
+                            </td>,
+                          );
+                          i += span - 1;
+                        }
+                        return cells;
+                      })()}
+                      {hasContextMenu && <td className="bg-[#F1EEE8]" />}
+                    </tr>
+                  );
+                };
+                const userGroupHeader = (key: string, fixed: boolean): React.ReactNode => {
+                  const g = userGroups?.get(key);
+                  const folded = userFolded.has(key);
+                  return (
+                    <tr
+                      key={`__ugroup__${key}`}
+                      data-dg="group"
+                      className="bg-[#E8E4DF] border-b border-[#D0CCC7] cursor-pointer hover:bg-[#DDD8D2] select-none"
+                      onClick={() => toggleUserFold(key)}
+                      title={folded ? "Show this group's rows" : "Fold this group"}
+                    >
+                      <td colSpan={groupSpan} className="px-3 py-1.5 text-[11px] font-bold text-[#4A4540]" style={fixed ? { height: `${GROUP_ROW_PX}px` } : undefined}>
+                        <span className="inline-block w-3 text-[9px] mr-1">{folded ? "▶" : "▼"}</span>
+                        {g && userGroupCol ? groupValueLabel(userGroupCol.type, g.value) : key} <span className="font-normal text-[#888] ml-1">({g?.rows.length ?? 0})</span>
+                      </td>
+                    </tr>
+                  );
+                };
+                // The page's own `groupBy` (the toolbar group toggle).
+                const groupCounts = new Map<string, number>();
+                if (!userGroupCol && groupBy && groupEnabled) {
+                  for (const row of sortedData) {
+                    const gv = String(getNestedValue(row, groupBy) ?? "—");
+                    groupCounts.set(gv, (groupCounts.get(gv) ?? 0) + 1);
+                  }
+                }
+                const pageGroupHeader = (gv: string, fixed: boolean): React.ReactNode => {
+                  const isCollapsed = collapsedGroups.has(gv);
+                  return (
+                    <tr
+                      key={`__group__${gv}`}
+                      className="bg-[#E8E4DF] border-b border-[#D0CCC7] cursor-pointer hover:bg-[#DDD8D2] select-none"
+                      onClick={() => toggleGroupCollapse(gv)}
+                    >
+                      <td
+                        colSpan={groupSpan}
+                        className="px-3 py-1.5 text-[11px] font-bold text-[#4A4540]"
+                        style={fixed ? { height: `${GROUP_ROW_PX}px` } : undefined}
+                      >
+                        <span className="inline-block w-3 text-[9px] mr-1">{isCollapsed ? "▶" : "▼"}</span>
+                        {gv} <span className="font-normal text-[#888] ml-1">({groupCounts.get(gv) ?? 0})</span>
+                      </td>
+                    </tr>
+                  );
+                };
+
+                // ── Windowed grouped path (review G8) ──
+                // Same items, same order, as the paths below; only the ones
+                // in (or near) the viewport are painted, between two spacer
+                // rows. Heights come from flatItemHeight in the SAME pass
+                // (no stale getTotalSize — see the flat path's notes above).
+                if (groupedFlat && groupedFlat.length >= VIRTUALIZE_MIN_ROWS) {
+                  const virtualItems = rowVirtualizer.getVirtualItems().filter((v) => v.index < groupedFlat.length);
+                  const totalSize = flatTotalHeight(groupedFlat, ROW_HEIGHT_PX);
+                  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+                  const paddingBottom =
+                    virtualItems.length > 0 ? Math.max(0, totalSize - virtualItems[virtualItems.length - 1].end) : 0;
+                  const out: React.ReactNode[] = [];
+                  if (paddingTop > 0) {
+                    out.push(
+                      <tr key="__virt_top__" aria-hidden="true">
+                        <td colSpan={groupSpan} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
                       </tr>,
                     );
-                  };
+                  }
+                  for (const v of virtualItems) {
+                    const item = groupedFlat[v.index];
+                    if (item.kind === "row") {
+                      const row = displayedData[item.index];
+                      if (row) out.push(renderDataRow(row, item.index));
+                    } else if (item.kind === "group") {
+                      out.push(userGroupCol ? userGroupHeader(item.key, true) : pageGroupHeader(item.key, true));
+                    } else {
+                      out.push(userSubtotalRow(item.key));
+                    }
+                  }
+                  if (paddingBottom > 0) {
+                    out.push(
+                      <tr key="__virt_bot__" aria-hidden="true">
+                        <td colSpan={groupSpan} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
+                      </tr>,
+                    );
+                  }
+                  return out;
+                }
+
+                if (userGroupCol) {
+                  const out: React.ReactNode[] = [];
                   let open: string | null = null;
                   displayedData.forEach((row, index) => {
                     const key = String(userGroupValue(row));
                     if (key !== open) {
-                      if (open !== null) subtotal(open);
+                      if (open !== null) out.push(userSubtotalRow(open));
                       open = key;
-                      const g = groups.get(key);
-                      const folded = userFolded.has(key);
-                      out.push(
-                        <tr
-                          key={`__ugroup__${key}`}
-                          data-dg="group"
-                          className="bg-[#E8E4DF] border-b border-[#D0CCC7] cursor-pointer hover:bg-[#DDD8D2] select-none"
-                          onClick={() => toggleUserFold(key)}
-                          title={folded ? "Show this group's rows" : "Fold this group"}
-                        >
-                          <td colSpan={span} className="px-3 py-1.5 text-[11px] font-bold text-[#4A4540]">
-                            <span className="inline-block w-3 text-[9px] mr-1">{folded ? "▶" : "▼"}</span>
-                            {g ? groupValueLabel(userGroupCol.type, g.value) : key} <span className="font-normal text-[#888] ml-1">({g?.rows.length ?? 0})</span>
-                          </td>
-                        </tr>,
-                      );
+                      out.push(userGroupHeader(key, false));
                     }
                     if (!userFolded.has(key)) out.push(renderDataRow(row, index));
                   });
-                  if (open !== null) subtotal(open);
+                  if (open !== null) out.push(userSubtotalRow(open));
                   return out;
                 }
 
                 // ── Legacy / grouped path (renders every row) ──
                 const rows: React.ReactNode[] = [];
                 let lastGroup: string | null = null;
-                // Pre-compute group counts if groupBy is set and enabled
-                const groupCounts = new Map<string, number>();
-                if (groupBy && groupEnabled) {
-                  for (const row of sortedData) {
-                    const gv = String(getNestedValue(row, groupBy) ?? "—");
-                    groupCounts.set(gv, (groupCounts.get(gv) ?? 0) + 1);
-                  }
-                }
 
                 displayedData.forEach((row, index) => {
                   // Group header
@@ -4308,22 +4519,7 @@ export function DataGrid<T extends Record<string, any>>({
                     const gv = String(getNestedValue(row, groupBy) ?? "—");
                     if (gv !== lastGroup) {
                       lastGroup = gv;
-                      const isCollapsed = collapsedGroups.has(gv);
-                      rows.push(
-                        <tr
-                          key={`__group__${gv}`}
-                          className="bg-[#E8E4DF] border-b border-[#D0CCC7] cursor-pointer hover:bg-[#DDD8D2] select-none"
-                          onClick={() => toggleGroupCollapse(gv)}
-                        >
-                          <td
-                            colSpan={visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0)}
-                            className="px-3 py-1.5 text-[11px] font-bold text-[#4A4540]"
-                          >
-                            <span className="inline-block w-3 text-[9px] mr-1">{isCollapsed ? "▶" : "▼"}</span>
-                            {gv} <span className="font-normal text-[#888] ml-1">({groupCounts.get(gv) ?? 0})</span>
-                          </td>
-                        </tr>
-                      );
+                      rows.push(pageGroupHeader(gv, false));
                     }
                     // Skip rows in collapsed groups
                     if (collapsedGroups.has(gv)) return;

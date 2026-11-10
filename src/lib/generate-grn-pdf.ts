@@ -12,6 +12,8 @@ import {
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
+import { fitCodeColumn } from "./pdf-code-column";
+import { warehousePrintName } from "./pdf-warehouse";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -93,7 +95,9 @@ export function generateGRNPdf(
   ry = lblVal(rightX, ry, "Date", fmtDate(data.date), rightMaxW);
   ry = lblVal(rightX, ry, "PO Ref", data.poRef ?? "-", rightMaxW);
   ry = lblVal(rightX, ry, "Supplier DO No.", data.doRef ?? data.supplierDoNo ?? "-", rightMaxW);
-  lblVal(rightX, ry, "Warehouse", data.warehouse ?? "-", rightMaxW);
+  // D6: the paper names the warehouse the goods were received at (was an
+  // always-"-" Warehouse row: no caller passed one).
+  lblVal(rightX, ry, "Received At", warehousePrintName(data.warehouse), rightMaxW);
 
   let y = Math.max(ly, ry) + 2;
 
@@ -124,6 +128,13 @@ export function generateGRNPdf(
       String(item.rejectedQty ?? 0),
       String(item.acceptedQty ?? 0),
     ];
+  });
+  // D5: the item code stays on one line — the column fits the longest code
+  // (22 mm floor, 40 mm cap; Description absorbs it), font shrinks last.
+  const codeCol = fitCodeColumn(doc, tableBody.map((r) => r[1]), {
+    minWidth: 22,
+    maxWidth: 40,
+    fontStyle: "normal",
   });
 
   autoTable(doc, {
@@ -163,7 +174,7 @@ export function generateGRNPdf(
     },
     columnStyles: {
       0: { cellWidth: 9, halign: "center" },
-      1: { cellWidth: 22 },
+      1: { cellWidth: codeCol.cellWidth, fontSize: codeCol.fontSize },
       2: { cellWidth: 28 },
       3: { cellWidth: "auto" },
       4: { cellWidth: 19, halign: "right" },

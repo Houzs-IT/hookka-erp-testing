@@ -16,6 +16,7 @@ import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import { hasLetterheadDetails } from "./org-letterhead-row";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
+import { fitCodeColumn } from "./pdf-code-column";
 
 // Letterhead info passed in from the caller. Mirrors the COMPANY constant's
 // shape so HOOKKA/OHANA fall through directly, and the route can populate
@@ -224,6 +225,9 @@ export function generatePurchaseOrderPdf(
       fmtCurrency(item.totalSen),
     ];
   });
+  // D5: the item code stays on one line — the column fits the longest code
+  // (24 mm floor, 38 mm cap; Description absorbs it), font shrinks last.
+  const codeCol = fitCodeColumn(doc, tableBody.map((r) => r[1]), { minWidth: 24, maxWidth: 38 });
 
   autoTable(doc, {
     startY: y,
@@ -262,7 +266,7 @@ export function generatePurchaseOrderPdf(
     },
     columnStyles: {
       0: { cellWidth: 9, halign: "center" },
-      1: { cellWidth: 24, fontStyle: "bold" },
+      1: { cellWidth: codeCol.cellWidth, fontStyle: "bold", fontSize: codeCol.fontSize },
       2: { cellWidth: 32 },
       3: { cellWidth: "auto" },
       4: { cellWidth: 15, halign: "center" },

@@ -35,7 +35,7 @@ test("GET returns the caller's own layout as `mine`, with when it was saved", ()
   assert.match(get, /SELECT kind, visible_cols, col_order, col_widths, updated_at/);
   assert.match(get, /kind IN \('org-default', 'print'\) OR kind = \?/, "only the shared rows and the caller's own");
   assert.match(get, /mine = \{ \.\.\.preset, updatedAt:/);
-  assert.match(get, /return c\.json\(\{ success: true, orgDefault, print, mine \}\)/);
+  assert.match(get, /return c\.json\(\{ success: true, orgDefault, print, mine, shared \}\)/);
 });
 
 test("PUT and DELETE: anyone signed in may save or clear their own layout; shared ones stay SUPER_ADMIN", () => {

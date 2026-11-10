@@ -15,6 +15,7 @@ import {
 } from "@/lib/generate-do-pdf";
 import { todayYmdMY } from "./utils";
 import { deliverJsPdf, pdfFileName } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // ---------------------------------------------------------------------------
 // Consignment Note PDF — the CN twin of generate-do-pdf.ts (owner asked for
@@ -52,6 +53,8 @@ export type CNPdfData = {
   driverPhone?: string;
   vehicleNo?: string;
   vehicleType?: string;
+  // The CN's raw backend status; CANCELLED prints the red stamp (review D2).
+  status?: string | null;
   items: CNPdfItem[];
 };
 
@@ -473,6 +476,8 @@ export function generateCNPdf(
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   renderCnInto(doc, data);
   stampCnFooters(doc);
+  // A cancelled CN prints a red CANCELLED stamp on every page, as the DO does.
+  if (isCancelledStatus(data.status)) stampCancelledJsPdf(doc);
 
   // cnNo already carries the "CGN-" prefix (e.g. "CGN-2606-001"); use it
   // verbatim and only add the prefix for any legacy number that lacks it
