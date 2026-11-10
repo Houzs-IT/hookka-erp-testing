@@ -172,6 +172,13 @@ for (const [file, flag] of [
   });
 }
 
+test("G3: Consignment Orders widens to every CO for search and header sort / funnels", () => {
+  const src = read("src/pages/consignment/index.tsx");
+  assert.match(src, /filterCategory \|\| filterDDFrom \|\| filterDDTo \|\| gridSearch\.trim\(\) \|\| gridColumnView/);
+  assert.match(src, /onSearchChange=\{setGridSearch\}/);
+  assert.match(src, /onColumnViewChange=\{setGridColumnView\}/);
+});
+
 test("G3: Invoices says it holds one page and can load every match", () => {
   const src = read("src/pages/invoices/index.tsx");
   assert.match(src, /totalRows=\{loadedAll \? undefined : totalInvoicesServer\}/);

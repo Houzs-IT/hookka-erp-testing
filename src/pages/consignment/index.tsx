@@ -105,9 +105,15 @@ export default function SalesPage() {
   const [filterDDFrom, setFilterDDFrom] = useUrlState<string>("ddFrom", "");
   const [filterDDTo, setFilterDDTo] = useUrlState<string>("ddTo", "");
 
+  // Review G3 (2026-11-10): the grid's search box, header sort, funnels and
+  // Group By judge the grid's rows — one 200-row page in the browse view — so
+  // while any of them is on, the fetch widens to every CO, as the filters
+  // above already do (the Sales pattern; Houzs#4753).
+  const [gridSearch, setGridSearch] = useState("");
+  const [gridColumnView, setGridColumnView] = useState(false);
   const _filtersActive = !!(
     filterStatus || filterCustomer || filterDateFrom || filterDateTo ||
-    filterCategory || filterDDFrom || filterDDTo
+    filterCategory || filterDDFrom || filterDDTo || gridSearch.trim() || gridColumnView
   );
 
   const { data: ordersResp, loading, refresh: refreshOrders } = useCachedJson<{
@@ -900,6 +906,8 @@ export default function SalesPage() {
             contextMenuItems={getContextMenuItems}
             selectable
             onSelectionChange={setSelectedRows}
+            onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             rowClassName={(row) =>
               row.status === "DRAFT"
                 ? "!bg-[#FAEFCB]/60 border-l-2 border-l-amber-400"
