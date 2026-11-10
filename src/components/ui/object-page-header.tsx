@@ -23,7 +23,8 @@
 //   />
 // ---------------------------------------------------------------------------
 import type { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { openerFor, openerIsPreviousEntry, openerLabel } from "@/lib/return-to";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -50,14 +51,42 @@ export function ObjectPageHeader({
   pager?: ReactNode;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const handleBack = onBack ?? (backTo ? () => navigate(backTo) : undefined);
+  // Review H2-9: opened from another page (a report, a map, another document)?
+  // Offer "Back to <that page>" — same spot — next to the usual list Back.
+  // Pages with their own onBack keep it alone.
+  const opener = onBack ? null : openerFor(`${location.pathname}${location.search}`, backTo);
+  const backToOpener = opener
+    ? () => {
+        const idx = (window.history.state as { idx?: number } | null)?.idx;
+        if (openerIsPreviousEntry(opener, typeof idx === "number" ? idx : null)) {
+          navigate(-1); // POP: ScrollRestoration puts the page back where it was
+          return;
+        }
+        navigate(opener.href);
+        const y = opener.scrollY;
+        if (y > 0) window.setTimeout(() => window.scrollTo(0, y), 300);
+      }
+    : undefined;
 
   return (
     // flex-wrap at every width: on a narrow desktop/tablet a long action row
     // used to squeeze the title to an ellipsis instead of wrapping under it.
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 max-md:gap-2">
+      {backToOpener && opener ? (
+        <Button variant="outline" size="sm" onClick={backToOpener} aria-label={openerLabel(opener)} title={openerLabel(opener)}>
+          <ArrowLeft className="h-4 w-4" /> {openerLabel(opener)}
+        </Button>
+      ) : null}
       {handleBack && (
-        <Button variant="ghost" size="icon" onClick={handleBack} aria-label="Back">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleBack}
+          aria-label={opener ? "Back to the list" : "Back"}
+          title={opener ? "Back to the list" : undefined}
+        >
           <ArrowLeft className="h-5 w-5" />
         </Button>
       )}

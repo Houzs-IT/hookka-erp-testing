@@ -359,3 +359,80 @@ test("H2-2: detail header + list row menu open New PO with ?copyFrom; the create
   assert.match(create, /setExpectedDate\(""\)/);
   assert.match(create, /toast\.warning\(notice\)/);
 });
+
+// ── H2-9: Back returns to the page the document was opened from ─────────
+import {
+  openerFor,
+  openerIsPreviousEntry,
+  openerLabel,
+  recordReturnVisit,
+  noteScroll,
+  resetReturnToForTests,
+} from "../src/lib/return-to.ts";
+import { sourceFromParams, sourceHref, sourceBackLabel, savedDocHref } from "../src/lib/return-to-source.ts";
+
+test("H2-9: a document opened from another page names it and keeps its scroll spot", () => {
+  resetReturnToForTests();
+  const t0 = 1_000_000;
+  recordReturnVisit("/procurement/grn/g-1", "PUSH", 4, t0); // first page: no opener
+  noteScroll(820);
+  recordReturnVisit("/procurement/po-1", "PUSH", 5, t0 + 10); // opened from the GRN
+  const o = openerFor("/procurement/po-1", "/procurement", t0 + 20);
+  assert.ok(o);
+  assert.equal(o.href, "/procurement/grn/g-1");
+  assert.equal(o.scrollY, 820);
+  assert.equal(openerLabel(o), "Back to Goods Receipt");
+  assert.equal(openerIsPreviousEntry(o, 5), true);
+  assert.equal(openerIsPreviousEntry(o, 7), false);
+  // Expired after two hours.
+  assert.equal(openerFor("/procurement/po-1", "/procurement", t0 + 3 * 3600 * 1000), null);
+});
+
+test("H2-9: opened from its own list = the usual Back; POP never records an opener", () => {
+  resetReturnToForTests();
+  recordReturnVisit("/procurement", "PUSH", 1);
+  recordReturnVisit("/procurement/po-1", "PUSH", 2);
+  assert.equal(openerFor("/procurement/po-1", "/procurement"), null, "from its own list");
+  recordReturnVisit("/procurement/po-2", "PUSH", 3); // doc → doc
+  assert.equal(openerFor("/procurement/po-2", "/procurement")?.href, "/procurement/po-1");
+  recordReturnVisit("/procurement/po-1", "POP", 2); // Back
+  assert.equal(openerFor("/procurement/po-1", "/procurement"), null, "Back must not make po-2 the opener of po-1");
+  recordReturnVisit("/procurement/create", "PUSH", 3);
+  recordReturnVisit("/procurement/po-9", "REPLACE", 3);
+  assert.equal(openerFor("/procurement/po-9", "/procurement"), null);
+});
+
+test("H2-9: ObjectPageHeader shows 'Back to <page>'; the shell records every navigation", () => {
+  const header = read("src/components/ui/object-page-header.tsx");
+  assert.match(header, /openerFor\(`\$\{location\.pathname\}\$\{location\.search\}`, backTo\)/);
+  assert.match(header, /navigate\(-1\); \/\/ POP/);
+  assert.match(header, /openerLabel\(opener\)/);
+  const shell = read("src/components/layout/workspace-tabs.tsx");
+  assert.match(shell, /recordReturnVisit\(`\$\{location\.pathname\}\$\{location\.search\}`, navigationType/);
+  assert.match(shell, /noteScroll\(window\.scrollY\)/);
+});
+
+// ── C2-6: after save, "Back to PO" / "Back to GRN" ───────────────────────
+test("C2-6: the source document comes from the create page's query", () => {
+  const q = (o) => ({ get: (k) => o[k] ?? null });
+  assert.deepEqual(sourceFromParams(q({ poId: "po-1" }), ["PO"]), { kind: "PO", id: "po-1" });
+  assert.deepEqual(sourceFromParams(q({ grnId: "g-1", poId: "po-1" }), ["GRN", "PO"]), { kind: "GRN", id: "g-1" });
+  assert.equal(sourceFromParams(q({ grnId: "g-1" }), ["PO"]), null);
+  assert.equal(sourceFromParams(q({}), ["GRN", "PO"]), null);
+  assert.equal(sourceHref({ kind: "PO", id: "po-1" }), "/procurement/po-1");
+  assert.equal(sourceHref({ kind: "GRN", id: "g 1" }), "/procurement/grn/g%201");
+  assert.equal(sourceBackLabel({ kind: "GRN", id: "x" }), "Back to GRN");
+  assert.equal(savedDocHref("PI", "pi-1"), "/procurement/pi/pi-1");
+  assert.equal(savedDocHref("GRN", null), "/procurement/grn");
+});
+
+test("C2-6: GRN and PI create offer Back to the source after save; from scratch = the list as before", () => {
+  const grn = read("src/pages/procurement/grn/create.tsx");
+  assert.match(grn, /sourceFromParams\(searchParams, \["PO"\]\)/);
+  assert.match(grn, /await leaveAfterSave\(resBody\.data\?\.id \?\? null\)/);
+  assert.match(grn, /if \(!saveSource\) \{\s*navigate\("\/procurement\/grn"\);/);
+  const pi = read("src/pages/procurement/pi/create.tsx");
+  assert.match(pi, /sourceFromParams\(searchParams, \["GRN", "PO"\]\)/);
+  assert.match(pi, /await leaveAfterSave\(j\.data\?\.id \?\? null\)/);
+  assert.match(pi, /if \(!saveSource\) \{\s*navigate\("\/procurement\/pi"\);/);
+});

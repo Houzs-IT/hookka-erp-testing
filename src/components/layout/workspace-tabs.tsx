@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useNavigationType } from "react-router-dom";
+import { noteScroll, recordReturnVisit } from "@/lib/return-to";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -30,10 +31,24 @@ export function WorkspaceTabs() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingRef = useRef<string | null>(null);
 
+  const navigationType = useNavigationType();
+
   // Record AFTER render — emitting during render would schedule a mid-render update.
   useEffect(() => {
     recordWorkspaceVisit(location.pathname, location.search);
   }, [location.pathname, location.search]);
+
+  // Review H2-9: remember which page each document was opened from (and its
+  // scroll spot), so the document's Back can return there.
+  useEffect(() => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx;
+    recordReturnVisit(`${location.pathname}${location.search}`, navigationType, typeof idx === "number" ? idx : null);
+  }, [location.pathname, location.search, navigationType]);
+  useEffect(() => {
+    const onScroll = () => noteScroll(window.scrollY);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   function close(id: string) {
     const { navigateTo } = closeWorkspaceTab(id);

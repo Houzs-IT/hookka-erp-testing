@@ -38,6 +38,8 @@ import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { savedDocHref, sourceBackLabel, sourceFromParams, sourceHref } from "@/lib/return-to-source";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -135,6 +137,22 @@ function GRNCreatePage() {
   // a lost response could post the same goods twice.
   const grnIdem = useIdempotencyKey();
   const [searchParams] = useSearchParams();
+  const { confirm } = useConfirm();
+  // Review C2-6: a GRN raised from a PO offers "Back to PO" after save.
+  const saveSource = sourceFromParams(searchParams, ["PO"]);
+  const leaveAfterSave = async (newId?: string | null) => {
+    if (!saveSource) {
+      navigate("/procurement/grn");
+      return;
+    }
+    const back = await confirm({
+      title: "GRN created",
+      message: "Go back to the purchase order this receipt was raised from, or open the new GRN?",
+      confirmLabel: sourceBackLabel(saveSource),
+      cancelLabel: newId ? "Open GRN" : "Go to GRN list",
+    });
+    navigate(back ? sourceHref(saveSource) : savedDocHref("GRN", newId));
+  };
 
   const seedPoId = searchParams.get("poId") ?? "";
   const autoScan = searchParams.get("scan") === "1";
@@ -679,7 +697,7 @@ function GRNCreatePage() {
         toast.success("GRN created");
       }
       navGuard.allowNext();
-      navigate("/procurement/grn");
+      await leaveAfterSave(resBody.data?.id ?? null);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Network error creating GRN",
@@ -1506,7 +1524,7 @@ function GRNCreatePage() {
                 : `${ids.length} Goods Receipt Notes created`,
             );
             navGuard.allowNext();
-            navigate("/procurement/grn");
+            void leaveAfterSave(ids.length === 1 ? ids[0] : null);
           }
         }}
       />
