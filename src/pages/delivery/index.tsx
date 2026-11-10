@@ -6996,6 +6996,7 @@ export default function DeliveryPage() {
       {podDialog && (
         <PODDialog
           open={!!podDialog}
+          doId={podDialog.id}
           doNo={podDialog.doNo}
           customerName={podDialog.customerName}
           onClose={() => setPodDialog(null)}

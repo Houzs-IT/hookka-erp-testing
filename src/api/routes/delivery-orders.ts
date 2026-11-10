@@ -64,6 +64,12 @@ import {
 // of the simplified branded fallback. buildSimpleTablePdf stays the ULTIMATE
 // fallback if the unified render ever throws on Workers.
 import { getOrCreateQrToken, qrScanUrl } from "../lib/do-qr-token";
+import {
+  ensurePodPhotosTable,
+  listPodPhotos,
+  MAX_POD_PHOTOS,
+  podPhotoProblem,
+} from "../lib/pod-photos";
 import { parseStatusList, startOfMonthMYT } from "../../lib/delivery-list-filters";
 // Company office number — the driver-contact fallback on dispatch notices
 // (owner rule: no driver phone on file → give the company's number).
@@ -3148,6 +3154,80 @@ app.get("/:id/qr-token", async (c) => {
       doNo: exists.doNo,
     },
   });
+});
+
+// ---------------------------------------------------------------------------
+// Delivery photos, uploaded the moment they are taken (review H3-4, C2-3).
+//   GET    /:id/pod-photos            — the DO's photos not yet in a POD, plus
+//                                       the server's clock (`serverNow`), which
+//                                       the page burns into each new photo
+//   POST   /:id/pod-photos {dataUrl}  — store one (compressed + stamped) photo
+//   DELETE /:id/pod-photos/:photoId   — drop one before the POD is confirmed
+// The POD write (PUT /:id, proofOfDelivery.photoIds) copies them into the POD
+// and deletes the drafts in the same batch. Registered BEFORE /:id.
+// ---------------------------------------------------------------------------
+app.get("/:id/pod-photos", async (c) => {
+  const denied = await requirePermission(c, "delivery-orders", "read");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const exists = await c.var.DB.prepare("SELECT id FROM delivery_orders WHERE id = ?")
+    .bind(id)
+    .first<{ id: string }>();
+  if (!exists) return c.json({ success: false, error: "Delivery order not found" }, 404);
+  const photos = await listPodPhotos(c.var.DB, id);
+  return c.json({ success: true, data: photos, serverNow: new Date().toISOString() });
+});
+
+app.post("/:id/pod-photos", async (c) => {
+  const denied = await requirePermission(c, "delivery-orders", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  let body: { dataUrl?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: "Invalid JSON in request body" }, 400);
+  }
+  const problem = podPhotoProblem(body.dataUrl);
+  if (problem) return c.json({ success: false, error: problem }, 400);
+  const dataUrl = String(body.dataUrl);
+  const existing = await c.var.DB.prepare("SELECT id, status FROM delivery_orders WHERE id = ?")
+    .bind(id)
+    .first<{ id: string; status: string }>();
+  if (!existing) return c.json({ success: false, error: "Delivery order not found" }, 404);
+  if (existing.status === "CANCELLED") {
+    return c.json({ success: false, error: "This delivery order is cancelled." }, 409);
+  }
+  await ensurePodPhotosTable(c.var.DB);
+  const photoId = `podph-${crypto.randomUUID().slice(0, 12)}`;
+  const serverAt = new Date().toISOString();
+  const userId = (c.get as unknown as (k: string) => string | undefined)("userId") ?? null;
+  // The cap is IN the insert, so two photos sent at once cannot both land
+  // past the fifth (refuse-only race guard).
+  const res = await c.var.DB.prepare(
+    `INSERT INTO delivery_pod_photos (id, org_id, do_id, data_url, server_at, created_by, size_chars)
+     SELECT ?, ?, ?, ?, ?, ?, CAST(? AS INTEGER)
+      WHERE (SELECT COUNT(*) FROM delivery_pod_photos WHERE do_id = ?) < CAST(? AS INTEGER)`,
+  )
+    .bind(photoId, getOrgId(c), id, dataUrl, serverAt, userId, dataUrl.length, id, MAX_POD_PHOTOS)
+    .run();
+  if (Number(res?.meta?.changes ?? 1) === 0) {
+    return c.json(
+      { success: false, error: `Up to ${MAX_POD_PHOTOS} photos per delivery. Remove one to add another.` },
+      409,
+    );
+  }
+  return c.json({ success: true, data: { id: photoId, serverAt }, serverNow: serverAt });
+});
+
+app.delete("/:id/pod-photos/:photoId", async (c) => {
+  const denied = await requirePermission(c, "delivery-orders", "update");
+  if (denied) return denied;
+  await ensurePodPhotosTable(c.var.DB);
+  await c.var.DB.prepare("DELETE FROM delivery_pod_photos WHERE id = ? AND do_id = ?")
+    .bind(c.req.param("photoId"), c.req.param("id"))
+    .run();
+  return c.json({ success: true });
 });
 
 // GET /api/delivery-orders/:id/billable-lines — what is still un-invoiced.

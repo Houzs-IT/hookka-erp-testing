@@ -60,6 +60,11 @@ function fakeDb({
               if (/FROM sales_orders WHERE id = \?/.test(q)) {
                 return salesOrders.find((s) => s.id === args[0]) ?? null;
               }
+              // H3-8: the undo reads the POD to keep it as an earlier attempt.
+              if (/^SELECT proofOfDelivery FROM delivery_orders WHERE id = \?$/.test(q)) {
+                const d = deliveryOrders.find((x) => x.id === args[0]);
+                return d ? { proofOfDelivery: d.proofOfDelivery ?? null } : null;
+              }
               if (/FROM delivery_orders WHERE id IN .* status IN \('DELIVERED','INVOICED'\)/.test(q)) {
                 return deliveryOrders.find((d) => args.includes(d.id) && ["DELIVERED", "INVOICED"].includes(d.status)) ?? null;
               }
@@ -184,6 +189,21 @@ test("the DO goes back to LOADED with its delivery stamps cleared, written last"
   assert.match(last.sql, /deliveredAt = NULL/);
   assert.match(last.sql, /deliveredEmailAt = NULL/, "the corrected invoice must be able to email again");
   assert.match(last.sql, /WHERE id = \? AND status IN \('DELIVERED','INVOICED'\)/);
+});
+
+test("H3-8: the undone delivery's POD is kept as an earlier attempt, not left as the proof", async () => {
+  const pod = { receiverName: "Ali", signatureDataUrl: "data:image/png;base64,AAAA", photoDataUrls: ["data:image/jpeg;base64,BBBB"], deliveredAt: "2026-10-21T09:00:00.000Z" };
+  const d = invoiced();
+  d.deliveryOrders[0].proofOfDelivery = JSON.stringify(pod);
+  const r = await buildDoUndeliverStatements(fakeDb(d), doArgs, ["inv-1"], ACTOR, NOW);
+  const last = r.statements[r.statements.length - 1];
+  assert.match(last.sql, /proofOfDelivery = \?/);
+  const stored = JSON.parse(last.args[1]);
+  assert.equal(stored.receiverName, undefined, "nothing current — the next Delivered asks for a fresh POD");
+  assert.deepEqual(stored.earlierAttempts, [{ ...pod, undoneAt: NOW }]);
+  // No POD at all → stays empty.
+  const r2 = await buildDoUndeliverStatements(fakeDb(invoiced()), doArgs, ["inv-1"], ACTOR, NOW);
+  assert.equal(r2.statements[r2.statements.length - 1].args[1], null);
 });
 
 test("an SO still billed by an invoice this reversal does not void keeps its status", async () => {

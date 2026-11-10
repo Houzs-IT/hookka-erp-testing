@@ -51,6 +51,7 @@ import {
 import { type FormSpec } from "../config/form-types";
 import { editSpecFor, newMailSpec, recordPaymentSpec, stockAdjustmentSpec } from "../config/forms";
 import { PodSheet } from "../components/PodSheet";
+import { readPodDraft } from "@/lib/pod-capture";
 import { GrnReceiveSheet } from "../components/GrnReceiveSheet";
 import type { ProofOfDelivery } from "@/types";
 import { mutateJson, refreshOne, refreshList } from "../config/mutate";
@@ -129,7 +130,11 @@ function Inner({
   // Edit / reply forms (FormSheet). When set, the prefilled form is open.
   const [formSpec, setFormSpec] = useState<FormSpec | null>(null);
   // Proof-of-delivery capture sheet (delivery "Mark Delivered").
-  const [podOpen, setPodOpen] = useState(false);
+  // Reopens by itself after the phone reloaded the page under the camera
+  // (review H3-4): the sheet keeps a per-DO draft with `open: true`.
+  const [podOpen, setPodOpen] = useState(
+    () => config.slug === "delivery" && !!id && readPodDraft(id)?.open === true,
+  );
   // Goods-receipt sheet (procurement PO "Receive (GRN)").
   const [grnOpen, setGrnOpen] = useState(false);
   // T-006 R10 — same receipt route as the desktop form, same protection: a
@@ -1155,6 +1160,8 @@ function Inner({
       {/* Proof of Delivery — same PUT the desktop DO detail uses. */}
       <PodSheet
         open={podOpen}
+        doId={id}
+        doNo={doc ? str(doc as Record<string, unknown>, "doNo", "do_no") : ""}
         onClose={() => setPodOpen(false)}
         onSubmit={async (pod: ProofOfDelivery) => {
           const res = await mutateJson(

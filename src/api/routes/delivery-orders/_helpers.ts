@@ -81,6 +81,8 @@ import { availableQty } from "../../../lib/convert-chain";
 import { returnableByLine } from "../../../lib/delivery-return-qty";
 import { loadReturnedQtyByPo } from "../../lib/delivery-return-create";
 import { mytYymm } from "../../../lib/doc-number";
+import { podAfterUndo, podEarlierForNewWrite, splitStoredPod } from "../../../lib/pod-history";
+import { loadPodPhotosByIds, MAX_POD_PHOTOS } from "../../lib/pod-photos";
 
 // HK-0118: creating a single-SO DO stamps its number on the SO
 // (hookkaDeliveryOrder). Deleting that DRAFT DO hands the stamp back to the
@@ -611,7 +613,11 @@ export function rowToOrder(
     // three separate readers of this column broken.
     deliveryIncomplete: !!Number(row.deliveryIncomplete ?? row.delivery_incomplete),
   };
-  if (pod) base.proofOfDelivery = pod;
+  // The current capture only; an undone delivery's POD is history (H3-8),
+  // shown as "Earlier delivery attempt" and never as this DO's proof.
+  const podSplit = splitStoredPod(pod);
+  if (podSplit.current) base.proofOfDelivery = podSplit.current;
+  if (podSplit.earlier.length) base.podEarlierAttempts = podSplit.earlier;
   return base;
 }
 
@@ -1379,15 +1385,26 @@ export async function buildDoUndeliverStatements(
     );
   }
 
+  // H3-8: the POD of the undone delivery is kept as an earlier attempt, not
+  // left as the proof (the next "Delivered" asks for a fresh one).
+  const podRow = await db
+    .prepare("SELECT proofOfDelivery FROM delivery_orders WHERE id = ?")
+    .bind(doRow.id)
+    .first<{ proofOfDelivery?: string | null; proof_of_delivery?: string | null }>();
+  const podAfter = podAfterUndo(
+    parseJson<Record<string, unknown> | null>(podRow?.proofOfDelivery ?? podRow?.proof_of_delivery ?? null, null),
+    now,
+  );
   statements.push(
     db
       .prepare(
         `UPDATE delivery_orders
             SET status = 'LOADED', overdue = 'PENDING', deliveredAt = NULL,
-                delivery_incomplete = 0, deliveredEmailAt = NULL, updated_at = ?
+                delivery_incomplete = 0, deliveredEmailAt = NULL, updated_at = ?,
+                proofOfDelivery = ?
           WHERE id = ? AND status IN ('DELIVERED','INVOICED')`,
       )
-      .bind(now, doRow.id),
+      .bind(now, podAfter ? JSON.stringify(podAfter) : null, doRow.id),
   );
 
   return { statements, reversedCogsSen: cogs.reversedCogsSen, releasedSoIds };
@@ -4694,18 +4711,33 @@ export async function applyDeliveryOrderUpdate(
 
     // --- proof of delivery blob ---
     let nextProofOfDelivery: string | null = existing.proofOfDelivery;
+    // Draft photos this POD names (uploaded when taken, review H3-4) — deleted
+    // in the same batch as the POD write, so a failed write keeps them.
+    let usedPodPhotoIds: string[] = [];
     if (body.proofOfDelivery) {
       const pod = body.proofOfDelivery;
+      const uploaded = await loadPodPhotosByIds(c.var.DB, id, pod.photoIds);
+      usedPodPhotoIds = uploaded.map((p) => p.id);
+      const sentPhotos: string[] = Array.isArray(pod.photoDataUrls) ? pod.photoDataUrls : [];
+      const prevPod = parseJson<Record<string, unknown> | null>(existing.proofOfDelivery, null);
+      // H3-8: a POD written after "Undo delivered" keeps the earlier one.
+      const earlierAttempts = podEarlierForNewWrite(prevPod, existing.status);
       nextProofOfDelivery = JSON.stringify({
         receiverName: pod.receiverName ?? "",
         receiverIC: pod.receiverIC ?? "",
         signatureDataUrl: pod.signatureDataUrl ?? "",
-        photoDataUrls: Array.isArray(pod.photoDataUrls)
-          ? pod.photoDataUrls.slice(0, 5)
-          : [],
+        photoDataUrls: [...uploaded.map((p) => p.dataUrl), ...sentPhotos].slice(0, MAX_POD_PHOTOS),
+        // When each uploaded photo reached the server (C2-3) — server time.
+        photoServerTimes: uploaded.map((p) => p.serverAt),
         remarks: pod.remarks ?? "",
-        deliveredAt: pod.deliveredAt ?? now,
+        // The proof's delivered time is the SERVER's (C2-3, Conts#547): a phone
+        // with a wrong clock cannot date the proof. The phone's own claim is
+        // kept beside it for audit. (The DO's deliveredAt column, which dates
+        // COGS and the invoice fallback, is left as it was — see PR notes.)
+        deliveredAt: now,
+        deviceDeliveredAt: typeof pod.deliveredAt === "string" ? pod.deliveredAt : null,
         capturedBy: pod.capturedBy ?? "",
+        ...(earlierAttempts.length ? { earlierAttempts } : {}),
       });
     }
 
@@ -5018,6 +5050,13 @@ export async function applyDeliveryOrderUpdate(
       ),
       c.var.DB.prepare(casGuardSql("delivery_orders")).bind(id, nextStatus, now),
     ];
+    if (usedPodPhotoIds.length > 0) {
+      statements.push(
+        c.var.DB.prepare(
+          `DELETE FROM delivery_pod_photos WHERE do_id = ? AND id IN (${usedPodPhotoIds.map(() => "?").join(", ")})`,
+        ).bind(id, ...usedPodPhotoIds),
+      );
+    }
 
     // Wei Siang 2026-05-16: invoice-number collision guard. The
     // auto-DRAFT-invoice on DELIVERED uses nextInvoiceNo() (read-MAX

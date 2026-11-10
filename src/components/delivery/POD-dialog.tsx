@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { X, Eraser, Upload, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { compressImage } from "@/lib/image-compress";
+import { fetchServerClockOffset, podStampLines, stampPodPhoto } from "@/lib/pod-photo-stamp";
 import type { ProofOfDelivery } from "@/types";
 
 interface PODDialogProps {
   open: boolean;
+  /** The DO's id — the server's clock for the photo stamp is read from it. */
+  doId: string;
   doNo: string;
   customerName: string;
   onClose: () => void;
@@ -63,6 +66,7 @@ async function compressPhoto(file: File): Promise<string> {
 
 export default function PODDialog({
   open,
+  doId,
   doNo,
   customerName,
   onClose,
@@ -80,6 +84,9 @@ export default function PODDialog({
   // Per-batch upload progress: { done, total } — drives the spinner overlay
   // on the photo grid. Cleared once compression finishes (success or error).
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+  // Server clock − this computer's clock: every photo is stamped with the DO
+  // number and the SERVER's time (review C2-3), never the device's.
+  const offsetRef = useRef<number | null>(null);
 
   // Reset state whenever the dialog opens.
   //
@@ -180,6 +187,10 @@ export default function PODDialog({
     if (files.length === 0) return;
     const remaining = MAX_PHOTOS - photos.length;
     const toProcess = files.slice(0, remaining);
+    if (files.length > toProcess.length) {
+      const left = files.length - toProcess.length;
+      toast.warning(`Only ${MAX_PHOTOS} photos can be attached — ${left} photo${left === 1 ? " was" : "s were"} not added.`);
+    }
 
     // Reject oversize raw uploads up front. 10 MB on a phone capture is the
     // upper end of even RAW-ish JPEGs; anything beyond that is almost certainly
@@ -196,13 +207,26 @@ export default function PODDialog({
     // Compress sequentially so the progress counter increments smoothly and
     // we don't stack multiple OffscreenCanvas decodes in flight on a low-end
     // phone (the worker pool is shared and concurrent decodes can OOM).
+    if (offsetRef.current == null) {
+      offsetRef.current = await fetchServerClockOffset(
+        `/api/delivery-orders/${encodeURIComponent(doId)}/pod-photos`,
+      );
+    }
+    if (offsetRef.current == null) {
+      toast.error("Can't reach the server to time-stamp the photo. Check the connection and try again.");
+      input.value = "";
+      return;
+    }
     setUploadProgress({ done: 0, total: toProcess.length });
     const compressed: string[] = [];
     try {
       for (let i = 0; i < toProcess.length; i++) {
         const f = toProcess[i];
         try {
-          compressed.push(await compressPhoto(f));
+          const small = await compressPhoto(f);
+          compressed.push(
+            await stampPodPhoto(small, podStampLines(doNo, Date.now() + (offsetRef.current ?? 0))),
+          );
         } catch (err) {
           toast.error(
             `Couldn't process "${f.name}": ${err instanceof Error ? err.message : String(err)}`,
