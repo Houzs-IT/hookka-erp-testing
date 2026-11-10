@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -525,6 +526,7 @@ export default function GRNPage() {
             poRef: grn.poNumber,
             supplierName: grn.supplierName,
             remarks: grn.notes,
+            status: grn.status, // CANCELLED → red stamp on the PDF
             items: grn.items.map((it) => ({
               itemCode: it.materialCode,
               supplierSKU: it.supplierSKU,
@@ -683,7 +685,7 @@ export default function GRNPage() {
 
   // ---- Columns ----
   const grnGridColumns: Column<GoodsReceiptNote>[] = useMemo(() => [
-    { key: "grnNumber", label: "GRN No.", type: "docno", width: "130px", sortable: true },
+    { key: "grnNumber", label: "GRN No.", type: "docno", width: "130px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
     { key: "poNumber", label: "PO No.", type: "docno", width: "130px", sortable: true },
     { key: "supplierName", label: "Supplier", type: "text", sortable: true },
     // Supplier's own DO number (their delivery-order ref). First-class
@@ -756,6 +758,7 @@ export default function GRNPage() {
               poRef: row.poNumber,
               supplierName: row.supplierName,
               remarks: row.notes,
+              status: row.status, // CANCELLED → red stamp on the PDF
               items: row.items.map((it) => ({
                 itemCode: it.materialCode,
                 supplierSKU: it.supplierSKU,
@@ -1228,6 +1231,7 @@ export default function GRNPage() {
             columns={grnGridColumns}
             data={filteredGRNs}
             keyField="id"
+            rowClassName={(r) => cancelledRowClass(r.status)}
             virtualize
             // Stable id — the column picker / drag / resize state persists
             // under it. Renaming it silently discards saved layouts.

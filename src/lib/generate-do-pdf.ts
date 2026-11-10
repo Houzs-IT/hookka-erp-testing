@@ -9,6 +9,7 @@ import { fmtDate, drawLetterhead } from "@/lib/pdf-utils";
 import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
 import { todayYmdMY } from "./utils";
 import { deliverJsPdf, pdfFileName } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 // DO-document rack line: per-component rack groups, NO label prefix, joined by
 // " · " (owner's spec). Shares formatRacksCompact's dedup + numeric sort.
 
@@ -751,6 +752,8 @@ export function generateDOPdf(
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   renderDoInto(doc, order, extras);
   stampDoFooters(doc);
+  // A cancelled DO prints a red CANCELLED stamp on every page (review D2).
+  if (isCancelledStatus(order.status)) stampCancelledJsPdf(doc);
 
   // order.doNo already carries the "DO-" prefix (e.g. "DO-2605-094"), so
   // prepending another "DO-" produced "DO-DO-2605-094.pdf". Use it verbatim;

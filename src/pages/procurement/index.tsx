@@ -1,4 +1,5 @@
 import { bindingIdForLine, cheapestBinding, uniqueSkuOptions } from "@/lib/cheapest-binding";
+import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
 import { todayYmdMY } from "@/lib/utils";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1605,7 +1606,7 @@ export default function ProcurementPage() {
 
   // ---- Columns ----
   const poGridColumns: Column<PurchaseOrder>[] = useMemo(() => [
-    { key: "poNo", label: "PO No", type: "docno", width: "120px", sortable: true },
+    { key: "poNo", label: "PO No", type: "docno", width: "120px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
     { key: "supplierName", label: "Supplier", type: "text", sortable: true },
     {
       key: "purchaseOrgCode",
@@ -2150,6 +2151,7 @@ export default function ProcurementPage() {
             columns={poGridColumns}
             data={filteredOrders}
             keyField="id"
+            rowClassName={(r) => cancelledRowClass(r.status)}
             loading={loading}
             stickyHeader={true}
             virtualize

@@ -17,9 +17,16 @@
 //   ├ Total   N SETS   …   M ITEMS   (grand piece breakdown)            │
 //   └ signatures / footer                                               ┘
 // ---------------------------------------------------------------------------
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 // Null-ish / "null" / ragged-whitespace clean-up for every wrapped string.
 import { pdfText } from "../../lib/pdf-text";
+import {
+  CANCELLED_ANGLE,
+  CANCELLED_OPACITY,
+  CANCELLED_RED,
+  CANCELLED_STAMP_TEXT,
+  stampOrigin,
+} from "../../lib/pdf-cancelled-stamp";
 
 const PAGE_W = 595;
 const PAGE_H = 842;
@@ -85,6 +92,30 @@ export interface UnifiedDocData {
   // Base64 PNG (no data-URI prefix) of the HOOKKA logo. Optional — omitted →
   // text-only letterhead. Backend passes HOOKKA_LOGO_PNG_BASE64; FE its inline.
   logoPngBase64?: string;
+  // A cancelled document prints a red diagonal CANCELLED stamp on every page
+  // (review D2). Display only.
+  cancelled?: boolean;
+}
+
+/** The red diagonal CANCELLED stamp across every page (review D2). */
+export function stampCancelledPages(pdf: PDFDocument, font: PDFFont): void {
+  const size = 90;
+  const w = font.widthOfTextAtSize(CANCELLED_STAMP_TEXT, size);
+  const h = font.heightAtSize(size, { descender: false });
+  const [r, g, b] = CANCELLED_RED;
+  for (const p of pdf.getPages()) {
+    const { width, height } = p.getSize();
+    const o = stampOrigin(width / 2, height / 2, w, h, CANCELLED_ANGLE, true);
+    p.drawText(CANCELLED_STAMP_TEXT, {
+      x: o.x,
+      y: o.y,
+      size,
+      font,
+      color: rgb(r / 255, g / 255, b / 255),
+      opacity: CANCELLED_OPACITY,
+      rotate: degrees(CANCELLED_ANGLE),
+    });
+  }
 }
 
 const LOGO_ASPECT = 2038 / 907;
@@ -421,5 +452,6 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
   }
 
   drawFooterLine();
+  if (data.cancelled) stampCancelledPages(pdf, fonts.bold);
   return pdf.save();
 }

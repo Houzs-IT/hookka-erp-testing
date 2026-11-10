@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -395,7 +396,7 @@ export default function PurchaseInvoicesPage() {
 
   // ---- Columns ----
   const piGridColumns: Column<PurchaseInvoice>[] = useMemo(() => [
-    { key: "piNo", label: "PI No.", type: "docno", width: "130px", sortable: true },
+    { key: "piNo", label: "PI No.", type: "docno", width: "130px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
     { key: "poRef", label: "PO Ref", type: "docno", width: "130px", sortable: true },
     { key: "supplier", label: "Supplier", type: "text", sortable: true },
     // Supplier-side reference numbers (migration 0105). Operator-critical:
@@ -819,6 +820,7 @@ export default function PurchaseInvoicesPage() {
                 columns={piGridColumns}
                 data={filteredInvoices}
                 keyField="id"
+                rowClassName={(r) => cancelledRowClass(r.status)}
                 virtualize
                 // Stable id — the column picker / drag / resize state persists
                 // under it. Renaming it silently discards saved layouts.

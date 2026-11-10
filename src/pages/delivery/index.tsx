@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
 import { useUrlState, useUrlStateNumber, useUrlBatch } from "@/lib/use-url-state";
 import { pageSlice } from "@/lib/delivery-list-filters";
 import { useToast } from "@/components/ui/toast";
@@ -4215,7 +4216,7 @@ export default function DeliveryPage() {
           return <span>-</span>;
         },
       },
-      { key: "doNo", label: "DO No.", type: "docno", width: "120px", sortable: true },
+      { key: "doNo", label: "DO No.", type: "docno", width: "120px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
       {
         key: "customerCount",
         label: "Customers",
@@ -5125,6 +5126,7 @@ export default function DeliveryPage() {
               columns={columns}
               data={filteredOrders}
               keyField="id"
+              rowClassName={(r) => cancelledRowClass(r.status)}
               // Column visibility / order / width persist under this id — one
               // layout for the DO list, shared by its four stage tabs, because
               // it is one list. The per-column VALUE filters must NOT be

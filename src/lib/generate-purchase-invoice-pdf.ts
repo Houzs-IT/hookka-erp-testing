@@ -15,6 +15,7 @@ import { COMPANY } from "@/lib/constants";
 import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // ---------------------------------------------------------------------------
 // Purchase Invoice (supplier invoice) PDF.
@@ -403,6 +404,8 @@ export function generatePurchaseInvoicePdf(
     doc.text(`Page ${p} of ${totalPages}`, pageW - margin, pageH - 16, { align: "right" });
   }
 
+  // A cancelled PI prints a red CANCELLED stamp on every page (review D2).
+  if (isCancelledStatus(pi.status)) stampCancelledJsPdf(doc);
   if (opts?.returnDoc) return doc;
   deliverJsPdf(doc, pdfFileName(pi.piNo, pi.supplierName, "PI"), opts?.mode);
 }

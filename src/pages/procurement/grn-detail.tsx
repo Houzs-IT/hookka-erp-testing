@@ -617,6 +617,7 @@ export default function GRNDetailPage() {
         poRef: grn.poNumber,
         supplierName: grn.supplierName,
         remarks: grn.notes ?? "",
+        status: grn.status, // CANCELLED → red stamp on the PDF
         items: items.map((it) => ({
           itemCode: it.materialCode,
           supplierSKU: it.supplierSKU,

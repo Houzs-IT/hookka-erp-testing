@@ -11,6 +11,7 @@ import {
 } from "@/lib/pdf-utils";
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -258,6 +259,8 @@ export function generateGRNPdf(
     doc.text(`Page ${p} of ${totalPages}`, pageW - margin, pageH - 16, { align: "right" });
   }
 
+  // A cancelled GRN prints a red CANCELLED stamp on every page (review D2).
+  if (isCancelledStatus(data.status)) stampCancelledJsPdf(doc);
   if (opts?.returnDoc) return doc;
   deliverJsPdf(doc, pdfFileName(data.grnNo, data.supplierName, "GRN"), opts?.mode);
 }

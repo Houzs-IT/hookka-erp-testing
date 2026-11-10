@@ -20,6 +20,7 @@ import { buildUnifiedDocPdf } from "../api/lib/unified-do-invoice-pdf";
 import { HOOKKA_LOGO_PNG_BASE64 } from "../api/lib/hookka-logo-base64";
 import { PDFDocument } from "pdf-lib";
 import { deliverPdf, pdfFileName, savePdfBlob, type PdfOutputMode } from "./pdf-preview";
+import { isCancelledStatus } from "./pdf-cancelled-stamp";
 
 // Combined (batch) files keep the caller's name; single documents are named
 // "<doc no> <customer>.pdf" and can open in the in-app preview (review D1).
@@ -102,14 +103,17 @@ export async function downloadUnifiedDoPdf(
   extras: AnyExtras,
   mode: PdfOutputMode = "download",
 ): Promise<void> {
-  const bytes = await buildUnifiedDocPdf(buildUnifiedDoData(doInputFromOrder(order, extras), HOOKKA_LOGO_PNG_BASE64));
+  const bytes = await renderUnifiedDoBytes(order, extras);
   deliverPdf(bytes, pdfFileName(order.doNo, order.customerName, "DO"), mode);
 }
 
 // Backend-parity DO renderer (returns bytes, no download) — used when a caller
 // needs the PDF bytes (e.g. batch, blob upload) rather than a browser save.
 export async function renderUnifiedDoBytes(order: AnyOrder, extras: AnyExtras): Promise<Uint8Array> {
-  return buildUnifiedDocPdf(buildUnifiedDoData(doInputFromOrder(order, extras), HOOKKA_LOGO_PNG_BASE64));
+  return buildUnifiedDocPdf({
+    ...buildUnifiedDoData(doInputFromOrder(order, extras), HOOKKA_LOGO_PNG_BASE64),
+    cancelled: isCancelledStatus(order.status),
+  });
 }
 
 // base64 for the customer-notify POST — the email carries the SAME PDF as the
@@ -169,7 +173,7 @@ export async function downloadUnifiedInvoicePdf(
   extras: AnyExtras,
   mode: PdfOutputMode = "download",
 ): Promise<void> {
-  const bytes = await buildUnifiedDocPdf(buildUnifiedInvoiceData(invoiceInputFromInvoice(inv, extras), HOOKKA_LOGO_PNG_BASE64));
+  const bytes = await renderUnifiedInvoiceBytes(inv, extras);
   deliverPdf(bytes, pdfFileName(inv.invoiceNo, inv.customerName, "INVOICE"), mode);
 }
 
@@ -181,7 +185,10 @@ export async function viewUnifiedInvoicePdf(inv: AnyInvoice, extras: AnyExtras):
 }
 
 export async function renderUnifiedInvoiceBytes(inv: AnyInvoice, extras: AnyExtras): Promise<Uint8Array> {
-  return buildUnifiedDocPdf(buildUnifiedInvoiceData(invoiceInputFromInvoice(inv, extras), HOOKKA_LOGO_PNG_BASE64));
+  return buildUnifiedDocPdf({
+    ...buildUnifiedInvoiceData(invoiceInputFromInvoice(inv, extras), HOOKKA_LOGO_PNG_BASE64),
+    cancelled: isCancelledStatus(inv.status),
+  });
 }
 
 export async function renderUnifiedInvoiceBase64(inv: AnyInvoice, extras: AnyExtras): Promise<string> {
@@ -261,9 +268,10 @@ export function salesOrderInputFromOrder(order: AnyOrder, billAddress?: string):
 }
 
 export async function renderUnifiedSalesOrderBytes(order: AnyOrder, billAddress?: string): Promise<Uint8Array> {
-  return buildUnifiedDocPdf(
-    buildUnifiedSalesOrderData(salesOrderInputFromOrder(order, billAddress), HOOKKA_LOGO_PNG_BASE64),
-  );
+  return buildUnifiedDocPdf({
+    ...buildUnifiedSalesOrderData(salesOrderInputFromOrder(order, billAddress), HOOKKA_LOGO_PNG_BASE64),
+    cancelled: isCancelledStatus(order.status),
+  });
 }
 
 export async function downloadUnifiedSalesOrderPdf(
@@ -307,9 +315,10 @@ export function consignmentOrderInputFromOrder(order: AnyOrder, billAddress?: st
 }
 
 export async function renderUnifiedConsignmentOrderBytes(order: AnyOrder, billAddress?: string): Promise<Uint8Array> {
-  return buildUnifiedDocPdf(
-    buildUnifiedConsignmentOrderData(consignmentOrderInputFromOrder(order, billAddress), HOOKKA_LOGO_PNG_BASE64),
-  );
+  return buildUnifiedDocPdf({
+    ...buildUnifiedConsignmentOrderData(consignmentOrderInputFromOrder(order, billAddress), HOOKKA_LOGO_PNG_BASE64),
+    cancelled: isCancelledStatus(order.status),
+  });
 }
 
 export async function downloadUnifiedConsignmentOrderPdf(

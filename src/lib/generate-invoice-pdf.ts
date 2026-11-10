@@ -10,6 +10,7 @@ import {
 } from "@/lib/pdf-utils";
 import { invoicePriceBuildUp } from "@/lib/invoice-line-price";
 import { deliverJsPdf, pdfFileName } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // Read-only print enrichment from GET /api/invoices/:id/print-extras.
 // All optional — the PDF still renders if not supplied.
@@ -666,6 +667,9 @@ function buildInvoiceDoc(
     doc.text(`Page ${p} of ${pages}`, pageW - m, fy, { align: "right" });
   }
 
+  // A cancelled invoice prints a red CANCELLED stamp on every page — the
+  // single, combined and emailed copies all build here (review D2).
+  if (isCancelledStatus(invoice.status)) stampCancelledJsPdf(doc);
   return doc;
 }
 

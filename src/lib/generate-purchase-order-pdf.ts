@@ -15,6 +15,7 @@ import { COMPANY } from "@/lib/constants";
 import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import { hasLetterheadDetails } from "./org-letterhead-row";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // Letterhead info passed in from the caller. Mirrors the COMPANY constant's
 // shape so HOOKKA/OHANA fall through directly, and the route can populate
@@ -420,6 +421,9 @@ export function generatePurchaseOrderPdf(
   }
 
   // Save
+  // A cancelled PO prints a red CANCELLED stamp on every page — on screen, in
+  // a batch print and in the supplier email (review D2, Houzs#5049).
+  if (isCancelledStatus(po.status)) stampCancelledJsPdf(doc);
   if (opts?.returnDoc) return doc;
   deliverJsPdf(doc, pdfFileName(po.poNo, po.supplierName, "PO"), opts?.mode);
 }
