@@ -34,14 +34,21 @@ If a branch exists with no PR, the agent was interrupted: open the PR from it or
 
 Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what Houzs / Conts did since 2026-10-01 vs Hookka).
 
-**Done today:** P1 document numbers in the Malaysia month (#1247) · new models export (#1241, #1243) · GRN-link backfill endpoint (#1245; measured on prod: **0** pre-#1218 system GRNs exist, nothing to link) · cross-system review saved (#1246).
+**Done today:** P1 document numbers in the Malaysia month (#1247) · new models export (#1241, #1243) · GRN-link backfill endpoint (#1245; measured on prod: **0** pre-#1218 system GRNs exist, nothing to link) · cross-system review saved (#1246) · **ported-improvements batch (PR `feat/ported-improvements-batch`, open until merged): O7, P2, P3, P4, P6** — see "After it merges" below.
 
 **In flight (agent batches above):** D1, D2, D3, D4, P7, G1, G2, G3, G4, G5, G7.
 
+**After `feat/ported-improvements-batch` merges (check on prod):**
+- O7: two old `wip-reset-backup` artifacts (2026-09-07, production WIP quantities) are still downloadable until 2026-12-06 — **owner to decide whether to delete them** (Actions → artifacts).
+- P2 left the money / stock / payroll "UTC day" sites as they are, listed with reasons in `scripts/data/clock-date-allowlist.json` (accounting period defaults, invoice due dates, cost ledger, fabric FIFO, worker-portal live pay estimate). Fixing them moves which day/month is used between 00:00 and 08:00 MYT — **needs the owner's yes**.
+- P3: DevTools on the bell / IT Support should show an unchanged poll as `304`.
+- P4: alerts go to `kv_config.health_alert_recipients`, else the morning-brief list `daily_report_recipients` (UNMEASURED whether either is set on prod). Nothing is sent while Analytics Engine metrics are mock. The drain's JSON reply now carries `healthAlert` (job log of "Email Outbox — Drain Cron").
+- P6: edit a supplier → Email 2 / Email 3 save; PO "Email to Supplier" opens with them in Cc.
+
 **Next batches (no approval needed — do them, then merge):**
-1. Ported-and-improved: P2 UTC-date guard (Houzs#5517), P3 ETag/304 on every polled list (Houzs#5484), P4 health-red alert email to management (Conts#420/#424), P6 PO email Cc supplier email 2/3 (Houzs#5435 — carries a migration: self-apply the columns).
+1. ~~Ported-and-improved: P2, P3, P4, P6~~ — done in `feat/ported-improvements-batch` (with O7).
 2. Documents/grid leftovers: D5 item codes on one line on PO/GRN/PI PDFs, D6 warehouse named on DO/GRN papers, G6 share a column layout with the team, G8 grouped lists keep virtual scroll, G9 fewer re-draws on long lists, G10 date filters judge by the Malaysian day.
-3. Other: O4 supplier bound to the same item once (unique index, 409), O5 upload clears the read cache, O6 shared CSV/Excel import parser, **O7 stop uploading production WIP data as a workflow artifact on the public repo** (do soon).
+3. Other: O4 supplier bound to the same item once (unique index, 409), O5 upload clears the read cache, O6 shared CSV/Excel import parser, ~~O7~~ (done in `feat/ported-improvements-batch`).
 4. **Board report inside the ERP** (owner 2026-11-10: every figure from live ERP data, nobody has to ask Claude). Decided: menu **Forecasting → Board Report**; visible to **accounting:read**; Notes page = **automatic flags + Finance-editable notes per month**; PDF = **browser print to PDF** (A4 page per section). Data sources mapped: `/api/accounting/dashboard` (monthly P&L actual+forecast, balance-sheet totals, ratios, cash-flow totals, salary by dept, cost structure, production revenue, labour base), `/api/accounting/pl-monthly`, `/api/accounting/pl` (balance sheet; call M and M-1), `/api/accounting/cashflow-statement` + `/cashflow-forecast`, `/api/dashboard/overview` (customers + concentration) and `/overview/revenue-split` (dept production revenue), `/api/products/new-models`. Gaps to build: P&L prev column, balance-sheet prev, server-side defect rates, efficiency bands (none today — use workforce top/bottom). Layout reference: the Claude artifact https://claude.ai/artifact/GvMT67d19bgmqvHXQpSmDg (13 pages + appendices).
 
 **Needs the owner's approval first (money / inventory) — do NOT start without a yes:** P5 credit note from a delivery return capped at the returned qty · G11 batch confirm GRN/PI · O1 delivery-return status compare-and-set · O2 MRP refuses a stale plan · O3 partial DO/invoice carries its share of the line discount.
