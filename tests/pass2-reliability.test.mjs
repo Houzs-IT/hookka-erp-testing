@@ -288,3 +288,49 @@ test("H3-7: the endpoint only reminds on CHECKED, refuses within the hour, never
   assert.match(page, /onClick=\{\(\) => void handleRemind\(r\)\}>Remind approver<\/Button>/);
   assert.match(page, /const pvFromLink = pvLinkParams\.get\("pv"\);/);
 });
+
+// ── H1-7: service-case target days per stage, overdue flag, chip counts ───
+import {
+  cleanTargetDays, isStageOverdue, overdueLabel, parseStageTargets, TARGET_STAGES, validateStageTargets,
+} from "../src/lib/service-case-sla.ts";
+
+test("H1-7: targets are whole days 1..365 per open stage; empty = no target", () => {
+  assert.deepEqual([...TARGET_STAGES], ["Opened", "Investigating", "Service Order", "Repair in progress", "Repair done", "Delivery arranged", "Delivered"]);
+  assert.equal(cleanTargetDays(3), 3);
+  assert.equal(cleanTargetDays("7"), 7);
+  assert.equal(cleanTargetDays(0), null);
+  assert.equal(cleanTargetDays(2.5), null);
+  assert.equal(cleanTargetDays(""), null);
+  assert.deepEqual(parseStageTargets('{"Opened":2,"Investigating":"x","Closed":5,"Bogus":1}'), { Opened: 2 });
+  assert.deepEqual(parseStageTargets(null), {});
+  assert.deepEqual(parseStageTargets("not json"), {});
+  assert.deepEqual(validateStageTargets({ Opened: 2, Investigating: null, "Repair done": "" }), { ok: true, targets: { Opened: 2 } });
+  assert.equal(validateStageTargets({ Closed: 3 }).ok, false);
+  assert.match(validateStageTargets({ Opened: -1 }).error, /Opened: enter whole days from 1 to 365/);
+  assert.equal(validateStageTargets([]).ok, false);
+});
+
+test("H1-7: overdue = open case past its current stage's target", () => {
+  const t = { Investigating: 2 };
+  assert.equal(isStageOverdue({ status: "IN_PROGRESS", stageLabel: "Investigating", stageDays: 3 }, t), true);
+  assert.equal(isStageOverdue({ status: "IN_PROGRESS", stageLabel: "Investigating", stageDays: 2 }, t), false, "on the target day is not overdue");
+  assert.equal(isStageOverdue({ status: "OPEN", stageLabel: "Opened", stageDays: 99 }, t), false, "no target, never overdue");
+  assert.equal(isStageOverdue({ status: "CLOSED", stageLabel: "Investigating", stageDays: 9 }, t), false);
+  assert.equal(isStageOverdue({ status: "CANCELLED", stageLabel: "Investigating", stageDays: 9 }, t), false);
+  assert.equal(overdueLabel({ stageLabel: "Investigating", stageDays: 5 }, t), "3d over the 2d target for Investigating");
+});
+
+test("H1-7: route stores the targets in kv_config; the list flags and counts overdue", () => {
+  const r = read("src/api/routes/service-cases.ts");
+  assert.ok(r.indexOf('app.get("/stage-targets"') < r.indexOf('app.get("/:id"'), "registered before /:id");
+  assert.match(r, /app\.put\("\/stage-targets"[\s\S]{0,120}requirePermission\(c, "service-cases", "update"\)/);
+  assert.match(r, /const v = validateStageTargets\(body\?\.targets\);\s*if \(!v\.ok\) return c\.json\(\{ success: false, error: v\.error \}, 400\);/);
+  assert.match(r, /INSERT INTO kv_config \(key, value, updated_at\) VALUES \(\?, \?, \?\)\s*ON CONFLICT\(key\) DO UPDATE/);
+  const p = read("src/pages/service-cases/index.tsx");
+  assert.match(p, /useCachedJson<\{\s*data\?: \{ targets: StageTargets \};\s*\}>\("\/api\/service-cases\/stage-targets"\)/);
+  assert.match(p, /const overdue = isStageOverdue\(r, stageTargets\);/);
+  assert.match(p, />Overdue<\/span>/);
+  assert.match(p, /r\.overdue && \(s === "ALL" \|\| r\.status === s\)\)\.length;[\s\S]{0,140}\{n\} overdue/);
+  assert.match(p, /Overdue only \(\{allRows\.filter\(\(r\) => r\.overdue\)\.length\}\)/);
+  assert.match(p, /fetch\("\/api\/service-cases\/stage-targets", \{\s*method: "PUT"/);
+});
