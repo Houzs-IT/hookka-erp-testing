@@ -88,7 +88,8 @@ test("every document form is guarded in-app, not only on tab close", () => {
     assert.doesNotMatch(src, /useUnsavedChanges\(isDirty\)/, `${file}: still tab-close only`);
     if (redirects) {
       // Each redirect after a save is let through first.
-      const navs = src.match(/navGuard\.allowNext\(\);\s*\n\s*navigate\(/g) || [];
+      // (PR #1267: a GRN/PI save may leave through leaveAfterSave — Back to PO/GRN — instead of navigate.)
+      const navs = src.match(/navGuard\.allowNext\(\);\s*\n\s*(navigate\(|(await |void )?leaveAfterSave\()/g) || [];
       assert.ok(navs.length >= 1, `${file}: redirect after save not let through`);
     }
   }
