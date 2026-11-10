@@ -61,6 +61,7 @@ import {
   getPdfPageCount,
   ocrModelFor,
 } from "../lib/scan-engine";
+import { MISSING_ANTHROPIC_KEY_ERROR } from "../lib/claude-fetch";
 
 const app = new Hono<Env>();
 
@@ -675,7 +676,11 @@ async function processOneRow(
             next.id,
           )
           .run();
-      } else if (attemptNo < MAX_OCR_ATTEMPTS) {
+      } else if (
+        attemptNo < MAX_OCR_ATTEMPTS &&
+        // A missing key fails the same way every time; retrying only delays the hint.
+        !result.error.startsWith(MISSING_ANTHROPIC_KEY_ERROR)
+      ) {
         // Transient miss (AI call timed out, bad page, isolate hiccup) — put
         // the row back in the queue for another automatic go instead of
         // failing it on the first try. started_at=NULL so a sweeper never
@@ -708,7 +713,7 @@ async function processOneRow(
               WHERE id = ?`,
           )
           .bind(
-            `failed after ${MAX_OCR_ATTEMPTS} attempts: ${result.error.slice(0, 1900)}`,
+            `failed after ${attemptNo} attempt${attemptNo === 1 ? "" : "s"}: ${result.error.slice(0, 1900)}`,
             ocrModelFor(next.kind),
             completedAt,
             next.id,

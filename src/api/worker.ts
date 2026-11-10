@@ -41,7 +41,7 @@ export type Env = {
     APP_URL: string;              // e.g. "http://localhost:8788" or "https://hookka-erp-testing.pages.dev"
     RESEND_API_KEY?: string;      // Optional — set via wrangler secret for prod, .dev.vars for local
     RESEND_FROM_EMAIL: string;    // e.g. "Hookka Manufacturing ERP <onboarding@resend.dev>"
-    ANTHROPIC_API_KEY?: string;   // Claude API key — set via `wrangler secret put ANTHROPIC_API_KEY`. Used by routes/scan-po.ts.
+    ANTHROPIC_API_KEY?: string;   // Claude API key — Pages secret, see MISSING_ANTHROPIC_KEY_ERROR in lib/claude-fetch.ts. Used by routes/scan-po.ts.
     // Per-user daily cap on AI Assistant questions (routes/assistant.ts).
     // String so it can be set as a plain wrangler [var]; parsed to int with
     // a default of 10 in src/api/lib/assistant-daily-quota.ts. Applies to
