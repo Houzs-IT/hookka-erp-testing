@@ -1,6 +1,7 @@
 // BUG-2026-11-11-497: saving BOM minutes (Edit BOM, bulk process edit, WIP
-// Times inline edit, WIP Times Excel import) fills that product's LIVE job
-// cards still at 0. Completed cards and cards with minutes are never touched.
+// Times inline edit, WIP Times Excel import) fills that product's job cards
+// still at 0: live ones, and ones completed this Malaysian month (payroll not
+// run yet). Cards completed earlier and cards with minutes are never touched.
 // Run: node --import tsx/esm --test tests/bom-minutes-fill-zero-cards.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +9,12 @@ import { Hono } from "hono";
 import bomApp from "../src/api/routes/bom.ts";
 import wipTimesApp from "../src/api/routes/wip-times.ts";
 import { breakBomIntoWips } from "../src/api/lib/bom-wip-breakdown.ts";
-import { fillZeroMinuteCardsForProducts, planZeroMinuteFills } from "../src/api/lib/fill-zero-minutes.ts";
+import {
+  currentMonthStartMY,
+  fillZeroMinuteCardsForProducts,
+  planZeroMinuteFills,
+} from "../src/api/lib/fill-zero-minutes.ts";
+import { todayYmdMY } from "../src/lib/utils.ts";
 
 const coverBom = (code, minutes) =>
   JSON.stringify([
@@ -30,11 +36,14 @@ function makeStore({ failCardSelect = false } = {}) {
       orgId: "hookka", wipComponents: coverBom("5567", 0), l1Processes: "[]" },
   ];
   const orders = { "po-1": productionOrder("po-1", "BC05"), "po-2": productionOrder("po-2", "5567") };
+  const bc05Card = (jcId, status, minutes, completedDate = null) =>
+    ({ jcId, poId: "po-1", wipKey: wipKeyOf("BC05"), deptCode: "FAB_SEW", status, minutes, completedDate });
   const cards = [
-    { jcId: "live", poId: "po-1", wipKey: wipKeyOf("BC05"), deptCode: "FAB_SEW", status: "WAITING", minutes: 0 },
-    { jcId: "done", poId: "po-1", wipKey: wipKeyOf("BC05"), deptCode: "FAB_SEW", status: "COMPLETED", minutes: 0 },
-    { jcId: "has-minutes", poId: "po-1", wipKey: wipKeyOf("BC05"), deptCode: "FAB_SEW", status: "IN_PROGRESS", minutes: 12 },
-    { jcId: "other-product", poId: "po-2", wipKey: wipKeyOf("5567"), deptCode: "FAB_SEW", status: "WAITING", minutes: 0 },
+    bc05Card("live", "WAITING", 0),
+    bc05Card("done-this-month", "COMPLETED", 0, todayYmdMY()),
+    bc05Card("done-earlier", "COMPLETED", 0, "2020-01-15"),
+    bc05Card("has-minutes", "IN_PROGRESS", 12),
+    { jcId: "other-product", poId: "po-2", wipKey: wipKeyOf("5567"), deptCode: "FAB_SEW", status: "WAITING", minutes: 0, completedDate: null },
   ];
   const cardSelects = [];
   const audits = [];
@@ -48,11 +57,14 @@ function makeStore({ failCardSelect = false } = {}) {
     if (/FROM job_cards jc JOIN production_orders/.test(sql)) {
       cardSelects.push({ sql, bound });
       if (failCardSelect) throw new Error("connection reset");
-      const codes = bound.filter((v) => !/^\d{4}-\d{2}-\d{2}$/.test(v));
+      const completedFrom = /completedDate >= \?/.test(sql) ? bound[0] : null;
+      const codes = completedFrom ? bound.slice(1) : bound;
+      const isLive = (c) => ["WAITING", "IN_PROGRESS", "PAUSED", "BLOCKED"].includes(c.status);
+      const isDoneInRange = (c) => completedFrom !== null && c.completedDate !== null && c.completedDate >= completedFrom;
       return cards
-        .filter((c) => c.minutes === 0 && ["WAITING", "IN_PROGRESS", "PAUSED", "BLOCKED"].includes(c.status))
+        .filter((c) => c.minutes === 0 && (isLive(c) || isDoneInRange(c)))
         .filter((c) => codes.length === 0 || codes.includes(orders[c.poId].productCode))
-        .map((c) => ({ ...orders[c.poId], jcId: c.jcId, wipKey: c.wipKey, deptCode: c.deptCode, status: c.status, completedDate: null }));
+        .map((c) => ({ ...orders[c.poId], jcId: c.jcId, wipKey: c.wipKey, deptCode: c.deptCode, status: c.status, completedDate: c.completedDate }));
     }
     if (/FROM job_cards WHERE productionOrderId = \?/.test(sql)) {
       return cards.filter((c) => c.poId === bound[0]).map((c) => ({ wipKey: c.wipKey, deptCode: c.deptCode }));
@@ -112,14 +124,15 @@ async function send(routeApp, db, method, path, body) {
   return { status: res.status, body: await res.json() };
 }
 
-test("wipTimesInlineEditFillsLiveZeroCardsOfThatProductOnly", async () => {
+test("wipTimesInlineEditFillsLiveAndThisMonthCompletedZeroCardsOfThatProductOnly", async () => {
   const store = makeStore();
   const { status, body } = await send(wipTimesApp, store.db, "PUT", "/",
     { wipLabel: "BC05 Cover", deptCode: "FAB_SEW", minutes: 25 });
   assert.equal(status, 200);
-  assert.deepEqual(body.zeroMinuteCards, { filled: 1, scanned: 1 });
+  assert.deepEqual(body.zeroMinuteCards, { filled: 2, scanned: 2 });
   assert.equal(store.minutesOf("live"), 25);
-  assert.equal(store.minutesOf("done"), 0, "a completed card keeps its minutes (pay is not re-run)");
+  assert.equal(store.minutesOf("done-this-month"), 25, "this month's payroll has not run yet");
+  assert.equal(store.minutesOf("done-earlier"), 0, "a card completed before this month keeps its minutes (pay already ran)");
   assert.equal(store.minutesOf("has-minutes"), 12, "a card with minutes is never overwritten");
   assert.equal(store.minutesOf("other-product"), 0, "another product's card is out of scope");
 });
@@ -132,8 +145,9 @@ test("wipTimesExcelImportFillsZeroCardsOfEveryAppliedProduct", async () => {
       { wipLabel: "5567 Cover", deptCode: "FAB_SEW", minutes: 40 },
     ],
   });
-  assert.deepEqual(body.zeroMinuteCards, { filled: 2, scanned: 2 });
+  assert.deepEqual(body.zeroMinuteCards, { filled: 3, scanned: 3 });
   assert.equal(store.minutesOf("live"), 25);
+  assert.equal(store.minutesOf("done-this-month"), 25);
   assert.equal(store.minutesOf("other-product"), 40);
 });
 
@@ -153,11 +167,12 @@ test("editBomSaveWithMinutesFillsZeroCardsAndAuditsAsSystem", async () => {
   const { status, body } = await send(bomApp, store.db, "PUT", "/templates/bom-bc05",
     { wipComponents: JSON.parse(coverBom("BC05", 18)) });
   assert.equal(status, 200);
-  assert.deepEqual(body.zeroMinuteCards, { filled: 1, scanned: 1 });
+  assert.deepEqual(body.zeroMinuteCards, { filled: 2, scanned: 2 });
   assert.equal(store.minutesOf("live"), 18);
-  assert.equal(store.audits.length, 1);
-  assert.ok(store.audits[0].includes("fill-zero-minutes-from-bom"));
-  assert.ok(store.audits[0].includes("system"));
+  assert.equal(store.minutesOf("done-this-month"), 18);
+  assert.equal(store.audits.length, 2);
+  assert.ok(store.audits.every((audit) => audit.includes("fill-zero-minutes-from-bom")));
+  assert.ok(store.audits.every((audit) => audit.includes("system")));
 });
 
 test("editBomSaveWithoutProcessFieldsDoesNotTouchCards", async () => {
@@ -172,8 +187,19 @@ test("bulkProcessEditFillsZeroCardsOfEditedTemplates", async () => {
   const { body } = await send(bomApp, store.db, "POST", "/templates/bulk-process-edit", {
     edits: [{ templateId: "bom-bc05", path: [0], processIndex: 0, newCategory: "CAT 1", newMinutes: 30 }],
   });
-  assert.deepEqual(body.zeroMinuteCards, { filled: 1, scanned: 1 });
+  assert.deepEqual(body.zeroMinuteCards, { filled: 2, scanned: 2 });
   assert.equal(store.minutesOf("live"), 30);
+  assert.equal(store.minutesOf("done-earlier"), 0);
+});
+
+test("autoFillReachesBackToTheFirstOfTheCurrentMalaysianMonth", async () => {
+  const store = makeStore();
+  await fillZeroMinuteCardsForProducts({ var: { DB: store.db } }, ["BC05"]);
+  const [select] = store.cardSelects;
+  assert.match(select.sql, /OR jc\.completedDate >= \?/);
+  assert.deepEqual(select.bound, [currentMonthStartMY(), "BC05"]);
+  assert.match(currentMonthStartMY(), /^\d{4}-\d{2}-01$/);
+  assert.equal(currentMonthStartMY().slice(0, 7), todayYmdMY().slice(0, 7));
 });
 
 test("aFailedFillIsReportedAndTheBomSaveStillSucceeds", async () => {

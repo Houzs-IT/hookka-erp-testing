@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { Env } from "../worker";
+import { todayYmdMY } from "../../lib/utils";
 import { buildAuditStatement, type AuditSource } from "./audit";
 import {
   computeExpectedJcs,
@@ -233,13 +234,20 @@ export async function writeZeroMinuteFills(
   return updated;
 }
 
+export function currentMonthStartMY(): string {
+  return `${todayYmdMY().slice(0, 8)}01`;
+}
+
 export async function fillZeroMinuteCardsForProducts(
   c: Context<Env>,
   productCodes: readonly string[],
 ): Promise<ProductFillOutcome> {
   if (productCodes.length === 0) return { filled: 0, scanned: 0 };
   try {
-    const plan = await planZeroMinuteFills(c.var.DB, { productCodes });
+    const plan = await planZeroMinuteFills(c.var.DB, {
+      productCodes,
+      completedFrom: currentMonthStartMY(),
+    });
     const filled = await writeZeroMinuteFills(c, plan.fills, "system");
     return { filled, scanned: plan.scanned };
   } catch (err) {
