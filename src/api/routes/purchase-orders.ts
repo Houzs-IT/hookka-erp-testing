@@ -25,6 +25,12 @@ import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
 import { editConflictMessage } from "../lib/edit-conflict";
 import { mytYymm } from "../../lib/doc-number";
+import {
+  inactiveCodesFromRows,
+  inactiveMaterialError,
+  newlyAddedCodes,
+  type RmActiveRow,
+} from "../../lib/po-inactive-material";
 import { summarizePoGrns, type GrnHeaderLite, type GrnLineLink } from "../../lib/po-grn-refs";
 
 const app = new Hono<Env>();
@@ -223,22 +229,35 @@ async function rmBaseUoms(
   db: D1Database,
   orgId: string,
   items: Array<Record<string, unknown>>,
-): Promise<Map<string, string>> {
+): Promise<{ uom: Map<string, string>; inactive: Set<string> }> {
   const codes = [...new Set(items.map((i) => String(i.materialCode ?? "").trim().toUpperCase()).filter(Boolean))];
-  if (codes.length === 0) return new Map();
+  if (codes.length === 0) return { uom: new Map(), inactive: new Set() };
   // D1 caps bound parameters at 100 per statement: orgId + 90 codes per query.
-  const rows: Array<{ itemCode: string; baseUOM: string | null }> = [];
+  // isActive / status ride along for review C2-8 (inactive codes) — same read.
+  const rows: Array<{ itemCode: string; baseUOM: string | null } & RmActiveRow> = [];
   for (let i = 0; i < codes.length; i += 90) {
     const chunk = codes.slice(i, i + 90);
     const { results } = await db
       .prepare(
-        `SELECT itemCode, baseUOM FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
+        `SELECT itemCode, baseUOM, isActive, status FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
       )
       .bind(orgId, ...chunk)
-      .all<{ itemCode: string; baseUOM: string | null }>();
+      .all<{ itemCode: string; baseUOM: string | null } & RmActiveRow>();
     rows.push(...(results ?? []));
   }
-  return rmUnitMap(rows);
+  return { uom: rmUnitMap(rows), inactive: inactiveCodesFromRows(rows) };
+}
+
+/**
+ * Review C2-8 — the material codes on the payload that the PO does not carry
+ * yet and whose every raw-material row is deactivated.
+ */
+function inactiveNewMaterials(
+  inactive: Set<string>,
+  items: Array<Record<string, unknown>>,
+  existingCodes: Iterable<unknown> = [],
+): string[] {
+  return newlyAddedCodes(items as Array<{ materialCode?: unknown }>, existingCodes).filter((c) => inactive.has(c));
 }
 
 function genItemId(): string {
@@ -595,7 +614,12 @@ app.post("/", idempotent(), async (c) => {
         return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
       }
     }
-    const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), poItems);
+    const { uom: rmUom, inactive: rmInactive } = await rmBaseUoms(c.var.DB, getOrgId(c), poItems);
+    // Review C2-8: a deactivated material can't be put on a new PO.
+    const inactiveNew = inactiveNewMaterials(rmInactive, poItems);
+    if (inactiveNew.length > 0) {
+      return c.json({ success: false, error: inactiveMaterialError(inactiveNew) }, 400);
+    }
     const items = poItems.map((item) => {
       const quantity = Number(item.quantity) || 0;
       const unitPriceSen = Number(item.unitPriceSen) || 0;
@@ -985,7 +1009,7 @@ app.put("/:id", async (c) => {
           return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
         }
       }
-      const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
+      const { uom: rmUom, inactive: rmInactive } = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
       // What is stored now decides whether a line was already received: the
       // payload's receivedQty is client-supplied and can be 0 or missing.
       const { results: storedLines } = await c.var.DB
@@ -994,6 +1018,16 @@ app.put("/:id", async (c) => {
         )
         .bind(id)
         .all<{ id: string; material_code: string | null; unit: string | null; receivedQty: number | null }>();
+      // Review C2-8: lines already on the PO stay editable; a material the PO
+      // does not carry yet must be active.
+      const inactiveNew = inactiveNewMaterials(
+        rmInactive,
+        rawItems,
+        (storedLines ?? []).map((l) => l.material_code ?? (l as { materialCode?: string | null }).materialCode ?? ""),
+      );
+      if (inactiveNew.length > 0) {
+        return c.json({ success: false, error: inactiveMaterialError(inactiveNew) }, 400);
+      }
       const stored = new Map((storedLines ?? []).map((l) => [l.id, l]));
       // A payload line with no id (or an id we do not hold) is matched to the
       // stored line with the same materialCode, in line order, so a received

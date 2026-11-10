@@ -124,3 +124,44 @@ test("H2-3: the PO list GET attaches the refs and the list shows both columns", 
   assert.match(list, /key: "grnNumbers", label: "GRN No\."/);
   assert.match(list, /key: "grnDate", label: "GRN Date", type: "date"/);
 });
+
+// ── C2-8: a deactivated material can't be newly added to a PO ────────────
+import {
+  inactiveCodesFromRows,
+  newlyAddedCodes,
+  inactiveMaterialError,
+  rmRowIsActive,
+} from "../src/lib/po-inactive-material.ts";
+
+test("C2-8: a code is inactive only when every unit row is inactive", () => {
+  const rows = [
+    { itemCode: "PC151-01", isActive: 0, status: "INACTIVE" },
+    { itemCode: "pc151-01 ", isActive: 1, status: "ACTIVE" }, // live unit row
+    { itemCode: "MHW 1 X 2", isActive: false },
+    { itemCode: "TARONI", isActive: 1, status: "INACTIVE" },
+    { itemCode: "FOAM", isActive: true },
+  ];
+  assert.deepEqual([...inactiveCodesFromRows(rows)].sort(), ["MHW 1 X 2", "TARONI"]);
+  assert.equal(rmRowIsActive({ isActive: null }), true);
+});
+
+test("C2-8: only codes the PO does not already carry are judged", () => {
+  assert.deepEqual(
+    newlyAddedCodes([{ materialCode: "a" }, { materialCode: "B" }, { materialCode: "b" }, { materialCode: "" }], ["A"]),
+    ["B"],
+  );
+  assert.deepEqual(newlyAddedCodes([{ materialCode: "X" }]), ["X"]);
+  assert.match(inactiveMaterialError(["X"]), /^X is deactivated and can't be added/);
+  assert.match(inactiveMaterialError(["X", "Y"]), /^X, Y are deactivated/);
+});
+
+test("C2-8: PO POST and PUT refuse a newly added inactive material with 400 before any write", () => {
+  const route = read("src/api/routes/purchase-orders.ts");
+  const post = route.slice(route.indexOf('app.post("/", idempotent()'), route.indexOf('app.get("/:id"'));
+  assert.match(post, /inactiveNewMaterials\(rmInactive, poItems\)[\s\S]*?inactiveMaterialError\(inactiveNew\) \}, 400\)/);
+  assert.ok(post.indexOf("inactiveNewMaterials") < post.indexOf("INSERT INTO purchase_orders"));
+  const put = route.slice(route.indexOf('app.put("/:id"'));
+  assert.match(put, /inactiveNewMaterials\(\s*rmInactive,\s*rawItems,\s*\(storedLines/);
+  // One raw-material read serves both the unit map and the active check.
+  assert.match(route, /SELECT itemCode, baseUOM, isActive, status FROM raw_materials/);
+});

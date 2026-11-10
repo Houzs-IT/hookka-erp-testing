@@ -148,3 +148,26 @@ test("poLineUnit: client unit wins unless blank or the legacy pcs default", () =
   assert.equal(mv.poLineUnit(m, "FAB-01", ""), "MTR");
   assert.equal(mv.poLineUnit(m, "NOPE", ""), "pcs");
 });
+
+// Review C2-8 (pass 2): a deactivated material can't be NEWLY added; a line
+// already on the PO stays editable after its material is deactivated.
+test("PUT: a newly added deactivated material is refused with 400 and nothing is written", async () => {
+  const rmRows = [
+    { itemCode: "FAB-01", baseUOM: "MTR", isActive: 0, status: "INACTIVE" },
+    { itemCode: "OLD-9", baseUOM: "PCS", isActive: 0, status: "INACTIVE" },
+  ];
+  const { app, inserts, log } = harness({ rmRows });
+  const res = await put(app, [
+    { id: "poi-a", materialCode: "FAB-01", quantity: 5, unitPriceSen: 100 },
+    { materialCode: "OLD-9", quantity: 1, unitPriceSen: 100 },
+  ]);
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /OLD-9 is deactivated/);
+  assert.equal(inserts.length, 0);
+  assert.ok(!log.some((s) => /^(INSERT|UPDATE|DELETE)/.test(s)), "no write");
+
+  // The deactivated FAB-01 that is already on the PO alone is fine.
+  const ok = harness({ rmRows });
+  const res2 = await put(ok.app, [{ id: "poi-a", materialCode: "FAB-01", quantity: 5, unitPriceSen: 100 }]);
+  assert.equal(res2.status, 200, await res2.clone().text());
+});
