@@ -409,11 +409,18 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Every other month is identical, by the Monthly P&L forecast fingerprint taken before the deploy.
       - The Forecast P&L page, the Monthly P&L forecast, the Finance Dashboard and the Cash Flow P&L forecast all read the same month. The Dashboard's first read was stale and its retry was fresh (#1280 at work).
       - At the owner's request (「你直接帮我做」), that month was restored on the Forecast P&L page: customer cleared, Sales and the material's % typed back. The stored forecast is byte-identical to before the test, once the re-added key's position is put back, and the Monthly P&L forecast fingerprint is the pre-test one.
-20. 🔵 Edit forecast, round two (branch `feat/monthly-pl-edit-tools`). The owner, after the first save:
+20. ✅ Edit forecast, round two (#1287). The owner, after the first save:
     - 「我这里无法直接填total?」 (a customer box left at 0 kept Sales locked): fixed, so only a customer figure above 0 makes Sales the customers' total (`customersKeyed`, `src/lib/forecast-sheet.ts`). This applies on the Forecast P&L page and in the editor.
     - 「有没有按钮可以点开全部和收起没用到的？」 → 「可以」: **Open all / Close all** opens every ▸, and **Hide unused** hides every line, group and opened detail row with no figure in any month (`plRowUnused`; `detailUsed` in the editor).
     - 「我也要一个按钮和cash flow 一样，hide 已经过了的month」 → 「对」: **Hide past months** with Forecast on, in the Monthly P&L view and in the editor. A past month's Forecast columns go and its Actual stays, as on Cash Flow (`plPastForecastCol`, `src/lib/pl-forecast-edit.ts`). Excel, Print and the ledger drill follow the screen. Switching Forecast shows every month again, and the editor opens as the view was.
     - Tests: `tests/monthly-pl-edit-tools.test.mjs`; three pins follow the change (pl-monthly-forecast, finance-tables-drills).
+    - MEASURED on prod 2026-11-10 after the deploy, read only. Figures were typed in the editor, never saved, and discarded.
+      - Monthly P&L with Forecast: Hide past months appears. Pressed, the two past months keep one column pair each (their Actual) and lose their Forecast. Every other column, and every net profit figure left on screen, is identical. The note says so.
+      - Edit forecast opened with Hide past months already on.
+      - Open all opened all fourteen ▸, with none left closed, and the button turned to Close all.
+      - Hide unused cut the opened sheet by about a third. Under Sales only the customers with figures stayed, and an unused customer in the list was hidden.
+      - With every customer box in the current month set to 0, that month's Sales box opened again, holding its total.
+      - Done → Confirm discarded it all. The stored forecast is unchanged since the restore. No console errors.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
