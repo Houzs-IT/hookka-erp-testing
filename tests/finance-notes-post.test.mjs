@@ -190,7 +190,7 @@ test("statement, debtor ledger and aging show the invoice as issued and the note
   assert.match(acc, /"credit_notes", "debit_notes",/);
   // The invoice page and its print work the issued amount back the same way.
   assert.match(read("src/pages/invoices/detail.tsx"), /Invoice as issued \{formatCurrency\(invoiceIssuedSen\(invoice\.totalSen,/);
-  assert.match(read("src/api/lib/invoice-print-extras.ts"), /return \{ customerSO, customerRef, priceByCode, items, noteAdjustSen \};/);
+  assert.match(read("src/api/lib/invoice-print-extras.ts"), /return \{ customerSO, customerRef, priceByCode, items, noteAdjustSen(, [^}]*)? \};/);
   const pdf = read("src/lib/generate-invoice-pdf.ts");
   assert.match(pdf, /sumLine\("TOTAL", fmtRM\(\(Number\(invoice\.totalSen\) \|\| 0\) \+ noteAdjustSen\), true, true\);/);
   assert.match(pdf, /amountInWords\(\(Number\(invoice\.totalSen\) \|\| 0\) \+ noteAdjustSen\)/);
