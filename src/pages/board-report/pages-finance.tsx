@@ -72,6 +72,7 @@ export function CoverPage({ r }: P) {
 }
 
 export function IncomePage({ r }: P) {
+  const incomeTrend = r.trend.ok ? r.trend.data.points.filter((p) => p.kind !== "forecast" && p.ym <= r.month) : [];
   return (
     <BrPage title="Income statement" kicker="Page 2" month={r.monthLabel}>
       {withSection(r.income, (d) => (
@@ -112,6 +113,28 @@ export function IncomePage({ r }: P) {
               </table>
             </div>
           </div>
+          {/* Owner review 2026-11-10: the lower half of the page was empty —
+              the month-by-month picture fills it (elastic, like the other pages). */}
+          {incomeTrend.length > 0 && (
+            <>
+              <h3>Revenue, gross profit and net profit by month</h3>
+              <Elastic>
+                {(w, h) => (
+                  <ComboChart
+                    w={w}
+                    h={h}
+                    data={incomeTrend
+                      .map<Datum>((p) => ({ label: p.label, faded: p.kind !== "actual", values: { s: p.sales, g: p.gross, n: p.net } }))}
+                    series={[
+                      { key: "s", label: "Revenue", color: C.navy, type: "bar" },
+                      { key: "g", label: "Gross profit", color: C.gold, type: "line" },
+                      { key: "n", label: "Net profit", color: C.green, type: "line" },
+                    ]}
+                  />
+                )}
+              </Elastic>
+            </>
+          )}
           <p className="brp-small">Source: Forecasting › Dashboard income statement (same figures as Finance › Monthly P&L); forecast from Forecasting › Forecast P&L.</p>
         </>
       ))}
@@ -126,7 +149,7 @@ export function LabourPage({ r }: P) {
         <>
           <div className="brp-tiles four">
             <Tile label="Direct labour" value={<>RM {rm(d.total)}</>} sub={<>last month RM {rm(d.prevTotal)} <Delta p={changePct(d.total, d.prevTotal)} invert /></>} />
-            <Tile label="Forecast" value={<>RM {rm(d.forecastTotal)}</>} sub={<Delta p={changePct(d.total, d.forecastTotal)} invert />} />
+            <Tile label="Forecast (production)" value={<>RM {rm(d.forecastTotal)}</>} sub={<Delta p={changePct(d.total, d.forecastTotal)} invert />} />
             <Tile label="% of production revenue" value={pctText(pct(d.total, d.productionRevenue))} sub={<>production revenue RM {rm(d.productionRevenue)}</>} />
             <Tile label="Per head" value={<>RM {rm(d.headcount ? Math.round(d.total / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} on payroll · {d.units ?? "-"} units completed</>} />
           </div>
@@ -147,7 +170,24 @@ export function LabourPage({ r }: P) {
                   <td><Delta p={changePct(x.cost, x.forecast)} invert /></td>
                 </tr>
               ))}
-              <tr className="strong"><td>Total</td><td><Money v={d.total} /></td><td>100.0%</td><td>{pctText(pct(d.total, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={d.forecastTotal} /></td><td><Delta p={changePct(d.total, d.forecastTotal)} invert /></td></tr>
+              <tr className="strong"><td>Production total</td><td><Money v={d.total} /></td><td>100.0%</td><td>{pctText(pct(d.total, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={d.forecastTotal} /></td><td><Delta p={changePct(d.total, d.forecastTotal)} invert /></td></tr>
+              {/* Non-production departments (owner review 2026-11-10). */}
+              <tr className="brp-subhead"><td colSpan={8}>Non-production</td></tr>
+              {d.nonProd.length === 0 ? (
+                <tr><td colSpan={8} className="brp-muted">No non-production salary recorded this month.</td></tr>
+              ) : (
+                d.nonProd.map((x) => (
+                  <tr key={x.dept}>
+                    <td>{deptName(x.dept)}</td>
+                    <td><Money v={x.cost} /></td>
+                    <td>-</td><td>-</td><td>-</td>
+                    <td><Money v={x.prev} /></td>
+                    <td><Money v={x.forecast} /></td>
+                    <td><Delta p={changePct(x.cost, x.forecast)} invert /></td>
+                  </tr>
+                ))
+              )}
+              <tr className="strong"><td>All labour</td><td><Money v={d.total + d.nonProdTotal} /></td><td /><td /><td /><td /><td /><td /></tr>
             </tbody>
           </table>
           <h3>Production salary by month</h3>
@@ -187,6 +227,21 @@ export function MaterialsPage({ r }: P) {
                   <td><Money v={x.prev} /></td><td><Money v={x.forecast} /></td><td><Delta p={changePct(x.spend, x.forecast)} invert /></td>
                 </tr>
               ))}
+              {/* Total row (owner review 2026-11-10). */}
+              {(() => {
+                const tot = (k: "spend" | "purchase" | "closing" | "prev" | "forecast") => {
+                  const v = d.cats.map((x) => x[k]).filter((x): x is number => typeof x === "number");
+                  return v.length ? v.reduce((a, b) => a + b, 0) : null;
+                };
+                const spend = tot("spend"), fc = tot("forecast");
+                return (
+                  <tr className="strong">
+                    <td>Total</td><td><Money v={spend} /></td><td>{pctText(d.cats.reduce((a, x) => a + (x.pctOfSales ?? 0), 0))}</td>
+                    <td><Money v={tot("purchase")} /></td><td><Money v={tot("closing")} /></td><td><Money v={tot("prev")} /></td>
+                    <td><Money v={fc} /></td><td><Delta p={changePct(spend, fc)} invert /></td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
           <h3>Raw materials used by month</h3>

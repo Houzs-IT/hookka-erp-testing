@@ -34,3 +34,15 @@ test("customers get a donut; operations ranks are lists; best revenue month star
 test("notes list only the last three months' losses", () => {
   assert.match(readFileSync("src/lib/board-report.ts", "utf8"), /closedMonths\(rows, month\)\.slice\(-3\)/);
 });
+
+test("second pass: income page chart fills the gap; labour lists non-production; materials has a total", () => {
+  const f = readFileSync("src/pages/board-report/pages-finance.tsx", "utf8");
+  assert.match(f, /Revenue, gross profit and net profit by month/);
+  assert.match(f, /const incomeTrend = r\.trend\.ok \?/);
+  assert.match(f, /<tr className="brp-subhead"><td colSpan=\{8\}>Non-production<\/td><\/tr>/);
+  assert.match(f, /<td>All labour<\/td><td><Money v=\{d\.total \+ d\.nonProdTotal\} \/>/);
+  assert.match(f, /label="Forecast \(production\)"/);
+  assert.match(f, /\{\/\* Total row \(owner review 2026-11-10\)\. \*\/\}/);
+  const lib = readFileSync("src/lib/board-report.ts", "utf8");
+  assert.match(lib, /x\.nonProd && x\.dept\.toUpperCase\(\) !== "PRODUCTION_SHORTFALL"/);
+});
