@@ -107,3 +107,18 @@ Security audit of 2026-07-23 — findings verified in code, owner said "这批�
 - Owner keeps: A2 (public rack-QR GET shows customer name/PO — tokens are physical only).
 
 Older pending lists live in `docs/archive/PENDING-TASKS-HANDOFF.md` and the other `docs/archive/HANDOFF-*.md` files. About 200 stale local worktrees on the Windows machine were never cleaned up (machine-local, no repo impact).
+
+## New feature requested 2026-11-10 — Operations › "Floor live" (design approved in principle, not built)
+
+Design: https://claude.ai/artifact/R8ZatPPKcU8hr4twvkE547 (artboards: compact board, inside the dashboard, phone).
+Owner wants a third sub-tab under Dashboard › Operations (next to Overview / Production) showing **who is in which department right now**, from their department QR scans, so time-theft is visible (e.g. scanned into Warehouse but actually working Upholstery, inflating Upholstery efficiency).
+
+What the owner asked for (and asked to drop):
+- Per department card: workers listed as **name · EMP no.**, with **pcs completed today**, **QR scans today**, and **live efficiency** (earned hours ÷ hours worked since punch-in). Use the SAME efficiency formula as the existing dashboard so numbers agree. **Refresh every 5 minutes.**
+- **Production and non-production in separate sections.** Departments come from the `departments` table (`isProduction` flag), so every department in Settings appears automatically. Non-production shows hours only, no efficiency.
+- Header strip: punched in, production / non-production head-count, pcs done today, floor efficiency, mismatch count.
+- Many people: each card shows 6 rows (mismatch + lowest efficiency first) with "+N more"; a name/EMP search; an "Issues only" toggle. Phone: department accordions + Production / Non-production / Issues chips.
+- Mismatch flag (red row): last dept scan = A, but pieces completed in that segment belong to dept B.
+- **Dropped by the owner:** job-card detail per person, a one-worker day timeline page, a mismatch log page.
+
+Data already in the system: `dept_scan_events` (workerid, date, departmentcode, atmin — a worker scans a department QR when they start there; no scan = home department; see `src/api/lib/punch-autofill.ts`, `src/lib/dept-scan-split.ts`), attendance punches, job-card completions per worker. Existing Operations code: `src/pages/dashboards/OperationsView.tsx`, `ops-floor-lib.ts` (department floor order/names).
