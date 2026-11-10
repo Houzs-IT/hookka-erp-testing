@@ -25,7 +25,12 @@ import { CashForecastPage, CustomersPage, NewModelsPage, OperationsPage, Outlook
 import { Appendices } from "./appendix";
 import "./board-report.css";
 
-type Payload = BoardReport & { canEditNotes?: boolean };
+type Payload = BoardReport & { canEditNotes?: boolean; cached?: boolean };
+
+// While a build runs in the background the page asks again every few seconds
+// (owner 2026-11-10: generate, leave, come back and download).
+const POLL_MS = 5000;
+const POLL_GIVE_UP_MS = 4 * 60_000;
 
 export default function BoardReportPage() {
   const [params, setParams] = useSearchParams();
@@ -34,6 +39,9 @@ export default function BoardReportPage() {
   const q = params.get("month") ?? "";
   const month = YM_RE.test(q) && q <= today.slice(0, 7) ? q : fallback;
   const [reloadKey, setReloadKey] = useState(0);
+  // A poll after "building" re-reads WITHOUT rebuilding; only Refresh rebuilds.
+  const [poll, setPoll] = useState(0);
+  const [buildingSince, setBuildingSince] = useState<number | null>(null);
   // The answer for one request (month + reload count); loading = no answer
   // for the request in view yet. A failed load is kept as its reason, never
   // shown as an empty report.
@@ -53,19 +61,44 @@ export default function BoardReportPage() {
 
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     (async () => {
       try {
-        const res = await fetch(`/api/reports/board?month=${reqKey.split("#")[0]}`);
+        // The first read after Refresh rebuilds; polls only re-read.
+        const rebuild = reloadKey > 0 && poll === 0 ? "&rebuild=1" : "";
+        const res = await fetch(`/api/reports/board?month=${reqKey.split("#")[0]}${rebuild}`);
         if (!res.ok) throw new Error(await responseErrorMessage(res, "The board report could not be loaded"));
-        const json = (await res.json()) as { success?: boolean; data?: Payload; error?: string };
+        const json = (await res.json()) as { success?: boolean; data?: Payload; error?: string; building?: boolean };
+        if (json.success && json.building) {
+          // Being built in the background — ask again shortly.
+          if (!alive) return;
+          const since = buildingSince ?? Date.now();
+          if (buildingSince == null) setBuildingSince(since);
+          if (Date.now() - since > POLL_GIVE_UP_MS) {
+            throw new Error("The build is taking unusually long. Press Refresh to try again.");
+          }
+          // eslint-disable-next-line no-restricted-syntax -- one-shot re-poll, cleared on unmount below
+          timer = setTimeout(() => setPoll((n) => n + 1), POLL_MS);
+          return;
+        }
         if (!json.success || !json.data) throw new Error(json.error || "The board report could not be loaded");
-        if (alive) setResult({ key: reqKey, data: json.data, error: null });
+        if (alive) {
+          setBuildingSince(null);
+          setResult({ key: reqKey, data: json.data, error: null });
+        }
       } catch (e) {
-        if (alive) setResult({ key: reqKey, data: null, error: e instanceof Error ? e.message : String(e) });
+        if (alive) {
+          setBuildingSince(null);
+          setResult({ key: reqKey, data: null, error: e instanceof Error ? e.message : String(e) });
+        }
       }
     })();
-    return () => { alive = false; };
-  }, [reqKey]);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- buildingSince is read, not a trigger
+  }, [reqKey, poll]);
 
   const saveNotes = useCallback(async (text: string): Promise<boolean> => {
     const res = await fetch("/api/reports/board/notes", {
@@ -107,7 +140,13 @@ export default function BoardReportPage() {
                   <option key={m} value={m}>{longMonth(m)}{m === today.slice(0, 7) ? " (to date)" : m === fallback ? " (last closed)" : ""}</option>
                 ))}
               </select>
-              <button type="button" className="brp-btn ghost" onClick={() => setReloadKey((k) => k + 1)} disabled={loading} title="Rebuild from the latest figures">
+              <button
+                type="button"
+                className="brp-btn ghost"
+                onClick={() => { setPoll(0); setBuildingSince(null); setReloadKey((k) => k + 1); }}
+                disabled={loading}
+                title="Rebuild from the latest figures"
+              >
                 <RefreshCw size={14} /> Refresh
               </button>
               <button type="button" className="brp-btn" onClick={() => window.print()} disabled={!data || loading}>
@@ -119,7 +158,19 @@ export default function BoardReportPage() {
         {month === today.slice(0, 7) && <p className="brp-banner">This month is still running — every figure is to date, not final.</p>}
         <p className="brp-hint">In the print dialog choose “Save as PDF”, paper A4, margins None, and tick Background graphics.</p>
       </div>
-      {loading && <div className="brp-state print:hidden">Building the board report for {longMonth(month)} from live figures… The first build of a month can take up to a minute.</div>}
+      {loading && (
+        <div className="brp-state print:hidden">
+          Building the board report for {longMonth(month)} from live figures…
+          {buildingSince != null
+            ? " It is being built in the background — you can leave this page; it will be ready to download when you come back."
+            : " Usually 10–30 seconds."}
+        </div>
+      )}
+      {!loading && data && (
+        <p className="brp-hint print:hidden">
+          Built {new Date(data.generatedAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} — press Refresh for the latest figures.
+        </p>
+      )}
       {!loading && error && (
         <div className="brp-state error print:hidden">
           <strong>The board report could not be built.</strong> {error}
