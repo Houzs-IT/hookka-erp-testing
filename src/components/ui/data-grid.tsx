@@ -428,6 +428,14 @@ export type DataGridProps<T> = {
   // its document number (`type: "docno"` columns) struck through, so a void
   // record reads as void at a glance. Display only.
   cancelledRow?: (row: T) => boolean;
+  // An inline detail panel under ONE row (Products SKU Master: production
+  // config, margin cards, BOM / Docs links, customer assignments). The row
+  // whose keyField equals `expandedRowKey` gets a full-width row below it
+  // holding `renderRowDetail(row)`. While a panel is open the grid stops
+  // windowing (`virtualize`), because the windowed body assumes every row is
+  // one fixed height. Both omitted (the default) = no detail rows, as before.
+  expandedRowKey?: string | null;
+  renderRowDetail?: (row: T) => React.ReactNode;
 };
 
 type SavedView = {
@@ -2015,6 +2023,8 @@ export function DataGrid<T extends Record<string, any>>({
   error,
   onRetry,
   cancelledRow,
+  expandedRowKey,
+  renderRowDetail,
 }: DataGridProps<T>) {
   // Review G1 (2026-11-10): the header menu and header drag are ON for every
   // grid that persists a layout (has a gridId), so new list pages get them
@@ -3063,13 +3073,17 @@ export function DataGrid<T extends Record<string, any>>({
   // virtualizer still mounts but its result is ignored — keeping hook order
   // stable across renders is non-negotiable.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const virtualizationActive = virtualize && !groupOn;
+  // An open row-detail panel is taller than ROW_HEIGHT_PX, so windowing is
+  // off while one is shown (the windowed body's arithmetic assumes fixed rows).
+  const detailOpen = !!renderRowDetail && expandedRowKey != null;
+  const windowing = virtualize && !detailOpen;
+  const virtualizationActive = windowing && !groupOn;
   // Review G8: a grouped grid keeps windowing. Its body (group headers, rows,
   // subtotals) is flattened in render order and the virtualizer windows that
   // list instead (src/lib/grid-virtual-groups.ts). null when not grouped or
   // not opted in to `virtualize`.
   const groupedFlat = useMemo<FlatGroupItem[] | null>(() => {
-    if (!virtualize || !groupOn) return null;
+    if (!windowing || !groupOn) return null;
     if (userGroupCol) {
       return flattenGroupedRows(
         displayedData,
@@ -3084,7 +3098,7 @@ export function DataGrid<T extends Record<string, any>>({
       collapsedGroups,
       false,
     );
-  }, [virtualize, groupOn, userGroupCol, displayedData, userGroupValue, userFolded, visibleColumns, groupBy, collapsedGroups]);
+  }, [windowing, groupOn, userGroupCol, displayedData, userGroupValue, userFolded, visibleColumns, groupBy, collapsedGroups]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- identity follows groupedFlat on purpose (see getItemKey below)
   const groupedItemKey = useCallback((i: number) => i, [groupedFlat]);
   // Single source of truth for the per-row height. Used by both the
@@ -4142,7 +4156,11 @@ export function DataGrid<T extends Record<string, any>>({
                   const isEven = index % 2 === 1;
                   const isCancelled = !!cancelledRow?.(row);
                   const rangeCols = rowRangeCols(activeRect, showRange, index);
-                  return (
+                  const detail =
+                    renderRowDetail && expandedRowKey != null && key === expandedRowKey
+                      ? renderRowDetail(row)
+                      : null;
+                  const dataRow = (
                     <tr
                       key={key}
                       data-dg="row"
@@ -4244,6 +4262,23 @@ export function DataGrid<T extends Record<string, any>>({
                         </td>
                       )}
                     </tr>
+                  );
+                  if (detail == null) return dataRow;
+                  // The detail row is not a data row: no data-dg="row", no
+                  // row handlers, so a click inside it never re-selects or
+                  // collapses the row, and copy / range-sum ignore it.
+                  return (
+                    <React.Fragment key={key}>
+                      {dataRow}
+                      <tr key={`${key}__detail`} data-dg="detail" className="border-b border-[#E2DDD8] bg-[#FBFAF7]">
+                        <td
+                          colSpan={visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0)}
+                          className="p-0 whitespace-normal text-left align-top"
+                        >
+                          {detail}
+                        </td>
+                      </tr>
+                    </React.Fragment>
                   );
                 };
 

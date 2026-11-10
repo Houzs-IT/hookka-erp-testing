@@ -7,7 +7,10 @@
 // take over. See docs/plans/2026-07-30-crm-unified-customer.md.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Phone, Mail, Trash2, CalendarClock, X, GripVertical, Tag } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Plus, Phone, Mail, Trash2, CalendarClock, X, GripVertical, Tag, LayoutGrid, List } from "lucide-react";
+import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { listLoadError } from "@/lib/list-load-error";
 import { formatCurrency } from "@/lib/utils";
 import { CrmPanel } from "@/components/customer/CrmPanel";
 import { KycPanel } from "@/components/customer/KycPanel";
@@ -32,6 +35,9 @@ type Lead = {
   notes: string | null;
   next_follow_up: string | null;
   lost_reason: string | null;
+  // Bought-list import columns (sales-leads.ts ensureImportColumns).
+  industry?: string | null;
+  location?: string | null;
   won_customer_id?: string | null;
   /** The POTENTIAL customer minted with this lead (owner 2026-08-01). */
   customer_id?: string | null;
@@ -88,6 +94,28 @@ async function getLeads(): Promise<{ leads: Lead[]; total: number }> {
   }
 }
 
+// The List view holds EVERY lead, not the board's first page: it pages the
+// list endpoint (500 a page, its cap) until `total` is reached. Unlike the
+// board's loader it does not swallow a failure — the grid shows
+// "Couldn't load this list" with Retry instead of an empty list.
+const LEAD_PAGE = 500;
+async function getAllLeads(): Promise<Lead[]> {
+  const out: Lead[] = [];
+  for (let page = 0; page < 200; page++) {
+    const r = await fetch(`/api/sales-leads?limit=${LEAD_PAGE}&offset=${out.length}`);
+    const j = (await r.json().catch(() => null)) as { success?: boolean; data?: Lead[]; total?: number; error?: string } | null;
+    const err = listLoadError(j, null) ?? (r.ok && j ? null : `Couldn't load the leads (HTTP ${r.status})`);
+    if (err) throw new Error(err);
+    const rows = j?.data ?? [];
+    out.push(...rows);
+    if (rows.length < LEAD_PAGE || out.length >= Number(j?.total ?? out.length)) break;
+  }
+  return out;
+}
+
+const STAGE_ORDER: Record<string, number> = Object.fromEntries(STAGES.map((s, i) => [s.key, i]));
+const stageLabel = (key: string) => STAGES.find((s) => s.key === key)?.label ?? key;
+
 type FollowUp = { id: string; summary: string | null; customer_name?: string | null; contact_name: string | null; next_follow_up: string | null };
 async function getFollowUps(): Promise<FollowUp[]> {
   try {
@@ -113,8 +141,29 @@ export default function LeadsPage() {
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   // Rows the server holds for this org, which may exceed the page shown here.
   const [leadTotal, setLeadTotal] = useState(0);
+  // Board (default, the drag-to-move kanban) or List (the shared DataGrid
+  // over every lead). Kept in the URL (?view=list) so Back / refresh / a
+  // shared link land on the same view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isList = searchParams.get("view") === "list";
+  const setView = (list: boolean) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (list) next.set("view", "list");
+        else next.delete("view");
+        return next;
+      },
+      { replace: true },
+    );
+  const [allLeads, setAllLeads] = useState<Lead[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  // Bumped by every save / move / delete so the List refetches too.
+  const [listNonce, setListNonce] = useState(0);
 
   const reload = useCallback(async () => {
+    setListNonce((n) => n + 1);
     const [ls, fu] = await Promise.all([getLeads(), getFollowUps()]);
     setLeads(ls.leads);
     setLeadTotal(ls.total);
@@ -126,6 +175,27 @@ export default function LeadsPage() {
   useEffect(() => {
     void reload();
   }, []);
+  // The List loads only while it is shown.
+  useEffect(() => {
+    if (!isList) return;
+    let cancelled = false;
+    setListLoading(true);
+    getAllLeads()
+      .then((rows) => {
+        if (cancelled) return;
+        setAllLeads(rows);
+        setListError(null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setListError(e instanceof Error && e.message ? e.message : "Couldn't load the leads.");
+      })
+      .finally(() => {
+        if (!cancelled) setListLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isList, listNonce]);
   /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
   const byStage = useMemo(() => {
@@ -140,7 +210,11 @@ export default function LeadsPage() {
     [leads],
   );
   const wonValueSen = useMemo(() => byStage.WON.reduce((s, l) => s + (l.est_value_sen ?? 0), 0), [byStage]);
-  const openLead = useMemo(() => leads.find((l) => l.id === openLeadId) ?? null, [leads, openLeadId]);
+  // The List can open a lead beyond the board's first page, so look in both.
+  const openLead = useMemo(
+    () => leads.find((l) => l.id === openLeadId) ?? allLeads.find((l) => l.id === openLeadId) ?? null,
+    [leads, allLeads, openLeadId],
+  );
 
   const addLead = async () => {
     if (!form.name.trim() && !form.company.trim()) return;
@@ -203,6 +277,7 @@ export default function LeadsPage() {
     }
     // Optimistic move so the drag feels instant; reconcile from the server after.
     setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, stage, lost_reason: lostReason ?? l.lost_reason } : l)));
+    setAllLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, stage, lost_reason: lostReason ?? l.lost_reason } : l)));
     const res = await fetch(`/api/sales-leads/${lead.id}/stage`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -223,25 +298,122 @@ export default function LeadsPage() {
     await reload();
   };
 
+  // ── List view columns (shared DataGrid, WORK-TRACKER 120) ──────────────
+  // The card's fields as columns. Est. value carries the footer total; a
+  // Dropped lead is listed but not added up (as the board's "Open pipeline"
+  // figure leaves it out).
+  const listColumns = useMemo<Column<Lead>[]>(
+    () => [
+      {
+        key: "company",
+        label: "Company",
+        width: "200px",
+        render: (_v, l, _i, hl) => <span className="font-medium">{hl(l.company || l.name || "—")}</span>,
+      },
+      { key: "name", label: "Contact person", width: "150px" },
+      { key: "phone", label: "Phone", width: "130px" },
+      { key: "email", label: "Email", width: "180px" },
+      { key: "source", label: "Source", width: "100px" },
+      {
+        key: "stage",
+        label: "Stage",
+        width: "110px",
+        sortAccessor: (l) => STAGE_ORDER[l.stage] ?? 0,
+        filterAccessor: (l) => stageLabel(l.stage),
+        groupAccessor: (l) => stageLabel(l.stage),
+        exportValue: (l) => stageLabel(l.stage),
+        render: (_v, l) => {
+          const s = STAGES.find((st) => st.key === l.stage) ?? STAGES[0];
+          return (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full" style={{ background: s.accent }} />
+              {s.label}
+            </span>
+          );
+        },
+      },
+      { key: "est_value_sen", label: "Est. value", type: "currency", width: "110px", align: "right", total: "sum" },
+      { key: "next_follow_up", label: "Next follow-up", type: "date", width: "120px" },
+      { key: "lost_reason", label: "Dropped reason", width: "160px", defaultHidden: true },
+      { key: "industry", label: "Industry", width: "120px", defaultHidden: true },
+      { key: "location", label: "Location", width: "120px", defaultHidden: true },
+      { key: "created_at", label: "Created", type: "date", width: "110px", defaultHidden: true },
+    ],
+    [],
+  );
+  // Right-click / ⋮ on a row: open it, move it to another stage (the same
+  // moveStage as the card's picker and drag — Dropped still asks why), or
+  // delete it (asks first in the list, where a stray right-click is easy).
+  const listMenu = (l: Lead): ContextMenuItem[] => [
+    { label: "Open", action: () => setOpenLeadId(l.id) },
+    ...STAGES.map((s, i) => ({
+      label: `Move to ${s.label}`,
+      separator: i === 0,
+      checked: l.stage === s.key,
+      disabled: l.stage === s.key,
+      action: () => void moveStage(l, s.key),
+    })),
+    {
+      label: "Delete",
+      separator: true,
+      danger: true,
+      action: async () => {
+        const ok = await confirm({
+          title: "Delete lead?",
+          message: `Delete ${l.company || l.name || "this lead"}?`,
+          confirmLabel: "Delete",
+          danger: true,
+        });
+        if (ok) void delLead(l.id);
+      },
+    },
+  ];
+
   return (
     <div className="p-6">
       {/* The board shows one page. Say so when there is more, rather than
           letting a salesperson work a truncated list believing it is the whole
           one — see getLeads above. */}
-      {leadTotal > leads.length && (
+      {!isList && leadTotal > leads.length && (
         <div className="mb-4 rounded-lg border border-[#E5C88A] bg-[#FDF6E7] px-4 py-2.5 text-sm text-[#7A5A16]">
           Showing <strong>{leads.length}</strong> of <strong>{leadTotal}</strong> leads.
-          The board is built for deals you are actively working — use the leads list to
-          search and filter the full set.
+          The board is built for deals you are actively working — use the{" "}
+          <button type="button" onClick={() => setView(true)} className="font-semibold underline">
+            List
+          </button>{" "}
+          to search and filter the full set.
         </div>
       )}
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-[#1F1D1B] tracking-tight">Sales Pipeline</h1>
-          <p className="text-sm text-[#6B7280] mt-0.5">Drag a card between columns to move a deal. Click it to log everything — so anyone can take over.</p>
+          <p className="text-sm text-[#6B7280] mt-0.5">
+            {isList
+              ? "Every lead in one list — right-click a row to move or delete it. Click it to log everything — so anyone can take over."
+              : "Drag a card between columns to move a deal. Click it to log everything — so anyone can take over."}
+          </p>
         </div>
         <div className="flex items-center gap-6">
+          {/* Board / List switch */}
+          <div className="inline-flex bg-[#F3F4F6] rounded-lg p-0.5" role="group" aria-label="View">
+            {([
+              [false, "Board", LayoutGrid],
+              [true, "List", List],
+            ] as const).map(([list, label, Icon]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setView(list)}
+                aria-pressed={isList === list}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                  isList === list ? "bg-white text-[#111827] shadow-sm" : "text-[#6B7280] hover:text-[#111827]"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" /> {label}
+              </button>
+            ))}
+          </div>
           <div className="text-right">
             <div className="text-[11px] uppercase tracking-wide text-[#9CA3AF]">Open pipeline</div>
             <div className="text-lg font-semibold text-[#1F1D1B]">{formatCurrency(openValueSen / 100)}</div>
@@ -279,7 +451,34 @@ export default function LeadsPage() {
         </div>
       )}
 
+      {/* List — every lead on the shared DataGrid (header menu, drag,
+          column chooser + saved / team layouts, URL-kept search / filters /
+          sort, Est. value total, Retry). Row click opens the same drawer. */}
+      {isList && (
+        <DataGrid<Lead>
+          gridId="leads-list"
+          columns={listColumns}
+          data={allLeads}
+          keyField="id"
+          loading={listLoading && allLeads.length === 0}
+          onRowClick={(l) => setOpenLeadId(l.id)}
+          contextMenuItems={listMenu}
+          totalsSkipRow={(l) => l.stage === "LOST"}
+          totalsSkipNoun="dropped"
+          alwaysSearchKeys={["company", "name", "phone", "email"]}
+          searchPlaceholder="Search leads..."
+          exportName="leads"
+          exportSheetLabel="Leads"
+          emptyMessage="No leads yet."
+          maxHeight="calc(100vh - 300px)"
+          virtualize
+          error={listError}
+          onRetry={() => setListNonce((n) => n + 1)}
+        />
+      )}
+
       {/* Board */}
+      {!isList && (
       <div className="flex gap-4 overflow-x-auto pb-4">
         {STAGES.map((s, si) => (
           <div
@@ -355,6 +554,7 @@ export default function LeadsPage() {
           </div>
         ))}
       </div>
+      )}
 
       {/* Lead detail drawer — full CRM record on a lead (takeover-ready) */}
       {openLead && (

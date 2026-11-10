@@ -58,9 +58,12 @@ test("G1: the header menu's Export / Print covers every matching row on a paged 
 });
 
 // The main list pages the review names. Each must give its grid a gridId —
-// that is what switches G1 + G2 on. Leads and Products have no DataGrid (hand-
-// rolled tables), so they are not here; see docs/WORK-TRACKER.md.
+// that is what switches G1 + G2 on. Leads (List view) and Products (SKU
+// Master) moved onto the grid later (WORK-TRACKER 120); Products names one
+// gridId per category through a map, pinned in
+// tests/leads-products-shared-grid.test.mjs.
 const MAIN_LISTS = [
+  ["src/pages/leads/index.tsx", "leads-list"],
   ["src/pages/sales/index.tsx", "sales-orders-list"],
   ["src/pages/procurement/index.tsx", "purchase-orders-list"],
   ["src/pages/procurement/grn.tsx", "goods-receipts-list"],

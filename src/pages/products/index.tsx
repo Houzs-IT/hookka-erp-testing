@@ -1,6 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef, Fragment, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from "react";
 import { usePermissions } from "@/lib/use-permission";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { cachedFetchJson, invalidateCachePrefix, useCachedJson } from "@/lib/cached-fetch";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -30,6 +29,8 @@ import {
 } from "./MaintenanceItemHistoryDialog";
 import { CncTemplatePanel } from "@/components/cnc/CncTemplatePanel";
 import { ProductCatalog } from "@/pages/products/catalog";
+import { DataGrid, type Column } from "@/components/ui/data-grid";
+import { listLoadError } from "@/lib/list-load-error";
 
 // Derive the bare product code for the CNC template lookup. SKU codes look
 // like "1013-(K)" / "1013 King" — the cutting templates are keyed by the
@@ -279,6 +280,38 @@ function baseColChooserLabel(col: { key: string; label: string }): string {
   const m = H_COL_RE.exec(col.key);
   if (m) return IS_NUMERIC_SIZE(m[1]) ? `Seat ${m[1]}"` : m[1];
   return BASE_COL_CHOOSER_LABEL[col.key] ?? col.label;
+}
+
+// ── SKU Master grid (shared DataGrid, WORK-TRACKER 120) ─────────────────
+// One saved layout per category (different column sets). Renaming an id
+// discards the operators' saved layouts — see tests/grid-ids.test.mjs.
+const SKU_GRID_IDS: Record<ProdCat, string> = {
+  BEDFRAME: "products-sku-bedframe",
+  SOFA: "products-sku-sofa",
+  ACCESSORY: "products-sku-accessory",
+};
+// Base columns whose grid value is money in sen (the sofa seat-size columns
+// are money too, matched by H_COL_RE) and the plain-number ones.
+const SKU_MONEY_KEYS = new Set(["price3", "price2", "price1", "basePrice"]);
+const SKU_NUMBER_KEYS = new Set(["unitM3", "fabric", "totalMin"]);
+// The grid's search always covers these, shown or not — the fields the old
+// "Search all products..." box matched (code, name + description, model,
+// category).
+const SKU_SEARCH_KEYS = ["code", "description", "model", "category"];
+// The grid reads a column's value by its key as a dotted path, so a size
+// with a dot ("24.5") must not put one in the key.
+const skuSizeKey = (size: string) => `h${size}`.replace(/\./g, "_");
+// The px floor of a registry track ("minmax(170px,1.3fr)" -> 170).
+function trackFloorPx(track: string): number {
+  const m = track.match(/(\d+)px/);
+  return m ? parseInt(m[1], 10) : 90;
+}
+type SkuRow = { id: string; _p: Product } & Record<string, unknown>;
+
+// Production minutes from the legacy dept-config snapshot (used only when the
+// live BOM-derived productionTimeMinutes is 0).
+function totalConfigMinutes(cfg: ProductDeptConfig): number {
+  return cfg.fabCutMinutes + cfg.fabSewMinutes + cfg.foamMinutes + cfg.framingMinutes + cfg.upholsteryMinutes + cfg.packingMinutes;
 }
 
 function productPrice3Sen(product: Product): number | null {
@@ -2306,313 +2339,6 @@ export default function ProductsPage() {
     }
   };
 
-  // Analytic columns (Labor / Margin / Labor%) the owner toggles via the
-  // catalog "Columns" chooser. Persisted per browser like sofaTier above so a
-  // chosen layout survives reloads. Defaults from ANALYTIC_COLS[].defaultOn.
-  const [analyticColVis, setAnalyticColVis] = useState<Record<string, boolean>>(
-    () => {
-      const base: Record<string, boolean> = {};
-      for (const c of ANALYTIC_COLS) base[c.key] = c.defaultOn;
-      if (typeof window === "undefined") return base;
-      try {
-        const saved = window.localStorage.getItem(
-          "hookka.products.analyticCols",
-        );
-        if (saved) Object.assign(base, JSON.parse(saved) as Record<string, boolean>);
-      } catch {
-        /* ignore corrupt prefs — fall back to defaults */
-      }
-      return base;
-    },
-  );
-  const toggleAnalyticCol = (key: string) => {
-    setAnalyticColVis((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(
-            "hookka.products.analyticCols",
-            JSON.stringify(next),
-          );
-        } catch {
-          /* ignore quota / disabled storage */
-        }
-      }
-      return next;
-    });
-  };
-
-  // Base-column visibility — the owner can hide ANY non-frozen base column
-  // (Description, Category, Size, Price 1/2, Unit, Fabric, Total Min, Variants,
-  // sofa seat columns). Keyed by column key across all categories (keys are
-  // unique enough to share one map). Missing key ⇒ visible (default-on), so a
-  // future-added column shows up without a migration. Persisted per browser.
-  const [baseColVis, setBaseColVis] = useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      const saved = window.localStorage.getItem("hookka.products.baseCols");
-      if (saved) return JSON.parse(saved) as Record<string, boolean>;
-    } catch {
-      /* ignore corrupt prefs */
-    }
-    return {};
-  });
-  // A column is shown unless it has been explicitly toggled off. Frozen /
-  // always-on columns (Code) can never be hidden.
-  const isBaseColVisible = (col: BaseCol) =>
-    col.alwaysOn || col.frozen || baseColVis[col.key] !== false;
-  const toggleBaseCol = (key: string) => {
-    setBaseColVis((prev) => {
-      const next = { ...prev, [key]: prev[key] === false ? true : false };
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(
-            "hookka.products.baseCols",
-            JSON.stringify(next),
-          );
-        } catch {
-          /* ignore quota / disabled storage */
-        }
-      }
-      return next;
-    });
-  };
-
-  // Manual column ORDER — the owner can drag a column header left/right to
-  // reorder it. Stored PER CATEGORY (the three categories define different
-  // column sets) as an array of column keys in the desired visual order.
-  // A key missing from the saved array keeps its registry/default position
-  // (so a future-added column appears without a migration); unknown/stale
-  // keys are ignored. The frozen "Product Code" column is ALWAYS pinned first
-  // and can never be reordered past the freeze — applyColOrder() strips it
-  // from the order list and re-prepends it. The saved order is applied to the
-  // single ordered-column list (orderedCols) that drives the header row, the
-  // per-column filter row, the grid-template-columns track string, AND every
-  // body row's keyed cells — so header and body can never drift apart.
-  const [colOrder, setColOrder] = useState<Record<string, string[]>>(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      const saved = window.localStorage.getItem("hookka.products.colOrder");
-      if (saved) return JSON.parse(saved) as Record<string, string[]>;
-    } catch {
-      /* ignore corrupt prefs */
-    }
-    return {};
-  });
-  const persistColOrder = (next: Record<string, string[]>) => {
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(
-          "hookka.products.colOrder",
-          JSON.stringify(next),
-        );
-      } catch {
-        /* ignore quota / disabled storage */
-      }
-    }
-  };
-  // Reorder the visible-column key list `keys` to match the saved order for
-  // `cat`. Frozen keys (Product Code) are always emitted first, in registry
-  // order, regardless of where the saved order would place them. The rest keep
-  // the saved relative order; any visible key not in the saved order is
-  // appended in its original (registry/track) position so nothing disappears.
-  const applyColOrder = (
-    keys: string[],
-    frozenKeys: Set<string>,
-    cat: ProdCat,
-  ): string[] => {
-    const order = colOrder[cat] ?? [];
-    const frozen = keys.filter((k) => frozenKeys.has(k));
-    const movable = keys.filter((k) => !frozenKeys.has(k));
-    if (order.length === 0) return [...frozen, ...movable];
-    const inOrder = order.filter((k) => movable.includes(k));
-    const rest = movable.filter((k) => !inOrder.includes(k));
-    return [...frozen, ...inOrder, ...rest];
-  };
-  // Persist a new movable-key order for a category. `frozenKeys` are never
-  // written into the saved order (they're always pinned first by applyColOrder).
-  const setColOrderForCat = (cat: ProdCat, movableKeys: string[]) => {
-    setColOrder((prev) => {
-      const next = { ...prev, [cat]: movableKeys };
-      persistColOrder(next);
-      return next;
-    });
-  };
-  // Native HTML5 drag-and-drop state for header reordering. Holds the key of
-  // the column currently being dragged and the key it is hovering over, so the
-  // header can render a drop indicator. Cleared on drop / dragend.
-  const [draggingColKey, setDraggingColKey] = useState<string | null>(null);
-  const [dragOverColKey, setDragOverColKey] = useState<string | null>(null);
-  // Move `fromKey` to occupy `toKey`'s slot within the current ordered list of
-  // movable keys for `cat`, then persist. Frozen keys are excluded from both
-  // ends so Code stays pinned. No-op if either key is frozen or they're equal.
-  const reorderColumn = (
-    fromKey: string,
-    toKey: string,
-    orderedMovableKeys: string[],
-    cat: ProdCat,
-  ) => {
-    if (fromKey === toKey) return;
-    const from = orderedMovableKeys.indexOf(fromKey);
-    const to = orderedMovableKeys.indexOf(toKey);
-    if (from === -1 || to === -1) return;
-    const next = [...orderedMovableKeys];
-    next.splice(from, 1);
-    next.splice(to, 0, fromKey);
-    setColOrderForCat(cat, next);
-  };
-
-  // Per-column manual widths (px), set by dragging a header's right edge.
-  // Keyed by column key; overrides the descriptor's minmax() track when set.
-  // Persisted per browser so a tuned layout survives reloads. Clearing a key
-  // (double-click the handle) restores the responsive minmax() default.
-  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      const saved = window.localStorage.getItem("hookka.products.colWidths");
-      if (saved) return JSON.parse(saved) as Record<string, number>;
-    } catch {
-      /* ignore corrupt prefs */
-    }
-    return {};
-  });
-  const persistColWidths = (next: Record<string, number>) => {
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(
-          "hookka.products.colWidths",
-          JSON.stringify(next),
-        );
-      } catch {
-        /* ignore quota / disabled storage */
-      }
-    }
-  };
-  // Track which column is being resized so a body-wide overlay can capture the
-  // drag (and so we can suppress the row click while dragging a handle).
-  const colResizeRef = useRef<{
-    key: string;
-    startX: number;
-    startW: number;
-  } | null>(null);
-  const beginColResize = (
-    e: React.MouseEvent,
-    key: string,
-    currentW: number,
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-    colResizeRef.current = { key, startX: e.clientX, startW: currentW };
-    const onMove = (ev: MouseEvent) => {
-      const st = colResizeRef.current;
-      if (!st) return;
-      const w = Math.max(48, Math.round(st.startW + (ev.clientX - st.startX)));
-      setColWidths((prev) => ({ ...prev, [st.key]: w }));
-    };
-    const onUp = () => {
-      const st = colResizeRef.current;
-      colResizeRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      document.body.style.userSelect = "";
-      if (st) {
-        setColWidths((prev) => {
-          persistColWidths(prev);
-          return prev;
-        });
-      }
-    };
-    document.body.style.userSelect = "none";
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-  // Double-click a resize handle to clear the manual width and return the
-  // column to its responsive minmax() default.
-  const clearColWidth = (key: string) => {
-    setColWidths((prev) => {
-      if (!(key in prev)) return prev;
-      const next = { ...prev };
-      delete next[key];
-      persistColWidths(next);
-      return next;
-    });
-  };
-
-  // Per-column client-side sort for the SKU Master table. null = natural
-  // (load) order. Only a safe subset of columns is sortable — see sortValueFor.
-  const [sortCol, setSortCol] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const toggleSort = (key: string) => {
-    setSortCol((prevCol) => {
-      if (prevCol !== key) {
-        setSortDir("asc");
-        return key;
-      }
-      // same column: asc → desc → off
-      if (sortDir === "asc") {
-        setSortDir("desc");
-        return key;
-      }
-      setSortDir("asc");
-      return null;
-    });
-  };
-
-  // Per-column text filter for the SKU Master table. Keyed by column key
-  // (shared across categories like colWidths / baseColVis). A non-empty value
-  // means "show only rows whose value for that column contains this text"
-  // (case-insensitive substring). EVERY column — base and analytic — supports
-  // a filter via the inline filter row under the header; the matching string
-  // for each column comes from filterValueFor(). Persisted per browser so a
-  // filtered view survives reloads, matching the sort / width / visibility
-  // prefs. Empty string clears that column's filter.
-  const [colFilters, setColFiltersState] = useState<Record<string, string>>(
-    () => {
-      if (typeof window === "undefined") return {};
-      try {
-        const saved = window.localStorage.getItem("hookka.products.colFilters");
-        if (saved) return JSON.parse(saved) as Record<string, string>;
-      } catch {
-        /* ignore corrupt prefs */
-      }
-      return {};
-    },
-  );
-  const setColFilter = (key: string, value: string) => {
-    setColFiltersState((prev) => {
-      const next = { ...prev };
-      if (value) next[key] = value;
-      else delete next[key];
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(
-            "hookka.products.colFilters",
-            JSON.stringify(next),
-          );
-        } catch {
-          /* ignore quota / disabled storage */
-        }
-      }
-      return next;
-    });
-  };
-  const clearAllColFilters = () => {
-    setColFiltersState({});
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.removeItem("hookka.products.colFilters");
-      } catch {
-        /* ignore */
-      }
-    }
-  };
-  // Whether the inline per-column filter row is shown. Defaults off so the
-  // table opens clean; toggled by the "Filter" button in the toolbar. Any
-  // active filter keeps the row visible regardless.
-  const [showFilterRow, setShowFilterRow] = useState(false);
-
-  const [showColMenu, setShowColMenu] = useState(false);
-
   // Master price-history dialog. Holds the product whose history is open;
   // null when the dialog is closed.
   const [scheduleProductId, setScheduleProductId] = useState<string | null>(
@@ -2813,7 +2539,7 @@ export default function ProductsPage() {
     const hint = fabricWidthHint(p.category);
     return (
       <div
-        className="px-3 py-1.5 text-right"
+        className="text-right"
         onClick={(e) => e.stopPropagation()}
       >
         {editMode && editingFabricUsage === p.id ? (
@@ -2842,7 +2568,8 @@ export default function ProductsPage() {
             min="0"
           />
         ) : (
-          <div className="flex flex-col items-end leading-tight whitespace-nowrap">
+          // One line (grid rows are one fixed height): value, then the roll width.
+          <div className="flex items-baseline justify-end gap-1 whitespace-nowrap">
             {editMode ? (
               <button
                 onClick={() => {
@@ -2885,7 +2612,7 @@ export default function ProductsPage() {
     const shown = dirty ? (p.unitM3 ?? 0) : stored;
     return (
       <div
-        className="px-3 py-1.5 text-right"
+        className="text-right"
         onClick={(e) => e.stopPropagation()}
       >
         {editMode && editingM3 === p.id ? (
@@ -3175,23 +2902,33 @@ export default function ProductsPage() {
   }
 
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [pData, cData] = await Promise.all([
-          cachedFetchJson<{ success?: boolean; data?: Product[] }>("/api/products"),
-          cachedFetchJson<{ success?: boolean; data?: ProductDeptConfig[] }>("/api/product-configs"),
-        ]);
-        if (pData?.success) setProducts(pData.data as Product[]);
-        if (cData?.success) setConfigs(cData.data as ProductDeptConfig[]);
-      } catch {
-        // silent
-      } finally {
-        setLoading(false);
-      }
+  // The product list load. A failed load used to be silent and read as an
+  // empty catalogue; the grid now says "Couldn't load this list" with Retry
+  // (review G7). `fresh` (Retry) drops the read cache first.
+  const [productsLoadError, setProductsLoadError] = useState<string | null>(null);
+  const loadProducts = useCallback(async (fresh = false) => {
+    if (fresh) {
+      invalidateCachePrefix("/api/products");
+      invalidateCachePrefix("/api/product-configs");
     }
-    load();
+    try {
+      const [pData, cData] = await Promise.all([
+        cachedFetchJson<{ success?: boolean; data?: Product[] }>("/api/products"),
+        cachedFetchJson<{ success?: boolean; data?: ProductDeptConfig[] }>("/api/product-configs"),
+      ]);
+      if (pData?.success) setProducts(pData.data as Product[]);
+      if (cData?.success) setConfigs(cData.data as ProductDeptConfig[]);
+      setProductsLoadError(listLoadError(pData, null));
+    } catch (err) {
+      setProductsLoadError(err instanceof Error && err.message ? err.message : "Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot initial load
+    void loadProducts();
+  }, [loadProducts]);
 
   // Mobile deep-link auto-export — when /products is opened with
   // ?autoCustomerCatalogueId=<id>, fetch that customer + immediately
@@ -3239,6 +2976,7 @@ export default function ProductsPage() {
   // Maintenance tab makes it immediately selectable here without a
   // refresh.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seed from the sync cache once at mount
     setMaintenanceConfig(parseMaintenanceConfig(getVariantsConfigSync()));
     let cancelled = false;
     void fetchVariantsConfig().then((v) => {
@@ -3329,6 +3067,9 @@ export default function ProductsPage() {
   // finds the accessory rows even while the BEDFRAME tab is active — no
   // more "why can't I find sofas while on bedframe" surprises.
   const filteredRaw = useMemo(() => {
+    // The text match itself is the grid's search (multi-word, over code,
+    // name + description, model and category — SKU_SEARCH_KEYS); this memo
+    // only decides WHICH products the grid is handed.
     const q = searchQuery.trim().toLowerCase();
     // KPI drill-down: show exactly the SKUs the card counted, ACROSS
     // CATEGORIES. The category tab is deliberately ignored — the metric counts
@@ -3338,21 +3079,10 @@ export default function ProductsPage() {
     // already has, for the same reason.
     if (incompleteCodes !== null) {
       const inDrill = products.filter((p) => incompleteCodes.has(p.code));
-      if (!q) return inDrill;
-      return inDrill.filter((p) => {
-        const hay = [p.code, p.name, p.description, p.baseModel, p.category]
-          .map((v) => (v || "").toLowerCase())
-          .join(" ");
-        return hay.includes(q);
-      });
+      return inDrill;
     }
     if (!q) return products.filter((p) => p.category === categoryFilter);
-    return products.filter((p) => {
-      const hay = [p.code, p.name, p.description, p.baseModel, p.category]
-        .map((v) => (v || "").toLowerCase())
-        .join(" ");
-      return hay.includes(q);
-    });
+    return products;
   }, [products, categoryFilter, searchQuery, incompleteCodes]);
 
   // Numeric value for an analytic column (labor / margin / labor%) for a
@@ -3555,97 +3285,740 @@ export default function ProductsPage() {
     [configMap, sofaTier, analyticValueFor],
   );
 
-  // Keys of the columns currently SHOWN for the active category — base
-  // columns that are visible plus the applicable analytic columns that are
-  // toggled on. Used to scope the per-column filter so a filter left on a
-  // column that is now hidden (or belongs to a different category) doesn't
-  // silently narrow the table. colFilters persists across category switches /
-  // column hides, so this gate keeps the visible result honest.
-  const visibleColKeys = useMemo(() => {
-    const cat: ProdCat =
-      categoryFilter === "SOFA"
-        ? "SOFA"
-        : categoryFilter === "ACCESSORY"
-          ? "ACCESSORY"
-          : "BEDFRAME";
-    const keys = new Set<string>();
-    for (const col of baseCols[cat]) {
-      // Inline of isBaseColVisible so this memo depends only on baseColVis
-      // (frozen / always-on columns are always shown; others unless toggled off).
-      if (col.alwaysOn || col.frozen || baseColVis[col.key] !== false)
-        keys.add(col.key);
-    }
-    for (const c of ANALYTIC_COLS) {
-      if (c.applies(cat) && analyticColVis[c.key]) keys.add(c.key);
-    }
-    return keys;
-  }, [categoryFilter, baseColVis, analyticColVis, baseCols]);
 
-  // Apply the per-column filter row on top of the category/search result.
-  // A row survives only if it matches EVERY active filter on a currently-
-  // VISIBLE column (case-insensitive substring against filterValueFor). No
-  // active filters ⇒ pass-through. Runs before sort so the count + sort
-  // reflect the filtered set.
-  const colFiltered = useMemo(() => {
-    const active = Object.entries(colFilters).filter(
-      ([key, v]) => v.trim() && visibleColKeys.has(key),
-    );
-    if (active.length === 0) return filteredRaw;
-    return filteredRaw.filter((p) =>
-      active.every(([key, term]) =>
-        filterValueFor(p, key).toLowerCase().includes(term.trim().toLowerCase()),
+  // ── SKU Master on the shared DataGrid (WORK-TRACKER 120) ────────────────
+  // One gridId per category: the three categories carry different column
+  // sets, so each keeps its own saved layout, URL state and team layouts.
+  const skuCat: ProdCat =
+    categoryFilter === "SOFA" ? "SOFA" : categoryFilter === "ACCESSORY" ? "ACCESSORY" : "BEDFRAME";
+  const skuGridId = SKU_GRID_IDS[skuCat];
+  // The rows the grid shows (its search, header filters and sort applied) —
+  // what the Export button and the product count read.
+  const [visibleSkuRows, setVisibleSkuRows] = useState<SkuRow[]>([]);
+  const filtered = useMemo(() => visibleSkuRows.map((r) => r._p), [visibleSkuRows]);
+
+  // One grid row per product. The fields named after the column keys hold the
+  // value the grid filters, groups, exports and copies (money in sen); the
+  // cell itself is drawn by skuCellFor from the product (`_p`), so the inline
+  // edits and dirty tints are exactly the ones the hand-made table had.
+  const skuRows = useMemo<SkuRow[]>(
+    () =>
+      filteredRaw.map((p) => {
+        const cfg = configMap.get(p.code);
+        const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
+        const dirty = dirtyEdits.get(p.id);
+        const row: SkuRow = {
+          id: p.id,
+          _p: p,
+          code: p.code,
+          description: `${p.name || ""} ${p.description || ""}`.trim(),
+          model: p.baseModel || "",
+          category: p.category || "",
+          size: p.sizeLabel || "",
+          price3: productPrice3Sen(p) || null,
+          price2: basePrice > 0 ? basePrice : null,
+          basePrice: basePrice > 0 ? basePrice : null,
+          price1: (p.price1Sen ?? 0) > 0 ? p.price1Sen : null,
+          unitM3: dirty?.unitM3 !== undefined ? (p.unitM3 ?? 0) : (cfg?.unitM3 ?? p.unitM3 ?? 0),
+          fabric: dirty?.fabricUsage !== undefined ? (p.fabricUsage || 0) : ((cfg?.fabricUsage ?? p.fabricUsage) || 0),
+          totalMin: sortValueFor(p, "totalMin"),
+          variants: filterValueFor(p, "variants"),
+        };
+        for (const c of ANALYTIC_COLS) row[c.key] = analyticValueFor(p, c.key);
+        for (const n of sofaHeightList) {
+          const v = Number(sortValueFor(p, `h${n}`));
+          row[skuSizeKey(n)] = v > 0 ? v : null;
+        }
+        return row;
+      }),
+    [filteredRaw, configMap, dirtyEdits, sortValueFor, filterValueFor, analyticValueFor, sofaHeightList],
+  );
+
+  // The body cell for column `key` (a BASE_COLS / ANALYTIC_COLS key) of
+  // product `p` — the hand-made table's cells, unchanged: click-to-edit price,
+  // seat-price, Unit (m³) and Fabric (m) cells (only in Edit mode, buffered
+  // for the bulk Save), the Variants button, and the analytic maths.
+  const skuCellFor = (key: string, p: Product): ReactNode => {
+    const cat = skuCat;
+    const isSofa = cat === "SOFA";
+    const cfg = configMap.get(p.code);
+    const totalMin = p.productionTimeMinutes > 0
+      ? p.productionTimeMinutes
+      : (cfg ? totalConfigMinutes(cfg) : 0);
+    const price1Val = p.price1Sen ?? 0;
+    const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
+    const price3Val = productPrice3Sen(p);
+    const laborCostSen = laborCostSenForMinutes(totalMin);
+    const sofaRepPriceSen = isSofa
+      ? ((p.seatHeightPrices || [])
+          .filter((s) => entryTier(s.tier) === sofaTier && s.priceSen > 0)
+          .sort((a, b) => a.priceSen - b.priceSen)[0]?.priceSen ?? 0)
+      : 0;
+    const variantDefaults: ProductDefaultVariants = p.defaultVariants ?? {};
+    const variantSetCount =
+      (variantDefaults.fabricCode ? 1 : 0) +
+      (variantDefaults.divanHeight ? 1 : 0) +
+      (variantDefaults.legHeight ? 1 : 0) +
+      (variantDefaults.gap ? 1 : 0) +
+      (variantDefaults.seatHeight ? 1 : 0) +
+      ((variantDefaults.specials?.length ?? 0) > 0 ? 1 : 0);
+    const hasVariantDefaults = variantSetCount > 0;
+    const isEditingThisPrice = editingPrice === p.id;
+    if (key === "code") {
+      const isExpanded = expandedId === p.id;
+      return (
+        <div className="min-w-0 flex items-center gap-1.5">
+          <svg
+            className={`w-3.5 h-3.5 text-[#9CA3AF] transition-transform flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="text-xs font-medium text-[#111827] whitespace-nowrap truncate min-w-0" title={p.code}>{p.code}</span>
+          {/* Schedule master price change. Same dialog drives the whole row
+              (BF Price 2/Price 1 and Sofa seat tiers). stopPropagation so
+              the click doesn't toggle the row's detail panel. */}
+          <button
+            type="button"
+            title="Schedule price change"
+            onClick={(e) => {
+              e.stopPropagation();
+              setScheduleProductId(p.id);
+            }}
+            className={`p-0.5 rounded flex-shrink-0 ${
+              p.hasPendingPriceChange
+                ? "text-[#B8601A] hover:bg-[#FBE4CE]"
+                : "text-[#9CA3AF] hover:text-[#6B5C32] hover:bg-[#F4F0E8]"
+            }`}
+          >
+            <Calendar className="h-3.5 w-3.5" />
+          </button>
+          {p.hasPendingPriceChange && (
+            <span
+              title={
+                p.pendingEffectiveFrom
+                  ? `Next price change effective ${p.pendingEffectiveFrom}`
+                  : "A future-dated price change is queued"
+              }
+              className="inline-flex items-center px-1.5 rounded text-[9px] font-medium bg-[#FBE4CE] text-[#B8601A] border border-[#E8B786] flex-shrink-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                setScheduleProductId(p.id);
+              }}
+            >
+              Pending
+              {p.pendingEffectiveFrom &&
+                (() => {
+                  const t = new Date(todayYmdMY() + "T00:00:00Z").getTime();
+                  const d = new Date(p.pendingEffectiveFrom + "T00:00:00Z").getTime();
+                  const days = Math.round((d - t) / 86400000);
+                  return ` · ${days}d`;
+                })()}
+            </span>
+          )}
+        </div>
+      );
+    }
+    const norm = (v: unknown) => String(v ?? "").replace('"', '').trim();
+    const bodyCellByKey: Record<string, () => ReactNode> = {
+      description: () => (
+        <div className="min-w-0 truncate" title={`${p.name}${p.description ? ` — ${p.description}` : ""}`}>
+          <span className="text-xs text-[#111827]">{p.name}</span>
+          {p.description ? <span className="ml-1.5 text-[11px] text-[#9CA3AF]">{p.description}</span> : null}
+        </div>
       ),
-    );
-  }, [filteredRaw, colFilters, filterValueFor, visibleColKeys]);
-
-  // Apply the active column sort on top of the filtered set. Stable: equal
-  // keys keep their natural (load) order. When no sort is active the filtered
-  // array passes through untouched so the default ordering is preserved.
-  const filtered = useMemo(() => {
-    if (!sortCol) return colFiltered;
-    const dir = sortDir === "asc" ? 1 : -1;
-    const decorated = colFiltered.map((p, i) => ({ p, i }));
-    decorated.sort((a, b) => {
-      const av = sortValueFor(a.p, sortCol);
-      const bv = sortValueFor(b.p, sortCol);
-      let cmp: number;
-      if (typeof av === "number" && typeof bv === "number") {
-        cmp = av - bv;
-      } else {
-        cmp = String(av).localeCompare(String(bv), undefined, {
-          numeric: true,
-        });
+      model: () => (
+        <div className="text-sm text-[#111827] truncate" title={p.baseModel}>{p.baseModel}</div>
+      ),
+      category: () => (
+        <div className="min-w-0 flex items-center" title={p.category}>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium max-w-full truncate ${
+            p.category === "BEDFRAME" ? "bg-[#FAEFCB] text-[#9C6F1E]" : "bg-[#E0EDF0] text-[#3E6570]"
+          }`}>
+            {p.category}
+          </span>
+        </div>
+      ),
+      size: () => (
+        <div className="text-sm text-[#111827] truncate" title={p.sizeLabel}>{p.sizeLabel}</div>
+      ),
+      price2: () => (
+      <div className="text-right" onClick={(e) => e.stopPropagation()}>
+        {isEditingThisPrice ? (
+          <input
+            autoFocus
+            type="number" onFocus={(e) => e.currentTarget.select()}
+            value={priceInput}
+            onChange={(e) => setPriceInput(e.target.value)}
+            onBlur={() => {
+              // BUG-2026-08-13-095 - one money parser; an
+              // unreadable entry abandons the edit instead of
+              // writing NaN into the product's base price.
+              const val = moneyFieldToSen(priceInput);
+              setEditingPrice(null);
+              if (val === null) return;
+              // Local-only update — bulk Save batches every dirty
+              // cell into one product_prices row at the picked
+              // effective date.
+              setProducts((prev) => prev.map((pr) => pr.id === p.id ? { ...pr, basePriceSen: val } : pr));
+              recordDirty(p.id, { basePriceSen: val });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setEditingPrice(null);
+            }}
+            className="w-full text-right text-sm border border-[#6B5C32] rounded px-2 py-0.5 bg-[#FAEFCB] focus:outline-none"
+            step="0.01"
+          />
+        ) : (
+          <button
+            onClick={() => {
+              if (!editMode) return;
+              setEditingPrice(p.id);
+              setPriceInput((basePrice / 100).toFixed(2));
+            }}
+            className={`text-sm font-medium ${
+              isProductDirty(p.id) && dirtyEdits.get(p.id)?.basePriceSen !== undefined
+                ? "bg-[#FEF7E0] px-1.5 rounded text-[#9C6F1E]"
+                : "text-[#111827]"
+            } ${editMode ? "hover:text-[#6B5C32] hover:underline cursor-pointer" : "cursor-default"}`}
+          >
+            {basePrice > 0 ? formatCurrency(basePrice) : <span className="text-[#9CA3AF]">Set price</span>}
+          </button>
+        )}
+      </div>
+      ),
+      price1: () => (
+      <div className="text-right" onClick={(e) => e.stopPropagation()}>
+        {editingPrice1 === p.id ? (
+          <input
+            autoFocus
+            type="number" onFocus={(e) => e.currentTarget.select()}
+            value={price1Input}
+            onChange={(e) => setPrice1Input(e.target.value)}
+            onBlur={() => {
+              const val = moneyFieldToSen(price1Input);
+              setEditingPrice1(null);
+              if (val === null) return;
+              setProducts((prev) => prev.map((pr) => pr.id === p.id ? { ...pr, price1Sen: val } : pr));
+              recordDirty(p.id, { price1Sen: val });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setEditingPrice1(null);
+            }}
+            className="w-full text-right text-sm border border-[#6B5C32] rounded px-2 py-0.5 bg-[#FAEFCB] focus:outline-none"
+            step="0.01"
+          />
+        ) : (
+          <button
+            onClick={() => {
+              if (!editMode) return;
+              setEditingPrice1(p.id);
+              setPrice1Input((price1Val / 100).toFixed(2));
+            }}
+            className={`text-sm font-medium ${
+              isProductDirty(p.id) && dirtyEdits.get(p.id)?.price1Sen !== undefined
+                ? "bg-[#FEF7E0] px-1.5 rounded text-[#9C6F1E]"
+                : "text-[#111827]"
+            } ${editMode ? "hover:text-[#6B5C32] hover:underline cursor-pointer" : "cursor-default"}`}
+          >
+            {price1Val > 0 ? formatCurrency(price1Val) : <span className="text-[#9CA3AF]">-</span>}
+          </button>
+        )}
+      </div>
+      ),
+      price3: () => (
+      <div className="text-right">
+        <span className="text-sm font-medium text-[#111827]">
+          {price3Val ? formatCurrency(price3Val) : <span className="text-[#9CA3AF]">-</span>}
+        </span>
+      </div>
+      ),
+      basePrice: () => (
+      <div className="text-right">
+        <span className="text-sm font-medium text-[#111827]">
+          {basePrice > 0 ? formatCurrency(basePrice) : <span className="text-[#9CA3AF]">-</span>}
+        </span>
+      </div>
+      ),
+      // Unit (m³) / Fabric (m) — editMode-gated, defers to Save
+      unitM3: () => renderUnitM3Cell(p, cfg),
+      fabric: () => renderFabricCell(p, cfg),
+      totalMin: () => (
+      <div className="text-right truncate" title={`${totalMin} min`}>
+        <div className="text-sm font-medium text-[#111827] truncate">{totalMin} min</div>
+        {/* Labor cost moved to its own "Labor (est.)"
+            column — no longer duplicated under Total Min
+            (owner 2026-06-17). */}
+      </div>
+      ),
+      variants: () => (
+      <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => setEditingVariant(p)}
+          className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
+            hasVariantDefaults
+              ? "bg-[#EEF3E4] text-[#4F7C3A] border-[#C6DBA8] hover:bg-[#EEF3E4]"
+              : "bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100"
+          }`}
+          title={
+            hasVariantDefaults
+              ? "Edit default variants for this SKU"
+              : "Configure default variants — Sales Order will pre-fill from these"
+          }
+        >
+          {hasVariantDefaults ? `${variantSetCount} set` : "Configure"}
+        </button>
+      </div>
+      ),
+    };
+    // Sofa per-seat-size price cells (one per Maintenance size: h20, h24, …).
+    if (isSofa) {
+      for (const h of sofaHeightList.map((n) => `${n}"`)) {
+        const hNum = h.replace('"', '');
+        // Cell read: scope by (height, current tier). Legacy
+        // entries with no `tier` resolve to P2 via entryTier(),
+        // so an old SKU that only has flat per-height prices
+        // shows up under the P2 toggle and looks empty under
+        // P1 / P3 until those cells are first edited.
+        const sh = (p.seatHeightPrices || []).find(
+          (s) => norm(s.height) === hNum && entryTier(s.tier) === sofaTier,
+        );
+        const editKey = `${p.id}__${h}__${sofaTier}`;
+        const isEditingThis = editingSeatPrices === editKey;
+        bodyCellByKey[`h${hNum}`] = () => (
+          <div className="text-right" onClick={(e) => e.stopPropagation()}>
+            {isEditingThis ? (
+              <input
+                autoFocus
+                type="number" onFocus={(e) => e.currentTarget.select()}
+                step="0.01"
+                value={seatPriceInputs[h] ?? ""}
+                onChange={(e) => setSeatPriceInputs((prev) => ({ ...prev, [h]: e.target.value }))}
+                onBlur={() => {
+                  const val = moneyFieldToSen(seatPriceInputs[h] ?? "");
+                  setEditingSeatPrices(null);
+                  if (val === null) return;
+                  const hN = h.replace('"', '');
+                  let arr = p.seatHeightPrices || [];
+                  // Match by BOTH height and current tier so editing
+                  // P1 doesn't overwrite an existing P2 cell. Legacy
+                  // untiered entries match the P2 view (entryTier
+                  // defaults), so a P2 edit upgrades an old
+                  // {height,priceSen} row in place by writing an
+                  // explicit tier:'PRICE_2'.
+                  const matches = (s: typeof arr[number]) =>
+                    norm(s.height) === hN && entryTier(s.tier) === sofaTier;
+                  if (!arr.find(matches)) {
+                    arr = [...arr, { height: hN, priceSen: val, tier: sofaTier }];
+                  }
+                  const updated = arr.map((s) =>
+                    matches(s) ? { height: hN, priceSen: val, tier: sofaTier } : s
+                  );
+                  // Mark the cell dirty in local state so the table
+                  // reflects the edit immediately, but DON'T touch
+                  // products yet — the bulk Save flow batches every
+                  // dirty cell into one product_prices row when the
+                  // user picks an effective date.
+                  setProducts((prev) => prev.map((pr) => pr.id === p.id ? { ...pr, seatHeightPrices: updated } : pr));
+                  recordDirty(p.id, { seatHeightPrices: updated });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  if (e.key === "Escape") setEditingSeatPrices(null);
+                }}
+                className="w-full text-right text-xs border border-[#6B5C32] rounded px-1 py-0.5 bg-[#FAEFCB] focus:outline-none"
+              />
+            ) : (
+              <button
+                onClick={() => {
+                  if (!editMode) return;
+                  setSeatPriceInputs({ [h]: ((sh?.priceSen ?? 0) / 100).toFixed(2) });
+                  setEditingSeatPrices(editKey);
+                }}
+                className={`text-sm tabular-nums ${
+                  isSeatCellDirty(p.id, hNum, sofaTier)
+                    ? "bg-[#FEF7E0] px-1.5 rounded text-[#9C6F1E] font-semibold"
+                    : "text-[#111827]"
+                } ${editMode ? "hover:text-[#6B5C32] hover:underline cursor-pointer" : "cursor-default"}`}
+              >
+                {sh && sh.priceSen > 0 ? formatCurrency(sh.priceSen) : <span className="text-[#9CA3AF]">-</span>}
+              </button>
+            )}
+          </div>
+        );
       }
-      return cmp !== 0 ? cmp * dir : a.i - b.i;
+    }
+    // Analytic cells (Labor / Margin / Labor %), keyed by each analytic
+    // column's key. Same computation as before.
+    for (const c of ANALYTIC_COLS.filter((ac) => ac.applies(cat))) {
+      const mainPrice = isSofa ? sofaRepPriceSen : basePrice;
+      const priceFor =
+        c.key === "marginP1" || c.key === "laborPctP1"
+          ? price1Val
+          : mainPrice;
+      const isPct =
+        c.key === "laborPctP2" || c.key === "laborPctP1";
+      bodyCellByKey[c.key] = () => (
+        <div
+          className="text-right text-sm tabular-nums truncate"
+          title={filterValueFor(p, c.key) || "—"}
+        >
+          {c.key === "labor" ? (
+            laborCostSen > 0 ? (
+              formatCurrency(laborCostSen)
+            ) : (
+              <span className="text-[#9CA3AF]">—</span>
+            )
+          ) : priceFor <= 0 || laborCostSen <= 0 ? (
+            <span className="text-[#9CA3AF]">—</span>
+          ) : isPct ? (
+            <span className="text-[#111827]">
+              {((laborCostSen / priceFor) * 100).toFixed(1)}%
+            </span>
+          ) : (
+            (() => {
+              const m = priceFor - laborCostSen;
+              return (
+                <span
+                  className={
+                    m >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"
+                  }
+                >
+                  {formatCurrency(m)}
+                  <span className="ml-1 text-[10px] text-[#9CA3AF]">
+                    ({((m / priceFor) * 100).toFixed(1)}%)
+                  </span>
+                </span>
+              );
+            })()
+          )}
+        </div>
+      );
+    }
+    return bodyCellByKey[key]?.() ?? null;
+  };
+
+  // The panel under an opened row (row click toggles it, as before).
+  const renderSkuDetail = (p: Product): ReactNode => {
+    const isSofa = skuCat === "SOFA";
+    const isExpanded = true;
+    const cfg = configMap.get(p.code);
+    const totalMin = p.productionTimeMinutes > 0
+      ? p.productionTimeMinutes
+      : (cfg ? totalConfigMinutes(cfg) : 0);
+    const price1Val = p.price1Sen ?? 0;
+    const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
+    const laborCostSen = laborCostSenForMinutes(totalMin);
+    const variantDefaults: ProductDefaultVariants = p.defaultVariants ?? {};
+    const hasVariantDefaults =
+      !!variantDefaults.fabricCode ||
+      !!variantDefaults.divanHeight ||
+      !!variantDefaults.legHeight ||
+      !!variantDefaults.gap ||
+      !!variantDefaults.seatHeight ||
+      (variantDefaults.specials?.length ?? 0) > 0;
+    return (
+      <div className="px-4 pb-4 space-y-3">
+        {cfg && <ProductionConfig config={cfg} />}
+
+        {/* ---- Price vs Labor (Margin) ----
+            Owner-requested side-by-side: each selling price
+            (Price 2 = company default tier `basePriceSen`,
+            Price 1 = `price1Sen`) against the estimated labor
+            cost, with margin = price − labor in RM and %.
+            Labor here is the flat-average estimate (RM2,200 /
+            26d / 9h / 60 — see LABOR_RATE_PER_MIN_SEN), NOT
+            full landed cost, so "margin" is price-minus-labor
+            only. Existing price labels are kept verbatim. */}
+        <div className="bg-[#FAF9F7] border border-[#E5E7EB] rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-[#374151]">
+              Price vs Labor (Margin)
+            </h4>
+            <span className="text-[10px] text-[#9CA3AF] italic">
+              Labor = est. {formatCurrency(LABOR_RATE_PER_MIN_SEN)}/min × {totalMin} min
+              {" "}(RM 2,200/mo ÷ 26d ÷ 9h)
+            </span>
+          </div>
+          {(() => {
+            // Margin row helper. price in sen; "—" when the
+            // price is unset (0) or minutes unknown so we never
+            // show a fake 100% margin against zero labor.
+            const marginRow = (label: string, priceSen: number) => {
+              const hasPrice = priceSen > 0;
+              const hasLabor = laborCostSen > 0;
+              const marginSen = priceSen - laborCostSen;
+              const marginPct = hasPrice
+                ? (marginSen / priceSen) * 100
+                : null;
+              return (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">{label}</div>
+                  <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
+                    {hasPrice ? formatCurrency(priceSen) : <span className="text-[#9CA3AF]">—</span>}
+                  </div>
+                  <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">
+                    Labor {hasLabor ? formatCurrency(laborCostSen) : "—"}
+                  </div>
+                  <div className="text-[11px] tabular-nums">
+                    {hasPrice && hasLabor ? (
+                      <span className={marginSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
+                        Margin {formatCurrency(marginSen)}
+                        {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
+                      </span>
+                    ) : (
+                      <span className="text-[#9CA3AF]">Margin —</span>
+                    )}
+                  </div>
+                </div>
+              );
+            };
+
+            // Labor-only card — reads even when a SKU has no
+            // price set yet. Shared by both layouts below.
+            const laborCard = (
+              <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                <div className="text-[10px] font-medium text-[#6B7280] uppercase">Labor Cost (est.)</div>
+                <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
+                  {laborCostSen > 0 ? formatCurrency(laborCostSen) : <span className="text-[#9CA3AF]">—</span>}
+                </div>
+                <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">{totalMin} min</div>
+              </div>
+            );
+
+            // Sofas don't carry flat price1Sen/basePriceSen —
+            // their selling prices live in seatHeightPrices[]
+            // per (seat height, tier). Showing the flat Price 2/
+            // Price 1/Margin cards therefore reads "—" even for a
+            // sofa that DOES have prices, which is misleading. So
+            // for sofas we derive a representative price = the
+            // lowest positive seat-height price in the currently
+            // selected tier (sofaTier) and compute the margin
+            // against THAT, labelled "from RM x (seat height …)".
+            if (isSofa) {
+              const tierRep = (p.seatHeightPrices || [])
+                .filter(
+                  (s) => entryTier(s.tier) === sofaTier && s.priceSen > 0,
+                )
+                .sort((a, b) => a.priceSen - b.priceSen)[0];
+              const tierLabel =
+                SOFA_TIERS.find((t) => t.value === sofaTier)?.label ?? "";
+              const repPriceSen = tierRep?.priceSen ?? 0;
+              const hasRep = repPriceSen > 0;
+              const hasLabor = laborCostSen > 0;
+              const marginSen = repPriceSen - laborCostSen;
+              const marginPct = hasRep ? (marginSen / repPriceSen) * 100 : null;
+              const repHeight = tierRep
+                ? String(tierRep.height).replace('"', "")
+                : null;
+              return (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                      <div className="text-[10px] font-medium text-[#6B7280] uppercase">
+                        Price (from, {tierLabel})
+                      </div>
+                      <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
+                        {hasRep ? (
+                          <>
+                            {formatCurrency(repPriceSen)}
+                            {repHeight && (
+                              <span className="ml-1 text-[10px] font-normal text-[#9CA3AF]">
+                                Seat {repHeight}"
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-[#9CA3AF]">—</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">
+                        Labor {hasLabor ? formatCurrency(laborCostSen) : "—"}
+                      </div>
+                      <div className="text-[11px] tabular-nums">
+                        {hasRep && hasLabor ? (
+                          <span className={marginSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
+                            Margin {formatCurrency(marginSen)}
+                            {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
+                          </span>
+                        ) : (
+                          <span className="text-[#9CA3AF]">Margin —</span>
+                        )}
+                      </div>
+                    </div>
+                    {laborCard}
+                  </div>
+                  <p className="mt-2 text-[10px] text-[#9CA3AF] italic">
+                    Sofa price varies by seat height — see each height's price above. Margin here compares against the lowest seat-height price in the current {tierLabel} tier.
+                  </p>
+                </>
+              );
+            }
+
+            // Bedframes / accessories keep the flat-price cards
+            // verbatim — those fields are correct for them.
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {marginRow("Price 2", basePrice)}
+                {marginRow("Price 1", price1Val)}
+                {laborCard}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Variant Defaults Summary — flat key/value cards
+            for the fields the operator has actually set,
+            one card per non-empty default. Edit hops back
+            into the dialog for changes. */}
+        {hasVariantDefaults && (
+          <div className="bg-[#FAF9F7] border border-[#E5E7EB] rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-semibold text-[#374151]">Variant Defaults</h4>
+              <button
+                onClick={() => setEditingVariant(p)}
+                className="text-xs text-[#6B5C32] hover:underline"
+              >
+                Edit
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {variantDefaults.fabricCode && (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Fabric</div>
+                  <div className="text-sm font-medium text-[#111827]">{variantDefaults.fabricCode}</div>
+                </div>
+              )}
+              {variantDefaults.divanHeight && (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Divan Height</div>
+                  <div className="text-sm font-medium text-[#111827]">{variantDefaults.divanHeight}</div>
+                </div>
+              )}
+              {variantDefaults.legHeight && (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Leg Height</div>
+                  <div className="text-sm font-medium text-[#111827]">{variantDefaults.legHeight}</div>
+                </div>
+              )}
+              {variantDefaults.gap && (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Gap</div>
+                  <div className="text-sm font-medium text-[#111827]">{variantDefaults.gap}</div>
+                </div>
+              )}
+              {variantDefaults.seatHeight && (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Seat Height</div>
+                  <div className="text-sm font-medium text-[#111827]">{variantDefaults.seatHeight}</div>
+                </div>
+              )}
+              {(variantDefaults.specials?.length ?? 0) > 0 && (
+                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB] col-span-2 md:col-span-3">
+                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Specials</div>
+                  <div className="text-sm font-medium text-[#111827]">
+                    {(variantDefaults.specials ?? []).join(" · ")}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Link to={`/products/${p.id}/bom`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#3E6570] bg-[#E0EDF0] border border-[#A8CAD2] rounded-md hover:bg-[#E0EDF0] transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+            </svg>
+            View BOM
+          </Link>
+          <Link to={`/products/${p.id}/documents`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6B5C32] bg-[#F0ECE9] border border-[#D8CFC0] rounded-md hover:bg-[#E8E2D9] transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5-3H12m-8.25-9v15.75c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9H4.875C4.254 2.25 3.75 2.754 3.75 3.375z" />
+            </svg>
+            Docs
+          </Link>
+          <button
+            onClick={() => setEditingVariant(p)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6B5C32] bg-[#FAEFCB] border border-[#E8D597] rounded-md hover:bg-[#FAEFCB] transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+            </svg>
+            Manage Variants
+          </button>
+        </div>
+
+        {/* Customer Assignments */}
+        <CustomerAssignmentsSection productId={p.id} active={isExpanded} />
+
+        {/* CNC Cutting Template — fabric-cutting files for
+            the BUYI E-DIGIT cutter, keyed by the bare
+            product code (variant suffix stripped) and
+            narrowed by this SKU's size. */}
+        <CncTemplatePanel
+          productCode={baseProductCode(p.code)}
+          size={p.sizeLabel}
+        />
+      </div>
+    );
+  };
+
+  // Columns for the active category: the BASE_COLS registry (price columns
+  // already dropped without product-pricing permission; sofa seat-size
+  // columns follow Maintenance `sofaSizes`) then the analytic columns
+  // (Margin (P1) / Labor % (P1) start hidden, as before). Every column sorts
+  // by the same value the old header sort used (sortValueFor).
+  const skuColumns = useMemo<Column<SkuRow>[]>(() => {
+    const cols: Column<SkuRow>[] = baseCols[skuCat].map((bc) => {
+      const isSize = H_COL_RE.test(bc.key);
+      return {
+        key: isSize ? skuSizeKey(bc.key.slice(1)) : bc.key,
+        label: baseColChooserLabel(bc),
+        width: `${trackFloorPx(bc.width) + (bc.frozen ? 40 : 0)}px`,
+        align: bc.align,
+        sticky: bc.frozen || undefined,
+        type: isSize || SKU_MONEY_KEYS.has(bc.key) ? "currency" : SKU_NUMBER_KEYS.has(bc.key) ? "number" : "text",
+        sortAccessor: (r) => sortValueFor(r._p, bc.key),
+        render: (_v, r) => skuCellFor(bc.key, r._p),
+      };
     });
-    return decorated.map((d) => d.p);
-  }, [colFiltered, sortCol, sortDir, sortValueFor]);
-
-  // ── Row virtualization for the SKU-master catalog table ────────────────
-  // The catalog renders one inline-edit row per product (10+ grid cells,
-  // price inputs, an expand panel). At a few hundred SKUs that is thousands
-  // of DOM nodes — slow first paint, and a full re-render of every row on
-  // each price keystroke. The virtualizer keeps only the visible window
-  // (~20 rows) mounted.
-  //
-  // estimateSize = 45 — matches the actual measured height of a collapsed
-  // BEDFRAME / SOFA / ACCESSORY row (verified 2026-05-24 against prod DOM).
-  // When the guess matches reality, the first paint positions every row
-  // correctly and ResizeObserver measureElement never has to shift them —
-  // no layout jitter on scroll. Bumping or shrinking estimateSize would
-  // reintroduce a one-frame shift each time a new window mounts.
-  const productsScrollRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is the repo-standard windowing lib (same usage as inventory/adjustments, invoices/e-invoice, bom); React Compiler skips memoizing it
-  const catalogRowVirtualizer = useVirtualizer({
-    count: filtered.length,
-    getScrollElement: () => productsScrollRef.current,
-    estimateSize: () => 45,
-    overscan: 10,
-  });
-
-  function totalConfigMinutes(cfg: ProductDeptConfig): number {
-    return cfg.fabCutMinutes + cfg.fabSewMinutes + cfg.foamMinutes + cfg.framingMinutes + cfg.upholsteryMinutes + cfg.packingMinutes;
-  }
+    for (const c of ANALYTIC_COLS) {
+      if (!c.applies(skuCat)) continue;
+      const pct = c.key === "laborPctP2" || c.key === "laborPctP1";
+      cols.push({
+        key: c.key,
+        label: c.label(skuCat),
+        width: `${trackFloorPx(c.width)}px`,
+        align: "right",
+        type: pct ? "number" : "currency",
+        defaultHidden: !c.defaultOn || undefined,
+        sortAccessor: (r) => sortValueFor(r._p, c.key),
+        exportValue: pct
+          ? (r) => (typeof r[c.key] === "number" ? Math.round((r[c.key] as number) * 10) / 10 : null)
+          : undefined,
+        render: (_v, r) => skuCellFor(c.key, r._p),
+      });
+    }
+    return cols;
+    // skuCellFor is rebuilt every render; these are the state it reads, so
+    // the columns (and the grid's filter pass) only rebuild when a cell would
+    // actually draw differently.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    baseCols, skuCat, sofaTier, sofaHeightList, editMode, dirtyEdits, expandedId, configMap,
+    editingPrice, priceInput, editingPrice1, price1Input, editingSeatPrices, seatPriceInputs,
+    editingM3, m3Input, editingFabricUsage, fabricUsageInput,
+    sortValueFor, filterValueFor,
+  ]);
 
   if (loading) {
     return (
@@ -3716,31 +4089,6 @@ export default function ProductsPage() {
                 </button>
               );
             })}
-          </div>
-          <div className="relative">
-            <svg
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#9CA3AF]"
-              viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden="true"
-            >
-              <circle cx="9" cy="9" r="6" />
-              <path d="M14 14l3.5 3.5" strokeLinecap="round" />
-            </svg>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search all products..."
-              className="pl-8 pr-7 py-1.5 rounded-md text-xs border border-[#E5E7EB] bg-white focus:outline-none focus:ring-1 focus:ring-[#6B5C32]/30 w-56"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-[#9CA3AF] hover:text-[#111827]"
-                title="Clear search"
-              >
-                ✕
-              </button>
-            )}
           </div>
           <div className="w-px h-5 bg-[#E5E7EB] mx-1" />
           <button
@@ -3830,178 +4178,6 @@ export default function ProductsPage() {
               </button>
             </>
           )}
-          {/* Filter toggle — shows/hides the per-column filter row under the
-              header. Every column (base + analytic) gets a filter input. The
-              badge shows how many columns are currently filtered; the row also
-              auto-stays-open while any filter is active so a filtered view is
-              never hidden. */}
-          <div className="w-px h-5 bg-[#E5E7EB] mx-1" />
-          {(() => {
-            const activeFilterCount = Object.values(colFilters).filter((v) =>
-              v.trim(),
-            ).length;
-            return (
-              <button
-                onClick={() => setShowFilterRow((v) => !v)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors inline-flex items-center gap-1.5 ${
-                  showFilterRow || activeFilterCount > 0
-                    ? "bg-[#F4F0E8] text-[#6B5C32] border-[#D9CEB3]"
-                    : "bg-white text-[#6B7280] border-[#E5E7EB] hover:bg-[#F3F4F6]"
-                }`}
-                title="Toggle per-column filter row"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden="true">
-                  <path d="M3 4.5h14l-5.5 6.5v4l-3 1.5v-5.5L3 4.5z" strokeLinejoin="round" />
-                </svg>
-                Filter
-                {activeFilterCount > 0 && (
-                  <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#6B5C32] text-white text-[9px] font-semibold">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </button>
-            );
-          })()}
-          {Object.values(colFilters).some((v) => v.trim()) && (
-            <button
-              onClick={clearAllColFilters}
-              className="px-2 py-1.5 rounded-md text-xs font-medium text-[#9A3A2D] hover:bg-[#F9E1DA] transition-colors"
-              title="Clear all column filters"
-            >
-              Clear filters
-            </button>
-          )}
-          {/* Columns chooser — show/hide ANY column (base + analytic) for the
-              active category. Per-browser persistence (localStorage), like the
-              Tier switcher. Frozen Code is always shown. */}
-          <div className="w-px h-5 bg-[#E5E7EB] mx-1" />
-          {(() => {
-            const catX: ProdCat =
-              categoryFilter === "SOFA"
-                ? "SOFA"
-                : categoryFilter === "ACCESSORY"
-                  ? "ACCESSORY"
-                  : "BEDFRAME";
-            const toggleableBase = baseCols[catX].filter(
-              (col) => !col.frozen && !col.alwaysOn,
-            );
-            const analyticForCat = ANALYTIC_COLS.filter((c) => c.applies(catX));
-            const hiddenCount =
-              toggleableBase.filter((col) => baseColVis[col.key] === false).length;
-            return (
-              <div className="relative">
-                <button
-                  onClick={() => setShowColMenu((v) => !v)}
-                  className="px-3 py-1.5 rounded-md text-xs font-medium bg-white text-[#6B7280] border border-[#E5E7EB] hover:bg-[#F3F4F6] transition-colors inline-flex items-center gap-1.5"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden="true">
-                    <rect x="3" y="3.5" width="14" height="13" rx="1.5" />
-                    <path d="M8.5 3.5v13M13 3.5v13" />
-                  </svg>
-                  Columns
-                  {hiddenCount > 0 && (
-                    <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#6B5C32] text-white text-[9px] font-semibold">
-                      {hiddenCount}
-                    </span>
-                  )}
-                </button>
-                {showColMenu && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-20"
-                      onClick={() => setShowColMenu(false)}
-                    />
-                    <div className="absolute right-0 mt-1 z-30 w-64 bg-white border border-[#E5E7EB] rounded-lg shadow-lg p-2 max-h-[70vh] overflow-y-auto">
-                      <div className="flex items-center justify-between px-2 py-1">
-                        <p className="text-[10px] font-semibold text-[#9CA3AF] uppercase tracking-wide">
-                          Columns
-                        </p>
-                        <button
-                          onClick={() => {
-                            // Reset layout: show all base columns, restore the
-                            // default column ORDER, clear manual widths, any
-                            // active sort, and all column filters. Analytics keep
-                            // their own defaults (left as-is so a chosen analytic
-                            // layout isn't surprising-cleared).
-                            setBaseColVis({});
-                            setColOrder({});
-                            persistColOrder({});
-                            setColWidths({});
-                            persistColWidths({});
-                            setSortCol(null);
-                            clearAllColFilters();
-                            if (typeof window !== "undefined") {
-                              try {
-                                window.localStorage.removeItem("hookka.products.baseCols");
-                              } catch {
-                                /* ignore */
-                              }
-                            }
-                          }}
-                          className="text-[10px] text-[#6B5C32] hover:underline font-medium"
-                        >
-                          Reset layout
-                        </button>
-                      </div>
-                      {/* Code is always shown — surfaced disabled so the owner
-                          sees it's pinned, not missing. */}
-                      <label className="flex items-center gap-2 px-2 py-1.5 rounded opacity-60 cursor-not-allowed">
-                        <input type="checkbox" checked disabled className="rounded border-[#D1D5DB] text-[#6B5C32]" />
-                        <span className="text-xs text-[#374151]">Product Code</span>
-                        <span className="ml-auto text-[9px] text-[#9CA3AF] uppercase">Frozen</span>
-                      </label>
-                      {toggleableBase.map((col) => (
-                        <label
-                          key={col.key}
-                          className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#F9FAFB] cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={baseColVis[col.key] !== false}
-                            onChange={() => toggleBaseCol(col.key)}
-                            className="rounded border-[#D1D5DB] text-[#6B5C32] focus:ring-[#6B5C32]"
-                          />
-                          <span className="text-xs text-[#374151]">
-                            {baseColChooserLabel(col)}
-                          </span>
-                        </label>
-                      ))}
-                      {analyticForCat.length > 0 && (
-                        <>
-                          <div className="my-1 border-t border-[#F3F4F6]" />
-                          <p className="px-2 py-1 text-[10px] font-semibold text-[#9CA3AF] uppercase tracking-wide">
-                            Analytics
-                          </p>
-                          {analyticForCat.map((c) => (
-                            <label
-                              key={c.key}
-                              className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#F9FAFB] cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={!!analyticColVis[c.key]}
-                                onChange={() => toggleAnalyticCol(c.key)}
-                                className="rounded border-[#D1D5DB] text-[#6B5C32] focus:ring-[#6B5C32]"
-                              />
-                              <span className="text-xs text-[#374151]">
-                                {c.label(catX)}
-                              </span>
-                            </label>
-                          ))}
-                        </>
-                      )}
-                      <div className="my-1 border-t border-[#F3F4F6]" />
-                      <p className="px-2 py-1 text-[10px] text-[#9CA3AF] leading-snug">
-                        Drag a header to reorder · drag its right edge to resize ·
-                        click to sort · use the Filter button for per-column
-                        filters. Reset layout restores the default order.
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })()}
           {/* Tier switcher — only meaningful for sofas (5 height columns
               are tier-aware). Renders as a single segmented control so the
               row-per-row table layout is preserved; clicking a tier re-renders
@@ -4225,1048 +4401,35 @@ export default function ProductsPage() {
       {/* Maintenance View */}
       {viewMode === "maintenance" && <MaintenanceView />}
 
-      {/* Table — column layout driven by the BASE_COLS registry + the
-          owner's per-column visibility / width / sort prefs. */}
-      {viewMode === "skuMaster" && (() => {
-        const isSofa = categoryFilter === "SOFA";
-        const isAccessory = categoryFilter === "ACCESSORY";
-        const cat: ProdCat = isSofa ? "SOFA" : isAccessory ? "ACCESSORY" : "BEDFRAME";
-        // The base columns this category defines, filtered to the ones the
-        // owner currently has shown. The Code column is always present (frozen).
-        const visibleBaseCols = baseCols[cat].filter((col) =>
-          isBaseColVisible(col),
-        );
-        // A hidden base / analytic column simply isn't in orderedCols (built
-        // below), so its header cell, body cell, and grid track all drop in
-        // lockstep — the body renders strictly from orderedCols, never a
-        // per-cell visibility gate, so reorder + hide stay aligned.
-        // The analytic columns the chooser currently has switched on, for this
-        // category. Their grid tracks are appended to gridTemplateColumns so the
-        // header + body cells line up; widths come from each column's def.
-        const activeAnalyticCols = ANALYTIC_COLS.filter(
-          (c) => c.applies(cat) && analyticColVis[c.key],
-        );
-        // One <td colSpan> spans the whole grid row; the actual columns live in
-        // the inner CSS grid, so colSpan just needs to cover them all.
-        const colSpanN = visibleBaseCols.length + activeAnalyticCols.length;
-        // Track width for a base column: a manual drag-width (px) overrides the
-        // responsive minmax() default. minmax() floors keep a column from
-        // crushing below its min when many columns are shown (owner: "被挤压了").
-        const trackFor = (key: string, fallback: string) =>
-          colWidths[key] != null ? `${colWidths[key]}px` : fallback;
-        // Single ordered list of EVERY visible column (base + active analytics).
-        // The header row, the per-column filter row, the resize handles, the
-        // grid-template-columns track string, AND every body row's cells all
-        // iterate THIS one list, so they can never drift out of lockstep no
-        // matter how the owner reorders columns. `label` is the clean name;
-        // `frozen` marks the sticky Code column (always emitted first);
-        // `fallbackWidth` is the registry minmax() track, used for both the grid
-        // track (when no manual width is set) and the resize handle's start width.
-        type OrderedCol = {
-          key: string;
-          label: string;
-          frozen: boolean;
-          fallbackWidth: string;
-          align: BaseColAlign;
-        };
-        // Build the natural (registry track) order first: base columns, then the
-        // active analytics, exactly as before. Then apply the owner's saved
-        // drag-reorder for this category (frozen Code stays pinned first).
-        const naturalCols: OrderedCol[] = [
-          ...visibleBaseCols.map((col) => ({
-            key: col.key,
-            label: baseColChooserLabel(col),
-            frozen: !!col.frozen,
-            fallbackWidth: col.width,
-            align: col.align,
-          })),
-          ...activeAnalyticCols.map((c) => ({
-            key: c.key,
-            label: c.label(cat),
-            frozen: false,
-            fallbackWidth: c.width,
-            align: "right" as const,
-          })),
-        ];
-        const colByKey = new Map(naturalCols.map((c) => [c.key, c] as const));
-        const frozenKeys = new Set(
-          naturalCols.filter((c) => c.frozen).map((c) => c.key),
-        );
-        const orderedKeys = applyColOrder(
-          naturalCols.map((c) => c.key),
-          frozenKeys,
-          cat,
-        );
-        const orderedCols: OrderedCol[] = orderedKeys.map(
-          (k) => colByKey.get(k)!,
-        );
-        // The movable (non-frozen) keys in their current visual order — the drag
-        // handlers splice within this list so frozen Code is never displaced.
-        const orderedMovableKeys = orderedCols
-          .filter((c) => !c.frozen)
-          .map((c) => c.key);
-        // grid-template-columns + min-width are derived FROM orderedCols (not the
-        // raw registry order) so the tracks follow the reordered header/body in
-        // lockstep. A manual drag-width overrides the registry minmax() track.
-        const gridColsFull = orderedCols
-          .map((c) => trackFor(c.key, c.fallbackWidth))
-          .join(" ");
-        // UNIFORM header style — every header cell (base + analytic) has the
-        // same padding and baseline, and lines up with its column body (right
-        // for numbers, centre for Variants). Sort arrow + resize handle on all.
-        const thCls =
-          "px-3 py-2 text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider";
-        const thJustify: Record<BaseColAlign, string> = {
-          left: "justify-start text-left",
-          right: "justify-end text-right",
-          center: "justify-center text-center",
-        };
-        // Give the scroll container a min-width so columns scroll horizontally
-        // instead of crushing once the table outgrows the viewport. Derived
-        // from the visible columns' minmax floors (digits parsed from each
-        // track) so it tracks show/hide + manual widths automatically.
-        const floorPx = (track: string): number => {
-          if (track.endsWith("px")) {
-            const n = parseInt(track, 10);
-            return Number.isFinite(n) ? n : 90;
+      {/* SKU Master list — the shared DataGrid (header menu, drag, column
+          chooser + saved / team layouts, URL-kept search / filters / sort,
+          Retry). Row click opens the detail panel under the row. */}
+      {viewMode === "skuMaster" && (
+        <DataGrid<SkuRow>
+          key={skuGridId}
+          gridId={skuGridId}
+          columns={skuColumns}
+          data={skuRows}
+          keyField="id"
+          onRowClick={(r) => setExpandedId((cur) => (cur === r.id ? null : r.id))}
+          expandedRowKey={expandedId}
+          renderRowDetail={(r) => renderSkuDetail(r._p)}
+          rowClassName={(r) =>
+            expandedId === r.id ? "bg-[#F4F0E8]" : isProductDirty(r.id) ? "bg-[#FEFBF0]" : ""
           }
-          const m = track.match(/minmax\((\d+)px/);
-          return m ? parseInt(m[1], 10) : 90;
-        };
-        const totalFloor = orderedCols.reduce(
-          (sum, c) => sum + floorPx(trackFor(c.key, c.fallbackWidth)),
-          0,
-        );
-        // Only force horizontal scroll once the floors exceed a comfortable
-        // baseline, so a trimmed-down table still fits without a scrollbar.
-        const gridMinWidth = totalFloor > 1040 ? `${totalFloor}px` : undefined;
-        // Header cell with an optional sort affordance + a resize handle on the
-        // right edge. Frozen Code gets special sticky styling inline below.
-        const sortIndicator = (key: string) =>
-          sortCol === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
-        return (
-      <div className="bg-white rounded-lg border border-[#E5E7EB] overflow-hidden">
-        <div
-          ref={productsScrollRef}
-          className="overflow-auto"
-          style={{ maxHeight: "calc(100vh - 320px)" }}
-        >
-          <table className="min-w-full divide-y divide-[#E5E7EB]">
-            <thead className="bg-[#F9FAFB] sticky top-0 z-10">
-              {/* Header row — UNIFORM cells driven by the single orderedCols
-                  list so header / filter / body never drift out of lockstep.
-                  Every column: click-to-sort (asc → desc → off), a drag handle
-                  on the right edge for manual width (double-click resets), and
-                  identical padding / left-alignment / baseline. The frozen Code
-                  column stays sticky-left with an invisible chevron spacer so
-                  its label lines up with the body's code text (expand arrow in
-                  front). */}
-              <tr>
-                <th colSpan={colSpanN} className="p-0">
-                  <div className="grid" style={{ gridTemplateColumns: gridColsFull, minWidth: gridMinWidth }}>
-                    {orderedCols.map((col) => {
-                      const active = sortCol === col.key;
-                      // The frozen Code column is pinned first and cannot be
-                      // dragged or used as a drop target — every movable column
-                      // reorders only among themselves. While a column is being
-                      // dragged, the column under the pointer gets a left/right
-                      // accent bar showing where it would land.
-                      const isDragging = draggingColKey === col.key;
-                      const isDropTarget =
-                        !col.frozen &&
-                        dragOverColKey === col.key &&
-                        draggingColKey !== null &&
-                        draggingColKey !== col.key;
-                      // Drop bar side: if the dragged column currently sits to
-                      // the LEFT of this one it would insert AFTER (right edge),
-                      // otherwise BEFORE (left edge).
-                      const dropOnRight =
-                        isDropTarget &&
-                        orderedMovableKeys.indexOf(draggingColKey!) <
-                          orderedMovableKeys.indexOf(col.key);
-                      return (
-                        <div
-                          key={col.key}
-                          draggable={!col.frozen}
-                          onDragStart={(e) => {
-                            if (col.frozen) return;
-                            setDraggingColKey(col.key);
-                            e.dataTransfer.effectAllowed = "move";
-                            // Firefox requires data to be set for drag to start.
-                            try {
-                              e.dataTransfer.setData("text/plain", col.key);
-                            } catch {
-                              /* some browsers disallow setData here */
-                            }
-                          }}
-                          onDragOver={(e) => {
-                            // Allow a drop only onto another movable column.
-                            if (col.frozen || draggingColKey === null) return;
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = "move";
-                            if (dragOverColKey !== col.key)
-                              setDragOverColKey(col.key);
-                          }}
-                          onDragLeave={() => {
-                            if (dragOverColKey === col.key) setDragOverColKey(null);
-                          }}
-                          onDrop={(e) => {
-                            if (col.frozen || draggingColKey === null) return;
-                            e.preventDefault();
-                            reorderColumn(
-                              draggingColKey,
-                              col.key,
-                              orderedMovableKeys,
-                              cat,
-                            );
-                            setDraggingColKey(null);
-                            setDragOverColKey(null);
-                          }}
-                          onDragEnd={() => {
-                            setDraggingColKey(null);
-                            setDragOverColKey(null);
-                          }}
-                          onClick={() => toggleSort(col.key)}
-                          title={col.frozen ? "Click to sort" : "Drag to reorder · click to sort"}
-                          className={`${thCls} ${thJustify[col.align]} relative group/th flex items-center gap-1 min-w-0 select-none hover:text-[#374151] ${
-                            col.frozen ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
-                          } ${
-                            col.frozen
-                              ? "sticky left-0 z-20 bg-[#F9FAFB] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.08)]"
-                              : ""
-                          } ${active ? "text-[#6B5C32]" : ""} ${
-                            isDragging ? "opacity-40" : ""
-                          }`}
-                        >
-                          {/* Drop-position indicator — a thin accent bar on the
-                              edge the dragged column would land against. */}
-                          {isDropTarget && (
-                            <span
-                              aria-hidden="true"
-                              className={`absolute top-0 ${
-                                dropOnRight ? "right-0" : "left-0"
-                              } h-full w-0.5 bg-[#6B5C32]`}
-                            />
-                          )}
-                          {col.frozen && (
-                            <span className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
-                          )}
-                          <span className="truncate" title={col.label}>{col.label}</span>
-                          <span className="text-[#9CA3AF] text-[9px] leading-none">
-                            {sortIndicator(col.key)}
-                          </span>
-                          {/* Resize handle — drag to set px width, dbl-click
-                              to clear back to the responsive default. Not a
-                              reorder handle: it must not start a column drag, so
-                              draggable is force-off here and drag events are
-                              swallowed (grabbing the edge resizes, the rest of
-                              the header drags-to-reorder). */}
-                          <span
-                            draggable={false}
-                            onDragStart={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                            onMouseDown={(e) =>
-                              beginColResize(
-                                e,
-                                col.key,
-                                colWidths[col.key] ?? floorPx(col.fallbackWidth),
-                              )
-                            }
-                            onDoubleClick={(e) => {
-                              e.stopPropagation();
-                              clearColWidth(col.key);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            title="Drag to resize · double-click to reset"
-                            className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/th:opacity-100 hover:bg-[#6B5C32]/30 transition-opacity"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {/* Per-column filter row — one input per visible column, in
-                      the SAME grid track order as the header + body. Toggled by
-                      the "Filter" button; auto-shown while any filter is active.
-                      Each input is a case-insensitive substring match against
-                      that column's displayed value (filterValueFor). The frozen
-                      Code filter cell is sticky-left to match its header/body. */}
-                  {(showFilterRow ||
-                    Object.values(colFilters).some((v) => v.trim())) && (
-                    <div
-                      className="grid border-t border-[#E5E7EB] bg-white"
-                      style={{ gridTemplateColumns: gridColsFull, minWidth: gridMinWidth }}
-                    >
-                      {orderedCols.map((col) => (
-                        <div
-                          key={col.key}
-                          className={`px-2 py-1 ${
-                            col.frozen
-                              ? "sticky left-0 z-[15] bg-white shadow-[2px_0_5px_-2px_rgba(0,0,0,0.08)]"
-                              : ""
-                          }`}
-                        >
-                          <input
-                            type="text"
-                            value={colFilters[col.key] ?? ""}
-                            onChange={(e) => setColFilter(col.key, e.target.value)}
-                            placeholder="Filter…"
-                            aria-label={`Filter ${col.label}`}
-                            className={`w-full min-w-0 text-[11px] rounded border px-1.5 py-1 bg-white focus:outline-none focus:border-[#6B5C32] focus:ring-1 focus:ring-[#6B5C32]/30 ${
-                              (colFilters[col.key] ?? "").trim()
-                                ? "border-[#6B5C32] bg-[#FBF8EE]"
-                                : "border-[#E5E7EB]"
-                            }`}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#E5E7EB]">
-              {(() => {
-                const vItems = catalogRowVirtualizer.getVirtualItems();
-                const padTop = vItems.length > 0 ? vItems[0].start : 0;
-                const padBottom =
-                  vItems.length > 0
-                    ? catalogRowVirtualizer.getTotalSize() -
-                      vItems[vItems.length - 1].end
-                    : 0;
-                return (
-                  <>
-                    {padTop > 0 && (
-                      <tr aria-hidden="true">
-                        <td
-                          colSpan={colSpanN}
-                          style={{ height: padTop, padding: 0, border: 0 }}
-                        />
-                      </tr>
-                    )}
-                    {vItems.map((vi) => {
-                const p = filtered[vi.index];
-                if (!p) return null;
-                const cfg = configMap.get(p.code);
-                const isExpanded = expandedId === p.id;
-                // /api/products now returns productionTimeMinutes derived
-                // live from the active BOM template, so prefer that over
-                // the legacy product_dept_configs (cfg) snapshot — which
-                // doesn't track BOM edits. cfg is only used when the API
-                // returns 0 (e.g. SKU has no active template yet).
-                const totalMin = p.productionTimeMinutes > 0
-                  ? p.productionTimeMinutes
-                  : (cfg ? totalConfigMinutes(cfg) : 0);
-                const price1Val = p.price1Sen ?? 0;
-                const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
-                const price3Val = productPrice3Sen(p);
-                // Estimated labor cost for this SKU = total production minutes
-                // × flat-average labor rate (see LABOR_RATE_PER_MIN_SEN). 0 when
-                // the SKU has no minutes yet — rendered as "—" downstream.
-                const laborCostSen = laborCostSenForMinutes(totalMin);
-                // Sofa selling price for the analytic columns = lowest positive
-                // seat-height price in the selected tier (mirrors the expand
-                // panel's representative-price logic). 0 for non-sofas, which
-                // fall back to basePriceSen / price1Sen below.
-                const sofaRepPriceSen = isSofa
-                  ? ((p.seatHeightPrices || [])
-                      .filter((s) => entryTier(s.tier) === sofaTier && s.priceSen > 0)
-                      .sort((a, b) => a.priceSen - b.priceSen)[0]?.priceSen ?? 0)
-                  : 0;
-                // Per-SKU default variants — read straight from the product
-                // row. The badge shows "✓ Configured" when ANY default field
-                // is set, otherwise "Configure". Counting the number of set
-                // fields in a summary list below.
-                const variantDefaults: ProductDefaultVariants = p.defaultVariants ?? {};
-                const variantSetCount =
-                  (variantDefaults.fabricCode ? 1 : 0) +
-                  (variantDefaults.divanHeight ? 1 : 0) +
-                  (variantDefaults.legHeight ? 1 : 0) +
-                  (variantDefaults.gap ? 1 : 0) +
-                  (variantDefaults.seatHeight ? 1 : 0) +
-                  ((variantDefaults.specials?.length ?? 0) > 0 ? 1 : 0);
-                const hasVariantDefaults = variantSetCount > 0;
-                const isEditingThisPrice = editingPrice === p.id;
-                // Zebra striping + state tints. The sticky Code column must use
-                // an OPAQUE background that matches its row's stripe, otherwise
-                // body cells would show through it on horizontal scroll. Expanded
-                // and dirty rows get a soft accent so they stand out.
-                const zebra = vi.index % 2 === 1;
-                const rowDirty = isProductDirty(p.id);
-                const rowGridBg = isExpanded
-                  ? "bg-[#F4F0E8]"
-                  : rowDirty
-                    ? "bg-[#FEFBF0]"
-                    : zebra
-                      ? "bg-[#FCFCFB]"
-                      : "bg-white";
-                const rowStickyBg = isExpanded
-                  ? "bg-[#F4F0E8]"
-                  : rowDirty
-                    ? "bg-[#FEFBF0]"
-                    : zebra
-                      ? "bg-[#FCFCFB]"
-                      : "bg-white";
-
-                return (
-                  <tr
-                    key={p.id}
-                    data-index={vi.index}
-                    ref={catalogRowVirtualizer.measureElement}
-                    className="group"
-                  >
-                    <td colSpan={colSpanN} className="p-0">
-                      {/* Main row */}
-                      <div
-                        className={`grid items-center cursor-pointer transition-colors ${rowGridBg} hover:bg-[#F4F2EC]`}
-                        style={{ gridTemplateColumns: gridColsFull, minWidth: gridMinWidth }}
-                        onClick={() => setExpandedId(isExpanded ? null : p.id)}
-                      >
-                        <div className={`px-3 py-1.5 self-stretch min-w-0 flex items-center gap-1.5 sticky left-0 z-[5] ${rowStickyBg} group-hover:bg-[#F4F2EC] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.08)]`}>
-                          <svg
-                            className={`w-3.5 h-3.5 text-[#9CA3AF] transition-transform flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`}
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                          </svg>
-                          <span className="text-xs font-medium text-[#111827] whitespace-nowrap truncate min-w-0" title={p.code}>{p.code}</span>
-                          {/* Schedule master price change. Same dialog drives the whole
-                              row (works for BF Price 2/Price 1 and Sofa seat tiers).
-                              stopPropagation so the click doesn't toggle the row's
-                              expansion state. */}
-                          <button
-                            type="button"
-                            title="Schedule price change"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setScheduleProductId(p.id);
-                            }}
-                            className={`p-1 rounded flex-shrink-0 ${
-                              p.hasPendingPriceChange
-                                ? "text-[#B8601A] hover:bg-[#FBE4CE]"
-                                : "text-[#9CA3AF] hover:text-[#6B5C32] hover:bg-[#F4F0E8]"
-                            }`}
-                          >
-                            <Calendar className="h-3.5 w-3.5" />
-                          </button>
-                          {p.hasPendingPriceChange && (
-                            <span
-                              title={
-                                p.pendingEffectiveFrom
-                                  ? `Next price change effective ${p.pendingEffectiveFrom}`
-                                  : "A future-dated price change is queued"
-                              }
-                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-[#FBE4CE] text-[#B8601A] border border-[#E8B786]"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setScheduleProductId(p.id);
-                              }}
-                            >
-                              Pending
-                              {p.pendingEffectiveFrom &&
-                                (() => {
-                                  const t = new Date(
-                                    todayYmdMY() +
-                                      "T00:00:00Z",
-                                  ).getTime();
-                                  const d = new Date(
-                                    p.pendingEffectiveFrom + "T00:00:00Z",
-                                  ).getTime();
-                                  const days = Math.round(
-                                    (d - t) / 86400000,
-                                  );
-                                  return ` · ${days}d`;
-                                })()}
-                            </span>
-                          )}
-                        </div>
-                        {/* Body cells, keyed by column key, then rendered in the
-                            SAME order as the header via orderedCols (below). The
-                            grid uses ONE ordered list, so reordering a column in
-                            the header reorders its body cell in lockstep — header
-                            and body can never misalign. Each cell's JSX (and its
-                            inline edit / dirty behaviour) is unchanged; only the
-                            iteration order is now data-driven. Hidden columns
-                            aren't in orderedCols, so their cells never render. */}
-                        {(() => {
-                          const norm = (v: unknown) => String(v ?? "").replace('"', '').trim();
-                          const bodyCellByKey: Record<string, ReactNode> = {
-                            description: (
-                              <div className="px-3 py-1.5 min-w-0">
-                                <span className="text-xs text-[#111827] truncate block" title={p.name}>{p.name}</span>
-                                <span className="block text-[11px] text-[#9CA3AF] truncate" title={p.description}>{p.description}</span>
-                              </div>
-                            ),
-                            model: (
-                              <div className="px-3 py-1.5 text-sm text-[#111827] truncate" title={p.baseModel}>{p.baseModel}</div>
-                            ),
-                            category: (
-                              <div className="px-3 py-1.5 min-w-0 flex items-center" title={p.category}>
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium max-w-full truncate ${
-                                  p.category === "BEDFRAME" ? "bg-[#FAEFCB] text-[#9C6F1E]" : "bg-[#E0EDF0] text-[#3E6570]"
-                                }`}>
-                                  {p.category}
-                                </span>
-                              </div>
-                            ),
-                            size: (
-                              <div className="px-3 py-1.5 text-sm text-[#111827] truncate" title={p.sizeLabel}>{p.sizeLabel}</div>
-                            ),
-                            price2: (
-                            <div className="px-3 py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
-                              {isEditingThisPrice ? (
-                                <input
-                                  autoFocus
-                                  type="number" onFocus={(e) => e.currentTarget.select()}
-                                  value={priceInput}
-                                  onChange={(e) => setPriceInput(e.target.value)}
-                                  onBlur={() => {
-                                    // BUG-2026-08-13-095 - one money parser; an
-                                    // unreadable entry abandons the edit instead of
-                                    // writing NaN into the product's base price.
-                                    const val = moneyFieldToSen(priceInput);
-                                    setEditingPrice(null);
-                                    if (val === null) return;
-                                    // Local-only update — bulk Save batches every dirty
-                                    // cell into one product_prices row at the picked
-                                    // effective date.
-                                    setProducts((prev) => prev.map((pr) => pr.id === p.id ? { ...pr, basePriceSen: val } : pr));
-                                    recordDirty(p.id, { basePriceSen: val });
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                    if (e.key === "Escape") setEditingPrice(null);
-                                  }}
-                                  className="w-full text-right text-sm border border-[#6B5C32] rounded px-2 py-0.5 bg-[#FAEFCB] focus:outline-none"
-                                  step="0.01"
-                                />
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    if (!editMode) return;
-                                    setEditingPrice(p.id);
-                                    setPriceInput((basePrice / 100).toFixed(2));
-                                  }}
-                                  className={`text-sm font-medium ${
-                                    isProductDirty(p.id) && dirtyEdits.get(p.id)?.basePriceSen !== undefined
-                                      ? "bg-[#FEF7E0] px-1.5 rounded text-[#9C6F1E]"
-                                      : "text-[#111827]"
-                                  } ${editMode ? "hover:text-[#6B5C32] hover:underline cursor-pointer" : "cursor-default"}`}
-                                >
-                                  {basePrice > 0 ? formatCurrency(basePrice) : <span className="text-[#9CA3AF]">Set price</span>}
-                                </button>
-                              )}
-                            </div>
-                            ),
-                            price1: (
-                            <div className="px-3 py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
-                              {editingPrice1 === p.id ? (
-                                <input
-                                  autoFocus
-                                  type="number" onFocus={(e) => e.currentTarget.select()}
-                                  value={price1Input}
-                                  onChange={(e) => setPrice1Input(e.target.value)}
-                                  onBlur={() => {
-                                    const val = moneyFieldToSen(price1Input);
-                                    setEditingPrice1(null);
-                                    if (val === null) return;
-                                    setProducts((prev) => prev.map((pr) => pr.id === p.id ? { ...pr, price1Sen: val } : pr));
-                                    recordDirty(p.id, { price1Sen: val });
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                    if (e.key === "Escape") setEditingPrice1(null);
-                                  }}
-                                  className="w-full text-right text-sm border border-[#6B5C32] rounded px-2 py-0.5 bg-[#FAEFCB] focus:outline-none"
-                                  step="0.01"
-                                />
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    if (!editMode) return;
-                                    setEditingPrice1(p.id);
-                                    setPrice1Input((price1Val / 100).toFixed(2));
-                                  }}
-                                  className={`text-sm font-medium ${
-                                    isProductDirty(p.id) && dirtyEdits.get(p.id)?.price1Sen !== undefined
-                                      ? "bg-[#FEF7E0] px-1.5 rounded text-[#9C6F1E]"
-                                      : "text-[#111827]"
-                                  } ${editMode ? "hover:text-[#6B5C32] hover:underline cursor-pointer" : "cursor-default"}`}
-                                >
-                                  {price1Val > 0 ? formatCurrency(price1Val) : <span className="text-[#9CA3AF]">-</span>}
-                                </button>
-                              )}
-                            </div>
-                            ),
-                            price3: (
-                            <div className="px-3 py-1.5 text-right">
-                              <span className="text-sm font-medium text-[#111827]">
-                                {price3Val ? formatCurrency(price3Val) : <span className="text-[#9CA3AF]">-</span>}
-                              </span>
-                            </div>
-                            ),
-                            basePrice: (
-                            <div className="px-3 py-1.5 text-right">
-                              <span className="text-sm font-medium text-[#111827]">
-                                {basePrice > 0 ? formatCurrency(basePrice) : <span className="text-[#9CA3AF]">-</span>}
-                              </span>
-                            </div>
-                            ),
-                            // Unit (m³) / Fabric (m) — editMode-gated, defers to Save
-                            unitM3: renderUnitM3Cell(p, cfg),
-                            fabric: renderFabricCell(p, cfg),
-                            totalMin: (
-                            <div className="px-3 py-1.5 text-right truncate" title={`${totalMin} min`}>
-                              <div className="text-sm font-medium text-[#111827] truncate">{totalMin} min</div>
-                              {/* Labor cost moved to its own "Labor (est.)"
-                                  column — no longer duplicated under Total Min
-                                  (owner 2026-06-17). */}
-                            </div>
-                            ),
-                            variants: (
-                            <div className="px-3 py-1.5 flex justify-center" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={() => setEditingVariant(p)}
-                                className={`text-[10px] font-medium px-2 py-1 rounded-full border transition-colors ${
-                                  hasVariantDefaults
-                                    ? "bg-[#EEF3E4] text-[#4F7C3A] border-[#C6DBA8] hover:bg-[#EEF3E4]"
-                                    : "bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100"
-                                }`}
-                                title={
-                                  hasVariantDefaults
-                                    ? "Edit default variants for this SKU"
-                                    : "Configure default variants — Sales Order will pre-fill from these"
-                                }
-                              >
-                                {hasVariantDefaults ? `${variantSetCount} set` : "Configure"}
-                              </button>
-                            </div>
-                            ),
-                          };
-                          // Sofa per-seat-height price cells (one per height key).
-                          // Identical edit behaviour as before; keys follow the
-                          // dynamic Maintenance Sizes list (h20, h24, …) so they
-                          // slot into orderedCols like any other column.
-                          if (isSofa) {
-                            for (const h of sofaHeightList.map((n) => `${n}"`)) {
-                              const hNum = h.replace('"', '');
-                              // Cell read: scope by (height, current tier). Legacy
-                              // entries with no `tier` resolve to P2 via entryTier(),
-                              // so an old SKU that only has flat per-height prices
-                              // shows up under the P2 toggle and looks empty under
-                              // P1 / P3 until those cells are first edited.
-                              const sh = (p.seatHeightPrices || []).find(
-                                (s) => norm(s.height) === hNum && entryTier(s.tier) === sofaTier,
-                              );
-                              const editKey = `${p.id}__${h}__${sofaTier}`;
-                              const isEditingThis = editingSeatPrices === editKey;
-                              bodyCellByKey[`h${hNum}`] = (
-                                <div className="px-3 py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
-                                  {isEditingThis ? (
-                                    <input
-                                      autoFocus
-                                      type="number" onFocus={(e) => e.currentTarget.select()}
-                                      step="0.01"
-                                      value={seatPriceInputs[h] ?? ""}
-                                      onChange={(e) => setSeatPriceInputs((prev) => ({ ...prev, [h]: e.target.value }))}
-                                      onBlur={() => {
-                                        const val = moneyFieldToSen(seatPriceInputs[h] ?? "");
-                                        setEditingSeatPrices(null);
-                                        if (val === null) return;
-                                        const hN = h.replace('"', '');
-                                        let arr = p.seatHeightPrices || [];
-                                        // Match by BOTH height and current tier so editing
-                                        // P1 doesn't overwrite an existing P2 cell. Legacy
-                                        // untiered entries match the P2 view (entryTier
-                                        // defaults), so a P2 edit upgrades an old
-                                        // {height,priceSen} row in place by writing an
-                                        // explicit tier:'PRICE_2'.
-                                        const matches = (s: typeof arr[number]) =>
-                                          norm(s.height) === hN && entryTier(s.tier) === sofaTier;
-                                        if (!arr.find(matches)) {
-                                          arr = [...arr, { height: hN, priceSen: val, tier: sofaTier }];
-                                        }
-                                        const updated = arr.map((s) =>
-                                          matches(s) ? { height: hN, priceSen: val, tier: sofaTier } : s
-                                        );
-                                        // Mark the cell dirty in local state so the table
-                                        // reflects the edit immediately, but DON'T touch
-                                        // products yet — the bulk Save flow batches every
-                                        // dirty cell into one product_prices row when the
-                                        // user picks an effective date.
-                                        setProducts((prev) => prev.map((pr) => pr.id === p.id ? { ...pr, seatHeightPrices: updated } : pr));
-                                        recordDirty(p.id, { seatHeightPrices: updated });
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                        if (e.key === "Escape") setEditingSeatPrices(null);
-                                      }}
-                                      className="w-full text-right text-xs border border-[#6B5C32] rounded px-1 py-0.5 bg-[#FAEFCB] focus:outline-none"
-                                    />
-                                  ) : (
-                                    <button
-                                      onClick={() => {
-                                        if (!editMode) return;
-                                        setSeatPriceInputs({ [h]: ((sh?.priceSen ?? 0) / 100).toFixed(2) });
-                                        setEditingSeatPrices(editKey);
-                                      }}
-                                      className={`text-sm tabular-nums ${
-                                        isSeatCellDirty(p.id, hNum, sofaTier)
-                                          ? "bg-[#FEF7E0] px-1.5 rounded text-[#9C6F1E] font-semibold"
-                                          : "text-[#111827]"
-                                      } ${editMode ? "hover:text-[#6B5C32] hover:underline cursor-pointer" : "cursor-default"}`}
-                                    >
-                                      {sh && sh.priceSen > 0 ? formatCurrency(sh.priceSen) : <span className="text-[#9CA3AF]">-</span>}
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            }
-                          }
-                          // Analytic cells (Labor / Margin / Labor %), keyed by
-                          // each analytic column's key. Same computation as before.
-                          for (const c of activeAnalyticCols) {
-                            const mainPrice = isSofa ? sofaRepPriceSen : basePrice;
-                            const priceFor =
-                              c.key === "marginP1" || c.key === "laborPctP1"
-                                ? price1Val
-                                : mainPrice;
-                            const isPct =
-                              c.key === "laborPctP2" || c.key === "laborPctP1";
-                            bodyCellByKey[c.key] = (
-                              <div
-                                className="px-3 py-1.5 text-right text-sm tabular-nums truncate"
-                                title={filterValueFor(p, c.key) || "—"}
-                              >
-                                {c.key === "labor" ? (
-                                  laborCostSen > 0 ? (
-                                    formatCurrency(laborCostSen)
-                                  ) : (
-                                    <span className="text-[#9CA3AF]">—</span>
-                                  )
-                                ) : priceFor <= 0 || laborCostSen <= 0 ? (
-                                  <span className="text-[#9CA3AF]">—</span>
-                                ) : isPct ? (
-                                  <span className="text-[#111827]">
-                                    {((laborCostSen / priceFor) * 100).toFixed(1)}%
-                                  </span>
-                                ) : (
-                                  (() => {
-                                    const m = priceFor - laborCostSen;
-                                    return (
-                                      <span
-                                        className={
-                                          m >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"
-                                        }
-                                      >
-                                        {formatCurrency(m)}
-                                        <span className="ml-1 text-[10px] text-[#9CA3AF]">
-                                          ({((m / priceFor) * 100).toFixed(1)}%)
-                                        </span>
-                                      </span>
-                                    );
-                                  })()
-                                )}
-                              </div>
-                            );
-                          }
-                          // Render every non-frozen column's cell in the exact
-                          // header order. The frozen Code cell is rendered above
-                          // (sticky-left); here we emit the rest from orderedCols
-                          // so body order === header order === grid-track order.
-                          return orderedCols
-                            .filter((col) => !col.frozen)
-                            .map((col) => (
-                              <Fragment key={col.key}>
-                                {bodyCellByKey[col.key] ?? null}
-                              </Fragment>
-                            ));
-                        })()}
-                      </div>
-                      {/* Expanded section */}
-                      {isExpanded && (
-                        <div className="px-4 pb-4 space-y-3">
-                          {cfg && <ProductionConfig config={cfg} />}
-
-                          {/* ---- Price vs Labor (Margin) ----
-                              Owner-requested side-by-side: each selling price
-                              (Price 2 = company default tier `basePriceSen`,
-                              Price 1 = `price1Sen`) against the estimated labor
-                              cost, with margin = price − labor in RM and %.
-                              Labor here is the flat-average estimate (RM2,200 /
-                              26d / 9h / 60 — see LABOR_RATE_PER_MIN_SEN), NOT
-                              full landed cost, so "margin" is price-minus-labor
-                              only. Existing price labels are kept verbatim. */}
-                          <div className="bg-[#FAF9F7] border border-[#E5E7EB] rounded-lg p-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="text-sm font-semibold text-[#374151]">
-                                Price vs Labor (Margin)
-                              </h4>
-                              <span className="text-[10px] text-[#9CA3AF] italic">
-                                Labor = est. {formatCurrency(LABOR_RATE_PER_MIN_SEN)}/min × {totalMin} min
-                                {" "}(RM 2,200/mo ÷ 26d ÷ 9h)
-                              </span>
-                            </div>
-                            {(() => {
-                              // Margin row helper. price in sen; "—" when the
-                              // price is unset (0) or minutes unknown so we never
-                              // show a fake 100% margin against zero labor.
-                              const marginRow = (label: string, priceSen: number) => {
-                                const hasPrice = priceSen > 0;
-                                const hasLabor = laborCostSen > 0;
-                                const marginSen = priceSen - laborCostSen;
-                                const marginPct = hasPrice
-                                  ? (marginSen / priceSen) * 100
-                                  : null;
-                                return (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">{label}</div>
-                                    <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
-                                      {hasPrice ? formatCurrency(priceSen) : <span className="text-[#9CA3AF]">—</span>}
-                                    </div>
-                                    <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">
-                                      Labor {hasLabor ? formatCurrency(laborCostSen) : "—"}
-                                    </div>
-                                    <div className="text-[11px] tabular-nums">
-                                      {hasPrice && hasLabor ? (
-                                        <span className={marginSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
-                                          Margin {formatCurrency(marginSen)}
-                                          {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
-                                        </span>
-                                      ) : (
-                                        <span className="text-[#9CA3AF]">Margin —</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              };
-
-                              // Labor-only card — reads even when a SKU has no
-                              // price set yet. Shared by both layouts below.
-                              const laborCard = (
-                                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">Labor Cost (est.)</div>
-                                  <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
-                                    {laborCostSen > 0 ? formatCurrency(laborCostSen) : <span className="text-[#9CA3AF]">—</span>}
-                                  </div>
-                                  <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">{totalMin} min</div>
-                                </div>
-                              );
-
-                              // Sofas don't carry flat price1Sen/basePriceSen —
-                              // their selling prices live in seatHeightPrices[]
-                              // per (seat height, tier). Showing the flat Price 2/
-                              // Price 1/Margin cards therefore reads "—" even for a
-                              // sofa that DOES have prices, which is misleading. So
-                              // for sofas we derive a representative price = the
-                              // lowest positive seat-height price in the currently
-                              // selected tier (sofaTier) and compute the margin
-                              // against THAT, labelled "from RM x (seat height …)".
-                              if (isSofa) {
-                                const tierRep = (p.seatHeightPrices || [])
-                                  .filter(
-                                    (s) => entryTier(s.tier) === sofaTier && s.priceSen > 0,
-                                  )
-                                  .sort((a, b) => a.priceSen - b.priceSen)[0];
-                                const tierLabel =
-                                  SOFA_TIERS.find((t) => t.value === sofaTier)?.label ?? "";
-                                const repPriceSen = tierRep?.priceSen ?? 0;
-                                const hasRep = repPriceSen > 0;
-                                const hasLabor = laborCostSen > 0;
-                                const marginSen = repPriceSen - laborCostSen;
-                                const marginPct = hasRep ? (marginSen / repPriceSen) * 100 : null;
-                                const repHeight = tierRep
-                                  ? String(tierRep.height).replace('"', "")
-                                  : null;
-                                return (
-                                  <>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                      <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                        <div className="text-[10px] font-medium text-[#6B7280] uppercase">
-                                          Price (from, {tierLabel})
-                                        </div>
-                                        <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
-                                          {hasRep ? (
-                                            <>
-                                              {formatCurrency(repPriceSen)}
-                                              {repHeight && (
-                                                <span className="ml-1 text-[10px] font-normal text-[#9CA3AF]">
-                                                  Seat {repHeight}"
-                                                </span>
-                                              )}
-                                            </>
-                                          ) : (
-                                            <span className="text-[#9CA3AF]">—</span>
-                                          )}
-                                        </div>
-                                        <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">
-                                          Labor {hasLabor ? formatCurrency(laborCostSen) : "—"}
-                                        </div>
-                                        <div className="text-[11px] tabular-nums">
-                                          {hasRep && hasLabor ? (
-                                            <span className={marginSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
-                                              Margin {formatCurrency(marginSen)}
-                                              {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
-                                            </span>
-                                          ) : (
-                                            <span className="text-[#9CA3AF]">Margin —</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                      {laborCard}
-                                    </div>
-                                    <p className="mt-2 text-[10px] text-[#9CA3AF] italic">
-                                      Sofa price varies by seat height — see each height's price above. Margin here compares against the lowest seat-height price in the current {tierLabel} tier.
-                                    </p>
-                                  </>
-                                );
-                              }
-
-                              // Bedframes / accessories keep the flat-price cards
-                              // verbatim — those fields are correct for them.
-                              return (
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                  {marginRow("Price 2", basePrice)}
-                                  {marginRow("Price 1", price1Val)}
-                                  {laborCard}
-                                </div>
-                              );
-                            })()}
-                          </div>
-
-                          {/* Variant Defaults Summary — flat key/value cards
-                              for the fields the operator has actually set,
-                              one card per non-empty default. Edit hops back
-                              into the dialog for changes. */}
-                          {hasVariantDefaults && (
-                            <div className="bg-[#FAF9F7] border border-[#E5E7EB] rounded-lg p-4">
-                              <div className="flex items-center justify-between mb-2">
-                                <h4 className="text-sm font-semibold text-[#374151]">Variant Defaults</h4>
-                                <button
-                                  onClick={() => setEditingVariant(p)}
-                                  className="text-xs text-[#6B5C32] hover:underline"
-                                >
-                                  Edit
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                {variantDefaults.fabricCode && (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">Fabric</div>
-                                    <div className="text-sm font-medium text-[#111827]">{variantDefaults.fabricCode}</div>
-                                  </div>
-                                )}
-                                {variantDefaults.divanHeight && (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">Divan Height</div>
-                                    <div className="text-sm font-medium text-[#111827]">{variantDefaults.divanHeight}</div>
-                                  </div>
-                                )}
-                                {variantDefaults.legHeight && (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">Leg Height</div>
-                                    <div className="text-sm font-medium text-[#111827]">{variantDefaults.legHeight}</div>
-                                  </div>
-                                )}
-                                {variantDefaults.gap && (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">Gap</div>
-                                    <div className="text-sm font-medium text-[#111827]">{variantDefaults.gap}</div>
-                                  </div>
-                                )}
-                                {variantDefaults.seatHeight && (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">Seat Height</div>
-                                    <div className="text-sm font-medium text-[#111827]">{variantDefaults.seatHeight}</div>
-                                  </div>
-                                )}
-                                {(variantDefaults.specials?.length ?? 0) > 0 && (
-                                  <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB] col-span-2 md:col-span-3">
-                                    <div className="text-[10px] font-medium text-[#6B7280] uppercase">Specials</div>
-                                    <div className="text-sm font-medium text-[#111827]">
-                                      {(variantDefaults.specials ?? []).join(" · ")}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="flex gap-2">
-                            <Link to={`/products/${p.id}/bom`}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#3E6570] bg-[#E0EDF0] border border-[#A8CAD2] rounded-md hover:bg-[#E0EDF0] transition-colors"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                              </svg>
-                              View BOM
-                            </Link>
-                            <Link to={`/products/${p.id}/documents`}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6B5C32] bg-[#F0ECE9] border border-[#D8CFC0] rounded-md hover:bg-[#E8E2D9] transition-colors"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5-3H12m-8.25-9v15.75c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9H4.875C4.254 2.25 3.75 2.754 3.75 3.375z" />
-                              </svg>
-                              Docs
-                            </Link>
-                            <button
-                              onClick={() => setEditingVariant(p)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6B5C32] bg-[#FAEFCB] border border-[#E8D597] rounded-md hover:bg-[#FAEFCB] transition-colors"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
-                              </svg>
-                              Manage Variants
-                            </button>
-                          </div>
-
-                          {/* Customer Assignments */}
-                          <CustomerAssignmentsSection productId={p.id} active={isExpanded} />
-
-                          {/* CNC Cutting Template — fabric-cutting files for
-                              the BUYI E-DIGIT cutter, keyed by the bare
-                              product code (variant suffix stripped) and
-                              narrowed by this SKU's size. */}
-                          <CncTemplatePanel
-                            productCode={baseProductCode(p.code)}
-                            size={p.sizeLabel}
-                          />
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-                    })}
-                    {padBottom > 0 && (
-                      <tr aria-hidden="true">
-                        <td
-                          colSpan={colSpanN}
-                          style={{ height: padBottom, padding: 0, border: 0 }}
-                        />
-                      </tr>
-                    )}
-                  </>
-                );
-              })()}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Record count footer */}
-        <div className="px-4 py-2 bg-[#F9FAFB] border-t border-[#E5E7EB] flex items-center justify-between">
-          <span className="text-xs text-[#6B7280]">
-            Record {filtered.length > 0 ? 1 : 0} of {filtered.length}
-          </span>
-          <span className="text-xs text-[#9CA3AF]">
-            {products.length} total products
-          </span>
-        </div>
-      </div>
-        );
-      })()}
+          virtualize
+          maxHeight="calc(100vh - 320px)"
+          searchPlaceholder="Search all products..."
+          onSearchChange={setSearchQuery}
+          alwaysSearchKeys={SKU_SEARCH_KEYS}
+          onFilteredDataChange={setVisibleSkuRows}
+          exportName={`products-${skuCat.toLowerCase()}`}
+          exportSheetLabel="SKU Master"
+          emptyMessage="No products found."
+          error={productsLoadError}
+          onRetry={() => void loadProducts(true)}
+        />
+      )}
 
       {/* Variant Editor Dialog (only in SKU Master mode) */}
       {editingVariant && (
