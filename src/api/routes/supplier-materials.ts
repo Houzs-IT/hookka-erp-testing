@@ -17,6 +17,13 @@ import { ensureCnyCurrency } from "../lib/currency-checks";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
 import { getOrgId } from "../lib/tenant";
 import { todayYmdMY } from "../../lib/utils";
+import {
+  duplicateBindingMessage,
+  ensureBindingUniqueIndex,
+  findSameBinding,
+  isUniqueViolation,
+  listDuplicateBindings,
+} from "../lib/supplier-binding-unique";
 
 const app = new Hono<Env>();
 
@@ -47,6 +54,7 @@ type BindingRow = {
   // (which was where the "from" date used to live).
   effectiveFrom: string | null;
   isMainSupplier: number;
+  orgId?: string | null;
 };
 
 function rowToBinding(r: BindingRow) {
@@ -212,6 +220,11 @@ app.post("/", async (c) => {
   const denied = await requirePermission(c, "supplier-materials", "create");
   if (denied) return denied;
   await ensureBindingColumns(c.var.DB);
+  // O4: unique (org, supplier, material) backstop — created only when no old
+  // duplicates exist; never throws, never touches existing rows.
+  await ensureBindingUniqueIndex(c.var.DB);
+  const orgId = getOrgId(c);
+  let codeLabel = "";
   try {
     const body = await c.req.json();
     const { supplierId, materialCode, materialName, supplierSku, unitPrice } =
@@ -230,6 +243,20 @@ app.post("/", async (c) => {
             "supplierId, materialCode, materialName, supplierSku, and unitPrice are required",
         },
         400,
+      );
+    }
+    // O4: a supplier is bound to an item once. Refuse with the row to edit.
+    codeLabel = String(materialCode);
+    const same = await findSameBinding(c.var.DB, orgId, String(supplierId), String(materialCode));
+    if (same) {
+      return c.json(
+        {
+          success: false,
+          code: "DUPLICATE_BINDING",
+          existingBindingId: same.id,
+          error: duplicateBindingMessage(same.supplierName, String(materialCode)),
+        },
+        409,
       );
     }
     const id = genId();
@@ -274,13 +301,14 @@ app.post("/", async (c) => {
       await ensureCnyCurrency(c.var.DB, "price_histories");
     }
     await c.var.DB.prepare(
-      `INSERT INTO supplier_material_bindings (id, supplierId, materialCode,
+      `INSERT INTO supplier_material_bindings (id, orgId, supplierId, materialCode,
          materialName, supplierSku, supplierDescription, unitPrice, currency, leadTimeDays,
          paymentTerms, moq, effectiveFrom, priceValidFrom, isMainSupplier)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         row.id,
+        orgId,
         row.supplierId,
         row.materialCode,
         row.materialName,
@@ -336,9 +364,35 @@ app.post("/", async (c) => {
       );
     }
     return c.json({ success: true, data: rowToBinding(created) }, 201);
-  } catch {
+  } catch (err) {
+    // Two creates of the same pair in the same second: the index refuses the
+    // second one. Same message as the pre-check, not a generic failure.
+    if (isUniqueViolation(err)) {
+      return c.json(
+        { success: false, code: "DUPLICATE_BINDING", error: duplicateBindingMessage("", codeLabel) },
+        409,
+      );
+    }
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
+});
+
+// GET /api/supplier-materials/duplicates — READ-ONLY (O4). Every supplier +
+// material pair bound more than once in this org: these block the unique index
+// (ensureBindingUniqueIndex skips it while any exist). Nothing is deleted or
+// merged here — cleaning them is the owner's call. Registered before "/:id".
+app.get("/duplicates", async (c) => {
+  const denied = await requirePermission(c, "supplier-materials", "read");
+  if (denied) return denied;
+  const groups = await listDuplicateBindings(c.var.DB, getOrgId(c));
+  return c.json({
+    success: true,
+    data: groups,
+    summary: {
+      pairs: groups.length,
+      surplusRows: groups.reduce((n, g) => n + g.count - 1, 0),
+    },
+  });
 });
 
 // GET /api/supplier-materials/:id
@@ -358,7 +412,9 @@ app.put("/:id", async (c) => {
   const denied = await requirePermission(c, "supplier-materials", "update");
   if (denied) return denied;
   await ensureBindingColumns(c.var.DB);
+  await ensureBindingUniqueIndex(c.var.DB);
   const id = c.req.param("id");
+  let codeLabel = "";
   const existing = await c.var.DB.prepare(
     "SELECT * FROM supplier_material_bindings WHERE id = ?",
   )
@@ -409,6 +465,32 @@ app.put("/:id", async (c) => {
             ? 1
             : 0,
     };
+    // O4: moving this binding onto an item the supplier already has would
+    // create a second row for the pair — refuse with the row to edit instead.
+    codeLabel = String(merged.materialCode);
+    if (
+      String(merged.supplierId) !== String(existing.supplierId) ||
+      String(merged.materialCode) !== String(existing.materialCode)
+    ) {
+      const same = await findSameBinding(
+        c.var.DB,
+        String(existing.orgId ?? getOrgId(c)),
+        String(merged.supplierId),
+        String(merged.materialCode),
+        id,
+      );
+      if (same) {
+        return c.json(
+          {
+            success: false,
+            code: "DUPLICATE_BINDING",
+            existingBindingId: same.id,
+            error: duplicateBindingMessage(same.supplierName, String(merged.materialCode)),
+          },
+          409,
+        );
+      }
+    }
     if (merged.currency === "CNY") {
       await ensureCnyCurrency(c.var.DB, "supplier_material_bindings");
       await ensureCnyCurrency(c.var.DB, "price_histories");
@@ -486,7 +568,13 @@ app.put("/:id", async (c) => {
       );
     }
     return c.json({ success: true, data: rowToBinding(updated) });
-  } catch {
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return c.json(
+        { success: false, code: "DUPLICATE_BINDING", error: duplicateBindingMessage("", codeLabel) },
+        409,
+      );
+    }
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });

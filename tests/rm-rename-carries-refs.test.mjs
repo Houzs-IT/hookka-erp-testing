@@ -32,7 +32,14 @@ test("a rename carries supplier bindings, BOM child lines and price history", as
   assert.match(sqls, /UPDATE supplier_material_bindings SET materialCode = \?/);
   assert.match(sqls, /UPDATE component_bom_lines SET child_code = \?/);
   assert.match(sqls, /UPDATE price_histories SET material_code = \?/);
-  for (const s of plan.statements) assert.deepEqual(s.args, ["PC151-01A", "PC151-01"]);
+  for (const s of plan.statements) {
+    // O4: the binding move skips a supplier already bound to the new code.
+    const expected = /supplier_material_bindings/.test(s.sql)
+      ? ["PC151-01A", "PC151-01", "PC151-01A"]
+      : ["PC151-01A", "PC151-01"];
+    assert.deepEqual(s.args, expected);
+  }
+  assert.match(sqls, /AND supplierId NOT IN \(\s*SELECT supplierId FROM supplier_material_bindings/);
 });
 
 test("nothing moves when another raw material holds the old or new code", async () => {
