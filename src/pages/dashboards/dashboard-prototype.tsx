@@ -247,8 +247,12 @@ export default function DashboardPrototypePage() {
         </div>
       </div>
 
-      {/* Today's problems: on every tab, above its content (owner 2026-10-17). */}
-      <ProblemsStrip visibleTabs={visibleTabs.map((t) => t.key)} onOpen={openProblem} />
+      {/* Today's problems: on every tab, above its content (owner 2026-10-17).
+          Hidden on a phone under Floor Live (owner 2026-11-10: the tiles left
+          the floor cards too little room); desktop keeps it. */}
+      <div className={tab === "operations" && sub === "floor" ? "max-md:hidden" : undefined}>
+        <ProblemsStrip visibleTabs={visibleTabs.map((t) => t.key)} onOpen={openProblem} />
+      </div>
 
       {blocked && (
         <Card>
