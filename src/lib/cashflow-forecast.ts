@@ -797,10 +797,13 @@ export function buildPnlForecastLegs(input: PnlForecastInput): { columns: Foreca
     // supplier (owner 2026-11-10 「让他在每个categories 出现相关的 supplier,
     // 我从那边填」): each supplier after its own term, Other after a month. A
     // material keyed by its %: after its suppliers' terms (the category mix).
+    // A supplier keyed as a % pays what it works out to that month; one that
+    // works out to nothing (no sales) pays nothing.
     for (const a of groups.materials) {
       const type = materialRowType(a);
       if (f.supplierKeyed(a.code)) {
         for (const [id, sen] of forecastTypeSupplierCells(m, type)) {
+          if (sen <= 0) continue;
           const other = id === FC_OTHER_SUPPLIER;
           const delay = other ? 1 : (input.supplierTerm?.(id) ?? 1);
           const to = addMonthsYm(S, delay);

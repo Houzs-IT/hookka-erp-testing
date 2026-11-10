@@ -18,14 +18,18 @@ export type FcEntry = number | { bp?: number; amtSen?: number };
  *  cell, the month's sales are their sum (forecastSalesSen).
  *  `purchasesByType` (owner 2026-11-10 「让他在每个categories 出现相关的
  *  supplier, 我从那边填」): material type → supplier id (or
- *  FC_OTHER_SUPPLIER) → sen; a material with any cell that month is their
- *  sum, one without keeps its own % / RM (forecastMonthFigures). */
+ *  FC_OTHER_SUPPLIER) → a supplier cell; a material with any cell that month
+ *  is their sum, one without keeps its own % / RM (forecastMonthFigures). */
 export type FcMonth = {
   salesSen?: number;
   salesByCustomer?: Record<string, number>;
-  purchasesByType?: Record<string, Record<string, number>>;
+  purchasesByType?: Record<string, Record<string, FcSupplierCell>>;
   pct?: Record<string, FcEntry>;
 };
+/** One supplier's figure under a material in a month (owner 2026-11-10
+ *  「每个supplier 填percentage 或amount」): whole sen (an RM amount) or
+ *  `{ bp }`, a % of the month's sales in basis points like a line's `{ bp }`. */
+export type FcSupplierCell = number | { bp: number };
 
 /** The sales-by-customer row for customers not in the list yet. */
 export const FC_OTHER_CUSTOMER = "other";
@@ -57,26 +61,60 @@ function cleanPartyCells(raw: unknown): Record<string, number> {
 }
 export const cleanSalesByCustomer = (raw: unknown): Record<string, number> => cleanPartyCells(raw);
 
+/** A material's supplier cells as stored: a real key with positive whole sen
+ *  (as customer cells), or `{ bp }` with positive whole basis points. Anything
+ *  else reads as nothing. */
+function cleanSupplierCells(raw: unknown): Record<string, FcSupplierCell> {
+  const out: Record<string, FcSupplierCell> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    const key = id.trim();
+    if (!key || key.length > 64) continue;
+    if (v && typeof v === "object") {
+      const bp = Math.round(Number((v as { bp?: unknown }).bp));
+      if (Number.isSafeInteger(bp) && bp > 0) out[key] = { bp };
+      continue;
+    }
+    const sen = Math.round(Number(v));
+    if (Number.isSafeInteger(sen) && sen > 0) out[key] = sen;
+  }
+  return out;
+}
+
 /** A month's supplier figures per material as stored: each material (a real
  *  key) with its supplier cells cleaned as above; a material left with no
  *  cell is dropped. Anything else reads as nothing. */
-export function cleanPurchasesByType(raw: unknown): Record<string, Record<string, number>> {
-  const out: Record<string, Record<string, number>> = {};
+export function cleanPurchasesByType(raw: unknown): Record<string, Record<string, FcSupplierCell>> {
+  const out: Record<string, Record<string, FcSupplierCell>> = {};
   if (!raw || typeof raw !== "object") return out;
   for (const [t, cells] of Object.entries(raw as Record<string, unknown>)) {
     const type = t.trim();
     if (!type || type.length > 64) continue;
-    const clean = cleanPartyCells(cells);
+    const clean = cleanSupplierCells(cells);
     if (Object.keys(clean).length) out[type] = clean;
   }
   return out;
 }
 
-/** A material's supplier figures in a month, positive whole sen only. */
+/** A material's keyed supplier figures in a month, each in sen: an RM cell as
+ *  keyed, a % cell worked out against the month's sales (forecastSalesSen,
+ *  so the sum of its customers when they are keyed). A % cell in a month with
+ *  no sales is 0 but still keyed — the material is then their sum. */
 export function forecastTypeSupplierCells(m: FcMonth | undefined, type: string): [string, number][] {
-  return Object.entries(m?.purchasesByType?.[type] ?? {})
-    .map(([id, v]) => [id, Math.round(Number(v) || 0)] as [string, number])
-    .filter(([, v]) => v > 0);
+  const out: [string, number][] = [];
+  let sales: number | null = null;
+  for (const [id, v] of Object.entries(m?.purchasesByType?.[type] ?? {})) {
+    if (v && typeof v === "object") {
+      const bp = Math.round(Number((v as { bp?: unknown }).bp) || 0);
+      if (bp <= 0) continue;
+      sales ??= forecastSalesSen(m);
+      out.push([id, Math.round((sales * bp) / 10000)]);
+    } else {
+      const sen = Math.round(Number(v) || 0);
+      if (sen > 0) out.push([id, sen]);
+    }
+  }
+  return out;
 }
 /** A material's supplier figures added up (0 when it is keyed by its %). */
 export function forecastTypeSupplierSen(m: FcMonth | undefined, type: string): number {

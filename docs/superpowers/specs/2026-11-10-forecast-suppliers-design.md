@@ -6,6 +6,7 @@
 > 1. 「supplier 那边还是你可以 set 根据 ratio 也可以，一个个也可以」 and 「hide past month 也一起做」 (#1266). That first build keyed one total per supplier and spread it over the materials by the supplier's recent purchases.
 > 2. 「我的 hide past month 是把 docs forecast 和 P&L forecast hide 起来，actual 要 remain」 (#1272).
 > 3. 「可以不可以这样，就是让他在每个categories 出现相关的supplier, 我从那边填」, then 「做」. Suppliers now sit under each material and are keyed there; the spread is gone. Sections 2 to 6 describe this.
+> 4. 「每个supplier 填percentage 或amount」, then 「做」: each supplier keyed as RM or % of sales (section 9).
 >
 > It builds on `docs/superpowers/specs/2026-11-09-forecast-three-columns-design.md` (called "the three-columns spec" below).
 > This repo is public, so this document carries no amounts and no counterparty names.
@@ -27,11 +28,11 @@ Separately, on Cash Flow with Forecast on: a button that hides the past months' 
 
 ## 3. The Forecast P&L page [owner unless tagged]
 
-- Each material row has a ▸. Opening it lists the suppliers that sold us that material in the window (section 4), plus any supplier keyed under it in some month (kept while it carries a figure, active or not), by name, then **Other (new suppliers)**. Each has a cell per month, RM only; the % column shows the share of the month's sales. [owner: 太久没使用的不列; my call on the window and on keeping keyed ones]
+- Each material row has a ▸. Opening it lists the suppliers that sold us that material in the window (section 4), plus any supplier keyed under it in some month (kept while it carries a figure, active or not), by name, then **Other (new suppliers)**. Each has a cell per month. It was RM only, with the % column showing the share of the month's sales; since section 9 it takes RM or %. [owner: 太久没使用的不列; my call on the window and on keeping keyed ones]
 - Closed is the default on every load. A supplier with a figure in any month shows even while its material is closed. [owner]
 - A new month copies the previous month's % but no supplier figures. [my call]
 - A supplier keyed under a material it never sold us lately: key it under that material's Other. [my call; no "add supplier" picker for now]
-- Storage: kv `forecast_pnl.months[ym].purchasesByType` = `{ "<MATERIAL>": { "<supplier id>": sen, "other": sen } }`. `PUT /forecast` keeps positive whole sen only (`cleanPurchasesByType`) and stores nothing derived. [my call]
+- Storage: kv `forecast_pnl.months[ym].purchasesByType` = `{ "<MATERIAL>": { "<supplier id>": sen, "other": sen } }`. `PUT /forecast` keeps positive whole sen only (`cleanPurchasesByType`) and stores nothing derived. A cell can also be `{ bp }` since section 9. [my call]
 
 ## 4. Which suppliers a material lists [my call]
 
@@ -59,3 +60,13 @@ Separately, on Cash Flow with Forecast on: a button that hides the past months' 
 - A material without supplier figures reads exactly as before on every screen.
 - Nothing here writes to the ledger or to any document.
 - With Hide past months off, the Cash Flow forecast is exactly as before; with it on, every Actual column is still there.
+
+## 9. Each supplier as RM or % of sales [owner unless tagged]
+
+Asked 2026-11-10 after the owner's first supplier save: 「这个我可以填percentage 算会上去吗？就是每个supplier 填percentage 或amount」. A proposal followed, then 「做」. This section supersedes "RM only" in section 3.
+
+- Each supplier cell has the material row's two boxes, RM and %. Typing one clears the other, and the empty box shows the other side worked out, greyed. [owner, as proposed]
+- The % is of that month's sales, like the material row's own %. That is the sum of the customer rows when they are keyed. A % supplier follows the month's sales; an RM supplier stays as typed. [owner, as proposed]
+- The material is the sum of its suppliers either way (section 2), and every reader takes that sum: Cash Flow pays each supplier the worked-out amount after its own term, and the Monthly P&L forecast and Finance Dashboard read the same figures. [owner, as proposed]
+- A % supplier in a month without sales works out to 0. The material still counts as keyed by its suppliers, so it is 0 that month and Cash Flow pays nothing for it. [my call: "any figure keyed" decides, as for RM cells]
+- Storage: each supplier in `purchasesByType` is whole sen (RM, as before) or `{ bp }` (whole basis points). `cleanPurchasesByType` keeps either when above zero and drops anything else. A sheet saved before this reads exactly as before. [my call]
