@@ -353,3 +353,25 @@ test("G9: a row's cells are one memoised component fed only stable / primitive p
   assert.doesNotMatch(impl, /activeRect|showRange|deferredSearch|rowClassName/);
   assert.match(impl, /const inRange = colIdx >= rangeLo && colIdx <= rangeHi;/);
 });
+
+// ── G3 for the DO and CN lists (follow-up to #1251, BUG-2026-11-10-443) ───
+test("G3 DO: a stage tab's header sort / funnel says it covers the loaded page, with Load all", () => {
+  const src = read("src/pages/delivery/index.tsx");
+  // Browse view only: the search view already holds the whole-table matches.
+  assert.match(src, /totalRows=\{search\.trim\(\) \|\| loadedAllDOs \? undefined : totalDOsServer\}/);
+  assert.match(src, /onLoadAll=\{\(\) => \{ void loadAllTabDOs\(\); \}\}/);
+  // Load all pages through every DO of THIS tab's statuses (the Export query).
+  assert.match(src, /fetchAllPages<DeliveryOrder>\(`\/api\/delivery-orders\?status=\$\{statuses\.join\(","\)\}`\)/);
+  // The loaded set is tied to the response and tab it was loaded for.
+  assert.match(src, /allTabDOs && allTabDOs\.resp === doRaw && allTabDOs\.tab === activeTab \? allTabDOs\.rows : null/);
+  assert.match(src, /return \(loadedAllDOs \?\? deliveryOrders\)\.filter\(\(d\) => statuses\.includes\(d\.status\)\);/);
+});
+
+test("G3 CN: a header sort / funnel / grouping widens the fetch to every CN; the pager counts the server total", () => {
+  const src = read("src/pages/consignment/note.tsx");
+  assert.match(src, /onColumnViewChange=\{setCnColumnView\}/);
+  assert.match(src, /\}>\(cnColumnView \? "\/api\/consignment-notes" : `\/api\/consignment-notes\?page=\$\{page\}&limit=\$\{PAGE_SIZE\}`\);/);
+  // BUG-2026-11-10-444: the pager used the loaded page's length (always one page).
+  assert.match(src, /const totalCNs = cnRaw\?\.total \?\? cnList\.length;/);
+  assert.doesNotMatch(src, /const totalCNs = cnList\.length;/);
+});

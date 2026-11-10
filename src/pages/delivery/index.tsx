@@ -1223,6 +1223,36 @@ export default function DeliveryPage() {
   // Per-tab: the server counts only the statuses this tab fetches.
   const totalDOsServer = doRaw?.total ?? (doRaw?.data?.length ?? 0);
 
+  // Review G3 follow-up (BUG-2026-11-10-443): the header sort, funnels and
+  // Group By judge the grid's rows, and a stage tab holds ONE 50-row page of
+  // its DOs. A whole-tab fetch on every header click would be heavy (the
+  // unpaged list is the slow one), so — as on Invoices — the grid says
+  // "cover the 50 loaded rows of N" and offers "Load all", which pages
+  // through every DO of this tab (same query as Export). Only in the browse
+  // view: while searching, the grid already holds the server's whole-table
+  // matches, so the notice would misfire. The loaded set belongs to the
+  // response + tab it was loaded for, so a refresh / page / tab change drops
+  // back to the paged view without an effect.
+  const [allTabDOs, setAllTabDOs] = useState<{ resp: unknown; tab: string; rows: DeliveryOrderRow[] } | null>(null);
+  const [loadingAllDOs, setLoadingAllDOs] = useState(false);
+  const loadedAllDOs =
+    allTabDOs && allTabDOs.resp === doRaw && allTabDOs.tab === activeTab ? allTabDOs.rows : null;
+  const loadAllTabDOs = async () => {
+    const statuses = TAB_DO_STATUSES[activeTab];
+    if (!statuses) return;
+    setLoadingAllDOs(true);
+    try {
+      const rows = (await fetchAllPages<DeliveryOrder>(`/api/delivery-orders?status=${statuses.join(",")}`))
+        .filter((d) => !d.id.startsWith("virt-"))
+        .map((d) => mapDOToRow(d, soRefMapRef.current));
+      setAllTabDOs({ resp: doRaw, tab: activeTab, rows });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't load every delivery order");
+    } finally {
+      setLoadingAllDOs(false);
+    }
+  };
+
   // Scroll position restoration — keyed per active tab so each tab remembers
   // its own scroll position independently. sessionStorage directly, NOT React
   // state: holding window.scrollY in state re-rendered this whole page on
@@ -2227,8 +2257,9 @@ export default function DeliveryPage() {
     // status (searchResults is a separate set so the browse-derived counts/
     // lists above stay correct). Empty search = normal tab-scoped view.
     if (search.trim()) return searchResults;
-    return deliveryOrders.filter((d) => statuses.includes(d.status));
-  }, [deliveryOrders, searchResults, activeTab, search]);
+    // "Load all" (review G3) swaps the 50-row page for every DO of the tab.
+    return (loadedAllDOs ?? deliveryOrders).filter((d) => statuses.includes(d.status));
+  }, [loadedAllDOs, deliveryOrders, searchResults, activeTab, search]);
 
   // Unified search index (Wei Siang 2026-06-02): one record-type-agnostic
   // index so the auto-jump below works for all 4 delivery tabs, not just the
@@ -5143,7 +5174,12 @@ export default function DeliveryPage() {
               error={listLoadError(doRaw, doError)}
               onRetry={refreshDOs}
               valueFilterKey={activeTab}
-              loading={loading}
+              loading={loading || loadingAllDOs}
+              // Review G3: a header sort / funnel / grouping on a one-page tab
+              // says it covers the loaded rows of N, with "Load all" (browse
+              // view only — the search view already holds every match).
+              totalRows={search.trim() || loadedAllDOs ? undefined : totalDOsServer}
+              onLoadAll={() => { void loadAllTabDOs(); }}
               stickyHeader
               virtualize
               maxHeight="calc(100vh - 280px)"

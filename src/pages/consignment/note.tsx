@@ -659,13 +659,20 @@ export default function ConsignmentNotePage() {
   // instead of just the active tab, so a CN is findable regardless of
   // which stage/tab it sits on, and feeds the auto-jump index below.
   const [cnGridSearch, setCnGridSearch] = useState("");
+  // Review G3 follow-up (BUG-2026-11-10-443): the grid's header sort, funnels
+  // and Group By judge the grid's rows — one 200-CN page, filtered to the tab.
+  // While any of them is on, the browse fetch widens to every CN (the route's
+  // no-paging form), the Sales Orders pattern, so a sort or a funnel covers
+  // the whole tab. Off again, it drops back to the page.
+  const [cnColumnView, setCnColumnView] = useState(false);
 
   // ---------- Fetch ----------
   // Pull CN list from /api/consignment-notes (legacy CN dispatch table).
   const { data: cnRaw, loading: cnLoading, error: cnError, refresh: refreshCNs } = useCachedJson<{
     success?: boolean;
     data?: ConsignmentNote[];
-  }>(`/api/consignment-notes?page=${page}&limit=${PAGE_SIZE}`);
+    total?: number;
+  }>(cnColumnView ? "/api/consignment-notes" : `/api/consignment-notes?page=${page}&limit=${PAGE_SIZE}`);
 
   // Search load — SEPARATE from the browse load above so it never disturbs the
   // derivations (readyPOs / counts) the browse page feeds. When the operator is
@@ -2926,8 +2933,13 @@ export default function ConsignmentNotePage() {
   };
 
   // ---------- Pagination derivations ----------
-  const totalCNs = cnList.length;
-  const totalPages = Math.max(1, Math.ceil(totalCNs / PAGE_SIZE));
+  // The server's count of every CN, not the loaded page: this was
+  // cnList.length (<= 200), so the pager always read "Page 1 / 1" and Next
+  // never enabled — CNs older than the newest 200 could only be reached by
+  // searching (BUG-2026-11-10-444). While the column view has widened the
+  // fetch to every CN there is a single page.
+  const totalCNs = cnRaw?.total ?? cnList.length;
+  const totalPages = cnColumnView ? 1 : Math.max(1, Math.ceil(totalCNs / PAGE_SIZE));
 
   // ---------- Transfer Handlers ----------
   // Returns hit the new POST /api/consignment-notes/:id/return endpoint
@@ -3332,6 +3344,7 @@ export default function ConsignmentNotePage() {
               onDoubleClick={(row) => setDetailCN(row)}
               initialSearch={cnGridSearch}
               onSearchChange={setCnGridSearch}
+              onColumnViewChange={setCnColumnView}
               contextMenuItems={getContextMenuItems}
               selectable
               onSelectionChange={(rows) =>
@@ -3354,7 +3367,7 @@ export default function ConsignmentNotePage() {
                   ← Prev
                 </Button>
                 <span className="tabular-nums text-[#1F1D1B]">
-                  Page {page} / {totalPages}
+                  Page {cnColumnView ? 1 : page} / {totalPages}
                 </span>
                 <Button
                   variant="outline"
