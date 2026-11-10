@@ -36,6 +36,7 @@ import {
   type PerfWheRow,
   type PerfJcRow,
   type PerfPicRow,
+  type PerfDay,
 } from "./workforce-perf";
 import {
   computeMonthlyEfficiencyByWorker,
@@ -765,25 +766,15 @@ export async function productionEfficiency(
 }
 
 /**
- * Department efficiency: the Dashboard Experimental > People > Efficiency
- * figure for the month, for the workers whose home department is one of the
- * assignment's departments (DEV-36). No departments = everyone, the page with
- * no department picked.
- *
- * Built by lib/workforce-perf.ts, the same code the dashboard route runs, from
- * the same tables, so this card and the page cannot disagree. The month's rows
- * only: every per-day figure depends on that day's rows alone.
+ * One month's per-day, per-worker minutes (lib/workforce-perf.ts buildPerfDays)
+ * from the month's working-hour entries and completed job cards — the rows the
+ * Dashboard Experimental > People > Efficiency page reads for that month. Also
+ * read by the Board Report's efficiency bands (board-report-sources.ts).
  */
-export async function departmentEfficiency(
-  c: Context<Env>,
-  period: string,
-  scope?: EfficiencyScope | null,
-): Promise<MetricResult> {
+export async function loadMonthPerfDays(db: Context<Env>["var"]["DB"], orgId: string, period: string): Promise<PerfDay[]> {
   const { start } = periodBounds(period);
   const [y, m] = period.split("-").map(Number);
   const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
-  const orgId = getOrgId(c);
-  const db = c.var.DB;
 
   const depts = await db.prepare(`SELECT code, is_production FROM departments`)
     .all<{ code: string; isProduction: number | boolean | null }>();
@@ -816,6 +807,32 @@ export async function departmentEfficiency(
     .bind(orgId, orgId, start, next)
     .all<PerfPicRow>();
 
+  return buildPerfDays({
+    whe: whe.results ?? [],
+    jobCards: jobCards.results ?? [],
+    pics: pics.results ?? [],
+    productionDepts,
+  }).perfDays;
+}
+
+/**
+ * Department efficiency: the Dashboard Experimental > People > Efficiency
+ * figure for the month, for the workers whose home department is one of the
+ * assignment's departments (DEV-36). No departments = everyone, the page with
+ * no department picked.
+ *
+ * Built by lib/workforce-perf.ts, the same code the dashboard route runs, from
+ * the same tables, so this card and the page cannot disagree. The month's rows
+ * only: every per-day figure depends on that day's rows alone.
+ */
+export async function departmentEfficiency(
+  c: Context<Env>,
+  period: string,
+  scope?: EfficiencyScope | null,
+): Promise<MetricResult> {
+  const orgId = getOrgId(c);
+  const db = c.var.DB;
+
   let workerIds: Set<string> | null = null;
   if (scope?.length) {
     const want = new Set(scope.map((s) => s.dept));
@@ -826,12 +843,7 @@ export async function departmentEfficiency(
     );
   }
 
-  const { perfDays } = buildPerfDays({
-    whe: whe.results ?? [],
-    jobCards: jobCards.results ?? [],
-    pics: pics.results ?? [],
-    productionDepts,
-  });
+  const perfDays = await loadMonthPerfDays(db, orgId, period);
   const r = poolEfficiencyPct(perfDays, workerIds, (d) => d.startsWith(period));
   const where = scope?.length ? ` in ${scope.map((s) => s.dept).join(" + ")}` : "";
   if (r.pct === null) {

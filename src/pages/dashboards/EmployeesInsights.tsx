@@ -3,6 +3,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { PieChart, Pie, Cell, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { TAUPE, TEAL, MUTED, BORDER, AMBER, GREEN, fmtN, inPeriod, inFocus, dayLabel, dayList, warnDays, workerDays, auditTier, OVER_TIERS, periodLabel, type AuditTier, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+import { EFFICIENCY_WARN_LOW, EFFICIENCY_WARN_HIGH, EFFICIENCY_MIN_RANK_MINUTES } from "@/lib/efficiency-bands";
 
 // The Employees tab's time/efficiency panels. Everything here is derived from
 // the SAME cached /api/dashboard/prototype `employee` slice the rest of the
@@ -41,11 +42,12 @@ const pct1 = (v: number) => `${v.toFixed(1)}%`;
 const TOOLTIP = { background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 };
 
 // Audit bands around the 100% baseline. The feed carries no configured warning
-// threshold, so these are display choices, not policy.
-const WARN_LOW = 90;
-const WARN_HIGH = 150;
+// threshold, so these are display choices, not policy. One definition in
+// src/lib/efficiency-bands.ts — the Board Report's page 11 counts the same bands.
+const WARN_LOW = EFFICIENCY_WARN_LOW;
+const WARN_HIGH = EFFICIENCY_WARN_HIGH;
 // A person clocking under an hour in the window has no meaningful ratio.
-const MIN_RANK_MINUTES = 60;
+const MIN_RANK_MINUTES = EFFICIENCY_MIN_RANK_MINUTES;
 
 type Common = {
   employee: EmployeeSlice; period: Period; target: number;

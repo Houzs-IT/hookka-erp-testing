@@ -18,10 +18,17 @@
 //   newModels     GET /api/products/new-models?from=&to=          (last 3 months)
 //   defects       defectRates() over buildServiceSlice()          (service cases)
 //   workforce     collectOperationsReport().workforce             (workers:read only)
+//                 + efficiency bands: the Employees insights per-person figure
+//                 (workforce-perf.ts workerEfficiencyPcts) in the shared
+//                 src/lib/efficiency-bands.ts thresholds
+//   stockTake     GET /api/accounting/stock-take/check?ym=M       (page 13 flag)
 //
 // Money is integer sen throughout; percentages are numbers (2 dp) or null when
 // the base is missing / zero — never a fabricated 0.
 // ---------------------------------------------------------------------------
+
+import type { EfficiencyBandCounts } from "./efficiency-bands";
+import type { StockTakeCheck } from "./stock-take-check";
 
 // ── month helpers ─────────────────────────────────────────────────────────
 export const YM_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -139,7 +146,14 @@ export type NewModelLite = { code: string; category: string; name: string; added
 export type NewModelsPayload = { from: string; to: string; models: NewModelLite[]; priceNote?: string; pricesIncluded?: boolean; undatedProducts?: number };
 export type DefectRow = { category: string; cases: number; units: number; rate: number | null };
 export type DefectsPayload = { month: DefectRow[]; prev: DefectRow[]; trend: { ym: string; cases: number; units: number; rate: number | null }[] };
-export type WorkforcePayload = { activeWorkers: number | null; topEfficiency: { name: string; pct: number }[]; bottomEfficiency: { name: string; pct: number }[] };
+export type WorkforcePayload = {
+  activeWorkers: number | null;
+  topEfficiency: { name: string; pct: number }[];
+  bottomEfficiency: { name: string; pct: number }[];
+  /** Workers below / within / above the Employees insights band (src/lib/efficiency-bands.ts); null with bandsError when it could not be read. */
+  bands?: EfficiencyBandCounts | null;
+  bandsError?: string | null;
+};
 export type BoardNotes = { text: string; updatedAt: string | null; updatedBy: string | null };
 
 export type BoardSources = {
@@ -155,6 +169,7 @@ export type BoardSources = {
   newModels: Src<NewModelsPayload>;
   defects: Src<DefectsPayload>;
   workforce: Src<WorkforcePayload>;
+  stockTake: Src<StockTakeCheck>;
   notes: BoardNotes;
 };
 
@@ -680,9 +695,10 @@ export function boardFlags(s: BoardSources, month: string): Flag[] {
   const failed: [string, Src<unknown>][] = [
     ["Financial Dashboard", s.dashboard], ["Monthly P&L", s.plMonthly], ["Balance sheet", s.plCur], ["Cash Flow statement", s.cashflow],
     ["Cash Flow forecast", s.cashForecast], ["Customer figures", s.overview], ["Production revenue by department", s.revSplitCur],
-    ["New models", s.newModels], ["Defect rates", s.defects],
+    ["New models", s.newModels], ["Defect rates", s.defects], ["Stock-take check", s.stockTake],
   ];
   for (const [name, src] of failed) if (!src.ok) flags.push({ level: "check", text: `${name} could not be loaded: ${src.error}` });
+  flags.push(...stockTakeFlags(s.stockTake, month));
   if (!s.dashboard.ok) return flags;
   const rows = s.dashboard.data.rows;
   const a = slice(rows, month, "actual");
@@ -726,6 +742,24 @@ export function boardFlags(s: BoardSources, month: string): Flag[] {
   }
   if (!s.workforce.ok) flags.push({ level: "info", text: `Workforce efficiency left out: ${s.workforce.error}` });
   return flags;
+}
+
+const groupLabel = (g: string) => (g.length > 3 ? g[0].toUpperCase() + g.slice(1).toLowerCase() : g);
+
+/** Page 13: a group whose stored stock take differs from its counted lines by more than RM 100 and 1%. */
+export function stockTakeFlags(src: Src<StockTakeCheck>, month: string): Flag[] {
+  if (!src.ok) return [];
+  const st = src.data;
+  const out: Flag[] = st.rows
+    .filter((r) => r.mismatch && r.linesSen !== null)
+    .map((r) => ({
+      level: "alert" as const,
+      text: `${groupLabel(r.group)} stock take: ${r.storedSen === null ? "nothing stored (the P&L uses the automatic figure)" : `${rmText(r.storedSen)} stored`}, ${rmText(r.linesSen!)} from its lines — which is right changes raw-material cost.`,
+    }));
+  if (!st.hasLines && st.rows.some((r) => r.storedSen !== null)) {
+    out.push({ level: "info", text: `No counted lines are saved with the ${longMonth(month)} stock take, so its stored values cannot be checked against them.` });
+  }
+  return out;
 }
 
 // ── the whole report ──────────────────────────────────────────────────────
