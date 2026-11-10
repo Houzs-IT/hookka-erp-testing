@@ -11651,6 +11651,12 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   // Double-click → the voucher's detail popup (resolved from `rows` by id so
   // it re-renders after a rung / void / attachment change).
   const [detailPvId, setDetailPvId] = useState<string | null>(null);
+  // A "Remind approver" notification links here with ?pv=<id> — open it.
+  const [pvLinkParams] = useSearchParams();
+  const pvFromLink = pvLinkParams.get("pv");
+  useEffect(() => {
+    if (pvFromLink) setDetailPvId(pvFromLink);
+  }, [pvFromLink]);
   // Same for a row from another door (keyed by PayRow.key).
   const [detailPayKey, setDetailPayKey] = useState<string | null>(null);
   // The foreign-currency payment whose bank amount is being keyed (step 4).
@@ -12137,6 +12143,20 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
     } finally { setLadderBusy(false); }
   };
 
+  // H3-7 (review pass 2): nudge the approver of a CHECKED voucher — an in-app
+  // notification to everyone with the Approve right, at most once an hour.
+  const handleRemind = async (r: PvRow) => {
+    setLadderBusy(true);
+    try {
+      const res = await fetch(`/api/accounting/payment-vouchers/${r.id}/remind`, { method: "POST" });
+      const j = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; data?: { reminded: number } };
+      if (j?.success) {
+        const n = j.data?.reminded ?? 0;
+        toast.success(`Reminder sent to ${n} approver${n === 1 ? "" : "s"} for ${r.pvNo}`);
+      } else toast.error(j?.error || "Could not send the reminder");
+    } finally { setLadderBusy(false); }
+  };
+
   // Batch rung over the ticked vouchers (date order on the server).
   const handleLadderBatch = async (action: "prepare" | "check" | "approve") => {
     // Only this page's own vouchers ride the ladder; a ticked foreign row is skipped.
@@ -12577,6 +12597,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
         ...(live && st === "CHECKED" ? [
           { label: "Reject", disabled: ladderBusy, action: () => void handleLadder(r, "reject") },
           { label: "Approve & post", disabled: ladderBusy, action: () => void handleLadder(r, "approve") },
+          { label: "Remind approver", disabled: ladderBusy, action: () => void handleRemind(r) },
         ] : []),
         ...(isPosted(r) && r.pvKind !== "AP" ? [{ label: "Edit", action: () => startEdit(r) }] : []),
         ...(isPosted(r) && r.accrued === 1 && !r.settledAt ? [{ label: "Settle", action: () => void handleSettle(r) }] : []),
@@ -13282,6 +13303,7 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
                 <Button variant="primary" size="sm" disabled={ladderBusy} onClick={() => void handleLadder(r, "check")}>Check →</Button>
               </>}
               {r.status !== "VOID" && st === "CHECKED" && <>
+                <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => void handleRemind(r)}>Remind approver</Button>
                 <Button variant="outline" size="sm" disabled={ladderBusy} onClick={() => void handleLadder(r, "reject")}>Reject</Button>
                 <Button variant="primary" size="sm" disabled={ladderBusy} onClick={() => void handleLadder(r, "approve")}>Approve &amp; post</Button>
               </>}

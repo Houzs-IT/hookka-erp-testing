@@ -247,3 +247,44 @@ test("C2-11: the health banner (page + alert email) carries the key verdicts", (
   assert.match(page, /keysRefused: keyProblems\(keyResults\)\.refused,/);
   assert.match(page, /<KeyProbesCard results=\{keyResults\} \/>/);
 });
+
+// ── H3-7: "Remind approver" on a checked payment voucher ──────────────────
+import {
+  grantsApprove, pvRemindLink, pvRemindNotificationId, remindTooSoonMessage, remindWaitMinutes,
+} from "../src/api/lib/pv-remind.ts";
+
+test("H3-7: at most once an hour per voucher; approvers by the same wildcard rules", () => {
+  const now = Date.parse("2026-11-10T10:00:00.000Z");
+  assert.equal(remindWaitMinutes(null, now), 0);
+  assert.equal(remindWaitMinutes("2026-11-10T08:59:00.000Z", now), 0);
+  assert.equal(remindWaitMinutes("2026-11-10T09:30:00.000Z", now), 30);
+  assert.equal(remindWaitMinutes("2026-11-10T09:59:30.000Z", now), 60);
+  assert.equal(remindWaitMinutes("garbage", now), 0);
+  assert.match(remindTooSoonMessage(1), /in 1 minute\.$/);
+  assert.equal(grantsApprove(new Set(["accounting:approve"])), true);
+  assert.equal(grantsApprove(new Set(["accounting:*"])), true);
+  assert.equal(grantsApprove(new Set(["*:*"])), true);
+  assert.equal(grantsApprove(new Set(["accounting:check", "accounting:update"])), false);
+  assert.equal(pvRemindLink("pv-1"), "/accounting?tab=payments&pv=pv-1");
+  // Same voucher + approver + hour -> same id, so a double press inserts once.
+  assert.equal(pvRemindNotificationId("pv-1", "u-1", now), pvRemindNotificationId("pv-1", "u-1", now + 59_000));
+});
+
+test("H3-7: the endpoint only reminds on CHECKED, refuses within the hour, never touches the voucher", () => {
+  const acc = read("src/api/routes/accounting.ts");
+  const a = acc.indexOf('app.post("/payment-vouchers/:id/remind"');
+  assert.ok(a > 0);
+  const r = acc.slice(a, acc.indexOf("\napp.", a + 10));
+  assert.match(r, /requirePermission\(c, "accounting", "update"\)/);
+  assert.match(r, /if \(state !== "CHECKED"\)/);
+  assert.match(r, /if \(wait > 0\) return c\.json\(\{ success: false, error: remindTooSoonMessage\(wait\), code: "too_soon" \}, 429\);/);
+  assert.match(r, /if \(grantsApprove\(perms\)\) approvers\.push/);
+  assert.match(r, /u\.id === actorUserId\) continue;/);
+  assert.match(r, /INSERT INTO notifications[\s\S]*ON CONFLICT \(id\) DO NOTHING/);
+  assert.doesNotMatch(r, /UPDATE payment_vouchers/);
+  const page = read("src/pages/accounting/index.tsx");
+  assert.match(page, /fetch\(`\/api\/accounting\/payment-vouchers\/\$\{r\.id\}\/remind`, \{ method: "POST" \}\)/);
+  assert.match(page, /\{ label: "Remind approver", disabled: ladderBusy, action: \(\) => void handleRemind\(r\) \}/);
+  assert.match(page, /onClick=\{\(\) => void handleRemind\(r\)\}>Remind approver<\/Button>/);
+  assert.match(page, /const pvFromLink = pvLinkParams\.get\("pv"\);/);
+});

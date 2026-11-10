@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
-import { requirePermission, requireFinance, hasPermission } from "../lib/rbac";
+import { requirePermission, requireFinance, hasPermission, getRolePermissions } from "../lib/rbac";
 import { monthsOverdue, nextMonthDueDate } from "../../lib/terms";
 import { getOrgId, companyFilter, type CompanyFilter } from "../lib/tenant";
 import {
@@ -159,6 +159,8 @@ import { buildSupplierPaymentCreate, buildSupplierPaymentLifecycle, buildSupplie
 import { storeUploadedFile, removeStoredFile } from "./files";
 import { capList } from "../lib/list-cap";
 import { casGuardSql, isCasMiss } from "../lib/status-cas";
+import { grantsApprove, pvRemindLink, pvRemindNotificationId, remindTooSoonMessage, remindWaitMinutes } from "../lib/pv-remind";
+import { getUserOverride } from "../lib/user-permissions";
 import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
@@ -14006,6 +14008,76 @@ app.post("/payment-vouchers/approval-batch", async (c) => {
     if (r.ok) await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action, after: { pvNo: r.pvNo, state: r.state, ...(reason ? { reason } : {}) } });
   }
   return c.json({ success: true, data: { results, done: results.filter((r) => r.ok).length } });
+});
+
+// "Remind approver" (review pass 2, H3-7): the preparer of a CHECKED voucher
+// sends everyone holding accounting:approve an in-app notification — at most
+// once an hour per voucher (lib/pv-remind.ts). The voucher is not touched.
+let pvRemindUserColumn: Promise<void> | null = null;
+app.post("/payment-vouchers/:id/remind", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  await ensurePvApprovalCols(c.var.DB);
+  const id = c.req.param("id");
+  const orgId = getOrgId(c);
+  const actorUserId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  const pv = await c.var.DB.prepare("SELECT * FROM payment_vouchers WHERE id = ?").bind(id)
+    .first<Record<string, unknown>>();
+  if (!pv) return c.json({ success: false, error: "Voucher not found" }, 404);
+  const state = String((pv.approvalState ?? pv.approval_state) ?? "APPROVED");
+  if (String(pv.status) === "VOID") return c.json({ success: false, error: "This voucher is cancelled" }, 400);
+  if (state !== "CHECKED") {
+    return c.json({ success: false, error: `Only a checked voucher waits for the approver (this one is ${state})` }, 400);
+  }
+  const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
+  const nowMs = Date.now();
+  const link = pvRemindLink(id);
+  if (!pvRemindUserColumn) {
+    pvRemindUserColumn = runSelfApply(c.var.DB, "notifications.user_id", [
+      "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id TEXT",
+    ]).catch((e) => { pvRemindUserColumn = null; throw e; });
+  }
+  await pvRemindUserColumn;
+  const last = await c.var.DB.prepare(
+    "SELECT MAX(created_at) AS \"lastAt\" FROM notifications WHERE link = ? AND id LIKE 'pv-remind-%'",
+  ).bind(link).first<{ lastAt?: string | null; lastat?: string | null }>();
+  const lastRaw = last?.lastAt ?? last?.lastat ?? null;
+  const wait = remindWaitMinutes(lastRaw == null ? null : new Date(lastRaw).toISOString(), nowMs);
+  if (wait > 0) return c.json({ success: false, error: remindTooSoonMessage(wait), code: "too_soon" }, 429);
+
+  // Everyone in this org whose permissions (own list, else role) grant
+  // accounting:approve — never the person pressing the button.
+  const usersRes = await c.var.DB.prepare(
+    "SELECT id, role FROM users WHERE isActive = 1 AND (orgId = ? OR orgId IS NULL)",
+  ).bind(orgId).all<{ id: string; role: string | null }>();
+  const roleCache = new Map<string, Set<string>>();
+  const approvers: string[] = [];
+  for (const u of usersRes.results ?? []) {
+    if (!u.id || u.id === actorUserId) continue;
+    let perms = await getUserOverride(c, String(u.id)).catch(() => null);
+    if (!perms) {
+      const role = String(u.role ?? "");
+      if (!roleCache.has(role)) roleCache.set(role, await getRolePermissions(c, role).catch(() => new Set<string>()));
+      perms = roleCache.get(role) ?? new Set<string>();
+    }
+    if (grantsApprove(perms)) approvers.push(String(u.id));
+    if (approvers.length >= 50) break;
+  }
+  if (approvers.length === 0) {
+    return c.json({ success: false, error: "Nobody else holds the Approve right for payment vouchers, so there is no one to remind." }, 400);
+  }
+  const nowIso = new Date(nowMs).toISOString();
+  const amount = (Math.round(Number(pv.totalSen ?? pv.total_sen) || 0) / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const title = `Payment voucher ${pvNo} is waiting for your approval`;
+  const message = `${String(pv.payee ?? "").trim() || "Payment"} · RM ${amount} — checked and waiting to be approved.`;
+  await c.var.DB.batch(approvers.map((uid) =>
+    c.var.DB.prepare(
+      `INSERT INTO notifications (id, type, title, message, severity, is_read, link, created_at, org_id, user_id)
+       VALUES (?, 'SYSTEM', ?, ?, 'WARNING', 0, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+    ).bind(pvRemindNotificationId(id, uid, nowMs), title, message, link, nowIso, orgId, uid),
+  ));
+  await emitAudit(c, { resource: "payment-vouchers", resourceId: id, action: "remind", after: { pvNo, approvers: approvers.length } });
+  return c.json({ success: true, data: { reminded: approvers.length } });
 });
 
 // Clear an accrued voucher against the bank: DR accrual, CR bank/cash.
