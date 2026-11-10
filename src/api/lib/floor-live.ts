@@ -5,23 +5,27 @@
 // production worker who scans into a non-production department (Warehousing,
 // Repair, Maintenance, R&D) and stays there is visible — time booked outside
 // production while the work happens elsewhere inflates a department's
-// efficiency. Pure (no DB): the route gathers rows and calls buildFloorLive.
+// efficiency. Pure (no DB): floor-live-data.ts gathers rows and calls these.
 //
 // Rules (owner rulings 2026-11-10):
-//   • where = the department of the worker's LAST scan today; no scan = home
-//     department (same rule as the punch auto-fill split);
-//   • production rows show pieces done today + efficiency (earned job-card
-//     minutes ÷ production minutes worked so far — the SAME figure as the
-//     Employees dashboard, from workforce-perf.ts);
-//   • non-production rows show the time they scanned in; RED when that was
-//     more than 60 minutes ago and they have not punched out;
+//   • where = the department of the worker's LAST scan of the day; no scan =
+//     home department (same rule as the punch auto-fill split);
+//   • production rows show pieces done + efficiency (earned job-card minutes ÷
+//     production minutes worked — the SAME figure as the Employees dashboard,
+//     from workforce-perf.ts);
+//   • non-production rows show the time they scanned in; RED when they stayed
+//     more than 60 minutes (live: still punched in and scanned in over an hour
+//     ago; a closed day: until their punch-out);
 //   • Production Shortfall is not shown (a worker last scanned there is shown
 //     under their home department);
-//   • names only (no EMP number on screen).
+//   • names only (no EMP number on screen);
+//   • a closed day is saved once as a snapshot and never recomputed; Month /
+//     Quarter / Year read those snapshots (summarizeFloorLive).
 // ---------------------------------------------------------------------------
 
 export const FLOOR_LIVE_HIDDEN_DEPTS = new Set(["PRODUCTION_SHORTFALL"]);
 export const NON_PROD_RED_AFTER_MIN = 60;
+const DAY_END_MIN = 24 * 60;
 
 export type FloorLiveDept = { code: string; name: string; isProduction: boolean; sequence: number };
 export type FloorLiveWorker = {
@@ -32,18 +36,24 @@ export type FloorLiveWorker = {
   isProduction: boolean;
   clockIn: string | null;
   clockOut: string | null;
-  /** HH:MM of the last department scan today; null = never scanned (home dept). */
+  /** HH:MM of the last department scan; null = never scanned (home dept). */
   scannedAt: string | null;
   done: number;
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
-  /** Non-production and scanned in more than an hour ago while still punched in. */
+  /** Minutes spent in non-production departments, from the scan segments. */
+  nonProdMinutes: number;
+  /** In a non-production department for more than an hour (see rules). */
   overHourNonProd: boolean;
 };
 
 const hhmm = (min: number) =>
   `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+const toMin = (t: string | null | undefined): number | null => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(t ?? ""));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
 
 /** Pieces each worker completed: one per piece-PIC row, else the card's qty to each PIC. */
 export function piecesDoneByWorker(
@@ -77,7 +87,10 @@ export function piecesDoneByWorker(
 }
 
 export function buildFloorLive(input: {
+  /** Minutes since midnight now (live) — ignored when `closedDay`. */
   nowMin: number;
+  /** A finished day: each worker's day ends at their punch-out (else midnight). */
+  closedDay?: boolean;
   departments: readonly { code: string; name: string | null; isProduction: boolean | number | null; sequence: number | string | null }[];
   workers: readonly { id: string; name: string | null; departmentCode: string | null }[];
   attendance: readonly { employeeId: string | null; clockIn: string | null; clockOut: string | null }[];
@@ -92,11 +105,13 @@ export function buildFloorLive(input: {
   const deptByCode = new Map(departments.map((d) => [d.code, d]));
   const workerById = new Map(input.workers.map((w) => [w.id, w]));
 
-  const lastScan = new Map<string, { departmentCode: string; atMin: number }>();
+  const scansByWorker = new Map<string, { departmentCode: string; atMin: number }[]>();
   for (const s of input.scans) {
-    const prev = lastScan.get(s.workerId);
-    if (!prev || s.atMin >= prev.atMin) lastScan.set(s.workerId, s);
+    const a = scansByWorker.get(s.workerId) ?? [];
+    a.push(s);
+    scansByWorker.set(s.workerId, a);
   }
+  for (const a of scansByWorker.values()) a.sort((x, y) => x.atMin - y.atMin);
 
   const seen = new Set<string>();
   const workers: FloorLiveWorker[] = [];
@@ -106,7 +121,8 @@ export function buildFloorLive(input: {
     seen.add(id);
     const w = workerById.get(id);
     const homeDept = w?.departmentCode ?? "";
-    const scan = lastScan.get(id);
+    const scans = scansByWorker.get(id) ?? [];
+    const scan = scans.length ? scans[scans.length - 1] : undefined;
     // A scan into a hidden or unknown department falls back to home.
     const scannedDept = scan && deptByCode.has(scan.departmentCode) ? scan.departmentCode : null;
     const dept = scannedDept ?? homeDept;
@@ -115,8 +131,26 @@ export function buildFloorLive(input: {
     const p = input.perf.get(id);
     const workingMinutes = Math.round(p?.workingMinutes ?? 0);
     const earnedMinutes = Math.round(p?.productionMinutes ?? 0);
-    const scannedAt = scannedDept && scan ? hhmm(scan.atMin) : null;
-    const stillIn = !a.clockOut;
+    const outMin = toMin(a.clockOut);
+    // Where the day ends for this worker: live = now (or punch-out if out);
+    // a closed day = punch-out, else midnight.
+    const endMin = input.closedDay ? (outMin ?? DAY_END_MIN) : (outMin ?? input.nowMin);
+
+    // Time in non-production departments: each scan opens a segment that
+    // runs to the next scan or the end of the day.
+    let nonProdMinutes = 0;
+    scans.forEach((s, i) => {
+      const next = i + 1 < scans.length ? scans[i + 1].atMin : endMin;
+      const seg = Math.max(0, Math.min(next, endMin) - s.atMin);
+      const sd = deptByCode.get(s.departmentCode);
+      if (sd && !sd.isProduction) nonProdMinutes += seg;
+    });
+
+    const lastStay = scan && scannedDept ? endMin - scan.atMin : 0;
+    const overHourNonProd = input.closedDay
+      ? !isProduction && lastStay > NON_PROD_RED_AFTER_MIN
+      : !isProduction && !a.clockOut && lastStay > NON_PROD_RED_AFTER_MIN;
+
     workers.push({
       id,
       name: w?.name ?? id,
@@ -125,15 +159,61 @@ export function buildFloorLive(input: {
       isProduction,
       clockIn: a.clockIn,
       clockOut: a.clockOut,
-      scannedAt,
+      scannedAt: scannedDept && scan ? hhmm(scan.atMin) : null,
       done: input.done.get(id) ?? 0,
       workingMinutes,
       earnedMinutes,
       effPct: workingMinutes > 0 ? Math.round((earnedMinutes / workingMinutes) * 100) : null,
-      overHourNonProd:
-        !isProduction && stillIn && !!scan && !!scannedDept && input.nowMin - scan.atMin > NON_PROD_RED_AFTER_MIN,
+      nonProdMinutes,
+      overHourNonProd,
     });
   }
   workers.sort((x, y) => x.name.localeCompare(y.name));
   return { departments, workers };
+}
+
+// ---- Month / Quarter / Year (owner 2026-11-10) ----------------------------
+export type FloorLiveSummaryRow = {
+  id: string;
+  name: string;
+  homeDept: string;
+  days: number;
+  done: number;
+  workingMinutes: number;
+  earnedMinutes: number;
+  effPct: number | null;
+  nonProdMinutes: number;
+  /** Days on which they stayed in a non-production department over an hour. */
+  overHourDays: number;
+};
+
+/** Sum saved day snapshots per worker; grouped by their latest home department. */
+export function summarizeFloorLive(
+  days: readonly { date: string; workers: readonly FloorLiveWorker[] }[],
+): FloorLiveSummaryRow[] {
+  const by = new Map<string, FloorLiveSummaryRow & { lastDate: string }>();
+  for (const day of [...days].sort((a, b) => (a.date < b.date ? -1 : 1))) {
+    for (const w of day.workers) {
+      const r = by.get(w.id) ?? {
+        id: w.id, name: w.name, homeDept: w.homeDept, days: 0, done: 0, workingMinutes: 0,
+        earnedMinutes: 0, effPct: null, nonProdMinutes: 0, overHourDays: 0, lastDate: "",
+      };
+      r.days += 1;
+      r.done += w.done || 0;
+      r.workingMinutes += w.workingMinutes || 0;
+      r.earnedMinutes += w.earnedMinutes || 0;
+      r.nonProdMinutes += w.nonProdMinutes || 0;
+      if (w.overHourNonProd) r.overHourDays += 1;
+      r.name = w.name;
+      r.homeDept = w.homeDept || r.homeDept;
+      r.lastDate = day.date;
+      by.set(w.id, r);
+    }
+  }
+  return [...by.values()]
+    .map(({ lastDate: _lastDate, ...r }) => ({
+      ...r,
+      effPct: r.workingMinutes > 0 ? Math.round((r.earnedMinutes / r.workingMinutes) * 100) : null,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

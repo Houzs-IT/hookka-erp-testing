@@ -141,7 +141,7 @@ export function OperationsView({
           The per-day Completed chart lives in Plant Load's Completed popup;
           the shortage list opens in a popup from its one-line row. */}
       {/* Floor Live (owner 2026-11-10): who is in which department right now. */}
-      {sub === "floor" && <FloorLiveView day={period.day} today={todayYmdMY()} />}
+      {sub === "floor" && <FloorLiveView period={period} today={todayYmdMY()} onPeriodChange={onPeriodChange} />}
 
       {sub === "production" && (
         <>

@@ -28,6 +28,9 @@ export type FloorLiveResponse = {
   error?: string;
   date?: string;
   asOf?: string;
+  live?: boolean;
+  /** A past day read from its saved snapshot. */
+  frozen?: boolean;
   departments: { code: string; name: string; isProduction: boolean; sequence: number }[];
   workers: FloorLiveRow[];
 };
@@ -100,4 +103,77 @@ export function floorLiveLayout(
       overHour: w.filter((r) => r.overHourNonProd).length,
     },
   };
+}
+
+// ---- Month / Quarter / Year summary (owner 2026-11-10) --------------------
+export type FloorSummaryRow = {
+  id: string;
+  name: string;
+  homeDept: string;
+  days: number;
+  done: number;
+  workingMinutes: number;
+  earnedMinutes: number;
+  effPct: number | null;
+  nonProdMinutes: number;
+  overHourDays: number;
+};
+export type FloorSummaryResponse = {
+  success: boolean;
+  error?: string;
+  from?: string;
+  to?: string;
+  savedDays: string[];
+  departments: { code: string; name: string; isProduction: boolean; sequence: number }[];
+  rows: FloorSummaryRow[];
+};
+
+/** The date window a dashboard period covers, capped at today. */
+export function periodRange(
+  p: { mode: string; month: string; from?: string; to?: string },
+  today: string,
+): { from: string; to: string } {
+  let from: string;
+  let to: string;
+  if (p.mode === "range" && p.from && p.to) {
+    from = p.from;
+    to = p.to;
+  } else if (p.mode === "ytd") {
+    const y = (p.month || today).slice(0, 4);
+    from = `${y}-01-01`;
+    to = `${y}-12-31`;
+  } else {
+    const m = p.month || today.slice(0, 7);
+    const [y, mo] = m.split("-").map(Number);
+    const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    from = `${m}-01`;
+    to = `${m}-${String(last).padStart(2, "0")}`;
+  }
+  return { from, to: to > today ? today : to };
+}
+
+/** Problem first: most days over an hour in non-production, then lowest efficiency. */
+export function summaryLayout(
+  data: Pick<FloorSummaryResponse, "departments" | "rows">,
+  q = "",
+): { code: string; name: string; isProduction: boolean; rows: FloorSummaryRow[] }[] {
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const keep = (r: FloorSummaryRow) => !words.length || words.every((w) => r.name.toLowerCase().includes(w));
+  const orderIdx = (code: string) => {
+    const i = (PRODUCTION_ORDER as readonly string[]).indexOf(code);
+    return i === -1 ? PRODUCTION_ORDER.length : i;
+  };
+  const depts = [...data.departments].sort(
+    (a, b) => Number(b.isProduction) - Number(a.isProduction) || orderIdx(a.code) - orderIdx(b.code) || a.sequence - b.sequence,
+  );
+  return depts
+    .map((d) => ({
+      code: d.code,
+      name: d.name,
+      isProduction: d.isProduction,
+      rows: data.rows
+        .filter((r) => r.homeDept === d.code && keep(r))
+        .sort((a, b) => b.overHourDays - a.overHourDays || (a.effPct ?? 9999) - (b.effPct ?? 9999) || a.name.localeCompare(b.name)),
+    }))
+    .filter((d) => d.rows.length > 0);
 }

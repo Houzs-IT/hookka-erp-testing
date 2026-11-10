@@ -420,6 +420,50 @@ app.get("/api/pg-ping", async (c) => {
 // a source table without bumping its updated_at column.
 //
 // Same CRON_SECRET pattern as /api/internal/refresh-mvs.
+// Floor Live daily snapshot (owner 2026-11-10: "每天存一份"). Saves each
+// closed day once into floor_live_snapshots; an existing day is never
+// overwritten. Body: {} = yesterday (Malaysia); {"date":"Y-M-D"}; or
+// {"from":"Y-M-D","to":"Y-M-D"} to back-fill (max 120 days, never today).
+// Nightly at 00:05 MYT via .github/workflows/floor-live-snapshot.yml.
+app.post("/api/internal/floor-live-snapshot", async (c) => {
+  const expected = c.env.CRON_SECRET;
+  if (!expected || expected.length < 16) {
+    console.error("[floor-live-snapshot] CRON_SECRET unset or too short — refusing");
+    return c.json({ ok: false, error: "service unavailable" }, 503);
+  }
+  const given = c.req.header("x-cron-secret") || "";
+  if (!(await constantTimeEqual(given, expected))) {
+    return c.json({ ok: false, error: "forbidden" }, 403);
+  }
+  const t0 = Date.now();
+  const body = (await c.req.json().catch(() => ({}))) as { date?: string; from?: string; to?: string };
+  const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const yesterday = new Date(Date.parse(today + "T00:00:00Z") - 86400_000).toISOString().slice(0, 10);
+  const YMD = /^\d{4}-\d{2}-\d{2}$/;
+  let dates: string[] = [];
+  if (body.from || body.to) {
+    if (!YMD.test(body.from ?? "") || !YMD.test(body.to ?? "") || body.from! > body.to!) {
+      return c.json({ ok: false, error: "from/to must be YYYY-MM-DD, from <= to" }, 400);
+    }
+    for (let d = body.from!; d <= body.to! && d < today && dates.length < 120; ) {
+      dates.push(d);
+      d = new Date(Date.parse(d + "T00:00:00Z") + 86400_000).toISOString().slice(0, 10);
+    }
+  } else {
+    const d = body.date || yesterday;
+    if (!YMD.test(d) || d >= today) return c.json({ ok: false, error: "date must be a past day" }, 400);
+    dates = [d];
+  }
+  try {
+    const { saveFloorLiveSnapshots } = await import("./lib/floor-live-data");
+    const r = await saveFloorLiveSnapshots(c.var.DB, dates);
+    return c.json({ ok: true, days: dates.length, written: r.written, existing: r.existing, orgs: r.orgs, elapsedMs: Date.now() - t0 });
+  } catch (e) {
+    console.error("[floor-live-snapshot]", e);
+    return c.json({ ok: false, error: e instanceof Error ? e.message : "snapshot failed" }, 500);
+  }
+});
+
 app.post("/api/internal/rebuild-dashboard-snapshot", async (c) => {
   const expected = c.env.CRON_SECRET;
   if (!expected || expected.length < 16) {

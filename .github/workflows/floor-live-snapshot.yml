@@ -1,0 +1,60 @@
+# Floor Live daily snapshot (owner 2026-11-10: "每天存一份").
+#
+# 00:05 Malaysia time (16:05 UTC) every day: save YESTERDAY's Floor Live into
+# floor_live_snapshots, once — an existing day is never overwritten, so a later
+# edit to punches or job cards does not move a closed day. Month / Quarter /
+# Year on the Floor Live tab are summed from these snapshots.
+#
+# Manual run (Actions › Floor Live snapshot › Run workflow) can back-fill a
+# range: fill "from" and "to" (YYYY-MM-DD, max 120 days, never today).
+# Uses the same CRON_SECRET repo secret as rebuild-dashboard-snapshot.yml.
+name: Floor Live snapshot (daily)
+
+on:
+  schedule:
+    - cron: '5 16 * * *'
+  workflow_dispatch:
+    inputs:
+      from:
+        description: 'Back-fill from (YYYY-MM-DD) — leave empty for yesterday'
+        required: false
+        default: ''
+      to:
+        description: 'Back-fill to (YYYY-MM-DD)'
+        required: false
+        default: ''
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/internal/floor-live-snapshot
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          FROM: ${{ github.event.inputs.from }}
+          TO: ${{ github.event.inputs.to }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repo secret is empty. See refresh-mvs.yml header for setup."
+            exit 1
+          fi
+          if [ -n "$FROM" ] && [ -n "$TO" ]; then
+            data=$(jq -nc --arg f "$FROM" --arg t "$TO" '{from:$f,to:$t}')
+          else
+            data='{}'
+          fi
+          response=$(curl --silent --show-error --write-out '\nHTTP_STATUS:%{http_code}' \
+            --max-time 300 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-cron-secret: $CRON_SECRET" \
+            --data "$data" \
+            'https://hookka-erp-testing.pages.dev/api/internal/floor-live-snapshot')
+          status=$(echo "$response" | tail -n1 | sed 's/HTTP_STATUS://')
+          body=$(echo "$response" | sed '$d')
+          echo "Status: $status"
+          echo "Body: $(printf '%s' "$body" | jq -rc '{ok, days, written, existing, orgs, elapsedMs, error}' 2>/dev/null || echo "<${#body} bytes, not JSON>")"
+          if [ "$status" != "200" ]; then
+            echo "::error::Floor Live snapshot failed with status $status"
+            exit 1
+          fi
