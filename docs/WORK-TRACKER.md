@@ -438,7 +438,7 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - With made-up dues injected into the popup's read in the browser tab only, and its save path blocked (no save was tried), the table showed the amounts, biggest first, and the right ticked total. The fill matched the shared lib's figures to the sen, including the over-limit month and amount. Ticking one more supplier added its month and moved the shortfall by its amount.
       - Afterwards the stored plan is unchanged (same fingerprint).
     - Replaced the same evening by per-month ticks (item 22). No owner Save had used these ticks.
-22. 🔵 Trade finance: a tick per supplier per month, shown after Fill from Forecast P&L (`feat/tf-ticks-per-month`). The owner, with a screenshot of item 21's table (all unticked, every amount "-"): 「有点乱，我如何选这个月哪里有个supplier 要用trade finance?」. Told the ticks covered the whole year and the amounts were empty because the Forecast P&L's materials are keyed as %, not per supplier. Proposed a tick per month, with a clickable mockup in chat. The owner's answers:
+22. ✅ Trade finance: a tick per supplier per month, shown after Fill from Forecast P&L (#1297). The owner, with a screenshot of item 21's table (all unticked, every amount "-"): 「有点乱，我如何选这个月哪里有个supplier 要用trade finance?」. Told the ticks covered the whole year and the amounts were empty because the Forecast P&L's materials are keyed as %, not per supplier. Proposed a tick per month, with a clickable mockup in chat. The owner's answers:
     - Amounts: 「到时我会按supplier 来填」, so a % material is not split across suppliers.
     - 「可以我按了fill from forecast pnl 才可以勾选吗？不然直接显示会让人误会」 and 「也会和原本的手动输入对冲」.
     - 「如果存了，我untick 不就可以了吗？」, then 「做」.
@@ -450,6 +450,17 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Save keeps the ticks (`ticks` per month in kv `cashflow_forecast_tf`). Reopened, the rows and ticks show, and unticking is how to change them.
       - The Cash Flow forecast works a ticked plan out afresh from today's Forecast P&L figures, so changed figures move it without another Save.
       - Item 21's Suppliers box and table are removed.
+    - Tests: `tests/tf-forecast-ticks.test.mjs` (replaces `tf-supplier-ticks`); the pins in `tf-fill-from-forecast`, `cashflow-forecast-route` and `cashflow-forecast-ui` follow.
+    - MEASURED on prod 2026-11-10 after #1297 deployed, read only. Nothing was saved: each popup was closed with Cancel, and a blocked save path counted no attempt.
+      - The Cash Flow forecast for this month (34 columns, 158 rows) is identical to before the deploy (same fingerprint, same load time). So are the stored plan, the keyed months and the facility inputs. No supplier figures are stored, so the popup gets no supplier dues.
+      - The real popup: before Fill there are no supplier rows, no Suppliers box and no Clear ticks. Fill says "Nothing to fill", and the owner's typed ten months stay.
+      - Made-up dues for four suppliers were injected into the popup's read, in the browser tab only:
+        - Fill showed the four rows, biggest first. The facility's three own suppliers were ticked and the fourth was not.
+        - The Drawdown row turned greyed and matched the shared lib to the sen, including the over-limit month and amount.
+        - Ticking the fourth supplier's month, clearing a row by its name and ticking it back each matched the lib. The cleared row stayed listed.
+        - Clear ticks brought back the owner's typed ten months.
+      - A saved ticked plan, simulated in the read, reopened straight into ticks with its Drawdown worked out from them. Clear ticks then gave empty boxes.
+      - Afterwards the stored plan is unchanged (same fingerprint).
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
