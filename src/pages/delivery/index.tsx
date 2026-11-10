@@ -5082,6 +5082,7 @@ export default function DeliveryPage() {
               groupBy="customerState"
               autoGroup={false}
               selectable
+              onDoubleClick={(row) => { if (row.salesOrderId) navigate(`/sales/${row.salesOrderId}`); }}
               initialSearch={search}
               onSearchChange={setSearch}
               alwaysSearchKeys={PO_SEARCH_KEYS}
