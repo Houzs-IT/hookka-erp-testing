@@ -119,6 +119,9 @@ What the owner asked for (and asked to drop):
 - Header strip: punched in, production / non-production head-count, pcs done today, floor efficiency, mismatch count.
 - Many people: each card shows 6 rows (mismatch + lowest efficiency first) with "+N more"; a name/EMP search; an "Issues only" toggle. Phone: department accordions + Production / Non-production / Issues chips.
 - Mismatch flag (red row): last dept scan = A, but pieces completed in that segment belong to dept B.
+- **Red rule (owner 2026-11-10, option A):** a worker whose HOME department is non-production (warehouse, QC, maintenance…) who has been scanned into a PRODUCTION department for more than 1 hour shows red.
+- Each row shows the worker's **last check-in (last department-scan) time**. Needs a new read endpoint over `dept_scan_events` (today, all workers: last departmentcode + atmin) — no existing API exposes it; the dashboard prototype feed only uses it internally for the live hours split.
+- Real-data mock built 2026-11-10 from `/api/dashboard/prototype` (employee.attendance + performance.byDay): efficiency = earned job-card minutes ÷ minutes worked so far; worked minutes include OT floored to whole hours (so 600 at 19:27 on an OT day is correct, not a cap).
 - **Dropped by the owner:** job-card detail per person, a one-worker day timeline page, a mismatch log page.
 
 Data already in the system: `dept_scan_events` (workerid, date, departmentcode, atmin — a worker scans a department QR when they start there; no scan = home department; see `src/api/lib/punch-autofill.ts`, `src/lib/dept-scan-split.ts`), attendance punches, job-card completions per worker. Existing Operations code: `src/pages/dashboards/OperationsView.tsx`, `ops-floor-lib.ts` (department floor order/names).
