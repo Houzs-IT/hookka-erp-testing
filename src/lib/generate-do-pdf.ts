@@ -10,6 +10,7 @@ import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
 import { todayYmdMY } from "./utils";
 import { deliverJsPdf, pdfFileName } from "./pdf-preview";
 import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
+import { warehousePrintName } from "./pdf-warehouse";
 // DO-document rack line: per-component rack groups, NO label prefix, joined by
 // " · " (owner's spec). Shares formatRacksCompact's dedup + numeric sort.
 
@@ -323,6 +324,7 @@ export function renderDoInto(
     driverPhone?: string;
     vehicleType?: string;
     lorryName?: string;
+    warehouseName?: string | null;
   };
 
   const docDate = fmtDate(order.deliveryDate);
@@ -414,7 +416,9 @@ export function renderDoInto(
     ry = lblVal(rightX, ry, "DO No.", order.doNo, rightMaxW);
     ry = lblVal(rightX, ry, "Date", docDate, rightMaxW);
     ry = lblVal(rightX, ry, "Driver", driverLine, rightMaxW);
-    lblVal(rightX, ry, "Lorry Plate", lorryLine, rightMaxW);
+    ry = lblVal(rightX, ry, "Lorry Plate", lorryLine, rightMaxW);
+    // D6: the paper names the warehouse the goods leave from.
+    lblVal(rightX, ry, "Ship From", warehousePrintName(o.warehouseName), rightMaxW);
 
     doc.setDrawColor(...RULE);
     doc.setLineWidth(0.5);

@@ -13,6 +13,7 @@ import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 import { fitCodeColumn } from "./pdf-code-column";
+import { warehousePrintName } from "./pdf-warehouse";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -94,7 +95,9 @@ export function generateGRNPdf(
   ry = lblVal(rightX, ry, "Date", fmtDate(data.date), rightMaxW);
   ry = lblVal(rightX, ry, "PO Ref", data.poRef ?? "-", rightMaxW);
   ry = lblVal(rightX, ry, "Supplier DO No.", data.doRef ?? data.supplierDoNo ?? "-", rightMaxW);
-  lblVal(rightX, ry, "Warehouse", data.warehouse ?? "-", rightMaxW);
+  // D6: the paper names the warehouse the goods were received at (was an
+  // always-"-" Warehouse row: no caller passed one).
+  lblVal(rightX, ry, "Received At", warehousePrintName(data.warehouse), rightMaxW);
 
   let y = Math.max(ly, ry) + 2;
 

@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { jsPDF } from "jspdf";
 
 import { fitCodeColumn } from "../src/lib/pdf-code-column.ts";
+import { warehousePrintName, DEFAULT_WAREHOUSE_LABEL } from "../src/lib/pdf-warehouse.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
@@ -66,4 +67,21 @@ test("D5: PO, GRN and PI size the Item Code column from their own codes", () => 
     assert.match(src, /const codeCol = fitCodeColumn\(doc, tableBody\.map\(\(r\) => r\[1\]\)/, f);
     assert.match(src, /1: \{ cellWidth: codeCol\.cellWidth,[^}]*fontSize: codeCol\.fontSize \}/, f);
   }
+});
+
+// ── D6 ────────────────────────────────────────────────────────────────────
+test("D6: no recorded warehouse prints Hookka's one site, a recorded one wins", () => {
+  assert.equal(DEFAULT_WAREHOUSE_LABEL, "HOOKKA INDUSTRIES, Sungai Buloh");
+  assert.equal(warehousePrintName(undefined), DEFAULT_WAREHOUSE_LABEL);
+  assert.equal(warehousePrintName("  "), DEFAULT_WAREHOUSE_LABEL);
+  assert.equal(warehousePrintName("-"), DEFAULT_WAREHOUSE_LABEL);
+  assert.equal(warehousePrintName(" Rawang Store "), "Rawang Store");
+});
+
+test("D6: the DO prints Ship From and the GRN prints Received At (no more always-dash Warehouse)", () => {
+  const dO = read("src/lib/generate-do-pdf.ts");
+  assert.match(dO, /lblVal\(rightX, ry, "Ship From", warehousePrintName\(o\.warehouseName\), rightMaxW\)/);
+  const grn = read("src/lib/generate-grn-pdf.ts");
+  assert.match(grn, /lblVal\(rightX, ry, "Received At", warehousePrintName\(data\.warehouse\), rightMaxW\)/);
+  assert.doesNotMatch(grn, /"Warehouse", data\.warehouse \?\? "-"/);
 });
