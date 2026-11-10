@@ -10,8 +10,14 @@
 //
 // Report first. `--apply` is a separate, deliberate act:
 //
-//   node scripts/import-leads-from-xlsx.mjs "path/to/file.xlsx"
-//   node scripts/import-leads-from-xlsx.mjs "path/to/file.xlsx" --apply --name Penang
+//   node --import tsx/esm scripts/import-leads-from-xlsx.mjs "path/to/file.xlsx"
+//   node --import tsx/esm scripts/import-leads-from-xlsx.mjs "path/to/file.xlsx" --apply --name Penang
+//
+// `--import tsx/esm` because the column finding is the app's shared table-import
+// parser (src/lib/lead-sheet.ts, O6), which is TypeScript. Headers are matched
+// without case / spacing / `_` / a trailing `*`, and "Company" / "Phone" /
+// "Email" / "Website" / "Address" are read as well as the Google-Maps
+// "Business Name" / "Business Phone" / … spelling.
 //
 // Needs API_BASE (e.g. https://staging.hookka-erp-testing.pages.dev) and a
 // session cookie in HOOKKA_COOKIE. Deliberately goes through the API rather
@@ -22,6 +28,7 @@
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { leadRowsFromSheet } from "../src/lib/lead-sheet.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -31,7 +38,7 @@ const nameIdx = process.argv.indexOf("--name");
 const batchName = nameIdx !== -1 ? process.argv[nameIdx + 1] : "import";
 
 if (!file) {
-  console.error("usage: node scripts/import-leads-from-xlsx.mjs <file.xlsx> [--apply] [--name Penang]");
+  console.error("usage: node --import tsx/esm scripts/import-leads-from-xlsx.mjs <file.xlsx> [--apply] [--name Penang]");
   process.exit(1);
 }
 
@@ -71,17 +78,7 @@ const INDUSTRY_FROM_SHEET = (sheet) =>
 const rows = [];
 for (const sheet of wb.SheetNames) {
   const json = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: null });
-  for (const r of json) {
-    if (!r || Object.values(r).every((v) => v === null || v === "")) continue;
-    rows.push({
-      company: r["Business Name"] ?? null,
-      phone: r["Business Phone"] ?? null,
-      email: r["Business Email"] ?? null,
-      website: r["Business Website"] ?? null,
-      location: r["Location"] ?? null,
-      industry: INDUSTRY_FROM_SHEET(sheet),
-    });
-  }
+  rows.push(...leadRowsFromSheet(json, INDUSTRY_FROM_SHEET(sheet)));
 }
 
 console.log(`file    : ${file}`);

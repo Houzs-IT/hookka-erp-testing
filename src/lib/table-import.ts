@@ -221,6 +221,33 @@ export function rowHasData(values: ImportRow): boolean {
   return Object.values(values).some((v) => v !== "" && v !== 0 && v !== false && v !== undefined);
 }
 
+/**
+ * One CSV line → its cells. Double quotes wrap a cell that holds commas, and
+ * `""` inside quotes is one literal quote. Cells are NOT trimmed or typed — the
+ * caller decides what a cell means.
+ *
+ * Moved VERBATIM from the bank-statement CSV paste in the Cash Book tab
+ * (`parseCsvLine`, src/pages/accounting/index.tsx) so that importer reads every
+ * file exactly as before; pinned by tests/table-import-more-importers.test.mjs.
+ */
+export function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else q = false;
+      } else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 /** The export sheet for a schema: header row, then one row per record. */
 export function buildExportAoa(columns: ImportColumn[], rows: ImportRow[]): (string | number | boolean)[][] {
   const headerRow = columns.map(exportHeader);
