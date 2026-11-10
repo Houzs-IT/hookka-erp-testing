@@ -167,14 +167,15 @@ test("Monthly P&L forecast: a material keyed by supplier is their sum; the other
 test("snapshot: a supplier figure under a material is a change; keying and clearing it again is not", () => {
   const base = { "2026-12": { salesStr: "", pct: {} } };
   const snap = forecastSnapshot(base);
-  assert.notEqual(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: "5000" } } } }), snap);
+  // A supplier cell is { a } (RM) or { p } (%) since 2026-11-10 (tests/forecast-supplier-pct.test.mjs).
+  assert.notEqual(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: { a: "5000" } } } } }), snap);
   assert.notEqual(
-    forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: "5000" } } } }),
-    forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FILLER: { s1: "5000" } } } }),
+    forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: { a: "5000" } } } } }),
+    forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FILLER: { s1: { a: "5000" } } } } }),
     "the same supplier under another material is a different sheet",
   );
-  assert.equal(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: "" } } } }), snap);
-  assert.equal(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: " " } } } }), snap);
+  assert.equal(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: { a: "" } } } } }), snap);
+  assert.equal(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: { a: " " } } } } }), snap);
 });
 
 const page = read("src/pages/forecast.tsx");

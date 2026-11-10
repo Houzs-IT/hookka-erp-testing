@@ -64,7 +64,7 @@ import {
   type TfPlanFacility,
   type TfPlanStore,
 } from "../../lib/cashflow-forecast";
-import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, forecastTypeSupplierSen, type FcMonth } from "../../lib/forecast-pnl";
+import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
 import { loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
@@ -17051,18 +17051,21 @@ app.get("/dashboard", async (c) => {
 
   // --- Forecast overlay (same percent-or-amount rule as the Forecast page) --
   const fcRow = await db.prepare("SELECT value FROM kv_config WHERE key = 'forecast_pnl'").first<{ value: string }>();
-  type FcMonth = { salesSen?: number; purchasesByType?: Record<string, Record<string, number>>; pct?: Record<string, number | { bp?: number; amtSen?: number }> };
+  type FcMonth = { salesSen?: number; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, FcSupplierCell>>; pct?: Record<string, number | { bp?: number; amtSen?: number }> };
   let fcMonths: Record<string, FcMonth> = {};
   try {
     fcMonths = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
   } catch { /* none yet */ }
   // A material keyed by supplier in a month (owner 2026-11-10, spec
   // 2026-11-10-forecast-suppliers-design.md 5) is its suppliers' sum, as on the
-  // Forecast page; a material without supplier figures keeps its % / RM.
+  // Forecast page; a material without supplier figures keeps its % / RM. A
+  // supplier keyed as a % of sales counts at what it works out to (owner
+  // 2026-11-10 「每个supplier 填percentage 或amount」); keyed means any cell,
+  // as on the page, even one that works out to 0 in a month without sales.
   const supplierTypesOf = (m: FcMonth): [string, number][] =>
     Object.keys(m.purchasesByType ?? {})
-      .map((type) => [type, forecastTypeSupplierSen(m, type)] as [string, number])
-      .filter(([, sen]) => sen > 0);
+      .filter((type) => forecastTypeSupplierCells(m, type).length > 0)
+      .map((type) => [type, forecastTypeSupplierSen(m, type)] as [string, number]);
   const fcLineAmt = (m: FcMonth, v: number | { bp?: number; amtSen?: number }): number => {
     const salesSen = Math.max(0, Math.round(Number(m.salesSen) || 0));
     if (typeof v === "number") return Math.round((salesSen * v) / 10000);
@@ -17398,9 +17401,10 @@ app.put("/forecast", async (c) => {
     // columns-design.md 4): kept as `salesByCustomer`, and `salesSen` is then
     // their sum, so every reader of salesSen keeps reading the month's total.
     // Purchases by supplier under each material (owner 2026-11-10, spec
-    // 2026-11-10-forecast-suppliers-design.md 3): kept as `purchasesByType`;
-    // nothing derived is stored — a material with any figure is their sum.
-    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, number>> }> = {};
+    // 2026-11-10-forecast-suppliers-design.md 3): kept as `purchasesByType`,
+    // each supplier as RM sen or `{ bp }` of sales (spec 9); nothing derived
+    // is stored — a material with any figure is their sum.
+    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, FcSupplierCell>> }> = {};
     for (const [ym, m] of Object.entries(body.months)) {
       if (!/^\d{4}-\d{2}$/.test(ym) || !m || typeof m !== "object") continue;
       const pct: Record<string, { bp?: number; amtSen?: number }> = {};

@@ -73,7 +73,7 @@ test("unsaved changes: a banner and a leave guard against the last loaded or sav
 
 test("keyed boxes carry their column and the key handler; Up / Down never nudge a number", () => {
   assert.match(src, /if \(e\.key === "ArrowUp" \|\| e\.key === "ArrowDown"\) e\.preventDefault\(\);/);
-  assert.equal((src.match(/onKeyDown=\{onCellKey\}/g) ?? []).length, 5, "amount, %, the sales box, a customer's sales box (2026-11-09), a supplier's box (2026-11-10)");
+  assert.equal((src.match(/onKeyDown=\{onCellKey\}/g) ?? []).length, 6, "amount, %, the sales box, a customer's sales box (2026-11-09), a supplier's RM and % boxes (2026-11-10)");
   assert.match(src, /col=\{ci \* 2\}/);
   assert.match(src, /data-fc-col=\{ci \* 2 \+ 1\}/);
   assert.match(src, /col=\{yms\.indexOf\(ym\) \* 2\}/);
@@ -81,7 +81,7 @@ test("keyed boxes carry their column and the key handler; Up / Down never nudge 
 });
 
 test("calm cells: warm keyed boxes, names without account codes, larger section labels", () => {
-  assert.equal((src.match(/bg-\[#FFFBF2\]/g) ?? []).length, 5, "amount, %, the sales box, a customer's box (2026-11-09), a supplier's box (2026-11-10)");
+  assert.equal((src.match(/bg-\[#FFFBF2\]/g) ?? []).length, 6, "amount, %, the sales box, a customer's box (2026-11-09), a supplier's RM and % boxes (2026-11-10)");
   assert.doesNotMatch(src, /<span className="tabular-nums text-\[11px\] text-\[#9CA3AF\] mr-1\.5">\{a\.code\}<\/span>/);
   assert.match(src, /title=\{a\.code\.startsWith\("cat:"\) \? undefined : a\.code\}/, "the code stays on hover");
   assert.match(src, /className="text-\[13px\] font-semibold text-\[#6B5C32\] cursor-pointer inline-flex items-center gap-1"/);

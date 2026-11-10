@@ -363,6 +363,11 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Desktop, a plain reload that met a real stale copy: "Updating…" showed, the page asked again 10.1 s after its first request, the fresh copy came in, and there was no third request.
       - Phone at 375 px: the same, with the retry at 10.5 s and the label gone after it. There was no sideways scroll, and the phone's stored copy ended without the flag.
       - No console errors on either screen.
+17. 🔵 Each supplier under a material keyed as RM or % of sales (branch `feat/forecast-supplier-pct`). The owner, with a screenshot of FABRIC's supplier rows: 「这个我可以填percentage 算会上去吗？就是每个supplier 填percentage 或amount」. The answer was no, RM only, with a proposal; then 「做」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md` section 9.
+    - Each supplier cell has the material row's RM and % boxes. Typing one clears the other, and the empty box shows the other side greyed. The % is of that month's sales (the customer rows' sum when keyed), and the material is their sum either way.
+    - Stored per supplier as whole sen (as before) or `{ bp }`. Every reader works a % out the same way (`forecastTypeSupplierCells`): the page, the Cash Flow P&L forecast (each supplier paid after its own term), the Monthly P&L forecast and the Finance Dashboard.
+    - A % supplier in a month without sales is 0. The material still counts as supplier-keyed, so it is 0, and the dashboard overlay now decides "keyed" the same way as the page.
+    - Tests: `tests/forecast-supplier-pct.test.mjs`; the snapshot test in `tests/forecast-suppliers.test.mjs` and the box counts in `tests/finance-v2-forecast.test.mjs` updated.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).

@@ -11,12 +11,12 @@
 export type ForecastCell = { p?: string; a?: string };
 /** `customers` (owner 2026-11-09): the sales keyed per customer, as typed.
  *  `suppliers` (owner 2026-11-10): the purchases keyed per material, then per
- *  supplier, as typed. */
+ *  supplier, as typed — RM or % like a line's cell. */
 export type ForecastMonth = {
   salesStr: string;
   pct: Record<string, ForecastCell>;
   customers?: Record<string, string>;
-  suppliers?: Record<string, Record<string, string>>;
+  suppliers?: Record<string, Record<string, ForecastCell>>;
 };
 
 const byKey = (x: string[], y: string[]) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
@@ -25,11 +25,23 @@ const keyedCells = (cells: Record<string, string> | undefined): string[][] =>
     .map(([id, v]) => [id, (v ?? "").trim()])
     .filter(([, v]) => v !== "")
     .sort(byKey);
+// A supplier cell by the side that is keyed (an RM amount over a %), "" when
+// neither is.
+const supplierSide = (e: ForecastCell | undefined): string => {
+  const a = (e?.a ?? "").trim();
+  if (a !== "") return `a:${a}`;
+  const p = (e?.p ?? "").trim();
+  return p !== "" ? `p:${p}` : "";
+};
 // A material's supplier cells keyed "<material>|<supplier>", so the same
 // supplier under another material is another cell.
-const keyedSupplierCells = (byType: Record<string, Record<string, string>> | undefined): string[][] =>
+const keyedSupplierCells = (byType: Record<string, Record<string, ForecastCell>> | undefined): string[][] =>
   Object.entries(byType ?? {})
-    .flatMap(([type, cells]) => keyedCells(cells).map(([id, v]) => [`${type}|${id}`, v]))
+    .flatMap(([type, cells]) =>
+      Object.entries(cells ?? {})
+        .map(([id, e]) => [`${type}|${id}`, supplierSide(e)])
+        .filter(([, v]) => v !== ""),
+    )
     .sort(byKey);
 
 export function forecastSnapshot(months: Record<string, ForecastMonth>): string {
