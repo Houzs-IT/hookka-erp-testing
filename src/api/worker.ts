@@ -576,6 +576,25 @@ app.post("/api/internal/process-email-outbox", async (c) => {
   if (!(await constantTimeEqual(given, expected))) {
     return c.json({ ok: false, error: "forbidden" }, 403);
   }
+  // P4: System Health red-alert email rides this 5-minute tick, BEFORE the
+  // drain so a queued alert goes out on this same tick. Best-effort; never
+  // fails the drain. Rules + recipients: lib/health-alert.ts.
+  let healthAlert: unknown = null;
+  try {
+    const { runHealthAlertCheck } = await import("./lib/health-alert");
+    const { measureHealthBanner } = await import("./routes/admin-health");
+    const { enqueueEmail } = await import("./lib/email-outbox");
+    healthAlert = await runHealthAlertCheck({
+      db: c.var.DB as unknown as Parameters<typeof runHealthAlertCheck>[0]["db"],
+      measure: () => measureHealthBanner(c.env),
+      send: async (to, mail) => {
+        await enqueueEmail(c, { to, subject: mail.subject, html: mail.html, text: mail.text });
+      },
+      pageUrl: `${new URL(c.req.url).origin}/admin/health`,
+    });
+  } catch (e) {
+    console.warn("[process-email-outbox] health alert check failed:", e);
+  }
   try {
     const { processOutbox } = await import("./lib/email-outbox");
     const result = await processOutbox(
@@ -598,7 +617,7 @@ app.post("/api/internal/process-email-outbox", async (c) => {
     } catch (e) {
       console.warn("[process-email-outbox] ack chase failed:", e);
     }
-    return c.json({ ok: true, ...result, ackChased });
+    return c.json({ ok: true, ...result, ackChased, healthAlert });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[process-email-outbox] error:", e);
