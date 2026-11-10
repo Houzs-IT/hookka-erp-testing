@@ -139,3 +139,17 @@ test("B5: jsonbText passes JSON text through and serialises a parsed value once"
   assert.equal(jsonbText({ docs: [1] }), '{"docs":[1]}');
   assert.equal(jsonbText([0, 2]), "[0,2]");
 });
+
+// ── H3 B8: a full session-mode pool is retried like the other connect errors
+import { isTransientDbError } from "../src/api/lib/supabase-compat.ts";
+
+test("B8: 'max clients reached in session mode' / EMAXCONNSESSION is a connect-time retry", () => {
+  const compat = read("src/api/lib/supabase-compat.ts");
+  const createRe = new RegExp(compat.match(/const CONN_CREATE_RE =\s*\/(.*)\/i/)?.[1] ?? "^$", "i");
+  assert.ok(createRe.test("(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15"));
+  assert.ok(createRe.test("Max clients reached in session mode"));
+  assert.match(compat, /if \(code === 'EMAXCONNSESSION'\) return true/);
+  const byCode = Object.assign(new Error("pool full"), { code: "EMAXCONNSESSION" });
+  assert.ok(isTransientDbError(byCode), "answers 503, not 500");
+  assert.ok(!createRe.test("connection terminated unexpectedly"), "a mid-statement drop is still never retried");
+});
