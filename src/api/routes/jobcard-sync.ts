@@ -24,180 +24,15 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
-import { buildAuditStatement } from "../lib/audit";
+import { deriveJobCardId } from "../lib/bom-wip-breakdown";
 import {
-  breakBomIntoJobCardWips,
-  deriveJobCardId,
-  l1ProcessesWithoutWipDupes,
-  type BomVariantContext,
-} from "../lib/bom-wip-breakdown";
+  computeExpectedJcs,
+  loadBomTemplate,
+  type ProductionOrderRow,
+} from "../lib/expected-job-cards";
+import { planZeroMinuteFills, writeZeroMinuteFills } from "../lib/fill-zero-minutes";
 
 const app = new Hono<Env>();
-
-type ProductionOrderRow = {
-  id: string;
-  salesOrderId: string | null;
-  productCode: string | null;
-  itemCategory: string | null;
-  quantity: number;
-  currentDepartment: string | null;
-  targetEndDate: string | null;
-  startDate: string | null;
-  sizeCode: string | null;
-  sizeLabel: string | null;
-  fabricCode: string | null;
-  gapInches: number | null;
-  divanHeightInches: number | null;
-  legHeightInches: number | null;
-};
-
-type L1Process = { deptCode: string; category: string; minutes: number };
-
-// Mirror parseL1Processes from sales-orders.ts. Kept inline (not exported
-// from sales-orders.ts) to preserve the "do not touch sales-orders.ts"
-// constraint — the parser is small and stable.
-function parseL1Processes(raw: string | null): L1Process[] {
-  if (!raw) return [];
-  try {
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .map((p) => ({
-        deptCode: String((p as { deptCode?: unknown }).deptCode ?? ""),
-        category: String((p as { category?: unknown }).category ?? ""),
-        minutes: Number((p as { minutes?: unknown }).minutes) || 0,
-      }))
-      .filter((p) => p.deptCode.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-// Build the full (wipKey, deptCode) → {wipCode, wipLabel, wipType, wipQty,
-// estMinutes, category, sequence} map the BOM currently expects for one PO.
-// Covers both the L2 WIP chain (breakBomIntoWips output) and the FG-level
-// l1Processes (wipKey="FG").
-type ExpectedJc = {
-  wipKey: string;
-  wipCode: string;
-  wipLabel: string;
-  wipType: string;
-  wipQty: number;
-  deptCode: string;
-  sequence: number;
-  estMinutes: number;
-  category: string;
-  branchKey: string;
-};
-
-function computeExpectedJcs(
-  po: ProductionOrderRow,
-  bomRow: {
-    wipComponents: string | null;
-    l1Processes: string | null;
-    baseModel: string | null;
-  } | null,
-): ExpectedJc[] {
-  const productCode = po.productCode ?? "";
-  const variants: BomVariantContext = {
-    productCode,
-    // Parent model from bom_templates.baseModel — fall back to productCode
-    // when BOM didn't store one (so {MODEL} keeps the legacy variant value
-    // for those rows instead of going blank). See BUG-2026-04-27-004.
-    model: bomRow?.baseModel ?? productCode,
-    sizeLabel: po.sizeLabel ?? "",
-    sizeCode: po.sizeCode ?? "",
-    fabricCode: po.fabricCode ?? "",
-    divanHeightInches: po.divanHeightInches ?? null,
-    legHeightInches: po.legHeightInches ?? null,
-    gapInches: po.gapInches ?? null,
-  };
-  // Same rules as the SO-confirm builder: an L1-only BOM gets an
-  // auto-generated chain of its L1 steps, and an L1 step a WIP card already
-  // covers gets no FG card (BUG-2026-10-01-244).
-  const l1ProcsAll = parseL1Processes(bomRow?.l1Processes ?? null);
-  const wips = breakBomIntoJobCardWips(
-    bomRow?.wipComponents ?? null,
-    l1ProcsAll,
-    productCode,
-    variants,
-  );
-  const expected: ExpectedJc[] = [];
-  for (const wip of wips) {
-    const wipQty = Math.max(
-      1,
-      Math.floor((po.quantity || 1) * wip.quantityMultiplier),
-    );
-    for (let i = 0; i < wip.processes.length; i++) {
-      const p = wip.processes[i];
-      expected.push({
-        wipKey: wip.wipKey,
-        wipCode: p.wipCode || wip.wipCode,
-        wipLabel: p.wipLabel || wip.wipLabel,
-        wipType: wip.wipType,
-        wipQty,
-        deptCode: p.deptCode,
-        sequence: i,
-        estMinutes: p.minutes,
-        category: p.category,
-        // BOM-walker stamped this on the process — no category/dept hardcode.
-        branchKey: p.branchKey ?? "",
-      });
-    }
-  }
-  // FG-level l1Processes — single JC per process, wipKey="FG".
-  for (const l1p of l1ProcessesWithoutWipDupes(l1ProcsAll, wips)) {
-    expected.push({
-      wipKey: "FG",
-      wipCode: productCode,
-      wipLabel: productCode,
-      wipType: "FG",
-      wipQty: po.quantity || 1,
-      deptCode: l1p.deptCode,
-      sequence: 99,
-      estMinutes: l1p.minutes,
-      category: l1p.category,
-      // FG-level joint terminals (UPHOLSTERY, PACKING) live at root —
-      // shared by every branch, so no specific branch identifier.
-      branchKey: "",
-    });
-  }
-  return expected;
-}
-
-// Load ACTIVE BOM; fall back to most-recent. Mirrors sales-orders.ts.
-async function loadBomTemplate(
-  db: D1Database,
-  productCode: string,
-): Promise<{
-  wipComponents: string | null;
-  l1Processes: string | null;
-  baseModel: string | null;
-} | null> {
-  if (!productCode) return null;
-  type Row = {
-    wipComponents: string | null;
-    l1Processes: string | null;
-    baseModel: string | null;
-  };
-  const active = await db
-    .prepare(
-      `SELECT wipComponents, l1Processes, baseModel FROM bom_templates
-         WHERE productCode = ? AND versionStatus = 'ACTIVE'
-         ORDER BY effectiveFrom DESC LIMIT 1`,
-    )
-    .bind(productCode)
-    .first<Row>();
-  if (active) return active;
-  const latest = await db
-    .prepare(
-      `SELECT wipComponents, l1Processes, baseModel FROM bom_templates
-         WHERE productCode = ? ORDER BY effectiveFrom DESC LIMIT 1`,
-    )
-    .bind(productCode)
-    .first<Row>();
-  return latest ?? null;
-}
 
 // Chunk an array into groups of n.
 function chunk<T>(arr: T[], n: number): T[][] {
@@ -355,37 +190,6 @@ app.post("/", async (c) => {
   });
 });
 
-// The minutes the CURRENT BOM gives an existing card, or why it can't say.
-// A merged Fab Cut card (wipKey `<poId>::<model>::<fabric>::FAB_CUT`) gets the
-// sum of every Fab Cut step of its PO, the same total aggregateFcSlots stamps
-// on a new one. A sofa merge spans several POs (key starts with the SO id), so
-// one PO's BOM can't price it.
-// A `<product>::FG_MAIN` card is the all-dept chain a PO got while its BOM was
-// empty (before BUG-2026-10-01-244). Today's BOM has other wipKeys, so it is
-// matched by dept instead: the sum of that dept's steps. Skipped when the PO
-// has another live card in the same dept, or that work would be counted twice.
-export function bomMinutesForCard(
-  card: { wipKey: string; deptCode: string; poId: string },
-  expected: readonly { wipKey: string; deptCode: string; estMinutes: number }[],
-  otherCardInDept = false,
-): { minutes: number } | { skip: "sofaFabCutMerge" | "noMatch" | "duplicateDept" } {
-  if (card.deptCode === "FAB_CUT" && card.wipKey.endsWith("::FAB_CUT")) {
-    if (!card.wipKey.startsWith(`${card.poId}::`)) return { skip: "sofaFabCutMerge" };
-    const fc = expected.filter((e) => e.deptCode === "FAB_CUT");
-    if (fc.length === 0) return { skip: "noMatch" };
-    return { minutes: fc.reduce((sum, e) => sum + e.estMinutes, 0) };
-  }
-  const hit = expected.find(
-    (e) => e.wipKey === card.wipKey && e.deptCode === card.deptCode,
-  );
-  if (hit) return { minutes: hit.estMinutes };
-  if (!card.wipKey.endsWith("::FG_MAIN")) return { skip: "noMatch" };
-  if (otherCardInDept) return { skip: "duplicateDept" };
-  const steps = expected.filter((e) => e.deptCode === card.deptCode);
-  if (steps.length === 0) return { skip: "noMatch" };
-  return { minutes: steps.reduce((sum, e) => sum + e.estMinutes, 0) };
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/production/sync-jobcards-from-bom/fill-zero-minutes
 //   ?dryRun=true             preview only
@@ -395,8 +199,10 @@ export function bomMinutesForCard(
 // Live cards only (WAITING / IN_PROGRESS / PAUSED / BLOCKED): a CANCELLED card
 // is never filled.
 //
-// A card's minutes are copied from the BOM once, when the card is created, so
-// a card cut while its BOM step had no minutes keeps 0 after the BOM is filled.
+// A card's minutes are copied from the BOM once, when the card is created.
+// Since BUG-2026-11-11-497 a BOM / WIP Times minutes save fills that product's
+// live cards still at 0 (fillZeroMinuteCardsForProducts); this endpoint is the
+// manual sweep for everything else (completed cards, older gaps).
 // This fills ONLY cards still at 0. A card that has minutes is never touched,
 // even if the BOM has changed since: that is the BOM of its day, not a gap.
 // Each write is audited (before/after) so it can be traced and reversed.
@@ -404,141 +210,23 @@ export function bomMinutesForCard(
 app.post("/fill-zero-minutes", async (c) => {
   const denied = await requirePermission(c, "production-orders", "update");
   if (denied) return denied;
-  const db = c.var.DB;
   const dryRun = c.req.query("dryRun") === "true";
   const completedFrom = c.req.query("completedFrom") ?? "";
   if (completedFrom && !/^\d{4}-\d{2}-\d{2}$/.test(completedFrom)) {
     return c.json({ success: false, error: "completedFrom must be YYYY-MM-DD" }, 400);
   }
 
-  type ZeroCard = ProductionOrderRow & {
-    jcId: string;
-    wipKey: string | null;
-    deptCode: string | null;
-    status: string;
-    completedDate: string | null;
-    poNo: string | null;
-  };
-  const sel = await db
-    .prepare(
-      `SELECT jc.id AS "jcId", jc.wipKey AS "wipKey", jc.departmentCode AS "deptCode",
-              jc.status AS "status", jc.completedDate AS "completedDate",
-              po.poNo AS "poNo", po.id, po.salesOrderId, po.productCode,
-              po.itemCategory, po.quantity, po.currentDepartment, po.targetEndDate,
-              po.startDate, po.sizeCode, po.sizeLabel, po.fabricCode, po.gapInches,
-              po.divanHeightInches, po.legHeightInches
-         FROM job_cards jc
-         JOIN production_orders po ON po.id = jc.productionOrderId
-        WHERE COALESCE(jc.productionTimeMinutes, 0) = 0
-          AND (jc.status IN ('WAITING','IN_PROGRESS','PAUSED','BLOCKED')
-               ${completedFrom ? "OR jc.completedDate >= ?" : ""})
-        ORDER BY jc.id`,
-    )
-    .bind(...(completedFrom ? [completedFrom] : []))
-    .all<ZeroCard>();
-  const cards = sel.results ?? [];
-
-  const bomCache = new Map<string, Awaited<ReturnType<typeof loadBomTemplate>>>();
-  const expectedByPo = new Map<string, ExpectedJc[]>();
-  // Per PO: dept -> wipKeys of its non-cancelled cards (for the FG_MAIN guard).
-  const deptKeysByPo = new Map<string, Map<string, string[]>>();
-  const fills: Array<{
-    jcId: string;
-    poNo: string;
-    productCode: string;
-    deptCode: string;
-    status: string;
-    minutes: number;
-  }> = [];
-  const skipped = { bomZero: 0, noMatch: 0, sofaFabCutMerge: 0, duplicateDept: 0 };
-  const skippedSamples: Array<{ jcId: string; poNo: string; productCode: string; deptCode: string; reason: string }> = [];
-
-  for (const r of cards) {
-    const productCode = r.productCode ?? "";
-    let expected = expectedByPo.get(r.id);
-    if (!expected) {
-      if (!bomCache.has(productCode)) bomCache.set(productCode, await loadBomTemplate(db, productCode));
-      expected = computeExpectedJcs(r, bomCache.get(productCode) ?? null);
-      expectedByPo.set(r.id, expected);
-    }
-    let deptKeys = deptKeysByPo.get(r.id);
-    if (!deptKeys) {
-      const own = await db
-        .prepare(
-          `SELECT wipKey AS "wipKey", departmentCode AS "deptCode" FROM job_cards
-            WHERE productionOrderId = ? AND status <> 'CANCELLED'`,
-        )
-        .bind(r.id)
-        .all<{ wipKey: string | null; deptCode: string | null }>();
-      deptKeys = new Map();
-      for (const o of own.results ?? []) {
-        const list = deptKeys.get(o.deptCode ?? "") ?? [];
-        list.push(o.wipKey ?? "");
-        deptKeys.set(o.deptCode ?? "", list);
-      }
-      deptKeysByPo.set(r.id, deptKeys);
-    }
-    const wipKey = r.wipKey ?? "";
-    const res = bomMinutesForCard(
-      { wipKey, deptCode: r.deptCode ?? "", poId: r.id },
-      expected,
-      (deptKeys.get(r.deptCode ?? "") ?? []).some((k) => k !== wipKey),
-    );
-    if ("skip" in res || res.minutes <= 0) {
-      const reason = "skip" in res ? res.skip : "bomZero";
-      skipped[reason]++;
-      if (skippedSamples.length < 50) {
-        skippedSamples.push({ jcId: r.jcId, poNo: r.poNo ?? "", productCode, deptCode: r.deptCode ?? "", reason });
-      }
-      continue;
-    }
-    fills.push({
-      jcId: r.jcId,
-      poNo: r.poNo ?? "",
-      productCode,
-      deptCode: r.deptCode ?? "",
-      status: r.status,
-      minutes: res.minutes,
-    });
-  }
-
+  const { fills, skippedSamples, ...counts } = await planZeroMinuteFills(c.var.DB, { completedFrom });
   const summary = {
-    scanned: cards.length,
+    ...counts,
     toFill: fills.length,
-    toFillCompleted: fills.filter((f) => f.status === "COMPLETED" || f.status === "TRANSFERRED").length,
-    skipped,
+    toFillCompleted: fills.filter((fill) => fill.status === "COMPLETED" || fill.status === "TRANSFERRED").length,
   };
   if (dryRun) {
     return c.json({ success: true, dryRun: true, completedFrom, ...summary, fills, skippedSamples });
   }
 
-  let updated = 0;
-  for (const part of chunk(fills, 50)) {
-    const stmts: D1PreparedStatement[] = [];
-    for (const f of part) {
-      // Re-checks 0 so a card that got minutes since the SELECT is left alone.
-      stmts.push(
-        db
-          .prepare(
-            `UPDATE job_cards SET productionTimeMinutes = ?, estMinutes = ?
-              WHERE id = ? AND COALESCE(productionTimeMinutes, 0) = 0`,
-          )
-          .bind(f.minutes, f.minutes, f.jcId),
-      );
-      const audit = await buildAuditStatement(c, {
-        resource: "job-cards",
-        resourceId: f.jcId,
-        action: "fill-zero-minutes-from-bom",
-        before: { productionTimeMinutes: 0, deptCode: f.deptCode },
-        after: { productionTimeMinutes: f.minutes, estMinutes: f.minutes, deptCode: f.deptCode },
-        source: "admin",
-      });
-      if (audit) stmts.push(audit);
-    }
-    await db.batch(stmts);
-    updated += part.length;
-  }
-
+  const updated = await writeZeroMinuteFills(c, fills, "admin");
   return c.json({ success: true, dryRun: false, completedFrom, ...summary, updated });
 });
 

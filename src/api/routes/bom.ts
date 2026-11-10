@@ -17,6 +17,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { buildAuditStatement, recordAuditCreatedMetric } from "../lib/audit";
+import { fillZeroMinuteCardsForProducts } from "../lib/fill-zero-minutes";
 import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
@@ -582,7 +583,11 @@ app.put("/templates/:id", async (c) => {
         500,
       );
     }
-    return c.json({ success: true, data: rowToTemplate(refreshed), debug });
+    const hasMinutesChange = "l1Processes" in patch || "wipComponents" in patch;
+    const zeroMinuteCards = hasMinutesChange
+      ? await fillZeroMinuteCardsForProducts(c, [refreshed.productCode])
+      : null;
+    return c.json({ success: true, data: rowToTemplate(refreshed), zeroMinuteCards, debug });
   } catch (err) {
     // Was bare `} catch {` returning 400 "Invalid request body" — masked
     // every internal error (DB constraint, schema mismatch, SQL syntax)
@@ -696,6 +701,7 @@ app.post("/templates/bulk-process-edit", async (c) => {
     let updated = 0;
     const failed: Array<{ templateId: string; error: string }> = [];
     const debug: Array<Record<string, unknown>> = [];
+    const updatedProductCodes: string[] = [];
 
     for (const [templateId, templateEdits] of byTemplate) {
       try {
@@ -768,6 +774,7 @@ app.post("/templates/bulk-process-edit", async (c) => {
           updateMetaChanges: updateResult.meta?.changes,
         });
         updated += 1;
+        updatedProductCodes.push(row.productCode);
       } catch (err) {
         failed.push({
           templateId,
@@ -776,10 +783,12 @@ app.post("/templates/bulk-process-edit", async (c) => {
       }
     }
 
+    const zeroMinuteCards = await fillZeroMinuteCardsForProducts(c, updatedProductCodes);
     return c.json({
       success: true,
       updated,
       failed,
+      zeroMinuteCards,
       debug: {
         incoming: incoming.length,
         validated: edits.length,

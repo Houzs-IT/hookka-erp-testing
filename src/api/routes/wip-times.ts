@@ -35,6 +35,7 @@ import {
   aggregateWipTimes,
   countProductsWithoutActiveBom,
 } from "../lib/wip-times-core";
+import { fillZeroMinuteCardsForProducts } from "../lib/fill-zero-minutes";
 
 const app = new Hono<Env>();
 
@@ -309,6 +310,7 @@ app.put("/", async (c) => {
 
   let updatedBomCount = 0;
   let updatedNodeCount = 0;
+  const updatedProductCodes: string[] = [];
 
   for (const row of result.results ?? []) {
     if (!row.wipComponents) continue;
@@ -352,9 +354,11 @@ app.put("/", async (c) => {
         .run();
       updatedBomCount++;
       updatedNodeCount += nodesUpdated;
+      updatedProductCodes.push(row.productCode);
     }
   }
 
+  const zeroMinuteCards = await fillZeroMinuteCardsForProducts(c, updatedProductCodes);
   return c.json({
     success: true,
     updatedBomCount,
@@ -362,6 +366,7 @@ app.put("/", async (c) => {
     wipLabel,
     deptCode,
     minutes,
+    zeroMinuteCards,
   });
 });
 
@@ -511,6 +516,7 @@ app.post("/bulk-import", async (c) => {
   // pass then walks the cached parsed structures in memory.
   type BomCache = {
     id: string;
+    productCode: string;
     tree: BomWipNode[];
     ctx: BomVariantContext;
     dirty: boolean;
@@ -540,7 +546,7 @@ app.post("/bulk-import", async (c) => {
       row.sizeLabel,
       defaults,
     );
-    bomCache.push({ id: row.id, tree: tree as BomWipNode[], ctx, dirty: false });
+    bomCache.push({ id: row.id, productCode: row.productCode, tree: tree as BomWipNode[], ctx, dirty: false });
   }
 
   // Per-item update pass over the cache. We DON'T write until after the
@@ -582,6 +588,7 @@ app.post("/bulk-import", async (c) => {
   // Write the dirty BOMs back, one row per UPDATE. Sequential to keep
   // error reporting per-row simple and to avoid pile-up under load.
   let appliedBomCount = 0;
+  const appliedProductCodes: string[] = [];
   if (!dryRun) {
     for (const bom of bomCache) {
       if (!bom.dirty) continue;
@@ -593,6 +600,7 @@ app.post("/bulk-import", async (c) => {
           .bind(JSON.stringify(bom.tree), bom.id, orgId)
           .run();
         appliedBomCount++;
+        appliedProductCodes.push(bom.productCode);
       } catch (e) {
         // Don't abort the rest — record the write failure but keep going
         // so an isolated row corruption doesn't lose every other update.
@@ -607,6 +615,7 @@ app.post("/bulk-import", async (c) => {
   const totalItems = rawItems.length;
   const applied = perItem.filter((p) => p.updatedNodeCount > 0).length;
   const skipped = perItem.length - applied;
+  const zeroMinuteCards = await fillZeroMinuteCardsForProducts(c, appliedProductCodes);
 
   return c.json({
     success: true,
@@ -616,6 +625,7 @@ app.post("/bulk-import", async (c) => {
     applied,
     skipped,
     appliedBomCount,
+    zeroMinuteCards,
     itemErrors,
     perItem,
   });
