@@ -22,6 +22,13 @@ import {
   sharedLayoutIdFromKind,
   sharedLayoutKind,
 } from "../src/lib/grid-shared-layouts.ts";
+import {
+  flattenGroupedRows,
+  flatItemHeight,
+  flatTotalHeight,
+  rowRangeCols,
+  GROUP_ROW_PX,
+} from "../src/lib/grid-virtual-groups.ts";
 import { Hono } from "hono";
 import layoutsRoute from "../src/api/routes/datagrid-layouts.ts";
 
@@ -274,4 +281,75 @@ test("G6: the Columns panel carries the Team layouts block, switching copies int
   assert.match(panel, /Team layouts/);
   assert.match(panel, /\{l\.canEdit && confirmDelete !== l\.id && \(/, "Update / Delete only for the author or an admin");
   assert.match(panel, /method: "POST",\s*body: \{ gridId, name: named\.name, \.\.\.current\(\) \}/);
+});
+
+// ── G8 grouped lists keep virtual scrolling ───────────────────────────────
+const rowsAB = [
+  { id: 1, g: "A" }, { id: 2, g: "A" }, { id: 3, g: "B" }, { id: 4, g: "C" }, { id: 5, g: "C" },
+];
+const byG = (r) => r.g;
+
+test("G8: the flat list is the old render order — header, rows, subtotal per group", () => {
+  assert.deepEqual(flattenGroupedRows(rowsAB, byG, new Set(), true), [
+    { kind: "group", key: "A" }, { kind: "row", index: 0 }, { kind: "row", index: 1 }, { kind: "sub", key: "A" },
+    { kind: "group", key: "B" }, { kind: "row", index: 2 }, { kind: "sub", key: "B" },
+    { kind: "group", key: "C" }, { kind: "row", index: 3 }, { kind: "row", index: 4 }, { kind: "sub", key: "C" },
+  ]);
+  // A folded group keeps its header and subtotal, drops its rows; no totals → no subtotal items.
+  assert.deepEqual(flattenGroupedRows(rowsAB, byG, new Set(["A", "C"]), false), [
+    { kind: "group", key: "A" }, { kind: "group", key: "B" }, { kind: "row", index: 2 }, { kind: "group", key: "C" },
+  ]);
+  assert.deepEqual(flattenGroupedRows([], byG, new Set(), true), []);
+});
+
+test("G8: heights add up in the same pass (headers pinned to GROUP_ROW_PX)", () => {
+  const flat = flattenGroupedRows(rowsAB, byG, new Set(), true);
+  // 3 headers × 30 + 5 rows × 26 + 3 subtotals × 26
+  assert.equal(GROUP_ROW_PX, 30);
+  assert.equal(flatTotalHeight(flat, 26), 3 * 30 + 8 * 26);
+  assert.equal(flatItemHeight({ kind: "row", index: 0 }, 26), 26);
+  assert.equal(flatItemHeight({ kind: "group", key: "A" }, 26), 30);
+});
+
+test("G8: the grid windows the grouped body instead of painting every row", () => {
+  const grid = read("src/components/ui/data-grid.tsx");
+  assert.match(grid, /const groupedFlat = useMemo<FlatGroupItem\[\] \| null>\(\(\) => \{\s*if \(!virtualize \|\| !groupOn\) return null;/);
+  assert.match(grid, /count: virtualizationActive \? displayedData\.length : groupedFlat \? groupedFlat\.length : 0,/);
+  assert.match(grid, /getItemKey: groupedItemKey,/);
+  assert.match(grid, /if \(groupedFlat && groupedFlat\.length >= VIRTUALIZE_MIN_ROWS\) \{/);
+  assert.match(grid, /const totalSize = flatTotalHeight\(groupedFlat, ROW_HEIGHT_PX\);/);
+  // Both group kinds paint their header through ONE builder in both paths.
+  assert.match(grid, /out\.push\(userGroupCol \? userGroupHeader\(item\.key, true\) : pageGroupHeader\(item\.key, true\)\);/);
+  assert.match(grid, /out\.push\(userGroupHeader\(key, false\)\);/);
+  assert.match(grid, /rows\.push\(pageGroupHeader\(gv, false\)\);/);
+  assert.match(grid, /style=\{fixed \? \{ height: `\$\{GROUP_ROW_PX\}px` \} : undefined\}/);
+});
+
+// ── G9 rows that did not change are not re-drawn ──────────────────────────
+test("G9: a row outside the copy range gets the same range props however the range moves", () => {
+  const rect = { r0: 2, r1: 4, c0: 1, c1: 3 };
+  assert.deepEqual(rowRangeCols(rect, true, 3), [1, 3]);
+  assert.deepEqual(rowRangeCols(rect, true, 0), [-1, -1]);
+  assert.deepEqual(rowRangeCols({ r0: 5, r1: 9, c0: 0, c1: 6 }, true, 0), [-1, -1], "range moved, row 0 unchanged");
+  assert.deepEqual(rowRangeCols(rect, false, 3), [-1, -1], "a single cell shows no range");
+  assert.deepEqual(rowRangeCols(null, true, 3), [-1, -1]);
+});
+
+test("G9: a row's cells are one memoised component fed only stable / primitive props", () => {
+  const grid = read("src/components/ui/data-grid.tsx");
+  assert.match(grid, /const DataRowCells = React\.memo\(DataRowCellsImpl\) as typeof DataRowCellsImpl;/);
+  assert.match(grid, /const rangeCols = rowRangeCols\(activeRect, showRange, index\);/);
+  const call = grid.slice(grid.indexOf("<DataRowCells"), grid.indexOf("/>", grid.indexOf("<DataRowCells")));
+  for (const p of [
+    "row={row}", "index={index}", "visibleColumns={visibleColumns}", "colWidths={colWidths}",
+    "stickyOffsets={stickyOffsets}", "isEven={isEven}", "isSelected={isSelected}", "isCancelled={isCancelled}",
+    "rowCls={rowClassName?.(row)}", "rangeLo={rangeCols[0]}", "rangeHi={rangeCols[1]}",
+    "search={deferredSearch}", "data={data}",
+  ]) assert.ok(call.includes(p), p);
+  // No inline closure / object literal props (they would defeat the memo).
+  assert.doesNotMatch(call, /=\{\(|=\{\{/);
+  // The cells no longer read grid state directly.
+  const impl = grid.slice(grid.indexOf("function DataRowCellsImpl"), grid.indexOf("const DataRowCells = React.memo")).replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(impl, /activeRect|showRange|deferredSearch|rowClassName/);
+  assert.match(impl, /const inRange = colIdx >= rangeLo && colIdx <= rangeHi;/);
 });

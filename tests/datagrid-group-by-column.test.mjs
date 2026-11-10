@@ -52,12 +52,14 @@ test("rows sort by their group first (read once per row), the user's sort inside
 });
 
 test("the body: a header per group that folds it, the rows, a subtotal row kept when folded", () => {
-  const body = between("if (userGroupCol) {\n                  const span =", "// ── Legacy / grouped path");
+  // Header / subtotal builders are shared by the painted-in-full and the
+  // windowed grouped body (review G8, tests/docs-grid-leftovers.test.mjs).
+  const body = between("// ── Grouped body ──", "// ── Legacy / grouped path");
   assert.match(body, /data-dg="group"/);
   assert.match(body, /onClick=\{\(\) => toggleUserFold\(key\)\}/);
   assert.match(body, /if \(!userFolded\.has\(key\)\) out\.push\(renderDataRow\(row, index\)\);/);
   assert.match(body, /data-dg="subtotal"/);
-  assert.match(body, /if \(!g \|\| !showFooter\) return;/, "no totals on the grid → no subtotal row");
+  assert.match(body, /if \(!g \|\| !showFooter \|\| !userGroupCol\) return null;/, "no totals on the grid → no subtotal row");
   assert.match(body, /const t = columnTotals\(splitForTotals\(g\.rows, totalsSkipRow\)\.counted, visibleColumns, \(row, k\) => getNestedValue\(row, k\)\);/, "over the group's every row, not the painted ones");
   assert.match(body, /\{name\} subtotal <span className="font-normal text-\[#6B7280\]">· \{g\.rows\.length\} \{g\.rows\.length === 1 \? "row" : "rows"\}<\/span>/);
   // The label spans the empty columns after it, so it never widens its column.
