@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 150 mounts, 148 route files in
-`src/api/routes/`, 1097 top-level handler registrations discovered.
+**Counts at generation time:** 151 mounts, 149 route files in
+`src/api/routes/`, 1099 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -120,6 +120,7 @@ offsets pointing past the end of their own file.
 | `/api/suppliers` | `src/api/routes/suppliers.ts` | `GET /` <sub>:345</sub><br>`POST /` <sub>:371</sub><br>`GET /:id` <sub>:511</sub><br>`POST /_backfill-snapshot-names` <sub>:541</sub><br>`PUT /:id` <sub>:563</sub><br>`DELETE /:id` <sub>:804</sub> | gated |
 | `/api/supplier-materials` | `src/api/routes/supplier-materials.ts` | `GET /` <sub>:182</sub><br>`POST /` <sub>:219</sub><br>`GET /duplicates` <sub>:384</sub><br>`GET /:id` <sub>:399</sub><br>`PUT /:id` <sub>:411</sub><br>`DELETE /:id` <sub>:583</sub> | gated |
 | `/api/supplier-scorecards` | `src/api/routes/supplier-scorecards.ts` | `GET /` <sub>:47</sub><br>`GET /summary` <sub>:94</sub><br>`GET /:supplierId` <sub>:182</sub> | gated |
+| `/api/procurement-reports` | `src/api/routes/procurement-reports.ts` | `GET /outstanding-lines` <sub>:134</sub><br>`GET /supplier-delay` <sub>:145</sub> | gated |
 | `/api/price-history` | `src/api/routes/price-history.ts` | `GET /` <sub>:60</sub><br>`POST /` <sub>:104</sub> | gated |
 | `/api/auth/oauth` | `src/api/routes/auth-oauth.ts` | `GET /google/start` <sub>:53</sub><br>`GET /google/callback` <sub>:98</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/auth/totp` | `src/api/routes/auth-totp.ts` | `POST /enroll` <sub>:85</sub><br>`POST /verify` <sub>:142</sub><br>`POST /login-verify` <sub>:198</sub><br>`POST /setup-start` <sub>:401</sub><br>`POST /setup-confirm` <sub>:477</sub><br>`POST /dismiss-prompt` <sub>:548</sub><br>`POST /disable` <sub>:570</sub> | gated (some paths public) |
