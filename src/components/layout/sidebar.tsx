@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
+  Presentation,
   Wrench,
   Bell,
   Mail,
@@ -297,6 +298,9 @@ export const navigationGroups: NavGroup[] = [
     items: [
       { name: "Dashboard", href: "/finance-dashboard", icon: BarChart3 },
       { name: "Forecast P&L", href: "/forecast", icon: TrendingUp },
+      // Owner 2026-11-10: the monthly board report, live from the ERP. Gated by
+      // accounting:read (nav-permissions.ts), not forecasts.
+      { name: "Board Report", href: "/board-report", icon: Presentation },
     ],
   },
   {

@@ -109,6 +109,9 @@ export const NAV_RESOURCE: Record<string, string> = {
   // Forecasting.
   "/finance-dashboard": "forecasts",
   "/forecast": "forecasts",
+  // Owner 2026-11-10: the Board Report is for accounting:read (the same gate
+  // as GET /api/reports/board), though it sits under Forecasting.
+  "/board-report": "accounting",
 
   // HR & operations. `/maintenance/sofa-combos` is longer, so it still wins.
   "/employees": "workers",
