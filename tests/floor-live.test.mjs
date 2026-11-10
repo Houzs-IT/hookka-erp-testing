@@ -176,3 +176,8 @@ test("snapshots: saved once, never overwritten; nightly job and summary route wi
   assert.match(readFileSync("src/api/routes/floor-live.ts", "utf8"), /app\.get\("\/summary"/);
   assert.match(readFileSync("src/pages/dashboards/dashboard-prototype.tsx", "utf8"), /tab === "operations" && sub === "floor"/);
 });
+
+test("owner 2026-11-10: today's problems strip hidden on a phone under Floor Live", () => {
+  const d = readFileSync("src/pages/dashboards/dashboard-prototype.tsx", "utf8");
+  assert.match(d, /tab === "operations" && sub === "floor" \? "max-md:hidden" : undefined/);
+});
