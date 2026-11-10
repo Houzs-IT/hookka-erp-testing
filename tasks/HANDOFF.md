@@ -1,6 +1,6 @@
 # Handoff — current state, what's next, what's blocked
 
-_Last updated: 2026-11-10 evening (MacBook session). Read the **Master checklist** first — it is the single list of everything open._
+_Last updated: 2026-11-10 night (MacBook session). Everything below the Master checklist is history; the checklist is current._
 Keep this file current in the same PR that changes state (global rule §6/§8).
 
 ## How to pick this up on another machine (MacBook)
@@ -24,38 +24,40 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs / work in flight (at time of writing)
 
-- `feat/pdf-preview-and-documents` — agent batch: D1 shared PDF preview + file named after the document, P7 blocked-tab helper, D2 CANCELLED stamp, G5 struck-through cancelled numbers, D3/D4 POD photos. PR opens when done; check `gh pr list`.
-- `feat/grid-common-features` — agent batch: G1 header menu + reorder on every list, G2 URL filters, G3 paged-list filter check/fix, G4 footer totals, G7 load-error Retry.
-If a branch exists with no PR, the agent was interrupted: open the PR from it or redo the item. Merge rule: CI green → squash-merge (owner wants it done without asking, except the approval items below).
+**None.** Everything from 2026-11-10 is merged and deployed (prod at `2d1c62110` when this was written).
 
-**Memory budget:** the owner runs a Houzs ERP session on the same MacBook — keep all sessions under **16 GB**. At most 2 agents at once, each in its own worktree with `node_modules` symlinked from the main checkout (no `npm install`), targeted tests only; CI runs the full suite.
+Merge rule: CI green → squash-merge, then verify on prod (owner wants it done without asking, except the approval items and prod data writes). PRs that each append a WORK-TRACKER item collide on the number — merge one, rebase the next, renumber.
 
-## Master checklist (2026-11-10) — everything still open
+**Memory budget:** the owner runs a Houzs ERP session on the same MacBook — keep all sessions under **16 GB**. At most 2 agents at once, each in its own worktree (`isolation: worktree`) with `node_modules` symlinked from the main checkout (no `npm install`), targeted tests + one `tsc` only; CI runs the full suite; commit with `--no-verify` and say why.
+
+## Master checklist (2026-11-10 night) — everything still open
 
 Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what Houzs / Conts did since 2026-10-01 vs Hookka).
 
-**Done today:** P1 document numbers in the Malaysia month (#1247) · new models export (#1241, #1243) · GRN-link backfill endpoint (#1245; measured on prod: **0** pre-#1218 system GRNs exist, nothing to link) · cross-system review saved (#1246) · **ported-improvements batch (PR `feat/ported-improvements-batch`, open until merged): O7, P2, P3, P4, P6** — see "After it merges" below. · **G11** batch confirm GRN / PI + **O1** delivery-return compare-and-set (owner-approved 2026-11-10; PR `feat/batch-confirm-and-return-guard`, open — check in a browser after merge: tick 2–3 draft GRNs / PIs → Confirm selected; a delivery return opened in two tabs, cancel in one, act in the other → 409 message).
+**Done and verified 2026-11-10:**
+- #1247 P1 document numbers in the Malaysia month · #1241/#1243 new models export · #1245 GRN-link backfill (prod: **0** pre-#1218 system GRNs — nothing to link) · #1246 cross-system review · #1249 this checklist.
+- #1250 documents: in-app PDF preview (Print / Download / Share / New tab), every saved PDF named after its document, CANCELLED stamp, cancelled numbers struck through, POD photos on the DO PDF + a POD-photos PDF for WhatsApp, blocked-tab message (D1–D4, D2/G5, P7).
+- #1251 lists: header menu + drag on every grid list, URL-kept filters/sort, footer totals without cancelled rows, "Couldn't load — Retry", Malaysian-day date presets, and **G3 fixed** (SO/PO/GRN header sort/filters used to see only the 200 loaded rows; now load all; Invoices say "200 of N — Load all"; BUG-2026-11-10-443).
+- #1252 **Board Report inside the ERP** — Forecasting → Board Report, `/board-report?month=YYYY-MM`, accounting:read, Download PDF = browser print (A4, margins None, background graphics on). **Verified on prod (Oct 2026):** 21 pages (13 + 8 appendix), none spills off A4, no section failed; revenue 463,324 / net 136,673 match the Financial Dashboard; first build ≈20 s, next ≈8 s; page-13 flags work. Not live-sourced: stock-take mismatch flag, efficiency bands (top/bottom workers shown instead).
+- #1253 ported improvements: O7 no prod data as a public workflow artifact (snapshot now in table `wip_reset_backups`), P2 clock-date gate `scripts/check-clock-dates.mjs` (+ fixed DR/PR/SDN numbers, worker-portal ranges, agent "today"), P3 ETag/304 on polled lists (**verified on prod: 304**), P4 health-red alert email, P6 supplier Email 2/3 + PO email Cc (**verified: field present**).
+- #1255 owner-approved G11 batch confirm GRN/PI from the lists + O1 delivery-return compare-and-set (409 "status_changed").
 
-**In flight (agent batches above):** D1, D2, D3, D4, P7, G1, G2, G3, G4, G5, G7.
+**Next batches (no approval needed — do them, then merge, then verify):**
+1. Documents/grid leftovers: D5 item codes on one line on PO/GRN/PI PDFs · D6 warehouse named on DO/GRN papers · G6 share a column layout with the team · G8 grouped lists keep virtual scroll · G9 fewer re-draws on long lists · CANCELLED stamp on the consignment-note (CGN) PDF · G3 for DO and CN lists (logged follow-up) · move Leads and Products onto the shared grid (they are hand-made tables, so none of the grid features reach them) · phone (/m) list cards for G4/G7.
+2. Other: O4 supplier bound to the same item once (unique index, 409) · O5 upload clears the read cache · O6 shared CSV/Excel import parser.
+3. Board report polish: a stock-take mismatch flag needs a source endpoint; real efficiency bands need a definition from the owner.
 
-**After `feat/ported-improvements-batch` merges (check on prod):**
-- O7: two old `wip-reset-backup` artifacts (2026-09-07, production WIP quantities) are still downloadable until 2026-12-06 — **owner to decide whether to delete them** (Actions → artifacts).
-- P2 left the money / stock / payroll "UTC day" sites as they are, listed with reasons in `scripts/data/clock-date-allowlist.json` (accounting period defaults, invoice due dates, cost ledger, fabric FIFO, worker-portal live pay estimate). Fixing them moves which day/month is used between 00:00 and 08:00 MYT — **needs the owner's yes**.
-- P3: DevTools on the bell / IT Support should show an unchanged poll as `304`.
-- P4: alerts go to `kv_config.health_alert_recipients`, else the morning-brief list `daily_report_recipients` (UNMEASURED whether either is set on prod). Nothing is sent while Analytics Engine metrics are mock. The drain's JSON reply now carries `healthAlert` (job log of "Email Outbox — Drain Cron").
-- P6: edit a supplier → Email 2 / Email 3 save; PO "Email to Supplier" opens with them in Cc.
-
-**Next batches (no approval needed — do them, then merge):**
-1. ~~Ported-and-improved: P2, P3, P4, P6~~ — done in `feat/ported-improvements-batch` (with O7).
-2. Documents/grid leftovers: D5 item codes on one line on PO/GRN/PI PDFs, D6 warehouse named on DO/GRN papers, G6 share a column layout with the team, G8 grouped lists keep virtual scroll, G9 fewer re-draws on long lists, G10 date filters judge by the Malaysian day.
-3. Other: O4 supplier bound to the same item once (unique index, 409), O5 upload clears the read cache, O6 shared CSV/Excel import parser, ~~O7~~ (done in `feat/ported-improvements-batch`).
-4. **Board report inside the ERP** (owner 2026-11-10: every figure from live ERP data, nobody has to ask Claude). Decided: menu **Forecasting → Board Report**; visible to **accounting:read**; Notes page = **automatic flags + Finance-editable notes per month**; PDF = **browser print to PDF** (A4 page per section). Data sources mapped: `/api/accounting/dashboard` (monthly P&L actual+forecast, balance-sheet totals, ratios, cash-flow totals, salary by dept, cost structure, production revenue, labour base), `/api/accounting/pl-monthly`, `/api/accounting/pl` (balance sheet; call M and M-1), `/api/accounting/cashflow-statement` + `/cashflow-forecast`, `/api/dashboard/overview` (customers + concentration) and `/overview/revenue-split` (dept production revenue), `/api/products/new-models`. Gaps to build: P&L prev column, balance-sheet prev, server-side defect rates, efficiency bands (none today — use workforce top/bottom). Layout reference: the Claude artifact https://claude.ai/artifact/GvMT67d19bgmqvHXQpSmDg (13 pages + appendices).
+**New questions for the owner (from #1253):**
+- Delete the two old `wip-reset-backup` artifacts (2026-09-07, production WIP quantities) that stay publicly downloadable until 2026-12-06? (GitHub → Actions → artifacts; needs his yes.)
+- The money / stock / payroll date sites still use the UTC day (`scripts/data/clock-date-allowlist.json`: accounting period defaults, invoice due dates, cost ledger, fabric FIFO, AR ageing, worker-portal live pay estimate). Moving them to the Malaysian day changes which day/month is used 00:00–08:00 — **needs approval**; if approved, the worker-portal estimate must move together with office payroll.
+- P4 health alerts: who should receive them? Set `kv_config.health_alert_recipients` (else the morning-brief list is used; nothing is sent if neither is set — UNMEASURED which is set).
 
 **Owner's ruling on the approval items (2026-11-10):**
 - **APPROVED — done** (listed under Done today; PR `feat/batch-confirm-and-return-guard`): **G11** batch confirm on the GRN / PI lists (drafts only, one at a time through each document's own confirm, "Confirming 3 of 12", refusals listed with the server's reason) · **O1** delivery-return status changes are compare-and-set (the page sends the status it saw; 409 "it is now X, it was Y" when the return moved).
 - **REJECTED by the owner — do not do, do not ask again:** **P5** credit-note cap from delivery returns · **O2** MRP stale-plan refusal · **O3** partial DO / invoice discount share.
 
 **Owner to do himself (Claude cannot):**
+- Try the new features in a browser (desktop + phone): PDF Preview on an SO/PO → Print, Share, Save (file name = document number); GRN / PI list → tick 2–3 drafts → Confirm selected; a delivery return open in two tabs → cancel in one, act in the other → the 409 message; Board Report → Download PDF; edit a supplier's Email 2/3 → PO Email to Supplier shows them in Cc.
 - Repo `Houzs-IT/hookka-erp-testing` is **PUBLIC** (measured 2026-11-10) and an old prod DB password is in its git history: decide private, rotate the password.
 - Try on prod (these write data): sign one device out → it gets 401; a 5,001-char SO note → 400; a lead with a phone already on file → "Possible duplicate"; Ctrl/Cmd+C from a grid into Excel; a save with several problems lists them all.
 - Upload missing Catalog photos: BC06, BC06-MF, SQUARE PILLOW, HIPSTER (its photo file is missing from storage).
@@ -108,7 +110,7 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 8. **Finance to confirm:** Oct staff cost RM 1,733 looks incomplete; equity rose 73,279 more than profit; Oct fabric stock-take RM 14,877 stored vs RM 97,660 from lines; Monthly P&L Oct net 136,271 vs /pl report 194,914.
 9. **Forecast proposals (Windows session, 2026-11-10; nothing built):** (a) suppliers keyed like customers on the Forecast P&L — the owner said 「这个我确定先」 (deciding first); (b) a "Hide past months" toggle on the Cash Flow forecast — waiting for 「做」. Details: `docs/WORK-TRACKER.md`, Cash Flow forecast item 14.
 
-## Board report inside the ERP (item 113, PR open — not merged)
+## Board report inside the ERP (item 115 — merged #1252, verified on prod 2026-11-10)
 
 Forecasting › **Board Report** (`/board-report?month=YYYY-MM`, default the last closed month), accounting:read for the menu and `GET /api/reports/board`. Every figure is read live from the ERP's own report endpoints (called in-process with the viewer's session, so each keeps its own permission gate and cache) — nobody rebuilds a snapshot each month. 13 A4 pages + appendices A (Monthly P&L), B (Balance sheet), C (Cash flow); Download PDF = browser print (A4, margins None, background graphics on). Page 13 = automatic flags + Finance's notes (kv_config `board_report_notes:<YYYY-MM>`, written by `PUT /api/reports/board/notes`, accounting:update).
 - **To check in a browser after merge** (not done — no browser run in the build session): every page fits its sheet with no clipped rows on real October data; print preview gives exactly one sheet per page; the first build's time (it reads about twelve reports; the 30 s client abort is lifted for this call only); photos on page 10.
