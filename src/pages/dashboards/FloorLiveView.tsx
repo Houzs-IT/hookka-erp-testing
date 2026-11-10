@@ -15,15 +15,19 @@ import { floorLiveLayout, type FloorLiveResponse, type FloorLiveRow } from "./fl
 const ROW_LIMIT = 6;
 const REFRESH_MS = 5 * 60 * 1000;
 
+// Owner 2026-11-10: efficiency turns red only below 80% (the number, not the
+// row). A whole red row is reserved for the non-production 1-hour rule.
 function effClass(e: number | null): string {
   if (e == null) return "text-[#6B7280]";
-  if (e > 110) return "text-[#9A3A2D]";
-  if (e < 80) return "text-[#8A6D1B]";
+  if (e < 80) return "text-[#9A3A2D]";
   return "text-[#1F1D1B]";
 }
 
+/** Last department check-in (scan) today, else the punch-in time. */
+const lastIn = (p: FloorLiveRow) => p.scannedAt ?? p.clockIn ?? "—";
+
 function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
-  const red = production ? p.effPct != null && p.effPct > 110 : p.overHourNonProd;
+  const red = !production && p.overHourNonProd;
   return (
     <div className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[#F3F0EC] px-3 py-1.5 text-xs ${red ? "bg-[#FBF3F1]" : "bg-white"}`}>
       <span className="flex min-w-0 items-center gap-2">
@@ -32,6 +36,7 @@ function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
       </span>
       {production ? (
         <span className="flex items-center gap-3 tabular-nums">
+          <span className="text-[#6B7280]" title="Last check-in to this department today">{lastIn(p)}</span>
           <span className="font-semibold">{p.done}</span>
           <span className={`w-11 text-right font-semibold ${effClass(p.effPct)}`}>{p.effPct == null ? "—" : `${p.effPct}%`}</span>
         </span>
@@ -67,7 +72,7 @@ function DeptCard({ name, rows, production, effPct }: { name: string; rows: Floo
         <>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] px-3 py-1 text-[11px] text-[#9CA3AF]">
             <span>Worker</span>
-            <span>{production ? "Done · Eff." : "Scanned in · Done · Eff."}</span>
+            <span>{production ? "Check-in · Done · Eff." : "Scanned in · Done · Eff."}</span>
           </div>
           {shown.map((p) => <Row key={p.id} p={p} production={production} />)}
           {rows.length > ROW_LIMIT && (

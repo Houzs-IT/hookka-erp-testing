@@ -49,7 +49,8 @@ function rank(r: FloorLiveRow): number {
 }
 
 export function isIssue(r: FloorLiveRow): boolean {
-  return r.overHourNonProd || r.effPct == null || r.effPct > 110 || r.effPct < 80;
+  // Owner 2026-11-10: only the non-production hour and low efficiency are issues.
+  return r.overHourNonProd || r.effPct == null || r.effPct < 80;
 }
 
 export function floorLiveLayout(

@@ -107,6 +107,7 @@ Who is in which department right now, from department QR scans. `GET /api/dashbo
 - Where = department of the worker's last `dept_scan_events` row today; no scan = home department. Production Shortfall is hidden (falls back to home).
 - Efficiency = earned job-card minutes ÷ production minutes worked so far — `buildPerfDays` (workforce-perf.ts) over today's working_hour_entries + `liveOpenPunchRows`, i.e. the Employees dashboard's own figure. Pieces = piece-PIC rows, else the card's qty to each PIC.
 - Non-production rows show the scan-in time and turn red after 60 minutes while still punched in; they still show the day's pieces and efficiency.
+- Colours (owner 2026-11-10): a whole red row only for the non-production 1-hour rule; the efficiency number is red only below 80%. Production rows show the last check-in to the department (last scan, else punch-in).
 - UI: names only (no EMP no.), 6 rows per card then "+N more", cards keep their own height, one card per row on a phone, refresh every 5 min (`useInterval`, paused when hidden).
 
 ## Related modules
