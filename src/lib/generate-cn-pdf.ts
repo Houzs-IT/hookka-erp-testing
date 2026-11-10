@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable, { type RowInput } from "jspdf-autotable";
+import { docPageLabel } from "./pdf-page-label";
 import { COMPANY } from "@/lib/constants";
 import { fmtDate, drawLetterhead } from "@/lib/pdf-utils";
 // REUSE the DO PDF's exported formatting helpers so the two documents render
@@ -440,9 +441,13 @@ export function renderCnInto(doc: jsPDF, data: CNPdfData) {
   doc.text("Name / Date / Stamp", pageW - m - halfW, sy + 23.5);
 }
 
-// Stamps the per-page footer + "Page X of Y" across the WHOLE document.
+// Stamps the per-page footer + "Page X of Y" on every page.
 // Run exactly once, after all CN(s) have been rendered.
-export function stampCnFooters(doc: jsPDF) {
+//
+// `starts` (batch prints): the first page of each document in the file. Each
+// document then numbers its own pages — "Page 1 of 2" — instead of the whole
+// file (review H3-10). Omitted = one document = the whole file.
+export function stampCnFooters(doc: jsPDF, starts?: number[]) {
   const m = 14;
   const co = COMPANY.HOOKKA;
   const pageW = doc.internal.pageSize.getWidth();
@@ -462,7 +467,7 @@ export function stampCnFooters(doc: jsPDF) {
       m,
       fy,
     );
-    doc.text(`Page ${p} of ${pages}`, pageW - m, fy, { align: "right" });
+    doc.text(docPageLabel(p, pages, starts), pageW - m, fy, { align: "right" });
   }
 }
 
@@ -513,8 +518,8 @@ export function generateCnPdfBase64(data: CNPdfData): string {
 // print, CN-side twin of generateConsolidatedDoPdf. ONE document = a cover
 // summary page (one line per CN + grand totals), then every selected CN
 // rendered in full via renderCnInto, each starting on a fresh page.
-// stampCnFooters runs once at the end so "Page X of Y" numbers the whole
-// file continuously. Unlike the DO side there is NO packing_lists row and
+// stampCnFooters runs once at the end; each CN (and the cover) numbers its
+// own pages "Page 1 of N" (review H3-10). Unlike the DO side there is NO packing_lists row and
 // no backend involvement — the caller hands over ready CNPdfData payloads.
 // ---------------------------------------------------------------------------
 
@@ -661,11 +666,14 @@ export function printCnPackingList(cns: CNPdfData[]) {
   if (!cns || cns.length === 0) return;
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   renderCnPackingSummary(doc, cns);
+  // Each CN numbers its own pages "Page 1 of 2" (review H3-10).
+  const starts = [1];
   cns.forEach((cn) => {
     doc.addPage();
+    starts.push(doc.getNumberOfPages());
     renderCnInto(doc, cn);
   });
-  stampCnFooters(doc);
+  stampCnFooters(doc, starts);
   const stamp = todayYmdMY();
   doc.save(`Consignment-PackingList-${stamp}.pdf`);
 }

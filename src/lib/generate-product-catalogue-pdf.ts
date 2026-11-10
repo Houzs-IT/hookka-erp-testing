@@ -285,7 +285,7 @@ export default function generateProductCataloguePdf(
   models: CatalogueModelEntry[],
   opts: CatalogueOptions = {},
 ): jsPDF {
-  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
 
   const today = opts.exportDate ?? todayYmdMY();
   const { customerName, categoryFilter } = opts;

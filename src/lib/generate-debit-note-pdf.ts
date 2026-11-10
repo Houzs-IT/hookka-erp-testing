@@ -13,7 +13,7 @@ const COMPANY_NAME = COMPANY.HOOKKA.name;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function generateDebitNotePdf(data: any) {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 15;

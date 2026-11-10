@@ -102,7 +102,7 @@ export async function exportReportPdf(
   ]);
   const autoTable = (autoTableMod as unknown as { default: (doc: unknown, opts: unknown) => void }).default;
   // Landscape for the wide month-column reports.
-  const doc = new jsPDF({ orientation: aoa[0] && aoa[0].length > 6 ? "landscape" : "portrait", unit: "pt", format: "a4" });
+  const doc = new jsPDF({ orientation: aoa[0] && aoa[0].length > 6 ? "landscape" : "portrait", unit: "pt", format: "a4", compress: true });
   doc.setFontSize(13);
   doc.text(opts?.company ?? COMPANY.HOOKKA.name, 40, 38);
   doc.setFontSize(10);

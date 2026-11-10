@@ -227,7 +227,7 @@ export default function generateCustomerQuotationPdfV2(
   const { customer, asOf, products, sofaCombos, maintenanceConfig } = env;
   const letterhead = resolveLetterhead(env.letterhead ?? null);
 
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 15;

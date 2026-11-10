@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable, { type RowInput } from "jspdf-autotable";
+import { docPageLabel } from "./pdf-page-label";
 import type { DeliveryOrder } from "@/lib/mock-data";
 import { COMPANY } from "@/lib/constants";
 import { fmtDate, drawLetterhead } from "@/lib/pdf-utils";
@@ -301,8 +302,9 @@ export function describe(
 // Draws ONE delivery order into an EXISTING jsPDF doc, starting on the
 // current page (the table paginates itself; the header reprints per page).
 // Footers + "Page X of Y" are NOT applied here — the caller runs
-// stampDoFooters() once after all DOs are drawn (so a multi-DO run numbers
-// the whole document, not each DO separately). The single-DO entry point
+// stampDoFooters() once after all DOs are drawn, passing where each DO
+// starts, so every DO in a multi-DO run numbers its own pages (review H3-10;
+// stamping here would restamp earlier DOs' pages). The single-DO entry point
 // generateDOPdf() below wraps this.
 export function renderDoInto(
   doc: jsPDF,
@@ -716,13 +718,17 @@ export function renderDoInto(
   doc.text("Name / Date / Stamp", pageW - m - halfW, sy + 23.5);
 
   // Footers + page numbering are applied once by stampDoFooters() after
-  // every DO is drawn — not here — so a multi-DO run numbers the whole
-  // document instead of restamping earlier DOs' pages.
+  // every DO is drawn — not here — so earlier DOs' pages are not restamped;
+  // the caller passes each DO's first page so each DO counts its own pages.
 }
 
-// Stamps the per-page footer + "Page X of Y" across the WHOLE document.
+// Stamps the per-page footer + "Page X of Y" on every page.
 // Run exactly once, after all DO(s) have been rendered.
-export function stampDoFooters(doc: jsPDF) {
+//
+// `starts` (batch prints): the first page of each document in the file. Each
+// document then numbers its own pages — "Page 1 of 2" — instead of the whole
+// file (review H3-10). Omitted = one document = the whole file.
+export function stampDoFooters(doc: jsPDF, starts?: number[]) {
   const m = 14;
   const co = COMPANY.HOOKKA;
   const pageW = doc.internal.pageSize.getWidth();
@@ -742,7 +748,7 @@ export function stampDoFooters(doc: jsPDF) {
       m,
       fy,
     );
-    doc.text(`Page ${p} of ${pages}`, pageW - m, fy, { align: "right" });
+    doc.text(docPageLabel(p, pages, starts), pageW - m, fy, { align: "right" });
   }
 }
 
@@ -1248,13 +1254,18 @@ export function generateConsolidatedDoPdf(
   if (!orders || orders.length === 0) return;
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   renderPackingSummary(doc, orders, packingNo, extrasById, plQrDataUrl);
+  // First page of each document in the file: the manifest, then every DO —
+  // so each DO numbers its own pages "Page 1 of 2" (review H3-10). The owner's
+  // ask (84109429d) was every DO in one file, split STOP 1, 2, 3 — kept.
+  const starts = [1];
   if (includeDoPages) {
     orders.forEach((o, i) => {
       doc.addPage();
+      starts.push(doc.getNumberOfPages());
       renderDoInto(doc, o, extrasById?.[o.id], { seq: i + 1, total: orders.length });
     });
   }
-  stampDoFooters(doc);
+  stampDoFooters(doc, starts);
   const stamp = todayYmdMY().replace(/-/g, "");
   const fileName = packingNo
     ? `PackingList-${packingNo}.pdf`

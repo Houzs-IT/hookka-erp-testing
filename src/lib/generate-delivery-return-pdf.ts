@@ -49,7 +49,7 @@ function typeLabel(t?: string): string {
 }
 
 export function generateDeliveryReturnPdf(dr: DeliveryReturnPdf): void {
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
   let y = drawLetterhead(doc, {
     docTitle: "DELIVERY RETURN",
     docNo: dr.returnNo,
