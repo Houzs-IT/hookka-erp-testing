@@ -316,12 +316,20 @@ export function buildReadyPlanning(inputs: ReadyPlanningInputs): {
     if (po.consignmentOrderId) continue;
     if (linkedPOIds.has(po.id)) continue;
     const uphCards = pickRelevantUphCards(po);
-    if (uphCards.length === 0) continue;
+    // HK-0141: the SO's pillow ships packed with the last sofa compartment
+    // (same rule as the FG sticker pairing in pages/production), so it is part
+    // of the set. It has no UPHOLSTERY card; it is ready once Pending Delivery
+    // would list it.
+    const pillow =
+      uphCards.length === 0 &&
+      (po.itemCategory || "").toUpperCase() === "ACCESSORY" &&
+      /pillow/i.test(`${po.productName ?? ""} ${po.productCode ?? ""}`);
+    if (uphCards.length === 0 && !pillow) continue;
     const soId = po.salesOrderId || "";
     if (!siblingsBySo.has(soId)) siblingsBySo.set(soId, { total: 0, ready: 0 });
     const slot = siblingsBySo.get(soId)!;
     slot.total += 1;
-    if (allUphDone(po)) slot.ready += 1;
+    if (pillow ? poReadyForDelivery(po, linkedPOIds) : allUphDone(po)) slot.ready += 1;
   }
 
   const mapPO = (po: ReadyPlanningPO): ReadyPORow => {

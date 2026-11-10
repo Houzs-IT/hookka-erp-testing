@@ -728,3 +728,68 @@ test("R12: is_stock alone does not block — it records birth, not ownership", (
     true,
   );
 });
+
+// ---------------------------------------------------------------------------
+// HK-0141 — the SO's pillow (ACCESSORY, no UPHOLSTERY card) ships packed with
+// the sofa, so the sofa's Set Status counts it.
+// ---------------------------------------------------------------------------
+function setInputs(allPOs) {
+  return {
+    allPOs,
+    linkedPOIds: new Set(),
+    soMap: new Map(),
+    soRefMap: new Map(),
+    poValMap: new Map(),
+    soPriceByProduct: new Map(),
+    productM3Map: new Map(),
+  };
+}
+const UPH_DONE = [
+  { departmentCode: "UPHOLSTERY", status: "COMPLETED" },
+  { departmentCode: "PACKING", status: "COMPLETED" },
+];
+const sofaPiece = (id) => ({
+  ...po({ id, salesOrderId: "so-1", jobCards: UPH_DONE }),
+  poNo: id,
+  productName: "SOFA 5540 1A",
+});
+const pillowPO = (status, cardStatus) => ({
+  ...po({
+    id: "pillow",
+    status,
+    itemCategory: "ACCESSORY",
+    salesOrderId: "so-1",
+    jobCards: [
+      { departmentCode: "FAB_SEW", status: cardStatus },
+      { departmentCode: "PACKING", status: cardStatus },
+    ],
+  }),
+  poNo: "pillow",
+  productName: "SOFA SQUARE PILLOW (16\"X16\")",
+});
+
+test("HK-0141: pillow still sewing -> sofa set 3/4, not complete", () => {
+  const { ready } = dp.buildReadyPlanning(
+    setInputs([sofaPiece("a"), sofaPiece("b"), sofaPiece("c"), pillowPO("IN_PROGRESS", "IN_PROGRESS")]),
+  );
+  const sofa = ready.find((r) => r.id === "a");
+  assert.equal(sofa.setTotalSiblings, 4);
+  assert.equal(sofa.setReadySiblings, 3);
+  assert.equal(sofa.setComplete, false);
+});
+
+test("HK-0141: pillow completed -> sofa set 4/4 complete", () => {
+  const { ready } = dp.buildReadyPlanning(
+    setInputs([sofaPiece("a"), sofaPiece("b"), sofaPiece("c"), pillowPO("COMPLETED", "COMPLETED")]),
+  );
+  const sofa = ready.find((r) => r.id === "a");
+  assert.equal(sofa.setTotalSiblings, 4);
+  assert.equal(sofa.setReadySiblings, 4);
+  assert.equal(sofa.setComplete, true);
+});
+
+test("HK-0141: non-pillow accessory does not join the sofa set", () => {
+  const cushion = { ...pillowPO("IN_PROGRESS", "IN_PROGRESS"), productName: "SEAT CUSHION" };
+  const { ready } = dp.buildReadyPlanning(setInputs([sofaPiece("a"), cushion]));
+  assert.equal(ready.find((r) => r.id === "a").setTotalSiblings, 1);
+});
