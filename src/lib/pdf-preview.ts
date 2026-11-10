@@ -150,6 +150,25 @@ export function sharablePdfFile(blob: Blob, filename: string): File | null {
 }
 
 const OVERLAY_ID = "hookka-pdf-preview";
+/** history.state key of the entry the preview pushes, so Back closes it (review B7). */
+export const PDF_PREVIEW_HISTORY_KEY = "hookkaPdfPreview";
+
+/* The open preview's closer, so a route change can shut it (closePdfPreview). */
+let activeClose: ((reason?: PdfPreviewCloseReason) => void) | null = null;
+
+/** Why the preview closed: the user (Close / Esc / backdrop), Back, or a route change. */
+export type PdfPreviewCloseReason = "user" | "back" | "route";
+
+/**
+ * Close the open preview, if any. The router calls this on every route change
+ * (src/router.tsx), so a preview never stays over the next page (review B7,
+ * Houzs#5402). Returns true when a preview was open.
+ */
+export function closePdfPreview(reason: PdfPreviewCloseReason = "route"): boolean {
+  if (!activeClose) return false;
+  activeClose(reason);
+  return true;
+}
 // Chrome needs the viewer to finish laying out before print() takes the pages.
 const PRINT_SETTLE_MS = 400;
 
@@ -173,13 +192,18 @@ function button(label: string, primary = false): HTMLButtonElement {
  * Show a PDF inside Hookka with Print / Download / Open in new tab / Close.
  * `print: true` also asks for the print dialog once the PDF has loaded.
  * Esc closes the preview only (caught in the capture phase, so a dialog
- * underneath stays open). Returns a function that closes it.
+ * underneath stays open). Browser / phone Back closes it too: opening pushes
+ * one history entry (same address) and its popstate closes the overlay; the
+ * Close button takes that entry back off, so the page's history is unchanged
+ * (review B7). Returns a function that closes it.
  */
 export function openPdfPreview(
   data: Blob | Uint8Array,
   filename: string,
   opts: { print?: boolean } = {},
 ): () => void {
+  // One preview at a time: close the previous one properly (listeners, history).
+  if (activeClose) activeClose("route");
   document.getElementById(OVERLAY_ID)?.remove();
   const blob = toBlob(data);
   const blobUrl = URL.createObjectURL(blob);
@@ -241,9 +265,38 @@ export function openPdfPreview(
     if (e.key !== "Escape") return;
     e.stopPropagation();
     e.preventDefault();
-    close();
+    close("user");
   };
-  function close() {
+  // Back closes the preview instead of leaving the page underneath (review B7).
+  const historyToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let pushedHistory = false;
+  try {
+    const prev = window.history.state;
+    // Keep the router's own fields (idx / key) so it sees the same location.
+    const base = prev && typeof prev === "object" ? prev : {};
+    window.history.pushState({ ...base, [PDF_PREVIEW_HISTORY_KEY]: historyToken }, "");
+    pushedHistory = true;
+  } catch {
+    /* no history API (sandboxed frame) — Back simply is not intercepted */
+  }
+  const onPop = () => close("back");
+  let closed = false;
+  function close(reason: PdfPreviewCloseReason = "user") {
+    if (closed) return;
+    closed = true;
+    if (activeClose === close) activeClose = null;
+    window.removeEventListener("popstate", onPop);
+    // Closed by the user: take our history entry back off so the next Back
+    // leaves the page as usual. Not on Back (already popped) or a route change
+    // (the router has moved on; going back would undo that navigation).
+    if (reason === "user" && pushedHistory) {
+      try {
+        const st = window.history.state as Record<string, unknown> | null;
+        if (st && st[PDF_PREVIEW_HISTORY_KEY] === historyToken) window.history.back();
+      } catch {
+        /* ignore */
+      }
+    }
     document.removeEventListener("keydown", onKey, true);
     overlay.remove();
     document.body.style.overflow = prevOverflow;
@@ -256,7 +309,7 @@ export function openPdfPreview(
   tabBtn.addEventListener("click", () => {
     if (!openUrlInNewTab(viewUrl)) showNote(BLOCKED_TAB_MESSAGE);
   });
-  closeBtn.addEventListener("click", close);
+  closeBtn.addEventListener("click", () => close("user"));
 
   // Share (phones): hands the named PDF to the OS share sheet — WhatsApp,
   // mail, … (review D3). Only shown where the browser can share files.
@@ -268,9 +321,11 @@ export function openPdfPreview(
     });
   });
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) close();
+    if (e.target === overlay) close("user");
   });
   document.addEventListener("keydown", onKey, true);
+  if (pushedHistory) window.addEventListener("popstate", onPop);
+  activeClose = close;
 
   for (const el of [name, printBtn, downloadBtn, shareBtn, tabBtn, closeBtn, note]) if (el) bar.appendChild(el);
   panel.appendChild(bar);
@@ -301,7 +356,7 @@ export function openPdfPreview(
     iframe.src = viewUrl;
   })();
 
-  return close;
+  return () => close("user");
 }
 
 /** Download or preview raw PDF bytes / a blob, by mode. */

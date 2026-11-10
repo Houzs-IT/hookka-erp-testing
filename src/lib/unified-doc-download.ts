@@ -22,6 +22,7 @@ import { PDFDocument } from "pdf-lib";
 import { deliverPdf, pdfFileName, savePdfBlob, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus } from "./pdf-cancelled-stamp";
 import { appendPodPagesToPdfBytes, type PodPdfInput } from "./pod-photos-pdf";
+import type { InvoicePrintPayment } from "./invoice-payments-print";
 
 // Combined (batch) files keep the caller's name; single documents are named
 // "<doc no> <customer>.pdf" and can open in the in-app preview (review D1).
@@ -41,6 +42,9 @@ type AnyExtras = {
   // Loosely typed — DO and Invoice print-extras carry slightly different per-item
   // shapes; both are structural supersets of DocLineExtra, read defensively below.
   items?: Record<string, unknown>;
+  // Invoice print-extras: payments received + stored paid (review H1-6).
+  payments?: InvoicePrintPayment[];
+  paidSen?: number;
 } | undefined;
 
 const extraOf = (extras: AnyExtras, id: string): DocLineExtra | undefined =>
@@ -171,6 +175,10 @@ export function invoiceInputFromInvoice(inv: AnyInvoice, extras: AnyExtras): Uni
     taxSen: Number(inv.taxSen) || 0,
     totalSen: Number(inv.totalSen) || 0,
     amountInWords: s(inv.amountInWords) || undefined,
+    // Payments received + balance due (review H1-6) from /print-extras;
+    // the invoice's own paidAmount when the extras predate the field.
+    payments: Array.isArray(extras?.payments) ? extras.payments : undefined,
+    paidSen: Number(extras?.paidSen ?? (inv as { paidAmount?: number }).paidAmount) || 0,
   };
 }
 

@@ -1575,8 +1575,15 @@ export type ProofOfDelivery = {
   receiverIC: string;
   signatureDataUrl: string;
   photoDataUrls: string[];
+  /** Photos already uploaded when taken (review H3-4); the server copies
+   *  them into photoDataUrls on the POD write. */
+  photoIds?: string[];
+  /** Server time each uploaded photo arrived (C2-3). */
+  photoServerTimes?: string[];
   remarks: string;
+  /** Server time of the POD write (C2-3); the phone's clock is in deviceDeliveredAt. */
   deliveredAt: string;
+  deviceDeliveredAt?: string | null;
   capturedBy: string;
 };
 

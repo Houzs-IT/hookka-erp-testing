@@ -35,7 +35,7 @@ function fmtRackStacked(
 // ---------------------------------------------------------------------------
 
 export function generatePackingListPdf(order: DeliveryOrder, extras?: DOPrintExtras) {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 15;
 

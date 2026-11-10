@@ -5,6 +5,7 @@ import WorkerLayout from './layouts/WorkerLayout'
 import { ErrorBoundary, ErrorFallback } from './components/ui/error-boundary'
 import RequireAuth from './components/RequireAuth'
 import { PageSkeleton } from './components/ui/skeleton'
+import { closePdfPreview } from './lib/pdf-preview'
 
 // ── Standalone / non-dashboard lazy pages ─────────────────────────────────
 
@@ -174,3 +175,14 @@ export const router = createBrowserRouter([
     ],
   },
 ])
+
+// A PDF preview belongs to the page it was opened on: any route change closes
+// it, so it never stays over the next page (review B7, Houzs#5402). Back is
+// handled inside the preview itself (its own history entry).
+let lastPreviewPath = router.state.location.pathname
+router.subscribe((state) => {
+  const path = state.location.pathname
+  if (path === lastPreviewPath) return
+  lastPreviewPath = path
+  closePdfPreview('route')
+})

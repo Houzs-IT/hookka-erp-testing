@@ -60,21 +60,22 @@ test("printCnPackingList builds a compressed A4 portrait document", () => {
 
 test("each CN renders in full on a fresh page, footers stamped once after all", () => {
   // The render/stamp split exists exactly for this: renderCnInto per CN in
-  // a loop, stampCnFooters ONCE at the end so page numbering is continuous.
+  // a loop, stampCnFooters ONCE at the end. Since review H3-10 each CN numbers
+  // its own pages: the loop records where each CN starts and passes it on.
   const body = sliceFrom(PDF_SRC, "export function printCnPackingList");
   assert.match(
     body,
-    /cns\.forEach\(\(cn\) => \{\s*doc\.addPage\(\);\s*renderCnInto\(doc, cn\);\s*\}\);/,
-    "every CN must start on addPage() and render via renderCnInto",
+    /cns\.forEach\(\(cn\) => \{\s*doc\.addPage\(\);\s*starts\.push\(doc\.getNumberOfPages\(\)\);\s*renderCnInto\(doc, cn\);\s*\}\);/,
+    "every CN must start on addPage(), record its first page and render via renderCnInto",
   );
-  const stampCalls = body.match(/stampCnFooters\(doc\);/g) || [];
+  const stampCalls = body.match(/stampCnFooters\(doc, starts\);/g) || [];
   assert.equal(
     stampCalls.length,
     1,
     "stampCnFooters must run exactly once across the whole document",
   );
   assert.ok(
-    body.indexOf("stampCnFooters(doc);") > body.indexOf("cns.forEach"),
+    body.indexOf("stampCnFooters(doc, starts);") > body.indexOf("cns.forEach"),
     "stampCnFooters must run AFTER all CNs are rendered",
   );
   // The split itself must stay exported — the page's single-CN path and

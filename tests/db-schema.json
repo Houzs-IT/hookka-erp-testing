@@ -803,6 +803,15 @@
     "refresh_count",
     "source_rows"
   ],
+  "delivery_pod_photos": [
+    "created_by",
+    "data_url",
+    "do_id",
+    "id",
+    "org_id",
+    "server_at",
+    "size_chars"
+  ],
   "delivery_proposals": [
     "decided_at",
     "decided_by",

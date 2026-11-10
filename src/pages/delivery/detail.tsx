@@ -34,6 +34,7 @@ import {
 import PODDialog from "@/components/delivery/POD-dialog";
 import DoQrDialog from "@/components/delivery/do-qr-dialog";
 import type { ProofOfDelivery } from "@/types";
+import type { PodEarlierAttempt } from "@/lib/pod-history";
 import { usePresence } from "@/lib/use-presence";
 import { PresenceBanner } from "@/components/presence-banner";
 import { FetchJsonError } from "@/lib/fetch-json";
@@ -89,6 +90,8 @@ type DeliveryOrder = {
   lorryId?: string | null;
   lorryName?: string;
   proofOfDelivery?: ProofOfDelivery | null;
+  // PODs of deliveries that were undone (review H3-8), oldest first.
+  podEarlierAttempts?: PodEarlierAttempt[];
   // Delivered "with issues" — goods arrived but paperwork incomplete, so the
   // invoice is on hold until resolved (POST /:id/resolve-incomplete).
   deliveryIncomplete?: boolean;
@@ -911,6 +914,56 @@ export default function DeliveryDetailPage() {
               )}
             </div>
           )}
+
+          {/* H3-8: the POD of an undone delivery is kept, not lost. */}
+          {(order.podEarlierAttempts ?? []).length > 0 && (
+            <div className="mt-5 space-y-3 border-t border-[#E2DDD8] pt-4">
+              {(order.podEarlierAttempts ?? [])
+                .slice()
+                .reverse()
+                .map((a, i) => (
+                  <div key={i} className="rounded-md border border-dashed border-[#D1CBC5] bg-[#FAF9F7] p-3">
+                    <p className="text-xs font-semibold text-[#6B7280]">
+                      Earlier delivery attempt
+                      {a.undoneAt ? ` · undone ${formatDateTime(a.undoneAt)}` : ""}
+                    </p>
+                    <div className="mt-2 grid grid-cols-3 gap-3 text-sm max-sm:grid-cols-1">
+                      <div>
+                        <p className="text-xs text-[#9CA3AF]">Receiver</p>
+                        <p className="text-[#4B5563]">{a.receiverName || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-[#9CA3AF]">Delivered At</p>
+                        <p className="text-[#4B5563]">{a.deliveredAt ? formatDateTime(a.deliveredAt) : "-"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-[#9CA3AF]">Remarks</p>
+                        <p className="text-[#4B5563]">{a.remarks || "-"}</p>
+                      </div>
+                    </div>
+                    {(a.signatureDataUrl || (a.photoDataUrls ?? []).length > 0) && (
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        {a.signatureDataUrl && (
+                          <img
+                            src={a.signatureDataUrl}
+                            alt="Earlier signature"
+                            className="h-16 rounded border border-[#E2DDD8] bg-white p-1"
+                          />
+                        )}
+                        {(a.photoDataUrls ?? []).map((src, j) => (
+                          <img
+                            key={j}
+                            src={src}
+                            alt={`Earlier photo ${j + 1}`}
+                            className="h-16 w-16 rounded border border-[#E2DDD8] object-cover"
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1155,6 +1208,7 @@ export default function DeliveryDetailPage() {
       {/* POD Capture Dialog */}
       <PODDialog
         open={podOpen}
+        doId={order.id}
         doNo={order.doNo}
         customerName={order.customerName}
         onClose={() => setPodOpen(false)}
