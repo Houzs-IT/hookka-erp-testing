@@ -84,9 +84,10 @@ test("three columns a month: Actual, Docs forecast, P&L forecast — in the head
 test("Capex & financing: a Trade finance block per facility — a Drawdown row, tenor and interest, Fill from bills, and the worked-out rows", () => {
   const dlg = slice("function CfForecastInputsDialog(", "\nfunction ");
   assert.match(dlg, /tfFacilities\.map\(\(f\) => \{/);
-  assert.match(dlg, /tfPlanSchedule\(\{ \.\.\.inp, plan: p\.months \}\)/);
+  // Since 2026-11-10 a plan ticked from the Forecast P&L schedules its ticked drawdowns (tests/tf-forecast-ticks.test.mjs).
+  assert.match(dlg, /tfPlanSchedule\(\{ \.\.\.inp, plan: planMonths \}\)/);
   // Since 2026-11-10 both fills go through planTfFill, which also names what the limit cannot cover (tests/tf-fill-from-forecast.test.mjs).
-  assert.match(dlg, /fillTf\(f, f\.billsDue, "bills"\)/);
+  assert.match(dlg, /fillTf\(f, f\.billsDue\)/);
   for (const w of ["Fill from bills", "Drawdown", "Interest (est.)", "Repayment", "Owed at month end", "Room left", "% per draw"]) assert.ok(dlg.includes(w), w);
   assert.match(dlg, /body: JSON\.stringify\(\{ months, \.\.\.\(tfFacilities\.length \? \{ tf \} : \{\}\) \}\)/, "saved with the keyed amounts, facilities only");
 });

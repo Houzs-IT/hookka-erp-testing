@@ -15,11 +15,10 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
-import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfPlanSchedule, tfSupplierRows, tfTickedDue, tfTickedIds, type TfForecastSupplier } from "@/lib/cashflow-forecast";
+import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfDefaultTicks, tfPlanSchedule, tfSupplierLabel, tfTickRows, tfTickedPlan, tfToggleRow, tfToggleTick, type TfForecastSupplier, type TfTicks } from "@/lib/cashflow-forecast";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { plPastForecastCol } from "@/lib/pl-forecast-edit";
 import { MonthlyPlForecastEditor } from "./monthly-pl-forecast-editor";
-import { TfSupplierPicker } from "./tf-supplier-picker";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -19013,14 +19012,15 @@ type CfKeyableAccount = { code: string; name: string; section: "CAPEX" | "LOAN" 
 // Trade finance in the same popup (owner 2026-11-09 「手动输入或调整」, spec
 // 2026-11-09-forecast-three-columns-design.md 5): per facility, as at today.
 // `paidSupplierIds` (owner 2026-11-10): the suppliers the facility has paid
-// before, the default ticks for Fill from Forecast P&L; `supplierIds` in the
-// plan, the owner's ticks once changed (「我要能选…就是tick」).
+// before, ticked when Fill from Forecast P&L starts; `ticks` in the plan,
+// a tick per supplier per month (「这个月哪里有个supplier 要用trade finance」),
+// present once that Fill was used: the Drawdown row then follows the ticks.
 type CfTfFacility = {
   accountCode: string; lender: string; limitSen: number | null; tenorDays: number; rateBp: number;
   owedNowSen: number; drawnThisMonthSen: number; dueBy: Record<string, number>; billsDue: Record<string, number>;
   paidSupplierIds?: string[];
 };
-type CfTfPlan = { tenorDays?: number; rateBp?: number; supplierIds?: string[]; months: Record<string, number> };
+type CfTfPlan = { tenorDays?: number; rateBp?: number; ticks?: TfTicks; months: Record<string, number> };
 function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const firstYm = todayYmdMY().slice(0, 7);
   const yms = useMemo(() => Array.from({ length: KEYED_MONTHS }, (_, i) => addMonthsYm(firstYm, i)), [firstYm]);
@@ -19028,11 +19028,10 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   const [months, setMonths] = useState<Record<string, Record<string, number>>>({});
   const [tfFacilities, setTfFacilities] = useState<CfTfFacility[]>([]);
   const [tfPlans, setTfPlans] = useState<Record<string, CfTfPlan>>({});
-  // Every supplier's Forecast P&L dues, for the Suppliers ticks; and the
-  // ticks each facility opened with, which stay listed when unticked
-  // (BUG-2026-11-10-491).
+  // Every supplier's Forecast P&L dues, for the tick rows; and, per facility,
+  // the amounts typed before Fill from Forecast P&L, for Clear ticks.
   const [tfSuppliers, setTfSuppliers] = useState<TfForecastSupplier[]>([]);
-  const [tfOpenedTicks, setTfOpenedTicks] = useState<Record<string, string[]>>({});
+  const [tfTypedBefore, setTfTypedBefore] = useState<Record<string, Record<string, number>>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -19049,7 +19048,6 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
         setTfFacilities(j.data.tf?.facilities ?? []);
         setTfPlans(j.data.tf?.plans ?? {});
         setTfSuppliers(j.data.tf?.forecastSuppliers ?? []);
-        setTfOpenedTicks(Object.fromEntries(Object.entries(j.data.tf?.plans ?? {}).map(([k, p]) => [k, p.supplierIds ?? []])));
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : String(e));
       }
@@ -19109,45 +19107,71 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
     const p = tfPlanOf(f.accountCode);
     return { yms, currentYm: firstYm, rateBp: p.rateBp ?? f.rateBp, tenorDays: p.tenorDays ?? f.tenorDays, owedNowSen: f.owedNowSen, drawnThisMonthSen: f.drawnThisMonthSen, dueBy: f.dueBy, limitSen: f.limitSen };
   };
-  // One click fills a facility's drawdowns from the bills due, or from the
-  // Forecast P&L (owner 2026-11-10 「我想要一键按直接填…额度不够你提醒」): as far
-  // as the limit lets once each month's repayments are in (planTfFill). The
-  // months it cannot cover, and by how much, are named under the buttons —
-  // the bank pays that part. Nothing counts until Save.
-  const fillTf = (f: CfTfFacility, due: Record<string, number>, source: "bills" | "forecast") => {
-    if (source === "forecast" && !yms.some((ym) => (due[ym] ?? 0) > 0)) {
-      setTfNote((prev) => ({ ...prev, [f.accountCode]: "Nothing to fill: the ticked suppliers have no Forecast P&L figures falling due in these months. Key them per supplier under each material (▸) on the Forecast P&L, or tick others under Suppliers." }));
-      return;
-    }
-    const r = planTfFill(tfInput(f), due);
-    replaceTfMonths(f.accountCode, r.months);
-    const short = yms.filter((ym) => (r.shortSen[ym] ?? 0) > 0);
-    setTfNote((prev) => ({
-      ...prev,
-      [f.accountCode]: short.length
-        ? `Over the limit: ${short.map((ym) => `${cfYmLabel(ym)} ${plDrillAmt(r.shortSen[ym])}`).join(" · ")} — not drawn; the bank pays that part.`
-        : "",
-    }));
+  const shortNote = (short: Record<string, number>) => {
+    const months = yms.filter((ym) => (short[ym] ?? 0) > 0);
+    return months.length ? `Over the limit: ${months.map((ym) => `${cfYmLabel(ym)} ${plDrillAmt(short[ym])}`).join(" · ")} — not drawn; the bank pays that part.` : "";
   };
-  // A tick (owner 2026-11-10 「我要能选…就是tick」) changes which suppliers Fill
-  // from Forecast P&L takes; the Drawdown row waits for the next fill, so a
-  // cell changed by hand is never overwritten unasked. Save keeps the ticks.
-  const toggleTfSupplier = (f: CfTfFacility, id: string) => {
-    setTfNote((prev) => ({ ...prev, [f.accountCode]: "Ticks changed: press Fill from Forecast P&L to fill with them." }));
+  // One click fills a facility's drawdowns from the bills due (owner
+  // 2026-11-10 「我想要一键按直接填…额度不够你提醒」): as far as the limit lets
+  // once each month's repayments are in (planTfFill); the months it cannot
+  // cover, and by how much, are named under the buttons — the bank pays that
+  // part. A ticked plan goes back to typed amounts. Nothing counts until Save.
+  const fillTf = (f: CfTfFacility, due: Record<string, number>) => {
+    const r = planTfFill(tfInput(f), due);
     setTfPlans((prev) => {
       const p = prev[f.accountCode] ?? { months: {} };
-      const cur = tfTickedIds(p.supplierIds, f.paidSupplierIds ?? []);
-      if (cur.has(id)) cur.delete(id); else cur.add(id);
-      return { ...prev, [f.accountCode]: { ...p, supplierIds: [...cur].sort() } };
+      const m = { ...p.months };
+      for (const ym of yms) delete m[ym];
+      return { ...prev, [f.accountCode]: { ...p, ticks: undefined, months: { ...m, ...r.months } } };
+    });
+    setTfNote((prev) => ({ ...prev, [f.accountCode]: shortNote(r.shortSen) }));
+  };
+  // Fill from Forecast P&L (owner 2026-11-10, second round: 「我按了fill from
+  // forecast pnl 才可以勾选」): the supplier rows appear, a tick per month, the
+  // facility's own suppliers ticked; from then on the whole Drawdown row
+  // follows the ticks (「也会和原本的手动输入对冲」), as far as the limit lets.
+  // The typed amounts are kept aside for Clear ticks.
+  const startTicks = (f: CfTfFacility) => {
+    if (!tfTickRows(tfSuppliers, yms).length) {
+      setTfNote((prev) => ({ ...prev, [f.accountCode]: "Nothing to fill: no Forecast P&L figures per supplier falling due in these months. Key them per supplier under each material (▸) on the Forecast P&L." }));
+      return;
+    }
+    const typed = tfPlanOf(f.accountCode).months;
+    setTfTypedBefore((prev) => ({ ...prev, [f.accountCode]: Object.fromEntries(yms.filter((ym) => typed[ym]).map((ym) => [ym, typed[ym]])) }));
+    clearTfNote(f.accountCode);
+    setTfPlans((prev) => ({ ...prev, [f.accountCode]: { ...(prev[f.accountCode] ?? { months: {} }), ticks: tfDefaultTicks(tfSuppliers, f.paidSupplierIds ?? [], yms) } }));
+  };
+  // Clear ticks: back to typing — the amounts typed before this Fill, or
+  // empty boxes if the plan was already ticked when the popup opened.
+  const clearTicks = (f: CfTfFacility) => {
+    const before = tfTypedBefore[f.accountCode] ?? {};
+    clearTfNote(f.accountCode);
+    setTfPlans((prev) => {
+      const p = prev[f.accountCode] ?? { months: {} };
+      const m = { ...p.months };
+      for (const ym of yms) delete m[ym];
+      return { ...prev, [f.accountCode]: { ...p, ticks: undefined, months: { ...m, ...before } } };
     });
   };
-  const tfMonthsLabel = `${cfYmLabel(yms[0])} – ${cfYmLabel(yms[yms.length - 1])}`;
+  const setTicks = (acct: string, change: (t: TfTicks) => TfTicks) =>
+    setTfPlans((prev) => {
+      const p = prev[acct] ?? { months: {} };
+      return { ...prev, [acct]: { ...p, ticks: change(p.ticks ?? {}) } };
+    });
+  // What Save sends: a ticked plan's months are its drawdowns as the ticks
+  // give them now (the Cash Flow forecast works them out afresh as well).
+  const tfPlanForSave = (f: CfTfFacility): CfTfPlan => {
+    const p = tfPlanOf(f.accountCode);
+    if (p.ticks === undefined) return p;
+    const outside = Object.fromEntries(Object.entries(p.months).filter(([ym]) => !yms.includes(ym)));
+    return { ...p, months: { ...outside, ...tfTickedPlan(tfInput(f), tfSuppliers, p.ticks).months } };
+  };
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
       // Only the facilities that exist: the server refuses any other account.
-      const tf = Object.fromEntries(tfFacilities.map((f) => [f.accountCode, tfPlanOf(f.accountCode)]));
+      const tf = Object.fromEntries(tfFacilities.map((f) => [f.accountCode, tfPlanForSave(f)]));
       const r = await fetch("/api/accounting/cashflow-forecast-inputs", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -19255,9 +19279,13 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
               {tfFacilities.map((f) => {
                 const p = tfPlanOf(f.accountCode);
                 const inp = tfInput(f);
-                const sched = tfPlanSchedule({ ...inp, plan: p.months });
-                const ticked = tfTickedIds(p.supplierIds, f.paidSupplierIds ?? []);
-                const pick = tfSupplierRows({ suppliers: tfSuppliers, ticked, yms, keep: new Set([...(f.paidSupplierIds ?? []), ...(tfOpenedTicks[f.accountCode] ?? [])]) });
+                // Ticked from the Forecast P&L: the Drawdown row is the ticks'.
+                const ticking = p.ticks !== undefined;
+                const tickFill = ticking ? tfTickedPlan(inp, tfSuppliers, p.ticks ?? {}) : null;
+                const planMonths = tickFill ? tickFill.months : p.months;
+                const sched = tfPlanSchedule({ ...inp, plan: planMonths });
+                const tickRows = ticking ? tfTickRows(tfSuppliers, yms) : [];
+                const note = tickFill ? shortNote(tickFill.shortSen) : tfNote[f.accountCode];
                 const computed: { label: string; key: "interestSen" | "repaySen" | "owedSen" | "roomSen" }[] = [
                   { label: "Interest (est.)", key: "interestSen" },
                   { label: "Repayment", key: "repaySen" },
@@ -19286,22 +19314,28 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                           </label>
                           <span>Owed today {plDrillAmt(f.owedNowSen)}</span>
                           {f.drawnThisMonthSen > 0 && <span>Drawn this month {plDrillAmt(f.drawnThisMonthSen)}</span>}
-                          <Button variant="outline" size="sm" onClick={() => fillTf(f, f.billsDue, "bills")}
+                          <Button variant="outline" size="sm" onClick={() => fillTf(f, f.billsDue)}
                             title="Fill each month with the bills due from suppliers this facility has paid before, as far as the limit lets; then change any cell">
                             Fill from bills
                           </Button>
-                          <TfSupplierPicker rows={pick.rows} tickedTotalSen={pick.tickedTotalSen} monthsLabel={tfMonthsLabel} onToggle={(id) => toggleTfSupplier(f, id)} />
-                          <Button variant="outline" size="sm" onClick={() => fillTf(f, tfTickedDue(tfSuppliers, ticked), "forecast")}
-                            title="Fill each month with the Forecast P&L figures of the suppliers ticked under Suppliers, each in the month it falls due by its term, as far as the limit lets; then change any cell">
-                            Fill from Forecast P&L
-                          </Button>
+                          {ticking ? (
+                            <Button variant="outline" size="sm" onClick={() => clearTicks(f)}
+                              title="Stop following the ticks and type the drawdowns by hand again">
+                              Clear ticks
+                            </Button>
+                          ) : (
+                            <Button variant="outline" size="sm" onClick={() => startTicks(f)}
+                              title="Show each supplier's Forecast P&L amounts by the month they fall due, to tick the ones this facility pays; the Drawdown row then follows the ticks">
+                              Fill from Forecast P&L
+                            </Button>
+                          )}
                         </span>
                       </td>
                     </tr>
-                    {tfNote[f.accountCode] && (
+                    {note && (
                       <tr className="bg-[#FFFBF2]">
                         <td colSpan={yms.length + 2} role="status" className="sticky left-0 px-2 py-1 text-[11px] text-[#9C6F1E]">
-                          {tfNote[f.accountCode]}
+                          {note}
                         </td>
                       </tr>
                     )}
@@ -19311,15 +19345,57 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                       </td>
                       {yms.map((ym) => (
                         <td key={ym} className="px-1 py-0.5">
-                          <MoneyInput value={p.months[ym] ? p.months[ym] / 100 : null} onChange={(v) => setTfCell(f.accountCode, ym, v)} className="h-7 w-28 px-2 text-xs tabular-nums" />
+                          {ticking ? (
+                            <span title="The ticked amounts below, as far as the limit lets" className="block h-7 w-28 rounded bg-[#F0ECE9] px-2 text-right text-xs leading-7 tabular-nums text-[#1F1D1B]">{amt(planMonths[ym] ?? 0)}</span>
+                          ) : (
+                            <MoneyInput value={p.months[ym] ? p.months[ym] / 100 : null} onChange={(v) => setTfCell(f.accountCode, ym, v)} className="h-7 w-28 px-2 text-xs tabular-nums" />
+                          )}
                         </td>
                       ))}
                       <td className="px-1 text-center">
-                        {yms.some((ym) => !!p.months[ym]) && (
+                        {!ticking && yms.some((ym) => !!p.months[ym]) && (
                           <button type="button" onClick={() => { clearTfNote(f.accountCode); replaceTfMonths(f.accountCode, {}); }} title="Clear this row's twelve months" className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
                         )}
                       </td>
                     </tr>
+                    {ticking && tickRows.length === 0 && (
+                      <tr className="border-b border-[#F0ECE9]">
+                        <td colSpan={yms.length + 2} className="sticky left-0 px-2 py-1 pl-4 text-[11px] text-[#6B7280]">
+                          No Forecast P&L figures per supplier fall due in these months. Key them per supplier under each material (▸) on the Forecast P&L, or press Clear ticks to type the drawdowns.
+                        </td>
+                      </tr>
+                    )}
+                    {ticking && tickRows.map((r) => {
+                      const on = (ym: string) => (p.ticks?.[ym] ?? []).includes(r.id);
+                      const due = yms.filter((ym) => (r.dueBy[ym] ?? 0) > 0);
+                      const nOn = due.filter(on).length;
+                      return (
+                        <tr key={`tick-${r.id}`} className="border-b border-[#F0ECE9] bg-[#FAF8F4]">
+                          <td className="sticky left-0 z-10 bg-[#FAF8F4] px-2 py-0.5 pl-4 whitespace-nowrap">
+                            <label className="inline-flex cursor-pointer items-center gap-1.5" title={`Tick every month for ${r.name}`}>
+                              <input type="checkbox" checked={nOn > 0 && nOn === due.length}
+                                ref={(el) => { if (el) el.indeterminate = nOn > 0 && nOn < due.length; }}
+                                onChange={() => setTicks(f.accountCode, (t) => tfToggleRow(t, r, yms))}
+                                className="h-3.5 w-3.5 accent-[#6B5C32]" />
+                              <span className="text-[#1F1D1B]">{tfSupplierLabel(r.name)}</span>
+                              {r.term && <span className="text-[#9CA3AF]">{r.term}</span>}
+                            </label>
+                          </td>
+                          {yms.map((ym) => (
+                            <td key={ym} className={`px-2 py-0.5 text-right tabular-nums ${on(ym) ? "bg-[#EFEAE0]" : ""}`}>
+                              {(r.dueBy[ym] ?? 0) > 0 ? (
+                                <label className="inline-flex cursor-pointer items-center justify-end gap-1.5 text-[#1F1D1B]">
+                                  <input type="checkbox" checked={on(ym)} onChange={() => setTicks(f.accountCode, (t) => tfToggleTick(t, r.id, ym))}
+                                    aria-label={`${r.name} ${cfYmLabel(ym)}`} className="h-3.5 w-3.5 accent-[#6B5C32]" />
+                                  {plDrillAmt(r.dueBy[ym])}
+                                </label>
+                              ) : <span className="text-[#9CA3AF]">-</span>}
+                            </td>
+                          ))}
+                          <td />
+                        </tr>
+                      );
+                    })}
                     {computed.map(({ label, key }) => (
                       <tr key={key} className="border-b border-[#F0ECE9] text-[#6B7280]">
                         <td className="sticky left-0 z-10 bg-white px-2 py-1 pl-4 whitespace-nowrap">{label}</td>
