@@ -306,11 +306,15 @@ export const TF_PLAN_MONTHS_AHEAD = 15;
 
 /** One facility's plan: month → the principal the lender is to pay for us. */
 export type TfPlanFacility = { accountCode: string; lender: string; tenorDays: number; rateBp: number; months: Record<string, number> };
+/** Per-month ticks (owner 2026-11-10 「这个月哪里有个supplier 要用trade
+ *  finance」): month → the suppliers whose Forecast P&L amount that month the
+ *  lender is to pay. */
+export type TfTicks = Record<string, string[]>;
 /** kv `cashflow_forecast_tf.facilities`: per facility account, the owner's
- *  tenor and interest (absent = the defaults), the suppliers ticked for Fill
- *  from Forecast P&L (absent = the ones the facility has paid before) and the
- *  months keyed. */
-export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; supplierIds?: string[]; months: Record<string, number> }>;
+ *  tenor and interest (absent = the defaults), the months keyed, and `ticks`
+ *  once Fill from Forecast P&L was used: present (even empty), the plan's
+ *  drawdowns follow the ticks instead of typed amounts. */
+export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; ticks?: TfTicks; months: Record<string, number> }>;
 
 /** A stored plan, cleaned: trade-finance accounts only (with `allowed`), a
  *  tenor of 1–400 days, a rate of 0–100 %, months as YYYY-MM, whole positive
@@ -322,15 +326,22 @@ export function cleanTfPlans(raw: unknown, allowed: ReadonlySet<string> | null):
   for (const [code, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!v || typeof v !== "object") continue;
     if (allowed && !allowed.has(code)) { rejected.add(code); continue; }
-    const o = v as { tenorDays?: unknown; rateBp?: unknown; supplierIds?: unknown; months?: unknown };
+    const o = v as { tenorDays?: unknown; rateBp?: unknown; ticks?: unknown; months?: unknown };
     const out: TfPlanStore[string] = { months: {} };
     const tenor = Math.round(Number(o.tenorDays));
     if (Number.isFinite(tenor) && tenor >= 1 && tenor <= 400) out.tenorDays = tenor;
     const rate = Math.round(Number(o.rateBp));
     if (o.rateBp !== undefined && o.rateBp !== null && Number.isFinite(rate) && rate >= 0 && rate <= 10_000) out.rateBp = rate;
-    // The ticked suppliers (2026-11-10); an empty list is the owner unticking them all.
-    if (Array.isArray(o.supplierIds)) {
-      out.supplierIds = [...new Set(o.supplierIds.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter((x) => x && x.length <= 100))].sort().slice(0, 1000);
+    // The per-month ticks (2026-11-10): an empty set is every tick cleared,
+    // and the plan still follows the ticks. A month left with none goes.
+    if (o.ticks && typeof o.ticks === "object" && !Array.isArray(o.ticks)) {
+      const ticks: TfTicks = {};
+      for (const [ym, ids] of Object.entries(o.ticks as Record<string, unknown>)) {
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym) || !Array.isArray(ids)) continue;
+        const clean = [...new Set(ids.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter((x) => x && x.length <= 100))].sort().slice(0, 500);
+        if (clean.length) ticks[ym] = clean;
+      }
+      out.ticks = ticks;
     }
     for (const [ym, s] of Object.entries((o.months ?? {}) as Record<string, unknown>)) {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) continue;
@@ -504,44 +515,72 @@ export function tfForecastDueBySupplier(o: {
   return out;
 }
 
-/** A supplier the Trade finance block lists: its Forecast P&L dues by month. */
-export type TfForecastSupplier = { id: string; name: string; dueBy: Record<string, number> };
+/** A supplier the Trade finance block can tick: its name, its payment term
+ *  and its Forecast P&L dues by month. */
+export type TfForecastSupplier = { id: string; name: string; term?: string; dueBy: Record<string, number> };
 
-/** What Fill from Forecast P&L takes (owner 2026-11-10 「我要能选…就是tick」):
- *  the ticked suppliers' dues added up, one figure per due month — a supplier
- *  keyed under several materials and months is one total there. */
-export function tfTickedDue(suppliers: readonly { id: string; dueBy: Record<string, number> }[], ticked: ReadonlySet<string>): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const s of suppliers) {
-    if (!ticked.has(s.id)) continue;
-    for (const [ym, sen] of Object.entries(s.dueBy)) if (sen > 0) out[ym] = (out[ym] ?? 0) + sen;
+/** The tick grid's rows (owner 2026-11-10, second round): every supplier with
+ *  a Forecast P&L amount due in the months shown, biggest total first, then by
+ *  name. A supplier with nothing due there has no row. */
+export function tfTickRows(suppliers: readonly TfForecastSupplier[], yms: readonly string[]): (TfForecastSupplier & { totalSen: number })[] {
+  return suppliers
+    .map((s) => ({ ...s, totalSen: yms.reduce((t, ym) => t + Math.max(0, s.dueBy[ym] ?? 0), 0) }))
+    .filter((r) => r.totalSen > 0)
+    .sort((a, b) => b.totalSen - a.totalSen || a.name.localeCompare(b.name));
+}
+
+/** The ticks Fill from Forecast P&L starts with: the facility's own suppliers
+ *  (paid through it before), every month in `yms` they have an amount. */
+export function tfDefaultTicks(suppliers: readonly { id: string; dueBy: Record<string, number> }[], ownIds: readonly string[], yms: readonly string[]): TfTicks {
+  const own = new Set(ownIds);
+  const out: TfTicks = {};
+  for (const ym of yms) {
+    const ids = suppliers.filter((s) => own.has(s.id) && (s.dueBy[ym] ?? 0) > 0).map((s) => s.id).sort();
+    if (ids.length) out[ym] = ids;
   }
   return out;
 }
 
-/** The ticked suppliers: the owner's once a tick was changed (none is a
- *  choice too), until then the suppliers the facility has paid before. */
-export function tfTickedIds(saved: readonly string[] | undefined, paidBefore: readonly string[]): Set<string> {
-  return new Set(saved ?? paidBefore);
+/** One month's tick on or off; a month left with none goes. */
+export function tfToggleTick(ticks: TfTicks, id: string, ym: string): TfTicks {
+  const cur = new Set(ticks[ym] ?? []);
+  if (cur.has(id)) cur.delete(id); else cur.add(id);
+  const next = { ...ticks };
+  if (cur.size) next[ym] = [...cur].sort(); else delete next[ym];
+  return next;
 }
 
-/** The picker's rows: each supplier's amount due in the months shown; a
- *  supplier is listed when it has one, is ticked, or is kept (`keep`: the
- *  facility's own suppliers and the ticks the popup opened with, so one
- *  unticked with nothing keyed can be ticked again, BUG-2026-11-10-491);
- *  biggest first, then by name. And what the ticked ones add up to. */
-export function tfSupplierRows(o: { suppliers: readonly TfForecastSupplier[]; ticked: ReadonlySet<string>; yms: readonly string[]; keep?: ReadonlySet<string> }): {
-  rows: { id: string; name: string; totalSen: number; ticked: boolean }[];
-  tickedTotalSen: number;
-} {
-  const rows = o.suppliers
-    .map((s) => ({ id: s.id, name: s.name, totalSen: o.yms.reduce((t, ym) => t + Math.max(0, s.dueBy[ym] ?? 0), 0), ticked: o.ticked.has(s.id) }))
-    .filter((r) => r.totalSen > 0 || r.ticked || !!o.keep?.has(r.id))
-    .sort((a, b) => b.totalSen - a.totalSen || a.name.localeCompare(b.name));
-  return { rows, tickedTotalSen: rows.reduce((t, r) => t + (r.ticked ? r.totalSen : 0), 0) };
+/** A tick on the name: every month in `yms` the supplier has an amount, on;
+ *  or off when they are all on already. */
+export function tfToggleRow(ticks: TfTicks, row: { id: string; dueBy: Record<string, number> }, yms: readonly string[]): TfTicks {
+  const months = yms.filter((ym) => (row.dueBy[ym] ?? 0) > 0);
+  const allOn = months.length > 0 && months.every((ym) => (ticks[ym] ?? []).includes(row.id));
+  let next = ticks;
+  for (const ym of months) if ((next[ym] ?? []).includes(row.id) === allOn) next = tfToggleTick(next, row.id, ym);
+  return next;
 }
 
-/** A supplier's name without its "SDN BHD", for the picker's narrow box. */
+/** What the ticks take: each month the ticked suppliers' amounts that month
+ *  (a supplier keyed under several materials is one total there). */
+export function tfTickedDue(suppliers: readonly { id: string; dueBy: Record<string, number> }[], ticks: TfTicks): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [ym, ids] of Object.entries(ticks)) {
+    for (const id of ids) {
+      const sen = suppliers.find((s) => s.id === id)?.dueBy[ym] ?? 0;
+      if (sen > 0) out[ym] = (out[ym] ?? 0) + sen;
+    }
+  }
+  return out;
+}
+
+/** A ticked plan's drawdowns: each month the ticked amounts, as far as the
+ *  limit lets once that month's repayments are in, and what does not fit
+ *  (planTfFill). The popup and the Cash Flow forecast both work it out here. */
+export function tfTickedPlan(o: TfScheduleInput, suppliers: readonly { id: string; dueBy: Record<string, number> }[], ticks: TfTicks): { months: Record<string, number>; shortSen: Record<string, number> } {
+  return planTfFill(o, tfTickedDue(suppliers, ticks));
+}
+
+/** A supplier's name without its "SDN BHD", for the tick rows. */
 export const tfSupplierLabel = (name: string): string => name.replace(/[\s,]*\bSDN[\s.,-]*BHD\.?\s*$/i, "").trim() || name;
 
 /** How many months the Capex & financing table offers, from the current

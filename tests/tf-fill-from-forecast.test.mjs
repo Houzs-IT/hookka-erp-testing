@@ -4,7 +4,7 @@
 // November purchase on NET60 is drawn in January 「可以」 → repayments give the
 // room back automatically → 「做」). One click fills the facility's planned
 // drawdowns from the Forecast P&L figures of the ticked suppliers (by default
-// the ones it has paid before; the ticks are in tests/tf-supplier-ticks.test.mjs),
+// the ones it has paid before; the per-month ticks are in tests/tf-forecast-ticks.test.mjs),
 // each in the month it falls due by that supplier's own term, as far as the
 // limit lets once each month's repayments are in; what does not fit is
 // reminded, month by month (the bank pays it).
@@ -33,7 +33,8 @@ test("the fill's dues: the ticked suppliers only, each in its due month by its o
     "2026-12": { salesSen: 40_000_000, pct: {}, purchasesByType: { OTHERS: { "sup-c": 400_000 } } },
   };
   const by = fc.tfForecastDueBySupplier({ months, termMonths: (id) => ({ "sup-a": 2, "sup-c": 1 })[id] ?? 1, fromYm: "2026-11" });
-  const due = fc.tfTickedDue(Object.entries(by).map(([id, dueBy]) => ({ id, dueBy })), new Set(["sup-a", "sup-c"]));
+  // Since the second round (2026-11-10) a tick is per month (tests/tf-forecast-ticks.test.mjs).
+  const due = fc.tfTickedDue(Object.entries(by).map(([id, dueBy]) => ({ id, dueBy })), { "2027-01": ["sup-a", "sup-c"] });
   assert.deepEqual(due, { "2027-01": 3_000_000 + 1_750_000 + 400_000 });
 });
 
@@ -62,7 +63,7 @@ const api = read("src/api/routes/accounting.ts");
 const page = read("src/pages/accounting/index.tsx");
 
 test("the facility inputs carry every supplier's Forecast P&L dues and the suppliers each facility has paid before", () => {
-  // Since 2026-11-10 the popup adds up the ticked suppliers (tests/tf-supplier-ticks.test.mjs).
+  // Since 2026-11-10 the popup ticks them per month (tests/tf-forecast-ticks.test.mjs).
   const fn = api.slice(api.indexOf("async function cfForecastTfFacilities("), api.indexOf('app.get("/cashflow-forecast-inputs"'));
   assert.match(fn, /SELECT id, name, paymentTerms FROM suppliers/);
   assert.match(fn, /tfForecastDueBySupplier\(\{/);
@@ -72,9 +73,10 @@ test("the facility inputs carry every supplier's Forecast P&L dues and the suppl
 test("the popup: Fill from Forecast P&L beside Fill from bills, one click, and a reminder of what the limit cannot cover", () => {
   const dlg = page.slice(page.indexOf("function CfForecastInputsDialog("), page.indexOf("\nfunction ", page.indexOf("function CfForecastInputsDialog(") + 10));
   assert.match(dlg, /Fill from Forecast P&L/);
-  assert.match(dlg, /fillTf\(f, tfTickedDue\(tfSuppliers, ticked\), "forecast"\)/);
-  assert.match(dlg, /fillTf\(f, f\.billsDue, "bills"\)/);
+  // Since the second round (2026-11-10) it opens per-month ticks (tests/tf-forecast-ticks.test.mjs).
+  assert.match(dlg, /onClick=\{\(\) => startTicks\(f\)\}/);
+  assert.match(dlg, /fillTf\(f, f\.billsDue\)/);
   assert.match(dlg, /planTfFill\(/);
   assert.match(dlg, /Over the limit:/, "the months the limit cannot cover, and by how much");
-  assert.doesNotMatch(dlg, /text-\[#9A3A2D\][^"]*"[^>]*>\s*\{tfNote/, "the reminder is not red (red means negative to the owner)");
+  assert.doesNotMatch(dlg, /text-\[#9A3A2D\][^"]*"[^>]*>\s*\{note/, "the reminder is not red (red means negative to the owner)");
 });

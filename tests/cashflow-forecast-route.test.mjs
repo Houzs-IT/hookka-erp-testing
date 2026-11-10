@@ -95,8 +95,8 @@ test("the loader builds the P&L forecast from the Forecast P&L and the last thre
 test("trade-finance plans: GET gives the popup each facility as at today; PUT keeps facilities only, in its own kv, audited", () => {
   const g = handler("get", "/cashflow-forecast-inputs");
   assert.match(g, /loadTfPlanStore\(c\.var\.DB\)/);
-  // Since 2026-11-10 the facilities come with every supplier's Forecast P&L dues (tests/tf-supplier-ticks.test.mjs).
-  assert.match(g, /cfForecastTfFacilities\(c\.var\.DB, getOrgId\(c\), plans\)/);
+  // Since 2026-11-10 the facilities come with every supplier's Forecast P&L dues (tests/tf-forecast-ticks.test.mjs).
+  assert.match(g, /cfForecastTfFacilities\(c\.var\.DB, getOrgId\(c\)\)/);
   assert.match(g, /tf: \{ facilities: tf\.facilities, plans: tfPlans, forecastSuppliers: tf\.forecastSuppliers \}/);
   assert.doesNotMatch(g, /\b(INSERT|UPDATE|DELETE)\b/);
   const p = handler("put", "/cashflow-forecast-inputs");
