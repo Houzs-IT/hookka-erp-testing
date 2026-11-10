@@ -1630,6 +1630,10 @@ export type BalanceSheetEntry = {
 // --- GRN & 3-Way Matching ---
 export type GRNItem = {
   poItemIndex: number;
+  // Review H1-5: the PO this line receives (multi-PO receipts); the server
+  // fills the header PO on legacy lines.
+  poId?: string;
+  poNumber?: string;
   materialCode: string;
   supplierSKU?: string;
   materialName: string;
