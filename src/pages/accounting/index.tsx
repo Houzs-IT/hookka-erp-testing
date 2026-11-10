@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
-import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, fillTfFromBills, keyedInputGroups, tfPlanSchedule } from "@/lib/cashflow-forecast";
+import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfPlanSchedule } from "@/lib/cashflow-forecast";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -18960,9 +18960,12 @@ function CfForecastDrillRows({ sources, cols, depth }: {
 type CfKeyableAccount = { code: string; name: string; section: "CAPEX" | "LOAN" };
 // Trade finance in the same popup (owner 2026-11-09 「手动输入或调整」, spec
 // 2026-11-09-forecast-three-columns-design.md 5): per facility, as at today.
+// `forecastDue` (owner 2026-11-10): the Forecast P&L figures of the suppliers
+// the facility has paid before, each in the month it falls due by its term.
 type CfTfFacility = {
   accountCode: string; lender: string; limitSen: number | null; tenorDays: number; rateBp: number;
   owedNowSen: number; drawnThisMonthSen: number; dueBy: Record<string, number>; billsDue: Record<string, number>;
+  forecastDue?: Record<string, number>;
 };
 type CfTfPlan = { tenorDays?: number; rateBp?: number; months: Record<string, number> };
 function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
@@ -19017,8 +19020,13 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   // Trade finance: a cell is the principal the lender is to pay for us that
   // month; tenor and interest default to the facility's (spec 5).
   const tfPlanOf = (acct: string): CfTfPlan => tfPlans[acct] ?? { months: {} };
+  // What the last one-click fill could not cover, per facility (cleared by
+  // any change by hand, which makes it stale).
+  const [tfNote, setTfNote] = useState<Record<string, string>>({});
+  const clearTfNote = (acct: string) => setTfNote((prev) => (prev[acct] ? { ...prev, [acct]: "" } : prev));
   const setTfCell = (acct: string, ym: string, rm: number | null) => {
     const sen = rm === null ? 0 : roundSen(rm * 100);
+    clearTfNote(acct);
     setTfPlans((prev) => {
       const p = prev[acct] ?? { months: {} };
       const m = { ...p.months };
@@ -19026,8 +19034,10 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
       return { ...prev, [acct]: { ...p, months: m } };
     });
   };
-  const setTfSetting = (acct: string, patch: Partial<CfTfPlan>) =>
+  const setTfSetting = (acct: string, patch: Partial<CfTfPlan>) => {
+    clearTfNote(acct);
     setTfPlans((prev) => ({ ...prev, [acct]: { ...(prev[acct] ?? { months: {} }), ...patch } }));
+  };
   const replaceTfMonths = (acct: string, cells: Record<string, number>) =>
     setTfPlans((prev) => {
       const p = prev[acct] ?? { months: {} };
@@ -19038,6 +19048,26 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   const tfInput = (f: CfTfFacility) => {
     const p = tfPlanOf(f.accountCode);
     return { yms, currentYm: firstYm, rateBp: p.rateBp ?? f.rateBp, tenorDays: p.tenorDays ?? f.tenorDays, owedNowSen: f.owedNowSen, drawnThisMonthSen: f.drawnThisMonthSen, dueBy: f.dueBy, limitSen: f.limitSen };
+  };
+  // One click fills a facility's drawdowns from the bills due, or from the
+  // Forecast P&L (owner 2026-11-10 「我想要一键按直接填…额度不够你提醒」): as far
+  // as the limit lets once each month's repayments are in (planTfFill). The
+  // months it cannot cover, and by how much, are named under the buttons —
+  // the bank pays that part. Nothing counts until Save.
+  const fillTf = (f: CfTfFacility, due: Record<string, number>, source: "bills" | "forecast") => {
+    if (source === "forecast" && !yms.some((ym) => (due[ym] ?? 0) > 0)) {
+      setTfNote((prev) => ({ ...prev, [f.accountCode]: "Nothing to fill: no Forecast P&L figures for this facility's suppliers falling due in these months. Key them per supplier under each material (▸) on the Forecast P&L." }));
+      return;
+    }
+    const r = planTfFill(tfInput(f), due);
+    replaceTfMonths(f.accountCode, r.months);
+    const short = yms.filter((ym) => (r.shortSen[ym] ?? 0) > 0);
+    setTfNote((prev) => ({
+      ...prev,
+      [f.accountCode]: short.length
+        ? `Over the limit: ${short.map((ym) => `${cfYmLabel(ym)} ${plDrillAmt(r.shortSen[ym])}`).join(" · ")} — not drawn; the bank pays that part.`
+        : "",
+    }));
   };
   const save = async () => {
     setSaving(true);
@@ -19181,13 +19211,24 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                           </label>
                           <span>Owed today {plDrillAmt(f.owedNowSen)}</span>
                           {f.drawnThisMonthSen > 0 && <span>Drawn this month {plDrillAmt(f.drawnThisMonthSen)}</span>}
-                          <Button variant="outline" size="sm" onClick={() => replaceTfMonths(f.accountCode, fillTfFromBills({ ...inp, billsDue: f.billsDue }))}
+                          <Button variant="outline" size="sm" onClick={() => fillTf(f, f.billsDue, "bills")}
                             title="Fill each month with the bills due from suppliers this facility has paid before, as far as the limit lets; then change any cell">
                             Fill from bills
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => fillTf(f, f.forecastDue ?? {}, "forecast")}
+                            title="Fill each month with the Forecast P&L figures of the suppliers this facility has paid before, each in the month it falls due by its term, as far as the limit lets; then change any cell">
+                            Fill from Forecast P&L
                           </Button>
                         </span>
                       </td>
                     </tr>
+                    {tfNote[f.accountCode] && (
+                      <tr className="bg-[#FFFBF2]">
+                        <td colSpan={yms.length + 2} role="status" className="sticky left-0 px-2 py-1 text-[11px] text-[#9C6F1E]">
+                          {tfNote[f.accountCode]}
+                        </td>
+                      </tr>
+                    )}
                     <tr className="border-b border-[#F0ECE9]">
                       <td className="sticky left-0 z-10 bg-white px-2 py-0.5 whitespace-nowrap">
                         <span className="text-[#1F1D1B]">Drawdown</span> <span className="text-[#9CA3AF]">(paid to suppliers for us)</span>
@@ -19199,7 +19240,7 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                       ))}
                       <td className="px-1 text-center">
                         {yms.some((ym) => !!p.months[ym]) && (
-                          <button type="button" onClick={() => replaceTfMonths(f.accountCode, {})} title="Clear this row's twelve months" className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
+                          <button type="button" onClick={() => { clearTfNote(f.accountCode); replaceTfMonths(f.accountCode, {}); }} title="Clear this row's twelve months" className="text-[#9CA3AF] hover:text-[#9A3A2D]">✕</button>
                         )}
                       </td>
                     </tr>

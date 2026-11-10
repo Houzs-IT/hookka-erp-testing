@@ -55,6 +55,7 @@ import {
   sharedForecastLegs,
   splitOpeningCredits,
   termMixOf,
+  tfForecastDue,
   type FcCashLine,
   type OpenDoc,
   type PlannedPayment,
@@ -11877,14 +11878,29 @@ async function loadTfPlanStore(db: Env["Variables"]["DB"]): Promise<TfPlanStore>
 async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string) {
   const curYm = todayMyt().slice(0, 7);
   const NO_COMPANY: CompanyFilter = { active: false, sql: "", param: null, orgId: null };
-  const [sources, ag, supRes] = await Promise.all([
+  const [sources, ag, supRes, fcRow] = await Promise.all([
     getTfSources(db),
     computeAgingData(db, orgId, null, NO_COMPANY),
-    db.prepare("SELECT id, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, name, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
+    db.prepare("SELECT value FROM kv_config WHERE key = 'forecast_pnl'").first<{ value: string }>().catch(() => null),
   ]);
   const supTerm = new Map((supRes.results ?? []).map((r) => [String(r.id), String((r.paymentTerms ?? r.payment_terms) ?? "NET30")] as const));
   const termOf = (d: OpenDoc): TermInfo => (supTerm.has(d.partyId) ? parseTermMonths(supTerm.get(d.partyId)) : { months: 1, flagged: true });
   const atLeastNow = (ym: string) => (ym < curYm ? curYm : ym);
+  // "Fill from Forecast P&L" (owner 2026-11-10 「从forecast P&L 那边capture
+  // supplier 买的」): the Forecast P&L's supplier figures, matched to the
+  // facility's suppliers by name as the bills are, each due by its own term —
+  // the same term the P&L forecast column pays it after.
+  let fcMonths: Record<string, FcMonth> = {};
+  try {
+    fcMonths = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
+  } catch { /* no forecast yet */ }
+  const supIdsByName = new Map<string, string[]>();
+  for (const r of supRes.results ?? []) {
+    const name = String(r.name ?? "").trim();
+    if (name) supIdsByName.set(name, [...(supIdsByName.get(name) ?? []), String(r.id)]);
+  }
+  const termMonthsOf = (id: string) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1);
   return sources.map((s) => {
     const sec = ag.data.tf.find((t) => t.accountCode === s.accountCode);
     const draws = sec?.draws ?? [];
@@ -11899,6 +11915,12 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
     }
     const billsDue: Record<string, number> = {};
     for (const d of scheduleOpenDocs(docs, termOf)) if (d.dueSen > 0 && d.expectedYm) { const ym = atLeastNow(d.expectedYm); billsDue[ym] = (billsDue[ym] ?? 0) + d.dueSen; }
+    const forecastDue = tfForecastDue({
+      months: fcMonths,
+      supplierIds: new Set([...paid].flatMap((name) => supIdsByName.get(name) ?? [])),
+      termMonths: termMonthsOf,
+      fromYm: curYm,
+    });
     return {
       accountCode: s.accountCode,
       lender: s.lenderName,
@@ -11909,6 +11931,7 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
       drawnThisMonthSen: draws.filter((d) => String(d.drawDate ?? "").slice(0, 7) === curYm).reduce((t, d) => t + d.amountSen - d.interestSen - (d.bankChargeSen ?? 0), 0),
       dueBy,
       billsDue,
+      forecastDue,
     };
   });
 }

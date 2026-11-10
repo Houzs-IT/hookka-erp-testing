@@ -85,7 +85,8 @@ test("Capex & financing: a Trade finance block per facility — a Drawdown row, 
   const dlg = slice("function CfForecastInputsDialog(", "\nfunction ");
   assert.match(dlg, /tfFacilities\.map\(\(f\) => \{/);
   assert.match(dlg, /tfPlanSchedule\(\{ \.\.\.inp, plan: p\.months \}\)/);
-  assert.match(dlg, /fillTfFromBills\(\{ \.\.\.inp, billsDue: f\.billsDue \}\)/);
+  // Since 2026-11-10 both fills go through planTfFill, which also names what the limit cannot cover (tests/tf-fill-from-forecast.test.mjs).
+  assert.match(dlg, /fillTf\(f, f\.billsDue, "bills"\)/);
   for (const w of ["Fill from bills", "Drawdown", "Interest (est.)", "Repayment", "Owed at month end", "Room left", "% per draw"]) assert.ok(dlg.includes(w), w);
   assert.match(dlg, /body: JSON\.stringify\(\{ months, \.\.\.\(tfFacilities\.length \? \{ tf \} : \{\}\) \}\)/, "saved with the keyed amounts, facilities only");
 });

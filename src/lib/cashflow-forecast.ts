@@ -431,31 +431,68 @@ export function tfPlanSchedule(o: TfScheduleInput & { plan: Record<string, numbe
   return rows;
 }
 
-/** "Fill from bills" (spec 5, owner 「输入或调整」): each month the bills due
- *  from suppliers the facility has paid before, as far as the limit lets
- *  once that month's repayments are in. The current month's cell is the
- *  month's whole use: what is already drawn plus what the bills add. */
-export function fillTfFromBills(o: TfScheduleInput & { billsDue: Record<string, number> }): Record<string, number> {
-  const out: Record<string, number> = {};
+/** The fill both buttons share (spec 5; owner 2026-11-10 「一键按直接填…额度不够
+ *  你提醒」): each month what falls due, as far as the limit lets once that
+ *  month's repayments are in — a repayment, an existing draw's or one this
+ *  fill planned a tenor earlier, gives the room back. `shortSen` is what did
+ *  not fit, by month (the bank pays it). The current month's cell is the
+ *  month's whole use: what is already drawn plus what this adds. */
+export function planTfFill(o: TfScheduleInput, dueSen: Record<string, number>): { months: Record<string, number>; shortSen: Record<string, number> } {
+  const months: Record<string, number> = {};
+  const shortSen: Record<string, number> = {};
   const planRepay = new Map<string, number>();
   let owed = o.owedNowSen;
   for (const ym of o.yms) {
     owed -= (o.dueBy[ym] ?? 0) + (planRepay.get(ym) ?? 0);
-    const bills = Math.max(0, Math.round(o.billsDue[ym] ?? 0));
-    let extra = bills;
+    const due = Math.max(0, Math.round(dueSen[ym] ?? 0));
+    let extra = due;
     if (o.limitSen !== null) {
       const avail = Math.max(0, o.limitSen - owed);
       let cap = Math.floor((avail * 10_000) / (10_000 + o.rateBp));
       while (cap > 0 && cap + tfInterestSen(cap, o.rateBp) > avail) cap -= 1;
-      extra = Math.min(bills, cap);
+      extra = Math.min(due, cap);
     }
+    if (due > extra) shortSen[ym] = due - extra;
     const drawn = ym === o.currentYm ? o.drawnThisMonthSen : 0;
-    if (extra + drawn > 0) out[ym] = extra + drawn;
+    if (extra + drawn > 0) months[ym] = extra + drawn;
     if (extra > 0) {
       const i = tfInterestSen(extra, o.rateBp);
       owed += extra + i;
       const to = tfRepayYm(ym, o.tenorDays);
       planRepay.set(to, (planRepay.get(to) ?? 0) + extra + i);
+    }
+  }
+  return { months, shortSen };
+}
+
+/** "Fill from bills" (spec 5, owner 「输入或调整」): each month the bills due
+ *  from suppliers the facility has paid before, through planTfFill. */
+export function fillTfFromBills(o: TfScheduleInput & { billsDue: Record<string, number> }): Record<string, number> {
+  return planTfFill(o, o.billsDue).months;
+}
+
+/** "Fill from Forecast P&L" (owner 2026-11-10 「从forecast P&L 那边capture
+ *  supplier 买的」): the Forecast P&L figures of the facility's suppliers —
+ *  keyed per supplier under a material, RM or % worked out — each in the
+ *  month it falls due by that supplier's own term, as the P&L forecast column
+ *  pays it (bought in November on NET60 → January). A due month before
+ *  `fromYm` is history and left out. */
+export function tfForecastDue(o: {
+  months: Record<string, FcMonth>;
+  supplierIds: ReadonlySet<string>;
+  termMonths: (id: string) => number;
+  fromYm: string;
+}): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [ym, m] of Object.entries(o.months)) {
+    if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+    for (const type of Object.keys(m?.purchasesByType ?? {})) {
+      for (const [id, sen] of forecastTypeSupplierCells(m, type)) {
+        if (sen <= 0 || !o.supplierIds.has(id)) continue;
+        const due = addMonthsYm(ym, Math.max(0, Math.round(o.termMonths(id))));
+        if (due < o.fromYm) continue;
+        out[due] = (out[due] ?? 0) + sen;
+      }
     }
   }
   return out;
