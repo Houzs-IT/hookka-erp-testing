@@ -84,7 +84,8 @@ test("the snapshot layer: the same gate first, every query parameter in the key,
   assert.match(fn, /const key = `\$\{REPORT_SNAPSHOT_V\}:\$\{view\}:\$\{runningMonthYm\(\)\}:\$\{params\}:\$\{orgId\}`;/);
   assert.match(fn, /if \(res\.status !== 200\) throw new ReportNotStored\(res\.status, text\);/);
   assert.match(fn, /if \(json\.success === false\) throw new ReportNotStored\(res\.status, text\);/);
-  assert.match(fn, /\{ staleWhileRevalidate: true, maxAgeMs: REPORT_SNAPSHOT_MAX_AGE_MS \}/);
+  // Since 2026-11-10 it also reports a stale copy beside data (onServedStale), so a page can ask again.
+  assert.match(fn, /\{ staleWhileRevalidate: true, maxAgeMs: REPORT_SNAPSHOT_MAX_AGE_MS, onServedStale: /);
   assert.match(api, /const REPORT_SNAPSHOT_MAX_AGE_MS = 15 \* 60 \* 1000;/);
   const tables = api.slice(api.indexOf("const reportSnapshotSourceTables = (): readonly string[] => ["), api.indexOf("];", api.indexOf("const reportSnapshotSourceTables")));
   assert.match(tables, /\.\.\.PNL_REPLAY_SOURCE_TABLES,/);

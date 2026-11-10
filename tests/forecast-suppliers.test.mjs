@@ -192,10 +192,12 @@ test("the page: suppliers under each material row, from GET /forecast/suppliers;
   assert.match(page, /fetch\("\/api\/accounting\/forecast\/suppliers"\)/);
   assert.match(page, /forecastSupplierRows\(/);
   assert.match(page, /forecastTypeSuppliers\(/);
-  assert.match(page, /purchasesByType/);
   assert.doesNotMatch(page, /By supplier/, "the first build's flat block is gone");
-  assert.match(page, /\{ salesStr: "", pct: inherited, customers: \{\}, suppliers: \{\} \}/, "a new month copies neither customers nor suppliers");
-  assert.match(page, /label: `\$\{ym\} \$\{type\} \$\{supplierName\(id\)\} purchases`/, "every supplier figure is checked before Save");
+  // Since 2026-11-10 the sheet's rules live in src/lib/forecast-sheet.ts, shared with the Monthly P&L.
+  const sheet = read("src/lib/forecast-sheet.ts");
+  assert.match(sheet, /purchasesByType/);
+  assert.match(sheet, /\{ salesStr: "", pct: inherited, customers: \{\}, suppliers: \{\} \}/, "a new month copies neither customers nor suppliers");
+  assert.match(sheet, /label: `\$\{ym\} \$\{type\} \$\{names\.supplierName\(id\)\} purchases`/, "every supplier figure is checked before Save");
 });
 
 test("the server readers: Cash Flow pays by each supplier's term; none of them needs the purchase weights any more", () => {

@@ -16,6 +16,8 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
 import { MoneyInput } from "@/components/ui/money-input";
 import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfPlanSchedule } from "@/lib/cashflow-forecast";
+import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
+import { MonthlyPlForecastEditor } from "./monthly-pl-forecast-editor";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -124,7 +126,7 @@ import { SegmentedChips } from "@/components/finance/segmented-chips";
 import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, pendingReceiptsFirst, weekdayOf, type FinStatus, type FinTone } from "@/lib/finance-daily";
 import { drawCashPositionImage, tfDueByMonthEnd } from "@/lib/cash-position-image";
 import { financePage } from "@/lib/finance-nav";
-import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
+import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, plMonthHeads, type TbSectionKey } from "@/lib/finance-reports";
 import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner, ForecastToggle, HidePastMonthsToggle } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
@@ -6232,18 +6234,8 @@ type PlMatrixRow = { kind: "group" | "line" | "total" | "grandtotal" | "gap"; de
 // 比」): each month's Actual then its Forecast; a future month Forecast only.
 type PlMonthlyCol = { key: string; label: string; accum: boolean; forecast?: boolean; future?: boolean; ym?: string };
 type PlMonthlyData = { fyLabel: string; line: string; anchor: string; forecast?: boolean; columns: PlMonthlyCol[]; rows: PlMatrixRow[] };
-// The forecast view's first heading row: a month over its Actual and
-// Forecast, Accumulated over both of its own.
-function plMonthHeads(cols: PlMonthlyCol[]): { key: string; label: string; span: number; accum: boolean; forecastOnly: boolean }[] {
-  const out: { key: string; label: string; span: number; accum: boolean; forecastOnly: boolean }[] = [];
-  for (const c of cols) {
-    const key = c.accum ? "acc" : `m:${c.ym ?? c.key}`;
-    const last = out[out.length - 1];
-    if (last && last.key === key) { last.span += 2; last.forecastOnly = last.forecastOnly && !!c.forecast; continue; }
-    out.push({ key, label: c.label, span: 2, accum: c.accum, forecastOnly: !!c.forecast });
-  }
-  return out;
-}
+// The forecast view's first heading row (plMonthHeads) lives in
+// src/lib/finance-reports.ts since 2026-11-10, shared with the Edit forecast.
 
 function MonthlyPlTab({ line }: { line: PlLine }) {
   const today = todayYmdMY();
@@ -6258,15 +6250,41 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
   // design.md 6): off on every load, Overall only.
   const [forecast, setForecast] = useState(false);
   const fcOn = forecast && line === "all";
+  // Edit forecast (owner 2026-11-10 「我想要A」, spec 2026-11-10-monthly-pl-
+  // forecast-edit-design.md): the Forecast columns keyed in place.
+  const [editing, setEditing] = useState(false);
+  const [reload, setReload] = useState(0);
+  // A stored report copy served while it rebuilds (`stale` beside data — e.g.
+  // right after a forecast Save): the figures stay up with "Updating…" and
+  // the tab asks again (src/lib/stale-refresh.ts, as the Financial Dashboard).
+  const [updating, setUpdating] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setData(null);
-    fetch(`/api/accounting/pl-monthly?line=${line}&anchor=${anchor}${fcOn ? "&forecast=1" : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: PlMonthlyData }>)
-      .then((j) => { if (j?.success && j.data) setData(j.data); })
-      .catch(() => {});
-  }, [line, anchor, fcOn]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let run = NO_STALE_RUN;
+    const load = () => {
+      fetch(`/api/accounting/pl-monthly?line=${line}&anchor=${anchor}${fcOn ? "&forecast=1" : ""}`)
+        .then((r) => r.json() as Promise<{ success?: boolean; data?: PlMonthlyData; stale?: unknown }>)
+        .then((j) => {
+          if (cancelled) return;
+          if (j?.success && j.data) setData(j.data);
+          const next = planStaleRetry(run, j);
+          run = next.run;
+          setUpdating(next.retryInMs !== null);
+          // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in this effect's cleanup
+          if (next.retryInMs !== null) timer = setTimeout(load, next.retryInMs);
+        })
+        .catch(() => {});
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [line, anchor, fcOn, reload]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const amt = (sen: number) => (sen === 0 ? "-" : fmtAmt(sen));
@@ -6327,6 +6345,18 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       );
     });
 
+  if (editing && fcOn) {
+    return (
+      <MonthlyPlForecastEditor
+        anchor={anchor}
+        onClose={(saved) => {
+          setEditing(false);
+          if (saved) setReload((n) => n + 1);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-3">
       <ReportToolbar>
@@ -6335,6 +6365,14 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
           <DetailLevels levels={Array.from({ length: maxLevel }, (_, i) => i + 1)} value={level ?? -1} onChange={applyLevel} />
         )}
         {line === "all" && <ForecastToggle on={forecast} onToggle={() => setForecast((v) => !v)} />}
+        {fcOn && (
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)} title="Key each month's Forecast here, RM or % of sales, with the actual months beside it">
+            Edit forecast
+          </Button>
+        )}
+        {updating && data && (
+          <span role="status" aria-live="polite" className="text-xs text-[#6B7280]">Updating…</span>
+        )}
         {data && <DownloadMenu items={downloads} />}
       </ReportToolbar>
 

@@ -99,7 +99,8 @@ test("Monthly P&L: a row's ledger lines under it, in their month's column; the l
   const mx = read("src/lib/pnl-matrix.ts");
   // One level deeper under a material type when the forecast is on (2026-11-09).
   assert.match(mx, /line\("PURCHASE", depth \+ 1, \(w\) => find\(w\)\?\.purchasesSen \?\? 0, undefined, rg\.group\);/);
-  assert.match(mx, /line\("CARRIAGE INWARDS", 1, \(w\) => w\.carriageSen, undefined, "700-1015"\);/);
+  // The trailing "700-1015" (2026-11-10) is the line's forecast key (fcKey), for the Edit forecast.
+  assert.match(mx, /line\("CARRIAGE INWARDS", 1, \(w\) => w\.carriageSen, undefined, "700-1015", "700-1015"\);/);
 });
 
 test("the General Ledger opens from a drill's link with the account and dates picked", () => {

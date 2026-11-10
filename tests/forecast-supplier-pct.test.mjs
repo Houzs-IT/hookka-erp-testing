@@ -103,13 +103,18 @@ test("the page: each supplier row has the material row's RM and % boxes, either 
   assert.match(rows, /setSupplierPct\(ym, type, r\.id, /, "% box");
   assert.match(page, /const setSupplierAmt = \(ym: string, type: string, id: string, v: string\) =>\s*setSupplierCell\(ym, type, id, v === "" \? \{\} : \{ a: v \}\);/);
   assert.match(page, /const setSupplierPct = \(ym: string, type: string, id: string, v: string\) =>\s*setSupplierCell\(ym, type, id, v === "" \? \{\} : \{ p: v \}\);/);
-  assert.match(page, /suppliers\?: Record<string, Record<string, CellEntry>>;/, "a supplier cell is the same { a, p } as a line's");
+  // The sheet's month shape lives in forecast-snapshot.ts (SheetMonth = ForecastMonth since 2026-11-10).
+  assert.match(read("src/lib/forecast-snapshot.ts"), /suppliers\?: Record<string, Record<string, ForecastCell>>;/, "a supplier cell is the same { a, p } as a line's");
+  assert.match(page, /type MonthState = SheetMonth;/);
 });
 
-test("the page: one conversion of supplier cells for the screen and for Save; saved % cells load back as %", () => {
-  assert.match(page, /function supplierCells\(/);
-  assert.equal((page.match(/supplierCells\(cells\)/g) ?? []).length, 2, "toFcMonth and save both use it");
-  assert.match(page, /\{ p: bpToStr\(/, "a stored { bp } supplier cell loads into the % box");
+test("one conversion of supplier cells for the screen and for Save; saved % cells load back as %", () => {
+  // Since 2026-11-10 in src/lib/forecast-sheet.ts, shared by the Forecast P&L page and the Monthly P&L's Edit forecast.
+  const sheet = read("src/lib/forecast-sheet.ts");
+  assert.match(sheet, /export function supplierCells\(/);
+  assert.equal((sheet.match(/supplierCells\(cells\)/g) ?? []).length, 2, "toFcMonth and sheetPayload both use it");
+  assert.match(sheet, /\{ p: bpToStr\(/, "a stored { bp } supplier cell loads into the % box");
+  assert.match(page, /sheetPayload\(months\)/);
 });
 
 test("the dashboard overlay counts a material as supplier-keyed by its keyed cells, as the page does", () => {

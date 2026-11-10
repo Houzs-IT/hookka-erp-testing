@@ -19,6 +19,18 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { nextCell, caretEdges, type CellPos } from "@/lib/grid-keys";
 import { forecastSnapshot } from "@/lib/forecast-snapshot";
+import {
+  cellKeyed,
+  newSheetMonth,
+  partySen,
+  sheetFromSaved,
+  sheetMoneyFields,
+  sheetPayload,
+  toFcMonth,
+  type CellEntry,
+  type SavedMonth,
+  type SheetMonth,
+} from "@/lib/forecast-sheet";
 import { invalidateCachePrefix } from "@/lib/cached-fetch";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
@@ -32,14 +44,11 @@ import {
   forecastTypeSupplierCells,
   forecastTypeSuppliers,
   materialRowType,
-  type FcEntry,
-  type FcMonth,
   type FcMonthFigures,
-  type FcSupplierCell,
   type FcSupplierMix,
 } from "@/lib/forecast-pnl";
-// One money parser. NOTE `strToBp` below is a PERCENTAGE and deliberately
-// keeps `parseFloat` - it is not money and is not in this fix's scope.
+// One money parser. NOTE `strToBp` (now in src/lib/forecast-sheet.ts) is a
+// PERCENTAGE and deliberately keeps `parseFloat` - it is not money.
 import { parseMoneyInput } from "@/lib/parse-money";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 
@@ -47,7 +56,6 @@ type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean 
 // Per line-month the owner keys ONE of the two (owner 2026-07-29): a % of
 // sales ("15.4") OR a direct RM amount ("3000") — typing one clears the
 // other; the empty box shows the derived value as a grey placeholder.
-type CellEntry = { p?: string; a?: string };
 // `customers` (owner 2026-11-09 「根据 customer 去 key-in 他的预计 sales」):
 // customer id (or "other") → RM as typed. Once any is keyed, the month's
 // sales are their sum and the single Sales box steps aside.
@@ -56,12 +64,8 @@ type CellEntry = { p?: string; a?: string };
 // line's: RM or % of sales as typed (「每个supplier 填percentage 或amount」).
 // A material with any supplier figure that month is their sum; its own %
 // steps aside (kept, and back once they are cleared).
-type MonthState = {
-  salesStr: string;
-  pct: Record<string, CellEntry>;
-  customers?: Record<string, string>;
-  suppliers?: Record<string, Record<string, CellEntry>>;
-};
+// The shapes are src/lib/forecast-sheet.ts's (CellEntry, SheetMonth).
+type MonthState = SheetMonth;
 type CustomerLite = { id: string; name: string; isActive?: boolean };
 
 
@@ -123,68 +127,9 @@ function AmountInput({
   );
 }
 
-// "15.4" → 1540 basis points (int); blank/garbage → 0.
-const strToBp = (s: string): number => {
-  const v = parseFloat(s);
-  return Number.isFinite(v) ? Math.round(v * 100) : 0;
-};
-const bpToStr = (bp: number): string => (bp === 0 ? "" : (bp / 100).toString());
-
-// The sheet's strings → the kv shape (`forecast_pnl.months[ym]`) the shared
-// calc reads. BUG-2026-08-13-095: `AmountInput` strips commas on the way in,
-// but that only covered ONE grouping style; the shared money parser reads
-// every form and returns null for the rest. `save` refuses on null, so the
-// `?? 0` here is only ever reached by a cell the operator is already being
-// told to fix. Every key is kept, even a cleared one: the dept-mode test
-// (monthHasDeptForecast) looks at keys, exactly as the old inline calc did.
-function toFcMonth(m: MonthState | undefined): FcMonth | undefined {
-  if (!m) return undefined;
-  const pct: Record<string, FcEntry> = {};
-  for (const [code, e] of Object.entries(m.pct)) {
-    pct[code] = e.a !== undefined && e.a !== "" ? { amtSen: moneyFieldToSen(e.a) ?? 0 } : { bp: strToBp(e.p ?? "") };
-  }
-  const purchasesByType: Record<string, Record<string, FcSupplierCell>> = {};
-  for (const [type, cells] of Object.entries(m.suppliers ?? {})) {
-    const kept = supplierCells(cells);
-    if (Object.keys(kept).length) purchasesByType[type] = kept;
-  }
-  return {
-    salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0),
-    salesByCustomer: partySen(m.customers),
-    purchasesByType,
-    pct,
-  };
-}
-// A material's supplier cells as typed → as stored, for the screen and for
-// Save alike: an RM amount (whole sen) over a % (`{ bp }` of the month's
-// sales); a cell that is empty or not above zero is left out. An unreadable
-// RM is left out too, never read as 0 (tests/money-input-parsing.test.mjs);
-// Save refuses it before this runs (forecastMoneyError).
-function supplierCells(cells: Record<string, CellEntry> | undefined): Record<string, FcSupplierCell> {
-  const out: Record<string, FcSupplierCell> = {};
-  for (const [id, e] of Object.entries(cells ?? {})) {
-    if ((e?.a ?? "").trim() !== "") {
-      const sen = moneyFieldToSen(e.a as string);
-      if (sen !== null && sen > 0) out[id] = sen;
-    } else if ((e?.p ?? "").trim() !== "") {
-      const bp = strToBp(e.p as string);
-      if (bp > 0) out[id] = { bp };
-    }
-  }
-  return out;
-}
-const cellKeyed = (e: CellEntry | undefined): boolean => (e?.a ?? "").trim() !== "" || (e?.p ?? "").trim() !== "";
-// A month's customer or supplier cells in sen, for the screen only (the live
-// total and each one's share). An unreadable cell shows as nothing here; Save
-// refuses it first (forecastMoneyError) and builds its own payload.
-function partySen(cells: Record<string, string> | undefined): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const [id, s] of Object.entries(cells ?? {})) {
-    const sen = (s ?? "").trim() === "" ? 0 : moneyFieldToSen(s) ?? 0;
-    if (sen > 0) out[id] = sen;
-  }
-  return out;
-}
+// The sheet's conversions (strings ⇄ stored months, the Save payload, the
+// money checks) live in src/lib/forecast-sheet.ts since 2026-11-10, shared
+// with the Monthly P&L's Edit forecast so both pages save alike.
 const customerSen = (m: MonthState | undefined) => partySen(m?.customers);
 
 export default function ForecastPage() {
@@ -249,34 +194,9 @@ export default function ForecastPage() {
           setSupplierMaster(sup.suppliers.filter((s) => typeof s?.id === "string" && s.id !== ""));
           setSupplierMix({ bySupplier: sup.mix.bySupplier ?? {}, all: sup.mix.all ?? {} });
         } else setSuppliersFailed(true);
-        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, FcSupplierCell>>; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
-        const next: Record<string, MonthState> = {};
-        for (const [ym, m] of Object.entries(saved)) {
-          const pct: Record<string, CellEntry> = {};
-          for (const [code, v] of Object.entries(m.pct ?? {})) {
-            // Legacy shape = bare bp number; new shape = { bp } or { amtSen }.
-            if (typeof v === "number") pct[code] = { p: bpToStr(v) };
-            else if (v && typeof v === "object") {
-              const o = v as { bp?: number; amtSen?: number };
-              if (o.amtSen) pct[code] = { a: (Number(o.amtSen) / 100).toString() };
-              else if (o.bp) pct[code] = { p: bpToStr(Number(o.bp) || 0) };
-            }
-          }
-          const customers: Record<string, string> = {};
-          for (const [id, sen] of Object.entries(m.salesByCustomer ?? {}))
-            if (Number(sen) > 0) customers[id] = (Number(sen) / 100).toFixed(2);
-          // A supplier cell loads into the box it was keyed in: RM sen → RM,
-          // `{ bp }` → % (owner 2026-11-10 「每个supplier 填percentage 或amount」).
-          const suppliers: Record<string, Record<string, CellEntry>> = {};
-          for (const [type, cells] of Object.entries(m.purchasesByType ?? {}))
-            for (const [id, v] of Object.entries(cells ?? {})) {
-              if (v && typeof v === "object") {
-                const bp = Number(v.bp) || 0;
-                if (bp > 0) (suppliers[type] ??= {})[id] = { p: bpToStr(bp) };
-              } else if (Number(v) > 0) (suppliers[type] ??= {})[id] = { a: (Number(v) / 100).toFixed(2) };
-            }
-          next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct, customers, suppliers };
-        }
+        const saved = ((fcJ?.data as { months?: Record<string, SavedMonth> } | undefined)?.months ?? {});
+        // Each cell in the box it was keyed in (forecast-sheet.ts).
+        const next: Record<string, MonthState> = sheetFromSaved(saved);
         setMonths(next);
         setSavedSnap(forecastSnapshot(next));
         // Dept row list = departments master ∪ departments already keyed in
@@ -398,13 +318,9 @@ export default function ForecastPage() {
       toast.error(`${ym} already exists`);
       return;
     }
-    // A new month inherits the PREVIOUS month's percentages (owner rule);
-    // the very first month starts blank — the owner keys every % himself.
-    const prevYm = [...yms].filter((k) => k < ym).pop() ?? [...yms].pop();
-    const inherited = prevYm ? { ...months[prevYm].pct } : {};
-    // The customer and supplier cells are not copied (spec 2026-11-09 section
-    // 4, spec 2026-11-10 section 3).
-    setMonths((prev) => ({ ...prev, [ym]: { salesStr: "", pct: inherited, customers: {}, suppliers: {} } }));
+    // A new month inherits the PREVIOUS month's percentages (owner rule), and
+    // no customer or supplier cells (newSheetMonth, forecast-sheet.ts).
+    setMonths((prev) => ({ ...prev, [ym]: newSheetMonth(prev, ym) }));
   };
 
   const { confirm } = useConfirm();
@@ -459,64 +375,16 @@ export default function ForecastPage() {
 
   // Every money cell on the sheet, labelled by month + account, so a refusal
   // can point at the one that cannot be read.
-  const forecastMoneyError = firstMoneyFieldError(
-    Object.entries(months).flatMap(([ym, m]) => [
-      { label: `${ym} sales`, value: m.salesStr },
-      ...Object.entries(m.customers ?? {})
-        .filter(([, v]) => (v ?? "").trim() !== "")
-        .map(([id, v]) => ({ label: `${ym} ${customerName(id)} sales`, value: v })),
-      ...Object.entries(m.suppliers ?? {}).flatMap(([type, cells]) =>
-        Object.entries(cells ?? {})
-          .filter(([, e]) => (e?.a ?? "").trim() !== "")
-          .map(([id, e]) => ({ label: `${ym} ${type} ${supplierName(id)} purchases`, value: e.a as string })),
-      ),
-      ...Object.entries(m.pct)
-        .filter(([, e]) => e.a !== undefined && e.a !== "")
-        .map(([code, e]) => ({ label: `${ym} ${code} amount`, value: e.a as string })),
-    ]),
-  );
+  // (sheetMoneyFields, forecast-sheet.ts: sales, customers, supplier RM, line RM).
+  const forecastMoneyError = firstMoneyFieldError(sheetMoneyFields(months, { customerName, supplierName }));
 
   const save = async () => {
     if (forecastMoneyError) { toast.error(forecastMoneyError); return; }
     setSaving(true);
     try {
-      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, FcSupplierCell>> }> = {};
-      for (const [ym, m] of Object.entries(months)) {
-        const pct: Record<string, { bp?: number; amtSen?: number }> = {};
-        for (const [code, e] of Object.entries(m.pct)) {
-          if (e.a !== undefined && e.a !== "") {
-            const sen = moneyFieldToSen(e.a) as number;
-            if (sen !== 0) pct[code] = { amtSen: sen };
-          } else if (e.p !== undefined && e.p !== "") {
-            const bp = strToBp(e.p);
-            if (bp !== 0) pct[code] = { bp };
-          }
-        }
-        // Customer cells: kept, and Sales is their sum (the server works it
-        // out the same way, forecastSalesSen). Every cell is readable here:
-        // forecastMoneyError refused the save above otherwise.
-        const salesByCustomer: Record<string, number> = {};
-        for (const [id, v] of Object.entries(m.customers ?? {})) {
-          if ((v ?? "").trim() === "") continue;
-          const sen = moneyFieldToSen(v) as number;
-          if (sen > 0) salesByCustomer[id] = sen;
-        }
-        const customerTotal = Object.values(salesByCustomer).reduce((s, v) => s + v, 0);
-        // Supplier cells under each material: kept as keyed, RM or % (the
-        // same conversion as the screen's); a material with any is their sum
-        // for every reader (forecastMonthFigures).
-        const purchasesByType: Record<string, Record<string, FcSupplierCell>> = {};
-        for (const [type, cells] of Object.entries(m.suppliers ?? {})) {
-          const kept = supplierCells(cells);
-          if (Object.keys(kept).length) purchasesByType[type] = kept;
-        }
-        payload[ym] = {
-          ...(customerTotal > 0
-            ? { salesSen: customerTotal, pct, salesByCustomer }
-            : { salesSen: Math.max(0, moneyFieldToSen(m.salesStr) as number), pct }),
-          ...(Object.keys(purchasesByType).length ? { purchasesByType } : {}),
-        };
-      }
+      // Every cell is readable here: forecastMoneyError refused the save above
+      // otherwise (sheetPayload, forecast-sheet.ts).
+      const payload = sheetPayload(months);
       const res = await fetch("/api/accounting/forecast", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

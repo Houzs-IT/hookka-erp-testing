@@ -201,7 +201,8 @@ const NON_MONEY_PARSEFLOAT = [
   ["src/pages/procurement/PurchaseInvoiceDetail.tsx", ["l.qty"], "line quantity"],
   ["src/components/employee-drawer.tsx", ["e.target.value"], "hours/day, OT multiplier, efficiency threshold % — all non-money, all on `e.target.value`"],
   ["src/pages/purchase-returns/index.tsx", ["l.retQty"], "return quantity"],
-  ["src/pages/forecast.tsx", ["s"], "strToBp — a PERCENTAGE to basis points"],
+  // strToBp moved here from src/pages/forecast.tsx on 2026-11-10 (the shared sheet model).
+  ["src/lib/forecast-sheet.ts", ["s"], "strToBp — a PERCENTAGE to basis points"],
 ];
 
 for (const [file, allowed, why] of NON_MONEY_PARSEFLOAT) {
@@ -312,7 +313,11 @@ test("a form with an unreadable amount does not STATE a total", () => {
 test("every `?? 0` on a money parse is a listed display fallback, not a payload", () => {
   const ALLOWED = new Map([
     ["src/pages/accounting/index.tsx", 8],   // 5 form `toSen` helpers + bank-CSV parseAmt + opening-balance toSen + AP-payment `apSen` (handleSaveAp refuses on apMoneyError first)
-    ["src/pages/forecast.tsx", 4],           // calc() sales + amt(), the derived-% hint, and the customer cells' on-screen total (customerSen, 2026-11-09; save refuses on forecastMoneyError first and builds its own payload)
+    ["src/pages/forecast.tsx", 1],           // the derived-% hint (display only)
+    // The sheet model shared with the Monthly P&L's Edit forecast (2026-11-10): toFcMonth's sales + line amount
+    // (the screen's calc) and partySen (the customer cells' on-screen total). Save refuses on sheetMoneyFields
+    // first, and sheetPayload never uses `?? 0`.
+    ["src/lib/forecast-sheet.ts", 3],
     ["src/pages/invoices/payments.tsx", 1],  // receivedSen preview; `canSubmit` blocks the post
     ["src/pages/invoices/index.tsx", 1],     // the Record Payment button predicate
     ["src/pages/invoices/detail.tsx", 1],    // the Record Payment button predicate
@@ -323,7 +328,7 @@ test("every `?? 0` on a money parse is a listed display fallback, not a payload"
   const FILES = [...new Set([...NO_PARSEFLOAT.map((r) => r[0]), ...NON_MONEY_PARSEFLOAT.map((r) => r[0]),
     "src/pages/invoices/index.tsx", "src/pages/invoices/detail.tsx", "src/pages/rd/detail.tsx",
     "src/pages/procurement/PurchaseInvoiceDetail.tsx", "src/pages/products/index.tsx",
-    "src/pages/inventory/index.tsx", "src/pages/employees.tsx"])];
+    "src/pages/inventory/index.tsx", "src/pages/employees.tsx", "src/pages/forecast.tsx"])];
 
   for (const file of FILES) {
     const src = code(file);

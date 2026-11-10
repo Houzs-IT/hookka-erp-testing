@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 import { FC_CARRIAGE, FC_SST, forecastMaterialType, forecastMonthFigures, materialRowType, type FcLineGroups, type FcMonth } from "./forecast-pnl";
 import { pnlBucketFor } from "./pnl-bucket";
-import { FORECAST_TYPE_GROUP_PREFIX, type PnlExpenseLine, type PnlLine, type PnlRmGroup, type PnlWindowLike } from "./pnl-matrix";
+import { FORECAST_TYPE_GROUP_PREFIX, buildPnlMatrix, type PnlExpenseLine, type PnlLine, type PnlMatrixCol, type PnlMatrixRow, type PnlRmGroup, type PnlWindowLike } from "./pnl-matrix";
 
 export type ForecastPnlOpts = {
   override: Record<string, string>;
@@ -148,5 +148,70 @@ export function sumPnlWindowLikes(ws: readonly PnlWindowLike[]): PnlWindowLike {
     expenseLines: merge(ws.map((w) => w.expenseLines)),
     expenseSen: total((w) => w.expenseSen),
     netProfitSen: total((w) => w.netProfitSen),
+  };
+}
+
+/** A Monthly P&L forecast column, as the page reads it. */
+export type PlForecastColumn = { key: string; label: string; accum: boolean; ym?: string; forecast?: true; future?: true };
+
+/** The Monthly P&L with the forecast beside the actual (spec 2026-11-09-
+ *  forecast-three-columns-design.md 6), laid out once for the route and for
+ *  the browser's Edit forecast (owner 2026-11-10 「我想要A」, spec 2026-11-10-
+ *  monthly-pl-forecast-edit-design.md 4): Accumulated actual, then Accumulated
+ *  forecast over the same months; the months after the current one, Forecast
+ *  only, newest first; then each month's actual and forecast, as `monthCols`
+ *  come (the route lays them newest first). The spine is every column added
+ *  up, so a line keyed only in the forecast still gets a row. */
+export function plForecastMatrix(o: {
+  accWindow: PnlWindowLike;
+  monthCols: readonly PnlMatrixCol[];
+  futureYms: readonly string[];
+  forecastOf: (ym: string) => PnlWindowLike;
+  labelOf: (ym: string) => string;
+  /** Lines to give a row even with no figure anywhere (Edit forecast:
+   *  forecastLinesWindow). Adds rows only, never amounts. */
+  extraSpine?: PnlWindowLike;
+}): { columns: PlForecastColumn[]; rows: PnlMatrixRow[] } {
+  const fcMonth = new Map(o.monthCols.map((c) => [c.key, o.forecastOf(c.key)] as const));
+  const mcols: PnlMatrixCol[] = [
+    { key: "acc", label: "Accumulated", accum: true, window: o.accWindow },
+    { key: "fc:acc", label: "Accumulated", accum: true, window: sumPnlWindowLikes([...fcMonth.values()]) },
+    ...[...o.futureYms].reverse().map((ym) => ({ key: `fc:${ym}`, label: o.labelOf(ym), accum: false, window: o.forecastOf(ym) })),
+    ...o.monthCols.flatMap((col) => [col, { key: `fc:${col.key}`, label: col.label, accum: false, window: fcMonth.get(col.key)! }]),
+  ];
+  const spine = sumPnlWindowLikes([o.accWindow, ...mcols.filter((m) => m.key.startsWith("fc:")).map((m) => m.window), ...(o.extraSpine ? [o.extraSpine] : [])]);
+  const fm = buildPnlMatrix(mcols, { spine, rmTypeOf });
+  const future = new Set(o.futureYms.map((ym) => `fc:${ym}`));
+  const columns = fm.columns.map((col): PlForecastColumn => {
+    if (!col.key.startsWith("fc:")) return { ...col, ...(col.accum ? {} : { ym: col.key }) };
+    const ym = col.key === "fc:acc" ? undefined : col.key.slice(3);
+    return { ...col, forecast: true, ...(ym ? { ym } : {}), ...(future.has(col.key) ? { future: true } : {}) };
+  });
+  return { columns, rows: fm.rows };
+}
+
+/** Every Forecast P&L line at zero, where forecastPnlWindow would place it
+ *  (a material in its type group, a department on the account its wages
+ *  post to or on its own line, an account in its section). The Edit forecast
+ *  adds it to the spine (plForecastMatrix `extraSpine`) so every line the
+ *  forecast keys has a row to key, figures or not. Placement is
+ *  forecastPnlWindow's own: once with every account (no department, so
+ *  nothing is superseded) and once with every department. */
+export function forecastLinesWindow(g: FcLineGroups, o: ForecastPnlOpts): PnlWindowLike {
+  const oneSen = (rows: readonly { code: string }[]): FcMonth => ({ salesSen: 0, pct: Object.fromEntries(rows.map((a) => [a.code, { amtSen: 1 }])) });
+  const accounts = [...g.materials, ...g.direct, ...g.labourAccounts, ...g.overhead, ...g.expenses, ...g.otherIncome];
+  const depts = [...g.labour, ...g.labourOvhDepts, ...g.labourExpDepts];
+  const placed = sumPnlWindowLikes([forecastPnlWindow(oneSen(accounts), g, o), forecastPnlWindow(oneSen(depts), g, o)]);
+  const zero = <L extends { amountSen: number }>(ls: L[]): L[] => ls.map((l) => ({ ...l, amountSen: 0 }));
+  return {
+    netSalesSen: 0, revLines: [],
+    rmGroups: placed.rmGroups.map((r) => ({ ...r, openingSen: 0, purchasesSen: 0, closingSen: 0 })), rmConsumedSen: 0, carriageSen: 0, sstSen: 0,
+    labourLines: zero(placed.labourLines), labourSen: 0,
+    overheadLines: zero(placed.overheadLines), overheadSen: 0,
+    wipOpen: 0, wipClose: 0, fgOpen: 0, fgClose: 0,
+    manufacturingSen: 0, cogsSen: 0, grossProfitSen: 0,
+    otherIncomeSen: 0, otherIncomeLines: zero(placed.otherIncomeLines),
+    expenseLines: zero(placed.expenseLines), expenseSen: 0,
+    netProfitSen: 0,
   };
 }
