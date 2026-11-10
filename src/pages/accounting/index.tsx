@@ -11650,13 +11650,10 @@ function PaymentsTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const [migrationMissing, setMigrationMissing] = useState(false);
   // Double-click → the voucher's detail popup (resolved from `rows` by id so
   // it re-renders after a rung / void / attachment change).
-  const [detailPvId, setDetailPvId] = useState<string | null>(null);
   // A "Remind approver" notification links here with ?pv=<id> — open it.
   const [pvLinkParams] = useSearchParams();
   const pvFromLink = pvLinkParams.get("pv");
-  useEffect(() => {
-    if (pvFromLink) setDetailPvId(pvFromLink);
-  }, [pvFromLink]);
+  const [detailPvId, setDetailPvId] = useState<string | null>(() => pvFromLink);
   // Same for a row from another door (keyed by PayRow.key).
   const [detailPayKey, setDetailPayKey] = useState<string | null>(null);
   // The foreign-currency payment whose bank amount is being keyed (step 4).

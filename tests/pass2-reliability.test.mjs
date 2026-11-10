@@ -9,8 +9,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-
 import { casGuardSql, isCasMiss, staleStatusMessage } from "../src/api/lib/status-cas.ts";
+import { docNoGuardSql, docNoGuardStatements, isDocNoTaken, withDocNoRetry } from "../src/api/lib/doc-no-guard.ts";
+import { isTransientDbError } from "../src/api/lib/supabase-compat.ts";
+import { classifyKeyProbe, keyProblems } from "../src/lib/key-probe.ts";
+import { computeHealthStatus } from "../src/lib/health-status.ts";
+import {
+  grantsApprove, pvRemindLink, pvRemindNotificationId, remindTooSoonMessage, remindWaitMinutes,
+} from "../src/api/lib/pv-remind.ts";
+import {
+  cleanTargetDays, isStageOverdue, overdueLabel, parseStageTargets, TARGET_STAGES, validateStageTargets,
+} from "../src/lib/service-case-sla.ts";
 
 const read = (p) => readFileSync(p, "utf8");
 
@@ -48,7 +57,6 @@ test("B1: consignment-note PUT and return are compare-and-set", () => {
 });
 
 // ── H3 B2: two saves at once cannot take the same number ──────────────────
-import { docNoGuardSql, docNoGuardStatements, isDocNoTaken, withDocNoRetry } from "../src/api/lib/doc-no-guard.ts";
 
 test("B2: guard SQL locks the table's numbering and fails when the number exists", () => {
   const g = docNoGuardSql("delivery_returns");
@@ -141,7 +149,6 @@ test("B5: jsonbText passes JSON text through and serialises a parsed value once"
 });
 
 // ── H3 B8: a full session-mode pool is retried like the other connect errors
-import { isTransientDbError } from "../src/api/lib/supabase-compat.ts";
 
 test("B8: 'max clients reached in session mode' / EMAXCONNSESSION is a connect-time retry", () => {
   const compat = read("src/api/lib/supabase-compat.ts");
@@ -182,8 +189,6 @@ test("C1-7: every create screen sends an Idempotency-Key", () => {
 });
 
 // ── C2-11: System Health checks each outside key with a harmless read ─────
-import { classifyKeyProbe, keyProblems } from "../src/lib/key-probe.ts";
-import { computeHealthStatus } from "../src/lib/health-status.ts";
 
 test("C2-11: probe answers map to ok / refused / no-answer", () => {
   assert.equal(classifyKeyProbe({ status: 200 }).verdict, "ok");
@@ -249,9 +254,6 @@ test("C2-11: the health banner (page + alert email) carries the key verdicts", (
 });
 
 // ── H3-7: "Remind approver" on a checked payment voucher ──────────────────
-import {
-  grantsApprove, pvRemindLink, pvRemindNotificationId, remindTooSoonMessage, remindWaitMinutes,
-} from "../src/api/lib/pv-remind.ts";
 
 test("H3-7: at most once an hour per voucher; approvers by the same wildcard rules", () => {
   const now = Date.parse("2026-11-10T10:00:00.000Z");
@@ -290,9 +292,6 @@ test("H3-7: the endpoint only reminds on CHECKED, refuses within the hour, never
 });
 
 // ── H1-7: service-case target days per stage, overdue flag, chip counts ───
-import {
-  cleanTargetDays, isStageOverdue, overdueLabel, parseStageTargets, TARGET_STAGES, validateStageTargets,
-} from "../src/lib/service-case-sla.ts";
 
 test("H1-7: targets are whole days 1..365 per open stage; empty = no target", () => {
   assert.deepEqual([...TARGET_STAGES], ["Opened", "Investigating", "Service Order", "Repair in progress", "Repair done", "Delivery arranged", "Delivered"]);
