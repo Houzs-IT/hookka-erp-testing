@@ -85,7 +85,8 @@ test("Monthly P&L: a row's ledger lines under it, in their month's column; the l
   assert.match(ep, /openingMonth,\n\s+lines,/, "months before the opening are from the old books");
   const tab = slice(ui, "function MonthlyPlTab(", "\nfunction ");
   assert.match(tab, /const drillCode = r\.kind === "line" \? \(r\.drillCode \?\? r\.accountCode\) : undefined;/);
-  assert.match(tab, /<PlMonthlyDrillRows account=\{drillCode\} cols=\{cols\} line=\{line\} rowValues=\{r\.values\} depth=\{r\.depth\} \/>/);
+  // Since 2026-11-10 the drill gets the columns on screen and their values (Hide past months).
+  assert.match(tab, /<PlMonthlyDrillRows account=\{drillCode\} cols=\{visCols\} line=\{line\} rowValues=\{vis\.map\(\(\[, j\]\) => r\.values\[j\] \?\? 0\)\} depth=\{r\.depth\} \/>/);
   const rows = slice(ui, "function PlMonthlyDrillRows(", "\nfunction ");
   assert.match(rows, /fetch\(`\/api\/accounting\/pl-drill\?account=\$\{encodeURIComponent\(account\)\}&from=\$\{from\}&to=\$\{to\}`\)/);
   assert.match(rows, /\$\{l\.description \|\| "—"\}\$\{l\.ref2 \? ` · \$\{l\.ref2\}` : ""\} — \$\{l\.ref1\}/, "date · description · who — document no.");

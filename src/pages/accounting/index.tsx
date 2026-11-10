@@ -17,6 +17,7 @@ import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/dat
 import { MoneyInput } from "@/components/ui/money-input";
 import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill, tfPlanSchedule } from "@/lib/cashflow-forecast";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
+import { plPastForecastCol } from "@/lib/pl-forecast-edit";
 import { MonthlyPlForecastEditor } from "./monthly-pl-forecast-editor";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
@@ -6253,6 +6254,10 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
   // Edit forecast (owner 2026-11-10 「我想要A」, spec 2026-11-10-monthly-pl-
   // forecast-edit-design.md): the Forecast columns keyed in place.
   const [editing, setEditing] = useState(false);
+  // Hide past months (owner 2026-11-10 「我也要一个按钮和cash flow 一样，hide 已经
+  // 过了的month」 → 「对」): a past month's Forecast columns go, its Actual
+  // stays, as on Cash Flow. Off on every load and when Forecast is switched.
+  const [hidePast, setHidePast] = useState(false);
   const [reload, setReload] = useState(0);
   // A stored report copy served while it rebuilds (`stale` beside data — e.g.
   // right after a forecast Save): the figures stay up with "Updating…" and
@@ -6293,6 +6298,11 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
 
   const cols = data?.columns ?? [];
   const rows = data?.rows ?? [];
+  // The columns shown (Hide past months), each with its place in the row values.
+  const vis = cols.map((c, j) => [c, j] as const).filter(([c]) => !(hidePast && fcOn && plPastForecastCol(c, thisMonth)));
+  const visCols = vis.map(([c]) => c);
+  const hasPast = fcOn && cols.some((c) => plPastForecastCol(c, thisMonth));
+  const pastNote = hidePast && fcOn ? " · past months' forecasts hidden" : "";
   // Detail-level control (AutoCount-style): "show level L" = collapse every
   // group at depth >= L-1 so rows deeper than L are hidden. maxLevel = deepest
   // row depth + 1 (P&L: depth 0..3 → L1..L4, L4 = fully expanded).
@@ -6309,29 +6319,30 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
 
   const buildExport = (): (string | number)[][] => {
     // Each column → two cells: RM amount + % of net sales (beside, not below).
+    // The columns on screen only (Hide past months), so the file says what the page shows.
     const header: (string | number)[] = ["Item"];
-    for (const c of cols) { header.push(c.forecast ? `${c.label} Forecast` : c.label, "%"); }
+    for (const [c] of vis) { header.push(c.forecast ? `${c.label} Forecast` : c.label, "%"); }
     const aoa: (string | number)[][] = [header];
     for (const r of rows) {
       if (r.kind === "gap") continue;
       const row: (string | number)[] = [r.label];
-      r.values.forEach((v, j) => { row.push((v / 100).toFixed(2), `${(r.pctValues[j] ?? 0).toFixed(1)}%`); });
+      for (const [, j] of vis) row.push(((r.values[j] ?? 0) / 100).toFixed(2), `${(r.pctValues[j] ?? 0).toFixed(1)}%`);
       aoa.push(row);
     }
     return aoa;
   };
   const fileBase = `monthly-pl-${data?.anchor ?? anchor}-${line}`;
-  const exportSub = `${data?.fyLabel ?? ""} · ${line}`;
+  const exportSub = `${data?.fyLabel ?? ""} · ${line}${pastNote}`;
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Monthly P&L", buildExport()); } },
     { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Monthly P&L", exportSub, buildExport(), { print: true }); } },
   ];
   const anchorOptions = useMemo(() => monthOptions(thisMonth, 18), [thisMonth]);
-  const span = cols.length * 2 + 1;
+  const span = vis.length * 2 + 1;
   // A row's month cells and their % — Accumulated shaded, an estimate amber
   // (only lines carry estimates). `show` false = an open group's heading.
   const cells = (r: PlMatrixRow, show: boolean) =>
-    cols.map((c, j) => {
+    vis.map(([c, j]) => {
       const v = r.values[j] ?? 0;
       const est = (r.estValues?.[j] ?? 0) !== 0;
       const tag = `${c.accum ? " acc" : ""}${est ? " est" : ""}${c.forecast ? " fc fp" : ""}`;
@@ -6349,6 +6360,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
     return (
       <MonthlyPlForecastEditor
         anchor={anchor}
+        hidePast={hidePast}
         onClose={(saved) => {
           setEditing(false);
           if (saved) setReload((n) => n + 1);
@@ -6364,7 +6376,8 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
         {data && maxLevel > 1 && (
           <DetailLevels levels={Array.from({ length: maxLevel }, (_, i) => i + 1)} value={level ?? -1} onChange={applyLevel} />
         )}
-        {line === "all" && <ForecastToggle on={forecast} onToggle={() => setForecast((v) => !v)} />}
+        {line === "all" && <ForecastToggle on={forecast} onToggle={() => { setForecast((v) => !v); setHidePast(false); }} />}
+        {hasPast && <HidePastMonthsToggle on={hidePast} onToggle={() => setHidePast((v) => !v)} />}
         {fcOn && (
           <Button size="sm" variant="outline" onClick={() => setEditing(true)} title="Key each month's Forecast here, RM or % of sales, with the actual months beside it">
             Edit forecast
@@ -6379,7 +6392,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={line === "all" ? "Monthly Profit-and-Loss (Overall)" : line === "sofa" ? "Monthly Profit-and-Loss — SOFA" : "Monthly Profit-and-Loss — BEDFRAME"}
-        note={data ? `${data.fyLabel} · read-only · all amounts RM · % = of net sales` : "Loading…"}
+        note={data ? `${data.fyLabel} · read-only · all amounts RM · % = of net sales${pastNote}` : "Loading…"}
         maxHeight="calc(100vh - 300px)"
       >
         {!data ? (
@@ -6392,12 +6405,12 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
                   {/* Forecast on: a month over its Actual and Forecast (as Cash Flow). */}
                   <tr data-row="h1">
                     <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
-                    {plMonthHeads(cols).map((h) => (
+                    {plMonthHeads(visCols).map((h) => (
                       <th key={h.key} colSpan={h.span} data-cell={`split center${h.accum ? " acc" : ""}${h.forecastOnly ? " fc fp" : ""}`}>{h.label}</th>
                     ))}
                   </tr>
                   <tr data-row="h2">
-                    {cols.map((c) => (
+                    {visCols.map((c) => (
                       <React.Fragment key={c.key}>
                         <th data-cell={`num split${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`}>{c.forecast ? "Forecast" : "Actual"}</th>
                         <th data-cell={`num pct${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`}>%</th>
@@ -6409,10 +6422,10 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
                 <>
                   <tr data-row="h1">
                     <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
-                    {cols.map((c) => <th key={c.key} colSpan={2} data-cell={`split center${c.accum ? " acc" : ""}`}>{c.label}</th>)}
+                    {visCols.map((c) => <th key={c.key} colSpan={2} data-cell={`split center${c.accum ? " acc" : ""}`}>{c.label}</th>)}
                   </tr>
                   <tr data-row="h2">
-                    {cols.map((c) => (
+                    {visCols.map((c) => (
                       <React.Fragment key={c.key}>
                         <th data-cell={`num split${c.accum ? " acc" : ""}`}>RM</th>
                         <th data-cell={`num pct${c.accum ? " acc" : ""}`}>%</th>
@@ -6469,7 +6482,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
                     </td>
                     {cells(r, true)}
                   </tr>
-                  {drilled && drillCode && <PlMonthlyDrillRows account={drillCode} cols={cols} line={line} rowValues={r.values} depth={r.depth} />}
+                  {drilled && drillCode && <PlMonthlyDrillRows account={drillCode} cols={visCols} line={line} rowValues={vis.map(([, j]) => r.values[j] ?? 0)} depth={r.depth} />}
                   </Fragment>
                 );
               })}

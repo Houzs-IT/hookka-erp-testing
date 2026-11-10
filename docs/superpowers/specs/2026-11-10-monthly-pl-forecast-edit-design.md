@@ -42,3 +42,10 @@ The owner keys the forecast while looking at the actual months beside it, in the
 - The Forecast P&L page reads, keys and saves exactly as before.
 - A sheet keyed on one page and saved reads the same on the other, to the sen.
 - Nothing here writes to the ledger or to any document.
+
+## 6. Round two (owner 2026-11-10, after the first save) [owner unless tagged]
+
+- **Sales and the customer boxes**: only a customer figure above 0 makes Sales the customers' total. A box left empty or at 0 no longer locks the Sales box (「我这里无法直接填total?」). This is the same on the Forecast P&L page. [owner's report; my call on "above 0", which is what the stored forecast keeps]
+- **Open all / Close all**: one button opens every ▸ on the sheet (customers, suppliers, departments), and the same button closes them all. [owner: 「点开全部」 → 「可以」]
+- **Hide unused**: hides every line, group and opened detail row with no figure in any month, actual or forecast. Sales and the totals always stay. Pressed again, everything shows. [owner: 「收起没用到的」 → 「可以」; my call on what counts as "no figure"]
+- **Hide past months**: with Forecast on, in the Monthly P&L view and in Edit forecast. A month before the current one loses its Forecast columns and keeps its Actual, as on Cash Flow. Excel, Print and the ledger drill follow the screen. It is off on every load and whenever Forecast is switched. Edit forecast opens as the view was. [owner: 「和cash flow 一样」 → 「对」; my call on carrying it into the editor]

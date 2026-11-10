@@ -15,7 +15,7 @@ import { Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
+import { HidePastMonthsToggle, ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
 import { COMPANY } from "@/lib/constants";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -24,7 +24,7 @@ import { fmtAmt, foldStatementRows, plMonthHeads } from "@/lib/finance-reports";
 import { firstMoneyFieldError, moneyFieldToSen } from "@/lib/money-field";
 import { parseMoneyInput } from "@/lib/parse-money";
 import { forecastSnapshot } from "@/lib/forecast-snapshot";
-import { cellKeyed, newSheetMonth, sheetFromSaved, sheetMoneyFields, sheetPayload, toFcMonth, type CellEntry, type SavedMonth, type SheetMonth } from "@/lib/forecast-sheet";
+import { cellKeyed, customersKeyed, newSheetMonth, partySen, sheetFromSaved, sheetMoneyFields, sheetPayload, toFcMonth, type CellEntry, type SavedMonth, type SheetMonth } from "@/lib/forecast-sheet";
 import {
   forecastCustomerRows,
   forecastDepts,
@@ -38,7 +38,7 @@ import {
 } from "@/lib/forecast-pnl";
 import { forecastLinesWindow, forecastPnlWindow, plForecastMatrix, type PlForecastColumn } from "@/lib/pnl-forecast";
 import type { PnlMatrixRow, PnlWindowLike } from "@/lib/pnl-matrix";
-import { deptsPostingTo, plEditKey } from "@/lib/pl-forecast-edit";
+import { deptsPostingTo, plEditKey, plPastForecastCol, plRowUnused } from "@/lib/pl-forecast-edit";
 import { addMonthsYm } from "@/lib/cashflow-forecast";
 
 type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean };
@@ -88,7 +88,7 @@ function PctBox({ value, hint, onChange, label }: { value: string; hint: string;
   );
 }
 
-export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; onClose: (saved: boolean) => void }) {
+export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastInitial = false }: { anchor: string; onClose: (saved: boolean) => void; hidePast?: boolean }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
   const [base, setBase] = useState<EditBase | null>(null);
@@ -106,6 +106,11 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
   const [savedOnce, setSavedOnce] = useState(false);
   // Rows opened to their detail (▸): "sales", "cat:<TYPE>", an account code.
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  // Owner 2026-11-10 「我也要一个按钮和cash flow 一样，hide 已经过了的month」:
+  // as the view was when Edit forecast opened. And 「点开全部和收起没用到的」:
+  // Hide unused takes away every row with no figure in any month.
+  const [hidePast, setHidePast] = useState(hidePastInitial);
+  const [hideUnused, setHideUnused] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -262,7 +267,11 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
   if (!base || !matrix || savedSnap === null) return <div className="py-12 text-center text-sm text-[#6B7280]">Loading the forecast…</div>;
 
   const cols = matrix.columns;
-  const span = cols.length * 2 + 1;
+  // Hide past months (as on Cash Flow): a past month's Forecast columns go,
+  // its Actual stays. `vis` keeps each column's place in the row values.
+  const vis = cols.map((c, j) => [c, j] as const).filter(([c]) => !(hidePast && plPastForecastCol(c, curYm)));
+  const hasPast = cols.some((c) => plPastForecastCol(c, curYm));
+  const span = vis.length * 2 + 1;
   const tagOf = (c: PlForecastColumn) => `${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`;
   const keyMonth = (c: PlForecastColumn) => (c.forecast && !c.accum && c.ym ? c.ym : null);
   const shown = foldStatementRows(matrix.rows, new Set());
@@ -295,7 +304,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
 
   // What a keyed row shows in each column.
   const editCells = (r: PnlMatrixRow, k: string, show: boolean) =>
-    cols.map((c, j) => {
+    vis.map(([c, j]) => {
       const ym = keyMonth(c);
       if (!ym) return figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, show);
       const m = sheet[ym];
@@ -304,7 +313,8 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
       if (!f) return noMonth(c);
       const label = `${labelOfYm(ym)} ${r.label}`;
       if (k === "sales") {
-        if (Object.values(m.customers ?? {}).some((v) => (v ?? "").trim() !== "")) return figure(c, f.salesSen, 100, true, true);
+        // Only a customer figure above 0 makes Sales their total (customersKeyed).
+        if (customersKeyed(m)) return figure(c, f.salesSen, 100, true, true);
         return (
           <Fragment key={c.key}>
             <td data-cell={`num split${tagOf(c)}`}><RmBox label={`${label} RM`} value={m.salesStr} hint="" onChange={(v) => setSales(ym, v)} /></td>
@@ -321,7 +331,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
   const detailRow = (key: string, depth: number, name: string, cell: (ym: string, c: PlForecastColumn) => ReactNode) => (
     <tr key={key} data-row="line">
       <td data-cell="stick" className="text-[12px] text-[#4B5563]" style={{ paddingLeft: `${14 + depth * 18}px` }}>{name}</td>
-      {cols.map((c) => {
+      {vis.map(([c]) => {
         const ym = keyMonth(c);
         if (!ym) return <Fragment key={c.key}><td data-cell={`num split${tagOf(c)}`} /><td data-cell={`num pct${tagOf(c)}`} /></Fragment>;
         if (!sheet[ym]) return noMonth(c);
@@ -329,10 +339,16 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
       })}
     </tr>
   );
+  // A customer, supplier or department row with something keyed in some
+  // month — Hide unused keeps only these.
+  const detailUsed = (kind: "cu" | "su" | "de", type: string, id: string) =>
+    Object.values(sheet).some((m) =>
+      kind === "cu" ? (partySen(m.customers)[id] ?? 0) > 0 : kind === "su" ? cellKeyed(m.suppliers?.[type]?.[id]) : cellKeyed(m.pct[id]),
+    );
   const details = (k: string, depth: number): ReactNode => {
     if (!open[k]) return null;
     if (k === "sales")
-      return customerRows.map((cr) =>
+      return customerRows.filter((cr) => !hideUnused || detailUsed("cu", "", cr.id)).map((cr) =>
         detailRow(`cu-${cr.id}`, depth, cr.name, (ym, c) => {
           const f = figures.get(ym);
           const sen = Math.max(0, moneyFieldToSen(sheet[ym].customers?.[cr.id] ?? "") ?? 0);
@@ -346,7 +362,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
       );
     if (k.startsWith("cat:")) {
       const type = k.slice(4);
-      return supplierRowsOf(type).map((sr) =>
+      return supplierRowsOf(type).filter((sr) => !hideUnused || detailUsed("su", type, sr.id)).map((sr) =>
         detailRow(`su-${type}-${sr.id}`, depth, sr.name, (ym, c) => {
           const e = sheet[ym].suppliers?.[type]?.[sr.id] ?? {};
           const sen = new Map(forecastTypeSupplierCells(toFcMonth(sheet[ym]), type)).get(sr.id) ?? 0;
@@ -354,7 +370,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
         }),
       );
     }
-    return deptsPostingTo(k, groups, deptAccount).map((d) =>
+    return deptsPostingTo(k, groups, deptAccount).filter((d) => !hideUnused || detailUsed("de", "", d.code)).map((d) =>
       detailRow(`de-${k}-${d.code}`, depth, d.name, (ym, c) => {
         const f = figures.get(ym);
         return boxes(c, `${labelOfYm(ym)} ${d.name}`, sheet[ym].pct[d.code] ?? {}, f?.amt(d.code) ?? 0, f?.salesSen ?? 0, (v) => setLine(ym, d.code, side(v, "a")), (v) => setLine(ym, d.code, side(v, "p")));
@@ -363,6 +379,9 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
   };
   const hasDetail = (k: string) => k === "sales" || k.startsWith("cat:") || deptsPostingTo(k, groups, deptAccount).length > 0;
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
+  // Open all / Close all (owner 2026-11-10 「点开全部」): every ▸ on the sheet.
+  const detailKeys = [...new Set(matrix.rows.map((r) => plEditKey(r, groups)).filter((k): k is string => !!k && hasDetail(k)))];
+  const allOpen = detailKeys.length > 0 && detailKeys.every((k) => open[k]);
   const opener = (k: string, label: string) =>
     hasDetail(k) ? (
       <button type="button" onClick={() => toggle(k)} className="cursor-pointer text-left uppercase hover:underline decoration-dotted"
@@ -385,6 +404,15 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
           <option value="">Add month…</option>
           {addable.map((ym) => <option key={ym} value={ym}>{labelOfYm(ym)}</option>)}
         </select>
+        <Button size="sm" variant="outline" onClick={() => setOpen(allOpen ? {} : Object.fromEntries(detailKeys.map((k) => [k, true])))}
+          title="Open or close every ▸ at once: customers, suppliers and departments">
+          {allOpen ? "Close all" : "Open all"}
+        </Button>
+        <Button size="sm" variant={hideUnused ? "default" : "outline"} aria-pressed={hideUnused} onClick={() => setHideUnused((v) => !v)}
+          title="Hide every row with no figure in any month, the opened customers, suppliers and departments included; press again to show them all">
+          Hide unused
+        </Button>
+        {hasPast && <HidePastMonthsToggle on={hidePast} onToggle={() => setHidePast((v) => !v)} />}
         <Button size="sm" onClick={save} disabled={saving || !dirty}>
           <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save"}
         </Button>
@@ -401,19 +429,19 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title="Monthly Profit-and-Loss (Overall) — Edit forecast"
-        note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · ▸ opens customers, suppliers or departments · all amounts RM`}
+        note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · ▸ opens customers, suppliers or departments · all amounts RM${hidePast ? " · past months' forecasts hidden" : ""}${hideUnused ? " · rows with no figure hidden" : ""}`}
         maxHeight="calc(100vh - 340px)"
       >
         <table data-col-resize="first" data-fin-report data-fin-fit>
           <thead>
             <tr data-row="h1">
               <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
-              {plMonthHeads(cols).map((h) => (
+              {plMonthHeads(vis.map(([c]) => c)).map((h) => (
                 <th key={h.key} colSpan={h.span} data-cell={`split center${h.accum ? " acc" : ""}${h.forecastOnly ? " fc fp" : ""}`}>{h.label}</th>
               ))}
             </tr>
             <tr data-row="h2">
-              {cols.map((c) => (
+              {vis.map(([c]) => (
                 <Fragment key={c.key}>
                   <th data-cell={`num split${tagOf(c)}`}>{c.forecast ? "Forecast" : "Actual"}</th>
                   <th data-cell={`num pct${tagOf(c)}`}>%</th>
@@ -423,12 +451,15 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
           </thead>
           <tbody>
             {shown.map(({ row: r, close: isClose }, i) => {
+              // Hide unused: a line or group (and its total line) with no
+              // figure in any column; Sales and the totals always stay.
+              if (hideUnused && (r.kind === "line" || r.kind === "group") && r.fcKey !== "sales" && plRowUnused(r)) return null;
               const pad = { paddingLeft: `${14 + r.depth * 18}px` };
               if (isClose) {
                 return (
                   <tr key={`c${i}`} data-row="sub">
                     <td data-cell="stick" className="uppercase" style={pad}>{r.totalLabel ?? `TOTAL ${r.label}`}</td>
-                    {cols.map((c, j) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, true))}
+                    {vis.map(([c, j]) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, true))}
                   </tr>
                 );
               }
@@ -438,7 +469,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
                 return (
                   <tr key={i} data-row={grand ? "res" : "sub"} data-fin-double={grand && r === lastGrand ? "" : undefined}>
                     <td data-cell="stick" className="uppercase" style={pad}>{r.label}</td>
-                    {cols.map((c, j) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, true))}
+                    {vis.map(([c, j]) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, true))}
                   </tr>
                 );
               }
@@ -450,7 +481,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
                   <Fragment key={i}>
                     <tr data-row={r.depth === 0 ? "sec" : "grp"}>
                       <td data-cell="stick" className="uppercase" style={pad}>{k ? opener(k, r.label) : r.label}</td>
-                      {k ? editCells(r, k, false) : cols.map((c, j) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, false))}
+                      {k ? editCells(r, k, false) : vis.map(([c, j]) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, false))}
                     </tr>
                     {k && details(k, r.depth + 1)}
                   </Fragment>
@@ -460,7 +491,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose }: { anchor: string; o
                 <Fragment key={i}>
                   <tr data-row="line">
                     <td data-cell="stick" className={`uppercase ${r.depth >= 3 ? "text-[12px] text-[#6B7280]" : ""}`} style={pad}>{k ? opener(k, r.label) : r.label}</td>
-                    {k ? editCells(r, k, true) : cols.map((c, j) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, true))}
+                    {k ? editCells(r, k, true) : vis.map(([c, j]) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, true))}
                   </tr>
                   {k && details(k, r.depth + 1)}
                 </Fragment>
