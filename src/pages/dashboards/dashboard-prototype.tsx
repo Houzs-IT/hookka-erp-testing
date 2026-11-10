@@ -141,7 +141,9 @@ export default function DashboardPrototypePage() {
   // non-quarter range falls back to its month too.
   const dayTab = tab === "people" || tab === "operations";
   const effectivePeriod = useMemo<Period>(() => {
-    const p = resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab));
+    // Floor Live opens on today, live (owner 2026-11-10); Month / Quarter /
+    // Year picked there show its summary instead.
+    const p = resolvePeriod(period, months, ymd(new Date()), opensOnToday(tab) || (tab === "operations" && sub === "floor"));
     if (tab === "people") return p;
     if (p.mode === "range" && !quarterOfPeriod(p)) return { mode: "monthly", month: p.month };
     return p.day && !dayTab ? { ...p, day: undefined } : p;

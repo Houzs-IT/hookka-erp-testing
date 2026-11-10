@@ -2519,8 +2519,8 @@ and gets it right — cite it in the fix.
 **All eight routers are LIVE** (mounted in `src/api/worker.ts`). Every mount below sits
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:1002`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
-`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:1016`),
-`tenantMiddleware` (`src/api/worker.ts:1023`) and `apiRateLimit` (`src/api/worker.ts:1038`)
+`src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:29`),
+`tenantMiddleware` (`src/api/worker.ts:1067`) and `apiRateLimit` (`src/api/worker.ts:1082`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 

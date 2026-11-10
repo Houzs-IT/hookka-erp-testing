@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildFloorLive, piecesDoneByWorker } from "../src/api/lib/floor-live.ts";
-import { floorLiveLayout, PRODUCTION_ORDER } from "../src/pages/dashboards/floor-live-lib.ts";
+import { buildFloorLive, piecesDoneByWorker, summarizeFloorLive } from "../src/api/lib/floor-live.ts";
+import { floorLiveLayout, PRODUCTION_ORDER, periodRange, summaryLayout } from "../src/pages/dashboards/floor-live-lib.ts";
 
 const DEPTS = [
   { code: "FAB_CUT", name: "Fabric Cutting", isProduction: 1, sequence: 1 },
@@ -104,7 +104,7 @@ test("wired: route mounted, Operations sub-tab, 5-minute refresh, cards keep the
 
 test("owner 2026-11-10: red only for the non-production hour; production rows show last check-in", () => {
   const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
-  assert.match(view, /const red = !production && p\.overHourNonProd;/);
+  assert.match(view, /const red = production \? p\.effPct != null && p\.effPct < 80 : p\.overHourNonProd;/);
   assert.doesNotMatch(view, /e > 110/);
   assert.match(view, /const lastIn = \(p: FloorLiveRow\) => p\.scannedAt \?\? p\.clockIn \?\? "—";/);
   assert.match(view, /<span className="text-right">Done<\/span>/);
@@ -112,7 +112,7 @@ test("owner 2026-11-10: red only for the non-production hour; production rows sh
 
 test("owner 2026-11-10: efficiency number is red only below 80%", () => {
   const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
-  assert.match(view, /if \(e < 80\) return "text-\[#9A3A2D\]";/);
+  assert.match(view, /if \(e < 80\) return "text-\[#DC2626\]";/);
 });
 
 test("owner 2026-11-10: headings share the rows' grid; a picked past day shows that day's end state", () => {
@@ -120,9 +120,59 @@ test("owner 2026-11-10: headings share the rows' grid; a picked past day shows t
   assert.match(view, /const COLS = "grid grid-cols-\[minmax\(0,1fr\)_3rem_2\.25rem_2\.75rem\]/);
   assert.equal((view.match(/\$\{COLS\}/g) ?? []).length, 2, "header and rows use the same grid");
   assert.match(view, /useInterval\(\(\) => refresh\(\), pastDay \? null : REFRESH_MS\)/);
-  assert.match(readFileSync("src/pages/dashboards/OperationsView.tsx", "utf8"), /<FloorLiveView day=\{period\.day\} today=\{todayYmdMY\(\)\} \/>/);
+  assert.match(readFileSync("src/pages/dashboards/OperationsView.tsx", "utf8"), /<FloorLiveView period=\{period\} today=\{todayYmdMY\(\)\} onPeriodChange=\{onPeriodChange\} \/>/);
   const route = readFileSync("src/api/routes/floor-live.ts", "utf8");
   assert.match(route, /const asked = c\.req\.query\("date"\)/);
-  assert.match(route, /asked > realToday/);
-  assert.match(route, /isToday && a\.employeeId && a\.clockIn && !a\.clockOut/);
+  assert.match(route, /asked > today/);
+  assert.match(readFileSync("src/api/lib/floor-live-data.ts", "utf8"), /if \(live\) \{/);
+});
+
+test("a closed day: red when the non-production stay ran over an hour before punch-out; non-production minutes summed", () => {
+  const { workers } = buildFloorLive(base({
+    closedDay: true,
+    attendance: [{ employeeId: "w1", clockIn: "07:48", clockOut: "17:30" }, { employeeId: "w3", clockIn: "07:53", clockOut: "17:00" }],
+    scans: [
+      { workerId: "w1", departmentCode: "WAREHOUSING", atMin: 16 * 60 + 12 },
+      { workerId: "w3", departmentCode: "R_AND_D", atMin: 9 * 60 },
+      { workerId: "w3", departmentCode: "UPHOLSTERY", atMin: 9 * 60 + 40 },
+    ],
+  }));
+  const w1 = workers.find((w) => w.id === "w1");
+  assert.equal(w1.overHourNonProd, true, "16:12 to 17:30 is 78 minutes");
+  assert.equal(w1.nonProdMinutes, 78);
+  const w3 = workers.find((w) => w.id === "w3");
+  assert.equal(w3.overHourNonProd, false, "back in production at the end");
+  assert.equal(w3.nonProdMinutes, 40);
+});
+
+test("Month / Quarter / Year: saved days summed per worker", () => {
+  const day = (date, done, worked, earned, np, over) => ({
+    date,
+    workers: [{ id: "w1", name: "ZAW LIN", homeDept: "UPHOLSTERY", dept: "UPHOLSTERY", isProduction: true, clockIn: "08:00", clockOut: "17:00", scannedAt: null, done, workingMinutes: worked, earnedMinutes: earned, effPct: null, nonProdMinutes: np, overHourNonProd: over }],
+  });
+  const [r] = summarizeFloorLive([day("2026-11-02", 10, 480, 300, 70, true), day("2026-11-03", 6, 480, 420, 0, false)]);
+  assert.deepEqual(
+    { days: r.days, done: r.done, effPct: r.effPct, nonProdMinutes: r.nonProdMinutes, overHourDays: r.overHourDays },
+    { days: 2, done: 16, effPct: 75, nonProdMinutes: 70, overHourDays: 1 },
+  );
+  const cards = summaryLayout({ departments: [{ code: "UPHOLSTERY", name: "Upholstery", isProduction: true, sequence: 9 }], rows: [r] });
+  assert.equal(cards[0].rows[0].name, "ZAW LIN");
+});
+
+test("period windows: month, year, range; never past today", () => {
+  assert.deepEqual(periodRange({ mode: "monthly", month: "2026-11" }, "2026-11-10"), { from: "2026-11-01", to: "2026-11-10" });
+  assert.deepEqual(periodRange({ mode: "monthly", month: "2026-10" }, "2026-11-10"), { from: "2026-10-01", to: "2026-10-31" });
+  assert.deepEqual(periodRange({ mode: "ytd", month: "2026-03" }, "2026-11-10"), { from: "2026-01-01", to: "2026-11-10" });
+  assert.deepEqual(periodRange({ mode: "range", month: "2026-07", from: "2026-07-01", to: "2026-09-30" }, "2026-11-10"), { from: "2026-07-01", to: "2026-09-30" });
+});
+
+test("snapshots: saved once, never overwritten; nightly job and summary route wired", () => {
+  const data = readFileSync("src/api/lib/floor-live-data.ts", "utf8");
+  assert.match(data, /ON CONFLICT \(org_id, date\) DO NOTHING/);
+  assert.match(data, /if \(await readFloorLiveSnapshot\(db, orgId, date\)\)/);
+  assert.match(readFileSync("src/api/worker.ts", "utf8"), /app\.post\("\/api\/internal\/floor-live-snapshot"/);
+  const wf = readFileSync(".github/workflows/floor-live-snapshot.yml", "utf8");
+  assert.match(wf, /cron: '5 16 \* \* \*'/);
+  assert.match(readFileSync("src/api/routes/floor-live.ts", "utf8"), /app\.get\("\/summary"/);
+  assert.match(readFileSync("src/pages/dashboards/dashboard-prototype.tsx", "utf8"), /tab === "operations" && sub === "floor"/);
 });

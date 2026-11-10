@@ -187,6 +187,9 @@ test("invite preflight prefix is still public", () => {
 const EXPECTED_PRE_AUTH_ROUTES = [
   "GET /api/health",
   "GET /api/pg-ping",
+  // Floor Live daily snapshot (added 2026-11-10). CRON_SECRET-gated; saves
+  // each closed day once into floor_live_snapshots (never overwrites).
+  "POST /api/internal/floor-live-snapshot",
   "POST /api/internal/rebuild-dashboard-snapshot",
   "POST /api/internal/process-email-outbox",
   "POST /api/internal/replay-audit-dlq",
