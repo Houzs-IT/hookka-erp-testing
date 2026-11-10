@@ -103,7 +103,7 @@ legacy path) plus component-level picks on `affectedProducts[].components`, all 
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `ServiceCasesListPage` | `src/pages/service-cases/index.tsx:249` | Case list |
+| `ServiceCasesListPage` | `src/pages/service-cases/index.tsx:259` | Case list |
 | `ServiceCaseDetailPage` | `src/pages/service-cases/detail.tsx:204` | Case command center (header/tabs/orchestration) |
 | `CasePipeline` | `src/pages/service-cases/detail.tsx:965` | Auto-computed display-only progress stepper |
 | `RootCausePanel` | `src/pages/service-cases/detail.tsx:1052` | Multi root-cause editor (manual Add/Save; verifiedSave ref impl) |
@@ -112,8 +112,8 @@ legacy path) plus component-level picks on `affectedProducts[].components`, all 
 | `ServiceOrdersListPage` | `src/pages/service-orders/index.tsx:119` | Plural SV-order list |
 | `CreateServiceOrderModal` | `src/pages/service-orders/index.tsx:314` | Create a plural SV order |
 | `ServiceOrderDetailPage` | `src/pages/service-orders/detail.tsx:129` | Plural SV-order detail (returns, repair scope) |
-| `app.post("/")` (case create) | `src/api/routes/service-cases.ts:650` | Create case + RCA/affected-products sanitize |
-| `app.put("/:id")` (case edit) | `src/api/routes/service-cases.ts:793` | Case edit (`ensureCaseLinkColumns` `:239`) |
+| `app.post("/")` (case create) | `src/api/routes/service-cases.ts:685` | Create case + RCA/affected-products sanitize |
+| `app.put("/:id")` (case edit) | `src/api/routes/service-cases.ts:828` | Case edit (`ensureCaseLinkColumns` `:239`) |
 | `STATUS_TRANSITIONS` (case) | `src/api/routes/service-cases.ts:60` | Legal case status moves |
 | `sanitizeRootCauses` / `synthesizeRootCauses` | `src/api/routes/service-cases.ts:178 / 208` | RCA normalization |
 | `app.post("/")` (SV-order create) | `src/api/routes/service-orders.ts:556` | Plural SV order create (`ensureServiceOrderMigrations` `:531`) |
