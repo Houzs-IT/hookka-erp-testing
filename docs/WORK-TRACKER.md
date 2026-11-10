@@ -388,7 +388,7 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Fill from Forecast P&L: the amber "Nothing to fill" note, and the Drawdown row kept the owner's plan.
       - Fill from bills: the same three months as measured 2026-11-09, and the new note naming the one month the limit cannot cover and the amount short (that month's bills minus what fits).
       - Room left matches 2026-11-09. After Cancel the stored plan is unchanged (same fingerprint). No console errors.
-19. 🔵 Key the forecast in the Monthly P&L (branch `feat/monthly-pl-forecast-edit`). The owner: 「我可以不可以把forecastP&L 自己做去现有的monthly P&L？因为我想要refer 数据」. Told that the Monthly P&L Forecast view already shows it read-only, and offered A (key it in the Monthly P&L) or B (actual figures beside the Forecast P&L's cells). The owner chose A: 「我想要A, 因为我的forecast cash flow 也是在cash flow 变动」. Then 「是不是我可以理解forecast的可以在monthly pnl 点开填资料保存？」 (yes), and 「做」. Design: `docs/superpowers/specs/2026-11-10-monthly-pl-forecast-edit-design.md`.
+19. ✅ Key the forecast in the Monthly P&L (#1285). The owner: 「我可以不可以把forecastP&L 自己做去现有的monthly P&L？因为我想要refer 数据」. Told that the Monthly P&L Forecast view already shows it read-only, and offered A (key it in the Monthly P&L) or B (actual figures beside the Forecast P&L's cells). The owner chose A: 「我想要A, 因为我的forecast cash flow 也是在cash flow 变动」. Then 「是不是我可以理解forecast的可以在monthly pnl 点开填资料保存？」 (yes), and 「做」. Design: `docs/superpowers/specs/2026-11-10-monthly-pl-forecast-edit-design.md`.
     - Forecast on, then "Edit forecast" (`MonthlyPlForecastEditor`, `src/pages/accounting/monthly-pl-forecast-editor.tsx`): each month's Forecast takes RM or %, with Add month, Save and Done. An unsaved banner and leave guard as on the Forecast P&L page.
     - The detail lines open with ▸: Sales to its customers, each material to its suppliers, each salary account to the departments whose wages post to it. In a month with any department figure, those accounts show greyed (the Forecast P&L's supersede rule).
     - Stock lines (WIP / FG) and lines the forecast does not list stay unkeyed. Every line the forecast keys has a row, figures or not (`forecastLinesWindow`).
@@ -396,6 +396,14 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
     - The same stored forecast (PUT /forecast), so the Forecast P&L page, Cash Flow and the Dashboard follow. The Forecast P&L page stays.
     - A stored report copy served while it rebuilds now says `stale` beside data (`reportSnapshot`), and the Monthly P&L asks again with "Updating…", as the Financial Dashboard does (#1280).
     - Tests: `tests/monthly-pl-forecast-edit.test.mjs`; the pins that followed the moved code are repointed.
+    - MEASURED on prod 2026-11-10 after the deploy, read only. A figure was typed in the editor but never saved, and Done discarded it.
+      - `/pl-monthly` with the forecast: the first read served the stored copy and said `stale`, and one retry 12 s later was fresh. Its forecast columns are identical to before the deploy (same fingerprint, same columns and rows). Rows now carry their forecast keys, and `edit=1` returns the actual windows, the months and the months ahead.
+      - The Forecast P&L page after the sheet move: the same table fingerprint, with no false unsaved banner.
+      - Edit forecast opened with its boxes in every forecast month. Its own net profit per month equals the route's for every forecast column, and a material's % showed with its RM worked out as the hint.
+      - One material's % raised by one point in one month moved that material, its total line and that month's net profit by exactly 1% of that month's sales. The Accumulated forecast, which covers only the year's months, stayed the same. The unsaved banner appeared.
+      - ▸ opened Sales' customers (RM per month), the material's suppliers (RM and %), and the departments under the two salary accounts their wages post to.
+      - Done asked "Discard changes?"; Confirm went back to the read-only view. The stored forecast is byte-identical to before. No console errors.
+      - A save from the editor stays unverified until the owner's first one (HANDOFF, still to verify).
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
