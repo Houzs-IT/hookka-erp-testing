@@ -47,7 +47,8 @@ test("rows sort by their group first (read once per row), the user's sort inside
   assert.match(src, /const groupOn = !!userGroupCol \|\| \(!!groupBy && groupEnabled\);/);
   assert.match(src, /const ug = userGroupCol \? new Map\(result\.map\(\(r\) => \[r, userGroupValue\(r\)\]\)\) : null;/);
   assert.match(src, /const gc = compareGroupValues\(ug\.get\(a\) \?\? "", ug\.get\(b\) \?\? ""\);/);
-  assert.match(src, /const virtualizationActive = virtualize && !groupOn;/, "a grouped grid is not virtualised");
+  // `windowing` = virtualize, minus an open row-detail panel (WORK-TRACKER 120).
+  assert.match(src, /const virtualizationActive = windowing && !groupOn;/, "a grouped grid is not virtualised");
   assert.match(src, /if \(!userGroupCol && groupBy && groupEnabled && groupFilter\) \{/, "the page's group filter is its own");
 });
 

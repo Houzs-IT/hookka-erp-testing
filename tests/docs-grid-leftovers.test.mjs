@@ -313,7 +313,7 @@ test("G8: heights add up in the same pass (headers pinned to GROUP_ROW_PX)", () 
 
 test("G8: the grid windows the grouped body instead of painting every row", () => {
   const grid = read("src/components/ui/data-grid.tsx");
-  assert.match(grid, /const groupedFlat = useMemo<FlatGroupItem\[\] \| null>\(\(\) => \{\s*if \(!virtualize \|\| !groupOn\) return null;/);
+  assert.match(grid, /const groupedFlat = useMemo<FlatGroupItem\[\] \| null>\(\(\) => \{\s*if \(!windowing \|\| !groupOn\) return null;/);
   assert.match(grid, /count: virtualizationActive \? displayedData\.length : groupedFlat \? groupedFlat\.length : 0,/);
   assert.match(grid, /getItemKey: groupedItemKey,/);
   assert.match(grid, /if \(groupedFlat && groupedFlat\.length >= VIRTUALIZE_MIN_ROWS\) \{/);
