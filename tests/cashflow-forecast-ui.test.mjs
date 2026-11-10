@@ -140,11 +140,15 @@ test("forecast colours run down to the totals: a subtotal or result row keeps it
   }
 });
 
-test("Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不显示 past month」): with the forecast on only; the months before the statement's go, Accumulated and the rest stay; the export follows; any press of Forecast shows them again", () => {
+test("Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不显示 past month」, then 「是把 docs forecast 和 P&L forecast hide 起来，actual 要 remain」): with the forecast on only; the past months' two forecast columns go, their Actual stays, Accumulated and the rest stay; the export follows; any press of Forecast shows them again", () => {
   assert.match(tab, /const \[hidePast, setHidePast\] = useState\(false\);/, "off on every load");
   assert.match(tab, /\{fcData && pastMonths && <HidePastMonthsToggle on=\{hidePast\} onToggle=\{\(\) => setHidePast\(\(v\) => !v\)\} \/>\}/, "only beside a forecast that has past months");
-  // Which columns go: a month before the statement's own, never Accumulated.
-  assert.match(tab, /if \(!c\.accum && c\.ym && c\.ym < period\) s\.add\(i\);/);
+  // Which columns go: a forecast column of a month before the statement's
+  // own. Never an Actual column, never Accumulated.
+  assert.match(ui, /const pastForecastCol = \(c: CfApiCol, period: string\): boolean => !c\.accum && !!c\.forecast && !!c\.ym && c\.ym < period;/);
+  assert.match(tab, /const pastMonths = !!fcData && fcData\.columns\.some\(\(c\) => pastForecastCol\(c, period\)\);/);
+  assert.match(tab, /if \(pastForecastCol\(c, period\)\) s\.add\(i\);/);
+  assert.doesNotMatch(tab, /if \(!c\.accum && c\.ym && c\.ym < period\) s\.add\(i\);/, "the first build hid the whole month, Actual too");
   assert.match(tab, /const cols: CfApiCol\[\] = hiddenIdx \? allCols\.filter\(\(_, i\) => !hiddenIdx\.has\(i\)\) : allCols;/);
   assert.match(tab, /hiddenIdx \? allRows\.map\(\(r\) => \(\{ \.\.\.r, values: r\.values\.filter\(\(_, i\) => !hiddenIdx\.has\(i\)\) \}\)\) : allRows/, "every row loses the same columns");
   // The export and print read the same cols and rows the screen does.
@@ -153,7 +157,7 @@ test("Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不
   const exp = tab.slice(at, tab.indexOf("\n  };", at));
   assert.match(exp, /cols\.map\(/);
   assert.match(exp, /for \(const r of cleanRows\)/);
-  assert.match(tab, /past months hidden/, "the note and the printout say so");
+  assert.match(tab, /past months' forecasts hidden/, "the note and the printout say so");
   const shell = read("src/components/finance/report-shell.tsx");
   assert.match(shell, /export function HidePastMonthsToggle\(\{ on, onToggle \}: \{ on: boolean; onToggle: \(\) => void \}\)/);
 });

@@ -235,14 +235,16 @@ export function ForecastToggle({ on, onToggle }: { on: boolean; onToggle: () => 
 }
 
 /** The forecast's second step (owner 2026-11-10 「先按 forecasting，然后再按不显示
- *  past month」): hides the months before the statement's own. */
+ *  past month」, then 「是把 docs forecast 和 P&L forecast hide 起来，actual 要
+ *  remain」): hides the forecast columns of the months before the statement's
+ *  own; their Actual stays. */
 export function HidePastMonthsToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
     <button
       type="button"
       aria-pressed={on}
       onClick={onToggle}
-      title={on ? "Show the past months again" : "Hide the months before this one (Accumulated, this month and the months ahead stay)"}
+      title={on ? "Show the past months' forecasts again" : "Hide the Docs and P&L forecast columns of the months before this one (their Actual stays)"}
       className={`${CTRL_SHAPE} px-3 ${on ? "border-[#2F5F9E] bg-[#2F5F9E] text-white hover:bg-[#264D80]" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
     >
       Hide past months
