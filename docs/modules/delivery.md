@@ -107,7 +107,7 @@ deliver write `stock_movements` and read `fg_units`, and fire idempotent custome
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `DeliveryPage` | `src/pages/delivery/index.tsx:901` | DO workbench + 3PL + agent, `pageTab` toggle |
+| `DeliveryPage` | `src/pages/delivery/index.tsx:909` | DO workbench + 3PL + agent, `pageTab` toggle |
 | `runBulkDoTransition` | `src/pages/delivery/index.tsx:3067` | FE bulk status move (all guards/cascades) |
 | `resendCustomerNotice` / `warnIfNoCustomerEmail` | `delivery/index.tsx:2940 / :2922` | Feature A per-DO resend / Feature B no-email warning |
 | `columns` (DataGrid) | `src/pages/delivery/index.tsx` (~3.9k) | DO grid column defs |
