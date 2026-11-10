@@ -45,7 +45,7 @@ import { PI_STATUS_CHECK_SQL } from "../lib/ensure-partial-payment";
 import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
 import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
-import { autoReceivePiStock, previewPiAutoGrn } from "../lib/pi-auto-grn";
+import { autoReceivePiStock, backfillAutoGrnLinks, previewPiAutoGrn } from "../lib/pi-auto-grn";
 import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -1002,6 +1002,28 @@ app.get("/", async (c) => {
 // GET /api/purchase-invoices/auto-grn-preview?from=YYYY-MM-DD — read-only:
 // what auto stock-in would receive for confirmed invoices since `from` that
 // have no receipt yet (the April-October 2026 gap, for the owner to approve).
+// GET  /api/purchase-invoices/auto-grn-link-backfill — read-only preview.
+// POST /api/purchase-invoices/auto-grn-link-backfill?confirm=LINK_AUTO_GRNS —
+// writes it. Links system GRNs made before #1218 back to their invoice
+// (owner approved 2026-11-10): untouched GRN lines get invoiced_qty = their
+// received qty; an unambiguous PI line gets its grn_item_id. Lines another
+// invoice already billed are never touched and are listed for the owner.
+app.get("/auto-grn-link-backfill", async (c) => {
+  const denied = await requirePermission(c, "purchase-invoices", "read");
+  if (denied) return denied;
+  await ensurePiMigrations(c.var.DB);
+  return c.json({ success: true, data: await backfillAutoGrnLinks(c.var.DB, getOrgId(c), false) });
+});
+app.post("/auto-grn-link-backfill", async (c) => {
+  const denied = await requirePermission(c, "purchase-invoices", "update");
+  if (denied) return denied;
+  if (c.req.query("confirm") !== "LINK_AUTO_GRNS") {
+    return c.json({ success: false, error: "Preview with GET first, then POST with ?confirm=LINK_AUTO_GRNS" }, 400);
+  }
+  await ensurePiMigrations(c.var.DB);
+  return c.json({ success: true, data: await backfillAutoGrnLinks(c.var.DB, getOrgId(c), true) });
+});
+
 app.get("/auto-grn-preview", async (c) => {
   const denied = await requirePermission(c, "purchase-invoices", "read");
   if (denied) return denied;
