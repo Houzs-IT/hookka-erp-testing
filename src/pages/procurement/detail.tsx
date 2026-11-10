@@ -550,6 +550,8 @@ export default function PurchaseOrderDetailPage() {
         poNo: po.poNo,
         supplierName: po.supplierName,
         supplierEmail: sup?.email,
+        supplierEmail2: sup?.email2,
+        supplierEmail3: sup?.email3,
         companyName: lh.name,
         pdfBase64: dataUri.slice(dataUri.indexOf(",") + 1),
       });

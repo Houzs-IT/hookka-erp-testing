@@ -678,6 +678,9 @@ export default function SupplierDetailPage() {
             <div>
               <p className="text-xs text-[#9CA3AF] mb-0.5">Email</p>
               <p className="text-[#374151] truncate" title={supplier.email}>{supplier.email || "-"}</p>
+              {[supplier.email2, supplier.email3].filter(Boolean).map((e) => (
+                <p key={e} className="text-[#6B7280] text-xs truncate" title={`${e} (Cc on PO emails)`}>{e}</p>
+              ))}
             </div>
             <div>
               <p className="text-xs text-[#9CA3AF] mb-0.5">Phone</p>
@@ -1130,6 +1133,8 @@ export default function SupplierDetailPage() {
             contactPerson: supplier.contactPerson,
             phone: supplier.phone,
             email: supplier.email,
+            email2: supplier.email2,
+            email3: supplier.email3,
             address: supplier.address,
             // status/paymentTerms are stored as plain strings on the @/types
             // Supplier; the form's union types are a subset of those strings.

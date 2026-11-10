@@ -46,6 +46,10 @@ type Supplier = {
   contactPerson: string;
   phone: string;
   email: string;
+  // Email 2 / Email 3 (P6) — carried so the edit dialog opens with them and
+  // does not send them back blank.
+  email2: string;
+  email3: string;
   paymentTerms: PaymentTerms;
   rating: number; // 1-5
   status: SupplierStatus;
@@ -946,6 +950,8 @@ export default function SupplierMaintenancePage() {
       contactPerson: String(s.contactPerson ?? s.attention ?? ""),
       phone: String(s.phone ?? ""),
       email: String(s.email ?? ""),
+      email2: String(s.email2 ?? ""),
+      email3: String(s.email3 ?? ""),
       paymentTerms: (s.paymentTerms ?? s.creditTerm ?? "NET30") as PaymentTerms,
       rating: Number(s.rating ?? 0),
       status: ((s.status ?? (s.isActive === false ? "INACTIVE" : "ACTIVE")) as SupplierStatus),

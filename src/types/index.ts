@@ -577,6 +577,9 @@ export type Supplier = {
   contactPerson: string;
   phone: string;
   email: string;
+  // 2nd / 3rd address, Cc'd on the PO email (P6). Absent on old payloads.
+  email2?: string;
+  email3?: string;
   address: string;
   state: string;
   paymentTerms: string;

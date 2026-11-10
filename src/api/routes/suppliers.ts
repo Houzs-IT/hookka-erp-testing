@@ -30,6 +30,7 @@ import {
   backfillSupplierNames,
 } from "../lib/party-name-propagate";
 import { partyText } from "../../lib/party-finance";
+import { supplierExtraEmailError } from "../../lib/supplier-emails";
 
 const app = new Hono<Env>();
 
@@ -86,6 +87,12 @@ type SupplierRow = {
   sst_reg_no?: string | null;
   bankAccount?: string | null;
   bank_account?: string | null;
+  // Email 2 / Email 3 (cross-system review P6, Houzs#5435): Cc'd on the PO
+  // email. snake_case, self-applied; dual-keyed read.
+  email2?: string | null;
+  email_2?: string | null;
+  email3?: string | null;
+  email_3?: string | null;
 };
 
 // Finance v2 party fields (owner 2026-10-17): the supplier's SST Reg. No. and
@@ -102,6 +109,35 @@ async function ensureSupplierFinanceColumns(db: D1Database): Promise<void> {
   } catch (err) {
     console.warn("[suppliers] ensureSupplierFinanceColumns:", err instanceof Error ? err.message : err);
   }
+}
+
+// Email 2 / Email 3 (P6): the supplier's 2nd and 3rd addresses, Cc'd on the PO
+// email (To stays the main Email). Same self-apply rule as the finance fields.
+let supplierEmailColsEnsured = false;
+async function ensureSupplierEmailColumns(db: D1Database): Promise<void> {
+  if (supplierEmailColsEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS email_2 TEXT NOT NULL DEFAULT ''").run();
+    await db.prepare("ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS email_3 TEXT NOT NULL DEFAULT ''").run();
+    supplierEmailColsEnsured = true;
+  } catch (err) {
+    console.warn("[suppliers] ensureSupplierEmailColumns:", err instanceof Error ? err.message : err);
+  }
+}
+
+// Email 2 / 3 write, in the same batch as the supplier's insert / update. On an
+// edit a field the body does not send keeps its value; null = nothing to write.
+function supplierEmailStatement(
+  db: D1Database,
+  id: string,
+  body: Record<string, unknown>,
+  existing: SupplierRow | null,
+): D1PreparedStatement | null {
+  if (existing && body.email2 === undefined && body.email3 === undefined) return null;
+  if (!existing && !body.email2 && !body.email3) return null;
+  const e2 = body.email2 !== undefined ? partyText(body.email2) : (existing?.email2 ?? existing?.email_2 ?? "");
+  const e3 = body.email3 !== undefined ? partyText(body.email3) : (existing?.email3 ?? existing?.email_3 ?? "");
+  return db.prepare("UPDATE suppliers SET email_2 = ?, email_3 = ? WHERE id = ?").bind(e2, e3, id);
 }
 
 // The finance fields' write, in the same batch as the supplier's own insert /
@@ -161,6 +197,8 @@ function rowToSupplier(
     contactPerson: row.contactPerson ?? "",
     phone: row.phone ?? "",
     email: row.email ?? "",
+    email2: (row.email2 ?? row.email_2 ?? "").trim(),
+    email3: (row.email3 ?? row.email_3 ?? "").trim(),
     address: row.address ?? "",
     state: row.state ?? "",
     paymentTerms: row.paymentTerms ?? "NET30",
@@ -334,11 +372,14 @@ app.post("/", async (c) => {
   const denied = await requirePermission(c, "suppliers", "create");
   if (denied) return denied;
   await ensureSupplierFinanceColumns(c.var.DB);
+  await ensureSupplierEmailColumns(c.var.DB);
   try {
     const body = await c.req.json();
     // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
     const tooLong = textCapError(body, SUPPLIER_CAPS);
     if (tooLong) return c.json({ success: false, error: tooLong }, 400);
+    const badEmail = supplierExtraEmailError(body);
+    if (badEmail) return c.json({ success: false, error: badEmail }, 400);
     const { code, name } = body;
     if (!code || !name) {
       return c.json(
@@ -428,7 +469,8 @@ app.post("/", async (c) => {
       );
     }
     const financeStmt = supplierFinanceStatement(c.var.DB, id, body, null);
-    const finance = financeStmt ? [financeStmt] : [];
+    const emailStmt = supplierEmailStatement(c.var.DB, id, body, null);
+    const finance = [financeStmt, emailStmt].filter((x): x is D1PreparedStatement => x !== null);
     try {
       await c.var.DB.batch([buildInsert(true), ...finance, ...matStmts]);
     } catch (e) {
@@ -522,6 +564,7 @@ app.put("/:id", async (c) => {
   const denied = await requirePermission(c, "suppliers", "update");
   if (denied) return denied;
   await ensureSupplierFinanceColumns(c.var.DB);
+  await ensureSupplierEmailColumns(c.var.DB);
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare("SELECT * FROM suppliers WHERE id = ?")
     .bind(id)
@@ -534,6 +577,8 @@ app.put("/:id", async (c) => {
     // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
     const tooLong = textCapError(body, SUPPLIER_CAPS);
     if (tooLong) return c.json({ success: false, error: tooLong }, 400);
+    const badEmail = supplierExtraEmailError(body);
+    if (badEmail) return c.json({ success: false, error: badEmail }, 400);
     const pick = <T>(fresh: T, current: T): T =>
       fresh === undefined ? current : fresh;
 
@@ -666,6 +711,8 @@ app.put("/:id", async (c) => {
     const statements: D1PreparedStatement[] = [buildUpdate(true)];
     const financeStmt = supplierFinanceStatement(c.var.DB, id, body, existing);
     if (financeStmt) statements.push(financeStmt);
+    const emailStmt = supplierEmailStatement(c.var.DB, id, body, existing);
+    if (emailStmt) statements.push(emailStmt);
 
     if (body.materials !== undefined) {
       const materials = sanitizeMaterials(body.materials);

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { isValidEmail } from "@/lib/contact-format";
+import { isOneEmailAddress } from "@/lib/supplier-emails";
 import { X } from "lucide-react";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import type { PartyFinanceValue } from "@/lib/party-finance";
@@ -30,6 +31,9 @@ export type SupplierFormData = {
   contactPerson: string;
   phone: string;
   email: string;
+  // Cc'd on the PO email (P6, Houzs#5435). One address each.
+  email2: string;
+  email3: string;
   address: string;
   paymentTerms: PaymentTerms;
   rating: number;
@@ -53,6 +57,8 @@ export type SupplierFormEditData = {
   contactPerson?: string;
   phone?: string;
   email?: string;
+  email2?: string;
+  email3?: string;
   address?: string;
   paymentTerms?: PaymentTerms;
   rating?: number;
@@ -81,6 +87,9 @@ export function SupplierFormDialog({
   const [contactPerson, setContactPerson] = useState(editData?.contactPerson || "");
   const [phone, setPhone] = useState(editData?.phone || "");
   const [email, setEmail] = useState(editData?.email || "");
+  const [email2, setEmail2] = useState(editData?.email2 || "");
+  const [email3, setEmail3] = useState(editData?.email3 || "");
+  const extraOk = (v: string) => !v.trim() || isOneEmailAddress(v);
   const [address, setAddress] = useState(editData?.address || "");
   const [paymentTerms, setPaymentTerms] = useState<PaymentTerms>(editData?.paymentTerms || "NET30");
   const [status, setStatus] = useState<SupplierStatus>(editData?.status || "ACTIVE");
@@ -105,8 +114,10 @@ export function SupplierFormDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValidEmail(email)) return; // block save on a malformed email
+    if (!extraOk(email2) || !extraOk(email3)) return;
     onSave({
-      code, name, contactPerson, phone, email, address, paymentTerms, rating, status, purchaseOrgCode,
+      code, name, contactPerson, phone, email, email2: email2.trim(), email3: email3.trim(),
+      address, paymentTerms, rating, status, purchaseOrgCode,
       registrationNo: registrationNo.trim(), taxEntityTin: finance.tin.trim(), sstRegNo: finance.sstRegNo.trim(),
       currency: finance.currency || "MYR", bankAccount: finance.bankAccount.trim(),
     });
@@ -159,6 +170,18 @@ export function SupplierFormDialog({
             <label className="block text-sm font-medium text-[#374151] mb-1">Email</label>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" className={!isValidEmail(email) ? "border-[#9A3A2D]" : undefined} />
             {!isValidEmail(email) ? <span className="text-[11px] text-[#9A3A2D]">Enter a valid email address</span> : null}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Email 2</label>
+              <Input type="email" value={email2} onChange={(e) => setEmail2(e.target.value)} placeholder="Cc on PO emails" className={!extraOk(email2) ? "border-[#9A3A2D]" : undefined} />
+              {!extraOk(email2) ? <span className="text-[11px] text-[#9A3A2D]">One valid email address</span> : null}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Email 3</label>
+              <Input type="email" value={email3} onChange={(e) => setEmail3(e.target.value)} placeholder="Cc on PO emails" className={!extraOk(email3) ? "border-[#9A3A2D]" : undefined} />
+              {!extraOk(email3) ? <span className="text-[11px] text-[#9A3A2D]">One valid email address</span> : null}
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1">Address</label>
