@@ -764,6 +764,8 @@ export function Sidebar({
         />
       )}
       <aside
+        // Already dark in light mode: dark mode leaves it exactly as it is.
+        data-theme="light"
         className={cn(
           "fixed left-0 top-0 z-50 h-screen bg-[#1F1D1B] text-white flex flex-col",
           "transition-transform duration-300 md:transition-all",

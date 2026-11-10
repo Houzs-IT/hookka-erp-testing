@@ -35,6 +35,11 @@ test("the generator covers the app's colour classes, dark-only and screen-only",
   assert.doesNotMatch(css, /\.text-white[: {]/);
   // Paper pages opt out.
   assert.match(css, /:not\(:where\(\[data-theme="light"\], \[data-theme="light"\] \*\)\)/);
+  // Inline style colours (TONE tables etc.) are matched by the attribute the browser writes.
+  assert.match(css, /\.dark \[style\^="color: rgb\(185, 28, 28\)"\]/);
+  assert.match(css, /\[style\*="background: rgb\(255, 255, 255\)"\]/);
+  // Areas already dark in light mode, and paper pages, get Tailwind's palette back.
+  assert.match(css, /:root\.dark \[data-theme="light"\] \{\n\s+--color-red-50:/);
   // Tailwind's own palette flips under .dark.
   assert.match(css, /:root\.dark \{\n\s+--color-red-50:/);
 });
@@ -51,6 +56,7 @@ test("wiring: build regenerates, first paint applies the choice, menu offers it,
   const top = read("src/components/layout/topbar.tsx");
   assert.match(top, /setThemePref\(p\)/);
   for (const v of ['"light", "Light"', '"dark", "Dark"', '"system", "System"']) assert.ok(top.includes(v), v);
+  assert.match(read("src/components/layout/sidebar.tsx"), /<aside\n\s+\/\/[^\n]*\n\s+data-theme="light"/);
   assert.match(read("src/pages/board-report/index.tsx"), /className="brp-root" data-theme="light"/);
   // Default is light, so nobody's screen changes until they pick dark.
   assert.match(read("src/lib/theme.ts"), /: "light";\n/);
