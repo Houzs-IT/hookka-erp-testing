@@ -58,7 +58,7 @@ test("the body: a header per group that folds it, the rows, a subtotal row kept 
   assert.match(body, /if \(!userFolded\.has\(key\)\) out\.push\(renderDataRow\(row, index\)\);/);
   assert.match(body, /data-dg="subtotal"/);
   assert.match(body, /if \(!g \|\| !showFooter\) return;/, "no totals on the grid → no subtotal row");
-  assert.match(body, /const t = columnTotals\(g\.rows, visibleColumns, \(row, k\) => getNestedValue\(row, k\)\);/, "over the group's every row, not the painted ones");
+  assert.match(body, /const t = columnTotals\(splitForTotals\(g\.rows, totalsSkipRow\)\.counted, visibleColumns, \(row, k\) => getNestedValue\(row, k\)\);/, "over the group's every row, not the painted ones");
   assert.match(body, /\{name\} subtotal <span className="font-normal text-\[#6B7280\]">· \{g\.rows\.length\} \{g\.rows\.length === 1 \? "row" : "rows"\}<\/span>/);
   // The label spans the empty columns after it, so it never widens its column.
   assert.match(body, /while \(i \+ span < visibleColumns\.length && t\[visibleColumns\[i \+ span\]\.key\] === undefined && !stickyOffsets\.has\(visibleColumns\[i \+ span\]\.key\)\) span\+\+;/);

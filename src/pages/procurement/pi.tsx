@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
@@ -177,7 +179,7 @@ export default function PurchaseInvoicesPage() {
   // generateMockPIs + invoiceOverrides client-side state. Status changes
   // (Approve / Mark Paid) now PUT through the real backend so refreshes
   // and other tabs see the same data.
-  const { data: piResp, loading, refresh: fetchData } = useCachedJson<{
+  const { data: piResp, loading, error: piError, refresh: fetchData } = useCachedJson<{
     success?: boolean;
     data?: PurchaseInvoice[];
   }>("/api/purchase-invoices");
@@ -426,7 +428,7 @@ export default function PurchaseInvoicesPage() {
     },
     { key: "invoiceDate", label: "Invoice Date", type: "date", width: "120px", sortable: true },
     { key: "dueDate", label: "Due Date", type: "date", width: "120px", sortable: true },
-    { key: "amountSen", label: "Amount", type: "currency", width: "130px", sortable: true },
+    { key: "amountSen", label: "Amount", type: "currency", width: "130px", sortable: true, total: "sum" },
     {
       key: "status",
       label: "Status",
@@ -825,6 +827,11 @@ export default function PurchaseInvoicesPage() {
                 // Stable id — the column picker / drag / resize state persists
                 // under it. Renaming it silently discards saved layouts.
                 gridId="purchase-invoices-list"
+                // Review G4: the Total row leaves cancelled rows out (still listed).
+                totalsSkipRow={isCancelledStatusRow}
+                // Review G7: a failed load says so, with Retry, instead of an empty list.
+                error={listLoadError(piResp, piError)}
+                onRetry={fetchData}
                 loading={loading}
                 stickyHeader={true}
                 selectable

@@ -19,15 +19,22 @@ test("columns and the grid can ask for a total row", () => {
 });
 
 test("the totals cover every filtered row and the footer only exists when a column asks", () => {
-  assert.match(src, /columnTotals\(sortedData, visibleColumns, \(row, key\) => getNestedValue\(row, key\)\)/,
+  // 2026-11-10 (review G4): sortedData minus the rows `totalsSkipRow` leaves
+  // out (cancelled documents), still never the render-capped displayedData.
+  assert.match(src, /splitForTotals\(sortedData, totalsSkipRow\)/,
     "totals from sortedData (filtered + sorted), not displayedData (render-capped)");
+  assert.match(src, /columnTotals\(totalsSplit\.counted, visibleColumns, \(row, key\) => getNestedValue\(row, key\)\)/);
   assert.match(src, /const showFooter = visibleColumns\.some\(\(c\) => c\.total\);/);
   assert.match(src, /\{showFooter && !loading && \(\s*<tfoot data-dg="foot" className="sticky bottom-0 z-30">/,
     "a sticky tfoot, only when a visible column has a total");
 });
 
 test("the footer label and the total formats", () => {
-  assert.match(src, /`Total · \$\{sortedData\.length\.toLocaleString\(\)\} shown of \$\{data\.length\.toLocaleString\(\)\}`/);
+  // The default label moved into totalFooterText (grid-layout.ts) when it
+  // learned "N cancelled not counted" and "loaded rows only" (review G4).
+  assert.match(src, /totalFooterText\(\{\s*shown: sortedData\.length,\s*all: data\.length,/);
+  const layout = readFileSync("src/lib/grid-layout.ts", "utf8");
+  assert.match(layout, /`Total · \$\{o\.shown\.toLocaleString\(\)\} shown of \$\{o\.all\.toLocaleString\(\)\}`/);
   assert.match(src, /col\.totalFormat \? col\.totalFormat\(t\) : col\.type === "currency" \? formatRM\(t\) : formatNumber\(t\)/,
     "currency totals in RM from sen, other numbers plain, or the column's own format");
 });

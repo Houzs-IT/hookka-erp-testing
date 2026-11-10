@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
@@ -116,7 +118,7 @@ export default function SalesPage() {
     filterCategory || filterDDFrom || filterDDTo || gridSearch.trim() || gridColumnView
   );
 
-  const { data: ordersResp, loading, refresh: refreshOrders } = useCachedJson<{
+  const { data: ordersResp, loading, error: ordersError, refresh: refreshOrders } = useCachedJson<{
     success?: boolean;
     data?: ConsignmentOrder[];
     page?: number;
@@ -474,7 +476,7 @@ export default function SalesPage() {
         return <span className="text-[#4F7C3A]">Done</span>;
       },
     },
-    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true },
+    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true, total: "sum" },
     { key: "status", label: "Status", type: "status", width: "100px", sortable: true },
   ];
 
@@ -900,6 +902,11 @@ export default function SalesPage() {
             // Stable id — the column picker / drag / resize state persists
             // under it. Renaming it silently discards saved layouts.
             gridId="consignment-orders-list"
+            // Review G4: the Total row leaves cancelled rows out (still listed).
+            totalsSkipRow={isCancelledStatusRow}
+            // Review G7: a failed load says so, with Retry, instead of an empty list.
+            error={listLoadError(ordersResp, ordersError)}
+            onRetry={refreshOrders}
             maxHeight="calc(100vh - 320px)"
             emptyMessage={tab === "DRAFT" ? "No draft orders." : "No confirmed orders."}
             onDoubleClick={(row) => navigate(`/consignment/${row.id}`)}

@@ -97,6 +97,44 @@ export function columnTotals<T>(
   return out;
 }
 
+/** Rows a total row counts vs. the ones it leaves out (review G4, Houzs#5415):
+ *  a cancelled document stays listed but is not added up. No `skip` → every
+ *  row counts, exactly as before. Display only — nothing is written. */
+export function splitForTotals<T>(rows: T[], skip?: (row: T) => boolean): { counted: T[]; skipped: number } {
+  if (!skip) return { counted: rows, skipped: 0 };
+  const counted: T[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    if (skip(row)) skipped++;
+    else counted.push(row);
+  }
+  return { counted, skipped };
+}
+
+/** A cancelled / voided document row (`status` read case-insensitively) — the
+ *  `totalsSkipRow` the main document lists pass. Module-level, so a page can
+ *  hand it to the grid without a new function each render. */
+export function isCancelledStatusRow(row: { status?: unknown }): boolean {
+  const s = String(row?.status ?? "").toUpperCase();
+  return s === "CANCELLED" || s === "CANCELED" || s === "VOID" || s === "VOIDED";
+}
+
+/** The total row's first cell: "Total · 12 shown of 40", then "· 1 cancelled
+ *  not counted" when rows were left out, and "· loaded rows only" when the
+ *  grid holds one server page of a longer list (`totalRows` > loaded). */
+export function totalFooterText(o: {
+  shown: number;
+  all: number;
+  skipped?: number;
+  skippedNoun?: string;
+  totalRows?: number;
+}): string {
+  const parts = [`Total · ${o.shown.toLocaleString()} shown of ${o.all.toLocaleString()}`];
+  if (o.skipped && o.skipped > 0) parts.push(`${o.skipped.toLocaleString()} ${o.skippedNoun || "cancelled"} not counted`);
+  if (o.totalRows !== undefined && o.totalRows > o.all) parts.push("loaded rows only");
+  return parts.join(" · ");
+}
+
 /** Is the operator narrowing or re-ordering the grid's OWN rows — a header
  *  sort, a column text filter, a value filter they touched, or Group By This
  *  Column? On a server-paged list each of these only sees the loaded page

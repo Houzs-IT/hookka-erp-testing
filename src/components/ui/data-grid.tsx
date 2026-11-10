@@ -26,7 +26,7 @@ import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-e
 import { exportReportCsv, exportReportPdf, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
 import {
-  columnTotals, columnViewActive, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
+  columnTotals, columnViewActive, decodeRange, headerMenuItems, splitForTotals, totalFooterText, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
 import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
 import { useSearchParams } from "react-router-dom";
@@ -404,6 +404,17 @@ export type DataGridProps<T> = {
   // total row "loaded rows only". Omit on a grid that holds the whole list.
   totalRows?: number;
   onLoadAll?: () => void;
+  // Rows the total row leaves out (still listed) — the cancelled documents
+  // on a document list (review G4, Houzs#5415). The footer says "1 cancelled
+  // not counted"; `totalsSkipNoun` swaps the word. Display only.
+  totalsSkipRow?: (row: T) => boolean;
+  totalsSkipNoun?: string;
+  // The list request failed (review G7, Conts#594): with no rows the body
+  // reads "Couldn't load this list" + the reason + Retry instead of the empty
+  // message; with rows still on screen a thin banner says the refresh failed.
+  // `listLoadError(resp, error)` (src/lib/list-load-error.ts) builds it.
+  error?: string | null;
+  onRetry?: () => void;
 };
 
 type SavedView = {
@@ -1842,6 +1853,10 @@ export function DataGrid<T extends Record<string, any>>({
   onColumnViewChange,
   totalRows,
   onLoadAll,
+  totalsSkipRow,
+  totalsSkipNoun,
+  error,
+  onRetry,
 }: DataGridProps<T>) {
   // Review G1 (2026-11-10): the header menu and header drag are ON for every
   // grid that persists a layout (has a gridId), so new list pages get them
@@ -3139,9 +3154,14 @@ export function DataGrid<T extends Record<string, any>>({
   // Sticky total row (finance v2): totals over every row the filter shows —
   // sortedData, not the render-capped displayedData.
   const showFooter = visibleColumns.some((c) => c.total);
+  // `totalsSkipRow` (review G4): cancelled rows stay listed, not added up.
+  const totalsSplit = useMemo(
+    () => (showFooter ? splitForTotals(sortedData, totalsSkipRow) : { counted: sortedData, skipped: 0 }),
+    [showFooter, sortedData, totalsSkipRow],
+  );
   const totals = useMemo(
-    () => (showFooter ? columnTotals(sortedData, visibleColumns, (row, key) => getNestedValue(row, key)) : {}),
-    [showFooter, sortedData, visibleColumns],
+    () => (showFooter ? columnTotals(totalsSplit.counted, visibleColumns, (row, key) => getNestedValue(row, key)) : {}),
+    [showFooter, totalsSplit, visibleColumns],
   );
 
   // ── Header right-click menu (finance v2; opt-in via `headerMenu`) ──
@@ -3162,7 +3182,7 @@ export function DataGrid<T extends Record<string, any>>({
   // the header menu now runs on the paged lists, so it must not export one
   // page while the toolbar Export writes them all).
   const exportSheet = (rows: T[]): { aoa: Aoa; subtotalRows: number[] } => {
-    const sumOf = (rs: T[]) => columnTotals(rs, visibleColumns, (row, key) => getNestedValue(row, key));
+    const sumOf = (rs: T[]) => columnTotals(splitForTotals(rs, totalsSkipRow).counted, visibleColumns, (row, key) => getNestedValue(row, key));
     const grouped = userGroupCol
       ? buildGroupedListingAoa(
           visibleColumns as unknown as ExportColumn<T>[],
@@ -3660,6 +3680,15 @@ export function DataGrid<T extends Record<string, any>>({
           )}
         </div>
       )}
+      {/* Review G7: the request failed but rows from before are still shown. */}
+      {error && !loading && data.length > 0 && (
+        <div data-dg="error-banner" role="alert" className="flex flex-wrap items-center gap-2 border-t border-[#F3C5C5] bg-[#FDF2F2] px-3 py-1.5 text-[12px] text-[#9B1C1C]">
+          <span>Couldn&apos;t refresh this list: {error}</span>
+          {onRetry && (
+            <button type="button" className="font-semibold underline" onClick={onRetry}>Retry</button>
+          )}
+        </div>
+      )}
 
       {/* Table — no own border/rounding: the grid is wrapped in a Card on every
           list page, so a border here just drew a second frame inside the Card
@@ -3868,6 +3897,25 @@ export function DataGrid<T extends Record<string, any>>({
                   )}
                 </tr>
               ))
+            ) : error && data.length === 0 ? (
+              // Review G7: a failed list request is NOT an empty list.
+              <tr>
+                <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0)} className="py-8 text-center text-[12px]">
+                  <div data-dg="load-error" role="alert" className="flex flex-col items-center gap-2">
+                    <span className="font-semibold text-[#9B1C1C]">Couldn&apos;t load this list</span>
+                    <span className="text-[#666]">{error}</span>
+                    {onRetry && (
+                      <button
+                        type="button"
+                        className="rounded border border-[#DDD] bg-white px-3 h-8 text-sm font-medium text-[#333] hover:border-[#999]"
+                        onClick={onRetry}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
             ) : sortedData.length === 0 ? (
               <tr>
                 <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0)} className="py-8 text-center text-[12px] text-[#999]">
@@ -4157,7 +4205,7 @@ export function DataGrid<T extends Record<string, any>>({
                   const subtotal = (key: string) => {
                     const g = groups.get(key);
                     if (!g || !showFooter) return;
-                    const t = columnTotals(g.rows, visibleColumns, (row, k) => getNestedValue(row, k));
+                    const t = columnTotals(splitForTotals(g.rows, totalsSkipRow).counted, visibleColumns, (row, k) => getNestedValue(row, k));
                     const name = groupValueLabel(userGroupCol.type, g.value);
                     out.push(
                       <tr key={`__usub__${key}`} data-dg="subtotal" className="bg-[#F1EEE8] text-[12px] font-semibold text-[#1F1D1B]">
@@ -4295,7 +4343,13 @@ export function DataGrid<T extends Record<string, any>>({
                         : i === 0
                           ? (footerLabel
                             ? footerLabel(sortedData.length, data.length)
-                            : `Total · ${sortedData.length.toLocaleString()} shown of ${data.length.toLocaleString()}`)
+                            : totalFooterText({
+                                shown: sortedData.length,
+                                all: data.length,
+                                skipped: totalsSplit.skipped,
+                                skippedNoun: totalsSkipNoun,
+                                totalRows,
+                              }))
                           : null}
                     </td>
                   );

@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency, todayYmdMY } from "@/lib/utils";
@@ -98,7 +100,7 @@ export default function InvoicesPage() {
     return qs.toString();
   })();
 
-  const { data: invResp, loading, refresh: refreshInvoices } = useCachedJson<{
+  const { data: invResp, loading, error: invError, refresh: refreshInvoices } = useCachedJson<{
     success?: boolean;
     data?: Invoice[];
     page?: number;
@@ -644,8 +646,8 @@ export default function InvoicesPage() {
     { key: "customerName", label: "Customer", type: "text", sortable: true },
     { key: "invoiceDate", label: "Invoice Date", type: "date", width: "110px", sortable: true },
     { key: "dueDate", label: "Due Date", type: "date", width: "110px", sortable: true },
-    { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true },
-    { key: "paidAmount", label: "Paid", type: "currency", width: "120px", sortable: true,
+    { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true, total: "sum" },
+    { key: "paidAmount", label: "Paid", type: "currency", width: "120px", sortable: true, total: "sum",
       render: (value: number) => (
         <span className="text-[#4F7C3A] tabular-nums">{value > 0 ? formatCurrency(value) : "-"}</span>
       ),
@@ -935,6 +937,11 @@ export default function InvoicesPage() {
                 // Stable id — the column picker / drag / resize state persists
                 // under it. Renaming it silently discards saved layouts.
                 gridId="invoices-list"
+                // Review G4: the Total row leaves cancelled rows out (still listed).
+                totalsSkipRow={isCancelledStatusRow}
+                // Review G7: a failed load says so, with Retry, instead of an empty list.
+                error={listLoadError(invResp, invError)}
+                onRetry={refreshInvoices}
                 selectable
                 onSelectionChange={(rows: Invoice[]) => setSelectedInvoices(rows)}
                 onDoubleClick={(row) => navigate(`/invoices/${row.id}`)}

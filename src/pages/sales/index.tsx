@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
@@ -284,7 +286,7 @@ export default function SalesPage() {
     tab === "DRAFT" || lateDrillActive
   );
 
-  const { data: ordersResp, loading, refresh: refreshOrders } = useCachedJson<{
+  const { data: ordersResp, loading, error: ordersError, refresh: refreshOrders } = useCachedJson<{
     success?: boolean;
     data?: SalesOrder[];
     page?: number;
@@ -945,7 +947,7 @@ export default function SalesPage() {
         return <span className="text-[#6B7280]">{stage}</span>;
       },
     },
-    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true },
+    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true, total: "sum" },
     // Service Orders panel only (#13): the repair's current production dept +
     // progress, aggregated from its linked production order(s) — the same
     // dept/progress the production grid shows. Hidden on the normal Sales list.
@@ -1738,6 +1740,12 @@ export default function SalesPage() {
             onSearchChange={setGridSearch}
             onColumnViewChange={setGridColumnView}
             gridId="sales-orders-list"
+            // Review G4: the Total row leaves cancelled rows out (still listed).
+            totalsSkipRow={isCancelledStatusRow}
+            totalRows={!_filtersActive && totalPages > 1 ? totalOrdersServer : undefined}
+            // Review G7: a failed load says so, with Retry, instead of an empty list.
+            error={listLoadError(ordersResp, ordersError)}
+            onRetry={refreshOrders}
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}

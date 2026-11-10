@@ -22,7 +22,14 @@ import {
   writeGridUrlState,
   hasGridUrlState,
 } from "../src/lib/grid-url-state.ts";
-import { columnViewActive } from "../src/lib/grid-layout.ts";
+import {
+  columnViewActive,
+  columnTotals,
+  isCancelledStatusRow,
+  splitForTotals,
+  totalFooterText,
+} from "../src/lib/grid-layout.ts";
+import { listLoadError } from "../src/lib/list-load-error.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const GRID = read("src/components/ui/data-grid.tsx");
@@ -189,3 +196,97 @@ test("G3: Invoices says it holds one page and can load every match", () => {
   assert.match(src, /allMatches\.resp === invResp && allMatches\.qs === invoiceListQs/);
   assert.match(src, /return \(loadedAll \?\? invoices\)\.filter/);
 });
+
+// ── G4 — footer totals that leave cancelled rows out ─────────────────────
+test("isCancelledStatusRow: cancelled / voided, any case; everything else counts", () => {
+  for (const s of ["CANCELLED", "cancelled", "Canceled", "VOID", "voided"]) assert.equal(isCancelledStatusRow({ status: s }), true, s);
+  for (const s of ["DRAFT", "CONFIRMED", "PAID", "", undefined, null]) assert.equal(isCancelledStatusRow({ status: s }), false, String(s));
+});
+
+test("splitForTotals + columnTotals: a cancelled row is listed but not added up", () => {
+  const rows = [
+    { status: "CONFIRMED", totalSen: 10000 },
+    { status: "CANCELLED", totalSen: 99999 },
+    { status: "PAID", totalSen: 2550 },
+  ];
+  const { counted, skipped } = splitForTotals(rows, isCancelledStatusRow);
+  assert.equal(skipped, 1);
+  assert.equal(counted.length, 2);
+  const t = columnTotals(counted, [{ key: "totalSen", total: "sum" }], (r, k) => r[k]);
+  assert.equal(t.totalSen, 12550, "whole sen stay whole");
+  // No skip → every row counts, exactly as before.
+  assert.deepEqual(splitForTotals(rows), { counted: rows, skipped: 0 });
+});
+
+test("totalFooterText says what was left out and when only a page is loaded", () => {
+  assert.equal(totalFooterText({ shown: 12, all: 40 }), "Total · 12 shown of 40");
+  assert.equal(totalFooterText({ shown: 12, all: 40, skipped: 1 }), "Total · 12 shown of 40 · 1 cancelled not counted");
+  assert.equal(totalFooterText({ shown: 1200, all: 1200, skipped: 0, totalRows: 1200 }), "Total · 1,200 shown of 1,200");
+  assert.equal(
+    totalFooterText({ shown: 200, all: 200, skipped: 3, totalRows: 1234 }),
+    "Total · 200 shown of 200 · 3 cancelled not counted · loaded rows only",
+  );
+});
+
+test("G4: DataGrid totals, group subtotals and the export all skip the same rows", () => {
+  assert.match(GRID, /splitForTotals\(sortedData, totalsSkipRow\)/);
+  assert.match(GRID, /columnTotals\(totalsSplit\.counted, visibleColumns/);
+  assert.match(GRID, /columnTotals\(splitForTotals\(g\.rows, totalsSkipRow\)\.counted, visibleColumns/);
+  assert.match(GRID, /const sumOf = \(rs: T\[\]\) => columnTotals\(splitForTotals\(rs, totalsSkipRow\)\.counted/);
+  assert.match(GRID, /skipped: totalsSplit\.skipped,/);
+});
+
+// [file, gridId, amount keys with total: "sum"]
+const DOC_LISTS = [
+  ["src/pages/sales/index.tsx", "sales-orders-list", ["totalSen"]],
+  ["src/pages/procurement/index.tsx", "purchase-orders-list", ["totalSen"]],
+  ["src/pages/procurement/grn.tsx", "goods-receipts-list", ["totalAmount"]],
+  ["src/pages/procurement/pi.tsx", "purchase-invoices-list", ["amountSen"]],
+  ["src/pages/invoices/index.tsx", "invoices-list", ["totalSen", "paidAmount"]],
+  ["src/pages/consignment/index.tsx", "consignment-orders-list", ["totalSen"]],
+];
+for (const [file, , keys] of DOC_LISTS) {
+  test(`G4: ${file} totals its amount column(s) and skips cancelled rows`, () => {
+    const src = read(file);
+    for (const k of keys) {
+      assert.match(src, new RegExp(`\\{ key: "${k}", label: "[^"]+", type: "currency",[^\\n]*total: "sum"`), k);
+    }
+    assert.match(src, /totalsSkipRow=\{isCancelledStatusRow\}/);
+  });
+}
+
+// ── G7 — "Couldn't load this list" + Retry ───────────────────────────────
+test("listLoadError: the fetch error, a { success: false } body, or null", () => {
+  assert.equal(listLoadError({ success: true, data: [] }, null), null);
+  assert.equal(listLoadError([], null), null, "a bare array is a good answer");
+  assert.equal(listLoadError(null, null), null, "not loaded yet is not an error");
+  assert.equal(listLoadError(null, "The request timed out."), "The request timed out.");
+  assert.equal(listLoadError({ success: false, error: "Not allowed" }, null), "Not allowed");
+  assert.equal(listLoadError({ success: false }, null), "The server could not return this list.");
+  assert.equal(listLoadError({ success: true }, "  Network error  "), "Network error");
+});
+
+test("G7: DataGrid shows a load error instead of the empty message, with Retry", () => {
+  assert.match(GRID, /error\?: string \| null;/);
+  assert.match(GRID, /onRetry\?: \(\) => void;/);
+  const at = GRID.indexOf(") : error && data.length === 0 ? (");
+  const empty = GRID.indexOf(") : sortedData.length === 0 ? (");
+  assert.ok(at > 0 && at < empty, "the error branch comes before the empty message");
+  assert.match(GRID, /Couldn&apos;t load this list/);
+  assert.match(GRID, /Couldn&apos;t refresh this list: \{error\}/, "rows still shown → a banner, not a blank grid");
+});
+
+for (const [file, gridId] of [
+  ...DOC_LISTS.map(([f, id]) => [f, id]),
+  ["src/pages/delivery/index.tsx", "delivery-orders-list"],
+  ["src/pages/consignment/note.tsx", "consignment-notes-list"],
+]) {
+  test(`G7: ${file} hands its list error and refresh to the grid`, () => {
+    const src = read(file);
+    const at = src.indexOf(`gridId="${gridId}"`);
+    assert.ok(at > 0);
+    const grid = src.slice(src.lastIndexOf("<DataGrid", at), src.indexOf("/>", at));
+    assert.match(grid, /error=\{listLoadError\(\w+, \w+\)\}/);
+    assert.match(grid, /onRetry=\{\w+\}/);
+  });
+}
