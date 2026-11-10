@@ -119,7 +119,7 @@ is enforced by hand in the handler, not by the middleware.
 - **QR/sticker URLs encode the print-time origin.** Scanning is path-based + domain-agnostic and resolves against the
   DB of whatever site you scan ON — a prod-printed token scanned on staging FAILS (different DB). Prod fallback origin
   is canonicalized → `erp.hookka.com` (`src/lib/app-origin.ts`).
-- **CSRF is GLOBAL, not per-call.** `src/lib/api-client.ts:76` monkey-patches `window.fetch` to auto-inject
+- **CSRF is GLOBAL, not per-call.** `src/lib/api-client.ts:81` monkey-patches `window.fetch` to auto-inject
   `X-CSRF-Token`. NO raw fetch is ever "missing CSRF"; an audit flagging N such fetches is ALL false positives — never
   add `csrfHeaders()` to "fix" it (a rack CSRF "fix" shipped then proved a no-op).
 - **RBAC: SUPER_ADMIN + ADMIN unconditionally bypass** (inside `requirePermission`, `rbac.ts:188`) so a never-seeded permission can't 403 them;
