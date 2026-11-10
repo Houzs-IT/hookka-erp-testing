@@ -314,10 +314,19 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
     - Without a dragged width: nothing pinned, all 35 columns show.
     - No console errors.
     - Monthly P&L's Forecast toggle was never affected: it redraws its table while loading (measured before the fix).
-14. 🔵 Materials by supplier on the Forecast P&L, and Hide past months on Cash Flow (`feat/forecast-suppliers-hide-past`). Proposed 2026-11-10; the owner first said 「这个我确定先」, then 「supplier 先根据 ratio 吧」「hide past month 也一起做」「supplier 那边还是你可以 set 根据 ratio 也可以，一个个也可以」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md`.
+14. ✅ Materials by supplier on the Forecast P&L, and Hide past months on Cash Flow (#1266). Proposed 2026-11-10; the owner first said 「这个我确定先」, then 「supplier 先根据 ratio 吧」「hide past month 也一起做」「supplier 那边还是你可以 set 根据 ratio 也可以，一个个也可以」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md`.
     - (a) Raw materials either way, month by month: by ratio (the % rows, as before) or one by one (a By supplier block inside Raw Materials: active suppliers bought from since the 1st of the month three months back, plus any keyed, plus Other). A month with a supplier figure takes their sum as its materials, spread over the material rows by each supplier's recent purchases (ledger legs on the material purchase accounts); the rows show it greyed. The same spread reaches the Cash Flow P&L forecast (each supplier after its own term, Other after a month), Monthly P&L forecast and the Finance Dashboard. New `GET /forecast/suppliers`; kv `forecast_pnl.months[ym].purchasesBySupplier`.
     - (b) Hide past months beside Forecast on Cash Flow: the months before the statement's own go whole; Accumulated, this month and the months ahead stay; Excel / Print follow; any press of Forecast shows them again.
-    - Not yet verified on prod.
+    - MEASURED on prod 2026-11-10 after the deploy, read only, nothing saved:
+      - Forecast P&L: the table identical to before the deploy (same fingerprint), plus one "By supplier" row under Raw Materials, empty in every month.
+      - `GET /forecast/suppliers`: window from 1 August, 19 suppliers and 35 supplier × material pairs, the same as the measurement given to the owner that morning; its 11 material types are the page's 11 material rows.
+      - Show empty lines lists the 19 suppliers by name, then Other, a box per month.
+      - A figure typed for one supplier in one month (not saved) made that month's material rows grey and spread over that supplier's types, adding up to the figure to the sen. Carriage and SST stayed as keyed, and Total COGS, Gross profit and Net profit moved by exactly the difference. Clearing it gave back the same fingerprint, the unsaved banner went, and the stored forecast had no supplier figure.
+      - Cash Flow forecast (`GET /cashflow-forecast?period=2026-11`): identical to before the deploy, all 157 rows.
+      - Hide past months shows only with the forecast on. Pressed, the two past months go (35 cells a row → 29), every remaining cell is the same as before pressing, and the note says "past months hidden". Forecast off and on brings everything back with the toggle released.
+      - With a dragged Item width set in the browser's storage: 35 → 29 → 35 columns, none 0 px, Item kept.
+      - Monthly P&L forecast: each month's Net profit equals the Forecast P&L page's.
+    - The save of supplier figures is UNVERIFIED on prod until the owner's first Save.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
