@@ -117,6 +117,7 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 7. **Supplier ↔ material bindings:** waiting for the owner's checked raw-material list (`Raw-Material-Supplier-List-2026-11-07.xlsx`, `Supplier-Binding-Plan-2026-11-07.xlsx`).
 8. **Finance to confirm:** Oct staff cost RM 1,733 looks incomplete; equity rose 73,279 more than profit; Oct fabric stock-take RM 14,877 stored vs RM 97,660 from lines; Monthly P&L Oct net 136,271 vs /pl report 194,914.
 9. ~~Forecast proposals~~ — **done (2026-11-10, Windows session)**: the owner said do both. Materials by ratio or by supplier on the Forecast P&L, and Hide past months on the Cash Flow forecast, shipped in #1266 and verified on prod read only (Hide past months corrected in #1272: past months keep their Actual). Then the owner asked for the suppliers under each material instead of one total spread by ratio (「让他在每个categories 出现相关的supplier, 我从那边填」→「做」), on `feat/forecast-suppliers-by-material`. Details: `docs/WORK-TRACKER.md`, Cash Flow forecast items 14 and 15.
+10. **Forecast follow-ups proposed 2026-11-10 (Windows session), waiting for 「做」:** fill the trade-finance plan from the Forecast P&L supplier figures, and key the forecast inside the Monthly P&L (the owner chose this over reference figures on the Forecast P&L). The proposals are in `docs/WORK-TRACKER.md`, Cash Flow forecast items 18 and 19.
 
 ## Board report inside the ERP (item 115 — merged #1252, verified on prod 2026-11-10)
 
