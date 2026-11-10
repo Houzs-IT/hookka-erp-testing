@@ -306,9 +306,10 @@ test("every status UPDATE carries the from-status, and a lost flip rolls the bat
   assert.match(api, /status='REDELIVERED', updated_at=\? WHERE id=\? AND status='SERVICE_SPAWNED'/);
   // the check statement raises when the UPDATE matched nothing, inside the same batch
   assert.match(api, /SELECT 1 \/ CASE WHEN EXISTS \(\s+SELECT 1 FROM delivery_returns WHERE id = \? AND status = \? AND updated_at = \?\s+\) THEN 1 ELSE 0 END AS "flipped"/);
-  assert.match(api, /division by zero[\s\S]*?\{ success: false, error: STATUS_RACE_ERROR \}, 409/);
+  // O1 (2026-11-10): the lost flip re-reads the row and answers 409 with what it is now.
+  assert.match(api, /division by zero[\s\S]*?return staleStatusResponse\(c, id, saw\);/);
   const rts = api.slice(api.indexOf('app.post("/:id/return-to-stock"'), api.indexOf('app.post("/:id/set-outcome"'));
-  assert.match(rts, /\.\.\.flipStatus\([\s\S]*?\);\s+const lost = await runFlip\(c, statements\)/);
+  assert.match(rts, /\.\.\.flipStatus\([\s\S]*?\);\s+const lost = await runFlip\(c, statements, id, header\.status\)/);
 });
 
 test("mark-redelivered is allowed only from SERVICE_SPAWNED", () => {

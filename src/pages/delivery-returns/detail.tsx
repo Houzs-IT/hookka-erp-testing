@@ -79,24 +79,33 @@ export default function DeliveryReturnDetail() {
     dr && deliveryReturnStatus(dr).awaitingCreditNote ? `/api/credit-notes/from-returns?returnId=${encodeURIComponent(String(id))}` : null,
   );
 
-  const call = async (path: string, body?: unknown) => {
-    if (busy) return;
+  // Resolves true only when the server accepted the change, so a follow-up
+  // step (open the credit note) never runs after a refusal.
+  const call = async (path: string, body?: unknown): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     try {
+      // Review O1: every status change names the status this page showed, so
+      // the server refuses (409) instead of acting on a return someone else
+      // moved meanwhile.
       const res = await fetch(`/api/delivery-returns/${id}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: body ? JSON.stringify(body) : undefined,
+        body: JSON.stringify({ ...((body as Record<string, unknown> | undefined) ?? {}), expectedStatus: dr?.status }),
       });
-      const json = (await res.json()) as { success?: boolean; error?: string };
+      const json = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
       if (!res.ok || json?.success === false) {
-        toast.error(json?.error || "Action failed");
-      } else {
-        toast.success("Done");
-        refresh();
+        toast.error(json?.error || `Action failed (HTTP ${res.status})`);
+        // The return moved under us — show its real state.
+        if (res.status === 409) refresh();
+        return false;
       }
+      toast.success("Done");
+      refresh();
+      return true;
     } catch {
       toast.error("Network error");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -293,13 +302,13 @@ export default function DeliveryReturnDetail() {
                 onClick={async () => {
                   const invoiced = dr.items.some((it) => it.wasInvoiced);
                   if (invoiced) {
-                    await call("/set-outcome", { returnType: "PURE_RETURN" });
+                    if (!(await call("/set-outcome", { returnType: "PURE_RETURN" }))) return;
                     toast.info(
                       "Returned to stock — this DO was invoiced, so a Credit Note is pre-filled; confirm the refund amount.",
                     );
                     navigate(`/invoices/credit-notes?fromReturn=${id}`);
                   } else {
-                    await call("/return-to-stock");
+                    if (!(await call("/return-to-stock"))) return;
                     toast.success(
                       "Returned to stock. No Credit Note — this DO was never invoiced.",
                     );
@@ -346,10 +355,11 @@ export default function DeliveryReturnDetail() {
                     const so = await fetch(`/api/delivery-returns/${id}/set-outcome`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ returnType: "REPAIR_REDELIVER", serviceCaseId: caseId }),
+                      body: JSON.stringify({ returnType: "REPAIR_REDELIVER", serviceCaseId: caseId, expectedStatus: dr.status }),
                     });
                     if (!so.ok) {
                       toast.error(await responseErrorMessage(so, "Couldn't set the return outcome"));
+                      if (so.status === 409) refresh();
                       return;
                     }
                     // Standard step is DR → Service Case → Service Order: land on

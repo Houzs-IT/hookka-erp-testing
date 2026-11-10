@@ -12,6 +12,7 @@ import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
 import { isCancelledStatusRow } from "@/lib/grid-layout";
 import { listLoadError } from "@/lib/list-load-error";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
+import { useBatchConfirm } from "@/components/batch-confirm";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
@@ -151,7 +152,6 @@ export default function PurchaseInvoicesPage() {
   // shared links land on the same view.
   const [tab, setTab] = useUrlState<"DRAFT" | "CONFIRMED">("tab", "CONFIRMED");
   const [selectedRows, setSelectedRows] = useState<PurchaseInvoice[]>([]);
-  const [bulkConverting, setBulkConverting] = useState(false);
   // Bumped to clear the DataGrid's OWN selection (its checkboxes), which
   // emptying selectedRows alone does not touch.
   const [clearSelectionToken, setClearSelectionToken] = useState(0);
@@ -284,51 +284,24 @@ export default function PurchaseInvoicesPage() {
   const draftCount = draftTab.count;
   const tabConfirmedCount = confirmedTab.count;
 
-  // Bulk DRAFT → CONFIRMED — parallel PUTs, then cache invalidation. Per the
-  // BE lifecycle map only DRAFT rows are valid sources for this transition.
-  const bulkConvertDrafts = useCallback(async () => {
-    const drafts = selectedRows.filter(r => r.status === "DRAFT");
-    if (drafts.length === 0) return;
-    if (
-      !(await confirm({
-        title: "Convert drafts",
-        message: `Convert ${drafts.length} draft invoice(s) to CONFIRMED?`,
-        danger: false,
-      }))
-    )
-      return;
-    setBulkConverting(true);
-    const results = await Promise.all(
-      drafts.map(async (pi) => {
-        try {
-          const res = await fetch(`/api/purchase-invoices/${pi.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "CONFIRMED" }),
-          });
-          const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
-          if (!res.ok || !j?.success) {
-            return { ok: false, id: pi.piNo, err: j?.error || `HTTP ${res.status}` };
-          }
-          return { ok: true, id: pi.piNo };
-        } catch (e) {
-          return { ok: false, id: pi.piNo, err: (e as Error).message };
-        }
-      }),
-    );
-    setBulkConverting(false);
-    const failed = results.filter(r => !r.ok);
-    invalidateCachePrefix("/api/purchase-invoices");
-    fetchData();
-    setSelectedRows([]);
-    if (failed.length > 0) {
-      const sample = failed.slice(0, 3).map(f => f.id).join(", ");
-      toast.error(`Converted ${results.length - failed.length} · Failed ${failed.length} (${sample})`);
-    } else {
-      toast.success(`Converted ${results.length} invoice${results.length !== 1 ? "s" : ""} successfully.`);
-    }
-    if (results.length - failed.length > 0) setTab("CONFIRMED");
-  }, [selectedRows, confirm, toast, fetchData, setTab]);
+  // Review G11: bulk DRAFT → CONFIRMED, one invoice at a time through the
+  // detail page's own confirm PUT; refusals are listed at the end with the
+  // server's reason (src/components/batch-confirm.tsx).
+  const batchConfirm = useBatchConfirm<PurchaseInvoice>({
+    noun: "invoice",
+    effect: "Each moves from DRAFT to CONFIRMED, exactly as its own Confirm button does.",
+    canConfirm: (r) => r.status === "DRAFT",
+    label: (r) => r.piNo,
+    amountSen: (r) => r.amountSen,
+    url: (r) => `/api/purchase-invoices/${r.id}`,
+    onFinished: (res) => {
+      invalidateCachePrefix("/api/purchase-invoices");
+      fetchData();
+      setSelectedRows([]);
+      setClearSelectionToken((t) => t + 1);
+      if (res.succeeded.length > 0 && res.failed.length === 0) setTab("CONFIRMED");
+    },
+  });
 
   // ---- Export CSV ----
   const exportCSV = () => {
@@ -891,16 +864,18 @@ export default function PurchaseInvoicesPage() {
                 variant="ghost"
                 size="sm"
                 className="text-white hover:bg-white/10"
-                disabled={bulkConverting}
-                onClick={bulkConvertDrafts}
+                disabled={batchConfirm.busy}
+                onClick={() => batchConfirm.run(selectedRows)}
               >
                 <CheckCircle2 className="h-4 w-4" />
-                {bulkConverting ? "Converting…" : `Confirm ${selectedDraftCount} draft${selectedDraftCount === 1 ? "" : "s"}`}
+                {batchConfirm.progress ?? `Confirm selected (${selectedDraftCount})`}
               </Button>
             )}
           </>
         }
       />
+
+      {batchConfirm.resultDialog}
 
       {/* From PO / GRN picker — navigates to PI create with pre-fill param */}
       <FromSourceModal
