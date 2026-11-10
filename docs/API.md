@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 149 mounts, 147 route files in
-`src/api/routes/`, 1085 top-level handler registrations discovered.
+`src/api/routes/`, 1086 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -118,7 +118,7 @@ offsets pointing past the end of their own file.
 | `/api/stock` | `src/api/routes/stock-breakdown.ts` | `GET /breakdown` <sub>:168</sub> | gated |
 | `/api/goods-in-transit` | `src/api/routes/goods-in-transit.ts` | `GET /` <sub>:96</sub><br>`POST /` <sub>:121</sub><br>`GET /:id` <sub>:245</sub><br>`PUT /:id` <sub>:260</sub><br>`DELETE /:id` <sub>:369</sub> | gated |
 | `/api/suppliers` | `src/api/routes/suppliers.ts` | `GET /` <sub>:345</sub><br>`POST /` <sub>:371</sub><br>`GET /:id` <sub>:511</sub><br>`POST /_backfill-snapshot-names` <sub>:541</sub><br>`PUT /:id` <sub>:563</sub><br>`DELETE /:id` <sub>:804</sub> | gated |
-| `/api/supplier-materials` | `src/api/routes/supplier-materials.ts` | `GET /` <sub>:174</sub><br>`POST /` <sub>:211</sub><br>`GET /:id` <sub>:345</sub><br>`PUT /:id` <sub>:357</sub><br>`DELETE /:id` <sub>:495</sub> | gated |
+| `/api/supplier-materials` | `src/api/routes/supplier-materials.ts` | `GET /` <sub>:182</sub><br>`POST /` <sub>:219</sub><br>`GET /duplicates` <sub>:384</sub><br>`GET /:id` <sub>:399</sub><br>`PUT /:id` <sub>:411</sub><br>`DELETE /:id` <sub>:583</sub> | gated |
 | `/api/supplier-scorecards` | `src/api/routes/supplier-scorecards.ts` | `GET /` <sub>:47</sub><br>`GET /summary` <sub>:94</sub><br>`GET /:supplierId` <sub>:182</sub> | gated |
 | `/api/price-history` | `src/api/routes/price-history.ts` | `GET /` <sub>:60</sub><br>`POST /` <sub>:104</sub> | gated |
 | `/api/auth/oauth` | `src/api/routes/auth-oauth.ts` | `GET /google/start` <sub>:53</sub><br>`GET /google/callback` <sub>:98</sub> | **public** (PUBLIC_PREFIXES) |
