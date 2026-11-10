@@ -377,13 +377,19 @@ export default function GRNPage() {
   const GRN_PAGE_SIZE = 200;
   const [grnPage, setGrnPage] = useState(1);
   const [gridSearch, setGridSearch] = useState("");
+  // Review G3 (2026-11-10): a header sort / funnel / Group By on the grid
+  // judges the grid's rows — one 200-row page in the browse view. While one is
+  // on, the fetch widens to every record exactly as for the search box, so it
+  // covers the whole list (Houzs#4753). DataGrid fires `onColumnViewChange`.
+  const [gridColumnView, setGridColumnView] = useState(false);
   const grnFiltersActive = !!(
     filterStatus ||
     filterSupplier ||
     filterDateFrom ||
     filterDateTo ||
     filterArrivalState ||
-    gridSearch.trim()
+    gridSearch.trim() ||
+    gridColumnView
   );
 
   // Bulk "Download PDF" — merge every selected GRN into one file. Rows come
@@ -1245,6 +1251,7 @@ export default function GRNPage() {
             maxHeight="calc(100vh - 300px)"
             emptyMessage={tab === "DRAFT" ? "No draft GRNs." : "No GRNs found."}
             onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             exportName="goods-receipts"
             exportSheetLabel="Goods Receipts"
             detailExport={{

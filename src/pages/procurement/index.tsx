@@ -843,6 +843,11 @@ export default function ProcurementPage() {
   // cancelled. Toggles off when the user clicks the widget again.
   const [filterOverdueOnly, setFilterOverdueOnly] = useState(false);
   const [gridSearch, setGridSearch] = useState("");
+  // Review G3 (2026-11-10): a header sort / funnel / Group By on the grid
+  // judges the grid's rows — one 200-row page in the browse view. While one is
+  // on, the fetch widens to every record exactly as for the search box, so it
+  // covers the whole list (Houzs#4753). DataGrid fires `onColumnViewChange`.
+  const [gridColumnView, setGridColumnView] = useState(false);
 
   // Server-side pagination for the PO list. The grid shows one 200-row page at
   // a time UNLESS a filter/search is active — then we drop pagination and pull
@@ -859,7 +864,8 @@ export default function ProcurementPage() {
     filterDateFrom ||
     filterDateTo ||
     filterOverdueOnly ||
-    gridSearch.trim()
+    gridSearch.trim() ||
+    gridColumnView
   );
 
   const { data: supResp, loading: supLoading, refresh: refreshSuppliers } = useCachedJson<{ success?: boolean; data?: Supplier[] }>("/api/suppliers");
@@ -2162,6 +2168,7 @@ export default function ProcurementPage() {
             maxHeight="calc(100vh - 300px)"
             emptyMessage={tab === "DRAFT" ? "No draft purchase orders." : "No purchase orders found."}
             onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             alwaysSearchKeys={PO_ALWAYS_SEARCH_KEYS}
             gridId="purchase-orders-list"
             exportName="purchase-orders"

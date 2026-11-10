@@ -22,6 +22,7 @@ import {
   writeGridUrlState,
   hasGridUrlState,
 } from "../src/lib/grid-url-state.ts";
+import { columnViewActive } from "../src/lib/grid-layout.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const GRID = read("src/components/ui/data-grid.tsx");
@@ -128,4 +129,56 @@ test("the sort round-trips through the URL beside the page's own keys", () => {
   // Another grid's sort is left alone.
   const two = writeGridUrlState(new URLSearchParams("po.s=a:asc"), "so", { search: "", columnFilters: {}, sort: null });
   assert.equal(two.get("po.s"), "a:asc");
+});
+
+// ── G3 ────────────────────────────────────────────────────────────────────
+// Verified 2026-11-10 by reading the code: SO / PO / GRN load one 200-row page
+// and widened to the whole list only for their filter bar and search box;
+// Invoices page server-side (#1216) for search + filter bar. The header sort,
+// funnels and Group By are the grid's own and never reached the page, so on a
+// list longer than one page they judged the loaded 200 rows only.
+test("columnViewActive: sort, text filter, touched value filter or grouping", () => {
+  const base = { sortKey: null, columnFilters: {}, valueFilterKeys: 0, valueFilterTouched: false, userGroupKey: null };
+  assert.equal(columnViewActive(base), false);
+  assert.equal(columnViewActive({ ...base, sortKey: "totalSen" }), true);
+  assert.equal(columnViewActive({ ...base, columnFilters: { customerName: "acme" } }), true);
+  assert.equal(columnViewActive({ ...base, columnFilters: { customerName: "" } }), false, "a cleared box is not a filter");
+  // A page's own defaultExcludedValues (Sales hides shipped rows) is NOT the
+  // operator narrowing — otherwise /sales would always fetch everything.
+  assert.equal(columnViewActive({ ...base, valueFilterKeys: 1, valueFilterTouched: false }), false);
+  assert.equal(columnViewActive({ ...base, valueFilterKeys: 1, valueFilterTouched: true }), true);
+  assert.equal(columnViewActive({ ...base, userGroupKey: "status" }), true);
+});
+
+test("G3: DataGrid reports the column view and flags a partial page", () => {
+  assert.match(GRID, /onColumnViewChange\?: \(active: boolean\) => void;/);
+  assert.match(GRID, /onColumnViewChange\(colViewActive\);/);
+  assert.match(GRID, /\}, \[colViewActive\]\);/, "fires on the boolean, not the callback identity");
+  assert.match(GRID, /const partialView = colViewActive && totalRows !== undefined && totalRows > data\.length && !loading;/);
+  assert.match(GRID, /Column sorting, filters and grouping cover the \{data\.length\.toLocaleString\(\)\} loaded rows of/);
+  assert.match(GRID, /Load all \{totalRows!\.toLocaleString\(\)\}/);
+});
+
+for (const [file, flag] of [
+  ["src/pages/sales/index.tsx", /_flCompany\[0\] \|\| gridColumnView \|\| gridSearch\.trim\(\) \|\|/],
+  ["src/pages/procurement/index.tsx", /gridSearch\.trim\(\) \|\|\s*gridColumnView\s*\);/],
+  ["src/pages/procurement/grn.tsx", /gridSearch\.trim\(\) \|\|\s*gridColumnView\s*\);/],
+]) {
+  test(`G3: ${file} widens to the whole list under a header sort / funnel`, () => {
+    const src = read(file);
+    assert.match(src, /const \[gridColumnView, setGridColumnView\] = useState\(false\);/);
+    assert.match(src, flag);
+    assert.match(src, /onColumnViewChange=\{setGridColumnView\}/);
+  });
+}
+
+test("G3: Invoices says it holds one page and can load every match", () => {
+  const src = read("src/pages/invoices/index.tsx");
+  assert.match(src, /totalRows=\{loadedAll \? undefined : totalInvoicesServer\}/);
+  assert.match(src, /onLoadAll=\{\(\) => \{ void loadAllInvoices\(\); \}\}/);
+  assert.match(src, /fetchAllPages<Invoice>\(`\/api\/invoices\?\$\{invoiceListQs\}`\)/);
+  // The loaded set is tied to the response + query, so a refresh / new filter
+  // drops back to paging instead of showing stale rows.
+  assert.match(src, /allMatches\.resp === invResp && allMatches\.qs === invoiceListQs/);
+  assert.match(src, /return \(loadedAll \?\? invoices\)\.filter/);
 });

@@ -97,6 +97,26 @@ export function columnTotals<T>(
   return out;
 }
 
+/** Is the operator narrowing or re-ordering the grid's OWN rows — a header
+ *  sort, a column text filter, a value filter they touched, or Group By This
+ *  Column? On a server-paged list each of these only sees the loaded page
+ *  (review G3, Houzs#4753), so the page widens its fetch while it is true.
+ *  A page's own `defaultExcludedValues` (untouched) does not count. */
+export function columnViewActive(o: {
+  sortKey: string | null;
+  columnFilters: Record<string, string>;
+  valueFilterKeys: number;
+  valueFilterTouched: boolean;
+  userGroupKey: string | null;
+}): boolean {
+  return (
+    !!o.sortKey ||
+    Object.values(o.columnFilters).some(Boolean) ||
+    (o.valueFilterTouched && o.valueFilterKeys > 0) ||
+    !!o.userGroupKey
+  );
+}
+
 /** The header right-click menu, in the design's order ("-" = a separator).
  *  `grouped` (a grid that can group its rows): "this" = grouped by this
  *  column, "other" = by another one, "none" = not grouped. */

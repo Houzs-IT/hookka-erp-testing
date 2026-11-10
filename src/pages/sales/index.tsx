@@ -222,6 +222,11 @@ export default function SalesPage() {
   // dropdown filter) — otherwise the search only sees the current
   // 200-row server page and misses matches on other pages.
   const [gridSearch, setGridSearch] = useState("");
+  // Review G3 (2026-11-10): a header sort / funnel / Group By on the grid
+  // judges the grid's rows — one 200-row page in the browse view. While one is
+  // on, the fetch widens to every record exactly as for the search box, so it
+  // covers the whole list (Houzs#4753). DataGrid fires `onColumnViewChange`.
+  const [gridColumnView, setGridColumnView] = useState(false);
 
   // Filter state read up front so we can adjust the fetch URL when any
   // filter is active (filters were silently scoped to the current 200-row
@@ -275,7 +280,7 @@ export default function SalesPage() {
   // the grid would disagree with the card it was reached from.
   const _filtersActive = !!(
     _flStatus[0] || _flCustomer[0] || _flFrom[0] || _flTo[0] ||
-    _flCat[0] || _flDDFrom[0] || _flDDTo[0] || _flCompany[0] || gridSearch.trim() ||
+    _flCat[0] || _flDDFrom[0] || _flDDTo[0] || _flCompany[0] || gridColumnView || gridSearch.trim() ||
     tab === "DRAFT" || lateDrillActive
   );
 
@@ -1731,6 +1736,7 @@ export default function SalesPage() {
             selectable
             onSelectionChange={setSelectedRows}
             onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             gridId="sales-orders-list"
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}

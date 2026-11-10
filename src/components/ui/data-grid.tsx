@@ -26,7 +26,7 @@ import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-e
 import { exportReportCsv, exportReportPdf, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
 import {
-  columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
+  columnTotals, columnViewActive, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
 import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
 import { useSearchParams } from "react-router-dom";
@@ -391,6 +391,19 @@ export type DataGridProps<T> = {
   // opts out. The header sort rides along (`?<gridId>.s=<key>:<dir>`). A
   // page's non-empty `initialSearch` still wins over the URL.
   urlFilters?: boolean;
+  // Fires with true while the operator narrows or re-orders the grid's OWN
+  // rows (header sort, column text filter, a value filter they touched, Group
+  // By This Column) — `columnViewActive` in src/lib/grid-layout.ts. A
+  // server-paged page widens its fetch to every matching record while it is
+  // true, exactly as it does for the search box (review G3, Houzs#4753).
+  onColumnViewChange?: (active: boolean) => void;
+  // How many records the page's SERVER query matches (one page may be loaded).
+  // When it exceeds the loaded rows and a column sort / filter / grouping is
+  // on, the grid says so above the rows — "cover the 200 loaded rows of
+  // 1,234" — and offers `onLoadAll` as a button when given. Also marks the
+  // total row "loaded rows only". Omit on a grid that holds the whole list.
+  totalRows?: number;
+  onLoadAll?: () => void;
 };
 
 type SavedView = {
@@ -1826,6 +1839,9 @@ export function DataGrid<T extends Record<string, any>>({
   searchPlaceholder,
   cellCopy = true,
   urlFilters,
+  onColumnViewChange,
+  totalRows,
+  onLoadAll,
 }: DataGridProps<T>) {
   // Review G1 (2026-11-10): the header menu and header drag are ON for every
   // grid that persists a layout (has a gridId), so new list pages get them
@@ -3054,6 +3070,23 @@ export function DataGrid<T extends Record<string, any>>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferredSearch]);
 
+  // Review G3: tell a server-paged page that a header sort / column filter /
+  // grouping is on, so it can widen its fetch to every matching record (same
+  // callback-identity rule as onSearchChange above: fires on the boolean only).
+  const colViewActive = columnViewActive({
+    sortKey,
+    columnFilters,
+    valueFilterKeys: Object.keys(columnValueFilters).length,
+    valueFilterTouched,
+    userGroupKey,
+  });
+  useEffect(() => {
+    if (!onColumnViewChange) return;
+    onColumnViewChange(colViewActive);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colViewActive]);
+  const partialView = colViewActive && totalRows !== undefined && totalRows > data.length && !loading;
+
   const handleContextMenu = useCallback((e: React.MouseEvent, row: T) => {
     if (!contextMenuItems) return;
     if (checkboxSelectOnly && e.shiftKey) return; // keep the browser's own menu
@@ -3610,6 +3643,23 @@ export function DataGrid<T extends Record<string, any>>({
           {sortedData.length} of {data.length} records
         </span>
       </div>
+
+      {/* Review G3: a column sort / filter / grouping on a grid that holds one
+          server page judges only that page — say so instead of looking whole. */}
+      {partialView && (
+        <div data-dg="partial" className="flex flex-wrap items-center gap-2 border-t border-[#F1D9A8] bg-[#FFF8E6] px-3 py-1.5 text-[12px] text-[#7A5B12]">
+          <span>
+            Column sorting, filters and grouping cover the {data.length.toLocaleString()} loaded rows of{" "}
+            {totalRows!.toLocaleString()}. Use Search or the filters above to narrow on the server
+            {onLoadAll ? ", or load every row." : "."}
+          </span>
+          {onLoadAll && (
+            <button type="button" className="font-semibold underline hover:text-[#4D3A08]" onClick={onLoadAll}>
+              Load all {totalRows!.toLocaleString()}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Table — no own border/rounding: the grid is wrapped in a Card on every
           list page, so a border here just drew a second frame inside the Card
