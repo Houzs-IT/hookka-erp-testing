@@ -38,6 +38,8 @@ import {
   ConvertToPIModal,
   type ConvertToPIResult,
 } from "@/components/convert-to-pi-modal";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 // ── Source-doc shapes (minimal fields we need for pre-fill) ────────────────
 type POItemShape = {
@@ -475,6 +477,17 @@ function CreatePurchaseInvoicePage() {
   // so each stored line total is net of its share.
   const [docDiscountSen, setDocDiscountSen] = useState<number>(0);
 
+  // ── Leave guard (review pass 2 H3-1 / C2-2) ───────────────────────────────
+  // Compared with the form as it opened — blank, or as seeded from ?poId /
+  // ?grnId once that seed lands — so anything typed or picked counts and the
+  // seed alone does not.
+  const seededFromLink = !!(searchParams.get("poId") || searchParams.get("grnId"));
+  const [formEdited] = useFormDirty(
+    { supplierId, invoiceDate, remarks, supplierInvoiceNo, supplierDoNo, lines, headerTaxRMInput, docDiscountSen },
+    !seededFromLink || sourcePurchaseOrderId !== null || sourceGrnId !== null,
+  );
+  const navGuard = useNavGuard(!saving && formEdited, "This purchase invoice is not saved. Leave without saving?");
+
   // ── Derived totals ────────────────────────────────────────────────────────
   const validLines = lines.filter((l) => l.materialName.trim() !== "");
   const grossLineSens = validLines.map(lineGrossSen);
@@ -610,6 +623,7 @@ function CreatePurchaseInvoicePage() {
           ? `Invoice ${j.data.piNo} created`
           : "Purchase invoice created",
       );
+      navGuard.allowNext();
       navigate("/procurement/pi");
     } catch (err) {
       toast.error(
@@ -899,7 +913,7 @@ function CreatePurchaseInvoicePage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="overflow-x-auto rounded-md border border-[#E2DDD8]">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm" {...LINE_GRID_PROPS}>
               <thead className="bg-[#F0ECE9] border-b border-[#E2DDD8]">
                 <tr className="text-xs uppercase tracking-wide text-[#6B7280]">
                   <th className="text-left px-3 py-2 font-medium">
@@ -1204,6 +1218,7 @@ function CreatePurchaseInvoicePage() {
                 ? "Purchase invoice created"
                 : `${ids.length} purchase invoices created`,
             );
+            navGuard.allowNext();
             navigate("/procurement/pi");
           }
         }}

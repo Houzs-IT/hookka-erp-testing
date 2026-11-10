@@ -29,6 +29,8 @@ import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { returnCandidateBlock, type ReturnCreditCandidate } from "@/lib/cn-from-return";
 import { NotePopup } from "@/components/finance/note-popup";
+import { useFormDirty } from "@/lib/use-nav-guard";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 const CNMutationSchema = mutationWithData(CreditNoteSchema);
 
@@ -256,6 +258,14 @@ export default function CreditNotesPage() {
     if (editingNote || copyOf) resetForm();
     else setFromReturnDraft(null);
   };
+  // Esc or a click on the dimmed backdrop asks "Discard your changes?" once
+  // anything in the form changed since it opened — a dropdown pick counts
+  // (review pass 2 C2-1). Cancel and ✕ still close at once.
+  const [formDirty] = useFormDirty(
+    { selectedCustomerId, selectedInvoiceId, reason, reasonDetail, items: items.map((it) => [it.description, it.quantity, it.priceStr, it.unitPriceSen]) },
+    showCreateModal,
+  );
+  const formGuard = useDiscardGuard({ open: showCreateModal, dirty: formDirty, onClose: closeForm, busy: creating });
 
   const addItem = () => {
     setItems([...items, newCNItem()]);
@@ -625,7 +635,7 @@ export default function CreditNotesPage() {
 
       {/* Create Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onMouseDown={formGuard.onBackdrop}>
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b">
               <h2 className="text-lg font-semibold">

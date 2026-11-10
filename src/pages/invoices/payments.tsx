@@ -22,6 +22,7 @@ import { moneyFieldToSen, isUnreadableMoney } from "@/lib/money-field";
 import { parseMoneyInput } from "@/lib/parse-money";
 import { useResizableTables } from "@/lib/use-resizable-tables";
 import { useEscapeClose } from "@/lib/escape-stack";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
 
 const PaymentMutationSchema = mutationWithData(PaymentSchema);
 
@@ -180,6 +181,14 @@ export function CustomerReceiptForm({ editing, onSaved, onCancelEdit, copyFrom =
   // BUG-2026-08-13-095 - the Received box is `type="text"`, so a receipt typed
   // "12,000" was recorded as RM 12.00 against the customer. `canSubmit` below
   // now refuses while the box is unreadable, so this 0 is never posted.
+  // Leave guard (review pass 2 H3-1 / C2-2): compared with the receipt as it
+  // opened (blank, the copy, the receipt being edited, or the Receive seed once
+  // it lands). Saving resets the form or remounts it, so it never asks then.
+  const [receiptChanged] = useFormDirty(
+    { selectedCustomerId, method, reference, payDate, allocations, amountStr },
+    !receiveFor || !!editing || allocations.length > 0,
+  );
+  useNavGuard(!creating && receiptChanged, "This receipt is not saved. Leave without saving?");
   const receivedUnreadable = amountTouched && isUnreadableMoney(amountStr);
   const receivedSen = amountTouched
     ? Math.max(0, moneyFieldToSen(amountStr) ?? 0)

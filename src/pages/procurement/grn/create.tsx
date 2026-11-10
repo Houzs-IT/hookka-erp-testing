@@ -56,6 +56,8 @@ import {
   ConvertFromPOModal,
   type ConvertFromPOResult,
 } from "@/components/convert-from-po-modal";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -247,6 +249,18 @@ function GRNCreatePage() {
     () => (orgsResp?.organisations ?? []).filter((o) => o.isActive !== false),
     [orgsResp],
   );
+
+  // ── Leave guard (review pass 2 H3-1 / C2-2) ───────────────────────────────
+  // Anything typed or picked counts; a deep-linked PO's seeded lines count
+  // only once edited (the seed itself is not the operator's work).
+  const [poEntriesEdited] = useFormDirty(poItemEntries, !isLockedPO || poItemEntries.length > 0);
+  const isDirty = !saving && (
+    !!receivedBy || !!notes || !!supplierDoNo || !!supplierId ||
+    !!shipmentMethod || !!shipmentCarrier || !!shipmentExpectedArrival ||
+    manualItems.some((m) => !!m.materialCode || !!m.materialName || m.receivedQty > 0) ||
+    (!isLockedPO && isPoLinked) || (isLockedPO && poEntriesEdited)
+  );
+  const navGuard = useNavGuard(isDirty, "This goods receipt is not saved. Leave without saving?");
 
   // ── Auto-scan gate ─────────────────────────────────────────────────────────
   // ?scan=1 + locked PO → open the in-page apply-mode autofill (legacy).
@@ -664,6 +678,7 @@ function GRNCreatePage() {
       } else {
         toast.success("GRN created");
       }
+      navGuard.allowNext();
       navigate("/procurement/grn");
     } catch (err) {
       toast.error(
@@ -1073,7 +1088,7 @@ function GRNCreatePage() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-md border border-[#E2DDD8]">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm" {...LINE_GRID_PROPS}>
                   <thead className="bg-[#F0ECE9] border-b border-[#E2DDD8]">
                     <tr className="text-xs uppercase tracking-wide text-[#6B7280]">
                       <th
@@ -1245,7 +1260,7 @@ function GRNCreatePage() {
           ) : (
             /* Manual mode grid */
             <div className="overflow-x-auto rounded-md border border-[#E2DDD8]">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm" {...LINE_GRID_PROPS}>
                 <thead className="bg-[#F0ECE9] border-b border-[#E2DDD8]">
                   <tr className="text-xs uppercase tracking-wide text-[#6B7280]">
                     <th
@@ -1490,6 +1505,7 @@ function GRNCreatePage() {
                 ? "Goods Receipt Note created"
                 : `${ids.length} Goods Receipt Notes created`,
             );
+            navGuard.allowNext();
             navigate("/procurement/grn");
           }
         }}

@@ -21,6 +21,7 @@ import { useResizableTables } from "@/lib/use-resizable-tables";
 // One money parser. NOTE: `rateStr` on this page is an FX RATE, not money, and
 // deliberately keeps `parseFloat` - see the comment at `rowBankSenWith`.
 import { moneyFieldToRinggit, moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/money-field";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Supplier Payment — the AP twin of the customer Payment page
@@ -209,6 +210,23 @@ export default function SupplierPaymentsPage() {
   // form is allocations-only), surfaced here so the operator sees the full
   // voucher total and knows the advance is untouched.
   const [editAdvanceKeptSen, setEditAdvanceKeptSen] = useState(0);
+
+  // Leave guard (review pass 2 H3-1 / C2-2): a new payment counts as started
+  // once a supplier is picked (other than the one a deep link opened with) or
+  // anything is keyed; an edit counts once it differs from the payment as it
+  // opened. Saving resets the form, so it never asks after a save.
+  const [initialSupplierId] = useState(selectedSupplierId);
+  const keyedRows =
+    Object.values(rows).some((r) => !!r.amountStr.trim() || !!r.foreignStr.trim() || r.full) ||
+    Object.values(tfRows).some((r) => !!r.amountStr.trim() || r.full);
+  const [editChanged] = useFormDirty({ date, reference, advanceStr, payFrom, rows, tfRows }, editingNo !== null && !loadingPIs);
+  const newPaymentStarted =
+    editingNo === null &&
+    ((!!selectedSupplierId && selectedSupplierId !== initialSupplierId) || !!reference.trim() || !!advanceStr.trim() || keyedRows);
+  useNavGuard(
+    !posting && (newPaymentStarted || (editingNo !== null && editChanged)),
+    "This supplier payment is not saved. Leave without saving?",
+  );
 
   const loadOpenPIs = (
     supplierId: string,

@@ -36,6 +36,8 @@ import { Link } from "react-router-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { ObjectPageHeader } from "@/components/ui/object-page-header";
 import { buildPoEmailDraft, type PoEmailDraft } from "@/lib/po-email-draft";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 const ComposeDialog = lazy(() =>
   import("@/pages/mail-center/compose").then((m) => ({ default: m.ComposeDialog })),
@@ -220,6 +222,10 @@ export default function PurchaseOrderDetailPage() {
   const [editLines, setEditLines] = useState<EditLine[]>([]);
   const [rmSearch, setRmSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  // Leaving the PO mid-edit by menu, link, Back or phone swipe asks first
+  // (review pass 2 H3-1 / C2-2); Save closes edit mode, so it never asks.
+  const [editDirty] = useFormDirty({ editExpectedDate, editNotes, editLines }, editing);
+  useNavGuard(editing && editDirty && !saving, "Your changes to this purchase order are not saved. Leave without saving?");
 
   // ------- Cancel-PO modal state (2.2) -------
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -938,7 +944,7 @@ export default function PurchaseOrderDetailPage() {
 
             {/* Line items */}
             {editLines.length > 0 && (
-              <div className="space-y-2">
+              <div className="space-y-2" {...LINE_GRID_PROPS}>
                 {editLines.map((line, idx) => {
                   // Active-only bindings — same gate as addLineFromRM so the
                   // dropdown can never offer a deactivated vendor.
@@ -946,7 +952,7 @@ export default function PurchaseOrderDetailPage() {
                     (b) => b.materialCode === line.rmCode && activeSupplierIds.has(b.supplierId),
                   );
                   return (
-                    <div key={idx} className="p-3 bg-[#FAF9F7] rounded border border-[#E2DDD8] overflow-x-auto">
+                    <div key={idx} data-line-row="" className="p-3 bg-[#FAF9F7] rounded border border-[#E2DDD8] overflow-x-auto">
                       <div className="grid grid-cols-8 gap-2 items-end" style={{ minWidth: "560px" }}>
                         <div className="col-span-2">
                           <label className="block text-xs text-[#6B7280] mb-1">RM Code</label>

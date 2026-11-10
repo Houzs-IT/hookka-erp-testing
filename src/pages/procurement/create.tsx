@@ -45,6 +45,8 @@ import {
 } from "@/lib/unit-price";
 import type { Supplier, SupplierMaterialBinding, RawMaterial } from "@/types";
 import { ArrowLeft, Check, Plus, Save, Trash2, X } from "lucide-react";
+import { useNavGuard } from "@/lib/use-nav-guard";
+import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 
 // Same shape used by the modal in procurement/index.tsx — kept identical
 // so the POST payload matches what the existing /api/purchase-orders
@@ -127,6 +129,10 @@ function CreatePurchaseOrderPage() {
   // Purchase company (HOOKKA / OHANA / sister co) that buys on this PO.
   // Prefilled from the picked supplier's default; always overridable.
   const [purchaseOrgCode, setPurchaseOrgCode] = useState<string>("HOOKKA");
+  // Leaving a half-filled PO by menu, link, Back or phone swipe asks first
+  // (review pass 2 H3-1 / C2-2). A supplier pick counts as a change.
+  const isDirty = !saving && (!!expectedDate || !!notes || items.length > 0 || !!selectedSupplierId);
+  const navGuard = useNavGuard(isDirty, "This purchase order is not saved. Leave without saving?");
 
   // Active Purchase Company options for the dropdown.
   const activeOrgs = useMemo(
@@ -449,6 +455,7 @@ function CreatePurchaseOrderPage() {
       // count from the SPA cache until the next manual refresh.
       invalidateCachePrefix("/api/fabric-tracking");
       toast.success("Purchase order created");
+      navGuard.allowNext();
       navigate("/procurement");
     } catch (err) {
       console.error("Failed to create PO:", err);
@@ -542,6 +549,7 @@ function CreatePurchaseOrderPage() {
 
     if (failures.length === 0) {
       toast.success(`Created ${okCount} POs across ${groups.length} suppliers`);
+      navGuard.allowNext();
       navigate("/procurement");
     } else {
       for (const f of failures) toast.error(`${f.supplierName}: ${f.error}`);
@@ -769,7 +777,7 @@ function CreatePurchaseOrderPage() {
               wrapping (10 numeric columns at min-width totals ~1200px). */}
           {items.length > 0 ? (
             <div className="overflow-x-auto rounded-md border border-[#E2DDD8]">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm" {...LINE_GRID_PROPS}>
                 <thead className="bg-[#F0ECE9] border-b border-[#E2DDD8]">
                   <tr className="text-xs uppercase tracking-wide text-[#6B7280]">
                     <th className="text-left px-3 py-2 font-medium" style={{ minWidth: 140 }}>RM Code</th>

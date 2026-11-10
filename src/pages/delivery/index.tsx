@@ -76,6 +76,8 @@ import {
   drawerLineSpec,
   isPrimaryDrawerAction,
 } from "@/lib/document-drawer";
+import { useFormDirty } from "@/lib/use-nav-guard";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 const DOMutationSchema = mutationWithData(DeliveryOrderSchema);
 const SOMutationSchema = mutationWithData(SalesOrderSchema);
@@ -963,6 +965,10 @@ export default function DeliveryPage() {
   const [manualCustomerId, setManualCustomerId] = useState<string>("");
   // Each drop point = one customer hub destination
   const [createDODrops, setCreateDODrops] = useState<{ customerId: string; customerName: string; hubId: string; address: string; contactName: string; contactPhone: string; poIds: string[] }[]>([]);
+  // Esc or a backdrop click on a half-filled Create DO asks "Discard your
+  // changes?" (review pass 2 C2-1); a 3PL / lorry / date pick counts.
+  const [createDODirty] = useFormDirty({ createDOForm, manualCustomerId, createDODrops }, !!createDODialog);
+  const createDOGuard = useDiscardGuard({ open: !!createDODialog, dirty: createDODirty, onClose: () => setCreateDODialog(null) });
   const [printDialog, setPrintDialog] = useState<DeliveryOrderRow[] | null>(null);
   const [plRemarks, setPlRemarks] = useState("");
   const [plCreating, setPlCreating] = useState(false);
@@ -4940,6 +4946,7 @@ export default function DeliveryPage() {
           (src/components/ui/status-tab-strip.tsx), so the page it came from
           can no longer drift away from the pages that followed it. */}
       <StatusTabStrip
+        loading={doLoading && !doRaw}
         variant="underline"
         value={activeTab}
         onChange={(key) => {
@@ -5430,7 +5437,7 @@ export default function DeliveryPage() {
       {/* ---------- Create DO Dialog ---------- */}
       {createDODialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setCreateDODialog(null)} />
+          <div className="absolute inset-0 bg-black/40" onMouseDown={createDOGuard.onBackdrop} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-[#E2DDD8]">
             <div className="px-6 py-4 border-b border-[#E2DDD8]">
               <h2 className="text-lg font-bold text-[#1F1D1B]">Create Delivery Order</h2>
