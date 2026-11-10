@@ -350,12 +350,19 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - The Cash Flow P&L forecast pays it once, to that supplier, after its own term, in place of the material's old spread.
       - The Finance Dashboard's forecast for that month carries it in Cost Structure, materials, COGS and net profit, each equal to the page's.
     - The owner then cleared it (a test figure). Observed on prod 2026-11-10, read only: the stored forecast is byte-identical to before the save, and the page, the Cash Flow P&L forecast and the Finance Dashboard are back to their earlier figures.
-16. 🔵 The Financial Dashboard swaps in the new figures by itself (branch `feat/dashboard-stale-refresh`). Found while checking the owner's clear above: the first Dashboard read after it still carried the old forecast; the next read had the new one. The owner: 「要，改」.
+16. ✅ The Financial Dashboard swaps in the new figures by itself (#1280). Found while checking the owner's clear above: the first Dashboard read after it still carried the old forecast; the next read had the new one. The owner: 「要，改」.
     - Why: `/api/accounting/dashboard` is a serve-stale-while-revalidate snapshot. After any change to its source tables (kv_config, so a Forecast save, but also job cards, invoices, postings), the next read gets the copy built before the change at once while the server rebuilds behind (~5–9 s). The page could not tell, and kept the old copy until reloaded.
     - Now `withSnapshot` reports a stale copy it serves (`onServedStale`). The route says so beside `data`: `stale: { builtFrom, sourceMax }`, outside the stored payload, so no `DASH_PAYLOAD_V` bump.
     - The desktop page and the phone screen keep the old figures up with "Updating…" and ask again after 10 s, 10 s and 15 s, until the copy covers everything up to the first answer. Normally that is one retry, even while job-card scans keep the snapshot "stale" all day.
     - The schedule lives in `src/lib/stale-refresh.ts`. The phone uses it through `useCachedJson`'s opt-in `retryStale`; no other screen changes.
     - Tests: `tests/dashboard-stale-refresh.test.mjs`.
+    - MEASURED on prod 2026-11-10 after the deploy, read only. Nothing was saved; each simulated "stale" answer existed only in my browser tab.
+      - The API: three stored Dashboard copies (two monthly windows and the quarterly one), read 4 s after a source change, all carried `stale`. Read again 12 s later, all three were fresh.
+      - Desktop, a simulated stale answer: "Updating…" showed at 0.5 s and the page asked again at 10.6 s. The label went at 10.8 s, with no third request.
+      - Desktop, a second answer still marked stale but covering the first: the page stopped there. The label went at 10.7 s, with no further request through 29 s.
+      - Desktop, a plain reload that met a real stale copy: "Updating…" showed, the page asked again 10.1 s after its first request, the fresh copy came in, and there was no third request.
+      - Phone at 375 px: the same, with the retry at 10.5 s and the label gone after it. There was no sideways scroll, and the phone's stored copy ended without the flag.
+      - No console errors on either screen.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
