@@ -93,18 +93,18 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `ProcurementPage` | `src/pages/procurement/index.tsx:812` | PO list, filters, banner, grid |
 | `POFormDialog` | `src/pages/procurement/index.tsx:71` | Create/edit PO modal (deep-link prefill) |
 | `PurchaseOrderDetailPage` | `src/pages/procurement/detail.tsx:122` | PO detail; status actions, 412-requiresGrn guard |
-| `ThreeWayMatchPanel` | `src/pages/procurement/detail.tsx:1469` | PO↔GRN↔PI variance panel (derived) |
-| `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:470` | PO create; `body.status` verbatim |
-| `app.put("/:id")` (PO edit) | `src/api/routes/purchase-orders.ts:802` | PO edit + status lifecycle |
-| `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1144` | Runtime column self-apply |
-| `buildGRNStockStatements` | `src/api/routes/grn.ts:533` | Stock + cost_ledger statements for the post's own batch (T-006 R3) |
-| `buildPoReceiptStatements` | `src/api/routes/grn.ts:980` | Guarded PO counter bump + PO status → RECEIVED/PARTIAL_RECEIVED, in the post's batch |
-| `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:673` | Compensating DELTA for POSTED-line edit |
-| `poCounterIncrement` | `src/api/routes/grn.ts:816` | PO line receivedQty += qty with the 110% ceiling in the UPDATE (T-006 R2) |
-| `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1196` | Un-post/cancel/delete: give back PO qty |
-| `resolveRmForGRNItem` | `src/api/routes/grn.ts:482` | Resolve GRN line → raw_material |
-| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1413` | GRN create; status derived from arrival |
-| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2436` | Arrival state transition (gate) |
+| `ThreeWayMatchPanel` | `src/pages/procurement/detail.tsx:1491` | PO↔GRN↔PI variance panel (derived) |
+| `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:545` | PO create; `body.status` verbatim |
+| `app.put("/:id")` (PO edit) | `src/api/routes/purchase-orders.ts:885` | PO edit + status lifecycle |
+| `ensurePendingMigrations` (PO) | `src/api/routes/purchase-orders.ts:1234` | Runtime column self-apply |
+| `buildGRNStockStatements` | `src/api/routes/grn.ts:583` | Stock + cost_ledger statements for the post's own batch (T-006 R3) |
+| `buildPoReceiptStatements` | `src/api/routes/grn.ts:1030` | Guarded PO counter bump + PO status → RECEIVED/PARTIAL_RECEIVED, in the post's batch |
+| `buildPostedGRNStockAdjustment` | `src/api/routes/grn.ts:723` | Compensating DELTA for POSTED-line edit |
+| `poCounterIncrement` | `src/api/routes/grn.ts:867` | PO line receivedQty += qty with the 110% ceiling in the UPDATE (T-006 R2) |
+| `restorePOReceivedQtyForGRN` | `src/api/routes/grn.ts:1245` | Un-post/cancel/delete: give back PO qty |
+| `resolveRmForGRNItem` | `src/api/routes/grn.ts:532` | Resolve GRN line → raw_material |
+| `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1463` | GRN create; status derived from arrival |
+| `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2487` | Arrival state transition (gate) |
 | `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1371` | PI create + convert-chain + GL post |
 | `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:2253` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
 | `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:848` | Ceiling on re-synced invoiced_qty |
