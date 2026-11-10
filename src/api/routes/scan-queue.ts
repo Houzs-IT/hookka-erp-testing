@@ -264,6 +264,16 @@ type ScanQueueRow = {
   consumedDocIdxs: number[];
 };
 
+// H3 B5 (review pass 2; sister Houzs#5457): a JSON value bound to `?::jsonb`
+// (or a bare `?` into a jsonb column) through postgres.js `unsafe` is encoded
+// a second time and stored as a jsonb STRING, so SQL `->` reads NULL. Every
+// jsonb write here binds TEXT and casts `?::text::jsonb`; this turns what a
+// read handed back (parsed value or JSON text) into that text.
+export function jsonbText(v: unknown): string | null {
+  if (v == null) return null;
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+
 // Hydrate a DB row (camelCase via the adapter's projection) into our typed
 // ScanQueueRow shape. Tolerates raw_json arriving as a JSON string vs already
 // parsed JSONB object — postgres.js sometimes hands JSONB back as a string
@@ -521,7 +531,7 @@ async function processOneRow(
                                (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
                                 file_bytes_b64, file_key, supplier_id, po_context, status, raw_json,
                                 cache_source_id, created_by, created_at, completed_at, org_id)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?::text::jsonb, ?, ?, ?, ?, ?)`,
                           )
                           .bind(
                             childId,
@@ -535,7 +545,7 @@ async function processOneRow(
                             stored.fileKey,
                             next.supplierId,
                             next.poContext,
-                            cacheSource.rawJson,
+                            jsonbText(cacheSource.rawJson),
                             cacheSource.id,
                             next.createdBy,
                             nowChildIso,
@@ -661,7 +671,7 @@ async function processOneRow(
           .prepare(
             `UPDATE scan_queue
                 SET status = 'done',
-                    raw_json = ?,
+                    raw_json = ?::text::jsonb,
                     sample_id = ?,
                     ocr_model = ?,
                     completed_at = ?,
@@ -836,7 +846,7 @@ app.post("/upload", async (c) => {
              (id, batch_id, kind, file_hash, file_name, mime_type, file_size,
               file_bytes_b64, file_key, supplier_id, po_context, status, raw_json,
               cache_source_id, created_by, created_at, completed_at, org_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cached', ?::text::jsonb, ?, ?, ?, ?, ?)`,
         )
           .bind(
             id,
@@ -850,9 +860,9 @@ app.post("/upload", async (c) => {
             stored.fileKey,
             supplierId,
             poContext,
-            // raw_json comes back as a string from postgres.js when JSONB
-            // — pass through verbatim so we don't double-stringify.
-            cacheSource.rawJson,
+            // raw_json comes back parsed or as a string; either way it goes
+            // in as text cast to jsonb, so it is stored as an object (H3 B5).
+            jsonbText(cacheSource.rawJson),
             cacheSource.id,
             createdBy,
             nowIso,
@@ -1499,7 +1509,7 @@ app.post("/:id/consume", async (c) => {
       // past 'done' so the create-PI step could upload to /api/files).
       await c.var.DB.prepare(
         `UPDATE scan_queue
-            SET consumed_doc_idxs = ?::jsonb,
+            SET consumed_doc_idxs = ?::text::jsonb,
                 consumed_at = ?,
                 file_bytes_b64 = CASE WHEN file_key IS NULL THEN NULL ELSE file_bytes_b64 END
           WHERE id = ?
@@ -1510,7 +1520,7 @@ app.post("/:id/consume", async (c) => {
     } else {
       await c.var.DB.prepare(
         `UPDATE scan_queue
-            SET consumed_doc_idxs = ?::jsonb
+            SET consumed_doc_idxs = ?::text::jsonb
           WHERE id = ?
             AND (org_id = ? OR org_id IS NULL)`,
       )

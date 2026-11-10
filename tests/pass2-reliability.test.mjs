@@ -119,3 +119,23 @@ test("B4: the PO PUT batch row-locks the PO and re-checks updated_at first", () 
   assert.match(put, /ELSE CAST\('\$\{PO_EDIT_CONFLICT\} ' \|\| id AS INTEGER\) END AS ok\s+FROM purchase_orders WHERE id = \? FOR UPDATE`/);
   assert.match(put, /includes\(PO_EDIT_CONFLICT\)\)[\s\S]{0,200}conflict: true \},\s*409/);
 });
+
+// ── H3 B5: scan-queue jsonb columns hold arrays / objects, not strings ────
+test("B5: every scan_queue jsonb write binds text and casts ?::text::jsonb", () => {
+  const s = read("src/api/routes/scan-queue.ts");
+  const code = s.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  assert.doesNotMatch(code, /\?::jsonb/, "a ?::jsonb placeholder is double-encoded by postgres.js unsafe");
+  assert.equal((s.match(/consumed_doc_idxs = \?::text::jsonb/g) ?? []).length, 2);
+  assert.match(s, /raw_json = \?::text::jsonb,/);
+  assert.equal((s.match(/'cached', \?::text::jsonb,/g) ?? []).length, 2, "both cache-hit copies");
+  assert.equal((s.match(/jsonbText\(cacheSource\.rawJson\)/g) ?? []).length, 2);
+});
+
+test("B5: jsonbText passes JSON text through and serialises a parsed value once", async () => {
+  const { jsonbText } = await import("../src/api/routes/scan-queue.ts");
+  assert.equal(jsonbText(null), null);
+  assert.equal(jsonbText(undefined), null);
+  assert.equal(jsonbText('{"docs":[1]}'), '{"docs":[1]}');
+  assert.equal(jsonbText({ docs: [1] }), '{"docs":[1]}');
+  assert.equal(jsonbText([0, 2]), "[0,2]");
+});
