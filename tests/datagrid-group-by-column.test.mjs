@@ -72,9 +72,9 @@ test("a column can name its own group; the Payment Vouchers status groups by its
 });
 
 test("the export carries each group's subtotal row; the PDF bands them", () => {
-  const sheet = between("const exportSheet = (): { aoa: Aoa; subtotalRows: number[] } => {", "const exportBase");
+  const sheet = between("const exportSheet = (rows: T[]): { aoa: Aoa; subtotalRows: number[] } => {", "const exportBase");
   assert.match(sheet, /buildGroupedListingAoa\(/);
-  assert.match(sheet, /groupRows\(sortedData, userGroupValue\)\.map\(\(g\) => \(\{ label: groupValueLabel\(userGroupCol\.type, g\.value\), rows: g\.rows \}\)\)/);
-  assert.match(src, /const \{ aoa, subtotalRows \} = exportSheet\(\);/);
+  assert.match(sheet, /groupRows\(rows, userGroupValue\)\.map\(\(g\) => \(\{ label: groupValueLabel\(userGroupCol\.type, g\.value\), rows: g\.rows \}\)\)/);
+  assert.match(src, /const \{ aoa, subtotalRows \} = exportSheet\(rows\);/);
   assert.match(src, /\(_row, idx\) => \(showFooter && idx === lastBody \? "grand" : subtotal\.has\(idx\) \? "subtotal" : undefined\)/);
 });

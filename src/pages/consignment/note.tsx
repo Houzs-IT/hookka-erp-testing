@@ -3196,6 +3196,7 @@ export default function ConsignmentNotePage() {
               columns={planningColumns}
               data={planningPOs}
               keyField="id"
+              gridId="consignment-note-planning-cos"
               loading={loading}
               stickyHeader
               maxHeight="calc(100vh - 280px)"
@@ -3241,6 +3242,7 @@ export default function ConsignmentNotePage() {
               columns={pendingCNColumns}
               data={readyPOs}
               keyField="id"
+              gridId="consignment-note-pending-cos"
               loading={loading}
               stickyHeader
               maxHeight="calc(100vh - 280px)"
@@ -3314,6 +3316,7 @@ export default function ConsignmentNotePage() {
               columns={cnColumns}
               data={filteredCNs}
               keyField="id"
+              gridId="consignment-notes-list"
               loading={loading}
               stickyHeader
               maxHeight="calc(100vh - 280px)"

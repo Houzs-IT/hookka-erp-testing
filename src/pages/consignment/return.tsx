@@ -618,6 +618,7 @@ export default function ConsignmentReturnPage() {
             columns={columns}
             data={filteredRows}
             keyField="id"
+            gridId="consignment-returns-list"
             loading={loading}
             stickyHeader
             maxHeight="calc(100vh - 280px)"

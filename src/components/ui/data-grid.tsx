@@ -357,11 +357,15 @@ export type DataGridProps<T> = {
   footerLabel?: (shown: number, all: number) => React.ReactNode;
   // Header right-click menu (finance v2 "PV table" rule, AutoCount style):
   // sort, filter, hide / choose columns, best fit, save / reset layout, and
-  // Export to Excel / PDF / Print of the current view. Off by default, so other
-  // grids keep the browser's own menu on their headers.
+  // Export to Excel / PDF / Print of the current view. DEFAULT: ON for every
+  // grid with a `gridId` (2026-11-10, review G1 — built for finance, the main
+  // lists never had it); pass `headerMenu={false}` to keep the browser's menu.
+  // Passing `headerMenu` EXPLICITLY (finance) also hides the toolbar Export
+  // button; a default-on grid keeps its toolbar Export (Detail Listing etc.).
   headerMenu?: boolean;
   // Drag a header onto another to move the column there (finance v2). The new
-  // order saves like a Columns-popover reorder. Off by default.
+  // order saves like a Columns-popover reorder. DEFAULT: ON for a grid with a
+  // `gridId` (review G1); `reorderableHeaders={false}` opts out.
   reorderableHeaders?: boolean;
   // Ticks change only through the checkbox column (finance lists, owner
   // 2026-10-01 「我不要点一次打开」): a row click, a right-click and the ⋮
@@ -381,9 +385,11 @@ export type DataGridProps<T> = {
   // Mirror the search text + column TEXT filters into the URL
   // (`?<gridId>.q=` / `?<gridId>.f.<col>=`, src/lib/grid-url-state.ts) and
   // read them back on mount, so a filtered view survives reload and can be
-  // shared. Needs `gridId`. Default: ON for a grid with a gridId that does NOT
-  // manage its own search (no `onSearchChange` / `initialSearch`); pass
-  // `urlFilters` to force it on, `urlFilters={false}` to opt out.
+  // shared. Needs `gridId`. Default: ON for every grid with a gridId
+  // (2026-11-10, review G2 — it used to skip grids that manage their own
+  // search, which were exactly the big paged lists); `urlFilters={false}`
+  // opts out. The header sort rides along (`?<gridId>.s=<key>:<dir>`). A
+  // page's non-empty `initialSearch` still wins over the URL.
   urlFilters?: boolean;
 };
 
@@ -1814,13 +1820,18 @@ export function DataGrid<T extends Record<string, any>>({
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
   footerLabel,
-  headerMenu,
-  reorderableHeaders,
+  headerMenu: headerMenuProp,
+  reorderableHeaders: reorderableHeadersProp,
   checkboxSelectOnly,
   searchPlaceholder,
   cellCopy = true,
   urlFilters,
 }: DataGridProps<T>) {
+  // Review G1 (2026-11-10): the header menu and header drag are ON for every
+  // grid that persists a layout (has a gridId), so new list pages get them
+  // for free. An explicit prop still wins either way.
+  const headerMenu = headerMenuProp ?? !!gridId;
+  const reorderableHeaders = reorderableHeadersProp ?? !!gridId;
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
   //   1. Personal layout `datagrid-cols-${gridId}-${userKey()}` — written
@@ -2361,10 +2372,14 @@ export function DataGrid<T extends Record<string, any>>({
   // URL filters (2026-11-08): read once on mount. A shared / reloaded link
   // wins over the sessionStorage tab-hop copy; a page's own initialSearch
   // still wins over both. See src/lib/grid-url-state.ts.
-  const urlSyncOn = !!gridId && (urlFilters ?? (!onSearchChange && initialSearch === undefined));
+  const urlSyncOn = !!gridId && (urlFilters ?? true);
   const [searchParams, setSearchParams] = useSearchParams();
   const [urlSeed] = useState(() => (urlSyncOn && gridId ? readGridUrlState(searchParams, gridId) : null));
-  const [searchText, setSearchText] = useState(initialSearch ?? (urlSeed?.search || seeded?.searchText) ?? "");
+  // A page's NON-EMPTY initialSearch wins; then the URL; then (only for a grid
+  // whose page does not seed its own search) the sessionStorage tab-hop copy.
+  const [searchText, setSearchText] = useState(
+    initialSearch || urlSeed?.search || (initialSearch === undefined ? seeded?.searchText ?? "" : ""),
+  );
   // Deferred copy of the search value. The <input> stays bound to searchText
   // (instant caret/echo), but the heavy filter+sort AND the parent
   // onSearchChange notification read deferredSearch — so a fast typist no
@@ -2377,7 +2392,11 @@ export function DataGrid<T extends Record<string, any>>({
       ? urlSeed.columnFilters
       : seededFilters?.columnFilters ?? {},
   );
-  // Write search + text filters back to the URL, replace-style (no history
+  // Header sort — seeded from the URL (`?<gridId>.s=`) so a shared or
+  // reloaded link keeps its order (review G2).
+  const [sortKey, setSortKey] = useState<string | null>(urlSeed?.sort?.key ?? null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(urlSeed?.sort?.dir ?? "asc");
+  // Write search + text filters + sort back to the URL, replace-style (no history
   // spam), 400 ms after the last change so typing never navigates per key.
   // Compared against the live location first, so an unchanged state is a
   // no-op. Every other query key (the page's ?tab=, another grid) is kept.
@@ -2390,11 +2409,15 @@ export function DataGrid<T extends Record<string, any>>({
     // eslint-disable-next-line no-restricted-syntax -- debounce of a URL write, cleared in this effect's cleanup
     const t = window.setTimeout(() => {
       const cur = new URLSearchParams(window.location.search);
-      const next = writeGridUrlState(cur, gridId, { search: searchText, columnFilters });
+      const next = writeGridUrlState(cur, gridId, {
+        search: searchText,
+        columnFilters,
+        sort: sortKey ? { key: sortKey, dir: sortDir } : null,
+      });
       if (!sameParams(cur, next)) setSearchParamsRef.current(next, { replace: true, preventScrollReset: true });
     }, 400);
     return () => window.clearTimeout(t);
-  }, [urlSyncOn, gridId, searchText, columnFilters]);
+  }, [urlSyncOn, gridId, searchText, columnFilters, sortKey, sortDir]);
   const [columnValueFilters, setColumnValueFilters] = useState<Record<string, Set<string>>>(
     () => {
       if (!seededFilters?.columnValueFilters) return {};
@@ -2514,9 +2537,7 @@ export function DataGrid<T extends Record<string, any>>({
     setColumnValueFilters(prev => { const n = { ...prev }; delete n[key]; return n; });
   }, []);
 
-  // ── Sorting ──
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // ── Sorting ── (state declared above, next to the URL seed it reads)
 
   // ── Selection ──
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -3103,17 +3124,23 @@ export function DataGrid<T extends Record<string, any>>({
   // plus the total row when the grid shows one (currency in RM). Grouped by
   // the user ("Group By This Column"): each group's rows, then its subtotal
   // row, as the design's export; `subtotalRows` marks them for the PDF.
-  const exportSheet = (): { aoa: Aoa; subtotalRows: number[] } => {
+  // `rows` = the filtered + sorted rows to write: the loaded ones, or — on a
+  // server-paged grid with `fetchAllRows` — every matching record (review G1:
+  // the header menu now runs on the paged lists, so it must not export one
+  // page while the toolbar Export writes them all).
+  const exportSheet = (rows: T[]): { aoa: Aoa; subtotalRows: number[] } => {
+    const sumOf = (rs: T[]) => columnTotals(rs, visibleColumns, (row, key) => getNestedValue(row, key));
     const grouped = userGroupCol
       ? buildGroupedListingAoa(
           visibleColumns as unknown as ExportColumn<T>[],
-          groupRows(sortedData, userGroupValue).map((g) => ({ label: groupValueLabel(userGroupCol.type, g.value), rows: g.rows })),
-          (rows) => columnTotals(rows, visibleColumns, (row, key) => getNestedValue(row, key)),
+          groupRows(rows, userGroupValue).map((g) => ({ label: groupValueLabel(userGroupCol.type, g.value), rows: g.rows })),
+          sumOf,
         )
       : null;
-    const aoa = grouped ? grouped.aoa : buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
+    const aoa = grouped ? grouped.aoa : buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], rows);
+    const sheetTotals = showFooter ? (rows === sortedData ? totals : sumOf(rows)) : {};
     if (showFooter) aoa.push(visibleColumns.map((c, i) => {
-      const t = totals[c.key];
+      const t = sheetTotals[c.key];
       if (t !== undefined) return c.type === "currency" ? Math.round(t) / 100 : t;
       return i === 0 ? "Total" : "";
     }));
@@ -3121,9 +3148,21 @@ export function DataGrid<T extends Record<string, any>>({
   };
   const exportBase = exportName || gridId || "export";
   const exportTitle = exportSheetLabel || exportName || gridId || "Listing";
-  const runExport = (kind: "xlsx" | "pdf" | "print") => {
+  const runExport = async (kind: "xlsx" | "pdf" | "print") => {
     const today = todayYmdMY();
-    const { aoa, subtotalRows } = exportSheet();
+    let rows = sortedData;
+    if (fetchAllRows) {
+      setExportBusy(true);
+      try {
+        rows = sortRows(filterRows(await fetchAllRows()));
+      } catch {
+        toast.error("Could not load every row to export — try again");
+        return;
+      } finally {
+        setExportBusy(false);
+      }
+    }
+    const { aoa, subtotalRows } = exportSheet(rows);
     if (kind === "xlsx") {
       void exportReportXlsx(exportFilename(exportBase, "listing", "xlsx", today), exportTitle, aoa);
       return;
@@ -3200,9 +3239,9 @@ export function DataGrid<T extends Record<string, any>>({
       }
       void resetToOrgDefault();
     },
-    "Export to Excel": () => runExport("xlsx"),
-    "Export to PDF": () => runExport("pdf"),
-    "Print": () => runExport("print"),
+    "Export to Excel": () => { void runExport("xlsx"); },
+    "Export to PDF": () => { void runExport("pdf"); },
+    "Print": () => { void runExport("print"); },
   });
   const hdrMenuEntries: ContextMenuItem[] = (() => {
     if (!hdrMenu) return [];
@@ -3450,7 +3489,7 @@ export function DataGrid<T extends Record<string, any>>({
             filtered+sorted rows. Opt-in per page via the `exportName` prop.
             A grid with the finance v2 header menu exports from there instead
             (Export to Excel / PDF / Print), so its toolbar stays uncluttered. */}
-        {exportName && !headerMenu && (
+        {exportName && !headerMenuProp && (
           <div className="relative">
             <button
               className={cn(
