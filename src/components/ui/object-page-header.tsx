@@ -66,6 +66,8 @@ export function ObjectPageHeader({
         }
         navigate(opener.href);
         const y = opener.scrollY;
+        // Event handler, not render: one-off scroll after the opener page mounts.
+        // eslint-disable-next-line no-restricted-syntax
         if (y > 0) window.setTimeout(() => window.scrollTo(0, y), 300);
       }
     : undefined;
