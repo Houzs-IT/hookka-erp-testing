@@ -267,3 +267,19 @@ export function chartTipRows<T extends { dataKey?: string; value?: number | stri
   const total = stacked && counted.length > 1 ? counted.reduce((sum, p) => sum + (p.value as number), 0) : null;
   return { bars, lines, total, counted };
 }
+
+/** The Monthly P&L forecast view's first heading row: a month over its Actual
+ *  and Forecast, Accumulated over both of its own. Shared by the read-only
+ *  view and the Edit forecast (2026-11-10). */
+export function plMonthHeads(
+  cols: readonly { key: string; label: string; accum: boolean; forecast?: boolean; ym?: string }[],
+): { key: string; label: string; span: number; accum: boolean; forecastOnly: boolean }[] {
+  const out: { key: string; label: string; span: number; accum: boolean; forecastOnly: boolean }[] = [];
+  for (const c of cols) {
+    const key = c.accum ? "acc" : `m:${c.ym ?? c.key}`;
+    const last = out[out.length - 1];
+    if (last && last.key === key) { last.span += 2; last.forecastOnly = last.forecastOnly && !!c.forecast; continue; }
+    out.push({ key, label: c.label, span: 2, accum: c.accum, forecastOnly: !!c.forecast });
+  }
+  return out;
+}

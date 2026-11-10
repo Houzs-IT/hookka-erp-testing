@@ -124,8 +124,8 @@ import {
   type PaymentAllocInput,
 } from "../../lib/other-party-payment";
 import { readIdempotencyKey, withIdempotency } from "../lib/idempotency";
-import { buildPnlMatrix, type PnlMatrixCol } from "../../lib/pnl-matrix";
-import { forecastPnlWindow, rmTypeOf, sumPnlWindowLikes } from "../../lib/pnl-forecast";
+import { buildPnlMatrix, type PnlMatrixCol, type PnlWindowLike } from "../../lib/pnl-matrix";
+import { forecastPnlWindow, plForecastMatrix } from "../../lib/pnl-forecast";
 import { lastMonths, sumByMonth, topModelsByMonth, overviewPnl, type OverviewMonth } from "../../lib/overview-trend";
 import { selectHistoricalWindow, sumPnlWindows, buildHistoricalMap } from "../../lib/pnl-historical";
 import { buildHistIdentityRemap } from "../../lib/pnl-hist-remap";
@@ -9569,6 +9569,9 @@ async function reportSnapshot(
     .map(([k, v]) => `${k}=${v}`)
     .join("&");
   const key = `${REPORT_SNAPSHOT_V}:${view}:${runningMonthYm()}:${params}:${orgId}`;
+  // Set by withSnapshot when it answers with the stale copy (a holder, so the
+  // callback's write is not narrowed away at the return below).
+  const served: { stale: { builtFrom: string | null; sourceMax: string | null } | null } = { stale: null };
   try {
     const payload = await withSnapshot(
       db,
@@ -9584,9 +9587,13 @@ async function reportSnapshot(
       },
       key,
       c,
-      { staleWhileRevalidate: true, maxAgeMs: REPORT_SNAPSHOT_MAX_AGE_MS },
+      // A stale copy is still served at once; `stale` beside it lets a page
+      // ask again once the rebuild has landed (owner 2026-11-10: the Monthly
+      // P&L's Edit forecast saves, then reads this copy back; as the Financial
+      // Dashboard, #1280, src/lib/stale-refresh.ts).
+      { staleWhileRevalidate: true, maxAgeMs: REPORT_SNAPSHOT_MAX_AGE_MS, onServedStale: (copy) => { served.stale = copy; } },
     );
-    return c.json(payload);
+    return c.json(served.stale ? { ...payload, stale: served.stale } : payload);
   } catch (e) {
     if (e instanceof ReportNotStored) {
       return new Response(e.body, { status: e.status, headers: { "Content-Type": "application/json; charset=UTF-8" } });
@@ -10443,22 +10450,23 @@ async function plMonthlyResponse(c: AccountingCtx) {
       const reach = Object.keys(fc.months).filter((ym) => /^\d{4}-\d{2}$/.test(ym) && ym > curYm && ym <= addMonthsYm(curYm, 12)).sort().pop();
       for (let ym = addMonthsYm(curYm, 1); reach && ym <= reach; ym = addMonthsYm(ym, 1)) futureYms.push(ym);
     }
-    const fcMonthCols = new Map(months.map((ym) => [ym, fw(ym)] as const));
-    const mcols: PnlMatrixCol[] = [
-      { key: "acc", label: "Accumulated", accum: true, window: accWindow },
-      { key: "fc:acc", label: "Accumulated", accum: true, window: sumPnlWindowLikes([...fcMonthCols.values()]) },
-      ...[...futureYms].reverse().map((ym) => ({ key: `fc:${ym}`, label: monthLabel(ym), accum: false, window: fw(ym) })),
-      ...cols.flatMap((col) => [col, { key: `fc:${col.key}`, label: col.label, accum: false, window: fcMonthCols.get(col.key)! }]),
-    ];
-    const spine = sumPnlWindowLikes([accWindow, ...mcols.filter((m) => m.key.startsWith("fc:")).map((m) => m.window)]);
-    const fm = buildPnlMatrix(mcols, { spine, rmTypeOf });
-    const future = new Set(futureYms.map((ym) => `fc:${ym}`));
-    const columns = fm.columns.map((col) => {
-      if (!col.key.startsWith("fc:")) return { ...col, ...(col.accum ? {} : { ym: col.key }) };
-      const ym = col.key === "fc:acc" ? undefined : col.key.slice(3);
-      return { ...col, forecast: true, ...(ym ? { ym } : {}), ...(future.has(col.key) ? { future: true } : {}) };
+    // One layout for this route and the page's Edit forecast (owner
+    // 2026-11-10 「我想要A」, spec 2026-11-10-monthly-pl-forecast-edit-design.md 4).
+    const fm = plForecastMatrix({ accWindow, monthCols: cols, futureYms, forecastOf: fw, labelOf: monthLabel });
+    // Edit forecast (edit=1): the actual windows and the months ahead, so the
+    // browser lays the same table with the forecast as it is being typed.
+    const pickWindow = (w: PnlWindowLike): PnlWindowLike => ({
+      netSalesSen: w.netSalesSen, revLines: w.revLines, rmGroups: w.rmGroups, rmConsumedSen: w.rmConsumedSen,
+      carriageSen: w.carriageSen, sstSen: w.sstSen, labourLines: w.labourLines, labourSen: w.labourSen,
+      overheadLines: w.overheadLines, overheadSen: w.overheadSen, wipOpen: w.wipOpen, wipClose: w.wipClose,
+      fgOpen: w.fgOpen, fgClose: w.fgClose, manufacturingSen: w.manufacturingSen, cogsSen: w.cogsSen,
+      grossProfitSen: w.grossProfitSen, otherIncomeSen: w.otherIncomeSen, otherIncomeLines: w.otherIncomeLines,
+      expenseLines: w.expenseLines, expenseSen: w.expenseSen, netProfitSen: w.netProfitSen,
     });
-    return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, forecast: true, columns, rows: fm.rows } });
+    const edit = c.req.query("edit") === "1"
+      ? { edit: { windows: { acc: pickWindow(accWindow), ...Object.fromEntries(cols.map((col) => [col.key, pickWindow(col.window)])) }, months: cols.map((col) => col.key), futureYms } }
+      : {};
+    return c.json({ success: true, data: { fyLabel: fy.label, line, anchor: anchorYm, forecast: true, columns: fm.columns, rows: fm.rows, ...edit } });
   }
 
   cols.unshift({ key: "acc", label: "Accumulated", accum: true, window: accWindow });

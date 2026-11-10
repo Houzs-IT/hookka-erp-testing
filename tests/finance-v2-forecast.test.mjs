@@ -55,7 +55,9 @@ test("snapshot: clearing a figure again, or adding then removing a month, is not
 test("the month control: picking a month adds it; the ✕ asks first and still waits for Save", () => {
   assert.match(src, /<select\n\s*aria-label="Add month"\n\s*value=""\n\s*onChange=\{\(e\) => \{ if \(e\.target\.value\) addMonth\(e\.target\.value\); \}\}/);
   assert.match(src, /const addMonth = \(ym: string\) => \{/);
-  assert.match(src, /const prevYm = \[\.\.\.yms\]\.filter\(\(k\) => k < ym\)\.pop\(\) \?\? \[\.\.\.yms\]\.pop\(\);/, "a new month still starts from the previous month's percentages");
+  // Since 2026-11-10 the rule lives in src/lib/forecast-sheet.ts (newSheetMonth), shared with the Monthly P&L.
+  assert.match(readFileSync("src/lib/forecast-sheet.ts", "utf8").replace(/\r\n/g, "\n"), /const prevYm = \[\.\.\.yms\]\.filter\(\(k\) => k < ym\)\.pop\(\) \?\? \[\.\.\.yms\]\.pop\(\);/, "a new month still starts from the previous month's percentages");
+  assert.match(src, /setMonths\(\(prev\) => \(\{ \.\.\.prev, \[ym\]: newSheetMonth\(prev, ym\) \}\)\);/);
   assert.doesNotMatch(src, /type="month"/);
   assert.match(src, /if \(!\(await confirm\(\{ title: "Remove month\?", message: `Remove \$\{monthLabel\(ym\)\} from the forecast\? It goes when you Save\.`, danger: true \}\)\)\) return;/);
   assert.match(src, /onClick=\{\(\) => void removeMonth\(ym\)\}/);

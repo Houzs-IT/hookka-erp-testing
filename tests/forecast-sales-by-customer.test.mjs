@@ -22,14 +22,19 @@ test("PUT /forecast keeps the customer cells and writes Sales as their sum", () 
 test("the page lists the customers under Sales and saves their cells", () => {
   assert.match(page, /fetch\("\/api\/customers"\)/);
   assert.match(page, /forecastCustomerRows\(/);
-  assert.match(page, /salesByCustomer/);
+  // The customer cells are stored and loaded by the shared sheet model (2026-11-10).
+  assert.match(read("src/lib/forecast-sheet.ts"), /salesByCustomer/);
   // A month with any customer cell shows the sum, not the single input.
   assert.match(page, /customerKeyed\(ym\) \?/);
   // A new month does not copy the previous month's customers (nor, since
-  // 2026-11-10, its suppliers).
-  assert.match(page, /\{ salesStr: "", pct: inherited, customers: \{\}, suppliers: \{\} \}/);
+  // 2026-11-10, its suppliers). Since 2026-11-10 the sheet's rules live in
+  // src/lib/forecast-sheet.ts, shared with the Monthly P&L's Edit forecast.
+  const sheet = read("src/lib/forecast-sheet.ts");
+  assert.match(sheet, /\{ salesStr: "", pct: inherited, customers: \{\}, suppliers: \{\} \}/);
+  assert.match(page, /newSheetMonth\(prev, ym\)/);
   // Every customer cell is checked before Save, like the other money cells.
-  assert.match(page, /label: `\$\{ym\} \$\{/);
+  assert.match(sheet, /label: `\$\{ym\} \$\{names\.customerName\(id\)\} sales`/);
+  assert.match(page, /firstMoneyFieldError\(sheetMoneyFields\(months, \{ customerName, supplierName \}\)\)/);
 });
 
 test("a save drops the Cash Flow forecast the browser keeps, so the next look waits for the new figures (owner 2026-11-09 「好，改」)", () => {

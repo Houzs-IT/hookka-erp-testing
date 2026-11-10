@@ -55,6 +55,11 @@ export interface PnlMatrixRow {
   // on lines that carry one in some column), and the month it came from.
   estValues?: number[];
   estFrom?: string;
+  // What the row is in Forecast P&L terms (owner 2026-11-10: the forecast is
+  // keyed in the Monthly P&L; src/lib/pl-forecast-edit.ts): "sales", a
+  // material type "cat:<TYPE>", carriage / SST, or the line's account code.
+  // Stock and revenue lines carry none.
+  fcKey?: string;
 }
 export interface PnlMatrix { columns: { key: string; label: string; accum: boolean }[]; rows: PnlMatrixRow[] }
 
@@ -84,13 +89,19 @@ export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLi
     list.find((l) => keyOf(l) === key)?.amountSen ?? 0;
 
   let gid = 0;
-  const push = (kind: PnlMatrixRow["kind"], depth: number, label: string, ex: (w: PnlWindowLike) => number, opts: { groupId?: string; totalLabel?: string; accountCode?: string; drillCode?: string } = {}) => {
+  const push = (kind: PnlMatrixRow["kind"], depth: number, label: string, ex: (w: PnlWindowLike) => number, opts: { groupId?: string; totalLabel?: string; accountCode?: string; drillCode?: string; fcKey?: string } = {}) => {
     const values = windows.map(ex);
     rows.push({ kind, depth, label, values, pctValues: pctOf(values), ...opts });
   };
-  const group = (label: string, depth: number, ex: (w: PnlWindowLike) => number, totalLabel: string) => { const id = `g${gid++}`; push("group", depth, label, ex, { groupId: id, totalLabel }); return id; };
-  const line = (label: string, depth: number, ex: (w: PnlWindowLike) => number, accountCode?: string, drillCode?: string) =>
-    push("line", depth, label, ex, drillCode ? { accountCode, drillCode } : { accountCode });
+  const group = (label: string, depth: number, ex: (w: PnlWindowLike) => number, totalLabel: string, fcKey?: string) => {
+    const id = `g${gid++}`;
+    push("group", depth, label, ex, fcKey ? { groupId: id, totalLabel, fcKey } : { groupId: id, totalLabel });
+    return id;
+  };
+  // `fcKey` (forecast key): an account line keys its own code; carriage and
+  // SST theirs; a revenue or stock line nothing.
+  const line = (label: string, depth: number, ex: (w: PnlWindowLike) => number, accountCode?: string, drillCode?: string, fcKey?: string) =>
+    push("line", depth, label, ex, { accountCode, ...(drillCode ? { drillCode } : {}), ...(fcKey ? { fcKey } : {}) });
   const tot = (label: string, depth: number, ex: (w: PnlWindowLike) => number) => push("total", depth, label, ex);
   // The line just pushed: which columns are (partly) estimates.
   const markEst = (pick: (w: PnlWindowLike) => { code: string; name?: string; estSen?: number; estFrom?: string }[], key: string) => {
@@ -105,7 +116,7 @@ export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLi
   const gap = () => rows.push({ kind: "gap", depth: 0, label: "", values: [], pctValues: [] });
 
   // SALES
-  group("SALES", 0, (w) => w.netSalesSen, "NET SALES");
+  group("SALES", 0, (w) => w.netSalesSen, "NET SALES", "sales");
   for (const rl of spine.revLines) line(rl.name, 1, (w) => byCode(w.revLines, keyOf(rl)), rl.code);
   gap();
 
@@ -126,16 +137,16 @@ export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLi
     const types: string[] = [];
     for (const rg of spine.rmGroups) { const t = typeOf(rg); if (!types.includes(t)) types.push(t); }
     for (const t of types) {
-      group(t, 2, (w) => w.rmGroups.filter((q) => typeOf(q) === t).reduce((s, q) => s + consumed(q), 0), `TOTAL ${t}`);
+      group(t, 2, (w) => w.rmGroups.filter((q) => typeOf(q) === t).reduce((s, q) => s + consumed(q), 0), `TOTAL ${t}`, `cat:${t}`);
       for (const rg of spine.rmGroups) if (typeOf(rg) === t && !rg.group.startsWith(FORECAST_TYPE_GROUP_PREFIX)) rmGroupRows(rg, 3);
     }
   } else for (const rg of spine.rmGroups) rmGroupRows(rg, 2);
-  line("CARRIAGE INWARDS", 1, (w) => w.carriageSen, undefined, "700-1015");
-  line("SST CHARGES", 1, (w) => w.sstSen, undefined, "706-0000");
+  line("CARRIAGE INWARDS", 1, (w) => w.carriageSen, undefined, "700-1015", "700-1015");
+  line("SST CHARGES", 1, (w) => w.sstSen, undefined, "706-0000", "706-0000");
   group("DIRECT LABOUR", 1, (w) => w.labourSen, "TOTAL DIRECT LABOUR");
-  for (const ll of spine.labourLines) line(ll.name, 2, (w) => byCode(w.labourLines, keyOf(ll)), ll.code);
+  for (const ll of spine.labourLines) line(ll.name, 2, (w) => byCode(w.labourLines, keyOf(ll)), ll.code, undefined, ll.code);
   group("FACTORY OVERHEAD", 1, (w) => w.overheadSen, "TOTAL FACTORY OVERHEAD");
-  for (const ol of spine.overheadLines) { line(ol.name, 2, (w) => byCode(w.overheadLines, keyOf(ol)), ol.code); markEst((w) => w.overheadLines, keyOf(ol)); }
+  for (const ol of spine.overheadLines) { line(ol.name, 2, (w) => byCode(w.overheadLines, keyOf(ol)), ol.code, undefined, ol.code); markEst((w) => w.overheadLines, keyOf(ol)); }
   group("WORK IN PROGRESS", 1, (w) => w.wipOpen - w.wipClose, "WIP MOVEMENT (net)");
   line("WIP - OPENING", 2, (w) => w.wipOpen);
   line("WIP - CLOSING", 2, (w) => -w.wipClose);
@@ -147,7 +158,7 @@ export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLi
   // OTHER INCOME
   if (spine.otherIncomeLines.length > 0 || windows.some((w) => w.otherIncomeSen !== 0)) {
     group("OTHER INCOME", 0, (w) => w.otherIncomeSen, "TOTAL OTHER INCOME");
-    for (const ol of spine.otherIncomeLines) line(ol.name, 1, (w) => byCode(w.otherIncomeLines, keyOf(ol)), ol.code);
+    for (const ol of spine.otherIncomeLines) line(ol.name, 1, (w) => byCode(w.otherIncomeLines, keyOf(ol)), ol.code, undefined, ol.code);
   }
 
   // OPERATING EXPENSES
@@ -155,9 +166,9 @@ export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLi
   const salLines = spine.expenseLines.filter((l) => l.salary);
   if (salLines.length > 0) {
     group("SALARIES & CONTRIBUTION", 1, (w) => w.expenseLines.filter((l) => l.salary).reduce((s, l) => s + l.amountSen, 0), "TOTAL SALARIES & CONTRIBUTION");
-    for (const sl of salLines) { line(sl.name, 2, (w) => byCode(w.expenseLines, keyOf(sl)), sl.code); markEst((w) => w.expenseLines, keyOf(sl)); }
+    for (const sl of salLines) { line(sl.name, 2, (w) => byCode(w.expenseLines, keyOf(sl)), sl.code, undefined, sl.code); markEst((w) => w.expenseLines, keyOf(sl)); }
   }
-  for (const el of spine.expenseLines.filter((l) => !l.salary)) { line(el.name, 1, (w) => byCode(w.expenseLines, keyOf(el)), el.code); markEst((w) => w.expenseLines, keyOf(el)); }
+  for (const el of spine.expenseLines.filter((l) => !l.salary)) { line(el.name, 1, (w) => byCode(w.expenseLines, keyOf(el)), el.code, undefined, el.code); markEst((w) => w.expenseLines, keyOf(el)); }
   grand("NET PROFIT / (LOSS)", (w) => w.netProfitSen);
 
   return { columns, rows };

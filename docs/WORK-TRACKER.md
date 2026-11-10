@@ -375,18 +375,27 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - RM typed on the % supplier cleared its % and showed the new share.
       - Clearing both gave back the material's own boxes and the same fingerprint, with no unsaved banner. The stored forecast is byte-identical to before. No console errors.
       - The save of a % supplier figure stays unverified until the owner's first save (HANDOFF, still to verify).
-18. 🔵 Trade finance: fill the planned drawdowns from the Forecast P&L supplier figures (branch `feat/tf-fill-from-forecast`). The owner: 「这个trade finance part 其实我是不是可以从forecast P&L 那边capture supplier 买的…然后我自己决定要不要使用？这点可以确定」. A proposal followed. The owner then refined it: 「我想要一键按直接填可以吗？额度不够你提醒」. Asked about a NET60 purchase in November going in January: 「可以」. Then 「做」. Design: `docs/superpowers/specs/2026-11-09-forecast-three-columns-design.md` section 5.
+18. ✅ Trade finance: fill the planned drawdowns from the Forecast P&L supplier figures (#1284). The owner: 「这个trade finance part 其实我是不是可以从forecast P&L 那边capture supplier 买的…然后我自己决定要不要使用？这点可以确定」. A proposal followed. The owner then refined it: 「我想要一键按直接填可以吗？额度不够你提醒」. Asked about a NET60 purchase in November going in January: 「可以」. Then 「做」. Design: `docs/superpowers/specs/2026-11-09-forecast-three-columns-design.md` section 5.
     - A "Fill from Forecast P&L" button beside "Fill from bills", one click, no reference row or ticks (dropped from the first proposal).
     - It takes the Forecast P&L figures (RM or %) of the suppliers the facility has paid before. Each lands in the month it falls due by the supplier's own term (`tfForecastDue`); a due month before this one is left out.
     - Capped by the limit as Fill from bills is; both now go through `planTfFill`. A repayment gives the room back the month it is paid (the owner: 「如果我repay 就会加回limit」, which is how the schedule already worked).
     - The months the limit cannot cover are named under the buttons with the amount short, and the bank pays that part. The note is amber, not red, and any change by hand clears it. With nothing to take, the note says so and the row is left as it is. Nothing counts until Save.
     - Only figures keyed per supplier can be taken; a material keyed by its % alone names no supplier.
     - Tests: `tests/tf-fill-from-forecast.test.mjs`; the dialog pin in `tests/cashflow-forecast-ui.test.mjs` updated.
-19. 🟡 Key the forecast in the Monthly P&L. The owner: 「我可以不可以把forecastP&L 自己做去现有的monthly P&L？因为我想要refer 数据」. Told that the Monthly P&L Forecast view already shows it read-only, and offered A (key it in the Monthly P&L) or B (actual figures beside the Forecast P&L's cells). The owner chose A: 「我想要A, 因为我的forecast cash flow 也是在cash flow 变动」. Proposal given, waiting for 「做」:
-    - Forecast on, then "Edit forecast": each month's Forecast column takes RM or %, with Save.
-    - The detail lines open with ▸: Sales to its customers, each material to its suppliers, each salary account to the departments whose wages post to it.
-    - Stock lines (WIP / FG) have no forecast and stay unkeyed.
-    - The same stored forecast, so the Forecast P&L page, Cash Flow and the Dashboard follow. The Forecast P&L page stays.
+    - MEASURED on prod 2026-11-10 after the deploy, read only. Nothing was saved; the popup was closed with Cancel.
+      - Before the deploy: the owner had already saved a trade-finance plan of 10 months, the first observed save of #1227's plan.
+      - `forecastDue` is served per facility. It is empty today because no supplier figures are stored. Every other input matches the pre-deploy fingerprint.
+      - Fill from Forecast P&L: the amber "Nothing to fill" note, and the Drawdown row kept the owner's plan.
+      - Fill from bills: the same three months as measured 2026-11-09, and the new note naming the one month the limit cannot cover and the amount short (that month's bills minus what fits).
+      - Room left matches 2026-11-09. After Cancel the stored plan is unchanged (same fingerprint). No console errors.
+19. 🔵 Key the forecast in the Monthly P&L (branch `feat/monthly-pl-forecast-edit`). The owner: 「我可以不可以把forecastP&L 自己做去现有的monthly P&L？因为我想要refer 数据」. Told that the Monthly P&L Forecast view already shows it read-only, and offered A (key it in the Monthly P&L) or B (actual figures beside the Forecast P&L's cells). The owner chose A: 「我想要A, 因为我的forecast cash flow 也是在cash flow 变动」. Then 「是不是我可以理解forecast的可以在monthly pnl 点开填资料保存？」 (yes), and 「做」. Design: `docs/superpowers/specs/2026-11-10-monthly-pl-forecast-edit-design.md`.
+    - Forecast on, then "Edit forecast" (`MonthlyPlForecastEditor`, `src/pages/accounting/monthly-pl-forecast-editor.tsx`): each month's Forecast takes RM or %, with Add month, Save and Done. An unsaved banner and leave guard as on the Forecast P&L page.
+    - The detail lines open with ▸: Sales to its customers, each material to its suppliers, each salary account to the departments whose wages post to it. In a month with any department figure, those accounts show greyed (the Forecast P&L's supersede rule).
+    - Stock lines (WIP / FG) and lines the forecast does not list stay unkeyed. Every line the forecast keys has a row, figures or not (`forecastLinesWindow`).
+    - One sheet model for both pages: `src/lib/forecast-sheet.ts`, moved from the Forecast P&L page unchanged. One column layout for the route and the editor: `plForecastMatrix`. `buildPnlMatrix` tags each row's forecast key (`fcKey`), and `src/lib/pl-forecast-edit.ts` says what a row keys.
+    - The same stored forecast (PUT /forecast), so the Forecast P&L page, Cash Flow and the Dashboard follow. The Forecast P&L page stays.
+    - A stored report copy served while it rebuilds now says `stale` beside data (`reportSnapshot`), and the Monthly P&L asks again with "Updating…", as the Financial Dashboard does (#1280).
+    - Tests: `tests/monthly-pl-forecast-edit.test.mjs`; the pins that followed the moved code are repointed.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).

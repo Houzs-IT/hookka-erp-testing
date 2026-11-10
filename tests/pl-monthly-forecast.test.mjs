@@ -23,12 +23,16 @@ test("GET /pl-monthly: the forecast only on request and for Overall; the plain v
 });
 
 test("forecast columns: Accumulated Actual then Forecast over the same months; months ahead Forecast only; each month Actual then Forecast", () => {
-  assert.match(route, /\{ key: "fc:acc", label: "Accumulated", accum: true, window: sumPnlWindowLikes\(\[\.\.\.fcMonthCols\.values\(\)\]\) \}/);
-  assert.match(route, /\.\.\.cols\.flatMap\(\(col\) => \[col, \{ key: `fc:\$\{col\.key\}`/);
+  // Since 2026-11-10 the layout is plForecastMatrix (src/lib/pnl-forecast.ts), shared with the page's
+  // Edit forecast; its order is tested in tests/monthly-pl-forecast-edit.test.mjs.
+  const lib = readFileSync("src/lib/pnl-forecast.ts", "utf8").replace(/\r\n/g, "\n");
+  assert.match(lib, /\{ key: "fc:acc", label: "Accumulated", accum: true, window: sumPnlWindowLikes\(\[\.\.\.fcMonth\.values\(\)\]\) \}/);
+  assert.match(lib, /\.\.\.o\.monthCols\.flatMap\(\(col\) => \[col, \{ key: `fc:\$\{col\.key\}`/);
+  assert.match(lib, /buildPnlMatrix\(mcols, \{ spine, rmTypeOf \}\)/, "material types over their purchase groups");
+  assert.match(route, /plForecastMatrix\(\{ accWindow, monthCols: cols, futureYms, forecastOf: fw, labelOf: monthLabel \}\)/);
   assert.match(route, /if \(anchorYm === curYm\) \{/, "months ahead only on this month's view");
   assert.match(route, /ym <= addMonthsYm\(curYm, 12\)/, "twelve at most");
-  assert.match(route, /buildPnlMatrix\(mcols, \{ spine, rmTypeOf \}\)/, "material types over their purchase groups");
-  assert.match(route, /forecast: true, columns, rows: fm\.rows/);
+  assert.match(route, /forecast: true, columns: fm\.columns, rows: fm\.rows/);
 });
 
 test("the forecast reads the Forecast P&L, its line structure and where each department's wages post", () => {
