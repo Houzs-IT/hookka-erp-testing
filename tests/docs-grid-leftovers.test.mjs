@@ -15,6 +15,15 @@ import { jsPDF } from "jspdf";
 
 import { fitCodeColumn } from "../src/lib/pdf-code-column.ts";
 import { warehousePrintName, DEFAULT_WAREHOUSE_LABEL } from "../src/lib/pdf-warehouse.ts";
+import {
+  canEditSharedLayout,
+  cleanSharedLayoutName,
+  sameLayoutName,
+  sharedLayoutIdFromKind,
+  sharedLayoutKind,
+} from "../src/lib/grid-shared-layouts.ts";
+import { Hono } from "hono";
+import layoutsRoute from "../src/api/routes/datagrid-layouts.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
@@ -96,4 +105,173 @@ test("CGN: a cancelled consignment note PDF carries the red CANCELLED stamp", ()
   // The page hands the RAW backend status (the display status folds states).
   const page = read("src/pages/consignment/note.tsx");
   assert.match(page, /status: row\.rawStatus, \/\/ CANCELLED → red stamp on the PDF/);
+});
+
+// ── G6 shared named layouts ───────────────────────────────────────────────
+test("G6: the rules — names, the shared kind, who may change a layout", () => {
+  assert.equal(sharedLayoutKind("abc"), "shared:abc");
+  assert.equal(sharedLayoutIdFromKind("shared:abc"), "abc");
+  assert.equal(sharedLayoutIdFromKind("shared:"), null);
+  assert.equal(sharedLayoutIdFromKind("user:u1"), null);
+  assert.equal(sharedLayoutIdFromKind("org-default"), null);
+  assert.deepEqual(cleanSharedLayoutName("  Store   view "), { name: "Store view" });
+  assert.ok("error" in cleanSharedLayoutName("   "));
+  assert.ok("error" in cleanSharedLayoutName("x".repeat(61)));
+  assert.ok(sameLayoutName("Store View", " store  view"));
+  assert.equal(canEditSharedLayout("u1", "u1", "SALES"), true, "the author");
+  assert.equal(canEditSharedLayout("u1", "u2", "SALES"), false, "another member");
+  assert.equal(canEditSharedLayout("u1", "u2", "admin"), true, "an admin");
+  assert.equal(canEditSharedLayout("u1", "u2", "SUPER_ADMIN"), true);
+  assert.equal(canEditSharedLayout(null, null, "SALES"), false, "no author, no user: nobody but admins");
+});
+
+/** In-memory stand-in for datagrid_org_layouts, enough for the route's SQL. */
+function layoutDb() {
+  const rows = [];
+  const db = {
+    rows,
+    prepare(sql) {
+      let args = [];
+      const s = sql.replace(/\s+/g, " ").trim();
+      const stmt = {
+        bind(...a) { args = a; return stmt; },
+        async run() {
+          if (/^(CREATE|ALTER)/.test(s)) return { success: true };
+          if (s.startsWith("INSERT INTO datagrid_org_layouts")) {
+            const [id, org_id, grid_id, kind, visible_cols, col_order, col_widths, updated_by, updated_at, name, created_by, created_by_name] = args;
+            rows.push({ id, org_id, grid_id, kind, visible_cols, col_order, col_widths, updated_by, updated_at, name, created_by, created_by_name });
+            return { success: true };
+          }
+          if (s.startsWith("UPDATE datagrid_org_layouts")) {
+            const [vc, co, cw, name, by, at, org, grid, kind] = args;
+            for (const r of rows) {
+              if (r.org_id === org && r.grid_id === grid && r.kind === kind) {
+                Object.assign(r, { visible_cols: vc, col_order: co, col_widths: cw, name: name ?? r.name, updated_by: by, updated_at: at });
+              }
+            }
+            return { success: true };
+          }
+          if (s.startsWith("DELETE FROM datagrid_org_layouts")) {
+            const [org, grid, kind] = args;
+            for (let i = rows.length - 1; i >= 0; i--) {
+              const r = rows[i];
+              if (r.org_id === org && r.grid_id === grid && r.kind === kind) rows.splice(i, 1);
+            }
+            return { success: true };
+          }
+          throw new Error(`unexpected run: ${s}`);
+        },
+        async all() {
+          const [org, grid, mine] = args;
+          const inGrid = rows.filter((r) => r.org_id === org && r.grid_id === grid);
+          if (s.startsWith("SELECT kind, visible_cols")) {
+            return { results: inGrid.filter((r) => ["org-default", "print"].includes(r.kind) || r.kind === mine || r.kind.startsWith("shared:")) };
+          }
+          if (s.startsWith("SELECT kind, name, created_by")) {
+            return { results: inGrid.filter((r) => r.kind.startsWith("shared:")) };
+          }
+          throw new Error(`unexpected all: ${s}`);
+        },
+        async first() {
+          if (s.startsWith("SELECT displayName")) return { displayName: "Aina" };
+          if (s.startsWith("SELECT kind, name, created_by")) {
+            const [org, grid, kind] = args;
+            return rows.find((r) => r.org_id === org && r.grid_id === grid && r.kind === kind) ?? null;
+          }
+          throw new Error(`unexpected first: ${s}`);
+        },
+      };
+      return stmt;
+    },
+  };
+  return db;
+}
+
+function layoutApp(db, who) {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("DB", db);
+    c.set("orgId", "hookka");
+    c.set("userId", who.id);
+    c.set("userRole", who.role);
+    await next();
+  });
+  app.route("/api/datagrid-layouts", layoutsRoute);
+  return app;
+}
+const call = (app, method, path, body) =>
+  app.request(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+test("G6: a member shares a layout, everyone sees it tagged with its author; only author or admin change it", async () => {
+  const db = layoutDb();
+  const ali = layoutApp(db, { id: "u-ali", role: "SALES" });
+  const bob = layoutApp(db, { id: "u-bob", role: "SALES" });
+  const boss = layoutApp(db, { id: "u-boss", role: "ADMIN" });
+  const cols = { gridId: "so-list", visibleCols: ["soNo", "customer"], colOrder: ["customer", "soNo"], colWidths: { soNo: "120px" } };
+
+  let res = await call(ali, "POST", "/api/datagrid-layouts/shared", { ...cols, name: "Store view" });
+  assert.equal(res.status, 200);
+  const { id } = await res.json();
+  assert.ok(id);
+
+  // Same name again (any case / spacing) → 409; no name → 400.
+  res = await call(bob, "POST", "/api/datagrid-layouts/shared", { ...cols, name: " store  VIEW " });
+  assert.equal(res.status, 409);
+  res = await call(bob, "POST", "/api/datagrid-layouts/shared", { ...cols, name: "" });
+  assert.equal(res.status, 400);
+
+  // Bob sees it, with Ali's name, and may not edit it.
+  res = await call(bob, "GET", "/api/datagrid-layouts?gridId=so-list");
+  const seen = (await res.json()).shared;
+  assert.equal(seen.length, 1);
+  assert.deepEqual(
+    { name: seen[0].name, by: seen[0].createdByName, canEdit: seen[0].canEdit, order: seen[0].colOrder, widths: seen[0].colWidths },
+    { name: "Store view", by: "Aina", canEdit: false, order: ["customer", "soNo"], widths: { soNo: "120px" } },
+  );
+  res = await call(ali, "GET", "/api/datagrid-layouts?gridId=so-list");
+  assert.equal((await res.json()).shared[0].canEdit, true, "the author may edit");
+
+  // Bob can neither overwrite nor delete it.
+  res = await call(bob, "PUT", `/api/datagrid-layouts/shared/${id}`, { ...cols, visibleCols: ["soNo"] });
+  assert.equal(res.status, 403);
+  res = await call(bob, "DELETE", `/api/datagrid-layouts/shared/${id}?gridId=so-list`);
+  assert.equal(res.status, 403);
+  assert.equal(db.rows.length, 1);
+  assert.equal(db.rows[0].visible_cols, JSON.stringify(["soNo", "customer"]), "untouched by the refused PUT");
+
+  // The author updates it; an admin deletes it.
+  res = await call(ali, "PUT", `/api/datagrid-layouts/shared/${id}`, { ...cols, visibleCols: ["soNo"] });
+  assert.equal(res.status, 200);
+  assert.equal(db.rows[0].visible_cols, JSON.stringify(["soNo"]));
+  res = await call(boss, "DELETE", `/api/datagrid-layouts/shared/${id}?gridId=so-list`);
+  assert.equal(res.status, 200);
+  assert.equal(db.rows.length, 0);
+  res = await call(ali, "DELETE", `/api/datagrid-layouts/shared/${id}?gridId=so-list`);
+  assert.equal(res.status, 404);
+});
+
+test("G6: the generic PUT / DELETE cannot reach a shared row", async () => {
+  const db = layoutDb();
+  const bob = layoutApp(db, { id: "u-bob", role: "SALES" });
+  const res = await call(bob, "PUT", "/api/datagrid-layouts", {
+    gridId: "so-list", kind: "shared:x", visibleCols: ["a"], colOrder: ["a"],
+  });
+  // Not the user kind → the SUPER_ADMIN gate refuses first.
+  assert.equal(res.status, 403);
+});
+
+test("G6: the Columns panel carries the Team layouts block, switching copies into the user's own layout", () => {
+  const grid = read("src/components/ui/data-grid.tsx");
+  assert.match(grid, /sharedLayouts=\{gridId \? \(\s*<GridSharedLayouts/);
+  assert.match(grid, /const applySharedLayout = useCallback\(/);
+  assert.match(grid, /localStorage\.setItem\(`datagrid-cols-\$\{gridId\}-\$\{userKey\(\)\}`, JSON\.stringify\(l\.visibleCols\)\)/);
+  const panel = read("src/components/ui/grid-shared-layouts.tsx");
+  assert.match(panel, />\s*Shared\s*</, "the Shared tag");
+  assert.match(panel, /Team layouts/);
+  assert.match(panel, /\{l\.canEdit && confirmDelete !== l\.id && \(/, "Update / Delete only for the author or an admin");
+  assert.match(panel, /method: "POST",\s*body: \{ gridId, name: named\.name, \.\.\.current\(\) \}/);
 });

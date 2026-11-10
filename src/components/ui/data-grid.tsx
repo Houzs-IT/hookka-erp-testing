@@ -32,6 +32,7 @@ import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows
 import { useSearchParams } from "react-router-dom";
 import { browserOwnsCopy, rangeStats, rangeToTsv, rectCellCount, rectContains, rectFrom, rowsToTsv, writeClipboardText, type CellPos, type CellRect } from "@/lib/grid-clipboard";
 import { readGridUrlState, sameParams, writeGridUrlState } from "@/lib/grid-url-state";
+import { GridSharedLayouts } from "@/components/ui/grid-shared-layouts";
 
 // Stable identifier for namespacing per-user grid preferences in localStorage.
 // Using email (lowercased) so column visibility / order / saved views are
@@ -1453,6 +1454,7 @@ function ColumnCustomizer<T>({
   printPresetLabel,
   onSaveAsPrintPreset,
   onResetPrintPreset,
+  sharedLayouts,
 }: {
   columns: Column<T>[];
   visibleKeys: Set<string>;
@@ -1472,6 +1474,8 @@ function ColumnCustomizer<T>({
   printPresetLabel?: string;
   onSaveAsPrintPreset?: () => Promise<boolean>;
   onResetPrintPreset?: () => Promise<boolean>;
+  // Team layouts block (review G6) — only for a grid with a gridId.
+  sharedLayouts?: React.ReactNode;
 }) {
   const { toast } = useToast();
   // SUPER_ADMIN is the only role allowed to publish an org-wide default.
@@ -1637,6 +1641,7 @@ function ColumnCustomizer<T>({
           Show All
         </button>
       </div>
+      {sharedLayouts}
       {(onSaveAsOrgDefault || onResetToOrgDefault || onSaveAsPrintPreset) && (
         <div className="border-t border-[#E5E5E5] px-3 py-2 space-y-1.5 bg-[#FAF8F5]">
           {onSaveAsPrintPreset && printPresetLabel && (
@@ -2047,6 +2052,23 @@ export function DataGrid<T extends Record<string, any>>({
     // SUPER_ADMIN, or offline) so the toast can warn it stayed local-only.
     return putOrgLayout(gridId, "org-default", cols, columnOrder, colWidths);
   }, [gridId, visibleKeys, columnOrder, colWidths, widthStoreId]);
+
+  // Switch to a layout shared with the team (review G6): it becomes this
+  // user's own layout on this browser, exactly as if they had set the columns
+  // by hand. The shared row itself never changes.
+  const applySharedLayout = useCallback((l: { visibleCols: string[]; colOrder: string[]; colWidths: Record<string, string> | null }) => {
+    if (!gridId) return;
+    const widths = l.colWidths ?? {};
+    setVisibleKeys(new Set(l.visibleCols));
+    setColumnOrder(l.colOrder);
+    setColWidths(widths);
+    try {
+      localStorage.setItem(`datagrid-cols-${gridId}-${userKey()}`, JSON.stringify(l.visibleCols));
+      localStorage.setItem(`datagrid-colorder-${gridId}-${userKey()}`, JSON.stringify(l.colOrder));
+      localStorage.setItem(`datagrid-colw-${widthStoreId}-${userKey()}`, JSON.stringify(widths));
+    } catch { /* ignore */ }
+    markLocalLayout();
+  }, [gridId, widthStoreId, markLocalLayout]);
 
   // Snapshot the CURRENT layout into a dedicated PRINT preset
   // (`datagrid-cols-${gridId}-print`) — a printout reads this instead of the
@@ -3662,6 +3684,13 @@ export function DataGrid<T extends Record<string, any>>({
               printPresetLabel={gridId ? printPresetLabel : undefined}
               onSaveAsPrintPreset={gridId && printPresetLabel ? saveAsPrintPreset : undefined}
               onResetPrintPreset={gridId && printPresetLabel ? resetPrintPreset : undefined}
+              sharedLayouts={gridId ? (
+                <GridSharedLayouts
+                  gridId={gridId}
+                  current={() => ({ visibleCols: [...visibleKeys], colOrder: columnOrder, colWidths })}
+                  onApply={applySharedLayout}
+                />
+              ) : undefined}
             />
           )}
         </div>
