@@ -97,7 +97,9 @@ jobs:
             status=$(echo "$response" | tail -n1 | sed 's/HTTP_STATUS://')
             body=$(echo "$response" | sed '$d')
             echo "Status: $status"
-            echo "Body: $body"
+            # The repo is PUBLIC: print only the shape and counts of the reply, never its
+            # figures, document numbers or rows (filter: scripts/ci/log-safe-body.jq).
+            echo "Body (counts only): $(printf '%s' "$body" | jq -rc 'if type == "object" then [to_entries[] | .key as $k | .value as $v | ($v | type) as $t | "\($k)=" + (if $t == "array" then "\($v | length) items" elif $t == "object" then "{\($v | length) keys}" elif $t == "boolean" or $t == "null" then ($v | tostring) elif $t == "number" and ($k | test("count|processed|skipped|failed|sent|created|updated|deleted|scanned|checked|posted|rebuilt|attempted|replayed|remaining|pending|errors|ms$|^n[A-Z_]"; "i")) and (($k | test("Rm$|Sen$|_rm$|_sen$")) or ($k | test("amount|price|cost|value|balance|total"; "i")) | not) then ($v | tostring) else "<\($t)>" end)] | join(" ") elif type == "array" then "[\(length) items]" else "<\(type)>" end' 2>/dev/null || echo "<${#body} bytes, not JSON>")"
             if [ "$status" != "200" ]; then
               echo "::error::$kind trigger failed with HTTP $status"
               fail=1
