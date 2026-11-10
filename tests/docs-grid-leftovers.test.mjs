@@ -85,3 +85,15 @@ test("D6: the DO prints Ship From and the GRN prints Received At (no more always
   assert.match(grn, /lblVal\(rightX, ry, "Received At", warehousePrintName\(data\.warehouse\), rightMaxW\)/);
   assert.doesNotMatch(grn, /"Warehouse", data\.warehouse \?\? "-"/);
 });
+
+// ── CANCELLED stamp on the consignment note (follow-up to #1250) ──────────
+test("CGN: a cancelled consignment note PDF carries the red CANCELLED stamp", () => {
+  const cn = read("src/lib/generate-cn-pdf.ts");
+  assert.match(cn, /import \{ isCancelledStatus, stampCancelledJsPdf \} from "\.\/pdf-cancelled-stamp";/);
+  assert.match(cn, /status\?: string \| null;/);
+  // Stamped after the footers, in the single-CN entry point (same order as the DO).
+  assert.match(cn, /stampCnFooters\(doc\);\n\s*\/\/[^\n]*\n\s*if \(isCancelledStatus\(data\.status\)\) stampCancelledJsPdf\(doc\);/);
+  // The page hands the RAW backend status (the display status folds states).
+  const page = read("src/pages/consignment/note.tsx");
+  assert.match(page, /status: row\.rawStatus, \/\/ CANCELLED → red stamp on the PDF/);
+});

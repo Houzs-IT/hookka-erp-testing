@@ -1415,6 +1415,7 @@ export default function ConsignmentNotePage() {
         driverPhone: row.driverPhone,
         vehicleNo: row.vehicleNo,
         vehicleType: row.vehicleType,
+        status: row.rawStatus, // CANCELLED → red stamp on the PDF
         items: row.items.map((it) => {
           const ex = extras[it.id];
           return {
