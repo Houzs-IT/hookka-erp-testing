@@ -327,7 +327,10 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - With a dragged Item width set in the browser's storage: 35 → 29 → 35 columns, none 0 px, Item kept.
       - Monthly P&L forecast: each month's Net profit equals the Forecast P&L page's.
     - The save of supplier figures is UNVERIFIED on prod until the owner's first Save.
-    - 🔵 Follow-up (`fix/cashflow-hide-past-forecasts`), owner 2026-11-10 「我的 hide past month 是把 docs forecast 和 P&L forecast hide 起来，actual 要 remain」: the first build hid the past months whole. Now only their Docs and P&L forecast columns go, and their Actual stays. Not yet verified on prod.
+    - ✅ Follow-up (#1272), owner 2026-11-10 「我的 hide past month 是把 docs forecast 和 P&L forecast hide 起来，actual 要 remain」: the first build hid the past months whole. Now only their Docs and P&L forecast columns go, and their Actual stays. MEASURED on prod 2026-11-10 after the deploy, read only:
+      - Pressed: 35 cells a row → 31. Oct'26 and Sep'26 each keep one column, Actual. Every remaining cell equals the full table's.
+      - The note reads "past months' forecasts hidden".
+      - With a dragged Item width: 5 → 35 → 31 columns, none 0 px, Item kept.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
