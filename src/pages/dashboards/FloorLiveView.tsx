@@ -26,31 +26,29 @@ function effClass(e: number | null): string {
 /** Last department check-in (scan) today, else the punch-in time. */
 const lastIn = (p: FloorLiveRow) => p.scannedAt ?? p.clockIn ?? "—";
 
+// One grid for the header and every row, so each heading sits over its own
+// column (owner 2026-11-10: "Done" sat crooked over the numbers).
+const COLS = "grid grid-cols-[minmax(0,1fr)_3rem_2.25rem_2.75rem] items-center gap-x-2";
+
 function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
   const red = !production && p.overHourNonProd;
   return (
-    <div className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[#F3F0EC] px-3 py-1.5 text-xs ${red ? "bg-[#FBF3F1]" : "bg-white"}`}>
+    <div className={`${COLS} border-t border-[#F3F0EC] px-3 py-1.5 text-xs tabular-nums ${red ? "bg-[#FBF3F1]" : "bg-white"}`}>
       <span className="flex min-w-0 items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${p.clockOut ? "bg-[#9CA3AF]" : "bg-[#3E7A4F]"}`} aria-hidden="true" />
         <span className="truncate" title={p.name}>{p.name}</span>
       </span>
-      {production ? (
-        <span className="flex items-center gap-3 tabular-nums">
-          <span className="text-[#6B7280]" title="Last check-in to this department today">{lastIn(p)}</span>
-          <span className="font-semibold">{p.done}</span>
-          <span className={`w-11 text-right font-semibold ${effClass(p.effPct)}`}>{p.effPct == null ? "—" : `${p.effPct}%`}</span>
-        </span>
-      ) : (
-        // Non-production still shows the day's pieces and efficiency so far
-        // (owner 2026-11-10) — the efficiency sinks while they stay here.
-        <span className="flex items-center gap-3 tabular-nums">
-          <span className={p.overHourNonProd ? "font-semibold text-[#9A3A2D]" : "text-[#4B5563]"}>
-            {p.scannedAt ? `since ${p.scannedAt}` : p.clockIn ? `in ${p.clockIn}` : "—"}
-          </span>
-          <span className="font-semibold">{p.done}</span>
-          <span className={`w-11 text-right font-semibold ${effClass(p.effPct)}`}>{p.effPct == null ? "—" : `${p.effPct}%`}</span>
-        </span>
-      )}
+      {/* Production: last check-in to the department. Non-production: the
+          scan-in time, red after an hour (the day's pieces and efficiency
+          still show — owner 2026-11-10). */}
+      <span
+        className={`text-right ${!production && p.overHourNonProd ? "font-semibold text-[#9A3A2D]" : "text-[#6B7280]"}`}
+        title={production ? "Last check-in to this department" : "Scanned in at"}
+      >
+        {lastIn(p)}
+      </span>
+      <span className="text-right font-semibold">{p.done}</span>
+      <span className={`text-right font-semibold ${effClass(p.effPct)}`}>{p.effPct == null ? "—" : `${p.effPct}%`}</span>
     </div>
   );
 }
@@ -70,9 +68,11 @@ function DeptCard({ name, rows, production, effPct }: { name: string; rows: Floo
         <div className="px-3 py-2.5 text-xs text-[#9CA3AF]">Nobody here today</div>
       ) : (
         <>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] px-3 py-1 text-[11px] text-[#9CA3AF]">
+          <div className={`${COLS} px-3 py-1 text-[11px] text-[#9CA3AF]`}>
             <span>Worker</span>
-            <span>{production ? "Check-in · Done · Eff." : "Scanned in · Done · Eff."}</span>
+            <span className="text-right">{production ? "In" : "Since"}</span>
+            <span className="text-right">Done</span>
+            <span className="text-right">Eff.</span>
           </div>
           {shown.map((p) => <Row key={p.id} p={p} production={production} />)}
           {rows.length > ROW_LIMIT && (
@@ -90,13 +90,19 @@ function DeptCard({ name, rows, production, effPct }: { name: string; rows: Floo
   );
 }
 
-export function FloorLiveView() {
-  const { data, loading, error, refresh } = useCachedJson<FloorLiveResponse>("/api/dashboard/floor-live", 0);
+/** `day` = the dashboard's picked day (YYYY-MM-DD). Today, or none = live;
+ *  a past day = how the floor ended that day, no refresh. */
+export function FloorLiveView({ day, today }: { day?: string; today: string }) {
+  const pastDay = !!day && day < today;
+  const { data, loading, error, refresh } = useCachedJson<FloorLiveResponse>(
+    pastDay ? `/api/dashboard/floor-live?date=${day}` : "/api/dashboard/floor-live",
+    0,
+  );
   const [q, setQ] = useState("");
   const [issuesOnly, setIssuesOnly] = useState(false);
 
   // Every 5 minutes, paused while the tab is hidden.
-  useInterval(() => refresh(), REFRESH_MS);
+  useInterval(() => refresh(), pastDay ? null : REFRESH_MS);
 
   const layout = useMemo(() => (data?.success ? floorLiveLayout(data, { q, issuesOnly }) : null), [data, q, issuesOnly]);
 
@@ -117,7 +123,7 @@ export function FloorLiveView() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EAF3EC] px-2 py-0.5 text-[11px] font-semibold text-[#2F5E3C]">
           <span className="h-1.5 w-1.5 rounded-full bg-[#3E7A4F]" aria-hidden="true" />
-          LIVE · as of {data?.asOf} · refreshes every 5 min
+          {pastDay ? `END OF DAY · ${data?.date ?? day}` : `LIVE · as of ${data?.asOf} · refreshes every 5 min`}
         </span>
         <span className="flex-1" />
         <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#E5E0D8] bg-white px-2.5 text-xs text-[#6B7280] max-md:w-full">

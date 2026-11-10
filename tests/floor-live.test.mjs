@@ -107,10 +107,22 @@ test("owner 2026-11-10: red only for the non-production hour; production rows sh
   assert.match(view, /const red = !production && p\.overHourNonProd;/);
   assert.doesNotMatch(view, /e > 110/);
   assert.match(view, /const lastIn = \(p: FloorLiveRow\) => p\.scannedAt \?\? p\.clockIn \?\? "—";/);
-  assert.match(view, /Check-in · Done · Eff\./);
+  assert.match(view, /<span className="text-right">Done<\/span>/);
 });
 
 test("owner 2026-11-10: efficiency number is red only below 80%", () => {
   const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
   assert.match(view, /if \(e < 80\) return "text-\[#9A3A2D\]";/);
+});
+
+test("owner 2026-11-10: headings share the rows' grid; a picked past day shows that day's end state", () => {
+  const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
+  assert.match(view, /const COLS = "grid grid-cols-\[minmax\(0,1fr\)_3rem_2\.25rem_2\.75rem\]/);
+  assert.equal((view.match(/\$\{COLS\}/g) ?? []).length, 2, "header and rows use the same grid");
+  assert.match(view, /useInterval\(\(\) => refresh\(\), pastDay \? null : REFRESH_MS\)/);
+  assert.match(readFileSync("src/pages/dashboards/OperationsView.tsx", "utf8"), /<FloorLiveView day=\{period\.day\} today=\{todayYmdMY\(\)\} \/>/);
+  const route = readFileSync("src/api/routes/floor-live.ts", "utf8");
+  assert.match(route, /const asked = c\.req\.query\("date"\)/);
+  assert.match(route, /asked > realToday/);
+  assert.match(route, /isToday && a\.employeeId && a\.clockIn && !a\.clockOut/);
 });
