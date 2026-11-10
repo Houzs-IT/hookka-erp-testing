@@ -14,6 +14,7 @@ import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 import { fitCodeColumn } from "./pdf-code-column";
 import { warehousePrintName } from "./pdf-warehouse";
+import { fitPhoto, grnPhotoCaption } from "./grn-photos";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -234,6 +235,34 @@ export function generateGRNPdf(
     doc.setFontSize(7);
     doc.setTextColor(...PDF.faint);
     doc.text("Name / Date / Stamp", sigPositions[i], y + 23.5);
+  }
+
+  // --- Receipt photos (review C2-4): two per page after the GRN itself. ---
+  // `data.photos` = JPEG data URLs, already downscaled by loadGrnPhotoDataUrls.
+  const photos: string[] = Array.isArray(data.photos) ? data.photos.filter((p: unknown) => typeof p === "string" && p) : [];
+  if (photos.length > 0) {
+    const top = 36;
+    const bottom = pageH - 24;
+    const slotH = (bottom - top - 8) / 2;
+    for (let i = 0; i < photos.length; i++) {
+      const slot = i % 2;
+      if (slot === 0) {
+        doc.addPage();
+        drawSectionLabel(doc, `Receipt photos — ${data.grnNo ?? ""}`, top - 10);
+      }
+      const y0 = top + slot * (slotH + 8);
+      try {
+        const props = doc.getImageProperties(photos[i]);
+        const fit = fitPhoto(props.width, props.height, cw, slotH - 8);
+        doc.addImage(photos[i], "JPEG", margin + (cw - fit.width) / 2, y0, fit.width, fit.height);
+      } catch {
+        /* unreadable image — caption only */
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(...PDF.faint);
+      doc.text(grnPhotoCaption(i, photos.length), margin, y0 + slotH - 2);
+    }
   }
 
   // --- Footer (all pages — shared DO/SI footer) ---

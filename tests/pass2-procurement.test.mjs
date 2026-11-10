@@ -530,3 +530,32 @@ test("H2-8: the PO edit PUT never writes the supplier dates; detail page shows t
   const detail = read("src/pages/procurement/detail.tsx");
   assert.match(detail, /<PoSupplierDatesCard/);
 });
+
+// ── C2-4: receipt photos on a GRN that print on the GRN PDF ──────────────
+import { grnPrintablePhotos, fitPhoto, grnPhotoCaption, GRN_PHOTO_RESOURCE } from "../src/lib/grn-photos.ts";
+
+test("C2-4: printable photos are images only, oldest first, capped; layout keeps the shape", () => {
+  const rows = [
+    { id: "f3", filename: "PHOTO__c.jpg", contentType: "image/jpeg", uploadedAt: "2026-11-10T03:00:00Z" },
+    { id: "f1", filename: "PHOTO__a.png", contentType: "image/png", uploadedAt: "2026-11-10T01:00:00Z" },
+    { id: "f2", filename: "note.pdf", contentType: "application/pdf", uploadedAt: "2026-11-10T02:00:00Z" },
+    { id: "f4", filename: "IMG.HEIC", contentType: "image/heic", uploadedAt: "2026-11-10T00:00:00Z" },
+  ];
+  assert.deepEqual(grnPrintablePhotos(rows).map((r) => r.id), ["f1", "f3"]);
+  assert.equal(grnPrintablePhotos(Array.from({ length: 20 }, (_, i) => ({ id: `p${i}`, contentType: "image/jpeg" }))).length, 12);
+  assert.deepEqual(fitPhoto(2000, 1000, 100, 100), { width: 100, height: 50 });
+  assert.deepEqual(fitPhoto(500, 1000, 100, 100), { width: 50, height: 100 });
+  assert.equal(grnPhotoCaption(1, 5), "Photo 2 of 5");
+  assert.equal(GRN_PHOTO_RESOURCE, "grn");
+});
+
+test("C2-4: GRN detail attaches photos via the shared file store and prints them", () => {
+  const detail = read("src/pages/procurement/grn-detail.tsx");
+  assert.match(detail, /<ResourceDocuments\s+resourceType=\{GRN_PHOTO_RESOURCE\}\s+resourceId=\{grn\.id\}/);
+  assert.match(detail, /const photos = await loadGrnPhotoDataUrls\(grn\.id\);\s*generateGRNPdf\(\{\s*photos,/);
+  const pdf = read("src/lib/generate-grn-pdf.ts");
+  assert.match(pdf, /Array\.isArray\(data\.photos\)/);
+  assert.match(pdf, /doc\.addImage\(photos\[i\], "JPEG"/);
+  // The photo pages are added before the footer loop, so they get page numbers and the CANCELLED stamp.
+  assert.ok(pdf.indexOf("Receipt photos") < pdf.indexOf("Footer (all pages"));
+});

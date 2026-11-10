@@ -47,6 +47,8 @@ import {
 } from "@/lib/purchase-edit-rules";
 import type { ArrivalState } from "@/types";
 import { grnPoRefs, grnLinePoLabel } from "@/lib/grn-line-po";
+import { ResourceDocuments } from "@/components/resource-documents";
+import { GRN_PHOTO_RESOURCE } from "@/lib/grn-photos";
 
 // Arrival state pipeline sequences for the stepper
 const ARRIVAL_SEQUENCE: ArrivalState[] = ["NOT_ARRIVED", "IN_TRANSIT", "AT_CUSTOMS", "ARRIVED"];
@@ -617,7 +619,11 @@ export default function GRNDetailPage() {
       ]);
       const sup = (supResp?.data ?? []).find((s) => s.id === grn.supplierId);
       const lh = letterheadForPurchaseOrg(sup?.purchaseOrgCode || "HOOKKA", orgsResp?.organisations);
+      // Review C2-4: receipt photos print after the GRN (downscaled).
+      const { loadGrnPhotoDataUrls } = await import("@/lib/grn-photos");
+      const photos = await loadGrnPhotoDataUrls(grn.id);
       generateGRNPdf({
+        photos,
         grnNo: grn.grnNumber,
         date: grn.receiveDate,
         poRef: grn.poNumber,
@@ -1069,6 +1075,21 @@ export default function GRNDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Review C2-4: receipt photos (delivery note, damaged cartons) — shared
+          /api/files store, resourceType "grn"; they print on the GRN PDF. */}
+      <Card>
+        <CardContent className="pt-4">
+          <ResourceDocuments
+            resourceType={GRN_PHOTO_RESOURCE}
+            resourceId={grn.id}
+            title="Receipt photos"
+            hint="Proof of receipt — the supplier's delivery note, damaged cartons. They print on the GRN PDF."
+            photosOnly
+            emptyText="No photos yet."
+          />
+        </CardContent>
+      </Card>
 
       {/* ── Shipment Card (PO-linked GRNs only) ────────────────────────────── */}
       {grn.poId && (
