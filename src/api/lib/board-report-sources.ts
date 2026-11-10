@@ -9,6 +9,11 @@
 // their dashboards call: defect rates (`defectRates` over `buildServiceSlice`,
 // as the Defect rate card does) and per-worker efficiency
 // (`collectWorkforce`, the Operations Report's section, workers:read only).
+// The efficiency bands use the Employees insights page's own per-person figure
+// (workforce-perf.ts `workerEfficiencyPcts` over `loadMonthPerfDays`, the
+// rows the KPI card reads) and the shared thresholds in
+// src/lib/efficiency-bands.ts. The stock-take check is
+// GET /api/accounting/stock-take/check (accounting:read), in-process.
 //
 // A source that fails returns { ok: false, error } — the page prints the
 // reason on that section and the Notes page lists it; it never renders as 0.
@@ -22,6 +27,11 @@ import { getOrgId } from "./tenant";
 import { buildServiceSlice } from "./dashboard-service-slice";
 import { defectRates, NOT_OUR_FAULT_CAUSES } from "./service-issue-stats";
 import { collectWorkforce, resolvePeriod } from "./operations-report";
+import { loadMonthPerfDays } from "./kpi-metrics";
+import { workerEfficiencyPcts } from "./workforce-perf";
+import { countsToHeadcount } from "./headcount-rule";
+import { countEfficiencyBands, EFFICIENCY_MIN_RANK_MINUTES } from "../../lib/efficiency-bands";
+import type { StockTakeCheck } from "../../lib/stock-take-check";
 import {
   addMonths,
   boardWindows,
@@ -88,13 +98,32 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
 
   const workforce = guarded<WorkforcePayload>(async () => {
     if (!(await hasPermission(c, "workers", "read"))) return { ok: false, error: "Not available to your role (needs workers read)" };
-    const wf = await collectWorkforce(db, getOrgId(c), resolvePeriod("monthly", `${month}-01`));
+    const orgId = getOrgId(c);
+    const wf = await collectWorkforce(db, orgId, resolvePeriod("monthly", `${month}-01`));
+    // Bands: the Employees insights figure (useRankedPeople) — headcount
+    // workers, at least an hour clocked, production ÷ working minutes summed
+    // over the month. A failure here leaves the top/bottom lists in place.
+    let bands: WorkforcePayload["bands"] = null;
+    let bandsError: string | null = null;
+    try {
+      const [perfDays, ws] = await Promise.all([
+        loadMonthPerfDays(db, orgId, month),
+        db.prepare("SELECT id, emp_no, status FROM workers").all<{ id: string; empNo?: string | null; emp_no?: string | null; status: string | null }>(),
+      ]);
+      const counted = new Set((ws.results ?? []).filter((x) => countsToHeadcount(x.status, x.empNo ?? x.emp_no ?? null)).map((x) => String(x.id)));
+      const people = workerEfficiencyPcts(perfDays, (d) => d.startsWith(month), (id) => counted.has(id), EFFICIENCY_MIN_RANK_MINUTES);
+      bands = countEfficiencyBands(people.map((x) => x.pct));
+    } catch (e) {
+      bandsError = e instanceof Error ? e.message : String(e);
+    }
     return {
       ok: true,
       data: {
         activeWorkers: wf.activeWorkers,
         topEfficiency: wf.topEfficiency.map((x) => ({ name: x.name, pct: x.pct })),
         bottomEfficiency: wf.bottomEfficiency.map((x) => ({ name: x.name, pct: x.pct })),
+        bands,
+        bandsError,
       },
     };
   });
@@ -108,7 +137,7 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     }
   })();
 
-  const [dashboard, plMonthly, plCur, plPrev, cashflow, cashForecast, ov, revCur, revPrev, newModels, defectsR, workforceR, notesR] = await Promise.all([
+  const [dashboard, plMonthly, plCur, plPrev, cashflow, cashForecast, ov, revCur, revPrev, newModels, stockTake, defectsR, workforceR, notesR] = await Promise.all([
     get<{ data?: DashPayload }>(accounting, `/dashboard?granularity=month&from=${w.dashFrom}&to=${w.dashTo}`).then(dataOf),
     get<{ data?: PlMonthlyPayload }>(accounting, `/pl-monthly?anchor=${month}`).then(dataOf),
     get<{ data?: PlPayload }>(accounting, `/pl?period=${month}`).then(dataOf),
@@ -119,6 +148,7 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     get<RevSplitPayload>(overview, `/revenue-split?period=${month}`).then(bodyOf),
     get<RevSplitPayload>(overview, `/revenue-split?period=${w.prev}`).then(bodyOf),
     get<{ data?: NewModelsPayload }>(products, `/new-models?from=${w.newModelsFrom}&to=${w.newModelsTo}`).then(dataOf),
+    get<{ data?: StockTakeCheck }>(accounting, `/stock-take/check?ym=${month}`).then(dataOf),
     defects,
     workforce,
     notes,
@@ -137,6 +167,7 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     newModels,
     defects: defectsR,
     workforce: workforceR,
+    stockTake,
     notes: notesR,
   };
 }

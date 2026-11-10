@@ -23,7 +23,11 @@ import {
   shapeBsAppendix,
   shapeCashForecast,
   shapeMatrix,
+  stockTakeFlags,
 } from "../src/lib/board-report.ts";
+import { compareStockTake, isStockTakeMismatch } from "../src/lib/stock-take-check.ts";
+import { countEfficiencyBands, efficiencyBand, EFFICIENCY_WARN_LOW, EFFICIENCY_WARN_HIGH, EFFICIENCY_MIN_RANK_MINUTES } from "../src/lib/efficiency-bands.ts";
+import { workerEfficiencyPcts } from "../src/api/lib/workforce-perf.ts";
 
 const read = (p) => readFileSync(p, "utf8");
 
@@ -92,6 +96,7 @@ function fixture() {
     newModels: ok({ from: "2026-08-01", to: "2026-10-31", priceNote: "note", models: Array.from({ length: 11 }, (_, i) => ({ code: `M${i}`, category: "SOFA", name: `Model ${i}`, added: `2026-10-${String(10 + i).padStart(2, "0")}`, skus: 1, sizes: "", price: "RM 1", price2: "", hasPhoto: false, photo: null })) }),
     defects: ok({ month: [{ category: "BEDFRAME", cases: 4, units: 200, rate: 2 }], prev: [], trend: [] }),
     workforce: bad("Not available to your role (needs workers read)"),
+    stockTake: ok({ ym: "2026-10", hasLines: true, linesFile: "count.xlsx", linesSavedAt: "2026-11-01T00:00:00Z", rows: [] }),
     notes: { text: "Finance note", updatedAt: "2026-11-09T02:00:00Z", updatedBy: "Lim" },
   };
 }
@@ -325,4 +330,119 @@ test("the page prints as A4: one page per section, page breaks, Download PDF = w
 
 test("the board call is exempt from the 30 s client abort", () => {
   assert.match(read("src/lib/api-client.ts"), /NO_TIMEOUT_PATH = .*reports\\\/board/);
+});
+
+// ── stock-take: stored vs its counted lines (page 13) ─────────────────────
+test("stock-take check: stored per group vs the sum of its counted lines", () => {
+  const stored = [{ itemGroup: "FABRIC", valueSen: 14_877_00 }, { itemGroup: "WOOD", valueSen: 20_000_00 }, { itemGroup: "FOAM", valueSen: 5_000_00 }];
+  const record = {
+    file: "oct.xlsx", savedAt: "2026-11-01T01:00:00Z",
+    lines: [
+      { group: "FABRIC", valueSen: 90_000_00, counted: true },
+      { group: "fabric ", valueSen: 7_660_00, counted: true },
+      { group: "FABRIC", valueSen: 1_000_00, counted: false },
+      { group: "WOOD", valueSen: 20_050_00, counted: true },
+      { group: "SPONGE", valueSen: 3_000_00, counted: true },
+      { group: "FOAM", valueSen: 9_999_00, counted: false },
+    ],
+  };
+  const r = compareStockTake("2026-10", stored, record);
+  assert.equal(r.hasLines, true);
+  assert.equal(r.linesFile, "oct.xlsx");
+  const by = Object.fromEntries(r.rows.map((x) => [x.group, x]));
+  assert.deepEqual(by.FABRIC, { group: "FABRIC", storedSen: 14_877_00, linesSen: 97_660_00, countedLines: 2, diffSen: 82_783_00, mismatch: true });
+  assert.equal(by.WOOD.mismatch, false, "RM 50 apart is under RM 100");
+  assert.equal(by.FOAM.linesSen, null, "a group left out of the count is not compared");
+  assert.equal(by.FOAM.mismatch, false);
+  assert.equal(by.SPONGE.storedSen, null, "counted but nothing stored: the P&L uses the automatic figure");
+  assert.equal(by.SPONGE.mismatch, true);
+  assert.equal(compareStockTake("2026-10", stored, null).hasLines, false);
+});
+
+test("stock-take mismatch needs more than RM 100 AND more than 1%", () => {
+  assert.equal(isStockTakeMismatch(1_000_000_00, 1_000_500_00), false, "RM 500 on RM 1m is under 1%");
+  assert.equal(isStockTakeMismatch(5_000_00, 5_100_00), false, "exactly RM 100 is not more than RM 100");
+  assert.equal(isStockTakeMismatch(5_000_00, 5_101_00), true);
+  assert.equal(isStockTakeMismatch(14_877_00, 97_660_00), true);
+});
+
+test("page 13 flags a stock-take group whose stored value differs from its lines", () => {
+  const f = fixture();
+  f.stockTake = ok(compareStockTake("2026-10", [{ itemGroup: "FABRIC", valueSen: 14_877_00 }], { lines: [{ group: "FABRIC", valueSen: 97_660_00, counted: true }] }));
+  const flags = boardFlags(f, "2026-10");
+  const st = flags.find((x) => x.text.startsWith("Fabric stock take"));
+  assert.ok(st, flags.map((x) => x.text).join("\n"));
+  assert.equal(st.level, "alert");
+  assert.equal(st.text, "Fabric stock take: RM 14,877 stored, RM 97,660 from its lines — which is right changes raw-material cost.");
+  assert.equal(stockTakeFlags(ok(compareStockTake("2026-10", [{ itemGroup: "FABRIC", valueSen: 1 }], null)), "2026-10")[0].level, "info", "no lines saved: says it cannot check");
+  assert.deepEqual(stockTakeFlags(ok(compareStockTake("2026-10", [], null)), "2026-10"), [], "no stock take at all: nothing to say");
+  f.stockTake = bad("Forbidden");
+  assert.ok(boardFlags(f, "2026-10").some((x) => x.text === "Stock-take check could not be loaded: Forbidden"));
+});
+
+test("stock-take check wiring: accounting:read, both stored and lines read, in-process from the board", () => {
+  const acc = read("src/api/routes/accounting.ts");
+  const at = acc.indexOf('app.get("/stock-take/check"');
+  assert.ok(at > 0);
+  const body = acc.slice(at, acc.indexOf("\n});", at));
+  assert.match(body, /requirePermission\(c, "accounting", "read"\)/);
+  assert.match(body, /FROM stock_take WHERE org_id = \? AND ym = \?/);
+  assert.match(body, /stockTakeLinesKey\(orgId, ym\)/);
+  assert.match(body, /compareStockTake\(/);
+  assert.doesNotMatch(body, /INSERT|UPDATE |DELETE/, "read-only");
+  assert.match(read("src/api/lib/board-report-sources.ts"), /\/stock-take\/check\?ym=\$\{month\}/);
+});
+
+// ── efficiency bands (page 11) ────────────────────────────────────────────
+test("efficiency bands: one shared definition, the Employees page's inclusive 90–150", () => {
+  assert.equal(EFFICIENCY_WARN_LOW, 90);
+  assert.equal(EFFICIENCY_WARN_HIGH, 150);
+  assert.equal(EFFICIENCY_MIN_RANK_MINUTES, 60);
+  assert.equal(efficiencyBand(89.99), "below");
+  assert.equal(efficiencyBand(90), "within");
+  assert.equal(efficiencyBand(150), "within");
+  assert.equal(efficiencyBand(150.01), "above");
+  assert.deepEqual(countEfficiencyBands([50, 95, 120, 150, 151, NaN]), { below: 1, within: 3, above: 1, ranked: 5, low: 90, high: 150 });
+  const page = read("src/pages/dashboards/EmployeesInsights.tsx");
+  assert.match(page, /from "@\/lib\/efficiency-bands"/);
+  assert.match(page, /const WARN_LOW = EFFICIENCY_WARN_LOW;/);
+  assert.match(page, /const WARN_HIGH = EFFICIENCY_WARN_HIGH;/);
+  assert.doesNotMatch(page, /const WARN_LOW = 90/, "no second definition");
+});
+
+test("workerEfficiencyPcts = the Employees page's per-person ratio of sums", () => {
+  const days = [
+    { date: "2026-10-01", workingMinutes: 0, productionMinutes: 0, allDeptMinutes: 0, workers: [
+      { workerId: "a", workingMinutes: 480, productionMinutes: 240, allDeptMinutes: 480 },
+      { workerId: "b", workingMinutes: 480, productionMinutes: 960, allDeptMinutes: 480 },
+      { workerId: "t", workingMinutes: 480, productionMinutes: 480, allDeptMinutes: 480 },
+      { workerId: "c", workingMinutes: 30, productionMinutes: 30, allDeptMinutes: 30 },
+    ] },
+    { date: "2026-10-02", workingMinutes: 0, productionMinutes: 0, allDeptMinutes: 0, workers: [
+      { workerId: "a", workingMinutes: 480, productionMinutes: 480, allDeptMinutes: 480 },
+    ] },
+    { date: "2026-09-30", workingMinutes: 0, productionMinutes: 0, allDeptMinutes: 0, workers: [
+      { workerId: "a", workingMinutes: 480, productionMinutes: 4800, allDeptMinutes: 480 },
+    ] },
+  ];
+  const r = workerEfficiencyPcts(days, (d) => d.startsWith("2026-10"), (id) => id !== "t", 60);
+  assert.deepEqual(r.map((x) => [x.workerId, x.pct]), [["b", 200], ["a", 75]], "c under an hour and t not headcount are dropped; September ignored");
+  assert.deepEqual(countEfficiencyBands(r.map((x) => x.pct)), { below: 1, within: 0, above: 1, ranked: 2, low: 90, high: 150 });
+});
+
+test("page 11 shows the bands next to the existing top / bottom workers, behind workers:read", () => {
+  const src = read("src/api/lib/board-report-sources.ts");
+  const wf = src.slice(src.indexOf("const workforce = guarded"), src.indexOf("const notes ="));
+  assert.ok(wf.indexOf('hasPermission(c, "workers", "read")') < wf.indexOf("loadMonthPerfDays("), "gate first");
+  assert.match(wf, /workerEfficiencyPcts\(/);
+  assert.match(wf, /countsToHeadcount\(/);
+  assert.match(wf, /EFFICIENCY_MIN_RANK_MINUTES/);
+  assert.match(wf, /topEfficiency: wf\.topEfficiency/);
+  const page = read("src/pages/board-report/pages-business.tsx");
+  const ops = page.slice(page.indexOf("export function OperationsPage"), page.indexOf("export function OutlookPage"));
+  assert.match(ops, /Workers by efficiency band/);
+  assert.match(ops, /bands\.below/);
+  assert.match(ops, /bands\.within/);
+  assert.match(ops, /bands\.above/);
+  assert.match(ops, /Highest efficiency/);
 });

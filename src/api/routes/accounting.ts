@@ -103,6 +103,7 @@ import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
 import { DOC_DATE_FAMILIES, stripLegSuffix, stripSourceIdSuffix, parseSourceIdDate } from "../../lib/doc-date";
 import { itemCodeKey } from "../../lib/stock-take-import";
+import { compareStockTake, type StockTakeLinesRecord } from "../../lib/stock-take-check";
 import {
   prefixForPartyType,
   computeBillTotals,
@@ -21004,6 +21005,36 @@ app.get("/stock-take/lines", async (c) => {
   let data: unknown = null;
   try { data = row?.value ? JSON.parse(row.value) : null; } catch { data = null; }
   return c.json({ success: true, data });
+});
+
+// GET /api/accounting/stock-take/check?ym=YYYY-MM — read-only: per group, the
+// stored stock take (table stock_take, the figure the P&L uses for raw-material
+// cost) against the sum of the counted lines saved with the month (kv_config
+// stock_take_lines). Shaped by src/lib/stock-take-check.ts; read by the Board
+// Report's page 13 flags. A month with no saved lines says so (hasLines false).
+app.get("/stock-take/check", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const ym = String(c.req.query("ym") ?? "").slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ success: false, error: "ym must be 'YYYY-MM'" }, 400);
+  const orgId = getOrgId(c);
+  await ensureStockTake(c.var.DB);
+  const [storedRes, linesRow] = await Promise.all([
+    c.var.DB.prepare("SELECT item_group, value_sen FROM stock_take WHERE org_id = ? AND ym = ?")
+      .bind(orgId, ym)
+      .all<{ item_group?: string | null; itemGroup?: string | null; value_sen?: number | null; valueSen?: number | null }>(),
+    c.var.DB.prepare("SELECT value FROM kv_config WHERE key = ?")
+      .bind(stockTakeLinesKey(orgId, ym))
+      .first<{ value: string | null }>()
+      .catch(() => null),
+  ]);
+  const stored = (storedRes.results ?? []).map((r) => ({
+    itemGroup: String(r.itemGroup ?? r.item_group ?? ""),
+    valueSen: Math.round(Number(r.valueSen ?? r.value_sen) || 0),
+  }));
+  let record: StockTakeLinesRecord = null;
+  try { record = linesRow?.value ? (JSON.parse(linesRow.value) as StockTakeLinesRecord) : null; } catch { record = null; }
+  return c.json({ success: true, data: compareStockTake(ym, stored, record) });
 });
 
 // PUT /api/accounting/stock-take

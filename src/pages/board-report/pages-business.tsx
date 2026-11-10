@@ -146,10 +146,20 @@ export function OperationsPage({ r }: P) {
               </div>
             </div>
             {d.workforce ? (
-              <div className="brp-grid2">
-                <div><h3>Highest efficiency</h3><p className="brp-small">{d.workforce.topEfficiency.slice(0, 5).map((x) => `${x.name} ${x.pct}%`).join(" · ") || "-"}</p></div>
-                <div><h3>Lowest efficiency</h3><p className="brp-small">{d.workforce.bottomEfficiency.slice(0, 5).map((x) => `${x.name} ${x.pct}%`).join(" · ") || "-"}</p></div>
-              </div>
+              <>
+                <div className="brp-grid2">
+                  <div><h3>Highest efficiency</h3><p className="brp-small">{d.workforce.topEfficiency.slice(0, 5).map((x) => `${x.name} ${x.pct}%`).join(" · ") || "-"}</p></div>
+                  <div><h3>Lowest efficiency</h3><p className="brp-small">{d.workforce.bottomEfficiency.slice(0, 5).map((x) => `${x.name} ${x.pct}%`).join(" · ") || "-"}</p></div>
+                </div>
+                <h3>Workers by efficiency band</h3>
+                {d.workforce.bands ? (
+                  <p className="brp-small">
+                    Below {d.workforce.bands.low}%: <b>{d.workforce.bands.below}</b> · {d.workforce.bands.low}–{d.workforce.bands.high}%: <b>{d.workforce.bands.within}</b> · Above {d.workforce.bands.high}%: <b>{d.workforce.bands.above}</b> · of {d.workforce.bands.ranked} workers with at least an hour clocked (same figure and bands as the Employees insights page)
+                  </p>
+                ) : (
+                  <p className="brp-small">Efficiency bands left out: {d.workforce.bandsError ?? "not available"}</p>
+                )}
+              </>
             ) : (
               <p className="brp-small">Worker efficiency left out: {d.workforceNote}</p>
             )}
@@ -165,7 +175,7 @@ export function OperationsPage({ r }: P) {
                   ]} />
               )}
             </Elastic>
-            <p className="brp-small">Defect rate = service cases logged ÷ units delivered (our defects: transport and customer causes left out). Efficiency = standard minutes earned ÷ clocked minutes (Operations Report). Units completed run high (known duplicate completions).</p>
+            <p className="brp-small">Defect rate = service cases logged ÷ units delivered (our defects: transport and customer causes left out). Highest / lowest efficiency = standard minutes earned ÷ clocked minutes (Operations Report); bands = each worker's production ÷ working minutes for the month (Employees insights). Units completed run high (known duplicate completions).</p>
           </>
         );
       })}

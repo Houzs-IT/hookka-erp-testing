@@ -213,3 +213,32 @@ export function dailyEfficiencyPct(
       return p === null ? [] : [{ date, pct: Math.round(p * 10) / 10 }];
     });
 }
+
+/**
+ * The Employees insights page's per-person figure (useRankedPeople in
+ * src/pages/dashboards/EmployeesInsights.tsx): each worker's production
+ * minutes ÷ working minutes summed over the days `inPeriod` accepts, for
+ * workers `keep` accepts (the page: countsToHeadcount), dropping anyone with
+ * fewer than `minMinutes` working minutes. Unrounded, highest first.
+ */
+export function workerEfficiencyPcts(
+  perfDays: readonly PerfDay[],
+  inPeriod: (date: string) => boolean,
+  keep: (workerId: string) => boolean,
+  minMinutes: number,
+): Array<{ workerId: string; pct: number; workingMinutes: number; productionMinutes: number }> {
+  const m = new Map<string, { w: number; p: number }>();
+  for (const d of perfDays) {
+    if (!inPeriod(d.date)) continue;
+    for (const x of d.workers) {
+      const cur = m.get(x.workerId) ?? { w: 0, p: 0 };
+      cur.w += x.workingMinutes;
+      cur.p += x.productionMinutes;
+      m.set(x.workerId, cur);
+    }
+  }
+  return [...m.entries()]
+    .filter(([id, v]) => keep(id) && v.w >= minMinutes && v.w > 0)
+    .map(([workerId, v]) => ({ workerId, pct: (v.p / v.w) * 100, workingMinutes: v.w, productionMinutes: v.p }))
+    .sort((a, b) => b.pct - a.pct);
+}
