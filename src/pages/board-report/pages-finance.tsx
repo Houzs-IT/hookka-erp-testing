@@ -5,7 +5,7 @@
 import type { BoardReport } from "@/lib/board-report";
 import { changePct, pct } from "@/lib/board-report";
 import { ComboChart, Donut, Elastic, type Datum } from "./charts";
-import { C, PALETTE, pctText, rm } from "./format";
+import { C, PALETTE, deptName, pctText, rm } from "./format";
 import { BrPage, Delta, Money, Tile } from "./page-kit";
 import { withSection } from "./with-section";
 
@@ -14,6 +14,14 @@ type P = { r: BoardReport };
 export function CoverPage({ r }: P) {
   return (
     <BrPage title={`Board report — ${r.monthLabel}`} kicker="Page 1 · Cover & highlights" month={r.monthLabel} className="brp-cover">
+      {/* Letterhead (owner review 2026-11-10: the cover had none). */}
+      <div className="brp-letterhead">
+        <img src="/hookka-logo.png" alt="Hookka" />
+        <div>
+          <div className="co">Hookka Industries Sdn Bhd</div>
+          <div className="sub">Monthly report to the Board of Directors · {r.monthLabel} · Confidential</div>
+        </div>
+      </div>
       {withSection(r.cover, (d) => (
         <>
           <div className="brp-tiles">
@@ -129,7 +137,7 @@ export function LabourPage({ r }: P) {
             <tbody>
               {d.depts.map((x) => (
                 <tr key={x.dept}>
-                  <td>{x.dept}</td>
+                  <td>{deptName(x.dept)}</td>
                   <td><Money v={x.cost} /></td>
                   <td>{pctText(x.share)}</td>
                   <td>{pctText(x.pctTotalProdRev)}</td>
@@ -202,12 +210,15 @@ export function MaterialsPage({ r }: P) {
 export function TrendPage({ r }: P) {
   return (
     <BrPage title="Trend" kicker="Page 5 · Revenue and profit over time" month={r.monthLabel}>
-      {withSection(r.trend, (d) => (
+      {withSection(r.trend, (d) => {
+        // Owner 2026-11-10: the best revenue month in bold, with a star.
+        const best = Math.max(...d.summary.filter((s) => s.kind === "actual" && s.sales !== null).map((s) => s.sales as number));
+        return (
         <>
           <table className="brp-table compact">
             <thead><tr><th>RM</th>{d.summary.map((s) => <th key={s.label}>{s.label}</th>)}</tr></thead>
             <tbody>
-              <tr><td>Revenue</td>{d.summary.map((s) => <td key={s.label}><Money v={s.sales} /></td>)}</tr>
+              <tr><td>Revenue</td>{d.summary.map((s) => <td key={s.label}>{s.kind === "actual" && s.sales === best ? <b>★ <Money v={s.sales} strong /></b> : <Money v={s.sales} />}</td>)}</tr>
               <tr><td>Gross profit</td>{d.summary.map((s) => <td key={s.label}><Money v={s.gross} /></td>)}</tr>
               <tr className="strong"><td>Net profit</td>{d.summary.map((s) => <td key={s.label}><Money v={s.net} /></td>)}</tr>
               <tr><td>Gross margin</td>{d.summary.map((s) => <td key={s.label}>{pctText(s.grossPct)}</td>)}</tr>
@@ -247,7 +258,8 @@ export function TrendPage({ r }: P) {
           </div>
           <p className="brp-small">* month to date. The last column is next month&apos;s Forecast P&L. Source: Forecasting › Dashboard.</p>
         </>
-      ))}
+        );
+      })}
     </BrPage>
   );
 }
@@ -300,7 +312,12 @@ export function CashFlowPage({ r }: P) {
   return (
     <BrPage title="Cash flow" kicker="Page 7 · Operating, investing, financing" month={r.monthLabel}>
       {withSection(r.cashFlow, (d) => {
-        const m = d.months.find((x) => x.ym === r.month) ?? d.months[d.months.length - 1];
+        // Owner review 2026-11-10: a September report showed October and
+        // November, and empty months before the books opened.
+        const upTo = d.months.filter((x) => x.ym <= r.month);
+        const firstLive = upTo.findIndex((x) => x.operating || x.investing || x.financing || x.net);
+        const shown = firstLive === -1 ? upTo : upTo.slice(firstLive);
+        const m = shown.find((x) => x.ym === r.month) ?? shown[shown.length - 1] ?? d.months[d.months.length - 1];
         return (
           <>
             <div className="brp-tiles five">
@@ -311,12 +328,12 @@ export function CashFlowPage({ r }: P) {
               <Tile label="Bank, month end" value={<Money v={d.bankClose} />} />
             </div>
             <table className="brp-table compact">
-              <thead><tr><th>RM</th>{d.months.slice(-8).map((x) => <th key={x.ym}>{x.kind === "mtd" ? `${x.label}*` : x.label}</th>)}</tr></thead>
+              <thead><tr><th>RM</th>{shown.slice(-8).map((x) => <th key={x.ym}>{x.kind === "mtd" ? `${x.label}*` : x.label}</th>)}</tr></thead>
               <tbody>
                 {(["operating", "investing", "financing", "net", "fcf"] as const).map((k) => (
                   <tr key={k} className={k === "net" ? "strong" : ""}>
                     <td>{{ operating: "Operating", investing: "Investing", financing: "Financing", net: "Net cash flow", fcf: "Free cash flow" }[k]}</td>
-                    {d.months.slice(-8).map((x) => <td key={x.ym}><Money v={x[k]} /></td>)}
+                    {shown.slice(-8).map((x) => <td key={x.ym}><Money v={x[k]} /></td>)}
                   </tr>
                 ))}
               </tbody>
@@ -325,7 +342,7 @@ export function CashFlowPage({ r }: P) {
             <Elastic>
               {(w, h) => (
                 <ComboChart w={w} h={h}
-                  data={d.months.map((x) => ({ label: x.kind === "mtd" ? `${x.label}*` : x.label, faded: x.kind === "mtd", values: { o: x.operating, i: x.investing, f: x.financing, n: x.net } }))}
+                  data={shown.map((x) => ({ label: x.kind === "mtd" ? `${x.label}*` : x.label, faded: x.kind === "mtd", values: { o: x.operating, i: x.investing, f: x.financing, n: x.net } }))}
                   series={[
                     { key: "o", label: "Operating", color: C.navy, type: "bar" },
                     { key: "i", label: "Investing", color: C.gold, type: "bar" },

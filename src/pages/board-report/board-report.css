@@ -124,3 +124,14 @@
   .brp-page { box-shadow: none; margin: 0; break-after: page; page-break-after: always; break-inside: avoid; }
   .brp-page:last-child { break-after: auto; page-break-after: auto; }
 }
+
+/* Cover letterhead + ranked lists (owner review 2026-11-10) */
+.brp-letterhead { display: flex; align-items: center; gap: 14px; padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid #E6E8EC; }
+.brp-letterhead img { height: 40px; width: auto; }
+.brp-letterhead .co { font-family: "Source Serif 4", Georgia, serif; font-size: 18px; font-weight: 700; color: #13294B; }
+.brp-letterhead .sub { font-size: 10.5px; color: #6B7280; letter-spacing: 0.02em; }
+.brp-rank { list-style: decimal; margin: 4px 0 0; padding-left: 18px; font-size: 11px; }
+.brp-rank li { display: list-item; }
+.brp-rank li > span { display: inline-block; min-width: 70%; }
+.brp-rank li > b { color: #1B7F5A; }
+.brp-rank.low li > b { color: #B4233C; }

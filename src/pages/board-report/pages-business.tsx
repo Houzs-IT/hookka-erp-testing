@@ -67,7 +67,9 @@ export function CustomersPage({ r }: P) {
             </tbody>
           </table>
           <h3>Share of confirmed orders</h3>
-          <div className="brp-fill">
+          {/* Owner review 2026-11-10: half the page was empty — a donut next to the bars. */}
+          <div className="brp-grid2 brp-fill">
+            <Donut items={d.rows.slice(0, 6).map((x) => ({ label: x.name, value: x.total ?? 0 }))} centre={pctText(d.concentration?.largestPct ?? null)} />
             <ShareBars rows={d.rows.map((x) => ({ label: x.name, value: x.total, pct: x.share }))} />
           </div>
           <p className="brp-small">Confirmed sales orders in the month (the Dashboard&apos;s sales figure), not invoices. Source: Dashboard › Sales (AOV by customer, concentration).</p>
@@ -148,8 +150,14 @@ export function OperationsPage({ r }: P) {
             {d.workforce ? (
               <>
                 <div className="brp-grid2">
-                  <div><h3>Highest efficiency</h3><p className="brp-small">{d.workforce.topEfficiency.slice(0, 5).map((x) => `${x.name} ${x.pct}%`).join(" · ") || "-"}</p></div>
-                  <div><h3>Lowest efficiency</h3><p className="brp-small">{d.workforce.bottomEfficiency.slice(0, 5).map((x) => `${x.name} ${x.pct}%`).join(" · ") || "-"}</p></div>
+                  <div>
+                    <h3>Highest efficiency</h3>
+                    <ol className="brp-rank">{d.workforce.topEfficiency.slice(0, 5).map((x) => <li key={x.name}><span>{x.name}</span><b>{x.pct}%</b></li>)}</ol>
+                  </div>
+                  <div>
+                    <h3>Lowest efficiency</h3>
+                    <ol className="brp-rank low">{d.workforce.bottomEfficiency.slice(0, 5).map((x) => <li key={x.name}><span>{x.name}</span><b>{x.pct}%</b></li>)}</ol>
+                  </div>
                 </div>
                 <h3>Workers by efficiency band</h3>
                 {d.workforce.bands ? (

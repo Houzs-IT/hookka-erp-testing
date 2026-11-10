@@ -725,7 +725,9 @@ export function boardFlags(s: BoardSources, month: string): Flag[] {
       flags.push({ level: "alert", text: `The balance sheet does not balance: assets ${rmText(cur.balanceSheet.assets)} vs liabilities + equity ${rmText(cur.balanceSheet.liabilities + cur.balanceSheet.equity)}.` });
     }
   }
-  for (const r of closedMonths(rows, month).slice(-12)) {
+  // Owner review 2026-11-10: twelve months of past losses buried the page —
+  // the report month and the two before it are enough.
+  for (const r of closedMonths(rows, month).slice(-3)) {
     if (r.actual && r.actual.net < 0) flags.push({ level: r.key === month ? "alert" : "info", text: `${longMonth(r.key)}: net loss of ${rmText(-r.actual.net)}.` });
   }
   const f = slice(rows, month, "forecast");

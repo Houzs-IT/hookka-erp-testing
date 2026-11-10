@@ -28,3 +28,12 @@ export const rmShort = (sen: number): string => {
   return v < 0 ? `-${s}` : s;
 };
 export const pctText = (p: number | null | undefined, dp = 1): string => (p === null || p === undefined ? "-" : `${p.toFixed(dp)}%`);
+
+/** Department code → the name the floor uses (owner review 2026-11-10: the
+ *  labour page printed FAB_SEW, WOOD_CUT…). Unknown codes pass through. */
+const DEPT_NAMES: Record<string, string> = {
+  FAB_CUT: "Fabric Cutting", FAB_SEW: "Fabric Sewing", WOOD_CUT: "Wood Cutting", FOAM_CUTTING: "Foam Cutting",
+  FOAM: "Foam Bonding", FIBRE: "Fibre", FRAMING: "Framing", WEBBING: "Webbing", UPHOLSTERY: "Upholstery",
+  PACKING: "Packing", WAREHOUSING: "Warehousing", REPAIR: "Repair", MAINTENANCE: "Maintenance", R_AND_D: "R&D",
+};
+export const deptName = (code: string): string => DEPT_NAMES[code] ?? code;
