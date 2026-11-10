@@ -42,7 +42,8 @@ const CSRF_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // hangs indefinitely and never shows up in observability.
 const API_TIMEOUT_MS = 30_000;
 // OCR calls legitimately run past 30s; they bring their own timeout or sweeper (BUG-2026-10-19-334).
-export const NO_TIMEOUT_PATH = /^\/api\/(scan-queue\/batch\/[^/]+\/work|scan-po\/extract|scan-supplier\/extract)$/;
+// The Board Report's first build of a month reads a dozen uncached reports in one call (2026-11-10).
+export const NO_TIMEOUT_PATH = /^\/api\/(scan-queue\/batch\/[^/]+\/work|scan-po\/extract|scan-supplier\/extract|reports\/board)$/;
 
 function pathOf(url: string): string {
   try {

@@ -99,6 +99,14 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 8. **Finance to confirm:** Oct staff cost RM 1,733 looks incomplete; equity rose 73,279 more than profit; Oct fabric stock-take RM 14,877 stored vs RM 97,660 from lines; Monthly P&L Oct net 136,271 vs /pl report 194,914.
 9. **Forecast proposals (Windows session, 2026-11-10; nothing built):** (a) suppliers keyed like customers on the Forecast P&L — the owner said 「这个我确定先」 (deciding first); (b) a "Hide past months" toggle on the Cash Flow forecast — waiting for 「做」. Details: `docs/WORK-TRACKER.md`, Cash Flow forecast item 14.
 
+## Board report inside the ERP (item 113, PR open — not merged)
+
+Forecasting › **Board Report** (`/board-report?month=YYYY-MM`, default the last closed month), accounting:read for the menu and `GET /api/reports/board`. Every figure is read live from the ERP's own report endpoints (called in-process with the viewer's session, so each keeps its own permission gate and cache) — nobody rebuilds a snapshot each month. 13 A4 pages + appendices A (Monthly P&L), B (Balance sheet), C (Cash flow); Download PDF = browser print (A4, margins None, background graphics on). Page 13 = automatic flags + Finance's notes (kv_config `board_report_notes:<YYYY-MM>`, written by `PUT /api/reports/board/notes`, accounting:update).
+- **To check in a browser after merge** (not done — no browser run in the build session): every page fits its sheet with no clipped rows on real October data; print preview gives exactly one sheet per page; the first build's time (it reads about twelve reports; the 30 s client abort is lifted for this call only); photos on page 10.
+- Sections a viewer's role cannot read say so (e.g. customers need `dashboard` read, new models `products` read, worker efficiency `workers` read) instead of showing zeros.
+- Not sourced live: the fabric stock-take "stored vs from lines" check (no endpoint exposes it) — the Notes page cannot flag it.
+- Once this is merged and checked, the Claude artifact below can be retired.
+
 ## Board report (artifact)
 
 Claude artifact "Hookka Monthly Board Report" (https://claude.ai/artifact/GvMT67d19bgmqvHXQpSmDg, private to the owner). Rebuilt 2026-11-10:

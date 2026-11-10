@@ -570,7 +570,7 @@ async function collectMaterial(
   };
 }
 
-async function collectWorkforce(
+export async function collectWorkforce(
   db: Db,
   orgId: string,
   p: ResolvedPeriod,

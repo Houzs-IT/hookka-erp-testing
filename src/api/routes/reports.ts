@@ -22,7 +22,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
-import { requirePermission, requireSuperAdmin } from "../lib/rbac";
+import { requirePermission, requireSuperAdmin, hasPermission } from "../lib/rbac";
+import { emitAudit } from "../lib/audit";
 import { sendMail } from "../lib/email";
 import {
   collectEfficiencyData,
@@ -388,6 +389,59 @@ app.get("/operations.json", async (c) => {
     console.error("[reports/operations.json] failed:", err);
     return c.json({ success: false, error: "report generation failed" }, 500);
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/reports/board?month=YYYY-MM — the monthly Board Report (owner
+// 2026-11-10: "every figure from live ERP data"). One read-only payload for
+// the Forecasting › Board Report page. It calls the existing report endpoints
+// in-process with the caller's own session (src/api/lib/board-report-sources.ts)
+// — each keeps its permission gate and snapshot cache — and only arranges
+// their figures (src/lib/board-report.ts). Default month = the last closed
+// month (Malaysia time); a future month falls back to it.
+//
+// PUT /api/reports/board/notes  body = { month, text } — Finance's notes for
+// page 13, stored in kv_config `board_report_notes:<YYYY-MM>`.
+// ---------------------------------------------------------------------------
+app.get("/board", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  try {
+    const { resolveBoardMonth, shapeBoardReport } = await import("../../lib/board-report");
+    const { loadBoardSources } = await import("../lib/board-report-sources");
+    const today = todayYmdSgt();
+    const month = resolveBoardMonth(c.req.query("month"), today);
+    const sources = await loadBoardSources(c, month, today);
+    const report = shapeBoardReport(sources, month, today, new Date().toISOString());
+    const canEditNotes = await hasPermission(c, "accounting", "update");
+    return c.json({ success: true, data: { ...report, canEditNotes } });
+  } catch (err) {
+    console.error("[reports/board] failed:", err);
+    return c.json({ success: false, error: "The board report could not be built" }, 500);
+  }
+});
+
+app.put("/board/notes", async (c) => {
+  const denied = await requirePermission(c, "accounting", "update");
+  if (denied) return denied;
+  const { cleanNotesInput, notesKey, parseNotes } = await import("../../lib/board-report");
+  const parsed = cleanNotesInput(await c.req.json().catch(() => null));
+  if (!parsed.ok) return c.json({ success: false, error: parsed.error }, 400);
+  const key = notesKey(parsed.month);
+  const beforeRow = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = ?").bind(key).first<{ value: string }>();
+  const userId = (c as unknown as { get: (k: string) => string | undefined }).get("userId") ?? null;
+  let updatedBy: string | null = userId;
+  if (userId) {
+    const u = await c.var.DB.prepare("SELECT displayName, email FROM users WHERE id = ? LIMIT 1").bind(userId).first<Record<string, unknown>>().catch(() => null);
+    updatedBy = String(u?.displayName ?? u?.display_name ?? u?.email ?? userId);
+  }
+  const next = { text: parsed.text, updatedAt: new Date().toISOString(), updatedBy };
+  await c.var.DB.prepare(
+    `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(key, JSON.stringify(next), next.updatedAt).run();
+  await emitAudit(c, { resource: "accounting", resourceId: key, action: "update", before: parseNotes(beforeRow?.value ?? null), after: next });
+  return c.json({ success: true, data: next });
 });
 
 // ---------------------------------------------------------------------------
