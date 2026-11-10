@@ -307,8 +307,10 @@ export const TF_PLAN_MONTHS_AHEAD = 15;
 /** One facility's plan: month → the principal the lender is to pay for us. */
 export type TfPlanFacility = { accountCode: string; lender: string; tenorDays: number; rateBp: number; months: Record<string, number> };
 /** kv `cashflow_forecast_tf.facilities`: per facility account, the owner's
- *  tenor and interest (absent = the defaults) and the months keyed. */
-export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; months: Record<string, number> }>;
+ *  tenor and interest (absent = the defaults), the suppliers ticked for Fill
+ *  from Forecast P&L (absent = the ones the facility has paid before) and the
+ *  months keyed. */
+export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; supplierIds?: string[]; months: Record<string, number> }>;
 
 /** A stored plan, cleaned: trade-finance accounts only (with `allowed`), a
  *  tenor of 1–400 days, a rate of 0–100 %, months as YYYY-MM, whole positive
@@ -320,12 +322,16 @@ export function cleanTfPlans(raw: unknown, allowed: ReadonlySet<string> | null):
   for (const [code, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!v || typeof v !== "object") continue;
     if (allowed && !allowed.has(code)) { rejected.add(code); continue; }
-    const o = v as { tenorDays?: unknown; rateBp?: unknown; months?: unknown };
+    const o = v as { tenorDays?: unknown; rateBp?: unknown; supplierIds?: unknown; months?: unknown };
     const out: TfPlanStore[string] = { months: {} };
     const tenor = Math.round(Number(o.tenorDays));
     if (Number.isFinite(tenor) && tenor >= 1 && tenor <= 400) out.tenorDays = tenor;
     const rate = Math.round(Number(o.rateBp));
     if (o.rateBp !== undefined && o.rateBp !== null && Number.isFinite(rate) && rate >= 0 && rate <= 10_000) out.rateBp = rate;
+    // The ticked suppliers (2026-11-10); an empty list is the owner unticking them all.
+    if (Array.isArray(o.supplierIds)) {
+      out.supplierIds = [...new Set(o.supplierIds.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter((x) => x && x.length <= 100))].sort().slice(0, 1000);
+    }
     for (const [ym, s] of Object.entries((o.months ?? {}) as Record<string, unknown>)) {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) continue;
       const sen = Math.round(Number(s));
@@ -472,31 +478,69 @@ export function fillTfFromBills(o: TfScheduleInput & { billsDue: Record<string, 
 }
 
 /** "Fill from Forecast P&L" (owner 2026-11-10 「从forecast P&L 那边capture
- *  supplier 买的」): the Forecast P&L figures of the facility's suppliers —
- *  keyed per supplier under a material, RM or % worked out — each in the
- *  month it falls due by that supplier's own term, as the P&L forecast column
- *  pays it (bought in November on NET60 → January). A due month before
- *  `fromYm` is history and left out. */
-export function tfForecastDue(o: {
+ *  supplier 买的」): each supplier's Forecast P&L figures — keyed per supplier
+ *  under a material, RM or % worked out — each in the month it falls due by
+ *  that supplier's own term, as the P&L forecast column pays it (bought in
+ *  November on NET60 → January). A due month before `fromYm` is history and
+ *  left out; Other (new suppliers) names no supplier a lender could pay. */
+export function tfForecastDueBySupplier(o: {
   months: Record<string, FcMonth>;
-  supplierIds: ReadonlySet<string>;
   termMonths: (id: string) => number;
   fromYm: string;
-}): Record<string, number> {
-  const out: Record<string, number> = {};
+}): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
   for (const [ym, m] of Object.entries(o.months)) {
     if (!/^\d{4}-\d{2}$/.test(ym)) continue;
     for (const type of Object.keys(m?.purchasesByType ?? {})) {
       for (const [id, sen] of forecastTypeSupplierCells(m, type)) {
-        if (sen <= 0 || !o.supplierIds.has(id)) continue;
+        if (sen <= 0 || id === FC_OTHER_SUPPLIER) continue;
         const due = addMonthsYm(ym, Math.max(0, Math.round(o.termMonths(id))));
         if (due < o.fromYm) continue;
-        out[due] = (out[due] ?? 0) + sen;
+        const by = (out[id] ??= {});
+        by[due] = (by[due] ?? 0) + sen;
       }
     }
   }
   return out;
 }
+
+/** A supplier the Trade finance block lists: its Forecast P&L dues by month. */
+export type TfForecastSupplier = { id: string; name: string; dueBy: Record<string, number> };
+
+/** What Fill from Forecast P&L takes (owner 2026-11-10 「我要能选…就是tick」):
+ *  the ticked suppliers' dues added up, one figure per due month — a supplier
+ *  keyed under several materials and months is one total there. */
+export function tfTickedDue(suppliers: readonly { id: string; dueBy: Record<string, number> }[], ticked: ReadonlySet<string>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const s of suppliers) {
+    if (!ticked.has(s.id)) continue;
+    for (const [ym, sen] of Object.entries(s.dueBy)) if (sen > 0) out[ym] = (out[ym] ?? 0) + sen;
+  }
+  return out;
+}
+
+/** The ticked suppliers: the owner's once a tick was changed (none is a
+ *  choice too), until then the suppliers the facility has paid before. */
+export function tfTickedIds(saved: readonly string[] | undefined, paidBefore: readonly string[]): Set<string> {
+  return new Set(saved ?? paidBefore);
+}
+
+/** The picker's rows: each supplier's amount due in the months shown; a
+ *  supplier is listed when it has one or is ticked; biggest first, then by
+ *  name. And what the ticked ones add up to. */
+export function tfSupplierRows(o: { suppliers: readonly TfForecastSupplier[]; ticked: ReadonlySet<string>; yms: readonly string[] }): {
+  rows: { id: string; name: string; totalSen: number; ticked: boolean }[];
+  tickedTotalSen: number;
+} {
+  const rows = o.suppliers
+    .map((s) => ({ id: s.id, name: s.name, totalSen: o.yms.reduce((t, ym) => t + Math.max(0, s.dueBy[ym] ?? 0), 0), ticked: o.ticked.has(s.id) }))
+    .filter((r) => r.totalSen > 0 || r.ticked)
+    .sort((a, b) => b.totalSen - a.totalSen || a.name.localeCompare(b.name));
+  return { rows, tickedTotalSen: rows.reduce((t, r) => t + (r.ticked ? r.totalSen : 0), 0) };
+}
+
+/** A supplier's name without its "SDN BHD", for the picker's narrow box. */
+export const tfSupplierLabel = (name: string): string => name.replace(/[\s,]*\bSDN[\s.,-]*BHD\.?\s*$/i, "").trim() || name;
 
 /** How many months the Capex & financing table offers, from the current
  *  month: a keyed month reaches at most this far (spec 6.4). */

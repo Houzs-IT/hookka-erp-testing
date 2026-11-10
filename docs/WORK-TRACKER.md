@@ -421,6 +421,13 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Hide unused cut the opened sheet by about a third. Under Sales only the customers with figures stayed, and an unused customer in the list was hidden.
       - With every customer box in the current month set to 0, that month's Sales box opened again, holding its total.
       - Done → Confirm discarded it all. The stored forecast is unchanged since the restore. No console errors.
+21. 🔵 Trade finance: tick the suppliers that Fill from Forecast P&L takes (`feat/tf-supplier-ticks`). The owner asked 「现在trade finance bill for forecast PNL 我也可以选其他的supplier？」 and was told no: the fill takes only the suppliers the facility has paid before. Then 「我要能选，别太复杂，就是tick 可以吗？可以确定一下，如何tick, 下个月会不会reflect」, and whether one supplier keyed in several places adds up to one total. After the proposal came two screenshots of a picker from another system (a box that opens a small table with a header, row lines and a scrollbar): 「我想要做成类似这样，supplier 名字和total amount，然后tick可以吗？这个amounts是forecast PNL 的 amount」, then 「做」.
+    - Each facility's Trade finance block gets a box, "Suppliers: … ▾". It opens a small table over the popup: a tick, the supplier, and its Forecast P&L amount (RM), biggest first, with the ticked total last. Esc or a click outside closes only the table.
+    - The amount is what the fill would take from that supplier: its Forecast P&L figures (every material, % worked out) falling due in the twelve months shown, each by the supplier's own term.
+    - Listed: every supplier with such a figure, plus the ticked ones (shown "-" when they have none). Other (new suppliers) is not listed.
+    - Ticked by default: the suppliers the facility has paid before, which is what the fill took until now. A tick changes nothing until Fill from Forecast P&L is pressed again. The popup's Save keeps the ticks (`supplierIds` in kv `cashflow_forecast_tf`), so they are the same next month. Until the owner changes a tick, the default keeps following the facility's real payments.
+    - The ticks steer Fill from Forecast P&L only. Fill from bills keeps the suppliers the facility has paid before, because the table's amounts are the Forecast P&L's (told to the owner).
+    - Confirmed to the owner, already true: one supplier keyed under several materials and months adds up, with every other ticked supplier, into one Drawdown figure per due month.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).

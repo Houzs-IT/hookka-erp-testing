@@ -1,12 +1,13 @@
 // Trade finance: "Fill from Forecast P&L" (owner 2026-11-10: 「这个trade finance
 // part 其实我是不是可以从forecast P&L 那边capture supplier 买的…然后我自己决定
-// 要不要使用？」 → 「我想要一键按直接填可以吗？额度不够你提醒」 → MEDITEX bought
-// in November on NET60 is drawn in January 「可以」 → repayments give the room
-// back automatically → 「做」). One click fills the facility's planned drawdowns
-// from the Forecast P&L figures of the suppliers it has paid before, each in
-// the month it falls due by that supplier's own term, as far as the limit lets
-// once each month's repayments are in; what does not fit is reminded, month by
-// month (the bank pays it).
+// 要不要使用？」 → 「我想要一键按直接填可以吗？额度不够你提醒」 → a supplier's
+// November purchase on NET60 is drawn in January 「可以」 → repayments give the
+// room back automatically → 「做」). One click fills the facility's planned
+// drawdowns from the Forecast P&L figures of the ticked suppliers (by default
+// the ones it has paid before; the ticks are in tests/tf-supplier-ticks.test.mjs),
+// each in the month it falls due by that supplier's own term, as far as the
+// limit lets once each month's repayments are in; what does not fit is
+// reminded, month by month (the bank pays it).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -18,24 +19,21 @@ const fc = await import(pathToFileURL(resolve(process.cwd(), "src/lib/cashflow-f
 
 const read = (p) => readFileSync(resolve(process.cwd(), p), "utf8").replace(/\r\n/g, "\n");
 
-test("tfForecastDue: the facility's suppliers only, each in its due month by its own term; history left out", () => {
+test("the fill's dues: the ticked suppliers only, each in its due month by its own term; history left out", () => {
+  // Since 2026-11-10 tfForecastDueBySupplier + tfTickedDue (was tfForecastDue, the facility's suppliers only).
   const months = {
     // RM 350,000 of sales in November: a 5% cell is RM 17,500.
     "2026-11": {
       salesSen: 35_000_000, pct: {},
-      purchasesByType: { FABRIC: { med: 3_000_000, acacia: 500_000 }, FILLER: { med: { bp: 500 }, other: 200_000 } },
+      purchasesByType: { FABRIC: { "sup-a": 3_000_000, "sup-b": 500_000 }, FILLER: { "sup-a": { bp: 500 }, other: 200_000 } },
     },
     // Bought in August on NET60: due October, before the table starts.
-    "2026-08": { salesSen: 35_000_000, pct: {}, purchasesByType: { FABRIC: { med: 1_000_000 } } },
+    "2026-08": { salesSen: 35_000_000, pct: {}, purchasesByType: { FABRIC: { "sup-a": 1_000_000 } } },
     // Bought in December on NET30: due January.
-    "2026-12": { salesSen: 40_000_000, pct: {}, purchasesByType: { OTHERS: { nly: 400_000 } } },
+    "2026-12": { salesSen: 40_000_000, pct: {}, purchasesByType: { OTHERS: { "sup-c": 400_000 } } },
   };
-  const due = fc.tfForecastDue({
-    months,
-    supplierIds: new Set(["med", "nly"]),
-    termMonths: (id) => ({ med: 2, nly: 1 })[id] ?? 1,
-    fromYm: "2026-11",
-  });
+  const by = fc.tfForecastDueBySupplier({ months, termMonths: (id) => ({ "sup-a": 2, "sup-c": 1 })[id] ?? 1, fromYm: "2026-11" });
+  const due = fc.tfTickedDue(Object.entries(by).map(([id, dueBy]) => ({ id, dueBy })), new Set(["sup-a", "sup-c"]));
   assert.deepEqual(due, { "2027-01": 3_000_000 + 1_750_000 + 400_000 });
 });
 
@@ -63,17 +61,18 @@ test("planTfFill: a repayment gives the room back the month it is paid", () => {
 const api = read("src/api/routes/accounting.ts");
 const page = read("src/pages/accounting/index.tsx");
 
-test("the facility inputs carry the Forecast P&L dues of the suppliers it has paid before", () => {
+test("the facility inputs carry every supplier's Forecast P&L dues and the suppliers each facility has paid before", () => {
+  // Since 2026-11-10 the popup adds up the ticked suppliers (tests/tf-supplier-ticks.test.mjs).
   const fn = api.slice(api.indexOf("async function cfForecastTfFacilities("), api.indexOf('app.get("/cashflow-forecast-inputs"'));
   assert.match(fn, /SELECT id, name, paymentTerms FROM suppliers/);
-  assert.match(fn, /tfForecastDue\(\{/);
-  assert.match(fn, /forecastDue,/);
+  assert.match(fn, /tfForecastDueBySupplier\(\{/);
+  assert.match(fn, /paidSupplierIds,/);
 });
 
 test("the popup: Fill from Forecast P&L beside Fill from bills, one click, and a reminder of what the limit cannot cover", () => {
   const dlg = page.slice(page.indexOf("function CfForecastInputsDialog("), page.indexOf("\nfunction ", page.indexOf("function CfForecastInputsDialog(") + 10));
   assert.match(dlg, /Fill from Forecast P&L/);
-  assert.match(dlg, /fillTf\(f, f\.forecastDue \?\? \{\}, "forecast"\)/);
+  assert.match(dlg, /fillTf\(f, tfTickedDue\(tfSuppliers, ticked\), "forecast"\)/);
   assert.match(dlg, /fillTf\(f, f\.billsDue, "bills"\)/);
   assert.match(dlg, /planTfFill\(/);
   assert.match(dlg, /Over the limit:/, "the months the limit cannot cover, and by how much");

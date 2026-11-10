@@ -1,6 +1,6 @@
 # Forecast in three columns, sales by customer, trade-finance plans, P&L forecast — design
 
-> **Last verified: 2026-11-09** against `src/lib/cashflow-forecast.ts`, `src/lib/forecast-pnl.ts`, `src/lib/trade-finance.ts`, `src/api/routes/accounting.ts` (`GET /cashflow-forecast`, `GET` / `PUT /forecast`, `GET /trade-finance`, `GET /pl-monthly`), `src/pages/forecast.tsx`, `src/pages/accounting/index.tsx` and read-only production data.
+> **Last verified: 2026-11-10** (section 5's supplier ticks) against `src/lib/cashflow-forecast.ts`, `src/api/routes/accounting.ts` (`GET` / `PUT /cashflow-forecast-inputs`), `src/pages/accounting/index.tsx` and `src/pages/accounting/tf-supplier-picker.tsx`. The rest: **2026-11-09** against `src/lib/cashflow-forecast.ts`, `src/lib/forecast-pnl.ts`, `src/lib/trade-finance.ts`, `src/api/routes/accounting.ts` (`GET /cashflow-forecast`, `GET` / `PUT /forecast`, `GET /trade-finance`, `GET /pl-monthly`), `src/pages/forecast.tsx`, `src/pages/accounting/index.tsx` and read-only production data.
 
 > Status: agreed with the owner in chat on 2026-11-09, item by item, ending with 「可以」. Building waits
 > for the owner's 「做」. This builds on `docs/superpowers/specs/2026-11-08-cash-flow-forecast-design.md`
@@ -86,7 +86,15 @@ The owner's words: 「我认为应该是手动输入或调整」.
 - In the Capex & financing popup, below the CAPEX and Loan groups, one block per trade-finance facility (`getTfSources`): an input row **Drawdown**, one cell a month for the same twelve months. A cell is what the owner expects the lender to pay suppliers for us that month. [owner]
 - **Fill from bills** (a button): fills each month with the bills the Docs forecast expects that month from suppliers this facility has paid before (the draws' `paidSupplier`), capped so the facility's owed amount stays within its limit. The owner then changes any cell. [owner: 输入或调整]
 - **Fill from Forecast P&L** (a button beside it, owner 2026-11-10: 「从forecast P&L 那边capture supplier 买的」, 「我想要一键按直接填…额度不够你提醒」, then 「做」). It is one click and fills directly. [owner]
-  - **Source**: the Forecast P&L figures of the same suppliers (matched by name as the bills are), keyed per supplier under a material, RM or % worked out. `tfForecastDue` takes them over every forecast month. [owner]
+  - **Source**: the Forecast P&L figures of the ticked suppliers (below), keyed per supplier under a material, RM or % worked out. `tfForecastDue` takes them over every forecast month. Until 2026-11-10 it took the same suppliers as Fill from bills (matched by name). [owner]
+  - **Suppliers, ticked** (owner 2026-11-10: 「我要能选，别太复杂，就是tick」; then a screenshot of a picker from another system, 「supplier 名字和total amount，然后tick…这个amounts是forecast PNL 的 amount」, then 「做」) [owner unless tagged]:
+    - A box in the block, "Suppliers: … ▾", opens a small table over the popup (like the owner's screenshot): a tick, the supplier, and its amount. Esc or a click outside closes only the table. [owner; my call on Esc and the click outside]
+    - The amount is what the fill would take from that supplier: its Forecast P&L figures (every material, % worked out), each in its due month by its own term, added up over the twelve months shown (`tfForecastDueBySupplier`, `tfSupplierRows`). [owner: forecast PNL 的 amount; my call on "due in the months shown"]
+    - Listed: every supplier with such an amount, plus the ticked ones ("-" when they have none). Biggest first, the ticked total last. Other (new suppliers) is not listed: it names no supplier a lender could pay. [my call]
+    - Ticked by default: the suppliers the facility has paid before, as the fill took until now. Once the owner changes a tick, the popup's Save keeps the ticked list (`supplierIds`), and it stays until changed. Until then, the default keeps following the facility's real payments. [owner: 默认那 3 家, 勾会记住; my call on following the payments]
+    - A tick changes nothing until Fill from Forecast P&L is pressed again, so a cell changed by hand is never overwritten unasked. [my call]
+    - The ticks steer this button only. Fill from bills keeps the suppliers the facility has paid before. [my call, told to the owner: the table's amounts are the Forecast P&L's]
+    - Each due month's figures from every ticked supplier, over all its materials and months, add up to that month's one Drawdown figure (already so; confirmed to the owner).
   - **Timing**: each figure goes in the month it falls due by that supplier's own term, as the P&L forecast column pays it. A NET60 purchase in November is drawn in January. Asked by the owner, then 「可以」. A due month before the current one is left out. [owner; my call on the cut-off]
   - **Limit**: the same limit rule as Fill from bills (`planTfFill`, which both buttons now share). Each month's repayments come off first and give the room back; the owner confirmed 「如果我repay 就会加回limit」. [owner]
   - **Reminder**: the months the limit cannot cover are named under the buttons with the amount short ("Over the limit: …"), and the bank pays that part. The note is amber, not red, and any change by hand clears it. With nothing to take, the note says so and the row is left as it is. [owner: 额度不够你提醒; my call on the wording and the clearing]
@@ -109,7 +117,7 @@ The owner's words: 「我认为应该是手动输入或调整」.
   - The popup shows the twelve months from the current month; past plans are kept, not shown, and need no clearing.
   - "Fill from bills" reads today's aging for every month, the current one included, so a bill already paid or drawn since the 1st is not filled again. [my call]
 - To roll a draw over, the owner keys a new drawdown in its repayment month. [my call; no separate roll-over control]
-- Storage: kv `cashflow_forecast_tf` = `{ facilities: { "<facility account code>": { tenorDays?, rateBp?, months: { "YYYY-MM": sen } } } }`. The PUT is audited and refuses an account that is not a trade-finance source. [my call]
+- Storage: kv `cashflow_forecast_tf` = `{ facilities: { "<facility account code>": { tenorDays?, rateBp?, supplierIds?, months: { "YYYY-MM": sen } } } }`. `supplierIds` (2026-11-10) is the ticked suppliers' ids, absent until the owner changes a tick. The PUT is audited and refuses an account that is not a trade-finance source. [my call]
 - A repayment month stretches the future months as a keyed amount does, up to fifteen months ahead (twelve keyable months plus a tenor). [my call]
 
 ## 6. Monthly P&L: forecast beside actual [owner]
