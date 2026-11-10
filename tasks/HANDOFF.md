@@ -24,7 +24,7 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs / work in flight (at time of writing)
 
-**None.** Everything from 2026-11-10 is merged and deployed (prod at `e2db0d65d` when this was written).
+**None.** Everything through 2026-11-11 is merged and deployed (prod at `231d0778d` when this was written).
 
 Merge rule: CI green → squash-merge, then verify on prod (owner wants it done without asking, except the approval items and prod data writes). PRs that each append a WORK-TRACKER item collide on the number — merge one, rebase the next, renumber.
 
@@ -50,10 +50,11 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 - #1265 cross-system review **pass 2** saved: `docs/plans/2026-11-10-cross-system-review-pass2.md` (Houzs #4387–#5567 and Conts #1–#820 read PR by PR; 54 items + ~20 shared bugs, triaged A1–A4 / needs approval).
 - #1270 pass-2 A4 reliability & security: no money/invoice numbers in public Actions logs; DO and CN-return status compare-and-set (a late Delivered can't revive a cancelled DO); DR/PR/ADJ number collision retry; payment-voucher approval compare-and-set; PO double-save row lock; scan-queue jsonb as arrays; EMAXCONNSESSION retried; Idempotency-Key on credit/debit notes, stock adjustments, salary advances; System Health probes outside keys; "Remind approver" on payment vouchers; service-case stage targets with Overdue flags (BUG-2026-11-10-486…490).
 
-**In flight (2026-11-10 late):**
-- Merging in order: #1268 (pass-2 A3 forms/search) → #1267 (A2 procurement) → #1269 (A1 documents/PDF). They collide only on the WORK-TRACKER line and docs/modules anchors; rebase one at a time (`git checkout --ours` the module guide, re-derive anchors, then `check-codebase-map --fix`).
-- Agents: R1 `feat/procurement-reports` (supplier delay score H2-5, outstanding PO-line ageing H2-6; read-only) and U1 `feat/form-safety-sweep` (discard prompt on the remaining ~70 overlays, leave guard on the remaining forms, loading dashes).
-- Queued after #1267/#1269 merge: Chinese-character font in PDFs (embed a Noto subset via @pdf-lib/fontkit; owner said "继续处理全部" to installing it) and attachments on every flow document and line (C1-5).
+**Done and verified 2026-11-10/11 (second half):**
+- #1268 pass-2 A3 forms/search · #1267 A2 procurement · #1269 A1 documents/PDF · #1300 R1 Procurement › Reports (supplier delay score, outstanding PO-line ageing) · #1303 form safety sweep (discard / leave prompts on the remaining forms, dashes while loading) · #1304 Chinese names print on DO / invoice / SO / CO PDFs · #1305 attachments on every flow document and line (C1-5).
+- **#1308 + #1309 Dark mode** for the whole office ERP (owner 2026-11-11): user menu (top right) › Theme › Light / Dark / System, remembered per browser, **default Light**. `scripts/gen-dark-theme.mjs` runs before every build and maps every hard-coded colour class and inline-style hex in `src/` to a dark counterpart; screen only — print, PDFs and the Board Report stay light; the sidebar keeps its look; worker phone app (`/worker`) untouched. **Verified on prod:** Dashboard, Sales Orders, Accounting overview, Production tracking readable in dark; sidebar text back to normal; dashboard problem figures lightened. Owner's browser left on Light.
+
+**Dark mode — known gaps (polish when seen, no approval needed):** chart libraries that draw colours in canvas/SVG attributes (not `style`) keep their light-mode colours; 49 class uses with unusual variants are skipped (count printed by the generator); `src/pages/m/` (office phone screens) use their own `theme-vars.css` and were not checked in dark.
 
 **Needs the owner's approval (from pass 2 — money / stock / payroll / sign-in / process):** stock count workflow (H1-2/H2-7) · separate Post GRN right (H1-3) · charge-only invoice without a DO (H1-8) · merge duplicate item codes (H2-1) · planned payment date on supplier bills (H2-4) · bank-reco date limit bug (H2 B2) · future-dated supplier price applied today, bug (H2 B3) · maintenance surcharge config not company-scoped, bug (H2 B4) · sign-in hardening: must-change-password, TOTP replay + encrypted secret, session max lifetime, admin signs a person out everywhere, admin password reset rules, staging view-as (H3-2, H3-3, C1-1…C1-4) · per-company default bank (H3-6) · purchase-return replacement question and shortfall prompt (H3-5, C1-6) · payroll bank-transfer export (C1-10) · selfie required for clock-in (C2-12) · expense claims / petty cash (C2-13) · limit users to product categories (C2-14) · DO `deliveredAt` from the server clock instead of the phone (it dates the COGS posting and the default invoice date; from #1269).
 
