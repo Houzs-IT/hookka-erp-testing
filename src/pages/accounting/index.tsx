@@ -19028,8 +19028,11 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
   const [months, setMonths] = useState<Record<string, Record<string, number>>>({});
   const [tfFacilities, setTfFacilities] = useState<CfTfFacility[]>([]);
   const [tfPlans, setTfPlans] = useState<Record<string, CfTfPlan>>({});
-  // Every supplier's Forecast P&L dues, for the Suppliers ticks.
+  // Every supplier's Forecast P&L dues, for the Suppliers ticks; and the
+  // ticks each facility opened with, which stay listed when unticked
+  // (BUG-2026-11-10-491).
   const [tfSuppliers, setTfSuppliers] = useState<TfForecastSupplier[]>([]);
+  const [tfOpenedTicks, setTfOpenedTicks] = useState<Record<string, string[]>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -19046,6 +19049,7 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
         setTfFacilities(j.data.tf?.facilities ?? []);
         setTfPlans(j.data.tf?.plans ?? {});
         setTfSuppliers(j.data.tf?.forecastSuppliers ?? []);
+        setTfOpenedTicks(Object.fromEntries(Object.entries(j.data.tf?.plans ?? {}).map(([k, p]) => [k, p.supplierIds ?? []])));
       } catch (e) {
         if (live) setLoadError(e instanceof Error ? e.message : String(e));
       }
@@ -19253,7 +19257,7 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                 const inp = tfInput(f);
                 const sched = tfPlanSchedule({ ...inp, plan: p.months });
                 const ticked = tfTickedIds(p.supplierIds, f.paidSupplierIds ?? []);
-                const pick = tfSupplierRows({ suppliers: tfSuppliers, ticked, yms });
+                const pick = tfSupplierRows({ suppliers: tfSuppliers, ticked, yms, keep: new Set([...(f.paidSupplierIds ?? []), ...(tfOpenedTicks[f.accountCode] ?? [])]) });
                 const computed: { label: string; key: "interestSen" | "repaySen" | "owedSen" | "roomSen" }[] = [
                   { label: "Interest (est.)", key: "interestSen" },
                   { label: "Repayment", key: "repaySen" },
