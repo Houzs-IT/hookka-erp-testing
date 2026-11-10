@@ -1,25 +1,21 @@
 // ---------------------------------------------------------------------------
-// What each supplier sold us lately, by material type: how a Forecast P&L
-// month keyed by supplier spreads over the material rows (owner 2026-11-10
-// 「supplier 那边还是你可以 set 根据 ratio 也可以，一个个也可以」; spec
+// What each supplier sold us lately, by material type: which suppliers the
+// Forecast P&L lists under each material row (owner 2026-11-10 「让他在每个
+// categories 出现相关的supplier, 我从那边填」; spec
 // docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md 4).
 //
 // The window: purchase invoices dated from the 1st of the month three months
-// before the current one. The weights: their ledger legs on the material
-// purchase accounts, debit minus credit — what the P&L reads — so a
-// supplier's spread matches where its purchases land on the P&L. Read only.
-// The pure part is supplierMixFromLegs (src/lib/forecast-pnl.ts).
+// before the current one. The amounts: their ledger legs on the material
+// purchase accounts, debit minus credit — what the P&L reads — so a supplier
+// sits under the materials its purchases land on in the P&L. Read only. The
+// pure part is supplierMixFromLegs (src/lib/forecast-pnl.ts).
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
 import { addMonthsYm } from "../../lib/cashflow-forecast";
-import { forecastMaterialAccountTypes, supplierMixFromLegs, type FcAccount, type FcMonth, type FcSupplierMix } from "../../lib/forecast-pnl";
+import { forecastMaterialAccountTypes, supplierMixFromLegs, type FcAccount, type FcSupplierMix } from "../../lib/forecast-pnl";
 
 /** The first day of the window, for a day (YYYY-MM-DD, Malaysia time). */
 export const supplierMixFrom = (today: string): string => `${addMonthsYm(today.slice(0, 7), -3)}-01`;
-
-/** Any month keyed by supplier: only then do the readers need the weights. */
-export const anySupplierMonth = (months: Record<string, FcMonth>): boolean =>
-  Object.values(months).some((m) => Object.values(m?.purchasesBySupplier ?? {}).some((v) => Math.round(Number(v) || 0) > 0));
 
 export async function loadForecastSupplierMix(
   db: Env["Variables"]["DB"],

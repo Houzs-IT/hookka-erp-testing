@@ -1,45 +1,52 @@
 # Forecast P&L: materials by supplier, and Cash Flow "Hide past months" — design
 
-> **Last verified: 2026-11-10** against `src/lib/forecast-pnl.ts`, `src/lib/cashflow-forecast.ts`, `src/lib/pnl-forecast.ts`, `src/pages/forecast.tsx`, `src/pages/accounting/index.tsx` (`CashFlowTab`), `src/api/routes/accounting.ts` (`GET` / `PUT /forecast`, `loadCashflowForecast`, `loadMonthlyPlForecast`, `GET /dashboard`) and read-only production data.
+> **Last verified: 2026-11-10** against `src/lib/forecast-pnl.ts`, `src/lib/cashflow-forecast.ts`, `src/lib/pnl-forecast.ts`, `src/pages/forecast.tsx`, `src/pages/accounting/index.tsx` (`CashFlowTab`), `src/api/routes/accounting.ts` (`GET` / `PUT /forecast`, `GET /forecast/suppliers`, `loadCashflowForecast`, `loadMonthlyPlForecast`, `GET /dashboard`) and read-only production data.
 
-> Status: proposed to the owner on 2026-11-10 and agreed: 「supplier 那边还是你可以 set 根据 ratio 也可以，一个个也可以」 and 「hide past month 也一起做」.
+> Status: agreed with the owner on 2026-11-10 in three steps, each built and shipped:
+> 1. 「supplier 那边还是你可以 set 根据 ratio 也可以，一个个也可以」 and 「hide past month 也一起做」 (#1266). That first build keyed one total per supplier and spread it over the materials by the supplier's recent purchases.
+> 2. 「我的 hide past month 是把 docs forecast 和 P&L forecast hide 起来，actual 要 remain」 (#1272).
+> 3. 「可以不可以这样，就是让他在每个categories 出现相关的supplier, 我从那边填」, then 「做」. Suppliers now sit under each material and are keyed there; the spread is gone. Sections 2 to 6 describe this.
+>
 > It builds on `docs/superpowers/specs/2026-11-09-forecast-three-columns-design.md` (called "the three-columns spec" below).
 > This repo is public, so this document carries no amounts and no counterparty names.
 > Each decision is tagged **[owner]** or **[my call]**.
 
 ## 1. Intent
 
-The owner keys customers one by one on the Forecast P&L (the three-columns spec, section 4) and wanted the same for suppliers: 「supplier part 我也像 customer 这样 key in amount」, with suppliers not used for a long time left off the list (「太久没使用的 supplier 就不在选项」). Then: 「supplier 先根据 ratio 吧」 and 「你可以 set 根据 ratio 也可以，一个个也可以」. Both ways stay open, month by month.
+The owner keys customers one by one on the Forecast P&L (the three-columns spec, section 4) and wanted the same for suppliers: 「supplier part 我也像 customer 这样 key in amount」, with suppliers not used for a long time left off the list (「太久没使用的 supplier 就不在选项」). Both ways stay open: a material by its % (the ratio), or supplier by supplier. Then, after seeing the first build: the suppliers should appear under each material and be keyed there (「让他在每个categories 出现相关的supplier, 我从那边填」).
 
-Separately, on Cash Flow with Forecast on: a button that hides the months already past (「先按 forecasting，然后再按不显示 past month」).
+Separately, on Cash Flow with Forecast on: a button that hides the past months' forecasts (「先按 forecasting，然后再按不显示 past month」).
 
-## 2. Materials: by ratio, or one by one [owner]
+## 2. Each material, each month: by its %, or by its suppliers [owner]
 
-- **By ratio** (a month with no supplier cell): the material rows as today, each type a % of sales or an RM amount.
-- **One by one** (a month with any supplier cell): the month's materials are the sum of its supplier cells, like Sales and the customer rows. Each supplier's amount spreads over the material rows by what that supplier sold us lately (section 4). The material rows show the result greyed and cannot be typed in that month. Their own % / RM stay saved and come back if the month's supplier cells are all cleared. [my call on keeping them]
-- Carriage and SST are not materials and stay keyed as today in both ways. [my call]
+- **By its %** (no supplier figure under that material that month): the material row as before, a % of sales or an RM amount.
+- **By its suppliers** (any supplier figure under it that month): the material is the sum of its supplier figures, like Sales and the customer rows. The material row shows the sum greyed and cannot be typed that month. Its own % / RM stays saved and counts again once its supplier figures are cleared. [my call on keeping it]
+- Each material decides on its own: one material can go by suppliers while the others keep their %. [owner's proposal as agreed]
+- Nothing is spread by ratio any more: a figure counts under the material it was keyed under. [owner]
+- Carriage and SST are not materials and stay keyed as before. [my call]
 
 ## 3. The Forecast P&L page [owner unless tagged]
 
-- Inside RAW MATERIALS / PURCHASES, above the material rows, a **By supplier** block: one row per supplier, then **Other (new suppliers)**. A cell per month, RM only; the % column shows the share of the month's sales.
-- Listed: active suppliers we bought raw materials from in the window (section 4), plus any supplier keyed in some month (kept while it carries a figure, active or not), by name. [owner: 太久没使用的不列; my call on the window and on keeping keyed ones]
-- Like the customer rows: empty supplier rows hide with "Hide empty lines"; a new month copies the previous month's % but not its supplier cells. [my call]
-- Storage: kv `forecast_pnl.months[ym].purchasesBySupplier` = `{ "<supplier id>": sen, "other": sen }`. `PUT /forecast` keeps positive whole sen only and stores nothing derived: the spread is worked out when read, from the current purchases. [my call]
+- Each material row has a ▸. Opening it lists the suppliers that sold us that material in the window (section 4), plus any supplier keyed under it in some month (kept while it carries a figure, active or not), by name, then **Other (new suppliers)**. Each has a cell per month, RM only; the % column shows the share of the month's sales. [owner: 太久没使用的不列; my call on the window and on keeping keyed ones]
+- Closed is the default on every load. A supplier with a figure in any month shows even while its material is closed. [owner]
+- A new month copies the previous month's % but no supplier figures. [my call]
+- A supplier keyed under a material it never sold us lately: key it under that material's Other. [my call; no "add supplier" picker for now]
+- Storage: kv `forecast_pnl.months[ym].purchasesByType` = `{ "<MATERIAL>": { "<supplier id>": sen, "other": sen } }`. `PUT /forecast` keeps positive whole sen only (`cleanPurchasesByType`) and stores nothing derived. [my call]
 
-## 4. The spread: what each supplier sold us lately [my call]
+## 4. Which suppliers a material lists [my call]
 
-- **Window**: purchase invoices (confirmed, approved, part-paid or paid) dated from the 1st of the month three months before the current month to today, Malaysia time. On 2026-11-10 that is 1 August to 10 November, the window the owner was shown.
-- **Weights**: those invoices' ledger legs on the material purchase accounts (the accounts the Forecast P&L folds into its material rows), debit minus credit, by supplier and by material type (`forecastMaterialType` of the account's name). The ledger is what the P&L reads, so a supplier's split matches where its purchases land on the P&L.
-- **Spread**: largest remainder, so the parts add up to the cell to the sen. A supplier with no material purchase in the window, and the Other row, take all suppliers' weights together. With no purchase at all in the window, everything goes on the OTHERS row (else the first material row), so the month's total is never lost.
+- **Window**: purchase invoices (confirmed, approved, part-paid or paid) dated from the 1st of the month three months before the current month, Malaysia time. On 2026-11-10 that is from 1 August, the window the owner was shown.
+- **Who sold what**: those invoices' ledger legs on the material purchase accounts (the accounts the Forecast P&L folds into its material rows), debit minus credit, by supplier and by material type (`forecastMaterialType` of the account's name). A supplier with a positive amount under a material is listed under it. The ledger is what the P&L reads, so a supplier sits under the materials its purchases land on in the P&L.
+- Measured on production on 2026-11-10: 19 suppliers, 35 supplier × material pairs.
 
-## 5. Every reader takes the same spread [my call]
+## 5. Every reader takes the same figures [my call]
 
-`forecastMonthFigures` takes the weights, so the page, the Cash Flow P&L forecast column, the Monthly P&L forecast and the Finance Dashboard's forecast all read the same amounts per type and the same total. The weights come from one loader on the server and from `GET /forecast/suppliers` on the page.
+`forecastMonthFigures` reads the supplier figures, so the page, the Cash Flow P&L forecast column, the Monthly P&L forecast and the Finance Dashboard's forecast read the same amount per material. Supplier figures under a material the page has no row for count nowhere on the page, the Cash Flow or the Monthly P&L. The dashboard counts them, which only differs if a material account is renamed after keying.
 
 ## 6. Cash Flow [owner unless tagged]
 
-- **P&L forecast column**, a one-by-one month: each supplier's amount is paid after that supplier's own term (`paymentTerms`, the base spec's parser; Other after one month), on the material type lines its spread gives, the drill naming the supplier. [owner: 按供应商的 term]
-- A by-ratio month: as today (each type by the term mix of its category's recent suppliers).
+- **P&L forecast column**, a material keyed by suppliers: each supplier's figure is paid after that supplier's own term (`paymentTerms`, the base spec's parser; Other after one month), on that material's line, the drill naming the supplier. [owner: 按供应商的 term]
+- A material keyed by its %: as before (the term mix of its category's recent suppliers).
 - The Docs forecast never carries Forecast P&L materials, so it does not change.
 
 ## 7. Cash Flow: Hide past months [owner]
@@ -49,6 +56,6 @@ Separately, on Cash Flow with Forecast on: a button that hides the months alread
 
 ## 8. What must stay true
 
-- A month without supplier cells reads exactly as before on every screen.
+- A material without supplier figures reads exactly as before on every screen.
 - Nothing here writes to the ledger or to any document.
 - With Hide past months off, the Cash Flow forecast is exactly as before; with it on, every Actual column is still there.

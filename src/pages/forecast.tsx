@@ -10,7 +10,7 @@
 // operating expenses — classified with the SAME pnl-bucket rules (incl. the
 // owner's section-map overrides) so the forecast rows match the real report.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { Button } from "@/components/ui/button";
@@ -24,12 +24,13 @@ import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { monthHasDeptForecast } from "@/lib/salary-dept";
 import {
-  EMPTY_SUPPLIER_MIX,
   forecastCustomerRows,
   forecastDepts,
   forecastLineGroups,
   forecastMonthFigures,
   forecastSupplierRows,
+  forecastTypeSuppliers,
+  materialRowType,
   type FcEntry,
   type FcMonth,
   type FcMonthFigures,
@@ -48,10 +49,16 @@ type CellEntry = { p?: string; a?: string };
 // `customers` (owner 2026-11-09 「根据 customer 去 key-in 他的预计 sales」):
 // customer id (or "other") → RM as typed. Once any is keyed, the month's
 // sales are their sum and the single Sales box steps aside.
-// `suppliers` (owner 2026-11-10 「根据 ratio 也可以，一个个也可以」): supplier
-// id (or "other") → RM as typed. Once any is keyed, the month's materials are
-// their sum, spread over the material rows; the rows' own % steps aside.
-type MonthState = { salesStr: string; pct: Record<string, CellEntry>; customers?: Record<string, string>; suppliers?: Record<string, string> };
+// `suppliers` (owner 2026-11-10 「让他在每个categories 出现相关的supplier, 我
+// 从那边填」): material type → supplier id (or "other") → RM as typed. A
+// material with any supplier figure that month is their sum; its own % steps
+// aside (kept, and back once they are cleared).
+type MonthState = {
+  salesStr: string;
+  pct: Record<string, CellEntry>;
+  customers?: Record<string, string>;
+  suppliers?: Record<string, Record<string, string>>;
+};
 type CustomerLite = { id: string; name: string; isActive?: boolean };
 
 
@@ -133,10 +140,15 @@ function toFcMonth(m: MonthState | undefined): FcMonth | undefined {
   for (const [code, e] of Object.entries(m.pct)) {
     pct[code] = e.a !== undefined && e.a !== "" ? { amtSen: moneyFieldToSen(e.a) ?? 0 } : { bp: strToBp(e.p ?? "") };
   }
+  const purchasesByType: Record<string, Record<string, number>> = {};
+  for (const [type, cells] of Object.entries(m.suppliers ?? {})) {
+    const sen = partySen(cells);
+    if (Object.keys(sen).length) purchasesByType[type] = sen;
+  }
   return {
     salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0),
     salesByCustomer: partySen(m.customers),
-    purchasesBySupplier: partySen(m.suppliers),
+    purchasesByType,
     pct,
   };
 }
@@ -152,7 +164,7 @@ function partySen(cells: Record<string, string> | undefined): Record<string, num
   return out;
 }
 const customerSen = (m: MonthState | undefined) => partySen(m?.customers);
-const supplierSen = (m: MonthState | undefined) => partySen(m?.suppliers);
+const supplierSen = (m: MonthState | undefined, type: string) => partySen(m?.suppliers?.[type]);
 
 export default function ForecastPage() {
   const { toast } = useToast();
@@ -178,12 +190,14 @@ export default function ForecastPage() {
   const [mappedAccounts, setMappedAccounts] = useState<Set<string>>(new Set());
   // The customers master, for the sales-by-customer rows (owner 2026-11-09).
   const [customerMaster, setCustomerMaster] = useState<CustomerLite[]>([]);
-  // The suppliers master and what each sold us lately by material type, for
-  // the materials-by-supplier rows (owner 2026-11-10): the same weights every
-  // other reader spreads a supplier month by (GET /forecast/suppliers).
+  // The suppliers master and what each sold us lately by material type (GET
+  // /forecast/suppliers): which suppliers each material row lists (owner
+  // 2026-11-10 「让他在每个categories 出现相关的supplier」).
   const [supplierMaster, setSupplierMaster] = useState<CustomerLite[]>([]);
-  const [supplierMix, setSupplierMix] = useState<FcSupplierMix>(EMPTY_SUPPLIER_MIX);
+  const [supplierMix, setSupplierMix] = useState<FcSupplierMix>({ bySupplier: {}, all: {} });
   const [suppliersFailed, setSuppliersFailed] = useState(false);
+  // The material rows opened to show their suppliers (closed on every load).
+  const [openTypes, setOpenTypes] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let stale = false;
@@ -214,7 +228,7 @@ export default function ForecastPage() {
           setSupplierMaster(sup.suppliers.filter((s) => typeof s?.id === "string" && s.id !== ""));
           setSupplierMix({ bySupplier: sup.mix.bySupplier ?? {}, all: sup.mix.all ?? {} });
         } else setSuppliersFailed(true);
-        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; salesByCustomer?: Record<string, number>; purchasesBySupplier?: Record<string, number>; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
+        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, number>>; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
         const next: Record<string, MonthState> = {};
         for (const [ym, m] of Object.entries(saved)) {
           const pct: Record<string, CellEntry> = {};
@@ -230,9 +244,10 @@ export default function ForecastPage() {
           const customers: Record<string, string> = {};
           for (const [id, sen] of Object.entries(m.salesByCustomer ?? {}))
             if (Number(sen) > 0) customers[id] = (Number(sen) / 100).toFixed(2);
-          const suppliers: Record<string, string> = {};
-          for (const [id, sen] of Object.entries(m.purchasesBySupplier ?? {}))
-            if (Number(sen) > 0) suppliers[id] = (Number(sen) / 100).toFixed(2);
+          const suppliers: Record<string, Record<string, string>> = {};
+          for (const [type, cells] of Object.entries(m.purchasesByType ?? {}))
+            for (const [id, sen] of Object.entries(cells ?? {}))
+              if (Number(sen) > 0) (suppliers[type] ??= {})[id] = (Number(sen) / 100).toFixed(2);
           next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct, customers, suppliers };
         }
         setMonths(next);
@@ -273,16 +288,17 @@ export default function ForecastPage() {
   // The sheet keeps strings while the owner types; each month is read in the
   // kv shape it saves to (toFcMonth) and the shared rule does the arithmetic:
   // amount-keyed cells win, %-keyed cells derive from sales, and a month with
-  // any dept row supersedes the 750-x and labour-map accounts. A month keyed
-  // by supplier spreads by the same weights every other reader uses. Worked
-  // out once per change, not once per cell.
+  // any dept row supersedes the 750-x and labour-map accounts. A material
+  // with supplier figures that month is their sum. Worked out once per
+  // change, not once per cell.
   const figures = useMemo(() => {
     const out: Record<string, FcMonthFigures> = {};
-    for (const ym of Object.keys(months)) out[ym] = forecastMonthFigures(toFcMonth(months[ym]), lines, mappedAccounts, supplierMix);
+    for (const ym of Object.keys(months)) out[ym] = forecastMonthFigures(toFcMonth(months[ym]), lines, mappedAccounts);
     return out;
-  }, [months, lines, mappedAccounts, supplierMix]);
-  const calc = (ym: string): FcMonthFigures => figures[ym] ?? forecastMonthFigures(undefined, lines, mappedAccounts, supplierMix);
-  const materialCodes = useMemo(() => new Set(lines.materials.map((a) => a.code)), [lines]);
+  }, [months, lines, mappedAccounts]);
+  const calc = (ym: string): FcMonthFigures => figures[ym] ?? forecastMonthFigures(undefined, lines, mappedAccounts);
+  // Each material row's type (`cat:FABRIC` → FABRIC): its supplier cells are keyed by it.
+  const materialType = useMemo(() => new Map(lines.materials.map((a) => [a.code, materialRowType(a)] as const)), [lines]);
 
   // Keying one side CLEARS the other (owner: "就是其中一个").
   const setPctStr = (ym: string, code: string, v: string) =>
@@ -306,21 +322,27 @@ export default function ForecastPage() {
   const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
   const customerKeyed = (ym: string) => Object.values(months[ym]?.customers ?? {}).some((v) => (v ?? "").trim() !== "");
   const customerRowHasData = (id: string) => yms.some((ym) => (months[ym]?.customers?.[id] ?? "").trim() !== "");
-  // Materials by supplier (owner 2026-11-10 「一个个也可以」): active suppliers
-  // bought from lately plus any keyed one, by name, then Other.
-  const setSupplier = (ym: string, id: string, v: string) =>
-    setMonths((prev) => ({ ...prev, [ym]: { ...prev[ym], suppliers: { ...(prev[ym].suppliers ?? {}), [id]: v } } }));
-  const supplierRows = useMemo(
-    () =>
-      forecastSupplierRows(
-        supplierMaster,
-        Object.keys(supplierMix.bySupplier),
-        Object.values(months).flatMap((m) => Object.entries(m.suppliers ?? {}).filter(([, v]) => (v ?? "").trim() !== "").map(([id]) => id)),
-      ),
-    [supplierMaster, supplierMix, months],
-  );
-  const supplierName = (id: string) => supplierRows.find((r) => r.id === id)?.name ?? id;
-  const supplierRowHasData = (id: string) => yms.some((ym) => (months[ym]?.suppliers?.[id] ?? "").trim() !== "");
+  // Suppliers under each material (owner 2026-11-10 「让他在每个categories 出现
+  // 相关的supplier, 我从那边填」): the active suppliers that sold us that
+  // material lately plus any keyed under it, by name, then Other.
+  const setSupplier = (ym: string, type: string, id: string, v: string) =>
+    setMonths((prev) => {
+      const byType = prev[ym].suppliers ?? {};
+      return { ...prev, [ym]: { ...prev[ym], suppliers: { ...byType, [type]: { ...(byType[type] ?? {}), [id]: v } } } };
+    });
+  const supplierRowsByType = useMemo(() => {
+    const out = new Map<string, { id: string; name: string }[]>();
+    for (const type of new Set(materialType.values())) {
+      const keyed = Object.values(months).flatMap((m) =>
+        Object.entries(m.suppliers?.[type] ?? {}).filter(([, v]) => (v ?? "").trim() !== "").map(([id]) => id),
+      );
+      out.set(type, forecastSupplierRows(supplierMaster, forecastTypeSuppliers(supplierMix, type), keyed));
+    }
+    return out;
+  }, [materialType, supplierMaster, supplierMix, months]);
+  const supplierNames = useMemo(() => new Map(supplierMaster.map((s) => [s.id, s.name] as const)), [supplierMaster]);
+  const supplierName = (id: string) => (id === "other" ? "Other (new suppliers)" : supplierNames.get(id) ?? `Unknown supplier (${id})`);
+  const supplierRowHasData = (type: string, id: string) => yms.some((ym) => (months[ym]?.suppliers?.[type]?.[id] ?? "").trim() !== "");
 
   const addMonth = (ym: string) => {
     if (!/^\d{4}-\d{2}$/.test(ym)) {
@@ -398,9 +420,11 @@ export default function ForecastPage() {
       ...Object.entries(m.customers ?? {})
         .filter(([, v]) => (v ?? "").trim() !== "")
         .map(([id, v]) => ({ label: `${ym} ${customerName(id)} sales`, value: v })),
-      ...Object.entries(m.suppliers ?? {})
-        .filter(([, v]) => (v ?? "").trim() !== "")
-        .map(([id, v]) => ({ label: `${ym} ${supplierName(id)} purchases`, value: v })),
+      ...Object.entries(m.suppliers ?? {}).flatMap(([type, cells]) =>
+        Object.entries(cells ?? {})
+          .filter(([, v]) => (v ?? "").trim() !== "")
+          .map(([id, v]) => ({ label: `${ym} ${type} ${supplierName(id)} purchases`, value: v })),
+      ),
       ...Object.entries(m.pct)
         .filter(([, e]) => e.a !== undefined && e.a !== "")
         .map(([code, e]) => ({ label: `${ym} ${code} amount`, value: e.a as string })),
@@ -411,7 +435,7 @@ export default function ForecastPage() {
     if (forecastMoneyError) { toast.error(forecastMoneyError); return; }
     setSaving(true);
     try {
-      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesBySupplier?: Record<string, number> }> = {};
+      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, number>> }> = {};
       for (const [ym, m] of Object.entries(months)) {
         const pct: Record<string, { bp?: number; amtSen?: number }> = {};
         for (const [code, e] of Object.entries(m.pct)) {
@@ -433,18 +457,20 @@ export default function ForecastPage() {
           if (sen > 0) salesByCustomer[id] = sen;
         }
         const customerTotal = Object.values(salesByCustomer).reduce((s, v) => s + v, 0);
-        // Supplier cells: kept as keyed; every reader spreads them itself.
-        const purchasesBySupplier: Record<string, number> = {};
-        for (const [id, v] of Object.entries(m.suppliers ?? {})) {
-          if ((v ?? "").trim() === "") continue;
-          const sen = moneyFieldToSen(v) as number;
-          if (sen > 0) purchasesBySupplier[id] = sen;
-        }
+        // Supplier cells under each material: kept as keyed; a material with
+        // any is their sum for every reader (forecastMonthFigures).
+        const purchasesByType: Record<string, Record<string, number>> = {};
+        for (const [type, cells] of Object.entries(m.suppliers ?? {}))
+          for (const [id, v] of Object.entries(cells ?? {})) {
+            if ((v ?? "").trim() === "") continue;
+            const sen = moneyFieldToSen(v) as number;
+            if (sen > 0) (purchasesByType[type] ??= {})[id] = sen;
+          }
         payload[ym] = {
           ...(customerTotal > 0
             ? { salesSen: customerTotal, pct, salesByCustomer }
             : { salesSen: Math.max(0, moneyFieldToSen(m.salesStr) as number), pct }),
-          ...(Object.keys(purchasesBySupplier).length ? { purchasesBySupplier } : {}),
+          ...(Object.keys(purchasesByType).length ? { purchasesByType } : {}),
         };
       }
       const res = await fetch("/api/accounting/forecast", {
@@ -480,15 +506,14 @@ export default function ForecastPage() {
         </span>
       );
     }
-    // A month keyed by supplier owns its materials there: the row shows its
-    // share of the suppliers' spread, greyed, and keeps its own % for a month
-    // whose supplier cells are cleared again.
-    if (c.supplierSplit && materialCodes.has(code)) {
+    // A material keyed by supplier this month is their sum: shown greyed, not
+    // typed; its own % stays for a month whose supplier figures are cleared.
+    if (c.supplierKeyed(code)) {
       const sen = c.amt(code);
       return (
-        <span className="inline-flex items-center justify-end gap-1" title="From the By supplier rows: each supplier's figure spread by what it sold us lately">
+        <span className="inline-flex items-center justify-end gap-1" title="The suppliers' figures under this material, added up">
           <span className={`${AMT_SLOT} px-1 py-0.5 text-right text-[12px] tabular-nums text-[#9CA3AF]`}>{fmtRM(sen)}</span>
-          <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>{sen ? pctOfSales(sen, c.salesSen) : "-"}</span>
+          <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>{pctOfSales(sen, c.salesSen)}</span>
         </span>
       );
     }
@@ -540,30 +565,96 @@ export default function ForecastPage() {
       </span>
     </span>
   );
-  const acctRow = (a: CoaAcct, indent = true) => (
-    <tr key={a.code} className="border-b border-[#F0ECE9]">
-      <td className={`px-3 py-1 sticky left-0 bg-white whitespace-nowrap ${indent ? "pl-7" : ""}`} title={a.code.startsWith("cat:") ? undefined : a.code}>
-        <span className="text-[#1F1D1B]">{a.name}</span>
-      </td>
-      {yms.map((ym) => (
-        <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
-          {cellInputs(ym, a.code)}
-        </td>
-      ))}
-    </tr>
-  );
+  // A material's supplier rows (owner 2026-11-10 「让他在每个categories 出现相关
+  // 的supplier, 我从那边填」): opened with the ▸ on the material; a supplier
+  // with a figure in any month shows while closed. Each one's % column is its
+  // share of the month's sales.
+  const supplierRowsFor = (type: string): ReactNode => {
+    const all = supplierRowsByType.get(type) ?? [];
+    const open = !!openTypes[type];
+    const shown = open ? all : all.filter((r) => supplierRowHasData(type, r.id));
+    return (
+      <>
+        {open && suppliersFailed && (
+          <tr className="border-b border-[#F0ECE9]">
+            <td colSpan={yms.length + 1} className="px-3 py-1 pl-12 text-[11px] text-[#9A3412]">
+              Could not load the suppliers — reload the page to see them all.
+            </td>
+          </tr>
+        )}
+        {shown.map((r) => (
+          <tr key={`sup-${type}-${r.id}`} className="border-b border-[#F0ECE9]">
+            <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-12">
+              <span className="text-[12px] text-[#4B5563]">{r.name}</span>
+            </td>
+            {yms.map((ym) => {
+              const sen = supplierSen(months[ym], type)[r.id] ?? 0;
+              return (
+                <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
+                  <span className="inline-flex items-center justify-end gap-1">
+                    <span className={`${AMT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1`}>
+                      <span className="text-[10px] text-[#9CA3AF] mr-0.5">RM</span>
+                      <AmountInput
+                        col={yms.indexOf(ym) * 2}
+                        onKeyDown={onCellKey}
+                        value={months[ym]?.suppliers?.[type]?.[r.id] ?? ""}
+                        onChange={(v) => setSupplier(ym, type, r.id, v)}
+                        placeholder="-"
+                        className="w-full min-w-0 bg-transparent py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
+                      />
+                    </span>
+                    <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
+                      {sen > 0 ? pctOfSales(sen, calc(ym).salesSen) : "-"}
+                    </span>
+                  </span>
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </>
+    );
+  };
+  const acctRow = (a: CoaAcct, indent = true) => {
+    const type = materialType.get(a.code);
+    const open = type !== undefined && !!openTypes[type];
+    return (
+      <Fragment key={a.code}>
+        <tr className="border-b border-[#F0ECE9]">
+          <td className={`px-3 py-1 sticky left-0 bg-white whitespace-nowrap ${indent ? "pl-7" : ""}`} title={a.code.startsWith("cat:") ? undefined : a.code}>
+            {type === undefined ? (
+              <span className="text-[#1F1D1B]">{a.name}</span>
+            ) : (
+              <button
+                onClick={() => setOpenTypes((p) => ({ ...p, [type]: !open }))}
+                title={open ? "Hide its suppliers" : "Show its suppliers, to key this material one supplier at a time"}
+                className="cursor-pointer inline-flex items-center gap-1 text-[#1F1D1B]"
+              >
+                {open ? <ChevronDown className="h-3 w-3 text-[#9CA3AF]" /> : <ChevronRight className="h-3 w-3 text-[#9CA3AF]" />}
+                {a.name}
+              </button>
+            )}
+          </td>
+          {yms.map((ym) => (
+            <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
+              {cellInputs(ym, a.code)}
+            </td>
+          ))}
+        </tr>
+        {type !== undefined && supplierRowsFor(type)}
+      </Fragment>
+    );
+  };
   // A line "has a figure" when any month carries a keyed % or RM — or, for a
-  // material row, a share of a supplier month's spread.
+  // material, a supplier figure under it.
   const rowHasData = (code: string) =>
     yms.some((ym) => {
       const e = months[ym]?.pct[code];
-      if (materialCodes.has(code) && calc(ym).supplierSplit && calc(ym).amt(code) !== 0) return true;
+      if (calc(ym).supplierKeyed(code)) return true;
       return !!e && ((e.p !== undefined && e.p !== "") || (e.a !== undefined && e.a !== ""));
     });
-  // Parent section row: collapse toggle + per-month section totals. `lead`:
-  // rows of its own under the heading, before the account rows (the
-  // materials' By supplier block).
-  const section = (key: string, title: string, rows: CoaAcct[], lead?: () => ReactNode) => {
+  // Parent section row: collapse toggle + per-month section totals.
+  const section = (key: string, title: string, rows: CoaAcct[]) => {
     if (rows.length === 0) return null;
     const open = !collapsed[key];
     const visible = showEmpty ? rows : rows.filter((r) => rowHasData(r.code));
@@ -592,90 +683,7 @@ export default function ForecastPage() {
             );
           })}
         </tr>
-        {open && lead?.()}
         {open && visible.map((a) => acctRow(a))}
-      </>
-    );
-  };
-  // Materials by supplier (owner 2026-11-10 「supplier 那边还是你可以 set 根据
-  // ratio 也可以，一个个也可以」): a month with any supplier figure takes their
-  // sum as its materials, spread over the material rows by what each supplier
-  // sold us lately; a month left empty here keeps the % rows. Each supplier's
-  // % column is its share of the month's sales.
-  const supplierBlock = (): ReactNode => {
-    if (suppliersFailed)
-      return (
-        <tr className="border-b border-[#F0ECE9]">
-          <td colSpan={yms.length + 1} className="px-3 py-1 pl-7 text-[11px] text-[#9A3412]">
-            Could not load the suppliers, so the By supplier rows are not shown. Reload the page to key materials by supplier.
-          </td>
-        </tr>
-      );
-    const open = !collapsed.sup;
-    const visible = showEmpty ? supplierRows : supplierRows.filter((r) => supplierRowHasData(r.id));
-    return (
-      <>
-        <tr className="border-b border-[#F0ECE9]">
-          <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7">
-            <button
-              onClick={() => setCollapsed((p) => ({ ...p, sup: open }))}
-              title="Key what you expect to buy from each supplier: that month's materials are then their sum, spread over the rows below by what each supplier sold us lately. Leave a month empty to use the % rows."
-              className="cursor-pointer inline-flex items-center gap-1 text-[12px] font-semibold text-[#6B5C32]"
-            >
-              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              By supplier
-              {!showEmpty && visible.length < supplierRows.length && (
-                <span className="font-normal text-[#9CA3AF]">({supplierRows.length - visible.length} empty hidden)</span>
-              )}
-            </button>
-          </td>
-          {yms.map((ym) => {
-            const c = calc(ym);
-            return (
-              <td key={ym} className="px-2 py-1 text-right border-l border-[#F0ECE9]">
-                {c.supplierSplit ? (
-                  amtWithPct(c.supplierSplit.totalSen, c.salesSen, true)
-                ) : (
-                  <span className="inline-flex items-center justify-end gap-1" title="Not keyed by supplier: this month's materials are the % rows below">
-                    <span className={`${AMT_SLOT} px-1 text-right tabular-nums text-[#C7C1BA]`}>-</span>
-                    <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#C7C1BA]`}>-</span>
-                  </span>
-                )}
-              </td>
-            );
-          })}
-        </tr>
-        {open &&
-          visible.map((r) => (
-            <tr key={`sup-${r.id}`} className="border-b border-[#F0ECE9]">
-              <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-11">
-                <span className="text-[#1F1D1B]">{r.name}</span>
-              </td>
-              {yms.map((ym) => {
-                const sen = supplierSen(months[ym])[r.id] ?? 0;
-                return (
-                  <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
-                    <span className="inline-flex items-center justify-end gap-1">
-                      <span className={`${AMT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1`}>
-                        <span className="text-[10px] text-[#9CA3AF] mr-0.5">RM</span>
-                        <AmountInput
-                          col={yms.indexOf(ym) * 2}
-                          onKeyDown={onCellKey}
-                          value={months[ym]?.suppliers?.[r.id] ?? ""}
-                          onChange={(v) => setSupplier(ym, r.id, v)}
-                          placeholder="-"
-                          className="w-full min-w-0 bg-transparent py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
-                        />
-                      </span>
-                      <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
-                        {sen > 0 ? pctOfSales(sen, calc(ym).salesSen) : "-"}
-                      </span>
-                    </span>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
       </>
     );
   };
@@ -786,7 +794,7 @@ export default function ForecastPage() {
         <FinancePageTitle
           title="Forecast P&L"
           icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />}
-          explain="Planning only — nothing here touches the books. Key the sales per month, as one total or per customer (the total is then their sum); every line is a % of sales; raw materials can also be keyed per supplier (that month's materials are then their sum); a new month starts with the previous month's percentages."
+          explain="Planning only — nothing here touches the books. Key the sales per month, as one total or per customer (the total is then their sum); every line is a % of sales; a raw material can also be keyed per supplier — open it with ▸ (that month it is then their sum); a new month starts with the previous month's percentages."
         />
         <div className="ml-auto flex items-center gap-2">
           {/* Finance v2: one control — picking a month adds it (it starts
@@ -860,7 +868,7 @@ export default function ForecastPage() {
               </thead>
               <tbody>
                 {salesBlock()}
-                {section("mat", "RAW MATERIALS / PURCHASES", [...lines.materials, ...lines.direct], lines.materials.length ? supplierBlock : undefined)}
+                {section("mat", "RAW MATERIALS / PURCHASES", [...lines.materials, ...lines.direct])}
                 {section("lab", "DIRECT LABOUR — BY DEPARTMENT", lines.labour)}
                 {/* Legacy account-keyed labour: visible only where it holds
                     data; a month that has dept rows supersedes these cells

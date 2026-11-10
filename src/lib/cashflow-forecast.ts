@@ -15,7 +15,7 @@ import {
   type ForecastItem,
   type ForecastLeg,
 } from "./cashflow-engine";
-import { FC_OTHER_CUSTOMER, FC_OTHER_SUPPLIER, EMPTY_SUPPLIER_MIX, forecastEntryRatio, forecastMonthFigures, forecastSalesSen, materialRowType, type FcAccount, type FcLineGroups, type FcMonth, type FcSupplierMix } from "./forecast-pnl";
+import { FC_OTHER_CUSTOMER, FC_OTHER_SUPPLIER, forecastEntryRatio, forecastMonthFigures, forecastSalesSen, forecastTypeSupplierCells, materialRowType, type FcAccount, type FcLineGroups, type FcMonth } from "./forecast-pnl";
 import { pnlBucketFor } from "./pnl-bucket";
 
 export type TermInfo = { months: number; flagged: boolean };
@@ -739,10 +739,8 @@ export type PnlForecastInput = {
   receiptMix: TermMix;
   /** A material type's term mix, from its suppliers' recent purchases (3.2). */
   materialMix: (type: string) => TermMix;
-  /** What each supplier sold us lately, for a month keyed by supplier (spec
-   *  2026-11-10-forecast-suppliers-design.md 4), and each supplier's term in
-   *  months and name (6). */
-  supplierMix?: FcSupplierMix;
+  /** A supplier's term in months and its name, for a material keyed by
+   *  supplier (spec 2026-11-10-forecast-suppliers-design.md 6). */
   supplierTerm?: (supplierId: string) => number;
   supplierName?: (supplierId: string) => string;
   /** The Docs forecast's last future month: the P&L forecast's months reach
@@ -790,34 +788,32 @@ export function buildPnlForecastLegs(input: PnlForecastInput): { columns: Foreca
         add(to, p.sen, { accountCode: arAcct, item: item("Forecast sales", "sales", to, `${from} sales · ${termWords(p.months)} (recent invoices' terms)`) });
       }
     }
-    const f = forecastMonthFigures(m, groups, mappedAccounts, input.supplierMix ?? EMPTY_SUPPLIER_MIX);
+    const f = forecastMonthFigures(m, groups, mappedAccounts);
     for (const a of groups.otherIncome) {
       const amt = f.amt(a.code);
       if (amt) add(S, amt, { accountCode: resolveAcct(a.code), item: item(a.name, a.code, S, from) });
     }
-    if (f.supplierSplit) {
-      // Keyed by supplier (owner 2026-11-10 「一个个也可以」): each supplier
-      // after its own term, Other after a month, on the lines of the types
-      // its spread gives.
-      for (const s of f.supplierSplit.suppliers) {
-        const other = s.id === FC_OTHER_SUPPLIER;
-        const delay = other ? 1 : (input.supplierTerm?.(s.id) ?? 1);
-        const to = addMonthsYm(S, delay);
-        const party = other ? "Other (new suppliers)" : (input.supplierName?.(s.id) ?? s.id);
-        for (const [type, sen] of Object.entries(s.byType))
-          add(to, -sen, { section: "RAW_MATERIALS", label: type, item: item(party, `cat:${type}`, to, `${from} · ${type} · ${termWords(delay)}`) });
-      }
-    } else {
-      // Keyed by ratio: on the type's own Raw Materials line, after its
-      // suppliers' terms.
-      for (const a of groups.materials) {
-        const amt = f.amt(a.code);
-        if (!amt) continue;
-        const type = materialRowType(a);
-        for (const p of spreadByMix(amt, materialMix(type))) {
-          const to = addMonthsYm(S, p.months);
-          add(to, -p.sen, { section: "RAW_MATERIALS", label: type, item: item(type, a.code, to, `${from} · ${termWords(p.months)} (its suppliers' terms)`) });
+    // Materials, each on its own Raw Materials line. A material keyed by
+    // supplier (owner 2026-11-10 「让他在每个categories 出现相关的 supplier,
+    // 我从那边填」): each supplier after its own term, Other after a month. A
+    // material keyed by its %: after its suppliers' terms (the category mix).
+    for (const a of groups.materials) {
+      const type = materialRowType(a);
+      if (f.supplierKeyed(a.code)) {
+        for (const [id, sen] of forecastTypeSupplierCells(m, type)) {
+          const other = id === FC_OTHER_SUPPLIER;
+          const delay = other ? 1 : (input.supplierTerm?.(id) ?? 1);
+          const to = addMonthsYm(S, delay);
+          const party = other ? "Other (new suppliers)" : (input.supplierName?.(id) ?? id);
+          add(to, -sen, { section: "RAW_MATERIALS", label: type, item: item(party, a.code, to, `${from} · ${type} · ${termWords(delay)}`) });
         }
+        continue;
+      }
+      const amt = f.amt(a.code);
+      if (!amt) continue;
+      for (const p of spreadByMix(amt, materialMix(type))) {
+        const to = addMonthsYm(S, p.months);
+        add(to, -p.sen, { section: "RAW_MATERIALS", label: type, item: item(type, a.code, to, `${from} · ${termWords(p.months)} (its suppliers' terms)`) });
       }
     }
     for (const a of groups.direct) {

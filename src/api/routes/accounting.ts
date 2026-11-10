@@ -64,8 +64,8 @@ import {
   type TfPlanFacility,
   type TfPlanStore,
 } from "../../lib/cashflow-forecast";
-import { EMPTY_SUPPLIER_MIX, cleanPurchasesBySupplier, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastSalesSen, forecastSupplierSplit, type FcMonth, type FcSupplierMix } from "../../lib/forecast-pnl";
-import { anySupplierMonth, loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
+import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, forecastTypeSupplierSen, type FcMonth } from "../../lib/forecast-pnl";
+import { loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
@@ -10487,16 +10487,6 @@ async function loadMonthlyPlForecast(db: Env["Variables"]["DB"], orgId: string, 
   );
   const deptAcct = new Map(labour.departments.map((d) => [d.code, d.account] as const));
   const coaBy = new Map(coaList.map((a) => [a.code, { name: a.name, type: a.type }] as const));
-  // A month keyed by supplier spreads as on the Forecast page (spec
-  // 2026-11-10-forecast-suppliers-design.md 5); read only when needed.
-  const supplierMix: FcSupplierMix = anySupplierMonth(months)
-    ? await loadForecastSupplierMix(db, {
-        today: todayMyt(),
-        accounts: coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
-        override,
-        resolveAcct: await loadAccountResolver(db),
-      })
-    : EMPTY_SUPPLIER_MIX;
   return {
     months,
     groups,
@@ -10505,7 +10495,6 @@ async function loadMonthlyPlForecast(db: Env["Variables"]["DB"], orgId: string, 
       mappedAccounts: new Set(labour.mappedAccounts),
       deptAccount: (d: string) => deptAcct.get(d) ?? null,
       accountOf: (code: string) => coaBy.get(code),
-      supplierMix,
     },
   };
 }
@@ -11122,16 +11111,6 @@ async function loadCashflowForecast(
     forecastDepts(labour.departments, Object.values(fcMonths).map((m) => m.pct)),
   );
   const mapped = new Set(labour.mappedAccounts);
-  // A month keyed by supplier spreads by what each supplier sold us lately
-  // (spec 2026-11-10-forecast-suppliers-design.md 4); read only when needed.
-  const supplierMix: FcSupplierMix = anySupplierMonth(fcMonths)
-    ? await loadForecastSupplierMix(db, {
-        today,
-        accounts: coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
-        override,
-        resolveAcct,
-      })
-    : EMPTY_SUPPLIER_MIX;
   const nonCash = (code: string, name: string) => isNonCashAccount(code, name, TF_INTEREST_ACCT.code);
   const pnl = new Map<string, { salesSen: number; lines: FcCashLine[] }>();
   const excluded: CashflowForecastMeta["excluded"] = [];
@@ -11227,7 +11206,6 @@ async function loadCashflowForecast(
     customerName: (id) => custName.get(id) ?? id,
     receiptMix,
     materialMix: (type) => catMix.get(rawMaterialLineFor(type, sgOverride)) ?? termMixOf([]),
-    supplierMix,
     supplierTerm: (id) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1),
     supplierName: (id) => supName.get(id) ?? id,
     minHorizon: futureDocs[futureDocs.length - 1],
@@ -17070,22 +17048,18 @@ app.get("/dashboard", async (c) => {
 
   // --- Forecast overlay (same percent-or-amount rule as the Forecast page) --
   const fcRow = await db.prepare("SELECT value FROM kv_config WHERE key = 'forecast_pnl'").first<{ value: string }>();
-  type FcMonth = { salesSen?: number; purchasesBySupplier?: Record<string, number>; pct?: Record<string, number | { bp?: number; amtSen?: number }> };
+  type FcMonth = { salesSen?: number; purchasesByType?: Record<string, Record<string, number>>; pct?: Record<string, number | { bp?: number; amtSen?: number }> };
   let fcMonths: Record<string, FcMonth> = {};
   try {
     fcMonths = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
   } catch { /* none yet */ }
-  // A month keyed by supplier (owner 2026-11-10, spec 2026-11-10-forecast-
-  // suppliers-design.md 5): its materials are the suppliers' sum, spread over
-  // the material types by what each supplier sold us lately — the Forecast
-  // page's own figures. Read only when a month is keyed that way.
-  let supplierSplitOf: (m: FcMonth) => ReturnType<typeof forecastSupplierSplit> = () => null;
-  if (anySupplierMonth(fcMonths)) {
-    const acctsDash = (await loadCoaList(db, false)).map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable }));
-    const typesDash = [...new Set(forecastMaterialAccountTypes(acctsDash, overrideDash).values())].sort();
-    const mixDash = await loadForecastSupplierMix(db, { today: todayMyt(), accounts: acctsDash, override: overrideDash, resolveAcct: resolveDash });
-    supplierSplitOf = (m) => forecastSupplierSplit(m, typesDash, mixDash);
-  }
+  // A material keyed by supplier in a month (owner 2026-11-10, spec
+  // 2026-11-10-forecast-suppliers-design.md 5) is its suppliers' sum, as on the
+  // Forecast page; a material without supplier figures keeps its % / RM.
+  const supplierTypesOf = (m: FcMonth): [string, number][] =>
+    Object.keys(m.purchasesByType ?? {})
+      .map((type) => [type, forecastTypeSupplierSen(m, type)] as [string, number])
+      .filter(([, sen]) => sen > 0);
   const fcLineAmt = (m: FcMonth, v: number | { bp?: number; amtSen?: number }): number => {
     const salesSen = Math.max(0, Math.round(Number(m.salesSen) || 0));
     if (typeof v === "number") return Math.round((salesSen * v) / 10000);
@@ -17120,14 +17094,16 @@ app.get("/dashboard", async (c) => {
   for (const [ym, m] of Object.entries(fcMonths)) {
     const slice = zero();
     slice.sales = Math.max(0, Math.round(Number(m.salesSen) || 0));
-    const split = supplierSplitOf(m);
+    const bySupplier = supplierTypesOf(m);
+    const supplierKeyed = new Set(bySupplier.map(([type]) => type));
     const cats = new Map<string, number>();
-    if (split) for (const [type, sen] of Object.entries(split.byType)) cats.set(type, (cats.get(type) ?? 0) + sen);
-    else for (const [code, v] of Object.entries(m.pct ?? {})) {
+    for (const [code, v] of Object.entries(m.pct ?? {})) {
       if (!code.startsWith("cat:")) continue;
       const name = code.slice(4);
+      if (supplierKeyed.has(name)) continue;
       cats.set(name, (cats.get(name) ?? 0) + fcLineAmt(m, v));
     }
+    for (const [type, sen] of bySupplier) cats.set(type, (cats.get(type) ?? 0) + sen);
     fcCatByMonth.set(ym, cats);
     // Owner 2026-08-11: salaries forecast PER DEPARTMENT (`dept:` pseudo-rows).
     // A month with any dept row owns its labour there — its 750-x account
@@ -17151,8 +17127,9 @@ app.get("/dashboard", async (c) => {
         continue;
       }
       if (deptForecast && (kind === "labourAccount" || labourMappedDash.has(code))) continue;
-      // Keyed by supplier: the spread below stands in for the rows' own figures.
-      if (split && code.startsWith("cat:")) continue;
+      // A material keyed by supplier: its suppliers' sum below stands in for
+      // its own figure.
+      if (code.startsWith("cat:") && supplierKeyed.has(code.slice(4))) continue;
       const amt = fcLineAmt(m, v);
       const meta = code.startsWith("cat:") ? { type: "COST" } : coaDash.get(code);
       if (!meta) { slice.materials += amt; slice.cogs += amt; continue; }
@@ -17164,7 +17141,7 @@ app.get("/dashboard", async (c) => {
       else if (bucket === "FACTORY_OVERHEAD") { slice.overhead += amt; slice.cogs += amt; }
       else { slice.materials += amt; slice.cogs += amt; } // materials incl. cat: rows
     }
-    if (split) { slice.materials += split.totalSen; slice.cogs += split.totalSen; }
+    for (const [, sen] of bySupplier) { slice.materials += sen; slice.cogs += sen; }
     slice.gross = slice.sales - slice.cogs;
     slice.net = slice.gross + slice.otherIncome - slice.expenses;
     fcByMonth.set(ym, slice);
@@ -17401,7 +17378,7 @@ app.put("/forecast", async (c) => {
   if (denied) return denied;
   try {
     const body = (await c.req.json()) as {
-      months?: Record<string, { salesSen?: number; salesByCustomer?: unknown; purchasesBySupplier?: unknown; pct?: Record<string, number | { bp?: number; amtSen?: number }> }>;
+      months?: Record<string, { salesSen?: number; salesByCustomer?: unknown; purchasesByType?: unknown; pct?: Record<string, number | { bp?: number; amtSen?: number }> }>;
     };
     if (!body.months || typeof body.months !== "object") {
       return c.json({ success: false, error: "months required" }, 400);
@@ -17412,10 +17389,10 @@ app.put("/forecast", async (c) => {
     // Sales by customer (owner 2026-11-09, spec 2026-11-09-forecast-three-
     // columns-design.md 4): kept as `salesByCustomer`, and `salesSen` is then
     // their sum, so every reader of salesSen keeps reading the month's total.
-    // Purchases by supplier (owner 2026-11-10, spec 2026-11-10-forecast-
-    // suppliers-design.md 3): kept as `purchasesBySupplier`; nothing derived
-    // is stored — every reader spreads them by the current purchases.
-    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesBySupplier?: Record<string, number> }> = {};
+    // Purchases by supplier under each material (owner 2026-11-10, spec
+    // 2026-11-10-forecast-suppliers-design.md 3): kept as `purchasesByType`;
+    // nothing derived is stored — a material with any figure is their sum.
+    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesByType?: Record<string, Record<string, number>> }> = {};
     for (const [ym, m] of Object.entries(body.months)) {
       if (!/^\d{4}-\d{2}$/.test(ym) || !m || typeof m !== "object") continue;
       const pct: Record<string, { bp?: number; amtSen?: number }> = {};
@@ -17431,12 +17408,12 @@ app.put("/forecast", async (c) => {
         }
       }
       const salesByCustomer = cleanSalesByCustomer(m.salesByCustomer);
-      const purchasesBySupplier = cleanPurchasesBySupplier(m.purchasesBySupplier);
+      const purchasesByType = cleanPurchasesByType(m.purchasesByType);
       months[ym] = {
         salesSen: forecastSalesSen({ salesSen: m.salesSen, salesByCustomer }),
         pct,
         ...(Object.keys(salesByCustomer).length ? { salesByCustomer } : {}),
-        ...(Object.keys(purchasesBySupplier).length ? { purchasesBySupplier } : {}),
+        ...(Object.keys(purchasesByType).length ? { purchasesByType } : {}),
       };
     }
     await c.var.DB.prepare(

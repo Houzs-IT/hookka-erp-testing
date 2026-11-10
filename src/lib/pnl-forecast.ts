@@ -9,7 +9,7 @@
 // profit therefore equals the Forecast P&L page's; gross profit differs only
 // by what posts outside COGS. Tests: tests/pnl-forecast.test.mjs.
 // ---------------------------------------------------------------------------
-import { EMPTY_SUPPLIER_MIX, FC_CARRIAGE, FC_SST, forecastMaterialType, forecastMonthFigures, materialRowType, type FcLineGroups, type FcMonth, type FcSupplierMix } from "./forecast-pnl";
+import { FC_CARRIAGE, FC_SST, forecastMaterialType, forecastMonthFigures, materialRowType, type FcLineGroups, type FcMonth } from "./forecast-pnl";
 import { pnlBucketFor } from "./pnl-bucket";
 import { FORECAST_TYPE_GROUP_PREFIX, type PnlExpenseLine, type PnlLine, type PnlRmGroup, type PnlWindowLike } from "./pnl-matrix";
 
@@ -20,9 +20,6 @@ export type ForecastPnlOpts = {
   deptAccount: (dept: string) => string | null;
   /** The chart's name and type of an account. */
   accountOf: (code: string) => { name: string; type: string } | undefined;
-  /** What each supplier sold us lately: a month keyed by supplier spreads by
-   *  it, as on the Forecast page (spec 2026-11-10-forecast-suppliers-design.md 5). */
-  supplierMix?: FcSupplierMix;
 };
 
 /** A purchase group's material type: a forecast type group says it; an actual
@@ -32,10 +29,10 @@ export function rmTypeOf(rg: PnlRmGroup): string {
 }
 
 /** One Forecast P&L month as a P&L window. The amounts are the page's own
- *  (forecastMonthFigures, supersede rule included); nothing for stock
- *  movements, which the plan does not forecast. */
+ *  (forecastMonthFigures, supersede rule and supplier-keyed materials
+ *  included); nothing for stock movements, which the plan does not forecast. */
 export function forecastPnlWindow(m: FcMonth | undefined, g: FcLineGroups, o: ForecastPnlOpts): PnlWindowLike {
-  const f = forecastMonthFigures(m, g, o.mappedAccounts, o.supplierMix ?? EMPTY_SUPPLIER_MIX);
+  const f = forecastMonthFigures(m, g, o.mappedAccounts);
   const labour = new Map<string, PnlLine>();
   const overhead = new Map<string, PnlLine>();
   const other = new Map<string, PnlLine>();
