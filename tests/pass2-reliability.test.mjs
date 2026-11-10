@@ -92,3 +92,20 @@ test("B2: DR / PR / stock adjustment batches open with the guard and retry", () 
   assert.match(sa, /stmts\.push\(\.\.\.docNoGuardStatements\(c\.var\.DB, "stock_adjustments", adjNo\), headerInsert\(adjNo\)\);/);
   assert.match(sa, /adjNo = await nextAdjNo\(c\.var\.DB\);\s*stmts\.splice\(0, 3,/);
 });
+
+// ── H3 B3: two Approve presses cannot both build a voucher's postings ─────
+test("B3: every PV ladder rung is compare-and-set on the state it read", () => {
+  const acc = read("src/api/routes/accounting.ts");
+  const a = acc.indexOf("async function pvApprovalCore(");
+  const core = acc.slice(a, acc.indexOf("\napp.", a));
+  // prepare / withdraw / reject / check: single UPDATE, 0 rows -> refused.
+  assert.equal((core.match(/WHERE id = \? AND approval_state = \?"/g) ?? []).length, 6, "4 single rungs + 2 approve UPDATEs");
+  assert.equal((core.match(/if \(changed\(r\)\) return raced\(\);/g) ?? []).length, 4);
+  // approve (GL and AP branches): the guard sits right after the UPDATE so
+  // the postings roll back with it.
+  assert.match(core, /db\.batch\(\[\.\.\.stmts\.slice\(0, 1\), db\.prepare\(casGuardSql\("payment_vouchers", "approval_state"\)\)\.bind\(id, "APPROVED", now\), \.\.\.stmts\.slice\(1\)\]\)/);
+  assert.match(core, /const lostAp = await runGuarded\(\[/);
+  assert.match(core, /const lost = await runGuarded\(\[/);
+  assert.doesNotMatch(core, /await db\.batch\(\[\s*db\.prepare\(\s*"UPDATE payment_vouchers SET approval_state = 'APPROVED'/);
+  assert.match(acc, /if \(!r\.ok\) return c\.json\(\{ success: false, error: r\.error, \.\.\.\(r\.status === 409 \? \{ code: "status_changed" \} : \{\}\) \}, r\.status \?\? 400\);/);
+});

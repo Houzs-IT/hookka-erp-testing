@@ -136,7 +136,7 @@ test("every finance save that recorded nothing now writes an audit row", () => {
   ];
   for (const [start, re] of rows) assert.match(route(start), re, start);
   // Recorded after the write succeeded: never before a refusal.
-  assert.match(route('app.post("/payment-vouchers/:id/approval",'), /if \(!r\.ok\) return c\.json\(\{ success: false, error: r\.error \}, 400\);\n\s*await emitAudit/);
+  assert.match(route('app.post("/payment-vouchers/:id/approval",'), /if \(!r\.ok\) return c\.json\(\{ success: false, error: r\.error, .*\}, r\.status \?\? 400\);\n\s*await emitAudit/);
   // The stock take records the month's figures before the save, in RM.
   assert.match(route('app.put("/stock-take",'), /SELECT item_group, value_sen FROM stock_take WHERE org_id = \? AND ym = \?/);
   // An opening invoice deleted is named by its number.
