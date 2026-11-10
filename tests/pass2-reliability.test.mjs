@@ -153,3 +153,30 @@ test("B8: 'max clients reached in session mode' / EMAXCONNSESSION is a connect-t
   assert.ok(isTransientDbError(byCode), "answers 503, not 500");
   assert.ok(!createRe.test("connection terminated unexpectedly"), "a mid-statement drop is still never retried");
 });
+
+// ── C1-7: Idempotency-Key on credit note, debit note, adjustment, advance ─
+test("C1-7: the four create routes are wrapped in idempotent()", () => {
+  for (const f of ["credit-notes", "debit-notes", "stock-adjustments", "employee-advances"]) {
+    const s = read(`src/api/routes/${f}.ts`);
+    assert.match(s, /import \{ idempotent \} from "\.\.\/lib\/idempotency";/, f);
+    assert.match(s, /app\.post\("\/", idempotent\(\), async \(c\) => \{/, f);
+  }
+});
+
+test("C1-7: every create screen sends an Idempotency-Key", () => {
+  const cn = read("src/pages/invoices/credit-notes.tsx");
+  assert.match(cn, /createIdem\.withKey\(\(key\) =>\s*fetchJson\("\/api\/credit-notes", CNMutationSchema, \{\s*method: "POST",\s*headers: \{ "Idempotency-Key": key \}/);
+  const dn = read("src/pages/invoices/debit-notes.tsx");
+  assert.match(dn, /createIdem\.withKey\(\(key\) =>\s*fetchJson\("\/api\/debit-notes", DNMutationSchema, \{ method: "POST", body, headers: \{ "Idempotency-Key": key \} \}\)/);
+  const adj = read("src/pages/inventory/adjustments.tsx");
+  assert.match(adj, /adjIdem\.withKey\(`row:\$\{row\.uid\}`, \(key\) =>\s*fetch\("\/api\/stock-adjustments", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Idempotency-Key": key \}/);
+  const emp = read("src/pages/employees.tsx");
+  assert.match(emp, /advIdem\.withKey\(`worker:\$\{row\.id\}`, \(key\) =>\s*fetch\("\/api\/employee-advances", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Idempotency-Key": key \}/);
+  const sc = read("src/pages/service-cases/detail.tsx");
+  assert.match(sc, /issueIdem\.withKey\(\(key\) => fetch\("\/api\/stock-adjustments", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Idempotency-Key": key \}/);
+  const m = read("src/pages/m/config/forms.ts");
+  assert.match(m, /mutateJson\("\/api\/stock-adjustments", "POST", body, \{\s*"Idempotency-Key": uuid\(\),/);
+  // The submit buttons still disable while sending (what stops a double click).
+  assert.match(cn, /disabled=\{creating \|\|/);
+  assert.match(dn, /disabled=\{creating \|\|/);
+});

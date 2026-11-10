@@ -1383,7 +1383,9 @@ export function stockAdjustmentSpec(doc: Record<string, unknown>, id: string): F
         reason: s(v.reason) || "COUNT_CORRECTION",
         notes: s(v.notes) || null,
       };
-      const res = await mutateJson("/api/stock-adjustments", "POST", body);
+      const res = await mutateJson("/api/stock-adjustments", "POST", body, {
+        "Idempotency-Key": uuid(),
+      });
       if (!res.ok) return { ok: false, error: res.error };
       refreshOne(`/api/raw-materials/${encodeURIComponent(id)}`);
       refreshList("/api/raw-materials");

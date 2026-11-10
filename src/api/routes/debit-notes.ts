@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../worker";
+import { idempotent } from "../lib/idempotency";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
@@ -134,7 +135,7 @@ app.get("/", async (c) => {
 });
 
 // POST /api/debit-notes — create
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   // RBAC gate (P3.3-followup) — debit-notes:create.
   const denied = await requirePermission(c, "debit-notes", "create");
   if (denied) return denied;

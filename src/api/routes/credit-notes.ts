@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../worker";
+import { idempotent } from "../lib/idempotency";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
@@ -313,7 +314,7 @@ async function ensureCreditNoteReturnColumn(db: Env["Variables"]["DB"]): Promise
 }
 
 // POST /api/credit-notes — create
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   // RBAC gate (P3.3-followup) — credit-notes:create.
   const denied = await requirePermission(c, "credit-notes", "create");
   if (denied) return denied;

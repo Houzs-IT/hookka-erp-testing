@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { DebitNote, Invoice } from "@/types";
 import { fetchJson } from "@/lib/fetch-json";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { mutationWithData } from "@/lib/schemas/common";
 import { DebitNoteSchema } from "@/lib/schemas/invoice";
 import { COMPANY } from "@/lib/constants";
@@ -140,6 +141,8 @@ export default function DebitNotesPage() {
   });
   const [items, setItems] = useState<DebitNoteItemRow[]>([newDNItem()]);
   const [creating, setCreating] = useState(false);
+  // C1-7 (review pass 2): a retried create replays the first note, not a second one.
+  const createIdem = useIdempotencyKey();
 
   // Ticked-row selection for batch print voucher + Excel/CSV export. The list
   // uses the shared DataGrid, which owns its own checkbox column (selectable)
@@ -210,7 +213,9 @@ export default function DebitNotesPage() {
       const body = { invoiceId: selectedInvoiceId, reason, reasonDetail, items: payloadItems };
       const data = editingNote
         ? await fetchJson(`/api/debit-notes/${encodeURIComponent(editingNote.id)}/edit`, DNMutationSchema, { method: "PUT", body })
-        : await fetchJson("/api/debit-notes", DNMutationSchema, { method: "POST", body });
+        : await createIdem.withKey((key) =>
+            fetchJson("/api/debit-notes", DNMutationSchema, { method: "POST", body, headers: { "Idempotency-Key": key } }),
+          );
       if (data.success) {
         const no = data.data?.noteNumber ?? editingNote?.noteNumber ?? "The debit note";
         toast.success(editingNote ? `${no} saved` : `${no} created${copyOf ? ` from ${copyOf}` : ""}`);

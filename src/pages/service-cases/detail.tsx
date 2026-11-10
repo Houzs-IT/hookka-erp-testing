@@ -35,6 +35,7 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { getCurrentUser } from "@/lib/auth";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { compressImage } from "@/lib/image-compress";
 import {
   ArrowLeft, CheckCircle2, XCircle, RotateCcw, Plus, X, Wrench, AlertCircle, Loader2,
@@ -2462,6 +2463,8 @@ function StockTopUpPanel({
   const [qty, setQtyInput] = useState("1");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  // C1-7 (review pass 2): a retried issue replays the first adjustment.
+  const issueIdem = useIdempotencyKey();
   // Focus drives the browsable dropdown — clicking the box shows the stock
   // list (first N) so the operator can browse without blind-typing.
   const [focused, setFocused] = useState(false);
@@ -2563,9 +2566,9 @@ function StockTopUpPanel({
       return;
     setSaving(true);
     try {
-      const res = await fetch("/api/stock-adjustments", {
+      const res = await issueIdem.withKey((key) => fetch("/api/stock-adjustments", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
         body: JSON.stringify({
           type,
           itemId: selected.id,
@@ -2577,7 +2580,7 @@ function StockTopUpPanel({
           adjustedBy: user?.id ?? null,
           adjustedByName: user?.displayName ?? user?.email ?? null,
         }),
-      });
+      }));
       const data = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
       // Append to the case's agent action log (same PUT shape the

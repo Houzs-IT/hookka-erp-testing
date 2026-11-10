@@ -35,6 +35,7 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../worker";
+import { idempotent } from "../lib/idempotency";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
@@ -206,7 +207,7 @@ app.get("/", async (c) => {
 //   caseId?: string,        // service_cases.id — SERVICE_REPLACEMENT backlink
 // }
 // ---------------------------------------------------------------------------
-app.post("/", async (c) => {
+app.post("/", idempotent(), async (c) => {
   const denied = await requirePermission(c, "inventory", "create");
   if (denied) return denied;
   await ensureStockAdjustmentColumns(c.var.DB);

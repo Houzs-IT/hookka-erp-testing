@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { CreditNote, Invoice } from "@/types";
 import { fetchJson } from "@/lib/fetch-json";
+import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { mutationWithData } from "@/lib/schemas/common";
 import { CreditNoteSchema } from "@/lib/schemas/invoice";
 import { COMPANY } from "@/lib/constants";
@@ -137,6 +138,8 @@ export default function CreditNotesPage() {
   });
   const [items, setItems] = useState<CreditNoteItemRow[]>([newCNItem()]);
   const [creating, setCreating] = useState(false);
+  // C1-7 (review pass 2): a retried create replays the first note, not a second one.
+  const createIdem = useIdempotencyKey();
 
   // A note from a delivery return (owner 2026-07-15 → priced 2026-10-17,
   // Finance v2 "create a Credit Note from a Delivery Return"): the New CN form
@@ -282,13 +285,16 @@ export default function CreditNotesPage() {
       const body = { invoiceId: selectedInvoiceId, reason, reasonDetail, items: payloadItems };
       const data = editingNote
         ? await fetchJson(`/api/credit-notes/${encodeURIComponent(editingNote.id)}/edit`, CNMutationSchema, { method: "PUT", body })
-        : await fetchJson("/api/credit-notes", CNMutationSchema, {
-            method: "POST",
-            body: {
-              ...body,
-              ...(fromReturnDraft ? { deliveryReturnId: fromReturnDraft.id } : {}),
-            },
-          });
+        : await createIdem.withKey((key) =>
+            fetchJson("/api/credit-notes", CNMutationSchema, {
+              method: "POST",
+              headers: { "Idempotency-Key": key },
+              body: {
+                ...body,
+                ...(fromReturnDraft ? { deliveryReturnId: fromReturnDraft.id } : {}),
+              },
+            }),
+          );
       if (data.success) {
         const no = data.data?.noteNumber ?? editingNote?.noteNumber ?? "The credit note";
         toast.success(editingNote ? `${no} saved` : `${no} created${copyOf ? ` from ${copyOf}` : ""}`);
