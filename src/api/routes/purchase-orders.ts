@@ -25,6 +25,7 @@ import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
 import { editConflictMessage } from "../lib/edit-conflict";
 import { mytYymm } from "../../lib/doc-number";
+import { summarizePoGrns, type GrnHeaderLite, type GrnLineLink } from "../../lib/po-grn-refs";
 
 const app = new Hono<Env>();
 
@@ -433,12 +434,64 @@ app.get("/", async (c) => {
     poRows.map((p) => p.supplierId),
   );
   fillBlankSupplierSku(data, bindings);
+  // Review H2-3 / C2-7: each PO's GRN number(s) + received date (read-only).
+  await attachPoGrnRefs(c.var.DB, data);
   return c.json(
     paginate
       ? { success: true, data, total, page, limit }
       : { success: true, data },
   );
 });
+
+/**
+ * Review H2-3 / C2-7 — add `grnRefs` / `grnNumbers` / `grnDate` to each PO in
+ * the list (in place). Two read-only queries over the returned POs (header poId, and the
+ * line po_id of multi-PO receipts). A failure leaves the columns blank rather
+ * than failing the list.
+ */
+export async function attachPoGrnRefs<T extends { id: string }>(
+  db: D1Database,
+  pos: T[],
+): Promise<void> {
+  const ids = pos.map((p) => p.id);
+  let grns: GrnHeaderLite[] = [];
+  let links: GrnLineLink[] = [];
+  if (ids.length) {
+    try {
+      await ensureGrnItemPoRef(db);
+      const ph = ids.map(() => "?").join(", ");
+      const [gRes, lRes] = await Promise.all([
+        db
+          .prepare(
+            `SELECT id, grnNumber, poId, receiveDate, status FROM grns WHERE poId IN (${ph}) OR id IN (SELECT grnId FROM grn_items WHERE po_id IN (${ph}))`,
+          )
+          .bind(...ids, ...ids)
+          .all<Record<string, unknown>>(),
+        db
+          .prepare(`SELECT grnId, po_id FROM grn_items WHERE po_id IN (${ph})`)
+          .bind(...ids)
+          .all<Record<string, unknown>>(),
+      ]);
+      grns = (gRes.results ?? []).map((r) => ({
+        id: String(r.id ?? ""),
+        grnNumber: String(r.grnNumber ?? r.grn_number ?? ""),
+        poId: String(r.poId ?? r.po_id ?? ""),
+        receiveDate: String(r.receiveDate ?? r.receive_date ?? ""),
+        status: String(r.status ?? ""),
+      }));
+      links = (lRes.results ?? []).map((r) => ({
+        grnId: String(r.grnId ?? r.grn_id ?? ""),
+        poId: String(r.poId ?? r.po_id ?? ""),
+      }));
+    } catch (err) {
+      console.warn("[purchase-orders] GRN refs:", err);
+    }
+  }
+  const summary = summarizePoGrns(ids, grns, links);
+  for (const p of pos) {
+    Object.assign(p, summary.get(p.id) ?? { grnRefs: [], grnNumbers: "", grnDate: "" });
+  }
+}
 
 // GET /api/purchase-orders/stats — whole-dataset PO header rows (NO line items),
 // so the list page's summary widgets (Draft / Confirmed counts, the overdue

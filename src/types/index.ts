@@ -629,6 +629,10 @@ export type PurchaseOrder = {
   orderDate: string;
   expectedDate: string;
   receivedDate: string | null;
+  // Review H2-3 / C2-7: GRNs that received this PO (list GET only).
+  grnRefs?: Array<{ id: string; grnNumber: string; receiveDate: string }>;
+  grnNumbers?: string;
+  grnDate?: string;
   notes: string;
   // Purchase company that buys on this PO (HOOKKA / OHANA / sister co).
   // Mirrors the supplier-level default in Supplier.purchaseOrgCode but is

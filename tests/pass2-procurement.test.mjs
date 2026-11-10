@@ -96,3 +96,31 @@ test("H1-5: GRN list + detail render the line PO; both GET routes fill it", () =
   const list = read("src/pages/procurement/grn.tsx");
   assert.match(list, /grnPoRefs\(row\)/);
 });
+
+// ── H2-3 / C2-7: GRN number(s) + GRN date on the PO list ─────────────────
+import { summarizePoGrns } from "../src/lib/po-grn-refs.ts";
+
+test("H2-3: each PO lists its GRNs (header or line link), cancelled left out", () => {
+  const grns = [
+    { id: "g1", grnNumber: "GRN-2611-001", poId: "po-1", receiveDate: "2026-11-02T00:00:00Z", status: "POSTED" },
+    { id: "g2", grnNumber: "GRN-2611-003", poId: "po-9", receiveDate: "2026-11-05", status: "DRAFT" },
+    { id: "g3", grnNumber: "GRN-2611-002", poId: "po-1", receiveDate: "2026-11-04", status: "CANCELLED" },
+  ];
+  // g2's header PO is po-9 but one of its lines receives po-1 (multi-PO).
+  const links = [{ grnId: "g2", poId: "po-1" }, { grnId: "g3", poId: "po-2" }];
+  const m = summarizePoGrns(["po-1", "po-2", "po-3"], grns, links);
+  assert.equal(m.get("po-1").grnNumbers, "GRN-2611-001, GRN-2611-003");
+  assert.equal(m.get("po-1").grnDate, "2026-11-05");
+  assert.deepEqual(m.get("po-1").grnRefs.map((r) => r.id), ["g1", "g2"]);
+  assert.equal(m.get("po-2").grnNumbers, "");
+  assert.equal(m.get("po-3").grnDate, "");
+});
+
+test("H2-3: the PO list GET attaches the refs and the list shows both columns", () => {
+  const route = read("src/api/routes/purchase-orders.ts");
+  assert.match(route, /await attachPoGrnRefs\(c\.var\.DB, data\)/);
+  assert.match(route, /OR id IN \(SELECT grnId FROM grn_items WHERE po_id IN/);
+  const list = read("src/pages/procurement/index.tsx");
+  assert.match(list, /key: "grnNumbers", label: "GRN No\."/);
+  assert.match(list, /key: "grnDate", label: "GRN Date", type: "date"/);
+});
