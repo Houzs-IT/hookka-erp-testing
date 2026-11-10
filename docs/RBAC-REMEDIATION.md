@@ -1,5 +1,6 @@
 # RBAC Remediation — current state and the way through
 
+> **Last verified: 2026-11-10** (branch `feat/flow-attachments`, to `main`): finding 1 — `files.ts` now maps the FLOW document types to their resource (`src/lib/flow-files.ts` `flowFileResource`, review C1-5); re-read `src/api/routes/files.ts`. Nothing else re-checked.
 > **Last verified: 2026-11-09** (branch `fix/security-batch`, to `main`): re-read `src/api/lib/rbac.ts` — every unresolved path still denies; added `tests/rbac-default-deny.test.mjs` (see the line under "Two fail-open paths"). Nothing else re-checked.
 > **Last verified: 2026-10-13** (branch `feat/it-support-to-main`, staging to `main`): finding 2b below (`it-support.ts` is self-scoped, not a hole). Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `feat/permissions-tab-main`, ported from staging): added the per-account layer above the role lookup ("Where a role's permissions actually come from"). Nothing else re-checked.
@@ -155,6 +156,15 @@ means mapping `resourceType` to a resource and choosing a default for anything u
 Recommend deny. Note also that `GET /:id/download` issues a **presigned Supabase URL valid
 for 300 seconds**, so once the link exists the object is outside the permission system
 entirely.
+
+**Partly done (2026-11-10, review C1-5).** The flow-document types now inherit their
+document's gate: `PO`/`PO_LINE`, `GRN`/`grn`/`GRN_LINE`, `PI`/`PI_LINE`, `DO`/`DO_LINE`,
+`INVOICE`/`INVOICE_LINE`, `DR`/`DR_LINE` → `purchase-orders` / `grn` / `purchase-invoices` /
+`delivery-orders` / `invoices` / `delivery-returns`. List-by-type, metadata, download and
+stream need `read`; upload needs `update`; delete needs `files:delete` and `update`; the
+unfiltered list drops rows the reader may not read. Every OTHER type is unchanged (open read,
+`files:create` / `files:delete`) — the deny-by-default for unmapped types is still open, and
+the 300-second presigned URL still escapes the gate once issued.
 
 **2. `sessions.ts` is not a hole — do not "fix" it.** `audit-rbac.mjs` flags `GET /` and
 `DELETE /:id` as ungated. Reading them: both bind every query to `ctxUserId(c)`
