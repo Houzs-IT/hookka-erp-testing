@@ -99,6 +99,17 @@ export function findPrefixClash(bankCfg: DocPrefixMap, typeCfg: DocTypePrefixMap
 
 /** "2610" for October 2026 in UTC — the month the self-numbering documents
  *  have always taken (the server's clock), kept so no run changes month. */
+/** YYMM of the MALAYSIA month (UTC+8). Document numbers carry the month the
+ *  business is in: a PO raised at 07:30 on 1 December MYT is still 30 November
+ *  in UTC, and used to be numbered PO-2611-… (Houzs fixed theirs in #5464 /
+ *  #5493; Hookka's server runs in UTC). Use this for every document number. */
+export function mytYymm(now: Date = new Date()): string {
+  const t = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return `${String(t.getUTCFullYear()).slice(2)}${String(t.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** @deprecated UTC month — wrong for document numbers; use mytYymm. Kept for
+ *  callers that genuinely need the UTC month. */
 export function utcYymm(now: Date = new Date()): string {
   return `${String(now.getUTCFullYear()).slice(2)}${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 }

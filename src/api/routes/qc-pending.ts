@@ -86,6 +86,7 @@ import {
   type RmFamily,
   type RmLineLike,
 } from "../lib/qc-rm-families";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -219,8 +220,7 @@ function genDefectId(): string {
 async function inspectionNoAllocator(
   db: D1Database,
 ): Promise<() => string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `QC-${yymm}-`;
   const res = await db
     .prepare("SELECT inspectionNo FROM qc_inspections WHERE inspectionNo LIKE ?")

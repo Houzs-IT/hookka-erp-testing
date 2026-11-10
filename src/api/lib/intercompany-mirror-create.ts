@@ -42,6 +42,7 @@ import {
 } from "../../lib/intercompany-mirror";
 import { normalizeCompanyName } from "../../lib/company-name-match";
 import { runSelfApply } from "../lib/self-apply";
+import { mytYymm } from "../../lib/doc-number";
 
 export type MirrorResult =
   | { created: false; reason: string; mirrorSoId?: undefined }
@@ -156,8 +157,7 @@ async function nextMirrorCompanySOId(
   if (m) {
     yymm = `${m[1].slice(2)}${m[2]}`;
   } else {
-    const now = new Date();
-    yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    yymm = mytYymm();
   }
   const prefix = `SO-${yymm}-`;
   const res = await db

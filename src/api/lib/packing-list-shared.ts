@@ -1,3 +1,4 @@
+import { mytYymm } from "../../lib/doc-number";
 // ---------------------------------------------------------------------------
 // packing-list-shared.ts — helpers shared by the two truck-run "packing list"
 // families:
@@ -58,9 +59,7 @@ export async function genNextPackingNo(
   orgId: string,
   now: Date = new Date(),
 ): Promise<string> {
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(
-    now.getMonth() + 1,
-  ).padStart(2, "0")}`;
+  const yymm = mytYymm(now);
   const full = `${prefix}-${yymm}-`;
   const res = await db
     .prepare(

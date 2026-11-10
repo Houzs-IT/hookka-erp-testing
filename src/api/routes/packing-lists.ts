@@ -19,6 +19,7 @@ import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { loadDoValueMap } from "../lib/do-value";
 import { getOrCreateQrToken, qrScanUrl } from "../lib/do-qr-token";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -105,8 +106,7 @@ function isMissingTable(e: unknown): boolean {
 }
 
 async function genNextPackingNo(db: D1Database, orgId: string): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `PL-${yymm}-`;
   const res = await db
     .prepare(

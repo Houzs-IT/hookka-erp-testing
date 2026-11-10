@@ -10,6 +10,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { capList } from "../lib/list-cap";
 import { todayYmdMY } from "../../lib/utils";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -143,8 +144,7 @@ function genId(prefix: string): string {
 }
 
 async function getNextQCNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `QC-${yymm}-`;
   const res = await db
     .prepare("SELECT COUNT(*) as n FROM qc_inspections WHERE inspectionNo LIKE ?")

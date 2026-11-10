@@ -1,5 +1,5 @@
 import type { Env } from "../worker";
-import { DOC_TYPES, formatDocNo, nextAfter, resolveTypePrefix, utcYymm, ymFromDate, resolveDocPrefix } from "../../lib/doc-number";
+import { DOC_TYPES, formatDocNo, nextAfter, resolveTypePrefix, mytYymm, ymFromDate, resolveDocPrefix } from "../../lib/doc-number";
 import type { DocDirection, DocPrefixMap, DocTypeKey, DocTypePrefixMap } from "../../lib/doc-number";
 
 /** The prefixes Finance set per document type (kv `doc_type_prefixes`). */
@@ -39,7 +39,7 @@ export async function nextSelfNumber(
   const t = SELF_NUMBERED[key];
   if (!t) throw new Error(`${key} is not self-numbered`);
   const prefix = await docTypePrefix(db, key);
-  const yymm = opts.yymm ?? utcYymm();
+  const yymm = opts.yymm ?? mytYymm();
   const digits = DOC_TYPES.find((d) => d.key === key)?.digits ?? 3;
   const like = `${prefix}-${yymm}-%`;
   if (t.count) {

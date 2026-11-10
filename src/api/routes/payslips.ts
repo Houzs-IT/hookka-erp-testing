@@ -82,6 +82,7 @@ import {
   linkPieceRecordsToPayslip,
   findPieceDrift,
 } from "../lib/outsource-piece";
+import { mytYymm } from "../../lib/doc-number";
 
 // Data-entry grace before an unrecorded working day is treated as a confirmed
 // absence. Spec (Wei Siang, 2026-06-02): the office keys Working Hours a few
@@ -486,10 +487,7 @@ async function nextPayslipId(
   if (m) {
     yymm = `${m[1].slice(2)}${m[2]}`;
   } else {
-    const now = new Date();
-    yymm = `${String(now.getFullYear()).slice(2)}${String(
-      now.getMonth() + 1,
-    ).padStart(2, "0")}`;
+    yymm = mytYymm();
   }
   const prefix = `PS-${yymm}-`;
   const res = await db

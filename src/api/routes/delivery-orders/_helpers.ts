@@ -79,6 +79,7 @@ import {
 import { availableQty } from "../../../lib/convert-chain";
 import { returnableByLine } from "../../../lib/delivery-return-qty";
 import { loadReturnedQtyByPo } from "../../lib/delivery-return-create";
+import { mytYymm } from "../../../lib/doc-number";
 
 // HK-0118: creating a single-SO DO stamps its number on the SO
 // (hookkaDeliveryOrder). Deleting that DRAFT DO hands the stamp back to the
@@ -684,8 +685,7 @@ export function genDoItemId(): string {
 // rule in Settings says DO-YYMM-NNN sequential). Mirrors the SO generator
 // in src/api/routes/sales-orders.ts generateCompanySOId.
 export async function genNextDoNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `DO-${yymm}-`;
   const res = await db
     .prepare(
