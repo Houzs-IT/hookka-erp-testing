@@ -5,7 +5,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const read = (p) => readFileSync(p, "utf8");
+// LF whatever the checkout: a Windows clone (core.autocrlf) has CRLF on disk,
+// and the BOM pattern below spans a line break.
+const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
 test("batch-B saves check the response and show the server's reason", () => {
   const sites = [
