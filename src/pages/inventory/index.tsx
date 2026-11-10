@@ -14,6 +14,7 @@ import {
   Search, Archive, Upload, Download, Trash2, Pencil, Check,
 } from "lucide-react";
 import { BatchImportDialog, type ImportColumn } from "@/components/ui/batch-import-dialog";
+import { FG_IMPORT_COLUMNS, RM_IMPORT_COLUMNS } from "@/lib/import-schemas";
 import { exportImportRows } from "@/components/ui/batch-import-dialog";
 // NOTE: mock arrays were previously imported here and used as the page data
 // source. They are retained only for TYPE imports; all runtime data is now
@@ -2006,31 +2007,9 @@ export default function InventoryPage() {
   // Template column schemas. ORDER determines column order in the Excel
   // template. The `code` / `itemCode` column is the match key — existing
   // rows with the same key get updated in-place, new keys get created.
-  const fgImportColumns: ImportColumn[] = [
-    { key: "id", label: "ID", hidden: true },
-    { key: "code", label: "Product Code", required: true, example: "2050(A)-(K)", help: "Unique product code" },
-    { key: "name", label: "Product Name", required: true, example: "ROMA BEDFRAME (6FT)" },
-    { key: "category", label: "Category", required: true, enum: ["BEDFRAME", "SOFA", "ACCESSORY"], example: "BEDFRAME" },
-    { key: "baseModel", label: "Base Model", example: "2050(A)", help: "Optional family name grouping" },
-    { key: "sizeCode", label: "Size Code", example: "K", help: "K / Q / S / SS / SK / SP" },
-    { key: "sizeLabel", label: "Size Label", example: "6FT" },
-    { key: "basePriceSen", label: "Base Price (RM)", type: "money", example: 2500, help: "In ringgit, converted to sen internally" },
-    { key: "costPriceSen", label: "Cost Price (RM)", type: "money", example: 1500 },
-    // Metres of fabric, not money - stays a plain number column on purpose.
-    { key: "fabricUsage", label: "Fabric Usage (m)", type: "number", example: 8 },
-  ];
+  const fgImportColumns: ImportColumn[] = FG_IMPORT_COLUMNS;
 
-  const rmImportColumns: ImportColumn[] = [
-    { key: "id", label: "ID", hidden: true },
-    { key: "itemCode", label: "Item Code", required: true, example: "PC151-01", help: "Unique item code" },
-    { key: "description", label: "Description", required: true, example: "Fabric PC151-01 Grey" },
-    { key: "baseUOM", label: "Base UOM", required: true, example: "MTR", help: "One of the units in RM Settings → Units." },
-    { key: "itemGroup", label: "Item Group", required: true, example: "FABRIC", help: "FABRIC / PLYWOOD / FOAM etc." },
-    { key: "balanceQty", label: "Balance Qty", type: "number", example: 0 },
-    { key: "isActive", label: "Active", type: "boolean", example: "TRUE" },
-    { key: "notes", label: "Notes", help: "Blank keeps the stored note. Type [CLEAR] to empty it." },
-    { key: "mainSupplierCode", label: "Main Supplier Code", help: "Blank keeps the stored code. Type [CLEAR] to empty it." },
-  ];
+  const rmImportColumns: ImportColumn[] = RM_IMPORT_COLUMNS;
 
   const handleImportFG = async (rows: Record<string, unknown>[]) => {
     const res = await fetch("/api/products/bulk-import", {

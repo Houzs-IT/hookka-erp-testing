@@ -27,37 +27,16 @@ import { Button } from "./button";
 import { Card, CardHeader, CardTitle, CardContent } from "./card";
 import { cn } from "@/lib/utils";
 import { humanizeError } from "@/lib/humanize-error";
-import { parseMoneyInput } from "@/lib/parse-money";
-
-// "money" columns go through the ONE money parser (src/lib/parse-money.ts) so
-// a spreadsheet cell reading "12,000" imports as twelve thousand rather than as
-// twelve. Plain "number" columns keep `Number()` on purpose: they carry
-// quantities, metres and days, where money syntax (a leading RM, accounting
-// parentheses) would be wrong to accept.
-export type ImportColumnType = "string" | "number" | "money" | "boolean";
-
-export type ImportColumn = {
-  /** Field name in the row object passed to onImport. */
-  key: string;
-  /** Column header shown in the downloaded template. */
-  label: string;
-  /** Marks this as a required field — blank rows fail validation. */
-  required?: boolean;
-  /** Accepted values. Case-insensitive on input. */
-  enum?: string[];
-  /** Type coercion for the parsed value. Defaults to "string". */
-  type?: ImportColumnType;
-  /** Example value shown as the second row in the template. */
-  example?: string | number;
-  /** Free-text help shown below the field in the legend. */
-  help?: string;
-  /** Still written/read on export/import for matching, but never shown in
-   *  the template legend, the preview table, or Excel (hidden column) —
-   *  for system-managed fields like `id` users shouldn't see or edit. */
-  hidden?: boolean;
-};
-
-export type ImportRow = Record<string, unknown>;
+// The parsing (header aliases, schema coercion, export sheet) lives in the ONE
+// shared table-import parser (O6) so it is unit-tested and shared.
+import {
+  buildExportAoa,
+  parseImportRows,
+  rowHasData,
+  type ImportColumn,
+  type ImportRow,
+} from "@/lib/table-import";
+export type { ImportColumn, ImportColumnType, ImportRow } from "@/lib/table-import";
 
 // Standalone export — deliberately NOT part of BatchImportDialog. Import
 // needs the FULL dataset (currentRows) to correctly detect new/update/rename
@@ -74,22 +53,8 @@ export async function exportImportRows(
   if (rows.length === 0) return;
   const XLSX: XLSXModule = await import("xlsx");
 
-  const headerRow = columns.map((c) => (c.required ? `${c.label} *` : c.label));
-
-  const dataRows: (string | number | boolean)[][] = rows.map((row) =>
-    columns.map((c) => {
-      const v = row[c.key];
-      if (v === null || v === undefined) return "";
-      if (c.type === "boolean") return v ? "TRUE" : "FALSE";
-      if (c.type === "number") {
-        const n = Number(v);
-        return Number.isFinite(n) ? n : "";
-      }
-      return String(v);
-    }),
-  );
-
-  const aoa: (string | number | boolean)[][] = [headerRow, ...dataRows];
+  const aoa = buildExportAoa(columns, rows);
+  const dataRows = aoa.slice(1);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
   // Widen columns to fit the longest value actually present (cap at 50)
@@ -240,14 +205,10 @@ export const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
         defval: "",
       });
 
-      // Map Excel headers ("Product Code *") back to field keys ("code").
-      // Users may remove the "*" from required headers, so we match by
-      // prefix after stripping the marker.
-      const headerToKey = new Map<string, string>();
-      for (const col of columns) {
-        headerToKey.set(col.label.toLowerCase(), col.key);
-        headerToKey.set(`${col.label} *`.toLowerCase(), col.key);
-      }
+      // Headers → field keys and every cell through the schema: the shared
+      // parser (label, "label *", aliases; required / enum / money / number /
+      // boolean; blank = absent). See src/lib/table-import.ts.
+      const parsedRows = parseImportRows(rawRows, columns);
 
       const byKey = new Map<string, ImportRow>();
       const byId = new Map<string, ImportRow>();
@@ -263,91 +224,7 @@ export const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
       const fieldsEqual = (a: ImportRow, b: ImportRow): boolean =>
         columns.every((c) => c.key === "id" || c.key === keyColumn || !fieldChanged(c, a[c.key], b[c.key]));
 
-      const rows: (ParsedRow & { unchanged: boolean })[] = rawRows.map((row, i) => {
-        const values: ImportRow = {};
-        const errors: string[] = [];
-
-        // Remap row keys from "Label *" to "key"
-        const remapped: Record<string, unknown> = {};
-        for (const [header, v] of Object.entries(row)) {
-          const k = headerToKey.get(header.trim().toLowerCase());
-          if (k) remapped[k] = v;
-        }
-
-        // Apply schema: coerce types, validate required/enum
-        for (const col of columns) {
-          const raw = remapped[col.key];
-          const str = raw === null || raw === undefined ? "" : String(raw).trim();
-
-          if (col.required && !str) {
-            errors.push(`${col.label} is required`);
-            values[col.key] = "";
-            continue;
-          }
-
-          if (!str) {
-            // Blank optional cell stays absent (not defaulted to 0/"") so
-            // JSON.stringify omits it and a server merge doesn't overwrite.
-            // A blank boolean is absent too (it used to become false = INACTIVE).
-            values[col.key] = undefined;
-            continue;
-          }
-
-          if (col.enum && col.enum.length > 0) {
-            const match = col.enum.find((e) => e.toLowerCase() === str.toLowerCase());
-            if (!match) {
-              errors.push(
-                `${col.label} must be one of: ${col.enum.join(", ")} (got "${str}")`,
-              );
-              values[col.key] = str;
-              continue;
-            }
-            values[col.key] = match;
-            continue;
-          }
-
-          if (col.type === "money") {
-            // BUG-2026-08-13-095 - this branch used to hand-roll `.replace(/,/g,
-            // "")`, one of six copies of the money parser in the repo. It now
-            // delegates. An unreadable cell still lands in `errors`, which
-            // categorises the row as "error" and blocks the import - the value
-            // is NEVER silently defaulted into the ledger.
-            const rm = parseMoneyInput(str);
-            if (rm === null) {
-              errors.push(`${col.label} must be an amount (got "${str}")`);
-              values[col.key] = 0;
-            } else {
-              values[col.key] = rm;
-            }
-            continue;
-          }
-
-          if (col.type === "number") {
-            const n = Number(str.replace(/,/g, ""));
-            if (Number.isNaN(n)) {
-              errors.push(`${col.label} must be a number (got "${str}")`);
-              values[col.key] = 0;
-            } else {
-              values[col.key] = n;
-            }
-            continue;
-          }
-
-          if (col.type === "boolean") {
-            const truthy = ["true", "yes", "y", "1", "active"].includes(str.toLowerCase());
-            const falsy = ["false", "no", "n", "0", "inactive"].includes(str.toLowerCase());
-            if (!truthy && !falsy) {
-              errors.push(`${col.label} must be true/false (got "${str}")`);
-              values[col.key] = false;
-            } else {
-              values[col.key] = truthy;
-            }
-            continue;
-          }
-
-          values[col.key] = str;
-        }
-
+      const rows: (ParsedRow & { unchanged: boolean })[] = parsedRows.map(({ idx, values, errors }) => {
         const keyValue = String(values[keyColumn] ?? "").trim();
         const idValue = String(values.id ?? "").trim();
         let category: RowCategory = "new";
@@ -380,12 +257,10 @@ export const BatchImportDialog: React.FC<BatchImportDialogProps> = ({
           }
         }
 
-        return { idx: i + 2, values, errors, keyValue, category, unchanged, existing };
+        return { idx, values, errors, keyValue, category, unchanged, existing };
       });
 
-      const withData = rows.filter((r) =>
-        Object.values(r.values).some((v) => v !== "" && v !== 0 && v !== false && v !== undefined),
-      );
+      const withData = rows.filter((r) => rowHasData(r.values));
       if (withData.length === 0) {
         setUploadErr("No data rows found. Did you fill in the template?");
         return;

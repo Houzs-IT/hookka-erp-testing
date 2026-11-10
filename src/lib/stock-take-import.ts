@@ -10,6 +10,7 @@
 // identity columns end, key normalization — are unit-testable without a live
 // database. The caller (StockTakeTab) does the fetching/resolving/UI.
 // ---------------------------------------------------------------------------
+import { normalizeHeader } from "./table-import";
 
 // Header names (case-insensitive) that mark the start of the NUMERIC section of
 // a row (in2 / Qty / Total in2 / Price per in2) — everything strictly BEFORE the
@@ -119,8 +120,9 @@ export function parseRawStockTakeRows(aoa: unknown[][], shape: RawShape): Parsed
 // priced sheet before it fills the month's group totals.
 // ---------------------------------------------------------------------------
 
-/** A header cell without the master export's required-field star ("Item Code *"). */
-const headerName = (v: unknown) => normalizeText(v).replace(/\s*\*$/, "");
+/** A header cell without the master export's required-field star ("Item Code *").
+ *  The shared table-import header rule (O6): case, spaces, `_` and the star never matter. */
+const headerName = (v: unknown) => normalizeHeader(v);
 
 /** True for the raw-material master export with a Balance Qty column. */
 export function isRmCountShape(headerRow: unknown[]): boolean {

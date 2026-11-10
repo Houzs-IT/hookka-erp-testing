@@ -172,7 +172,8 @@ const NO_PARSEFLOAT = [
   ["src/pages/customers.tsx", "customer price list — base / P1 / seat-height"],
   ["src/components/scan-po-modal.tsx", "custom-special surcharge"],
   ["src/components/ui/money-input.tsx", "the shared money input"],
-  ["src/components/ui/batch-import-dialog.tsx", "the money import column"],
+  // The BatchImportDialog money column is parsed in the shared table-import parser (O6).
+  ["src/lib/table-import.ts", "the money import column"],
 ];
 
 for (const [file, what] of NO_PARSEFLOAT) {
@@ -186,7 +187,7 @@ for (const [file, what] of NO_PARSEFLOAT) {
     assert.ok(
       // MoneyInput routes every commit through parseMoneyInput, so a page that
       // imports it is on the shared parser too (PO create / detail, 2026-09-22).
-      /from "@\/lib\/(money-field|parse-money)"|from "@\/components\/ui\/money-input"/.test(src),
+      /from "@\/lib\/(money-field|parse-money)"|from "\.\/parse-money"|from "@\/components\/ui\/money-input"/.test(src),
       `${file} must import the shared parser`,
     );
   });
