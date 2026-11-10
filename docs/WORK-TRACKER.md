@@ -344,7 +344,11 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Cash Flow forecast: all 90 month × material amounts from Sep'26 to Jun'27 land in full in the P&L forecast column.
       - The statement's overall fingerprint differs from the morning's. The morning snapshot was lost when the browser restarted, so the difference is UNMEASURED; it is probably the day's postings.
       - Monthly P&L forecast: each month's Net profit still equals the Forecast P&L page's.
-    - Saving supplier figures stays UNVERIFIED until the owner's first Save.
+    - The save, observed on prod 2026-11-10 after the owner's first Save (one supplier figure under one material in one past month). Read only:
+      - Stored under `purchasesByType` as whole sen, under a supplier that material lists. No month's Sales changed.
+      - The page shows that material greyed at the figure; Raw Materials moved by the figure minus the material's old %.
+      - The Cash Flow P&L forecast pays it once, to that supplier, after its own term, in place of the material's old spread.
+      - The Finance Dashboard's forecast for that month carries it in Cost Structure, materials, COGS and net profit, each equal to the page's.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
