@@ -199,7 +199,7 @@ export type BoardReport = {
   openingDate: string | null;
   cover: Section<{ tiles: Tile[]; trend: TrendPoint[]; highlights: string[] }>;
   income: Section<{ rows: IncomeRow[]; sinceLabel: string; costStructure: { label: string; value: number }[]; margins: { label: string; actual: number | null; forecast: number | null; prev: number | null }[]; estimated: number }>;
-  labour: Section<{ depts: LabourDept[]; total: number; prevTotal: number | null; forecastTotal: number | null; productionRevenue: number | null; headcount: number | null; units: number | null; trend: { ym: string; label: string; byDept: Record<string, number>; total: number }[]; series: string[] }>;
+  labour: Section<{ depts: LabourDept[]; nonProd: { dept: string; cost: number; prev: number | null; forecast: number | null }[]; nonProdTotal: number; total: number; prevTotal: number | null; forecastTotal: number | null; productionRevenue: number | null; headcount: number | null; units: number | null; trend: { ym: string; label: string; byDept: Record<string, number>; total: number }[]; series: string[] }>;
   materials: Section<{ cats: MaterialCat[]; total: number; sales: number | null; trend: { ym: string; label: string; actual: number | null; forecast: number | null }[] }>;
   trend: Section<{ points: TrendPoint[]; summary: { label: string; kind: TrendPoint["kind"]; sales: number | null; gross: number | null; net: number | null; grossPct: number | null; netPct: number | null }[]; last3: { label: string; sales: number | null; fcSales: number | null; net: number | null; fcNet: number | null }[] }>;
   balance: Section<{ rows: BsRow[]; ratios: { label: string; cur: number | null; prev: number | null; unit: "x" | "%" }[]; equity: { opening: number | null; net: number | null; other: number | null; closing: number | null }; trend: { ym: string; label: string; assets: number; liabilities: number; equity: number }[] }>;
@@ -372,10 +372,20 @@ function shapeLabour(d: DashPayload, month: string, rev: RevSplitPayload | null)
   });
   const prevTotal = prevRow ? (prod(prevRow).length ? sum(prod(prevRow).map((x) => x.costSen)) : prevRow.actual?.labour ?? null) : null;
   const fcAll = cur.map((x) => x.forecastSen ?? 0);
+  // Non-production salary (owner review 2026-11-10: Warehousing, Repair,
+  // Maintenance, R&D were filtered out and never shown). Production
+  // Shortfall is not a department the owner reports on.
+  const np = (row: DashRow | null) => (row?.salaryByDept ?? []).filter((x) => x.nonProd && x.dept.toUpperCase() !== "PRODUCTION_SHORTFALL");
+  const prevNp = new Map(np(prevRow).map((x) => [x.dept, x.costSen] as const));
+  const nonProd = np(r)
+    .map((x) => ({ dept: x.dept, cost: x.costSen, prev: prevNp.get(x.dept) ?? null, forecast: x.forecastSen ? x.forecastSen : null }))
+    .sort((x, y) => y.cost - x.cost);
   return {
     ok: true,
     data: {
       depts: capped,
+      nonProd,
+      nonProdTotal: sum(nonProd.map((x) => x.cost)),
       total,
       prevTotal,
       forecastTotal: fcAll.some((x) => x !== 0) ? sum(fcAll) : r.forecast?.labour ?? null,
@@ -725,7 +735,9 @@ export function boardFlags(s: BoardSources, month: string): Flag[] {
       flags.push({ level: "alert", text: `The balance sheet does not balance: assets ${rmText(cur.balanceSheet.assets)} vs liabilities + equity ${rmText(cur.balanceSheet.liabilities + cur.balanceSheet.equity)}.` });
     }
   }
-  for (const r of closedMonths(rows, month).slice(-12)) {
+  // Owner review 2026-11-10: twelve months of past losses buried the page —
+  // the report month and the two before it are enough.
+  for (const r of closedMonths(rows, month).slice(-3)) {
     if (r.actual && r.actual.net < 0) flags.push({ level: r.key === month ? "alert" : "info", text: `${longMonth(r.key)}: net loss of ${rmText(-r.actual.net)}.` });
   }
   const f = slice(rows, month, "forecast");
