@@ -24,7 +24,7 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs / work in flight (at time of writing)
 
-**None.** Everything from 2026-11-10 is merged and deployed (prod at `2d1c62110` when this was written).
+**None.** Everything from 2026-11-10 is merged and deployed (prod at `e2db0d65d` when this was written).
 
 Merge rule: CI green → squash-merge, then verify on prod (owner wants it done without asking, except the approval items and prod data writes). PRs that each append a WORK-TRACKER item collide on the number — merge one, rebase the next, renumber.
 
@@ -41,13 +41,18 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 - #1252 **Board Report inside the ERP** — Forecasting → Board Report, `/board-report?month=YYYY-MM`, accounting:read, Download PDF = browser print (A4, margins None, background graphics on). **Verified on prod (Oct 2026):** 21 pages (13 + 8 appendix), none spills off A4, no section failed; revenue 463,324 / net 136,673 match the Financial Dashboard; first build ≈20 s, next ≈8 s; page-13 flags work. Not live-sourced: stock-take mismatch flag, efficiency bands (top/bottom workers shown instead).
 - #1253 ported improvements: O7 no prod data as a public workflow artifact (snapshot now in table `wip_reset_backups`), P2 clock-date gate `scripts/check-clock-dates.mjs` (+ fixed DR/PR/SDN numbers, worker-portal ranges, agent "today"), P3 ETag/304 on polled lists (**verified on prod: 304**), P4 health-red alert email, P6 supplier Email 2/3 + PO email Cc (**verified: field present**).
 - #1255 owner-approved G11 batch confirm GRN/PI from the lists + O1 delivery-return compare-and-set (409 "status_changed").
+- #1258 O4 a supplier is bound to an item once (409; unique index created only when no duplicates exist — **measured on prod: 39 duplicate pairs, so the index is NOT created yet**; list at `GET /api/supplier-materials/duplicates`) · O5 an upload clears the cached reads at once · O6 shared CSV/Excel import parser (`src/lib/table-import.ts`, header aliases, round-trip tests; importers not yet converted are listed in CODEBASE-MAP).
+- #1259 D5 item codes stay on one line on PO/GRN/PI PDFs · D6 DO "Ship From" / GRN "Received At" (the company address, Sungai Buloh) · CANCELLED stamp on the consignment-note PDF · G6 share a column layout with the team · G8/G9 smoother long and grouped lists · G3 for DO ("loaded N of M — Load all") and CN (fetch all; also fixed the CN pager always saying Page 1/1, BUG-2026-11-10-444).
 
 **Next batches (no approval needed — do them, then merge, then verify):**
-1. Documents/grid leftovers: D5 item codes on one line on PO/GRN/PI PDFs · D6 warehouse named on DO/GRN papers · G6 share a column layout with the team · G8 grouped lists keep virtual scroll · G9 fewer re-draws on long lists · CANCELLED stamp on the consignment-note (CGN) PDF · G3 for DO and CN lists (logged follow-up) · move Leads and Products onto the shared grid (they are hand-made tables, so none of the grid features reach them) · phone (/m) list cards for G4/G7.
-2. Other: O4 supplier bound to the same item once (unique index, 409) · O5 upload clears the read cache · O6 shared CSV/Excel import parser.
-3. Board report polish: a stock-take mismatch flag needs a source endpoint; real efficiency bands need a definition from the owner.
+1. Move Leads and Products onto the shared grid (hand-made tables today, so none of the grid features reach them).
+2. Phone (/m) list cards: footer totals and the "Couldn't load — Retry" state (G4/G7 were desktop only).
+3. Convert the remaining importers to `src/lib/table-import.ts` (document importer, lead list, invoice price, CNC, outsource piece-rate paste, bank-statement CSV, stock-take raw layout — reasons in CODEBASE-MAP).
+4. Board report polish: a stock-take mismatch flag needs a source endpoint; real efficiency bands need a definition from the owner.
 
-**New questions for the owner (from #1253):**
+**New questions for the owner:**
+- **39 duplicate supplier↔item bindings on prod** (e.g. STE SOLID TIMBER `MLHW-1" X 2" X3"-7'`, ADD WOOD `CHIPBOARD KOSONG 4X8-9MM`). New duplicates are refused already; cleaning the old ones (keep one per pair) is a prod data write — the owner cleans them in Suppliers → SKU, or says "clean them" and Claude first shows which row of each pair it would keep. After cleanup the unique index is created on the next worker start.
+- Goods bought under a sister company's letterhead (e.g. OHANA): are they also received at Sungai Buloh? (GRN "Received At" prints the company address.)
 - Delete the two old `wip-reset-backup` artifacts (2026-09-07, production WIP quantities) that stay publicly downloadable until 2026-12-06? (GitHub → Actions → artifacts; needs his yes.)
 - The money / stock / payroll date sites still use the UTC day (`scripts/data/clock-date-allowlist.json`: accounting period defaults, invoice due dates, cost ledger, fabric FIFO, AR ageing, worker-portal live pay estimate). Moving them to the Malaysian day changes which day/month is used 00:00–08:00 — **needs approval**; if approved, the worker-portal estimate must move together with office payroll.
 - P4 health alerts: who should receive them? Set `kv_config.health_alert_recipients` (else the morning-brief list is used; nothing is sent if neither is set — UNMEASURED which is set).
@@ -57,7 +62,7 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 - **REJECTED by the owner — do not do, do not ask again:** **P5** credit-note cap from delivery returns · **O2** MRP stale-plan refusal · **O3** partial DO / invoice discount share.
 
 **Owner to do himself (Claude cannot):**
-- Try the new features in a browser (desktop + phone): PDF Preview on an SO/PO → Print, Share, Save (file name = document number); GRN / PI list → tick 2–3 drafts → Confirm selected; a delivery return open in two tabs → cancel in one, act in the other → the 409 message; Board Report → Download PDF; edit a supplier's Email 2/3 → PO Email to Supplier shows them in Cc.
+- Try the new features in a browser (desktop + phone): share a column layout and see it from a second login; Products export → re-import the same file; PDF Preview on an SO/PO → Print, Share, Save (file name = document number); GRN / PI list → tick 2–3 drafts → Confirm selected; a delivery return open in two tabs → cancel in one, act in the other → the 409 message; Board Report → Download PDF; edit a supplier's Email 2/3 → PO Email to Supplier shows them in Cc.
 - Repo `Houzs-IT/hookka-erp-testing` is **PUBLIC** (measured 2026-11-10) and an old prod DB password is in its git history: decide private, rotate the password.
 - Try on prod (these write data): sign one device out → it gets 401; a 5,001-char SO note → 400; a lead with a phone already on file → "Possible duplicate"; Ctrl/Cmd+C from a grid into Excel; a save with several problems lists them all.
 - Upload missing Catalog photos: BC06, BC06-MF, SQUARE PILLOW, HIPSTER (its photo file is missing from storage).
