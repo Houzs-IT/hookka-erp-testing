@@ -31,7 +31,7 @@ import {
   Plus, ShoppingBag, Truck, Trash2, X, Package,
   FileText, Download, Filter, AlertTriangle,
   Eye, Pencil, Printer, RefreshCw, TrendingDown, ChevronDown, ChevronUp,
-  ClipboardCheck, Upload,
+  ClipboardCheck, Upload, Copy,
 } from "lucide-react";
 
 // PO statuses that the bulk Convert-to-GRN action accepts. Mirrors the
@@ -1735,6 +1735,12 @@ export default function ProcurementPage() {
         icon: <Pencil className="h-3.5 w-3.5" />,
         action: () => navigate(`/procurement/${row.id}`),
         disabled: row.status !== "DRAFT",
+      },
+      // Review H2-2 / C2-5: New PO pre-filled from this one (any status).
+      {
+        label: "Copy as new",
+        icon: <Copy className="h-3.5 w-3.5" />,
+        action: () => navigate(`/procurement/create?copyFrom=${encodeURIComponent(row.id)}`),
       },
       { label: "", separator: true, action: () => {} },
       {

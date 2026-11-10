@@ -295,3 +295,67 @@ test("H2 B1: read-only list of items with more than one main; import path demote
   const imp = read("src/api/routes/import-completion/procurement-backfills.ts");
   assert.equal((imp.match(/demoteOtherMainsStatement\(db, materialCode,/g) ?? []).length, 2);
 });
+
+// ── H2-2 / C2-5: "Copy as new" on a PO ───────────────────────────────────
+import { buildPoCopySeed, poCopyNotice, copyLineCode, isOneOffLine } from "../src/lib/po-copy.ts";
+
+const RMS_COPY = [
+  { id: "rm-1", itemCode: "FAB-01", description: "Fabric", baseUOM: "MTR", itemGroup: "FABRIC", isActive: true },
+  { id: "rm-1r", itemCode: "FAB-01", description: "Fabric", baseUOM: "ROLL", itemGroup: "FABRIC", isActive: true },
+  { id: "rm-2", itemCode: "OLD-9", description: "Old", baseUOM: "PCS", itemGroup: "MISC", isActive: false },
+  { id: "rm-3", itemCode: "FOAM", description: "Foam", baseUOM: "PCS", itemGroup: "FOAM", isActive: true },
+];
+
+test("H2-2: the copy keeps supplier, lines and prices; leaves number, dates, status, received qty out", () => {
+  const po = {
+    id: "po-1",
+    poNo: "PO-2611-007",
+    status: "RECEIVED",
+    orderDate: "2026-11-01",
+    expectedDate: "2026-11-09",
+    supplierId: "s-1",
+    purchaseOrgCode: "OHANA",
+    notes: "Deliver to bay 2",
+    items: [
+      { materialCode: "FAB-01", materialName: "Fabric", supplierSKU: "F-1", quantity: 12.5, unitPriceSen: 1050, unit: "ROLL", receivedQty: 12.5, materialCategory: "FABRIC" },
+      { materialCode: "", materialName: "FOAM - Foam", supplierSKU: "", quantity: 3, unitPriceSen: 0, unit: "PCS", receivedQty: 3, materialCategory: "FOAM" },
+      { materialCode: "OLD-9", materialName: "Old", quantity: 1, unitPriceSen: 5, unit: "PCS" },
+      { materialCode: "GONE", materialName: "Gone", quantity: 1, unitPriceSen: 5 },
+      { materialCode: "FAB-01", materialName: "Fabric", quantity: 1, unitPriceSen: 0, materialCategory: "PROMO" },
+    ],
+  };
+  const seed = buildPoCopySeed(po, RMS_COPY);
+  assert.equal(seed.supplierId, "s-1");
+  assert.equal(seed.purchaseOrgCode, "OHANA");
+  assert.equal(seed.notes, "Deliver to bay 2");
+  assert.deepEqual(
+    seed.lines.map((l) => [l.rmId, l.quantity, l.unitPriceSen, l.unit, l.supplierSku]),
+    [["rm-1r", 12.5, 1050, "ROLL", "F-1"], ["rm-3", 3, 0, "PCS", ""]],
+  );
+  for (const l of seed.lines) {
+    assert.equal("receivedQty" in l, false);
+    assert.equal("expectedDate" in l, false);
+  }
+  assert.equal("poNo" in seed || "status" in seed || "expectedDate" in seed || "orderDate" in seed, false);
+  assert.deepEqual(seed.droppedInactive, ["OLD-9"]);
+  assert.deepEqual(seed.droppedUnknown, ["GONE"]);
+  assert.deepEqual(seed.droppedOneOff, ["FAB-01"]);
+  assert.match(poCopyNotice(seed), /^3 lines left out of the copy \(deactivated: OLD-9; no longer in Raw Materials: GONE; one-off promo lines: FAB-01\)\.$/);
+  assert.equal(poCopyNotice({ droppedInactive: [], droppedUnknown: [], droppedOneOff: [] }), "");
+  assert.equal(copyLineCode({ materialName: "AB-1 - thing" }), "AB-1");
+  assert.equal(isOneOffLine({ materialCategory: "Free gift" }), true);
+  assert.equal(isOneOffLine({ materialCategory: "FABRIC" }), false);
+});
+
+test("H2-2: detail header + list row menu open New PO with ?copyFrom; the create page seeds from it", () => {
+  const detail = read("src/pages/procurement/detail.tsx");
+  assert.match(detail, /navigate\(`\/procurement\/create\?copyFrom=\$\{encodeURIComponent\(po\.id\)\}`\)/);
+  assert.match(detail, /Copy as new/);
+  const list = read("src/pages/procurement/index.tsx");
+  assert.match(list, /label: "Copy as new"[\s\S]{0,200}copyFrom=\$\{encodeURIComponent\(row\.id\)\}/);
+  const create = read("src/pages/procurement/create.tsx");
+  assert.match(create, /searchParams\.get\("copyFrom"\)/);
+  assert.match(create, /buildPoCopySeed\(body\.data, rawMaterials\)/);
+  assert.match(create, /setExpectedDate\(""\)/);
+  assert.match(create, /toast\.warning\(notice\)/);
+});

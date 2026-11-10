@@ -30,7 +30,7 @@ import type {
 import {
   ArrowLeft, Download, Printer, ChevronRight, Package, FileText,
   CheckCircle, Send, Lock, Pencil, Save, X, Trash2, AlertTriangle, Mail,
-  GitCompare, ChevronDown, ChevronUp, Receipt,
+  GitCompare, ChevronDown, ChevronUp, Receipt, Copy,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useParams, useNavigate } from "react-router-dom";
@@ -718,6 +718,16 @@ export default function PurchaseOrderDetailPage() {
             {isEditable && !editing && (
               <Button variant="outline" onClick={startEdit}>
                 <Pencil className="h-4 w-4" /> Edit
+              </Button>
+            )}
+            {/* Review H2-2 / C2-5: New PO pre-filled from this one. */}
+            {!editing && (
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/procurement/create?copyFrom=${encodeURIComponent(po.id)}`)}
+                title="Open a new PO with this supplier, lines and prices (dates and number blank)"
+              >
+                <Copy className="h-4 w-4" /> Copy as new
               </Button>
             )}
             {canEmail && !editing && (
