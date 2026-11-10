@@ -100,5 +100,14 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 - **Force a live refresh** → hit `POST /api/internal/rebuild-dashboard-snapshot` (`worker.ts:387`, CRON_SECRET) or bump the `v23` KV key; remember the 60s KV TTL.
 - **Debug stale numbers** → check freshness order: `dashboard_snapshot.built_from` vs `getMaxSourceUpdatedAt` (`dashboard-snapshot.ts:155`), then the 60s KV key, then whether a source `updated_at` was bumped on the last write.
 
+## Operations › Floor Live (2026-11-10)
+
+Who is in which department right now, from department QR scans. `GET /api/dashboard/floor-live` (`src/api/routes/floor-live.ts`, read-only, today in Malaysia time) → shaping in `src/api/lib/floor-live.ts` (`buildFloorLive`, `piecesDoneByWorker`) → `src/pages/dashboards/FloorLiveView.tsx` + `floor-live-lib.ts` (owner's card order, filters, totals). Sub-tab key `floor` in `OPS_SUBS`.
+
+- Where = department of the worker's last `dept_scan_events` row today; no scan = home department. Production Shortfall is hidden (falls back to home).
+- Efficiency = earned job-card minutes ÷ production minutes worked so far — `buildPerfDays` (workforce-perf.ts) over today's working_hour_entries + `liveOpenPunchRows`, i.e. the Employees dashboard's own figure. Pieces = piece-PIC rows, else the card's qty to each PIC.
+- Non-production rows show the scan-in time and turn red after 60 minutes while still punched in; they still show the day's pieces and efficiency.
+- UI: names only (no EMP no.), 6 rows per card then "+N more", cards keep their own height, one card per row on a phone, refresh every 5 min (`useInterval`, paused when hidden).
+
 ## Related modules
 [[sales]] [[production]] [[delivery]] [[procurement]] [[accounting]] [[inventory]]

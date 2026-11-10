@@ -12,6 +12,7 @@ import { DashModal } from "./DashModal";
 import { CommandCenterSections } from "./CommandCenterSections";
 import { OverdueOrdersList } from "./OverdueOrdersList";
 import { DailyProductionRevenueCard } from "./DailyProductionRevenueCard";
+import { FloorLiveView } from "./FloorLiveView";
 
 // Operations tab: the shop-floor report checklist (handed over on paper,
 // 2026-09-17), redesigned 2026-09-18 for density: a single KPI strip, a 2-column chart split
@@ -138,6 +139,9 @@ export function OperationsView({
           costing vs production revenue, plan vs actual, fabric + purchasing.
           The per-day Completed chart lives in Plant Load's Completed popup;
           the shortage list opens in a popup from its one-line row. */}
+      {/* Floor Live (owner 2026-11-10): who is in which department right now. */}
+      {sub === "floor" && <FloorLiveView />}
+
       {sub === "production" && (
         <>
           <CostingPanel period={period} costByDay={production?.productionCost?.byDay ?? []} onPeriodChange={onPeriodChange} />
