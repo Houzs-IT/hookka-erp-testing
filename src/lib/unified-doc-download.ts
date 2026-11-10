@@ -21,6 +21,7 @@ import { HOOKKA_LOGO_PNG_BASE64 } from "../api/lib/hookka-logo-base64";
 import { PDFDocument } from "pdf-lib";
 import { deliverPdf, pdfFileName, savePdfBlob, type PdfOutputMode } from "./pdf-preview";
 import { isCancelledStatus } from "./pdf-cancelled-stamp";
+import { appendPodPagesToPdfBytes, type PodPdfInput } from "./pod-photos-pdf";
 
 // Combined (batch) files keep the caller's name; single documents are named
 // "<doc no> <customer>.pdf" and can open in the in-app preview (review D1).
@@ -102,8 +103,13 @@ export async function downloadUnifiedDoPdf(
   order: AnyOrder,
   extras: AnyExtras,
   mode: PdfOutputMode = "download",
+  // The DO's POD (photos + signature), already downscaled: printed after the
+  // DO's own pages, two photos per page (review D4). Browser prints only —
+  // the customer-notify email renders without it.
+  pod?: PodPdfInput | null,
 ): Promise<void> {
-  const bytes = await renderUnifiedDoBytes(order, extras);
+  let bytes = await renderUnifiedDoBytes(order, extras);
+  if (pod) bytes = await appendPodPagesToPdfBytes(bytes, pod);
   deliverPdf(bytes, pdfFileName(order.doNo, order.customerName, "DO"), mode);
 }
 

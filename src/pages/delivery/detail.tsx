@@ -494,7 +494,25 @@ export default function DeliveryDetailPage() {
     } catch {
       /* graceful — PDF still renders without extras */
     }
-    await downloadUnifiedDoPdf(order, extras, mode);
+    // The POD photos (and signature) print after the DO's own pages, two per
+    // page, downscaled so the file stays small (review D4).
+    let pod: import("@/lib/pod-photos-pdf").PodPdfInput | null = null;
+    if (order.proofOfDelivery) {
+      const { loadPodPdfInput } = await import("@/lib/pod-photos-load");
+      pod = await loadPodPdfInput(order.doNo, order.customerName, order.proofOfDelivery);
+    }
+    await downloadUnifiedDoPdf(order, extras, mode, pod);
+  };
+
+  // "POD photos PDF": one PDF of just the photos, to send on WhatsApp (review D3).
+  const podPhotosPdf = async () => {
+    try {
+      const { openPodPhotosPdf } = await import("@/lib/pod-photos-load");
+      const ok = await openPodPhotosPdf(order.doNo, order.customerName, order.proofOfDelivery, "view");
+      if (!ok) toast.error("None of the POD photos could be read.");
+    } catch {
+      toast.error("Could not make the POD photos PDF.");
+    }
   };
 
   return (
@@ -856,9 +874,14 @@ export default function DeliveryDetailPage() {
 
               {order.proofOfDelivery.photoDataUrls.length > 0 && (
                 <div>
-                  <p className="text-xs text-[#9CA3AF] mb-1">
-                    Photos ({order.proofOfDelivery.photoDataUrls.length})
-                  </p>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-xs text-[#9CA3AF]">
+                      Photos ({order.proofOfDelivery.photoDataUrls.length})
+                    </p>
+                    <Button variant="outline" size="sm" onClick={() => void podPhotosPdf()}>
+                      <FileText className="h-4 w-4" /> POD photos PDF
+                    </Button>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {order.proofOfDelivery.photoDataUrls.map((src, idx) => (
                       <img

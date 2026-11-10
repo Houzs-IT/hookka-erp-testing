@@ -137,6 +137,18 @@ export async function putPdfPreview(blob: Blob, filename: string): Promise<strin
   return path;
 }
 
+/** A File of the PDF when this browser can share files (Web Share Level 2), else null. */
+export function sharablePdfFile(blob: Blob, filename: string): File | null {
+  try {
+    if (typeof navigator === "undefined" || typeof navigator.canShare !== "function") return null;
+    if (typeof File === "undefined") return null;
+    const file = new File([blob], filename, { type: "application/pdf" });
+    return navigator.canShare({ files: [file] }) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 const OVERLAY_ID = "hookka-pdf-preview";
 // Chrome needs the viewer to finish laying out before print() takes the pages.
 const PRINT_SETTLE_MS = 400;
@@ -245,12 +257,22 @@ export function openPdfPreview(
     if (!openUrlInNewTab(viewUrl)) showNote(BLOCKED_TAB_MESSAGE);
   });
   closeBtn.addEventListener("click", close);
+
+  // Share (phones): hands the named PDF to the OS share sheet — WhatsApp,
+  // mail, … (review D3). Only shown where the browser can share files.
+  const shareFile = sharablePdfFile(blob, filename);
+  const shareBtn = shareFile ? button("Share") : null;
+  shareBtn?.addEventListener("click", () => {
+    void navigator.share({ files: [shareFile as File], title }).catch(() => {
+      /* the user closed the share sheet */
+    });
+  });
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
   });
   document.addEventListener("keydown", onKey, true);
 
-  for (const el of [name, printBtn, downloadBtn, tabBtn, closeBtn, note]) bar.appendChild(el);
+  for (const el of [name, printBtn, downloadBtn, shareBtn, tabBtn, closeBtn, note]) if (el) bar.appendChild(el);
   panel.appendChild(bar);
   panel.appendChild(iframe);
   overlay.appendChild(panel);
