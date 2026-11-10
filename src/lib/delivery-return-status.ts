@@ -44,3 +44,38 @@ export function deliveryReturnStatus(r: {
     awaitingCreditNote: false,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Compare-and-set on status changes (review O1, owner-approved 2026-11-10;
+// sister of Houzs#5466). Every status-changing endpoint takes the status the
+// page showed (`expectedStatus`) and refuses with 409 when the return has
+// moved since — so a late click cannot act on a state nobody looked at, and a
+// late write cannot re-open a cancelled return. Pure; shared by the route and
+// the tests.
+// ---------------------------------------------------------------------------
+
+/** The status the client says it saw, or null when it sent none. */
+export function readExpectedStatus(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const v = (body as { expectedStatus?: unknown }).expectedStatus;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+/** True when the client named a status and the return is no longer in it. */
+export function isStaleStatus(expected: string | null, current: string | null | undefined): boolean {
+  return expected != null && expected !== (current ?? "");
+}
+
+function statusWords(s: string | null | undefined): string {
+  if (!s) return "gone";
+  return DELIVERY_RETURN_STATUS_LABEL[s] ?? s;
+}
+
+/** The 409 sentence when the return moved between the page and the save. */
+export function staleReturnStatusMessage(
+  current: string | null | undefined,
+  saw: string | null | undefined,
+): string {
+  const was = saw ? `, it was ${statusWords(saw)} when you started` : "";
+  return `This return was changed by someone else just now (it is now ${statusWords(current)}${was}). Nothing was saved. Refresh and check before trying again.`;
+}

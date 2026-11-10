@@ -31,6 +31,11 @@ import {
   loadReturnedQtyByPo,
 } from "../lib/delivery-return-create";
 import { returnableByLine } from "../../lib/delivery-return-qty";
+import {
+  isStaleStatus,
+  readExpectedStatus,
+  staleReturnStatusMessage,
+} from "../../lib/delivery-return-status";
 import { capList } from "../lib/list-cap";
 
 const app = new Hono<Env>();
@@ -466,13 +471,37 @@ function flipStatus(db: D1Database, sql: string, binds: unknown[], id: string, t
       .bind(id, to, now),
   ];
 }
-async function runFlip(c: Context<Env>, statements: D1PreparedStatement[]) {
+// Review O1 (owner-approved 2026-11-10): the 409 for a return that moved
+// says what it is NOW and what the caller saw, read again after the lost
+// write. `currentStatus` lets the page refresh to the real state.
+async function staleStatusResponse(c: Context<Env>, id: string, saw: string | null) {
+  let current: string | null = null;
+  try {
+    const row = await c.var.DB
+      .prepare(`SELECT status FROM delivery_returns WHERE id = ?`)
+      .bind(id)
+      .first<{ status: string }>();
+    current = row?.status ?? null;
+  } catch {
+    return c.json({ success: false, error: STATUS_RACE_ERROR, code: "status_changed" }, 409);
+  }
+  return c.json(
+    {
+      success: false,
+      error: staleReturnStatusMessage(current, saw),
+      code: "status_changed",
+      currentStatus: current,
+    },
+    409,
+  );
+}
+async function runFlip(c: Context<Env>, statements: D1PreparedStatement[], id: string, saw: string | null) {
   try {
     await c.var.DB.batch(statements);
     return null;
   } catch (err) {
     if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
-      return c.json({ success: false, error: STATUS_RACE_ERROR }, 409);
+      return staleStatusResponse(c, id, saw);
     }
     throw err;
   }
@@ -484,12 +513,15 @@ app.post("/:id/return-to-stock", async (c) => {
   await ensureDeliveryReturnTables(c.var.DB);
   const id = c.req.param("id");
   const now = new Date().toISOString();
+  const expected = readExpectedStatus(await c.req.json().catch(() => ({})));
 
   const header = await c.var.DB
     .prepare(`SELECT delivery_order_id AS "doId", status FROM delivery_returns WHERE id = ?`)
     .bind(id)
     .first<{ doId: string | null; status: string }>();
   if (!header) return c.json({ success: false, error: "Not found" }, 404);
+  // O1: the page acted on the status it showed — refuse if it has moved since.
+  if (isStaleStatus(expected, header.status)) return staleStatusResponse(c, id, expected);
   // One-and-done: an outcome can only be chosen from OPEN. This is what makes
   // "restock" and "repair" MUTUALLY EXCLUSIVE — you cannot return-to-stock (+1
   // good stock) and then also repair-&-remake (produce a replacement), which
@@ -521,7 +553,7 @@ app.post("/:id/return-to-stock", async (c) => {
     ),
   );
 
-  const lost = await runFlip(c, statements);
+  const lost = await runFlip(c, statements, id, header.status);
   if (lost) return lost;
   return c.json({ success: true, reversedCogsSen });
 });
@@ -539,12 +571,14 @@ app.post("/:id/set-outcome", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const type = body.returnType === "PURE_RETURN" ? "PURE_RETURN" : "REPAIR_REDELIVER";
   const now = new Date().toISOString();
+  const expected = readExpectedStatus(body);
 
   const header = await c.var.DB
     .prepare(`SELECT delivery_order_id AS "doId", status FROM delivery_returns WHERE id = ?`)
     .bind(id)
     .first<{ doId: string | null; status: string }>();
   if (!header) return c.json({ success: false, error: "Not found" }, 404);
+  if (isStaleStatus(expected, header.status)) return staleStatusResponse(c, id, expected);
   // Mutual exclusivity (see return-to-stock): an outcome is settable only from
   // OPEN, so REPAIR can never follow a RESTOCK (which would book the defective
   // unit as good stock AND produce a replacement — a double count).
@@ -588,7 +622,7 @@ app.post("/:id/set-outcome", async (c) => {
       now,
     ),
   );
-  const lost = await runFlip(c, statements);
+  const lost = await runFlip(c, statements, id, header.status);
   if (lost) return lost;
   return c.json({ success: true });
 });
@@ -600,11 +634,13 @@ app.post("/:id/mark-redelivered", async (c) => {
   await ensureDeliveryReturnTables(c.var.DB);
   const id = c.req.param("id");
   const now = new Date().toISOString();
+  const expected = readExpectedStatus(await c.req.json().catch(() => ({})));
   const h = await c.var.DB
     .prepare(`SELECT status FROM delivery_returns WHERE id = ?`)
     .bind(id)
     .first<{ status: string }>();
   if (!h) return c.json({ success: false, error: "Not found" }, 404);
+  if (isStaleStatus(expected, h.status)) return staleStatusResponse(c, id, expected);
   // Only a repair that was handed to service can come back as re-delivered.
   if (h.status !== "SERVICE_SPAWNED") {
     return c.json({ success: false, error: `Cannot mark a ${h.status} return as re-delivered` }, 409);
@@ -619,6 +655,8 @@ app.post("/:id/mark-redelivered", async (c) => {
       "REDELIVERED",
       now,
     ),
+    id,
+    h.status,
   );
   if (lost) return lost;
   return c.json({ success: true });
@@ -630,11 +668,15 @@ app.post("/:id/cancel", async (c) => {
   if (denied) return denied;
   await ensureDeliveryReturnTables(c.var.DB);
   const id = c.req.param("id");
+  const expected = readExpectedStatus(await c.req.json().catch(() => ({})));
   const h = await c.var.DB
     .prepare(`SELECT status FROM delivery_returns WHERE id = ?`)
     .bind(id)
     .first<{ status: string }>();
   if (!h) return c.json({ success: false, error: "Not found" }, 404);
+  // O1: a cancel pressed on an OPEN return must not undo a return-to-stock
+  // someone else did meanwhile (or re-cancel one already moved on).
+  if (isStaleStatus(expected, h.status)) return staleStatusResponse(c, id, expected);
   if (h.status === "CLOSED" || h.status === "REDELIVERED" || h.status === "CN_ISSUED") {
     return c.json(
       { success: false, error: `Cannot cancel a ${h.status} return` },
@@ -656,6 +698,14 @@ app.post("/:id/cancel", async (c) => {
       await c.var.DB.batch(undo.statements);
     } catch (err) {
       if (/division by zero/i.test(err instanceof Error ? err.message : String(err))) {
+        // O1: say what it is now when someone else moved it; otherwise the
+        // stock-went-negative guard tripped.
+        const now2 = await c.var.DB
+          .prepare(`SELECT status FROM delivery_returns WHERE id = ?`)
+          .bind(id)
+          .first<{ status: string }>()
+          .catch(() => null);
+        if (now2 && now2.status !== "RETURNED_TO_STOCK") return staleStatusResponse(c, id, h.status);
         return c.json(
           { success: false, error: "Not undone: this return was already cancelled, or its stock was used while undoing. Reload and check." },
           409,
@@ -676,6 +726,8 @@ app.post("/:id/cancel", async (c) => {
       "CANCELLED",
       now,
     ),
+    id,
+    h.status,
   );
   if (lost) return lost;
   return c.json({ success: true });

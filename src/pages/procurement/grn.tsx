@@ -19,6 +19,7 @@ import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState } from "@/lib/use-url-state";
 import { buildGrnDetailListingAoa } from "@/lib/doc-detail-listings";
 import { DocImportDialog } from "@/components/doc-import-dialog";
+import { useBatchConfirm } from "@/components/batch-confirm";
 import type { GoodsReceiptNote, PurchaseOrder, ArrivalState } from "@/types";
 import { Ship } from "lucide-react";
 import {
@@ -363,7 +364,6 @@ export default function GRNPage() {
   // shows everything that ISN'T DRAFT (CONFIRMED + POSTED + CANCELLED);
   // DRAFT tab is only DRAFT rows. URL-synced.
   const [tab, setTab] = useUrlState<"DRAFT" | "CONFIRMED">("tab", "CONFIRMED");
-  const [bulkConverting, setBulkConverting] = useState(false);
 
   // Filters
   const [filterStatus, setFilterStatus] = useState("");
@@ -634,52 +634,28 @@ export default function GRNPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGrns, bulkArrivalBusy, toast, fetchData]);
 
-  // Bulk DRAFT → CONFIRMED — mirrors the Sales Order bulk-confirm UX. GRNs
-  // transition DRAFT → CONFIRMED via PUT /api/grn/:id; the move to POSTED
-  // (which actually commits stock) stays on the per-row context menu.
-  const bulkConvertDrafts = useCallback(async () => {
-    const drafts = selectedGrns.filter(g => g.status === "DRAFT");
-    if (drafts.length === 0) return;
-    if (
-      !(await confirm({
-        title: "Convert drafts",
-        message: `Confirm ${drafts.length} draft GRN(s)? They will move to CONFIRMED (Post to Stock stays per-row).`,
-        danger: false,
-      }))
-    )
-      return;
-    setBulkConverting(true);
-    const results = await Promise.all(
-      drafts.map(async (g) => {
-        try {
-          const res = await fetch(`/api/grn/${g.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "CONFIRMED" }),
-          });
-          const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
-          if (!res.ok || !j?.success) {
-            return { ok: false, id: g.grnNumber, err: j?.error || `HTTP ${res.status}` };
-          }
-          return { ok: true, id: g.grnNumber };
-        } catch (e) {
-          return { ok: false, id: g.grnNumber, err: (e as Error).message };
-        }
-      }),
-    );
-    setBulkConverting(false);
-    const failed = results.filter(r => !r.ok);
-    invalidateCachePrefix("/api/grn");
-    fetchData();
-    setSelectedGrns([]);
-    if (failed.length > 0) {
-      const sample = failed.slice(0, 3).map(f => f.id).join(", ");
-      toast.error(`Confirmed ${results.length - failed.length} · Failed ${failed.length} (${sample})`);
-    } else {
-      toast.success(`Confirmed ${results.length} GRN${results.length !== 1 ? "s" : ""} successfully.`);
-    }
-    if (results.length - failed.length > 0) setTab("CONFIRMED");
-  }, [selectedGrns, confirm, toast, fetchData, setTab]);
+  // Review G11: bulk DRAFT → CONFIRMED, one GRN at a time through the same
+  // PUT /api/grn/:id the row menu's / detail page's "Approve" makes. Post to
+  // Stock (the move that commits inventory) stays per-row. Refusals are
+  // listed at the end with the server's reason (src/components/batch-confirm.tsx).
+  const [clearSelectionToken, setClearSelectionToken] = useState(0);
+  const batchConfirm = useBatchConfirm<GoodsReceiptNote>({
+    noun: "GRN",
+    effect: "Each moves from DRAFT to CONFIRMED, exactly as its own Approve does. No stock is posted — Post to Stock stays per GRN.",
+    canConfirm: (g) => g.status === "DRAFT",
+    label: (g) => g.grnNumber,
+    amountSen: (g) => g.totalAmount,
+    url: (g) => `/api/grn/${g.id}`,
+    onFinished: (res) => {
+      invalidateCachePrefix("/api/grn");
+      invalidateCachePrefix("/api/purchase-orders");
+      fetchData();
+      setSelectedGrns([]);
+      setClearSelectionToken((t) => t + 1);
+      if (res.succeeded.length > 0 && res.failed.length === 0) setTab("CONFIRMED");
+    },
+  });
+  const selectedDraftGrnCount = selectedGrns.filter((g) => g.status === "DRAFT").length;
 
   // Purchase company display map: org code → legal name. Falls back to
   // the code when no name is registered.
@@ -1217,21 +1193,20 @@ export default function GRNPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {tab === "DRAFT" && selectedGrns.length > 0 && (
+          {selectedDraftGrnCount > 0 && (
             <div className="mb-3 flex items-center justify-between rounded-md border border-[#E8D597] bg-[#FAEFCB] px-3 py-2 text-sm">
               <span className="text-[#9C6F1E]">
-                {selectedGrns.filter(g => g.status === "DRAFT").length} draft GRN(s) selected
+                {selectedDraftGrnCount} draft GRN(s) selected
+                {selectedGrns.length > selectedDraftGrnCount && ` · ${selectedGrns.length - selectedDraftGrnCount} non-draft left out`}
               </span>
               <Button
                 variant="primary"
                 size="sm"
-                disabled={bulkConverting}
-                onClick={bulkConvertDrafts}
+                disabled={batchConfirm.busy}
+                onClick={() => batchConfirm.run(selectedGrns)}
               >
                 <CheckCircle2 className="h-4 w-4" />{" "}
-                {bulkConverting
-                  ? "Converting..."
-                  : `Convert ${selectedGrns.filter(g => g.status === "DRAFT").length} drafts`}
+                {batchConfirm.progress ?? `Confirm selected (${selectedDraftGrnCount})`}
               </Button>
             </div>
           )}
@@ -1256,6 +1231,7 @@ export default function GRNPage() {
             stickyHeader={true}
             selectable
             onSelectionChange={setSelectedGrns}
+            clearSelectionToken={clearSelectionToken}
             onDoubleClick={(row) => navigate(`/procurement/grn/${row.id}`)}
             contextMenuItems={grnGridContextMenu}
             maxHeight="calc(100vh - 300px)"
@@ -1300,6 +1276,7 @@ export default function GRNPage() {
         </CardContent>
       </Card>
 
+      {batchConfirm.resultDialog}
     </div>
   );
 }

@@ -45,7 +45,8 @@ test("PI's bulk actions are a SUBSET of what its row menu can already do", () =>
   // Bulk bar — every action must correspond to one of those.
   const bar = PI.slice(PI.indexOf("<BulkActionBar"));
   assert.match(bar, /Print \(\$\{selectedRows\.length\}\)|Print \(\{selectedRows\.length\}\)|`Print \(/);
-  assert.match(bar, /Confirm \$\{selectedDraftCount\}/);
+  // G11 (2026-11-10): the label reads "Confirm selected (N)".
+  assert.match(bar, /Confirm selected \(\$\{selectedDraftCount\}\)/);
   // Nothing that isn't a row action: no bulk delete, no bulk pay, no bulk void.
   for (const forbidden of ["Delete", "Void", "Mark Paid", "Cancel"]) {
     assert.ok(

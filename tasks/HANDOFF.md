@@ -34,7 +34,7 @@ If a branch exists with no PR, the agent was interrupted: open the PR from it or
 
 Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what Houzs / Conts did since 2026-10-01 vs Hookka).
 
-**Done today:** P1 document numbers in the Malaysia month (#1247) · new models export (#1241, #1243) · GRN-link backfill endpoint (#1245; measured on prod: **0** pre-#1218 system GRNs exist, nothing to link) · cross-system review saved (#1246) · **ported-improvements batch (PR `feat/ported-improvements-batch`, open until merged): O7, P2, P3, P4, P6** — see "After it merges" below.
+**Done today:** P1 document numbers in the Malaysia month (#1247) · new models export (#1241, #1243) · GRN-link backfill endpoint (#1245; measured on prod: **0** pre-#1218 system GRNs exist, nothing to link) · cross-system review saved (#1246) · **ported-improvements batch (PR `feat/ported-improvements-batch`, open until merged): O7, P2, P3, P4, P6** — see "After it merges" below. · **G11** batch confirm GRN / PI + **O1** delivery-return compare-and-set (owner-approved 2026-11-10; PR `feat/batch-confirm-and-return-guard`, open — check in a browser after merge: tick 2–3 draft GRNs / PIs → Confirm selected; a delivery return opened in two tabs, cancel in one, act in the other → 409 message).
 
 **In flight (agent batches above):** D1, D2, D3, D4, P7, G1, G2, G3, G4, G5, G7.
 
@@ -51,7 +51,9 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 3. Other: O4 supplier bound to the same item once (unique index, 409), O5 upload clears the read cache, O6 shared CSV/Excel import parser, ~~O7~~ (done in `feat/ported-improvements-batch`).
 4. **Board report inside the ERP** (owner 2026-11-10: every figure from live ERP data, nobody has to ask Claude). Decided: menu **Forecasting → Board Report**; visible to **accounting:read**; Notes page = **automatic flags + Finance-editable notes per month**; PDF = **browser print to PDF** (A4 page per section). Data sources mapped: `/api/accounting/dashboard` (monthly P&L actual+forecast, balance-sheet totals, ratios, cash-flow totals, salary by dept, cost structure, production revenue, labour base), `/api/accounting/pl-monthly`, `/api/accounting/pl` (balance sheet; call M and M-1), `/api/accounting/cashflow-statement` + `/cashflow-forecast`, `/api/dashboard/overview` (customers + concentration) and `/overview/revenue-split` (dept production revenue), `/api/products/new-models`. Gaps to build: P&L prev column, balance-sheet prev, server-side defect rates, efficiency bands (none today — use workforce top/bottom). Layout reference: the Claude artifact https://claude.ai/artifact/GvMT67d19bgmqvHXQpSmDg (13 pages + appendices).
 
-**Needs the owner's approval first (money / inventory) — do NOT start without a yes:** P5 credit note from a delivery return capped at the returned qty · G11 batch confirm GRN/PI · O1 delivery-return status compare-and-set · O2 MRP refuses a stale plan · O3 partial DO/invoice carries its share of the line discount.
+**Owner's ruling on the approval items (2026-11-10):**
+- **APPROVED — done** (listed under Done today; PR `feat/batch-confirm-and-return-guard`): **G11** batch confirm on the GRN / PI lists (drafts only, one at a time through each document's own confirm, "Confirming 3 of 12", refusals listed with the server's reason) · **O1** delivery-return status changes are compare-and-set (the page sends the status it saw; 409 "it is now X, it was Y" when the return moved).
+- **REJECTED by the owner — do not do, do not ask again:** **P5** credit-note cap from delivery returns · **O2** MRP stale-plan refusal · **O3** partial DO / invoice discount share.
 
 **Owner to do himself (Claude cannot):**
 - Repo `Houzs-IT/hookka-erp-testing` is **PUBLIC** (measured 2026-11-10) and an old prod DB password is in its git history: decide private, rotate the password.
