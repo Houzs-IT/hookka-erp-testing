@@ -92,7 +92,10 @@ test("main document PDF generators pass their free text through pdfText", () => 
   }
   // SO / DO / Invoice share the unified renderer: both wrap helpers clean first.
   const uni = read("src/api/lib/unified-do-invoice-pdf.ts");
-  assert.equal((uni.match(/winAnsi\(pdfText\(rawText\)\)/g) ?? []).length, 2);
+  // (H1-1: the cleaned text then goes to ink() — winAnsi for Helvetica, the
+  // CJK font's own character set for Chinese — see tests/pdf-cjk-font.test.mjs.)
+  assert.equal((uni.match(/const clean = pdfText\(rawText\);/g) ?? []).length, 2);
+  assert.equal((uni.match(/const text = ink\(font, clean\);/g) ?? []).length, 2);
 });
 
 // ── 18. Numeric inputs ────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ import {
 } from "../../lib/customer-notify";
 import { buildSimpleTablePdf } from "../../lib/assistant-exports";
 import { buildUnifiedDocPdf } from "../../lib/unified-do-invoice-pdf";
+import { workerCjkFontLoader } from "../../lib/worker-cjk-font";
 import {
   buildUnifiedDoData,
   buildUnifiedInvoiceData,
@@ -4029,6 +4030,15 @@ export function bytesToBase64(bytes: Uint8Array): string {
 // dispatch notices go out without an attachment and invoice notices fall
 // back to buildSimpleTablePdf.
 // ---------------------------------------------------------------------------
+/** The request URL, or null for a context without one (the CJK font loader then uses ASSETS only). */
+function safeRequestUrl(c: Context<Env>): string | null {
+  try {
+    return c.req.url;
+  } catch {
+    return null;
+  }
+}
+
 export async function queueDoCustomerNotice(
   c: Context<Env>,
   id: string,
@@ -4270,6 +4280,8 @@ export async function queueDoCustomerNotice(
                 },
                 HOOKKA_LOGO_PNG_BASE64,
               ),
+              // Chinese names print in Noto Sans SC (review H1-1).
+              { loadCjkFont: workerCjkFontLoader(c.env, safeRequestUrl(c)) },
             );
           } catch (brandedErr) {
             console.warn(
@@ -4463,6 +4475,8 @@ export async function queueDoCustomerNotice(
                 },
                 HOOKKA_LOGO_PNG_BASE64,
               ),
+              // Chinese names print in Noto Sans SC (review H1-1).
+              { loadCjkFont: workerCjkFontLoader(c.env, safeRequestUrl(c)) },
             );
           } catch (brandedErr) {
             console.warn(

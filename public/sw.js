@@ -245,6 +245,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // The ~10 MB CJK font for PDFs (/fonts/*, review H1-1): leave it to the
+  // browser's HTTP cache (_headers gives it a year). Stale-while-revalidate
+  // below would re-download all of it on every PDF and copy it into every
+  // build's cache.
+  if (url.pathname.startsWith('/fonts/')) return;
+
   // Everything else (icons, manifest, favicon): stale-while-revalidate.
   event.respondWith(
     caches.match(req).then((hit) => {

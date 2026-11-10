@@ -18,6 +18,16 @@
 //   └ signatures / footer                                               ┘
 // ---------------------------------------------------------------------------
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+// Chinese names (review H1-1): a CJK font is embedded (subset) only when the
+// document carries CJK text; otherwise Helvetica only, exactly as before.
+import {
+  browserCjkFontLoader,
+  cjkSafe,
+  documentNeedsCjk,
+  needsCjkFont,
+  withEvenGlyphPadding,
+  type CjkFontLoader,
+} from "../../lib/pdf-cjk-font";
 // Null-ish / "null" / ragged-whitespace clean-up for every wrapped string.
 import { pdfText } from "../../lib/pdf-text";
 import {
@@ -181,8 +191,86 @@ export function winAnsi(s: string): string {
 // token that is itself wider than the column by character. The row grows to fit
 // the wrapped lines — nothing is ever truncated or pushed under the next column
 // (owner 2026-07-02: "照我們的怎麼處理就怎麼處理" — wrap, don't ellipsis).
-function wrapHard(font: PDFFont, rawText: string, maxW: number, size: number, maxLines = 12): string[] {
-  const text = winAnsi(pdfText(rawText));
+// ── CJK font plumbing (review H1-1) ─────────────────────────────────────
+// The embedded CJK font of each document, and the code points it can draw.
+const CJK_FONT_BY_DOC = new WeakMap<PDFDocument, PDFFont>();
+const CJK_FONTS = new WeakSet<PDFFont>();
+const CHARSETS = new WeakMap<PDFFont, Set<number>>();
+
+function charsetOf(font: PDFFont): Set<number> {
+  let set = CHARSETS.get(font);
+  if (!set) {
+    set = new Set(font.getCharacterSet());
+    CHARSETS.set(font, set);
+  }
+  return set;
+}
+
+/** Text made drawable in `font`: the CJK font keeps what it has, Helvetica gets winAnsi. */
+function ink(font: PDFFont, text: string): string {
+  return CJK_FONTS.has(font) ? cjkSafe(text, charsetOf(font)) : winAnsi(text);
+}
+
+/** The font a string is measured / drawn in: the CJK one when it has CJK text and the doc embedded it. */
+function fontFor(base: PDFFont, text: string, cjk: PDFFont | null | undefined): PDFFont {
+  return cjk && needsCjkFont(text) ? cjk : base;
+}
+
+/** drawText for data strings: picks the CJK font for a CJK line, sanitises for the chosen font. */
+function drawStr(
+  page: PDFPage,
+  text: string,
+  opts: { x: number; y: number; size: number; font: PDFFont; color: ReturnType<typeof rgb> },
+): void {
+  const f = fontFor(opts.font, text, CJK_FONT_BY_DOC.get(page.doc));
+  page.drawText(ink(f, text), { ...opts, font: f });
+}
+
+/**
+ * Embed the CJK font (subset) into `pdf` when the document needs it. Returns
+ * null — and the document prints "?" as before — when nothing needs it, no
+ * loader was given (Worker without a font source), or anything fails.
+ */
+export async function embedCjkFontIfNeeded(
+  pdf: PDFDocument,
+  data: unknown,
+  loadCjkFont: CjkFontLoader | null | undefined,
+): Promise<PDFFont | null> {
+  if (!loadCjkFont || !documentNeedsCjk(data)) return null;
+  try {
+    const bytes = await loadCjkFont();
+    if (!bytes) return null;
+    const fontkitMod = await import("@pdf-lib/fontkit");
+    const fontkit = (fontkitMod as { default?: unknown }).default ?? fontkitMod;
+    // withEvenGlyphPadding: @pdf-lib/fontkit's subsetter garbles fonts with
+    // odd-length glyphs (Noto Sans SC is one) — see pdf-cjk-font.ts.
+    pdf.registerFontkit(
+      withEvenGlyphPadding(fontkit as { create: (...a: never[]) => unknown }) as Parameters<
+        PDFDocument["registerFontkit"]
+      >[0],
+    );
+    // subset: true → only the glyphs this document draws are written.
+    const font = await pdf.embedFont(bytes, { subset: true });
+    CJK_FONTS.add(font);
+    CJK_FONT_BY_DOC.set(pdf, font);
+    return font;
+  } catch (e) {
+    console.warn("[unified-pdf] CJK font unavailable, printing '?' instead", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+function wrapHard(
+  font: PDFFont,
+  rawText: string,
+  maxW: number,
+  size: number,
+  maxLines = 12,
+  cjk: PDFFont | null = null,
+): string[] {
+  const clean = pdfText(rawText);
+  font = fontFor(font, clean, cjk);
+  const text = ink(font, clean);
   if (!text) return [];
   const fits = (s: string) => font.widthOfTextAtSize(s, size) <= maxW;
   const out: string[] = [];
@@ -207,8 +295,17 @@ function wrapHard(font: PDFFont, rawText: string, maxW: number, size: number, ma
   return out.slice(0, maxLines);
 }
 
-function wrap(font: PDFFont, rawText: string, maxW: number, size: number, maxLines = 4): string[] {
-  const text = winAnsi(pdfText(rawText));
+function wrap(
+  font: PDFFont,
+  rawText: string,
+  maxW: number,
+  size: number,
+  maxLines = 4,
+  cjk: PDFFont | null = null,
+): string[] {
+  const clean = pdfText(rawText);
+  font = fontFor(font, clean, cjk);
+  const text = ink(font, clean);
   if (!text) return [];
   const words = text.split(/\s+/).filter(Boolean);
   const out: string[] = [];
@@ -226,19 +323,38 @@ function wrap(font: PDFFont, rawText: string, maxW: number, size: number, maxLin
   return out;
 }
 
-interface Fonts { helv: PDFFont; bold: PDFFont }
+interface Fonts { helv: PDFFont; bold: PDFFont; cjk: PDFFont | null }
 
 function rightText(page: PDFPage, text: string, xRight: number, y: number, size: number, font: PDFFont, color = INK) {
-  const t = winAnsi(text);
-  const w = font.widthOfTextAtSize(t, size);
-  page.drawText(t, { x: xRight - w, y, size, font, color });
+  const f = fontFor(font, text, CJK_FONT_BY_DOC.get(page.doc));
+  const t = ink(f, text);
+  const w = f.widthOfTextAtSize(t, size);
+  page.drawText(t, { x: xRight - w, y, size, font: f, color });
 }
 
-export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Array> {
+export interface UnifiedPdfOptions {
+  /**
+   * Where the CJK font comes from when the document has Chinese text. Default:
+   * the browser fetches /fonts/NotoSansSC-Regular.ttf from its own origin; in
+   * the Worker the caller passes a loader that reads the same file from the
+   * Pages assets (src/api/lib/worker-cjk-font.ts). Null → never embed.
+   */
+  loadCjkFont?: CjkFontLoader | null;
+}
+
+export async function buildUnifiedDocPdf(
+  data: UnifiedDocData,
+  opts: UnifiedPdfOptions = {},
+): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const fonts: Fonts = {
     helv: await pdf.embedFont(StandardFonts.Helvetica),
     bold: await pdf.embedFont(StandardFonts.HelveticaBold),
+    cjk: await embedCjkFontIfNeeded(
+      pdf,
+      data,
+      opts.loadCjkFont === undefined ? browserCjkFontLoader : opts.loadCjkFont,
+    ),
   };
   let page = pdf.addPage([PAGE_W, PAGE_H]);
 
@@ -273,10 +389,10 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
   const labelW = 60;
   const colGap = PAGE_W / 2 + 12;
   const drawField = (x: number, yy: number, k: string, v: string, maxW: number): number => {
-    page.drawText(winAnsi(k), { x, y: yy, size: 8, font: fonts.helv, color: MUTED });
-    const lines = wrap(fonts.bold, v || "-", maxW - labelW, 8.5, 3);
+    drawStr(page, k, { x, y: yy, size: 8, font: fonts.helv, color: MUTED });
+    const lines = wrap(fonts.bold, v || "-", maxW - labelW, 8.5, 3, fonts.cjk);
     (lines.length ? lines : ["-"]).forEach((ln, i) => {
-      page.drawText(ln, { x: x + labelW, y: yy - i * 10, size: 8.5, font: fonts.bold, color: INK });
+      drawStr(page, ln, { x: x + labelW, y: yy - i * 10, size: 8.5, font: fonts.bold, color: INK });
     });
     return yy - Math.max(1, lines.length) * 10 - 1.5;
   };
@@ -330,7 +446,7 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
   for (const g of data.groups) {
     ensureSpace(16);
     page.drawRectangle({ x: MARGIN, y: y - 3, width: PAGE_W - MARGIN * 2, height: 12, color: BAND });
-    page.drawText(winAnsi(g.category), { x: xOrder + 2, y: y, size: 8, font: fonts.bold, color: INK });
+    drawStr(page, g.category, { x: xOrder + 2, y: y, size: 8, font: fonts.bold, color: INK });
     y -= 16;
 
     for (const it of g.items) {
@@ -339,12 +455,12 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
       // column is the gap between the Set number and its right edge.
       const qtyColW = xCol4Right - (xSet + 18);
       const refWrapped: string[] = [];
-      for (const r of it.orderRefs.slice(0, 4)) refWrapped.push(...wrapHard(fonts.helv, r, wOrder - 2, 7.5, 3));
-      const codeWrapped = wrapHard(fonts.bold, it.code, wDesc, 8, 2);
-      const nameWrapped = wrapHard(fonts.helv, it.name, wDesc, 7.5, 3);
+      for (const r of it.orderRefs.slice(0, 4)) refWrapped.push(...wrapHard(fonts.helv, r, wOrder - 2, 7.5, 3, fonts.cjk));
+      const codeWrapped = wrapHard(fonts.bold, it.code, wDesc, 8, 2, fonts.cjk);
+      const nameWrapped = wrapHard(fonts.helv, it.name, wDesc, 7.5, 3, fonts.cjk);
       const specWrapped: string[] = [];
-      for (const s of it.specLines) specWrapped.push(...wrapHard(fonts.helv, s, wDesc, 7.5, 3));
-      const qtyWrapped = isDO ? wrapHard(fonts.helv, it.qtyBreakdown || "-", qtyColW, 7.5, 4) : [];
+      for (const s of it.specLines) specWrapped.push(...wrapHard(fonts.helv, s, wDesc, 7.5, 3, fonts.cjk));
+      const qtyWrapped = isDO ? wrapHard(fonts.helv, it.qtyBreakdown || "-", qtyColW, 7.5, 4, fonts.cjk) : [];
       const descLineCount = codeWrapped.length + nameWrapped.length + specWrapped.length;
       const priceBreakdownLines = !isDO && it.priceBreakdown ? it.priceBreakdown.length : 0;
       const rowLines = Math.max(refWrapped.length, descLineCount, qtyWrapped.length, priceBreakdownLines, 1);
@@ -352,13 +468,13 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
       ensureSpace(rowH);
 
       refWrapped.forEach((r, i) => {
-        page.drawText(r, { x: xOrder, y: y - i * 9.3, size: 7.5, font: fonts.helv, color: INK });
+        drawStr(page, r, { x: xOrder, y: y - i * 9.3, size: 7.5, font: fonts.helv, color: INK });
       });
       // Description: code (bold) then name then spec, each wrapped to the column.
       let dl = 0;
-      for (const ln of codeWrapped) { page.drawText(ln, { x: xDesc, y: y - dl * 9.3, size: 8, font: fonts.bold, color: INK }); dl++; }
-      for (const ln of nameWrapped) { page.drawText(ln, { x: xDesc, y: y - dl * 9.3, size: 7.5, font: fonts.helv, color: INK }); dl++; }
-      for (const ln of specWrapped) { page.drawText(ln, { x: xDesc, y: y - dl * 9.3, size: 7.5, font: fonts.helv, color: MUTED }); dl++; }
+      for (const ln of codeWrapped) { drawStr(page, ln, { x: xDesc, y: y - dl * 9.3, size: 8, font: fonts.bold, color: INK }); dl++; }
+      for (const ln of nameWrapped) { drawStr(page, ln, { x: xDesc, y: y - dl * 9.3, size: 7.5, font: fonts.helv, color: INK }); dl++; }
+      for (const ln of specWrapped) { drawStr(page, ln, { x: xDesc, y: y - dl * 9.3, size: 7.5, font: fonts.helv, color: MUTED }); dl++; }
 
       // Set / Price / Total are single-line values. Centre them against the
       // DESCRIPTION block (code + name + spec) — the product identity — NOT the
@@ -420,7 +536,7 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
   // page instead of being squeezed off the Quantity cell (owner "被擠出去" fix).
   const gbLines =
     isDO && data.grandBreakdown
-      ? wrapHard(fonts.helv, data.grandBreakdown, PAGE_W - MARGIN * 2, 8, 4)
+      ? wrapHard(fonts.helv, data.grandBreakdown, PAGE_W - MARGIN * 2, 8, 4, fonts.cjk)
       : [];
   // Reserve the WHOLE tail (totals + breakdown / invoice summary + signature
   // block) so it never crosses the footer — else push it to a fresh page.
@@ -455,7 +571,7 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
     if (data.taxSen) sum("Tax", `RM ${money(data.taxSen)}`);
     sum("Total", `RM ${money(data.totalSen ?? 0)}`, true, true);
     if (data.amountInWords) {
-      page.drawText(winAnsi(data.amountInWords), { x: MARGIN, y: y + 2, size: 8, font: fonts.helv, color: MUTED });
+      drawStr(page, data.amountInWords, { x: MARGIN, y: y + 2, size: 8, font: fonts.helv, color: MUTED });
     }
 
     // ── Payments received + balance due (review H1-6) ──────────────────
