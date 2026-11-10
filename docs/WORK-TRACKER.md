@@ -363,11 +363,29 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Desktop, a plain reload that met a real stale copy: "Updating…" showed, the page asked again 10.1 s after its first request, the fresh copy came in, and there was no third request.
       - Phone at 375 px: the same, with the retry at 10.5 s and the label gone after it. There was no sideways scroll, and the phone's stored copy ended without the flag.
       - No console errors on either screen.
-17. 🔵 Each supplier under a material keyed as RM or % of sales (branch `feat/forecast-supplier-pct`). The owner, with a screenshot of FABRIC's supplier rows: 「这个我可以填percentage 算会上去吗？就是每个supplier 填percentage 或amount」. The answer was no, RM only, with a proposal; then 「做」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md` section 9.
+17. ✅ Each supplier under a material keyed as RM or % of sales (#1282). The owner, with a screenshot of FABRIC's supplier rows: 「这个我可以填percentage 算会上去吗？就是每个supplier 填percentage 或amount」. The answer was no, RM only, with a proposal; then 「做」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md` section 9.
     - Each supplier cell has the material row's RM and % boxes. Typing one clears the other, and the empty box shows the other side greyed. The % is of that month's sales (the customer rows' sum when keyed), and the material is their sum either way.
     - Stored per supplier as whole sen (as before) or `{ bp }`. Every reader works a % out the same way (`forecastTypeSupplierCells`): the page, the Cash Flow P&L forecast (each supplier paid after its own term), the Monthly P&L forecast and the Finance Dashboard.
     - A % supplier in a month without sales is 0. The material still counts as supplier-keyed, so it is 0, and the dashboard overlay now decides "keyed" the same way as the page.
     - Tests: `tests/forecast-supplier-pct.test.mjs`; the snapshot test in `tests/forecast-suppliers.test.mjs` and the box counts in `tests/finance-v2-forecast.test.mjs` updated.
+    - MEASURED on prod 2026-11-10 after the deploy, read only. Values were typed on the page but never saved:
+      - The Forecast P&L table with every material closed is identical to before (same fingerprint).
+      - The first material opened lists its suppliers plus Other, each with an RM box and a % box in every month.
+      - The owner's example in one month: one supplier at 5% and another at a fixed RM amount. The material showed their sum and share, greyed. The % supplier's RM box and the RM supplier's % box showed the other side. Raw Materials, Total COGS and Net profit moved by exactly the difference. The material's next month kept its own %.
+      - RM typed on the % supplier cleared its % and showed the new share.
+      - Clearing both gave back the material's own boxes and the same fingerprint, with no unsaved banner. The stored forecast is byte-identical to before. No console errors.
+      - The save of a % supplier figure stays unverified until the owner's first save (HANDOFF, still to verify).
+18. 🟡 Trade finance: fill the planned drawdowns from the Forecast P&L supplier figures. The owner: 「这个trade finance part 其实我是不是可以从forecast P&L 那边capture supplier 买的…然后我自己决定要不要使用？这点可以确定」. Proposal given, waiting for 「做」:
+    - A "Fill from Forecast P&L" button beside "Fill from bills".
+    - It takes the Forecast P&L figures (RM or %) of the suppliers the facility has paid before, with ticks to choose which. Each lands in the month it is due by the supplier's own term: the owner asked, and a NET60 purchase in November is drawn in January and repaid about April.
+    - Capped by the limit like Fill from bills; a repayment gives the room back (the owner: 「如果我repay 就会加回limit」, which is how the schedule already works).
+    - A grey reference row shows the amounts first. Nothing counts until Save.
+    - Only figures keyed per supplier can be taken; a material keyed by its % alone names no supplier.
+19. 🟡 Key the forecast in the Monthly P&L. The owner: 「我可以不可以把forecastP&L 自己做去现有的monthly P&L？因为我想要refer 数据」. Told that the Monthly P&L Forecast view already shows it read-only, and offered A (key it in the Monthly P&L) or B (actual figures beside the Forecast P&L's cells). The owner chose A: 「我想要A, 因为我的forecast cash flow 也是在cash flow 变动」. Proposal given, waiting for 「做」:
+    - Forecast on, then "Edit forecast": each month's Forecast column takes RM or %, with Save.
+    - The detail lines open with ▸: Sales to its customers, each material to its suppliers, each salary account to the departments whose wages post to it.
+    - Stock lines (WIP / FG) have no forecast and stay unkeyed.
+    - The same stored forecast, so the Forecast P&L page, Cash Flow and the Dashboard follow. The Forecast P&L page stays.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
