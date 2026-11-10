@@ -375,12 +375,13 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - RM typed on the % supplier cleared its % and showed the new share.
       - Clearing both gave back the material's own boxes and the same fingerprint, with no unsaved banner. The stored forecast is byte-identical to before. No console errors.
       - The save of a % supplier figure stays unverified until the owner's first save (HANDOFF, still to verify).
-18. 🟡 Trade finance: fill the planned drawdowns from the Forecast P&L supplier figures. The owner: 「这个trade finance part 其实我是不是可以从forecast P&L 那边capture supplier 买的…然后我自己决定要不要使用？这点可以确定」. Proposal given, waiting for 「做」:
-    - A "Fill from Forecast P&L" button beside "Fill from bills".
-    - It takes the Forecast P&L figures (RM or %) of the suppliers the facility has paid before, with ticks to choose which. Each lands in the month it is due by the supplier's own term: the owner asked, and a NET60 purchase in November is drawn in January and repaid about April.
-    - Capped by the limit like Fill from bills; a repayment gives the room back (the owner: 「如果我repay 就会加回limit」, which is how the schedule already works).
-    - A grey reference row shows the amounts first. Nothing counts until Save.
+18. 🔵 Trade finance: fill the planned drawdowns from the Forecast P&L supplier figures (branch `feat/tf-fill-from-forecast`). The owner: 「这个trade finance part 其实我是不是可以从forecast P&L 那边capture supplier 买的…然后我自己决定要不要使用？这点可以确定」. A proposal followed. The owner then refined it: 「我想要一键按直接填可以吗？额度不够你提醒」. Asked about a NET60 purchase in November going in January: 「可以」. Then 「做」. Design: `docs/superpowers/specs/2026-11-09-forecast-three-columns-design.md` section 5.
+    - A "Fill from Forecast P&L" button beside "Fill from bills", one click, no reference row or ticks (dropped from the first proposal).
+    - It takes the Forecast P&L figures (RM or %) of the suppliers the facility has paid before. Each lands in the month it falls due by the supplier's own term (`tfForecastDue`); a due month before this one is left out.
+    - Capped by the limit as Fill from bills is; both now go through `planTfFill`. A repayment gives the room back the month it is paid (the owner: 「如果我repay 就会加回limit」, which is how the schedule already worked).
+    - The months the limit cannot cover are named under the buttons with the amount short, and the bank pays that part. The note is amber, not red, and any change by hand clears it. With nothing to take, the note says so and the row is left as it is. Nothing counts until Save.
     - Only figures keyed per supplier can be taken; a material keyed by its % alone names no supplier.
+    - Tests: `tests/tf-fill-from-forecast.test.mjs`; the dialog pin in `tests/cashflow-forecast-ui.test.mjs` updated.
 19. 🟡 Key the forecast in the Monthly P&L. The owner: 「我可以不可以把forecastP&L 自己做去现有的monthly P&L？因为我想要refer 数据」. Told that the Monthly P&L Forecast view already shows it read-only, and offered A (key it in the Monthly P&L) or B (actual figures beside the Forecast P&L's cells). The owner chose A: 「我想要A, 因为我的forecast cash flow 也是在cash flow 变动」. Proposal given, waiting for 「做」:
     - Forecast on, then "Edit forecast": each month's Forecast column takes RM or %, with Save.
     - The detail lines open with ▸: Sales to its customers, each material to its suppliers, each salary account to the departments whose wages post to it.
