@@ -102,7 +102,7 @@ test("URL state round-trips search + text filters under the gridId namespace", (
   assert.equal(next.get(gridSearchParam("sales-orders")), "ivory 151");
   assert.equal(next.get("sales-orders.f.customer"), "houzs");
   assert.equal(next.has("sales-orders.f.status"), false, "blank filters are not written");
-  assert.deepEqual(readGridUrlState(next, "sales-orders"), { search: "ivory 151", columnFilters: { customer: "houzs" } });
+  assert.deepEqual(readGridUrlState(next, "sales-orders"), { search: "ivory 151", columnFilters: { customer: "houzs" }, sort: null });
   assert.equal(hasGridUrlState(next, "sales-orders"), true);
 });
 
@@ -111,7 +111,7 @@ test("clearing the search / filters removes the keys", () => {
   const cleared = writeGridUrlState(withState, "g", { search: "  ", columnFilters: {} });
   assert.equal(cleared.toString(), "tab=t");
   assert.equal(hasGridUrlState(cleared, "g"), false);
-  assert.deepEqual(readGridUrlState(new URLSearchParams(""), "g"), { search: "", columnFilters: {} });
+  assert.deepEqual(readGridUrlState(new URLSearchParams(""), "g"), { search: "", columnFilters: {}, sort: null });
 });
 
 test("sameParams ignores key order (no-op writes are skipped)", () => {
@@ -125,8 +125,9 @@ test("DataGrid wires copy, range-sum and URL filters, all opt-out-able", () => {
   assert.match(src, /cellCopy\?: boolean;/);
   assert.match(src, /urlFilters\?: boolean;/);
   assert.match(src, /cellCopy = true,/);
-  // URL sync defaults OFF for pages that manage their own search.
-  assert.match(src, /urlFilters \?\? \(!onSearchChange && initialSearch === undefined\)/);
+  // URL sync is ON for every grid with a gridId since 2026-11-10 (review G2):
+  // the grids that manage their own search were exactly the big paged lists.
+  assert.match(src, /const urlSyncOn = !!gridId && \(urlFilters \?\? true\);/);
   assert.match(src, /useSearchParams\(\)/);
   assert.match(src, /setSearchParamsRef\.current\(next, \{ replace: true, preventScrollReset: true \}\)/);
   assert.match(src, /data-dg-col=\{colIdx\}/);

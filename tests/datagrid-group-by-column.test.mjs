@@ -58,7 +58,7 @@ test("the body: a header per group that folds it, the rows, a subtotal row kept 
   assert.match(body, /if \(!userFolded\.has\(key\)\) out\.push\(renderDataRow\(row, index\)\);/);
   assert.match(body, /data-dg="subtotal"/);
   assert.match(body, /if \(!g \|\| !showFooter\) return;/, "no totals on the grid → no subtotal row");
-  assert.match(body, /const t = columnTotals\(g\.rows, visibleColumns, \(row, k\) => getNestedValue\(row, k\)\);/, "over the group's every row, not the painted ones");
+  assert.match(body, /const t = columnTotals\(splitForTotals\(g\.rows, totalsSkipRow\)\.counted, visibleColumns, \(row, k\) => getNestedValue\(row, k\)\);/, "over the group's every row, not the painted ones");
   assert.match(body, /\{name\} subtotal <span className="font-normal text-\[#6B7280\]">· \{g\.rows\.length\} \{g\.rows\.length === 1 \? "row" : "rows"\}<\/span>/);
   // The label spans the empty columns after it, so it never widens its column.
   assert.match(body, /while \(i \+ span < visibleColumns\.length && t\[visibleColumns\[i \+ span\]\.key\] === undefined && !stickyOffsets\.has\(visibleColumns\[i \+ span\]\.key\)\) span\+\+;/);
@@ -72,9 +72,9 @@ test("a column can name its own group; the Payment Vouchers status groups by its
 });
 
 test("the export carries each group's subtotal row; the PDF bands them", () => {
-  const sheet = between("const exportSheet = (): { aoa: Aoa; subtotalRows: number[] } => {", "const exportBase");
+  const sheet = between("const exportSheet = (rows: T[]): { aoa: Aoa; subtotalRows: number[] } => {", "const exportBase");
   assert.match(sheet, /buildGroupedListingAoa\(/);
-  assert.match(sheet, /groupRows\(sortedData, userGroupValue\)\.map\(\(g\) => \(\{ label: groupValueLabel\(userGroupCol\.type, g\.value\), rows: g\.rows \}\)\)/);
-  assert.match(src, /const \{ aoa, subtotalRows \} = exportSheet\(\);/);
+  assert.match(sheet, /groupRows\(rows, userGroupValue\)\.map\(\(g\) => \(\{ label: groupValueLabel\(userGroupCol\.type, g\.value\), rows: g\.rows \}\)\)/);
+  assert.match(src, /const \{ aoa, subtotalRows \} = exportSheet\(rows\);/);
   assert.match(src, /\(_row, idx\) => \(showFooter && idx === lastBody \? "grand" : subtotal\.has\(idx\) \? "subtotal" : undefined\)/);
 });

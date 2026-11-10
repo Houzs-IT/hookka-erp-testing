@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency, todayYmdMY } from "@/lib/utils";
@@ -98,7 +100,7 @@ export default function InvoicesPage() {
     return qs.toString();
   })();
 
-  const { data: invResp, loading, refresh: refreshInvoices } = useCachedJson<{
+  const { data: invResp, loading, error: invError, refresh: refreshInvoices } = useCachedJson<{
     success?: boolean;
     data?: Invoice[];
     page?: number;
@@ -148,6 +150,32 @@ export default function InvoicesPage() {
   );
   const totalInvoicesServer = invResp?.total ?? invoices.length;
   const totalPages = Math.max(1, Math.ceil(totalInvoicesServer / PAGE_SIZE));
+
+  // Review G3 (2026-11-10): the header sort, funnels and Group By judge the
+  // grid's rows, and the grid holds ONE 200-row page of the matches. Unlike
+  // SO / PO / GRN there is no whole-list fetch here (the server pages at 500),
+  // so the grid says "cover the 200 loaded rows of N" and offers "Load all",
+  // which pages through every match (same query as Export). The loaded set
+  // belongs to the response + query it was loaded for, so a refresh or a new
+  // filter / search drops back to the paged view without an effect.
+  const invoiceListQs = [
+    filterQs,
+    gridSearch.trim() ? `search=${encodeURIComponent(gridSearch.trim())}` : "",
+  ].filter(Boolean).join("&");
+  const [allMatches, setAllMatches] = useState<{ resp: unknown; qs: string; rows: Invoice[] } | null>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const loadedAll = allMatches && allMatches.resp === invResp && allMatches.qs === invoiceListQs ? allMatches.rows : null;
+  const loadAllInvoices = async () => {
+    setLoadingAll(true);
+    try {
+      const rows = await fetchAllPages<Invoice>(`/api/invoices?${invoiceListQs}`);
+      setAllMatches({ resp: invResp, qs: invoiceListQs, rows });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't load every invoice");
+    } finally {
+      setLoadingAll(false);
+    }
+  };
 
   // ---- Status tab strip (count + money per state) ------------------------
   // This strip IS the status filter — there is no separate Status dropdown, so
@@ -565,14 +593,14 @@ export default function InvoicesPage() {
   // server fetch sent it as ?customerId= — the SQL matched nothing and the
   // list went blank the moment a customer was picked).
   const filteredInvoices = useMemo(() => {
-    return invoices.filter((inv) => {
+    return (loadedAll ?? invoices).filter((inv) => {
       if (filterStatus && inv.status !== filterStatus) return false;
       if (filterCustomer && inv.customerId !== filterCustomer) return false;
       if (filterDateFrom && inv.invoiceDate < filterDateFrom) return false;
       if (filterDateTo && inv.invoiceDate > filterDateTo) return false;
       return true;
     });
-  }, [invoices, filterStatus, filterCustomer, filterDateFrom, filterDateTo]);
+  }, [loadedAll, invoices, filterStatus, filterCustomer, filterDateFrom, filterDateTo]);
 
   // KPI calculations. All four (Total, Overdue, Outstanding RM, Collected
   // MTD) now read from the server /stats aggregate so they reflect the
@@ -618,8 +646,8 @@ export default function InvoicesPage() {
     { key: "customerName", label: "Customer", type: "text", sortable: true },
     { key: "invoiceDate", label: "Invoice Date", type: "date", width: "110px", sortable: true },
     { key: "dueDate", label: "Due Date", type: "date", width: "110px", sortable: true },
-    { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true },
-    { key: "paidAmount", label: "Paid", type: "currency", width: "120px", sortable: true,
+    { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true, total: "sum" },
+    { key: "paidAmount", label: "Paid", type: "currency", width: "120px", sortable: true, total: "sum",
       render: (value: number) => (
         <span className="text-[#4F7C3A] tabular-nums">{value > 0 ? formatCurrency(value) : "-"}</span>
       ),
@@ -898,13 +926,24 @@ export default function InvoicesPage() {
               <DataGrid<Invoice>
                 columns={invoiceGridColumns}
                 data={filteredInvoices}
-                loading={loading}
+                loading={loading || loadingAll}
+                // Review G3: one server page is loaded — say so under a column
+                // sort / filter / grouping, and offer every match.
+                totalRows={loadedAll ? undefined : totalInvoicesServer}
+                onLoadAll={() => { void loadAllInvoices(); }}
                 keyField="id"
                 rowClassName={(r) => cancelledRowClass(r.status)}
                 virtualize
                 // Stable id — the column picker / drag / resize state persists
                 // under it. Renaming it silently discards saved layouts.
                 gridId="invoices-list"
+                // Review G5: a cancelled document is faded, its number struck through.
+                cancelledRow={isCancelledStatusRow}
+                // Review G4: the Total row leaves cancelled rows out (still listed).
+                totalsSkipRow={isCancelledStatusRow}
+                // Review G7: a failed load says so, with Retry, instead of an empty list.
+                error={listLoadError(invResp, invError)}
+                onRetry={refreshInvoices}
                 selectable
                 onSelectionChange={(rows: Invoice[]) => setSelectedInvoices(rows)}
                 onDoubleClick={(row) => navigate(`/invoices/${row.id}`)}
@@ -927,13 +966,7 @@ export default function InvoicesPage() {
                     buildInvoiceDetailRows(rows, { partyCodes: new Map(customers.map((cu) => [cu.id, cu.code ?? ""])) }),
                 }}
                 // The grid holds one page of the matches. Export every match.
-                fetchAllRows={() =>
-                  fetchAllPages<Invoice>(
-                    `/api/invoices?${[
-                      filterQs,
-                      gridSearch.trim() ? `search=${encodeURIComponent(gridSearch.trim())}` : "",
-                    ].filter(Boolean).join("&")}`,
-                  )}
+                fetchAllRows={loadedAll ? undefined : () => fetchAllPages<Invoice>(`/api/invoices?${invoiceListQs}`)}
               />
 
               {/* Pagination footer */}
@@ -941,7 +974,9 @@ export default function InvoicesPage() {
                 <span>
                   {totalInvoicesServer.toLocaleString()} invoice
                   {totalInvoicesServer === 1 ? "" : "s"}
+                  {loadedAll ? " · all loaded" : ""}
                 </span>
+                {!loadedAll && (
                 <div className="flex items-center gap-3">
                   <Button
                     variant="outline"
@@ -963,6 +998,7 @@ export default function InvoicesPage() {
                     Next →
                   </Button>
                 </div>
+                )}
               </div>
             </CardContent>
           </Card>

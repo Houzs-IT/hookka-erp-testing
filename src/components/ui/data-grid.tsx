@@ -26,7 +26,7 @@ import { buildListingAoa, exportFilename, type ExportColumn } from "@/lib/grid-e
 import { exportReportCsv, exportReportPdf, exportReportXlsx, type Aoa } from "@/lib/export-report";
 import { bindContextMenuRow } from "@/lib/context-menu-bind";
 import {
-  columnTotals, decodeRange, headerMenuItems, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
+  columnTotals, columnViewActive, decodeRange, headerMenuItems, splitForTotals, totalFooterText, inRange, moveColumn, parseAmount, pickLayoutSource, rangeTerm, RANGE_MODE,
 } from "@/lib/grid-layout";
 import { buildGroupedListingAoa, columnGroupValue, compareGroupValues, groupRows, groupValueLabel, type GroupColumn } from "@/lib/grid-group";
 import { useSearchParams } from "react-router-dom";
@@ -357,11 +357,15 @@ export type DataGridProps<T> = {
   footerLabel?: (shown: number, all: number) => React.ReactNode;
   // Header right-click menu (finance v2 "PV table" rule, AutoCount style):
   // sort, filter, hide / choose columns, best fit, save / reset layout, and
-  // Export to Excel / PDF / Print of the current view. Off by default, so other
-  // grids keep the browser's own menu on their headers.
+  // Export to Excel / PDF / Print of the current view. DEFAULT: ON for every
+  // grid with a `gridId` (2026-11-10, review G1 — built for finance, the main
+  // lists never had it); pass `headerMenu={false}` to keep the browser's menu.
+  // Passing `headerMenu` EXPLICITLY (finance) also hides the toolbar Export
+  // button; a default-on grid keeps its toolbar Export (Detail Listing etc.).
   headerMenu?: boolean;
   // Drag a header onto another to move the column there (finance v2). The new
-  // order saves like a Columns-popover reorder. Off by default.
+  // order saves like a Columns-popover reorder. DEFAULT: ON for a grid with a
+  // `gridId` (review G1); `reorderableHeaders={false}` opts out.
   reorderableHeaders?: boolean;
   // Ticks change only through the checkbox column (finance lists, owner
   // 2026-10-01 「我不要点一次打开」): a row click, a right-click and the ⋮
@@ -381,10 +385,40 @@ export type DataGridProps<T> = {
   // Mirror the search text + column TEXT filters into the URL
   // (`?<gridId>.q=` / `?<gridId>.f.<col>=`, src/lib/grid-url-state.ts) and
   // read them back on mount, so a filtered view survives reload and can be
-  // shared. Needs `gridId`. Default: ON for a grid with a gridId that does NOT
-  // manage its own search (no `onSearchChange` / `initialSearch`); pass
-  // `urlFilters` to force it on, `urlFilters={false}` to opt out.
+  // shared. Needs `gridId`. Default: ON for every grid with a gridId
+  // (2026-11-10, review G2 — it used to skip grids that manage their own
+  // search, which were exactly the big paged lists); `urlFilters={false}`
+  // opts out. The header sort rides along (`?<gridId>.s=<key>:<dir>`). A
+  // page's non-empty `initialSearch` still wins over the URL.
   urlFilters?: boolean;
+  // Fires with true while the operator narrows or re-orders the grid's OWN
+  // rows (header sort, column text filter, a value filter they touched, Group
+  // By This Column) — `columnViewActive` in src/lib/grid-layout.ts. A
+  // server-paged page widens its fetch to every matching record while it is
+  // true, exactly as it does for the search box (review G3, Houzs#4753).
+  onColumnViewChange?: (active: boolean) => void;
+  // How many records the page's SERVER query matches (one page may be loaded).
+  // When it exceeds the loaded rows and a column sort / filter / grouping is
+  // on, the grid says so above the rows — "cover the 200 loaded rows of
+  // 1,234" — and offers `onLoadAll` as a button when given. Also marks the
+  // total row "loaded rows only". Omit on a grid that holds the whole list.
+  totalRows?: number;
+  onLoadAll?: () => void;
+  // Rows the total row leaves out (still listed) — the cancelled documents
+  // on a document list (review G4, Houzs#5415). The footer says "1 cancelled
+  // not counted"; `totalsSkipNoun` swaps the word. Display only.
+  totalsSkipRow?: (row: T) => boolean;
+  totalsSkipNoun?: string;
+  // The list request failed (review G7, Conts#594): with no rows the body
+  // reads "Couldn't load this list" + the reason + Retry instead of the empty
+  // message; with rows still on screen a thin banner says the refresh failed.
+  // `listLoadError(resp, error)` (src/lib/list-load-error.ts) builds it.
+  error?: string | null;
+  onRetry?: () => void;
+  // A cancelled document row (review G5, Houzs#4493): the row is faded and
+  // its document number (`type: "docno"` columns) struck through, so a void
+  // record reads as void at a glance. Display only.
+  cancelledRow?: (row: T) => boolean;
 };
 
 type SavedView = {
@@ -859,10 +893,13 @@ function ColumnFilterDropdown<T>({
     onApplyValues(new Set(matched));
     onClose();
   };
+  // Review G10 (Houzs#5499): "Today" / "This Week" / Overdue judge by the
+  // MALAYSIAN calendar day, not the device clock — a laptop set to another
+  // timezone used to shift every preset by a day around midnight. The rows'
+  // dates are compared as local y/m/d, so the MY day is built the same way.
   const today0 = () => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
+    const [y, m, d] = todayYmdMY().split("-").map(Number);
+    return new Date(y, m - 1, d);
   };
   const addDays = (d: Date, n: number) => {
     const x = new Date(d);
@@ -1814,13 +1851,26 @@ export function DataGrid<T extends Record<string, any>>({
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
   footerLabel,
-  headerMenu,
-  reorderableHeaders,
+  headerMenu: headerMenuProp,
+  reorderableHeaders: reorderableHeadersProp,
   checkboxSelectOnly,
   searchPlaceholder,
   cellCopy = true,
   urlFilters,
+  onColumnViewChange,
+  totalRows,
+  onLoadAll,
+  totalsSkipRow,
+  totalsSkipNoun,
+  error,
+  onRetry,
+  cancelledRow,
 }: DataGridProps<T>) {
+  // Review G1 (2026-11-10): the header menu and header drag are ON for every
+  // grid that persists a layout (has a gridId), so new list pages get them
+  // for free. An explicit prop still wins either way.
+  const headerMenu = headerMenuProp ?? !!gridId;
+  const reorderableHeaders = reorderableHeadersProp ?? !!gridId;
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
   //   1. Personal layout `datagrid-cols-${gridId}-${userKey()}` — written
@@ -2361,10 +2411,14 @@ export function DataGrid<T extends Record<string, any>>({
   // URL filters (2026-11-08): read once on mount. A shared / reloaded link
   // wins over the sessionStorage tab-hop copy; a page's own initialSearch
   // still wins over both. See src/lib/grid-url-state.ts.
-  const urlSyncOn = !!gridId && (urlFilters ?? (!onSearchChange && initialSearch === undefined));
+  const urlSyncOn = !!gridId && (urlFilters ?? true);
   const [searchParams, setSearchParams] = useSearchParams();
   const [urlSeed] = useState(() => (urlSyncOn && gridId ? readGridUrlState(searchParams, gridId) : null));
-  const [searchText, setSearchText] = useState(initialSearch ?? (urlSeed?.search || seeded?.searchText) ?? "");
+  // A page's NON-EMPTY initialSearch wins; then the URL; then (only for a grid
+  // whose page does not seed its own search) the sessionStorage tab-hop copy.
+  const [searchText, setSearchText] = useState(
+    initialSearch || urlSeed?.search || (initialSearch === undefined ? seeded?.searchText ?? "" : ""),
+  );
   // Deferred copy of the search value. The <input> stays bound to searchText
   // (instant caret/echo), but the heavy filter+sort AND the parent
   // onSearchChange notification read deferredSearch — so a fast typist no
@@ -2377,7 +2431,11 @@ export function DataGrid<T extends Record<string, any>>({
       ? urlSeed.columnFilters
       : seededFilters?.columnFilters ?? {},
   );
-  // Write search + text filters back to the URL, replace-style (no history
+  // Header sort — seeded from the URL (`?<gridId>.s=`) so a shared or
+  // reloaded link keeps its order (review G2).
+  const [sortKey, setSortKey] = useState<string | null>(urlSeed?.sort?.key ?? null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(urlSeed?.sort?.dir ?? "asc");
+  // Write search + text filters + sort back to the URL, replace-style (no history
   // spam), 400 ms after the last change so typing never navigates per key.
   // Compared against the live location first, so an unchanged state is a
   // no-op. Every other query key (the page's ?tab=, another grid) is kept.
@@ -2390,11 +2448,15 @@ export function DataGrid<T extends Record<string, any>>({
     // eslint-disable-next-line no-restricted-syntax -- debounce of a URL write, cleared in this effect's cleanup
     const t = window.setTimeout(() => {
       const cur = new URLSearchParams(window.location.search);
-      const next = writeGridUrlState(cur, gridId, { search: searchText, columnFilters });
+      const next = writeGridUrlState(cur, gridId, {
+        search: searchText,
+        columnFilters,
+        sort: sortKey ? { key: sortKey, dir: sortDir } : null,
+      });
       if (!sameParams(cur, next)) setSearchParamsRef.current(next, { replace: true, preventScrollReset: true });
     }, 400);
     return () => window.clearTimeout(t);
-  }, [urlSyncOn, gridId, searchText, columnFilters]);
+  }, [urlSyncOn, gridId, searchText, columnFilters, sortKey, sortDir]);
   const [columnValueFilters, setColumnValueFilters] = useState<Record<string, Set<string>>>(
     () => {
       if (!seededFilters?.columnValueFilters) return {};
@@ -2514,9 +2576,7 @@ export function DataGrid<T extends Record<string, any>>({
     setColumnValueFilters(prev => { const n = { ...prev }; delete n[key]; return n; });
   }, []);
 
-  // ── Sorting ──
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // ── Sorting ── (state declared above, next to the URL seed it reads)
 
   // ── Selection ──
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -3033,6 +3093,23 @@ export function DataGrid<T extends Record<string, any>>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferredSearch]);
 
+  // Review G3: tell a server-paged page that a header sort / column filter /
+  // grouping is on, so it can widen its fetch to every matching record (same
+  // callback-identity rule as onSearchChange above: fires on the boolean only).
+  const colViewActive = columnViewActive({
+    sortKey,
+    columnFilters,
+    valueFilterKeys: Object.keys(columnValueFilters).length,
+    valueFilterTouched,
+    userGroupKey,
+  });
+  useEffect(() => {
+    if (!onColumnViewChange) return;
+    onColumnViewChange(colViewActive);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colViewActive]);
+  const partialView = colViewActive && totalRows !== undefined && totalRows > data.length && !loading;
+
   const handleContextMenu = useCallback((e: React.MouseEvent, row: T) => {
     if (!contextMenuItems) return;
     if (checkboxSelectOnly && e.shiftKey) return; // keep the browser's own menu
@@ -3085,9 +3162,14 @@ export function DataGrid<T extends Record<string, any>>({
   // Sticky total row (finance v2): totals over every row the filter shows —
   // sortedData, not the render-capped displayedData.
   const showFooter = visibleColumns.some((c) => c.total);
+  // `totalsSkipRow` (review G4): cancelled rows stay listed, not added up.
+  const totalsSplit = useMemo(
+    () => (showFooter ? splitForTotals(sortedData, totalsSkipRow) : { counted: sortedData, skipped: 0 }),
+    [showFooter, sortedData, totalsSkipRow],
+  );
   const totals = useMemo(
-    () => (showFooter ? columnTotals(sortedData, visibleColumns, (row, key) => getNestedValue(row, key)) : {}),
-    [showFooter, sortedData, visibleColumns],
+    () => (showFooter ? columnTotals(totalsSplit.counted, visibleColumns, (row, key) => getNestedValue(row, key)) : {}),
+    [showFooter, totalsSplit, visibleColumns],
   );
 
   // ── Header right-click menu (finance v2; opt-in via `headerMenu`) ──
@@ -3103,17 +3185,23 @@ export function DataGrid<T extends Record<string, any>>({
   // plus the total row when the grid shows one (currency in RM). Grouped by
   // the user ("Group By This Column"): each group's rows, then its subtotal
   // row, as the design's export; `subtotalRows` marks them for the PDF.
-  const exportSheet = (): { aoa: Aoa; subtotalRows: number[] } => {
+  // `rows` = the filtered + sorted rows to write: the loaded ones, or — on a
+  // server-paged grid with `fetchAllRows` — every matching record (review G1:
+  // the header menu now runs on the paged lists, so it must not export one
+  // page while the toolbar Export writes them all).
+  const exportSheet = (rows: T[]): { aoa: Aoa; subtotalRows: number[] } => {
+    const sumOf = (rs: T[]) => columnTotals(splitForTotals(rs, totalsSkipRow).counted, visibleColumns, (row, key) => getNestedValue(row, key));
     const grouped = userGroupCol
       ? buildGroupedListingAoa(
           visibleColumns as unknown as ExportColumn<T>[],
-          groupRows(sortedData, userGroupValue).map((g) => ({ label: groupValueLabel(userGroupCol.type, g.value), rows: g.rows })),
-          (rows) => columnTotals(rows, visibleColumns, (row, key) => getNestedValue(row, key)),
+          groupRows(rows, userGroupValue).map((g) => ({ label: groupValueLabel(userGroupCol.type, g.value), rows: g.rows })),
+          sumOf,
         )
       : null;
-    const aoa = grouped ? grouped.aoa : buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], sortedData);
+    const aoa = grouped ? grouped.aoa : buildListingAoa(visibleColumns as unknown as ExportColumn<T>[], rows);
+    const sheetTotals = showFooter ? (rows === sortedData ? totals : sumOf(rows)) : {};
     if (showFooter) aoa.push(visibleColumns.map((c, i) => {
-      const t = totals[c.key];
+      const t = sheetTotals[c.key];
       if (t !== undefined) return c.type === "currency" ? Math.round(t) / 100 : t;
       return i === 0 ? "Total" : "";
     }));
@@ -3121,9 +3209,21 @@ export function DataGrid<T extends Record<string, any>>({
   };
   const exportBase = exportName || gridId || "export";
   const exportTitle = exportSheetLabel || exportName || gridId || "Listing";
-  const runExport = (kind: "xlsx" | "pdf" | "print") => {
+  const runExport = async (kind: "xlsx" | "pdf" | "print") => {
     const today = todayYmdMY();
-    const { aoa, subtotalRows } = exportSheet();
+    let rows = sortedData;
+    if (fetchAllRows) {
+      setExportBusy(true);
+      try {
+        rows = sortRows(filterRows(await fetchAllRows()));
+      } catch {
+        toast.error("Could not load every row to export — try again");
+        return;
+      } finally {
+        setExportBusy(false);
+      }
+    }
+    const { aoa, subtotalRows } = exportSheet(rows);
     if (kind === "xlsx") {
       void exportReportXlsx(exportFilename(exportBase, "listing", "xlsx", today), exportTitle, aoa);
       return;
@@ -3200,9 +3300,9 @@ export function DataGrid<T extends Record<string, any>>({
       }
       void resetToOrgDefault();
     },
-    "Export to Excel": () => runExport("xlsx"),
-    "Export to PDF": () => runExport("pdf"),
-    "Print": () => runExport("print"),
+    "Export to Excel": () => { void runExport("xlsx"); },
+    "Export to PDF": () => { void runExport("pdf"); },
+    "Print": () => { void runExport("print"); },
   });
   const hdrMenuEntries: ContextMenuItem[] = (() => {
     if (!hdrMenu) return [];
@@ -3450,7 +3550,7 @@ export function DataGrid<T extends Record<string, any>>({
             filtered+sorted rows. Opt-in per page via the `exportName` prop.
             A grid with the finance v2 header menu exports from there instead
             (Export to Excel / PDF / Print), so its toolbar stays uncluttered. */}
-        {exportName && !headerMenu && (
+        {exportName && !headerMenuProp && (
           <div className="relative">
             <button
               className={cn(
@@ -3571,6 +3671,32 @@ export function DataGrid<T extends Record<string, any>>({
           {sortedData.length} of {data.length} records
         </span>
       </div>
+
+      {/* Review G3: a column sort / filter / grouping on a grid that holds one
+          server page judges only that page — say so instead of looking whole. */}
+      {partialView && (
+        <div data-dg="partial" className="flex flex-wrap items-center gap-2 border-t border-[#F1D9A8] bg-[#FFF8E6] px-3 py-1.5 text-[12px] text-[#7A5B12]">
+          <span>
+            Column sorting, filters and grouping cover the {data.length.toLocaleString()} loaded rows of{" "}
+            {totalRows!.toLocaleString()}. Use Search or the filters above to narrow on the server
+            {onLoadAll ? ", or load every row." : "."}
+          </span>
+          {onLoadAll && (
+            <button type="button" className="font-semibold underline hover:text-[#4D3A08]" onClick={onLoadAll}>
+              Load all {totalRows!.toLocaleString()}
+            </button>
+          )}
+        </div>
+      )}
+      {/* Review G7: the request failed but rows from before are still shown. */}
+      {error && !loading && data.length > 0 && (
+        <div data-dg="error-banner" role="alert" className="flex flex-wrap items-center gap-2 border-t border-[#F3C5C5] bg-[#FDF2F2] px-3 py-1.5 text-[12px] text-[#9B1C1C]">
+          <span>Couldn&apos;t refresh this list: {error}</span>
+          {onRetry && (
+            <button type="button" className="font-semibold underline" onClick={onRetry}>Retry</button>
+          )}
+        </div>
+      )}
 
       {/* Table — no own border/rounding: the grid is wrapped in a Card on every
           list page, so a border here just drew a second frame inside the Card
@@ -3779,6 +3905,25 @@ export function DataGrid<T extends Record<string, any>>({
                   )}
                 </tr>
               ))
+            ) : error && data.length === 0 ? (
+              // Review G7: a failed list request is NOT an empty list.
+              <tr>
+                <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0)} className="py-8 text-center text-[12px]">
+                  <div data-dg="load-error" role="alert" className="flex flex-col items-center gap-2">
+                    <span className="font-semibold text-[#9B1C1C]">Couldn&apos;t load this list</span>
+                    <span className="text-[#666]">{error}</span>
+                    {onRetry && (
+                      <button
+                        type="button"
+                        className="rounded border border-[#DDD] bg-white px-3 h-8 text-sm font-medium text-[#333] hover:border-[#999]"
+                        onClick={onRetry}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
             ) : sortedData.length === 0 ? (
               <tr>
                 <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (hasContextMenu ? 1 : 0)} className="py-8 text-center text-[12px] text-[#999]">
@@ -3794,10 +3939,12 @@ export function DataGrid<T extends Record<string, any>>({
                   const key = String(getNestedValue(row, keyField));
                   const isSelected = selectedKeys.has(key);
                   const isEven = index % 2 === 1;
+                  const isCancelled = !!cancelledRow?.(row);
                   return (
                     <tr
                       key={key}
                       data-dg="row"
+                      data-cancelled={isCancelled || undefined}
                       className={cn(
                         // Tablet: min-h-[40px] for finger-friendly row height
                         // when selectable=true; otherwise keep the dense default
@@ -3805,6 +3952,8 @@ export function DataGrid<T extends Record<string, any>>({
                         "border-b border-[#E2DDD8] text-[12px] text-[#111]",
                         selectable && "min-h-[40px]",
                         isEven && "bg-[#FAFAFA]",
+                        // Review G5: a cancelled document reads as void.
+                        isCancelled && "!text-[#9CA3AF]",
                         rowClassName?.(row),
                         isSelected && "!bg-[#CCE0FF] border-l-2 border-l-[#3366CC]",
                         !isSelected && "hover:bg-[#F0ECE9]",
@@ -3907,6 +4056,7 @@ export function DataGrid<T extends Record<string, any>>({
                               isSticky && isSelected && "!bg-[#CCE0FF]",
                               inRange && "!bg-[#B9D3F5]",
                               col.cellClassName?.(row),
+                              isCancelled && col.type === "docno" && "line-through",
                             )}
                             data-dg-col={colIdx}
                             style={{
@@ -4068,7 +4218,7 @@ export function DataGrid<T extends Record<string, any>>({
                   const subtotal = (key: string) => {
                     const g = groups.get(key);
                     if (!g || !showFooter) return;
-                    const t = columnTotals(g.rows, visibleColumns, (row, k) => getNestedValue(row, k));
+                    const t = columnTotals(splitForTotals(g.rows, totalsSkipRow).counted, visibleColumns, (row, k) => getNestedValue(row, k));
                     const name = groupValueLabel(userGroupCol.type, g.value);
                     out.push(
                       <tr key={`__usub__${key}`} data-dg="subtotal" className="bg-[#F1EEE8] text-[12px] font-semibold text-[#1F1D1B]">
@@ -4206,7 +4356,13 @@ export function DataGrid<T extends Record<string, any>>({
                         : i === 0
                           ? (footerLabel
                             ? footerLabel(sortedData.length, data.length)
-                            : `Total · ${sortedData.length.toLocaleString()} shown of ${data.length.toLocaleString()}`)
+                            : totalFooterText({
+                                shown: sortedData.length,
+                                all: data.length,
+                                skipped: totalsSplit.skipped,
+                                skippedNoun: totalsSkipNoun,
+                                totalRows,
+                              }))
                           : null}
                     </td>
                   );

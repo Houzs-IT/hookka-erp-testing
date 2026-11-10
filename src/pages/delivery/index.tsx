@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RepairPartsBadge } from "@/components/sales/repair-scope-picker";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen, type StatusTabSpec } from "@/lib/status-tab-strip";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
@@ -1186,7 +1188,7 @@ export default function DeliveryPage() {
   // Nothing whole-table is derived from this page of rows any more — counts,
   // tab money and Delivered (MTD) come from /stats, the already-on-a-DO set
   // from /linked-po-ids.
-  const { data: doRaw, loading: doLoading, refresh: refreshDOs } = useCachedJson<{
+  const { data: doRaw, loading: doLoading, error: doError, refresh: refreshDOs } = useCachedJson<{
     success?: boolean;
     data?: DeliveryOrder[];
     page?: number;
@@ -5135,6 +5137,11 @@ export default function DeliveryPage() {
               // grid rather than as a filter (BUG-CLASSES C7). Hence the tab in
               // valueFilterKey and not in gridId.
               gridId="delivery-orders-list"
+              // Review G5: a cancelled document is faded, its number struck through.
+              cancelledRow={isCancelledStatusRow}
+              // Review G7: a failed load says so, with Retry, instead of an empty list.
+              error={listLoadError(doRaw, doError)}
+              onRetry={refreshDOs}
               valueFilterKey={activeTab}
               loading={loading}
               stickyHeader

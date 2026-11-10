@@ -2,8 +2,8 @@
 // datagrid-header-menu.test.mjs — the header right-click menu (finance v2 "PV
 // table" rule: Export Excel / Export PDF / Print / Columns live on a header
 // right-click menu, AutoCount style, so the toolbar is not crowded; plan
-// 2026-10-16-finance-v2-foundation Task 5). Opt-in per grid (`headerMenu`), so
-// every other grid keeps the browser's own menu on its headers.
+// 2026-10-16-finance-v2-foundation Task 5). Since 2026-11-10 (review G1) it is
+// ON for every grid with a gridId; `headerMenu={false}` opts a grid out.
 // ---------------------------------------------------------------------------
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const src = read("src/components/ui/data-grid.tsx");
 
-test("only a grid that asks gets the header menu; Shift keeps the browser's", () => {
+test("the header menu is wired per header; Shift keeps the browser's", () => {
   assert.match(src, /headerMenu\?: boolean;/, "DataGridProps.headerMenu");
   assert.match(src, /onContextMenu=\{headerMenu \? \(e\) => openHeaderMenu\(e, col\.key\) : undefined\}/);
   const at = src.indexOf("const openHeaderMenu = ");
@@ -53,7 +53,7 @@ test("the menu reuses the grid's context menu (Esc, outside click, arrow keys) w
 });
 
 test("exports carry the total row; Print opens the PDF for printing instead of saving it", () => {
-  assert.match(src, /const exportSheet = \(\): \{ aoa: Aoa; subtotalRows: number\[\] \} => \{/);
+  assert.match(src, /const exportSheet = \(rows: T\[\]\): \{ aoa: Aoa; subtotalRows: number\[\] \} => \{/);
   assert.match(src, /if \(showFooter\) aoa\.push\(/, "the total row goes into the file too");
   assert.match(src, /void exportReportXlsx\(exportFilename\(exportBase, "listing", "xlsx", today\), exportTitle, aoa\)/);
   assert.match(src, /void exportReportPdf\(exportFilename\(exportBase, "listing", "pdf", today\), exportTitle, `As at \$\{formatDateDMY\(today\)\}`, aoa, \{/);

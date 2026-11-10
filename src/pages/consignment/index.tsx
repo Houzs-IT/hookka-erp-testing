@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency, cn, todayYmdMY } from "@/lib/utils";
@@ -105,12 +107,18 @@ export default function SalesPage() {
   const [filterDDFrom, setFilterDDFrom] = useUrlState<string>("ddFrom", "");
   const [filterDDTo, setFilterDDTo] = useUrlState<string>("ddTo", "");
 
+  // Review G3 (2026-11-10): the grid's search box, header sort, funnels and
+  // Group By judge the grid's rows — one 200-row page in the browse view — so
+  // while any of them is on, the fetch widens to every CO, as the filters
+  // above already do (the Sales pattern; Houzs#4753).
+  const [gridSearch, setGridSearch] = useState("");
+  const [gridColumnView, setGridColumnView] = useState(false);
   const _filtersActive = !!(
     filterStatus || filterCustomer || filterDateFrom || filterDateTo ||
-    filterCategory || filterDDFrom || filterDDTo
+    filterCategory || filterDDFrom || filterDDTo || gridSearch.trim() || gridColumnView
   );
 
-  const { data: ordersResp, loading, refresh: refreshOrders } = useCachedJson<{
+  const { data: ordersResp, loading, error: ordersError, refresh: refreshOrders } = useCachedJson<{
     success?: boolean;
     data?: ConsignmentOrder[];
     page?: number;
@@ -468,7 +476,7 @@ export default function SalesPage() {
         return <span className="text-[#4F7C3A]">Done</span>;
       },
     },
-    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true },
+    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true, total: "sum" },
     { key: "status", label: "Status", type: "status", width: "100px", sortable: true },
   ];
 
@@ -894,12 +902,21 @@ export default function SalesPage() {
             // Stable id — the column picker / drag / resize state persists
             // under it. Renaming it silently discards saved layouts.
             gridId="consignment-orders-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
+            // Review G4: the Total row leaves cancelled rows out (still listed).
+            totalsSkipRow={isCancelledStatusRow}
+            // Review G7: a failed load says so, with Retry, instead of an empty list.
+            error={listLoadError(ordersResp, ordersError)}
+            onRetry={refreshOrders}
             maxHeight="calc(100vh - 320px)"
             emptyMessage={tab === "DRAFT" ? "No draft orders." : "No confirmed orders."}
             onDoubleClick={(row) => navigate(`/consignment/${row.id}`)}
             contextMenuItems={getContextMenuItems}
             selectable
             onSelectionChange={setSelectedRows}
+            onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             rowClassName={(row) =>
               row.status === "DRAFT"
                 ? "!bg-[#FAEFCB]/60 border-l-2 border-l-amber-400"

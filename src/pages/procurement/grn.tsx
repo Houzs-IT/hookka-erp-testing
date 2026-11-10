@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, getStatusColor } from "@/lib/utils";
@@ -377,13 +379,19 @@ export default function GRNPage() {
   const GRN_PAGE_SIZE = 200;
   const [grnPage, setGrnPage] = useState(1);
   const [gridSearch, setGridSearch] = useState("");
+  // Review G3 (2026-11-10): a header sort / funnel / Group By on the grid
+  // judges the grid's rows — one 200-row page in the browse view. While one is
+  // on, the fetch widens to every record exactly as for the search box, so it
+  // covers the whole list (Houzs#4753). DataGrid fires `onColumnViewChange`.
+  const [gridColumnView, setGridColumnView] = useState(false);
   const grnFiltersActive = !!(
     filterStatus ||
     filterSupplier ||
     filterDateFrom ||
     filterDateTo ||
     filterArrivalState ||
-    gridSearch.trim()
+    gridSearch.trim() ||
+    gridColumnView
   );
 
   // Bulk "Download PDF" — merge every selected GRN into one file. Rows come
@@ -393,7 +401,7 @@ export default function GRNPage() {
   const [bulkArrivalBusy, setBulkArrivalBusy] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
-  const { data: grnResp, loading: grnLoading, refresh: refreshGrns } = useCachedJson<{ success?: boolean; data?: GoodsReceiptNote[]; total?: number } | GoodsReceiptNote[]>(
+  const { data: grnResp, loading: grnLoading, error: grnError, refresh: refreshGrns } = useCachedJson<{ success?: boolean; data?: GoodsReceiptNote[]; total?: number } | GoodsReceiptNote[]>(
     grnFiltersActive
       ? "/api/grn"
       : `/api/grn?page=${grnPage}&limit=${GRN_PAGE_SIZE}`,
@@ -720,7 +728,7 @@ export default function GRNPage() {
     { key: "items.length", label: "Items", type: "number", width: "70px", align: "right", sortable: true,
       render: (_v: unknown, row: GoodsReceiptNote) => <span>{row.items.length}</span>,
     },
-    { key: "totalAmount", label: "Total", type: "currency", width: "120px", sortable: true },
+    { key: "totalAmount", label: "Total", type: "currency", width: "120px", sortable: true, total: "sum" },
     { key: "arrival_state", label: "Arrival", type: "status", width: "130px", sortable: true,
       render: (_v: unknown, row: GoodsReceiptNote) => (
         <Badge variant="status" status={row.arrival_state}>
@@ -1236,6 +1244,14 @@ export default function GRNPage() {
             // Stable id — the column picker / drag / resize state persists
             // under it. Renaming it silently discards saved layouts.
             gridId="goods-receipts-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
+            // Review G4: the Total row leaves cancelled rows out (still listed).
+            totalsSkipRow={isCancelledStatusRow}
+            totalRows={!grnFiltersActive && grnTotalPages > 1 ? grnTotalCount : undefined}
+            // Review G7: a failed load says so, with Retry, instead of an empty list.
+            error={listLoadError(grnResp, grnError)}
+            onRetry={refreshGrns}
             loading={loading}
             stickyHeader={true}
             selectable
@@ -1245,6 +1261,7 @@ export default function GRNPage() {
             maxHeight="calc(100vh - 300px)"
             emptyMessage={tab === "DRAFT" ? "No draft GRNs." : "No GRNs found."}
             onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             exportName="goods-receipts"
             exportSheetLabel="Goods Receipts"
             detailExport={{

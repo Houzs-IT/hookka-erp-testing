@@ -45,8 +45,9 @@ test("the search box still survives a tab hop", () => {
   assert.match(
     GRID,
     // 2026-11-08: a URL search (?<gridId>.q=) sits between initialSearch and
-    // the tab-hop copy.
-    /useState\(initialSearch \?\? \(urlSeed\?\.search \|\| seeded\?\.searchText\) \?\? ""\)/,
+    // the tab-hop copy. 2026-11-10: a page's EMPTY initialSearch no longer
+    // beats the URL (review G2), and still never falls back to the tab hop.
+    /initialSearch \|\| urlSeed\?\.search \|\| \(initialSearch === undefined \? seeded\?\.searchText \?\? "" : ""\)/,
     "search text must still be restored",
   );
 });

@@ -12,6 +12,8 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column, ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabTotals } from "@/lib/status-tab-strip";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -843,6 +845,11 @@ export default function ProcurementPage() {
   // cancelled. Toggles off when the user clicks the widget again.
   const [filterOverdueOnly, setFilterOverdueOnly] = useState(false);
   const [gridSearch, setGridSearch] = useState("");
+  // Review G3 (2026-11-10): a header sort / funnel / Group By on the grid
+  // judges the grid's rows — one 200-row page in the browse view. While one is
+  // on, the fetch widens to every record exactly as for the search box, so it
+  // covers the whole list (Houzs#4753). DataGrid fires `onColumnViewChange`.
+  const [gridColumnView, setGridColumnView] = useState(false);
 
   // Server-side pagination for the PO list. The grid shows one 200-row page at
   // a time UNLESS a filter/search is active — then we drop pagination and pull
@@ -859,14 +866,15 @@ export default function ProcurementPage() {
     filterDateFrom ||
     filterDateTo ||
     filterOverdueOnly ||
-    gridSearch.trim()
+    gridSearch.trim() ||
+    gridColumnView
   );
 
   const { data: supResp, loading: supLoading, refresh: refreshSuppliers } = useCachedJson<{ success?: boolean; data?: Supplier[] }>("/api/suppliers");
   // Purchase Company letterhead registry — print each PO under its supplier's
   // buying company (HOOKKA / OHANA / any sister co); accounting stays HOOKKA.
   const { data: orgsResp } = useCachedJson<{ organisations?: Array<{ code?: string; name?: string; regNo?: string; tin?: string; address?: string; phone?: string; email?: string }> }>("/api/organisations");
-  const { data: poResp, loading: poLoading, refresh: refreshPOs } = useCachedJson<{ success?: boolean; data?: PurchaseOrder[]; total?: number; page?: number; limit?: number }>(
+  const { data: poResp, loading: poLoading, error: poError, refresh: refreshPOs } = useCachedJson<{ success?: boolean; data?: PurchaseOrder[]; total?: number; page?: number; limit?: number }>(
     poFiltersActive
       ? // Any filter/search active → whole dataset (no page params), so the
         // client-side filter/search below sees every PO.
@@ -1688,7 +1696,7 @@ export default function ProcurementPage() {
         return <span className="text-[#4F7C3A]">0</span>;
       },
     },
-    { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true },
+    { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true, total: "sum" },
     { key: "status", label: "Status", type: "status", width: "120px", sortable: true },
   ], [otrMap, orgNameByCode]);
 
@@ -2162,8 +2170,17 @@ export default function ProcurementPage() {
             maxHeight="calc(100vh - 300px)"
             emptyMessage={tab === "DRAFT" ? "No draft purchase orders." : "No purchase orders found."}
             onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             alwaysSearchKeys={PO_ALWAYS_SEARCH_KEYS}
             gridId="purchase-orders-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
+            // Review G4: the Total row leaves cancelled rows out (still listed).
+            totalsSkipRow={isCancelledStatusRow}
+            totalRows={!poFiltersActive && poTotalPages > 1 ? poTotalCount : undefined}
+            // Review G7: a failed load says so, with Retry, instead of an empty list.
+            error={listLoadError(poResp, poError)}
+            onRetry={refreshPOs}
             exportName="purchase-orders"
             exportSheetLabel="Purchase Orders"
             detailExport={{

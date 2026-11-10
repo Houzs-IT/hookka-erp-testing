@@ -35,7 +35,9 @@ test("the grid uses the v2 table rules", () => {
   assert.match(grid, /exportName="Journal Entries"/);
 });
 
-test("a grid with the header menu keeps Export off its toolbar", () => {
+test("a grid that asks for the header menu keeps Export off its toolbar", () => {
   const grid = read("src/components/ui/data-grid.tsx");
-  assert.match(grid, /\{exportName && !headerMenu && \(/);
+  // 2026-11-10 (review G1): the menu defaults on for every gridId grid; only an
+  // EXPLICIT headerMenu (the finance pages) also drops the toolbar Export.
+  assert.match(grid, /\{exportName && !headerMenuProp && \(/);
 });

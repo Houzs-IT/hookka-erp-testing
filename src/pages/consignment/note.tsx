@@ -32,6 +32,8 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
@@ -660,7 +662,7 @@ export default function ConsignmentNotePage() {
 
   // ---------- Fetch ----------
   // Pull CN list from /api/consignment-notes (legacy CN dispatch table).
-  const { data: cnRaw, loading: cnLoading, refresh: refreshCNs } = useCachedJson<{
+  const { data: cnRaw, loading: cnLoading, error: cnError, refresh: refreshCNs } = useCachedJson<{
     success?: boolean;
     data?: ConsignmentNote[];
   }>(`/api/consignment-notes?page=${page}&limit=${PAGE_SIZE}`);
@@ -3196,6 +3198,7 @@ export default function ConsignmentNotePage() {
               columns={planningColumns}
               data={planningPOs}
               keyField="id"
+              gridId="consignment-note-planning-cos"
               loading={loading}
               stickyHeader
               maxHeight="calc(100vh - 280px)"
@@ -3241,6 +3244,7 @@ export default function ConsignmentNotePage() {
               columns={pendingCNColumns}
               data={readyPOs}
               keyField="id"
+              gridId="consignment-note-pending-cos"
               loading={loading}
               stickyHeader
               maxHeight="calc(100vh - 280px)"
@@ -3314,6 +3318,12 @@ export default function ConsignmentNotePage() {
               columns={cnColumns}
               data={filteredCNs}
               keyField="id"
+              gridId="consignment-notes-list"
+              // Review G5: a cancelled document is faded, its number struck through.
+              cancelledRow={isCancelledStatusRow}
+              // Review G7: a failed load says so, with Retry, instead of an empty list.
+              error={listLoadError(cnRaw, cnError)}
+              onRetry={refreshCNs}
               loading={loading}
               stickyHeader
               maxHeight="calc(100vh - 280px)"

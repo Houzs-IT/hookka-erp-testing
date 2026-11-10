@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
+import { isCancelledStatusRow } from "@/lib/grid-layout";
+import { listLoadError } from "@/lib/list-load-error";
 import { StatusTabStrip } from "@/components/ui/status-tab-strip";
 import { tabValueSen } from "@/lib/status-tab-strip";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
@@ -222,6 +224,11 @@ export default function SalesPage() {
   // dropdown filter) — otherwise the search only sees the current
   // 200-row server page and misses matches on other pages.
   const [gridSearch, setGridSearch] = useState("");
+  // Review G3 (2026-11-10): a header sort / funnel / Group By on the grid
+  // judges the grid's rows — one 200-row page in the browse view. While one is
+  // on, the fetch widens to every record exactly as for the search box, so it
+  // covers the whole list (Houzs#4753). DataGrid fires `onColumnViewChange`.
+  const [gridColumnView, setGridColumnView] = useState(false);
 
   // Filter state read up front so we can adjust the fetch URL when any
   // filter is active (filters were silently scoped to the current 200-row
@@ -275,11 +282,11 @@ export default function SalesPage() {
   // the grid would disagree with the card it was reached from.
   const _filtersActive = !!(
     _flStatus[0] || _flCustomer[0] || _flFrom[0] || _flTo[0] ||
-    _flCat[0] || _flDDFrom[0] || _flDDTo[0] || _flCompany[0] || gridSearch.trim() ||
+    _flCat[0] || _flDDFrom[0] || _flDDTo[0] || _flCompany[0] || gridColumnView || gridSearch.trim() ||
     tab === "DRAFT" || lateDrillActive
   );
 
-  const { data: ordersResp, loading, refresh: refreshOrders } = useCachedJson<{
+  const { data: ordersResp, loading, error: ordersError, refresh: refreshOrders } = useCachedJson<{
     success?: boolean;
     data?: SalesOrder[];
     page?: number;
@@ -940,7 +947,7 @@ export default function SalesPage() {
         return <span className="text-[#6B7280]">{stage}</span>;
       },
     },
-    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true },
+    { key: "totalSen", label: "Total", type: "currency", width: "100px", sortable: true, total: "sum" },
     // Service Orders panel only (#13): the repair's current production dept +
     // progress, aggregated from its linked production order(s) — the same
     // dept/progress the production grid shows. Hidden on the normal Sales list.
@@ -1731,7 +1738,16 @@ export default function SalesPage() {
             selectable
             onSelectionChange={setSelectedRows}
             onSearchChange={setGridSearch}
+            onColumnViewChange={setGridColumnView}
             gridId="sales-orders-list"
+            // Review G5: a cancelled document is faded, its number struck through.
+            cancelledRow={isCancelledStatusRow}
+            // Review G4: the Total row leaves cancelled rows out (still listed).
+            totalsSkipRow={isCancelledStatusRow}
+            totalRows={!_filtersActive && totalPages > 1 ? totalOrdersServer : undefined}
+            // Review G7: a failed load says so, with Retry, instead of an empty list.
+            error={listLoadError(ordersResp, ordersError)}
+            onRetry={refreshOrders}
             exportName={isServiceOrderMode ? "service-orders" : "sales-orders"}
             exportSheetLabel={isServiceOrderMode ? "Service Orders" : "Sales Orders"}
             detailExport={{ label: "Detail Listing", build: (rows) => buildSoDetailListingAoa(rows, detailExportLookups) }}
