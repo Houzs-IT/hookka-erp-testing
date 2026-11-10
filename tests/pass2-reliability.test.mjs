@@ -109,3 +109,13 @@ test("B3: every PV ladder rung is compare-and-set on the state it read", () => {
   assert.doesNotMatch(core, /await db\.batch\(\[\s*db\.prepare\(\s*"UPDATE payment_vouchers SET approval_state = 'APPROVED'/);
   assert.match(acc, /if \(!r\.ok\) return c\.json\(\{ success: false, error: r\.error, \.\.\.\(r\.status === 409 \? \{ code: "status_changed" \} : \{\}\) \}, r\.status \?\? 400\);/);
 });
+
+// ── H3 B4: two saves of one PO within ms cannot both pass the stale check ─
+test("B4: the PO PUT batch row-locks the PO and re-checks updated_at first", () => {
+  const s = read("src/api/routes/purchase-orders.ts");
+  const put = s.slice(s.indexOf("const staleMsg = editConflictMessage("), s.indexOf("// No supplier email on → SUBMITTED any more"));
+  assert.match(put, /if \(body\?\.expectedUpdatedAt != null && body\.expectedUpdatedAt !== "" && readIso/);
+  assert.match(put, /statements\.unshift\(\s*c\.var\.DB\.prepare\(\s*`SELECT CASE WHEN date_trunc\('milliseconds', updated_at::timestamptz\) = date_trunc\('milliseconds', \?::timestamptz\)/);
+  assert.match(put, /ELSE CAST\('\$\{PO_EDIT_CONFLICT\} ' \|\| id AS INTEGER\) END AS ok\s+FROM purchase_orders WHERE id = \? FOR UPDATE`/);
+  assert.match(put, /includes\(PO_EDIT_CONFLICT\)\)[\s\S]{0,200}conflict: true \},\s*409/);
+});
