@@ -18,8 +18,10 @@ const addrOf = (c?: Customer | null): string | undefined =>
 export async function generateSOPdf(
   order: SalesOrder,
   customer?: Customer | null,
+  // "view" opens the in-app preview instead of saving (review D1).
+  mode: "download" | "view" = "download",
 ): Promise<void> {
-  await downloadUnifiedSalesOrderPdf(order as unknown as LooseOrder, addrOf(customer));
+  await downloadUnifiedSalesOrderPdf(order as unknown as LooseOrder, addrOf(customer), mode);
 }
 
 // Bulk "Download PDF" — merge several sales orders into ONE file, via the same

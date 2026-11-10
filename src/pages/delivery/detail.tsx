@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   Box,
   QrCode,
+  FileText,
 } from "lucide-react";
 // PDF generators are dynamic-imported in the click handlers so the 1MB
 // jspdf vendor chunk only ships when the user actually downloads a PDF.
@@ -474,6 +475,28 @@ export default function DeliveryDetailPage() {
   // Returns raised against this DO — server-side reverse lookup, no list fetch.
   const linkedReturns: LinkedReturn[] = doResp?.linkedReturns ?? [];
 
+  // The DO PDF: "view" opens the in-app preview (Print / Download / Open in
+  // new tab, review D1); "download" saves "<DO no> <customer>.pdf".
+  const doPdf = async (mode: "download" | "view") => {
+    const { downloadUnifiedDoPdf } = await import("@/lib/unified-doc-download");
+    // Best-effort print enrichment (customerSO / customerRef /
+    // bedframe build params). Never block the download.
+    let extras: import("@/lib/generate-do-pdf").DOPrintExtras = {};
+    try {
+      const r = await fetch(
+        `/api/delivery-orders/${encodeURIComponent((order as { id: string }).id)}/print-extras`,
+      );
+      const j = (await r.json()) as {
+        success?: boolean;
+        data?: import("@/lib/generate-do-pdf").DOPrintExtras;
+      };
+      if (j?.success && j.data) extras = j.data;
+    } catch {
+      /* graceful — PDF still renders without extras */
+    }
+    await downloadUnifiedDoPdf(order, extras, mode);
+  };
+
   return (
     <div className="space-y-6 max-md:space-y-4">
       <LockBanner reason={lockReason} />
@@ -500,31 +523,10 @@ export default function DeliveryDetailPage() {
             <Button variant="outline" size="sm" onClick={() => setQrOpen(true)}>
               <QrCode className="h-4 w-4" /> QR
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                const { downloadUnifiedDoPdf } = await import("@/lib/unified-doc-download");
-                // Best-effort print enrichment (customerSO / customerRef /
-                // bedframe build params). Never block the download.
-                let extras: import("@/lib/generate-do-pdf").DOPrintExtras = {};
-                try {
-                  const r = await fetch(
-                    `/api/delivery-orders/${encodeURIComponent(
-                      (order as { id: string }).id,
-                    )}/print-extras`,
-                  );
-                  const j = (await r.json()) as {
-                    success?: boolean;
-                    data?: import("@/lib/generate-do-pdf").DOPrintExtras;
-                  };
-                  if (j?.success && j.data) extras = j.data;
-                } catch {
-                  /* graceful — PDF still renders without extras */
-                }
-                await downloadUnifiedDoPdf(order, extras);
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => void doPdf("view")}>
+              <FileText className="h-4 w-4" /> Preview
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void doPdf("download")}>
               <Download className="h-4 w-4" /> Download DO PDF
             </Button>
             <Button

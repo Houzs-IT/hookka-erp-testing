@@ -14,6 +14,7 @@ import {
   type BuildSpecExtra,
 } from "@/lib/generate-do-pdf";
 import { todayYmdMY } from "./utils";
+import { deliverJsPdf, pdfFileName } from "./pdf-preview";
 
 // ---------------------------------------------------------------------------
 // Consignment Note PDF — the CN twin of generate-do-pdf.ts (owner asked for
@@ -477,21 +478,13 @@ export function generateCNPdf(
   // verbatim and only add the prefix for any legacy number that lacks it
   // (pre-rename CON-* numbers stay as-is too).
   const cnNo = data.cnNo || "";
-  const fileName = `${
-    cnNo.startsWith("CGN-") || cnNo.startsWith("CON-") ? cnNo : `CGN-${cnNo}`
-  }.pdf`;
+  const fileName = pdfFileName(
+    cnNo.startsWith("CGN-") || cnNo.startsWith("CON-") ? cnNo : `CGN-${cnNo}`,
+    data.customerName,
+  );
 
-  if (mode === "view") {
-    try {
-      const url = doc.output("bloburl");
-      const w = window.open(String(url), "_blank");
-      if (!w) doc.save(fileName);
-    } catch {
-      doc.save(fileName);
-    }
-    return;
-  }
-  doc.save(fileName);
+  // "view" opens the in-app preview (no popup to block); "download" saves.
+  deliverJsPdf(doc, fileName, mode);
 }
 
 // Same branded single-CN document as generateCNPdf, returned as a base64

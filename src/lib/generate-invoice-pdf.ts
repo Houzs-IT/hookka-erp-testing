@@ -9,6 +9,7 @@ import {
   drawLetterhead,
 } from "@/lib/pdf-utils";
 import { invoicePriceBuildUp } from "@/lib/invoice-line-price";
+import { deliverJsPdf, pdfFileName } from "./pdf-preview";
 
 // Read-only print enrichment from GET /api/invoices/:id/print-extras.
 // All optional — the PDF still renders if not supplied.
@@ -678,18 +679,9 @@ export function generateInvoicePdf(
   const doc = buildInvoiceDoc(invoice, extras);
   // invoiceNo already carries the "INV-" prefix (e.g. INV-2606-115) — don't
   // double it (was producing "INV-INV-2606-115.pdf"). Matches SO/PO/PI naming.
-  const fileName = `${invoice.invoiceNo || "INVOICE"}.pdf`;
-  if (mode === "view") {
-    try {
-      const url = doc.output("bloburl");
-      const w = window.open(String(url), "_blank");
-      if (!w) doc.save(fileName);
-    } catch {
-      doc.save(fileName);
-    }
-    return;
-  }
-  doc.save(fileName);
+  const fileName = pdfFileName(invoice.invoiceNo, invoice.customerName, "INVOICE");
+  // "view" opens the in-app preview (no popup to block); "download" saves.
+  deliverJsPdf(doc, fileName, mode);
 }
 
 // Same branded invoice document, returned as a base64 string instead of

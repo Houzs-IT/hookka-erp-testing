@@ -626,7 +626,7 @@ export default function GRNDetailPage() {
           rejectedQty: it.rejectedQty,
           acceptedQty: it.acceptedQty,
         })),
-      }, lh);
+      }, lh, { mode: "view" }); // in-app preview: Print / Download (review D1)
     } catch {
       toast.error("Could not generate the PDF.");
     }

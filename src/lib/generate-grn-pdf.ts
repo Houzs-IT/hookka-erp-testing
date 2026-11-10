@@ -10,6 +10,7 @@ import {
   splitCodeName,
 } from "@/lib/pdf-utils";
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
+import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -24,7 +25,8 @@ export function generateGRNPdf(
   letterheadOverride?: LetterheadInfo,
   // returnDoc: hand back the built jsPDF instead of saving — lets the bulk
   // "Download PDF" action merge several GRNs into one file (see merge-pdf.ts).
-  opts?: { returnDoc?: boolean },
+  // mode: "view" opens the in-app preview instead of saving (review D1).
+  opts?: { returnDoc?: boolean; mode?: PdfOutputMode },
 ): jsPDF | void {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   const pageW = doc.internal.pageSize.getWidth();
@@ -257,7 +259,7 @@ export function generateGRNPdf(
   }
 
   if (opts?.returnDoc) return doc;
-  doc.save(`${data.grnNo ?? "GRN"}.pdf`);
+  deliverJsPdf(doc, pdfFileName(data.grnNo, data.supplierName, "GRN"), opts?.mode);
 }
 
 // Merge several Goods Received Notes into ONE downloadable PDF (GRN list →

@@ -3,6 +3,7 @@ import autoTable from "jspdf-autotable";
 import { COMPANY } from "@/lib/constants";
 import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import { fmtRM as fmtCurrency, fmtDate, amountInWords, drawLetterhead } from "@/lib/pdf-utils";
+import { pdfFileName } from "./pdf-preview";
 
 // Company name for the signature / footer lines (header now via drawLetterhead).
 const COMPANY_NAME = COMPANY.HOOKKA.name;
@@ -220,7 +221,7 @@ export function generateCreditNotePdf(
   doc.text(`Generated: ${fmtDate(new Date().toISOString())}`, pageW - margin, footerY, { align: "right" });
 
   if (opts?.returnDoc) return doc;
-  doc.save(`${data.cnNo ?? data.noteNumber ?? "CreditNote"}.pdf`);
+  doc.save(pdfFileName(data.cnNo ?? data.noteNumber, data.customerName, "CreditNote"));
 }
 
 // Merge several credit notes into ONE downloadable PDF (Credit Notes list →

@@ -14,6 +14,7 @@ import {
 import { COMPANY } from "@/lib/constants";
 import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import { hasLetterheadDetails } from "./org-letterhead-row";
+import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 
 // Letterhead info passed in from the caller. Mirrors the COMPANY constant's
 // shape so HOOKKA/OHANA fall through directly, and the route can populate
@@ -124,7 +125,8 @@ export function generatePurchaseOrderPdf(
   letterheadOverride?: LetterheadInfo,
   // returnDoc: hand back the built jsPDF instead of saving — lets the bulk
   // "Download PDF" action merge several POs into one file (see merge-pdf.ts).
-  opts?: { returnDoc?: boolean },
+  // mode: "view" opens the in-app preview instead of saving (review D1).
+  opts?: { returnDoc?: boolean; mode?: PdfOutputMode },
 ): jsPDF | void {
   // Letterhead override: HOOKKA by default; supplier.purchaseOrgCode flips
   // this to OHANA (or any registered sister company via letterheadOverride).
@@ -419,7 +421,7 @@ export function generatePurchaseOrderPdf(
 
   // Save
   if (opts?.returnDoc) return doc;
-  doc.save(`${po.poNo}.pdf`);
+  deliverJsPdf(doc, pdfFileName(po.poNo, po.supplierName, "PO"), opts?.mode);
 }
 
 // Merge several purchase orders into ONE downloadable PDF (Purchase Orders

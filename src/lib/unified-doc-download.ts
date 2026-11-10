@@ -19,18 +19,12 @@ import {
 import { buildUnifiedDocPdf } from "../api/lib/unified-do-invoice-pdf";
 import { HOOKKA_LOGO_PNG_BASE64 } from "../api/lib/hookka-logo-base64";
 import { PDFDocument } from "pdf-lib";
+import { deliverPdf, pdfFileName, savePdfBlob, type PdfOutputMode } from "./pdf-preview";
 
+// Combined (batch) files keep the caller's name; single documents are named
+// "<doc no> <customer>.pdf" and can open in the in-app preview (review D1).
 function triggerDownload(bytes: Uint8Array, filename: string): void {
-  const blob = new Blob([bytes.slice()], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // eslint-disable-next-line no-restricted-syntax -- one-shot object-URL cleanup, not a React timer
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  savePdfBlob(bytes, filename);
 }
 
 // Loosely-typed shapes — the FES pass their own DO/Invoice + the /print-extras
@@ -103,9 +97,13 @@ export function doInputFromOrder(order: AnyOrder, extras: AnyExtras): UnifiedDoI
   };
 }
 
-export async function downloadUnifiedDoPdf(order: AnyOrder, extras: AnyExtras): Promise<void> {
+export async function downloadUnifiedDoPdf(
+  order: AnyOrder,
+  extras: AnyExtras,
+  mode: PdfOutputMode = "download",
+): Promise<void> {
   const bytes = await buildUnifiedDocPdf(buildUnifiedDoData(doInputFromOrder(order, extras), HOOKKA_LOGO_PNG_BASE64));
-  triggerDownload(bytes, `${s(order.doNo) || "DO"}.pdf`);
+  deliverPdf(bytes, pdfFileName(order.doNo, order.customerName, "DO"), mode);
 }
 
 // Backend-parity DO renderer (returns bytes, no download) — used when a caller
@@ -166,16 +164,20 @@ export function invoiceInputFromInvoice(inv: AnyInvoice, extras: AnyExtras): Uni
   };
 }
 
-export async function downloadUnifiedInvoicePdf(inv: AnyInvoice, extras: AnyExtras): Promise<void> {
+export async function downloadUnifiedInvoicePdf(
+  inv: AnyInvoice,
+  extras: AnyExtras,
+  mode: PdfOutputMode = "download",
+): Promise<void> {
   const bytes = await buildUnifiedDocPdf(buildUnifiedInvoiceData(invoiceInputFromInvoice(inv, extras), HOOKKA_LOGO_PNG_BASE64));
-  triggerDownload(bytes, `${s(inv.invoiceNo) || "INVOICE"}.pdf`);
+  deliverPdf(bytes, pdfFileName(inv.invoiceNo, inv.customerName, "INVOICE"), mode);
 }
 
-// "View Documentation": render into a tab the caller opened synchronously on
-// click (a window.open after an await would be popup-blocked).
-export async function viewUnifiedInvoicePdf(inv: AnyInvoice, extras: AnyExtras, w: Window): Promise<void> {
-  const bytes = await renderUnifiedInvoiceBytes(inv, extras);
-  w.location.href = URL.createObjectURL(new Blob([bytes.slice()], { type: "application/pdf" }));
+// "View Documentation": the in-app preview. It used to render into a tab the
+// caller opened on click — blocked on some browsers, and the browser's Save
+// named the file after the blob GUID.
+export async function viewUnifiedInvoicePdf(inv: AnyInvoice, extras: AnyExtras): Promise<void> {
+  await downloadUnifiedInvoicePdf(inv, extras, "view");
 }
 
 export async function renderUnifiedInvoiceBytes(inv: AnyInvoice, extras: AnyExtras): Promise<Uint8Array> {
@@ -264,9 +266,13 @@ export async function renderUnifiedSalesOrderBytes(order: AnyOrder, billAddress?
   );
 }
 
-export async function downloadUnifiedSalesOrderPdf(order: AnyOrder, billAddress?: string): Promise<void> {
+export async function downloadUnifiedSalesOrderPdf(
+  order: AnyOrder,
+  billAddress?: string,
+  mode: PdfOutputMode = "download",
+): Promise<void> {
   const bytes = await renderUnifiedSalesOrderBytes(order, billAddress);
-  triggerDownload(bytes, `${s((order as Record<string, unknown>).companySOId) || "SO"}.pdf`);
+  deliverPdf(bytes, pdfFileName((order as Record<string, unknown>).companySOId, order.customerName, "SO"), mode);
 }
 
 export async function downloadCombinedUnifiedSalesOrderPdf(
@@ -306,9 +312,13 @@ export async function renderUnifiedConsignmentOrderBytes(order: AnyOrder, billAd
   );
 }
 
-export async function downloadUnifiedConsignmentOrderPdf(order: AnyOrder, billAddress?: string): Promise<void> {
+export async function downloadUnifiedConsignmentOrderPdf(
+  order: AnyOrder,
+  billAddress?: string,
+  mode: PdfOutputMode = "download",
+): Promise<void> {
   const bytes = await renderUnifiedConsignmentOrderBytes(order, billAddress);
-  triggerDownload(bytes, `${s((order as Record<string, unknown>).companyCOId) || "CO"}.pdf`);
+  deliverPdf(bytes, pdfFileName((order as Record<string, unknown>).companyCOId, order.customerName, "CO"), mode);
 }
 
 export async function downloadCombinedUnifiedConsignmentOrderPdf(

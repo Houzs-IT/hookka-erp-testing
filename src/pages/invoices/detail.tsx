@@ -276,16 +276,10 @@ export default function InvoiceDetailPage() {
   useTimeout(() => setToast(null), toast ? 3000 : null);
 
   // Pull the read-only price build-up / customer refs, then render the
-  // A4 invoice. "download" saves the file; "view" opens it on screen.
+  // A4 invoice. "download" saves the file; "view" opens the in-app preview
+  // (Print / Download / Open in new tab) — no popup, so nothing to block.
   const printInvoicePdf = async (mode: "download" | "view" = "download") => {
     if (!invoice) return;
-    // Open the tab now, inside the click — after the awaits below the browser
-    // would treat it as an unsolicited popup and block it.
-    const viewWin = mode === "view" ? window.open("", "_blank") : null;
-    if (mode === "view" && !viewWin) {
-      setToast("Please allow pop-ups to view the invoice.");
-      return;
-    }
     let extras: import("@/lib/generate-invoice-pdf").InvoicePrintExtras = {};
     try {
       const r = await fetch(
@@ -299,17 +293,8 @@ export default function InvoiceDetailPage() {
     } catch {
       /* graceful — PDF still renders without extras */
     }
-    const { downloadUnifiedInvoicePdf, viewUnifiedInvoicePdf } = await import("@/lib/unified-doc-download");
-    if (viewWin) {
-      try {
-        await viewUnifiedInvoicePdf(invoice, extras, viewWin);
-      } catch (e) {
-        viewWin.close();
-        throw e;
-      }
-    } else {
-      await downloadUnifiedInvoicePdf(invoice, extras);
-    }
+    const { downloadUnifiedInvoicePdf } = await import("@/lib/unified-doc-download");
+    await downloadUnifiedInvoicePdf(invoice, extras, mode);
   };
 
   const sendInvoice = async () => {
