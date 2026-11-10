@@ -8,6 +8,7 @@ import { DEFAULT_IN_PREFIX, DEFAULT_OUT_PREFIX, DOC_TYPES, findPrefixClash, norm
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { LifecycleBadge } from "@/components/accounting/lifecycle-actions";
 import { defaultBankCode } from "@/lib/default-bank";
+import { splitCsvLine } from "@/lib/table-import";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16342,24 +16343,6 @@ type RecoReport = {
   final?: RecoFinal | null;
 };
 
-function parseCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let q = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (q) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++; } else q = false;
-      } else cur += ch;
-    } else if (ch === '"') q = true;
-    else if (ch === ",") { out.push(cur); cur = ""; }
-    else cur += ch;
-  }
-  out.push(cur);
-  return out;
-}
-
 function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
@@ -16586,7 +16569,9 @@ function CashBookTab({ accounts }: { accounts: ChartOfAccount[] }) {
     const oi = parseInt(map.out, 10) - 1;
     const ii = parseInt(map.in, 10) - 1;
     for (let i = map.header ? 1 : 0; i < rawLines.length; i++) {
-      const cells = parseCsvLine(rawLines[i]);
+      // The shared CSV line split (O6, src/lib/table-import.ts), moved here
+      // verbatim from this tab — what a statement imports is unchanged.
+      const cells = splitCsvLine(rawLines[i]);
       const date = parseDate(cells[di] ?? "");
       if (!date) continue;
       let amountSen = 0;

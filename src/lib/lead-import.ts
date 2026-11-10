@@ -91,6 +91,16 @@ export function normalizePhone(input: string | null | undefined): string {
   return d;
 }
 
+/**
+ * A cell as trimmed text. A spreadsheet hands a phone typed without spaces
+ * over as a NUMBER (60124567890), and `.trim()` on a number threw — the whole
+ * import refused with a 500 (BUG-2026-11-10-461). Strings come out exactly as
+ * `(v ?? "").trim()` did.
+ */
+function cellText(v: unknown): string {
+  return v === null || v === undefined ? "" : String(v).trim();
+}
+
 /** Collapse a company name for the "looks like the same shop" check. */
 export function normalizeCompany(input: string | null | undefined): string {
   if (!input) return "";
@@ -151,9 +161,9 @@ export function cleanLocation(
   location: string | null | undefined,
   company: string | null | undefined,
 ): string | null {
-  const loc = (location ?? "").trim();
+  const loc = cellText(location);
   if (!loc) return null;
-  const co = (company ?? "").trim();
+  const co = cellText(company);
   if (co && loc.toLowerCase().startsWith(co.toLowerCase())) {
     const rest = loc.slice(co.length).replace(/^[\s,、]+/, "");
     return rest || null;
@@ -184,7 +194,7 @@ export function planImport(
   const skipped: Skipped[] = [];
 
   for (const raw of rows) {
-    const company = (raw.company ?? "").trim();
+    const company = cellText(raw.company);
     if (!company) {
       skipped.push({ row: raw, reason: "NO_COMPANY" });
       continue;
@@ -225,13 +235,13 @@ export function planImport(
     insert.push({
       company: cleanCompanyName(company),
       originalCompany: cleanCompanyName(company) === company.trim() ? null : company.trim(),
-      contactName: (raw.contactName ?? "").trim() || null,
-      phone: (raw.phone ?? "").trim() || null,
-      email: (raw.email ?? "").trim() || null,
+      contactName: cellText(raw.contactName) || null,
+      phone: cellText(raw.phone) || null,
+      email: cellText(raw.email) || null,
       website: cleanWebsite(raw.website),
-      industry: (raw.industry ?? "").trim() || null,
+      industry: cellText(raw.industry) || null,
       location: cleanLocation(raw.location, company),
-      notes: (raw.notes ?? "").trim() || null,
+      notes: cellText(raw.notes) || null,
       phoneKey,
     });
   }
