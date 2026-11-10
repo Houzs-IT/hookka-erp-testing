@@ -104,7 +104,7 @@ test("wired: route mounted, Operations sub-tab, 5-minute refresh, cards keep the
 
 test("owner 2026-11-10: red only for the non-production hour; production rows show last check-in", () => {
   const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
-  assert.match(view, /const red = !production && p\.overHourNonProd;/);
+  assert.match(view, /const red = production \? p\.effPct != null && p\.effPct < 80 : p\.overHourNonProd;/);
   assert.doesNotMatch(view, /e > 110/);
   assert.match(view, /const lastIn = \(p: FloorLiveRow\) => p\.scannedAt \?\? p\.clockIn \?\? "—";/);
   assert.match(view, /<span className="text-right">Done<\/span>/);

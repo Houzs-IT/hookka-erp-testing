@@ -35,7 +35,9 @@ const lastIn = (p: FloorLiveRow) => p.scannedAt ?? p.clockIn ?? "—";
 const COLS = "grid grid-cols-[minmax(0,1fr)_3rem_2.25rem_2.75rem] items-center gap-x-2";
 
 function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
-  const red = !production && p.overHourNonProd;
+  // Pale red row: a production worker below 80% (owner 2026-11-10), or a
+  // non-production stay over an hour.
+  const red = production ? p.effPct != null && p.effPct < 80 : p.overHourNonProd;
   return (
     <div className={`${COLS} border-t border-[#F3F0EC] px-3 py-1.5 text-xs tabular-nums ${red ? "bg-[#FBF3F1]" : "bg-white"}`}>
       <span className="flex min-w-0 items-center gap-2">
