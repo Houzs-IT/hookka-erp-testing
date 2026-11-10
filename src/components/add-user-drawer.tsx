@@ -23,6 +23,7 @@
 // ---------------------------------------------------------------------------
 import { useState } from "react";
 import { X, UserPlus, Eye, EyeOff } from "lucide-react";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 type Props = {
   departments: readonly string[];
@@ -44,6 +45,15 @@ export function AddUserDrawer({ departments, roleOptions, onClose, onCreated }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  // Esc or a click beside the drawer asks "Discard your changes?" while
+  // anything is typed, or a pick was changed since the last account was
+  // created (review pass 2 C2-1 follow-up). After a create the typed fields
+  // clear, so the drawer closes quietly again.
+  const [initialRole] = useState(role);
+  const dirty =
+    Boolean(email || displayName || position || password) ||
+    (ok === null && (department !== "" || role !== initialRole || !mustChange));
+  const guard = useDiscardGuard({ open: true, dirty, onClose, busy });
 
   // Mirrors the server's own floor (users.ts). Checked here too so the operator
   // is told before the round trip, not after.
@@ -99,7 +109,7 @@ export function AddUserDrawer({ departments, roleOptions, onClose, onCreated }: 
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
-      <div className="flex-1 bg-black/20" onClick={onClose} aria-hidden />
+      <div className="flex-1 bg-black/20" onMouseDown={guard.onBackdrop} aria-hidden />
       <div className="flex h-full w-full max-w-md flex-col bg-white shadow-xl">
         <div className="flex items-start justify-between border-b border-[#E2DDD8] px-5 py-4">
           <div>

@@ -46,7 +46,7 @@ import { otherPartyAgingRows, type OtherPartyAgingBill } from "@/lib/other-party
 import { daysUntil, dueText, dueTone, monthBucket, nextDueOf, overdueSen } from "@/lib/aging-next-due";
 import { useRowSelection } from "@/lib/use-row-selection";
 import { useResizableTables } from "@/lib/use-resizable-tables";
-import { useEscapeClose } from "@/lib/escape-stack";
+import { isBackdropClick, useEscapeClose } from "@/lib/escape-stack";
 import type { SystemPosting } from "@/lib/system-journals";
 import { lifecycleMenuItems, rowMenuItems, useRowMenu, type RowMenuGroups } from "@/components/accounting/row-menu";
 import { BatchActionsBar } from "@/components/accounting/batch-actions-bar";
@@ -129,6 +129,7 @@ import { drawCashPositionImage, tfDueByMonthEnd } from "@/lib/cash-position-imag
 import { financePage } from "@/lib/finance-nav";
 import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, plMonthHeads, type TbSectionKey } from "@/lib/finance-reports";
 import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner, ForecastToggle, HidePastMonthsToggle } from "@/components/finance/report-shell";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -7772,7 +7773,7 @@ function ScanVouchers({ accounts, bankCash, onDone, onOpenInForm }: {
         <Upload className="h-4 w-4 mr-1.5" /> Scan
       </Button>
       {open && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto p-4" onClick={close}>
+        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto p-4" onMouseDown={(e) => { if (isBackdropClick(e)) void escClose(); }}>
           <div className={`bg-white rounded-lg shadow-xl w-full mx-auto my-6 ${phase === "drop" ? "max-w-2xl" : "max-w-6xl"}`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
               <div>
@@ -9315,7 +9316,13 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
   const blankPartyDraft = { name: "", contactPerson: "", phone: "", email: "", tin: "", registrationNo: "", address: "", notes: "" };
   const [newPartyDraft, setNewPartyDraft] = useState<typeof blankPartyDraft | null>(null);
   const [creatingParty, setCreatingParty] = useState(false);
-  useEscapeClose(() => { if (!creatingParty) setNewPartyDraft(null); }, !!newPartyDraft);
+  // Esc or a backdrop click on a half-typed New Party asks "Discard your
+  // changes?" first; nothing happens mid-create (review pass 2 C2-1 follow-up).
+  const newPartyGuard = useFormDiscardGuard(newPartyDraft, {
+    open: !!newPartyDraft,
+    busy: creatingParty,
+    onClose: () => setNewPartyDraft(null),
+  });
   // Esc closes the AP bill popup (owner 2026-10-02): at once when nothing was
   // changed, after a confirm when something was. The page's inline form stays.
   const requestCloseBillPopup = async () => {
@@ -9472,7 +9479,7 @@ function OtherPartyBillsManager({ parties, accounts, side, formOnly }: { parties
       </div>
 
       {newPartyDraft && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { if (!creatingParty) setNewPartyDraft(null); }}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={newPartyGuard.onBackdrop}>
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
               <div>

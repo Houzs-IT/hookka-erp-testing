@@ -24,6 +24,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 type Status =
   | "OPEN"
@@ -744,6 +745,10 @@ function LogReturnModal({
   const [serviceOrderLineId, setServiceOrderLineId] = useState(lines[0]?.id ?? "");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Esc or a backdrop click asks "Discard your changes?" once anything was
+  // typed or picked; nothing happens mid-submit (review pass 2 C2-1
+  // follow-up). Cancel / ✕ still close at once.
+  const guard = useFormDiscardGuard({ serviceOrderLineId, notes }, { onClose, busy: submitting });
 
   async function handleSubmit() {
     setSubmitting(true);
@@ -774,7 +779,7 @@ function LogReturnModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-lg mx-4 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-[#1F1D1B]">

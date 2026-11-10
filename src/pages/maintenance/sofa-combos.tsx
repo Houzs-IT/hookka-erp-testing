@@ -34,6 +34,7 @@ import {
 } from "./SofaComboHistoryDialog";
 import { OLD_SO_SAFE_BANNER } from "../products/MaintenanceConfigHistoryDialog";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -936,13 +937,9 @@ function BatchEditDialog({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !saving) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, saving]);
+  // Esc or a backdrop click asks "Discard your changes?" once something was
+  // typed or picked; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard({ effectiveFrom, mode, percent, setRm }, { onClose, busy: saving });
 
   // Compute the new price map for a combo from its CURRENT active prices.
   function computeNewPrices(current: Record<string, number>): Record<string, number> | null {
@@ -1031,7 +1028,7 @@ function BatchEditDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={() => !saving && onClose()} />
+      <div className="absolute inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
         <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
           <h2 className="text-lg font-semibold text-[#1F1D1B]">

@@ -14,6 +14,7 @@ import type {
   MaterialScaling,
   MaterialScalingDimension,
 } from "@/api/lib/material-scaling";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 // ---------- Types ----------
 type BOMProcess = {
@@ -5489,12 +5490,16 @@ function BatchEditMaterialsDialog({
     }
   }
 
+  // Esc or a backdrop click asks "Discard your changes?" while there are
+  // unsaved edits; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useDiscardGuard({ open, dirty: dirtyCount > 0, busy: saving, onClose });
+
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onClose}
+      onMouseDown={guard.onBackdrop}
     >
       <div
         className="bg-white rounded-xl shadow-2xl w-[920px] max-w-[95vw] max-h-[90vh] flex flex-col"

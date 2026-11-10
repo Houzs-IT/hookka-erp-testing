@@ -78,12 +78,14 @@ test("every finance popup closes on Esc", () => {
   assert.match(ui, /useEscapeClose\(\(\) => setDetailJv\(null\), !!detailJv\);/);
   assert.match(ui, /useEscapeClose\(\(\) => \{ if \(!busy\) setOpen\(false\); \}, open\);/, "the scan drop zone");
   assert.match(ui, /useEscapeClose\(\(\) => void escClose\(\), open\);/, "the Scan dialog");
-  assert.match(ui, /useEscapeClose\(\(\) => \{ if \(!creatingParty\) setNewPartyDraft\(null\); \}, !!newPartyDraft\);/);
+  // New Party: Esc still closes, through the discard guard (asks once typed; review pass 2 C2-1 follow-up).
+  assert.match(ui, /useFormDiscardGuard\(newPartyDraft, \{\n\s+open: !!newPartyDraft,\n\s+busy: creatingParty,\n\s+onClose: \(\) => setNewPartyDraft\(null\),/);
   assert.match(ui, /useEscapeClose\(\(\) => setDetail\(null\), !!detail\);/, "other-party payment popup");
   assert.match(ui, /useEscapeClose\(closeImgPopup, !!imgPopup\);/, "report image");
   assert.match(sp, /useEscapeClose\(\(\) => setDetail\(null\), !!detail\);/);
   assert.match(read("src/pages/invoices/payments.tsx"), /useEscapeClose\(\(\) => setDetail\(null\), !!detail\);/);
-  assert.match(read("src/pages/invoices/e-invoice.tsx"), /useEscapeClose\(\(\) => \{ if \(!busy\) setDialog\(null\); \}, !!dialog\);/, "the e-Invoice step dialog");
+  // The e-Invoice step: Esc still closes, through the discard guard (review pass 2 C2-1 follow-up).
+  assert.match(read("src/pages/invoices/e-invoice.tsx"), /useFormDiscardGuard\(\{ submissionId, result, uuid, reason, selectedXmlId \}, \{\n\s+open: !!dialog,\n\s+busy,\n\s+onClose: \(\) => setDialog\(null\),/, "the e-Invoice step dialog");
 });
 
 test("a form popup asks before Esc drops what was keyed", () => {

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Users, X, Search } from "lucide-react";
+import { useEscapeClose } from "@/lib/escape-stack";
 
 export type DirectoryPerson = {
   key: string;
@@ -78,6 +79,9 @@ export function RecipientPicker({
         p.department.toLowerCase().includes(needle),
     );
   }, [data, tab, q]);
+  // Esc closes the picker before it reaches the Compose dialog underneath
+  // (the shared escape stack answers the newest popup first).
+  useEscapeClose(onClose, open);
 
   if (!open) return null;
 

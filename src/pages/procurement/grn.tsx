@@ -45,6 +45,7 @@ import {
   ScanSupplierModal,
   type SupplierExtraction,
 } from "@/components/scan-supplier-modal";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // ============================================================
 // GRN FORM DIALOG (Transfer from PO)
@@ -84,6 +85,13 @@ export function GRNFormDialog({
   const [scanOpen, setScanOpen] = useState(false);
 
   const po = purchaseOrders.find((p) => p.id === selectedPO);
+  // Esc or a backdrop click asks "Discard your changes?" once a PO is picked
+  // or a quantity / name / note changed (review pass 2 C2-1 follow-up). A
+  // PO opened from its own page waits for its seeded lines as the baseline.
+  const guard = useFormDiscardGuard(
+    { selectedPO, receivedBy, notes, itemEntries },
+    { onClose, ready: lockedPoId ? itemEntries.length > 0 : true },
+  );
 
   // When launched from the header "Scan supplier document" button (autoScan),
   // auto-open the scan modal ONLY ONCE A PO IS SELECTED — never before. A GRN
@@ -193,7 +201,7 @@ export function GRNFormDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-[#E2DDD8]">
           <h2 className="text-lg font-semibold text-[#1F1D1B]">Create Goods Receipt Note</h2>

@@ -42,6 +42,7 @@ import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { InvoiceSchema } from "@/lib/schemas/invoice";
 import { buildSoDetailListingAoa } from "@/lib/so-detail-listing";
 import { z } from "zod";
+import { figureOrDash } from "@/lib/loading-figure";
 
 const DOListSchema = z
   .object({
@@ -737,6 +738,9 @@ export default function SalesPage() {
   ]);
 
   const statsTotal = kpiSource.total;
+  // Neither the stats nor the list has arrived yet: the KPI tiles show "—",
+  // not "0" (review pass 2 C1-11). A real zero after loading is unchanged.
+  const kpiLoading = !statsResp && !ordersResp;
   const draftCount = kpiSource.byStatus.DRAFT ?? 0;
   const confirmedCount = Math.max(0, statsTotal - draftCount);
   // Tab money — order value (each SO's own totalSen, the grid's "Total" column).
@@ -1284,31 +1288,31 @@ export default function SalesPage() {
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#F0ECE9] p-2.5 shrink-0"><ClipboardList className="h-5 w-5 text-[#6B5C32]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#1F1D1B]">{statsTotal}</p><p className="text-xs text-[#6B7280]">Total Service Orders</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(kpiLoading, statsTotal)}</p><p className="text-xs text-[#6B7280]">Total Service Orders</p></div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#FAEFCB] p-2.5 shrink-0"><DollarSign className="h-5 w-5 text-[#9C6F1E]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#9C6F1E]">{outstandingCount}</p><p className="text-xs text-[#6B7280]">Outstanding</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#9C6F1E]">{figureOrDash(kpiLoading, outstandingCount)}</p><p className="text-xs text-[#6B7280]">Outstanding</p></div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#F0ECE9] p-2.5 shrink-0"><Package className="h-5 w-5 text-[#6B5C32]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#6B5C32]">{inProductionCount}</p><p className="text-xs text-[#6B7280]">In Production</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#6B5C32]">{figureOrDash(kpiLoading, inProductionCount)}</p><p className="text-xs text-[#6B7280]">In Production</p></div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#E6F0F3] p-2.5 shrink-0"><Truck className="h-5 w-5 text-[#3E6570]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#3E6570]">{pendingDeliveryCount}</p><p className="text-xs text-[#6B7280]">Pending Delivery</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#3E6570]">{figureOrDash(kpiLoading, pendingDeliveryCount)}</p><p className="text-xs text-[#6B7280]">Pending Delivery</p></div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#EEF3E4] p-2.5 shrink-0"><CheckCircle className="h-5 w-5 text-[#4F7C3A]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#4F7C3A]">{deliveredCount + completedCount}</p><p className="text-xs text-[#6B7280]">Delivered</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#4F7C3A]">{figureOrDash(kpiLoading, deliveredCount + completedCount)}</p><p className="text-xs text-[#6B7280]">Delivered</p></div>
               </CardContent>
             </Card>
           </>
@@ -1317,7 +1321,7 @@ export default function SalesPage() {
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#F0ECE9] p-2.5 shrink-0"><ShoppingCart className="h-5 w-5 text-[#6B5C32]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#1F1D1B]">{statsTotal}</p><p className="text-xs text-[#6B7280]">Total Orders</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(kpiLoading, statsTotal)}</p><p className="text-xs text-[#6B7280]">Total Orders</p></div>
               </CardContent>
             </Card>
             <Card>
@@ -1325,7 +1329,7 @@ export default function SalesPage() {
                 <div className="rounded-lg bg-[#F0ECE9] p-2.5 shrink-0"><DollarSign className="h-5 w-5 text-[#6B5C32]" /></div>
                 <div className="min-w-0">
                   <p className={cn("text-xl font-bold truncate", hasActiveFilters ? "text-[#6B5C32]" : "text-[#1F1D1B]")}>
-                    {formatCurrency(displayRevenue)}
+                    {figureOrDash(kpiLoading, displayRevenue, formatCurrency)}
                   </p>
                   <p
                     className="text-xs text-[#6B7280]"
@@ -1339,19 +1343,19 @@ export default function SalesPage() {
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#FAEFCB] p-2.5 shrink-0"><DollarSign className="h-5 w-5 text-[#9C6F1E]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#9C6F1E]">{outstandingCount}</p><p className="text-xs text-[#6B7280]">Outstanding</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#9C6F1E]">{figureOrDash(kpiLoading, outstandingCount)}</p><p className="text-xs text-[#6B7280]">Outstanding</p></div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#E6F0F3] p-2.5 shrink-0"><Truck className="h-5 w-5 text-[#3E6570]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#3E6570]">{pendingDeliveryCount}</p><p className="text-xs text-[#6B7280]">Pending Delivery</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#3E6570]">{figureOrDash(kpiLoading, pendingDeliveryCount)}</p><p className="text-xs text-[#6B7280]">Pending Delivery</p></div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="rounded-lg bg-[#EEF3E4] p-2.5 shrink-0"><CheckCircle className="h-5 w-5 text-[#4F7C3A]" /></div>
-                <div className="min-w-0"><p className="text-2xl font-bold text-[#4F7C3A]">{completedCount}</p><p className="text-xs text-[#6B7280]">Completed</p></div>
+                <div className="min-w-0"><p className="text-2xl font-bold text-[#4F7C3A]">{figureOrDash(kpiLoading, completedCount)}</p><p className="text-xs text-[#6B7280]">Completed</p></div>
               </CardContent>
             </Card>
           </>

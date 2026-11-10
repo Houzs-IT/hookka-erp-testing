@@ -87,6 +87,7 @@ import {
 import { compressScanFile } from "@/lib/compress-scan-pdf";
 import { useIdempotencyKeys } from "@/lib/idempotency-key";
 import { todayYmdMY } from "@/lib/utils";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 // ─── Shared types (kept exported for callers) ─────────────────────────────
 
@@ -764,12 +765,17 @@ function ApplyModeModal({
     close();
   };
 
+  // A scanned result under review is work to lose: Esc or a backdrop click
+  // asks "Discard your changes?" first; nothing happens mid-scan / mid-apply
+  // (review pass 2 C2-1 follow-up). ✕ / Cancel still close at once.
+  const guard = useDiscardGuard({ open, dirty: phase === "review", busy: phase === "scanning" || applying, onClose: close });
+
   if (!open) return null;
   const lines = ex?.lines ?? [];
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={close} />
+      <div className="absolute inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-[#E2DDD8]">
           <h2 className="text-lg font-semibold text-[#1F1D1B] flex items-center gap-2">

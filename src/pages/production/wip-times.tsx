@@ -23,6 +23,7 @@ import { DEPARTMENTS } from "./utils";
 import { useUrlState, useUrlStateBool } from "@/lib/use-url-state";
 import { findHeaderIndex } from "@/lib/table-import";
 import type * as XlsxNs from "xlsx";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 type XLSXModule = typeof XlsxNs;
 
 type WipTimeRow = {
@@ -208,6 +209,18 @@ export default function WipTimesPage() {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportPreview | null>(null);
+  // Esc or a backdrop click on a half-typed minutes edit asks "Discard your
+  // changes?" first; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const editGuard = useFormDiscardGuard({ draftMinutes: editing?.draftMinutes ?? "" }, {
+    open: !!editing,
+    busy: saving,
+    onClose: () => setEditing(null),
+  });
+  const batchGuard = useFormDiscardGuard({ batchMinutes }, {
+    open: batchOpen,
+    busy: batchSaving,
+    onClose: () => setBatchOpen(false),
+  });
 
   const url = useMemo(() => {
     const params = new URLSearchParams();
@@ -1072,7 +1085,7 @@ export default function WipTimesPage() {
       {editing && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => !saving && setEditing(null)}
+          onMouseDown={editGuard.onBackdrop}
         >
           <div
             className="bg-white rounded-lg shadow-xl max-w-md w-full"
@@ -1258,7 +1271,7 @@ export default function WipTimesPage() {
       {batchOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => !batchSaving && setBatchOpen(false)}
+          onMouseDown={batchGuard.onBackdrop}
         >
           <div
             className="bg-white rounded-lg shadow-xl max-w-md w-full"

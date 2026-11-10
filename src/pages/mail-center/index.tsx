@@ -144,6 +144,7 @@ import {
   PanelRight,
   Square,
 } from "lucide-react";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 type MailThread = {
   id: string;
@@ -3293,6 +3294,9 @@ function LabelManagerDialog({
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState(LABEL_PALETTE[0].value);
   const [busy, setBusy] = useState(false);
+  // Esc or a backdrop click asks "Discard your changes?" while a new label
+  // name is typed (review pass 2 C2-1 follow-up).
+  const guard = useDiscardGuard({ open, dirty: newName.trim() !== "", busy, onClose });
 
   if (!open) return null;
 
@@ -3370,7 +3374,7 @@ function LabelManagerDialog({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div
         role="dialog"
         aria-modal="true"

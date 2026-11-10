@@ -41,6 +41,7 @@ import {
   type ProjectHealth,
 } from "./health";
 import { csvBlob } from "@/lib/csv-cell";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 const RDMutationSchema = mutationWithData(RdProjectSchema);
 
@@ -1008,6 +1009,10 @@ function CreateProjectDialog({
     sourceNotes: "",
   });
 
+  // Esc or a backdrop click asks "Discard your changes?" while there are
+  // unsaved edits; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard(form, { onClose, busy: submitting });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) {
@@ -1078,7 +1083,7 @@ function CreateProjectDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onMouseDown={guard.onBackdrop}>
       <div
         className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}

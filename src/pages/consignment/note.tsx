@@ -67,6 +67,8 @@ import type { ConsignmentNote, Customer } from "@/types";
 import type { CNPdfData, CNPdfItem } from "@/lib/generate-cn-pdf";
 import { csvBlob } from "@/lib/csv-cell";
 import { responseErrorMessage } from "@/lib/response-error";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { useNavGuard } from "@/lib/use-nav-guard";
 
 // Per-line rich detail from GET /api/consignment-notes/:id/print-extras —
 // the CN twin of DO's print-extras. Keyed by consignment_items.id, merged
@@ -642,6 +644,38 @@ export default function ConsignmentNotePage() {
   // editDialogVehicles.
   const [createCNVehicles, setCreateCNVehicles] = useState<ThreePLVehicleShape[]>([]);
   const [createCNDrivers, setCreateCNDrivers] = useState<ThreePLDriverShape[]>([]);
+  // Esc or a backdrop click on a half-filled Packing List, Mark Dispatched or
+  // Create CN asks "Discard your changes?" first; nothing happens mid-save
+  // (review pass 2 C2-1 follow-up). Dispatch leaves the driver out of its
+  // snapshot: an edited row's driver is matched by name after the dialog
+  // opens, which is not the operator's change.
+  const createPLGuard = useFormDiscardGuard({ plRemarks }, {
+    open: !!createPLDialog,
+    busy: plCreating,
+    onClose: () => setCreatePLDialog(null),
+  });
+  const dispatchGuard = useFormDiscardGuard(
+    { providerId: dispatchForm.providerId, vehicleId: dispatchForm.vehicleId },
+    {
+      open: !!dispatchDialog,
+      busy: dispatchSaving,
+      onClose: () => {
+        setDispatchDialog(null);
+        pendingDispatchDriverNameRef.current = "";
+      },
+    },
+  );
+  const createCNGuard = useFormDiscardGuard(createCNForm, {
+    open: !!createCNDialog,
+    busy: creatingCNFromPO,
+    onClose: () => setCreateCNDialog(null),
+  });
+  // Menu, link, Back or phone swipe ask "Leave without saving?" while one of
+  // them is half-filled (review pass 2 H3-1 follow-up).
+  useNavGuard(
+    createPLGuard.dirty || dispatchGuard.dirty || createCNGuard.dirty,
+    "You have an unsaved consignment note form. Leave without saving?",
+  );
 
   // ----- Customers cache (for hub picker on the Create CN dialog) -----
   // Mirrors DO's customersData state. Pulled lazily — only the Create CN
@@ -3542,9 +3576,7 @@ export default function ConsignmentNotePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => {
-              if (!plCreating) setCreatePLDialog(null);
-            }}
+            onMouseDown={createPLGuard.onBackdrop}
           />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 border border-[#E2DDD8]">
             <div className="px-6 py-4 border-b border-[#E2DDD8]">
@@ -4596,7 +4628,7 @@ export default function ConsignmentNotePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => !creatingCNFromPO && setCreateCNDialog(null)}
+            onMouseDown={createCNGuard.onBackdrop}
           />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-[#E2DDD8]">
             <div className="px-6 py-4 border-b border-[#E2DDD8]">
@@ -4852,11 +4884,7 @@ export default function ConsignmentNotePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => {
-              if (dispatchSaving) return;
-              setDispatchDialog(null);
-              pendingDispatchDriverNameRef.current = "";
-            }}
+            onMouseDown={dispatchGuard.onBackdrop}
           />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 border border-[#E2DDD8]">
             <div className="px-6 py-4 border-b border-[#E2DDD8] flex items-center justify-between">

@@ -27,6 +27,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
 import { todayYmdMY } from "@/lib/utils";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 // Single source of truth for the "old SOs are unaffected" copy. Every
 // catalog Save modal renders this so the operator hears the same promise
@@ -245,14 +246,14 @@ export function EffectiveDateConfirmModal({
   }, [open, defaultEffectiveFrom]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !saving) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, saving]);
+  // Esc or a backdrop click asks "Discard your changes?" while there are
+  // unsaved edits; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useDiscardGuard({
+    open,
+    dirty: notes.trim() !== "" || effectiveFrom !== (defaultEffectiveFrom ?? todayIso()),
+    busy: saving,
+    onClose,
+  });
 
   if (!open) return null;
 
@@ -278,7 +279,7 @@ export function EffectiveDateConfirmModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={() => !saving && onClose()}
+      onMouseDown={guard.onBackdrop}
     >
       <div
         className="bg-white rounded-lg shadow-xl flex flex-col w-[90vw] max-w-md mx-4"

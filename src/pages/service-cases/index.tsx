@@ -46,6 +46,7 @@ import { compressImage } from "@/lib/image-compress";
 import { exportToCsv } from "@/lib/export-csv";
 import { formatDateDMY, todayYmdMY } from "@/lib/utils";
 import { Plus, X, AlertCircle, Loader2, Download } from "lucide-react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 type CaseStatus = "OPEN" | "IN_PROGRESS" | "CLOSED" | "CANCELLED";
 type SourceType = "SO" | "CO" | "EXTERNAL";
@@ -942,6 +943,7 @@ function StageTargetsModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const guard = useFormDiscardGuard(draft, { onClose, busy: saving });
   const save = async () => {
     setSaving(true);
     setError("");
@@ -968,7 +970,7 @@ function StageTargetsModal({
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={guard.onBackdrop} />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b border-[#E2DDD8]">
           <h3 className="text-lg font-semibold text-[#1F1D1B]">Stage targets</h3>
@@ -1068,6 +1070,13 @@ export function CreateServiceCaseModal({
     qty?: number | null;
     components?: AffectedComponentPick[];
   }>>([]);
+  // Esc or a backdrop click asks "Discard your changes?" once anything was
+  // typed, picked or attached; nothing happens mid-submit (review pass 2
+  // C2-1 follow-up). Cancel / ✕ still close at once.
+  const formGuard = useFormDiscardGuard(
+    { sourceType, sourceId, externalCustomerId, externalCustomerName, externalRef, issueDescription, photos, rootCauseCategory, affectedProducts },
+    { onClose, busy: submitting },
+  );
 
   const { data: soResp, loading: soLoading } = useCachedJson<{ data?: SalesOrderApi[] }>("/api/sales-orders");
   const { data: coResp, loading: coLoading } = useCachedJson<{ data?: ConsignmentOrderApi[] }>("/api/consignment-orders");
@@ -1276,7 +1285,7 @@ export function CreateServiceCaseModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40" onMouseDown={formGuard.onBackdrop} />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b border-[#E2DDD8]">
           <h3 className="text-lg font-semibold text-[#1F1D1B]">New Service Case</h3>

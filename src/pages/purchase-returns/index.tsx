@@ -11,6 +11,8 @@ import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
 import { useIdempotencyKey } from "@/lib/idempotency-key";
 import { responseErrorMessage } from "@/lib/response-error";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
+import { useNavGuard } from "@/lib/use-nav-guard";
 
 type PurchaseReturn = {
   id: string;
@@ -175,6 +177,16 @@ function NewPurchaseReturnDialog({ initialPiId, initialGrnId, onClose, onDone }:
   const [notes, setNotes] = useState("");
   const [resolution, setResolution] = useState("REFUND");
   const [busy, setBusy] = useState(false);
+  // Esc or a backdrop click asks "Discard your changes?" once a line is
+  // ticked, a reason typed or a different PI picked; a deep-linked PI / GRN
+  // loading by itself does not count (review pass 2 C2-1 follow-up).
+  const dirty =
+    lines.some((l) => l.on) || reason.trim() !== "" || notes.trim() !== "" || resolution !== "REFUND" ||
+    (piId !== "" && piId !== (initialPiId ?? ""));
+  const guard = useDiscardGuard({ open: true, dirty, busy, onClose });
+  // Menu, link, Back or phone swipe ask "Leave without saving?" too (review
+  // pass 2 H3-1 follow-up).
+  useNavGuard(dirty, "You have an unsaved purchase return. Leave without saving?");
   // T-006 R10 — the create route is wrapped in withIdempotency server-side; a
   // retry after a lost response must not raise a second return, which the R6
   // cap would then reject as an over-return against the GRN line.
@@ -279,7 +291,7 @@ function NewPurchaseReturnDialog({ initialPiId, initialGrnId, onClose, onDone }:
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={guard.onBackdrop}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-[#1F1D1B]">New Purchase Return</h2>

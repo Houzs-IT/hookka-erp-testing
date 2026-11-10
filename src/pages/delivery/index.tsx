@@ -76,8 +76,8 @@ import {
   drawerLineSpec,
   isPrimaryDrawerAction,
 } from "@/lib/document-drawer";
-import { useFormDirty } from "@/lib/use-nav-guard";
-import { useDiscardGuard } from "@/lib/use-discard-guard";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
+import { useDiscardGuard, useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 const DOMutationSchema = mutationWithData(DeliveryOrderSchema);
 const SOMutationSchema = mutationWithData(SalesOrderSchema);
@@ -1114,6 +1114,37 @@ export default function DeliveryPage() {
   // in saveProvider.
   type ProviderDialogTab = "info" | "rates" | "fleet" | "drivers";
   const [providerDialogTab, setProviderDialogTab] = useState<ProviderDialogTab>("info");
+  // Esc or a backdrop click on a half-filled Packing List, Transfer to
+  // Invoice line pick or 3PL provider form asks "Discard your changes?"
+  // first (review pass 2 C2-1 follow-up). Each baseline waits for the
+  // values the dialog seeds itself (an edited list's driver, the default
+  // "bill everything left" pick), so opening alone never asks.
+  const printGuard = useFormDiscardGuard(
+    { plProviderId, plVehicleId, plDriverPersonId, plRemarks },
+    {
+      open: !!printDialog,
+      ready: pendingDriverName === "",
+      busy: plCreating,
+      onClose: () => { setPrintDialog(null); setEditingPL(null); },
+    },
+  );
+  const invoiceGuard = useFormDiscardGuard(invoicePick, {
+    open: !!invoiceDialog,
+    ready: invoiceLines !== null && !invoiceLinesLoading,
+    busy: invoiceLoading,
+    onClose: () => setInvoiceDialog(null),
+  });
+  const providerGuard = useFormDiscardGuard(providerForm, {
+    open: providerDialog !== null,
+    busy: providerSaving,
+    onClose: () => setProviderDialog(null),
+  });
+  // Menu, link, Back or phone swipe ask "Leave without saving?" while any of
+  // these, or Create DO, is half-filled (review pass 2 H3-1 follow-up).
+  useNavGuard(
+    createDODirty || printGuard.dirty || invoiceGuard.dirty || providerGuard.dirty,
+    "You have an unsaved delivery form. Leave without saving?",
+  );
   const emptyRateGrid = () =>
     Object.fromEntries(
       MALAYSIA_STATES.map((s) => [s.code, { trip: "", drop: "" }]),
@@ -5926,7 +5957,7 @@ export default function DeliveryPage() {
       {/* ---------- Create Packing List Dialog ---------- */}
       {printDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { if (!plCreating) { setPrintDialog(null); setEditingPL(null); } }} />
+          <div className="absolute inset-0 bg-black/40" onMouseDown={printGuard.onBackdrop} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 border border-[#E2DDD8]">
             <div className="px-6 py-4 border-b border-[#E2DDD8]">
               <h2 className="text-lg font-bold text-[#1F1D1B]">
@@ -6058,7 +6089,7 @@ export default function DeliveryPage() {
       {/* ---------- Transfer to Invoice Dialog ---------- */}
       {invoiceDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !invoiceLoading && setInvoiceDialog(null)} />
+          <div className="absolute inset-0 bg-black/40" onMouseDown={invoiceGuard.onBackdrop} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 border border-[#E2DDD8] max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-4 border-b border-[#E2DDD8]">
               <h2 className="text-lg font-bold text-[#1F1D1B]">Transfer to Sales Invoice</h2>
@@ -7120,7 +7151,7 @@ export default function DeliveryPage() {
           {/* 3PL Create/Edit Dialog */}
           {providerDialog !== null && (
             <div className="fixed inset-0 z-50 flex items-center justify-center">
-              <div className="absolute inset-0 bg-black/40" onClick={() => !providerSaving && setProviderDialog(null)} />
+              <div className="absolute inset-0 bg-black/40" onMouseDown={providerGuard.onBackdrop} />
               <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-5xl mx-4 max-h-[90vh] overflow-y-auto border border-[#E2DDD8]">
                 {/* Sticky header + section pills (house big-dialog style) */}
                 <div className="sticky top-0 bg-white border-b border-[#E2DDD8] rounded-t-xl z-10">

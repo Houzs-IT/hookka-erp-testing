@@ -27,7 +27,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { NotePopup } from "@/components/finance/note-popup";
-import { useFormDirty } from "@/lib/use-nav-guard";
+import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
 import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 const DNMutationSchema = mutationWithData(DebitNoteSchema);
@@ -195,6 +195,9 @@ export default function DebitNotesPage() {
     showCreateModal,
   );
   const formGuard = useDiscardGuard({ open: showCreateModal, dirty: formDirty, onClose: closeForm, busy: creating });
+  // Menu, link, Back or phone swipe ask "Leave without saving?" while the
+  // form is half-filled (review pass 2 H3-1 follow-up).
+  useNavGuard(formDirty, "You have an unsaved debit note. Leave without saving?");
 
   const addItem = () => {
     setItems([...items, newDNItem()]);

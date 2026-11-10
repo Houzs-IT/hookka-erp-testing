@@ -8,6 +8,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 export interface DatesCascadeResult {
   productionOrders: number;
@@ -37,6 +38,9 @@ export function DatesEditModal({
   const [hookkaDD, setHookkaDD] = useState(ymd(currentHookkaDD));
   const [saving, setSaving] = useState(false);
   const [errMsg, setErrMsg] = useState("");
+  // Esc or a backdrop click asks "Discard your changes?" once something was
+  // picked or typed; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard({ customerDD, hookkaDD }, { open, onClose, busy: saving });
 
   if (!open) return null;
 
@@ -80,7 +84,7 @@ export function DatesEditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
         className="fixed inset-0 bg-black/40"
-        onClick={() => (saving ? null : onClose())}
+        onMouseDown={guard.onBackdrop}
       />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-md mx-4 p-6 space-y-4">
         <div className="flex items-center justify-between">

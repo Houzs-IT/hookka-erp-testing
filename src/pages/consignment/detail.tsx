@@ -29,6 +29,7 @@ import { RecordLoadError } from "@/components/ui/record-load-error";
 import { getCurrentUser } from "@/lib/auth";
 import type { Customer } from "@/types";
 import type { ConsignmentOrder as SalesOrder, COStatus as SOStatus } from "@/types";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 type LinkedPO = {
   id: string;
@@ -364,6 +365,20 @@ export default function SalesOrderDetailPage() {
     submitting: boolean;
     error: string | null;
   }>({ open: false, reason: "", submitting: false, error: null });
+  // Esc or a backdrop click on the Put On Hold / Override Lock reason asks
+  // "Discard your changes?" once a reason is typed (review pass 2 C2-1
+  // follow-up); ✕ / Cancel still close at once.
+  const holdGuard = useDiscardGuard({
+    open: holdModal.open,
+    dirty: holdModal.reason.trim() !== "",
+    onClose: () => setHoldModal({ open: false, reason: "", error: "" }),
+  });
+  const overrideGuard = useDiscardGuard({
+    open: overrideModal.open,
+    dirty: overrideModal.reason.trim() !== "",
+    busy: overrideModal.submitting,
+    onClose: () => setOverrideModal({ open: false, reason: "", submitting: false, error: null }),
+  });
 
   // Hub-edit modal state. Same rule as SO: hub stays editable until the
   // first CN moves past ACTIVE (i.e. PARTIALLY_SOLD or FULLY_SOLD), or any
@@ -767,7 +782,7 @@ export default function SalesOrderDetailPage() {
           on the backend. The reason flows to the production grid. */}
       {holdModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/40" onClick={() => setHoldModal({ open: false, reason: "", error: "" })} />
+          <div className="fixed inset-0 bg-black/40" onMouseDown={holdGuard.onBackdrop} />
           <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-md mx-4 p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -978,11 +993,7 @@ export default function SalesOrderDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="fixed inset-0 bg-black/40"
-            onClick={() => {
-              if (!overrideModal.submitting) {
-                setOverrideModal({ open: false, reason: "", submitting: false, error: null });
-              }
-            }}
+            onMouseDown={overrideGuard.onBackdrop}
           />
           <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-lg mx-4 p-6 space-y-4">
             <div className="flex items-center justify-between">

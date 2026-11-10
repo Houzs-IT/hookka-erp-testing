@@ -61,11 +61,11 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 |---|---|---|
 | `CustomersPage` | `src/pages/customers.tsx:3424` | List/KPI/columns/CRUD/context menu (default export) |
 | `CustomerProductsPanel` | `src/pages/customers.tsx:193` | Per-customer pricing (mirrors Products bulk-edit) |
-| `CustomerMaintenancePanel` | `src/pages/customers.tsx:1639` | Per-customer config snapshot tabs |
+| `CustomerMaintenancePanel` | `src/pages/customers.tsx:1647` | Per-customer config snapshot tabs |
 | `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2411` | Per-customer combo pricing (config editor) |
 | `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2692` | Price-history viewer |
 | `AssignSkuModal` | `src/pages/customers.tsx:3218` | SKU assignment modal |
-| `UsersPage` | `src/pages/settings/Users.tsx:226` | Users/Org/Mailbox tab shell |
+| `UsersPage` | `src/pages/settings/Users.tsx:234` | Users/Org/Mailbox tab shell |
 | `validateDebtorCode` | `src/api/routes/customers.ts:93` | Debtor-code validation on create/edit |
 | `rowToCustomer` | `src/api/routes/customers.ts:294` | Dual-key row → customer, buckets hubs |
 | `app.post("/")` / `app.put("/:id")` | `src/api/routes/customers.ts:379 / 540` | Customer create / edit (+ column self-apply) |

@@ -5,7 +5,8 @@
 // duplicating the form code, mirroring how sku-form-dialog.tsx was extracted.
 // Behaviour is unchanged from the previous inline definition in maintenance.tsx.
 // ---------------------------------------------------------------------------
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
@@ -14,6 +15,7 @@ import { isOneEmailAddress } from "@/lib/supplier-emails";
 import { X } from "lucide-react";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import type { PartyFinanceValue } from "@/lib/party-finance";
+import { useNavGuard } from "@/lib/use-nav-guard";
 
 export type SupplierStatus = "ACTIVE" | "INACTIVE" | "BLACKLISTED";
 export type PaymentTerms = "NET15" | "NET30" | "NET45" | "NET60" | "COD";
@@ -123,18 +125,21 @@ export function SupplierFormDialog({
     });
   };
 
-  // Close on Escape key — operators expect dialog dismissal even when
-  // focus is trapped inside an Input.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Esc (even with focus in an Input) or a backdrop click closes — but asks
+  // "Discard your changes?" first once anything was typed or picked (review
+  // pass 2 C2-1 follow-up). ✕ / Cancel still close at once.
+  const guard = useFormDiscardGuard(
+    { code, name, contactPerson, phone, email, email2, email3, address, paymentTerms, status, purchaseOrgCode, registrationNo, finance },
+    { onClose },
+  );
+  // Menu, link, Back or phone swipe ask "Leave without saving?" too
+  // (review pass 2 H3-1 follow-up).
+  useNavGuard(guard.dirty, "You have an unsaved supplier. Leave without saving?");
 
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={guard.onBackdrop}
     >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-[#E2DDD8]">

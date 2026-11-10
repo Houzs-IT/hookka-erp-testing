@@ -72,6 +72,7 @@ import {
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { copyText } from "@/lib/copy-text";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // The three assignable roles, shown in BOTH the invite dropdown and the
 // per-row "Change role" dialog. ONE source of truth so the two pickers can
@@ -307,6 +308,22 @@ export default function UsersPage() {
   const [aliasPosition, setAliasPosition] = useState("");
   const [aliasSubmitting, setAliasSubmitting] = useState(false);
   const [aliasError, setAliasError] = useState<string | null>(null);
+  // Esc or a backdrop click on a half-typed Reset Password / Edit details
+  // asks "Discard your changes?" first; nothing happens mid-save (review
+  // pass 2 C2-1 follow-up). ✕ / Cancel still close at once.
+  const resetGuard = useFormDiscardGuard({ resetPassword }, {
+    open: !!resetForUser,
+    busy: resetSubmitting,
+    onClose: () => setResetForUser(null),
+  });
+  const aliasGuard = useFormDiscardGuard({ aliasAddress, aliasDept, aliasPosition, editRole }, {
+    open: !!aliasForUser,
+    busy: aliasSubmitting || editRoleSubmitting,
+    onClose: () => {
+      setAliasForUser(null);
+      setAliasExisting(null);
+    },
+  });
 
   // Inline flash banner
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(
@@ -2534,7 +2551,7 @@ export default function UsersPage() {
       {resetForUser && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !resetSubmitting && setResetForUser(null)}
+          onMouseDown={resetGuard.onBackdrop}
         >
           <div
             className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
@@ -2667,12 +2684,7 @@ export default function UsersPage() {
       {aliasForUser && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => {
-            if (!aliasSubmitting && !editRoleSubmitting) {
-              setAliasForUser(null);
-              setAliasExisting(null);
-            }
-          }}
+          onMouseDown={aliasGuard.onBackdrop}
         >
           <div
             className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"

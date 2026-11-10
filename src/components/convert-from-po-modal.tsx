@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { useCachedJson } from "@/lib/cached-fetch";
 import type { PurchaseOrder } from "@/types";
 import { X, Search, FileText, ArrowLeft } from "lucide-react";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
 
 // PO line as returned by GET /api/purchase-orders/:id (rowToItem).
 type POLine = {
@@ -225,14 +226,16 @@ export function ConvertFromPOModal({ open, onClose, onConfirm }: Props) {
     onClose();
   };
 
+  // Once a document is picked there is work to lose: Esc or a backdrop click
+  // asks "Discard your changes?" first (review pass 2 C2-1 follow-up).
+  const guard = useDiscardGuard({ open, dirty: !!selectedPoId, onClose });
+
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      onMouseDown={guard.onBackdrop}
     >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[85vh]">
         {/* Header */}

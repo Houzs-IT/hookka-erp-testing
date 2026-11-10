@@ -36,6 +36,7 @@ import { RecipientsInput } from "./recipients-input";
 import { AckRequestRow } from "./ack-request-row";
 import { RecipientPicker } from "./recipient-picker";
 import { parseAddressList, recipientsValid } from "@/api/lib/mail-threading";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 // One picked file held in memory for the compose POST. contentBase64 is the
 // RAW base64 (the `data:...;base64,` prefix is stripped on read) so it maps
@@ -178,6 +179,8 @@ export function ComposeDialog({
   // Id of the local draft being edited, if this dialog was opened by resuming a
   // draft (so Send / re-save can clear or update the right one).
   const [draftId, setDraftId] = useState<string | null>(null);
+  // True once this opening's fields are seeded (the discard guard's baseline).
+  const [seeded, setSeeded] = useState(false);
 
   // Reset the form each time the dialog is freshly opened. The From override is
   // intentionally preserved across opens (operator's last chosen mailbox). When
@@ -203,9 +206,22 @@ export function ComposeDialog({
       // so a freshly-opened dialog — even one resuming a draft — starts empty.
       setFiles(seed?.attachments ?? []);
       setAttachError(null);
+      setSeeded(true);
+    } else if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- falling-edge reset, same as the rising-edge seed above
+      setSeeded(false);
     }
     wasOpen.current = open;
   }, [open, initialDraft, prefill]);
+
+  // Esc or a backdrop click asks "Discard your changes?" once the message
+  // differs from how it opened (blank, a reply prefill or a resumed draft);
+  // nothing happens mid-send (review pass 2 C2-1 follow-up). The baseline
+  // waits for the seeding above, so a prefilled reply alone never asks.
+  const guard = useFormDiscardGuard(
+    { to, cc, bcc, subject, body, ackRequired, files: files.length },
+    { open, ready: seeded, busy: sending, onClose },
+  );
 
   if (!open) return null;
 
@@ -410,9 +426,7 @@ export function ComposeDialog({
       {/* Backdrop click = close (only while idle, so a send isn't dropped). */}
       <div
         className="fixed inset-0 bg-black/40"
-        onClick={() => {
-          if (!sending) onClose();
-        }}
+        onMouseDown={guard.onBackdrop}
       />
       <div
         role="dialog"

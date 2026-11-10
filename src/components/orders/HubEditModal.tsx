@@ -17,6 +17,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DeliveryHub } from "@/types";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 
 /**
  * Counts of downstream rows the backend cascaded the hub change into.
@@ -60,6 +61,9 @@ export function HubEditModal({
   const [reason, setReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [errMsg, setErrMsg] = useState<string>("");
+  // Esc or a backdrop click asks "Discard your changes?" once something was
+  // picked or typed; nothing happens mid-save (review pass 2 C2-1 follow-up).
+  const guard = useFormDiscardGuard({ hubId, reason }, { open, onClose, busy: saving });
 
   if (!open) return null;
 
@@ -108,7 +112,7 @@ export function HubEditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
         className="fixed inset-0 bg-black/40"
-        onClick={() => (saving ? null : onClose())}
+        onMouseDown={guard.onBackdrop}
       />
       <div className="relative bg-white rounded-lg shadow-xl border border-[#E2DDD8] w-full max-w-md mx-4 p-6 space-y-4">
         <div className="flex items-center justify-between">

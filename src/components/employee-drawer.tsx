@@ -32,6 +32,8 @@ import {
 // One money parser. NOTE: hours/day, OT multiplier and efficiency threshold %
 // below are NOT money and deliberately keep `parseFloat`.
 import { moneyFieldToSen } from "@/lib/money-field";
+import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { useNavGuard } from "@/lib/use-nav-guard";
 
 /** Only what the drawer touches — the page owns the full Worker type. */
 export type EmployeeDraft = {
@@ -139,6 +141,13 @@ export function EmployeeDrawer({
   // the list cannot wipe what is being typed — which a props-syncing effect
   // would have done, and which also made this a setState-inside-an-effect.
   const [draft, setDraft] = useState<EmployeeDraft | null>(employee);
+  // Esc or a click beside the drawer asks "Discard your changes?" once the
+  // draft differs from the person as opened; nothing happens mid-save
+  // (review pass 2 C2-1 follow-up). Cancel / ✕ still close at once.
+  const guard = useFormDiscardGuard(draft, { open: !!employee && !!draft, onClose, busy: saving });
+  // Menu, link, Back or phone swipe ask "Leave without saving?" too
+  // (review pass 2 H3-1 follow-up).
+  useNavGuard(guard.dirty, "You have an unsaved employee. Leave without saving?");
 
   if (!employee || !draft) return null;
   const set = <K extends keyof EmployeeDraft>(k: K, v: EmployeeDraft[K]) =>
@@ -159,7 +168,7 @@ export function EmployeeDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
-      <div className="flex-1 bg-black/25" onClick={saving ? undefined : onClose} />
+      <div className="flex-1 bg-black/25" onMouseDown={guard.onBackdrop} />
       <div className="flex h-full w-full max-w-[420px] flex-col bg-white shadow-xl">
         <div className="flex items-start justify-between border-b border-[#E2DDD8] px-4 py-3">
           <div className="min-w-0">

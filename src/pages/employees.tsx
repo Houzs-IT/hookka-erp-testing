@@ -82,6 +82,8 @@ import {
 } from "@/lib/pcb";
 import { CSV_BOM, csvBlob, csvCell as sharedCsvCell } from "@/lib/csv-cell";
 import { useIdempotencyKeys } from "@/lib/idempotency-key";
+import { useDiscardGuard } from "@/lib/use-discard-guard";
+import { figureOrDash } from "@/lib/loading-figure";
 
 // --------------- TYPES ---------------
 
@@ -2842,6 +2844,30 @@ function EmployeeMasterTab({
     setSalaryChangePrompt(null);
     refreshWorkers();
   };
+  // Esc or a backdrop click no longer throws away a pending salary change, a
+  // typed custom PIN or a one-time PIN on screen without asking first
+  // (review pass 2 C2-1 follow-up). Cancel / Done still close at once.
+  const salaryGuard = useDiscardGuard({
+    open: !!salaryChangePrompt,
+    dirty: true,
+    busy: salaryChangePrompt?.submitting,
+    onClose: cancelSalaryChange,
+    message: "The new salary will not be saved.",
+  });
+  const pinGuard = useDiscardGuard({
+    open: !!pinModal,
+    dirty: pinModal?.phase === "reveal" || (pinModal?.customPin ?? "") !== "",
+    busy: pinModal?.submitting,
+    onClose: closePinModal,
+    message: pinModal?.phase === "reveal" ? "The PIN on screen will not be shown again." : undefined,
+  });
+  const bulkGuard = useDiscardGuard({
+    open: !!bulkModal,
+    dirty: bulkModal?.phase === "reveal" && bulkModal.generated.length > 0,
+    busy: bulkModal?.phase === "submitting",
+    onClose: closeBulkModal,
+    message: "The PINs on screen will not be shown again.",
+  });
 
   const handleDelete = async (id: string) => {
     const name = workers.find((w) => w.id === id)?.name;
@@ -3460,7 +3486,7 @@ function EmployeeMasterTab({
       {salaryChangePrompt && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={salaryChangePrompt.submitting ? undefined : cancelSalaryChange}
+          onMouseDown={salaryGuard.onBackdrop}
         >
           <div
             className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
@@ -3547,7 +3573,7 @@ function EmployeeMasterTab({
       {pinModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={closePinModal}
+          onMouseDown={pinGuard.onBackdrop}
         >
           <div
             className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
@@ -3719,9 +3745,7 @@ function EmployeeMasterTab({
       {bulkModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={
-            bulkModal.phase === "submitting" ? undefined : closeBulkModal
-          }
+          onMouseDown={bulkGuard.onBackdrop}
         >
           <div
             className="w-full max-w-2xl rounded-lg bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto"
@@ -6402,7 +6426,7 @@ function DepartmentPerformanceTab({
       <div className="grid gap-4 grid-cols-2 sm:grid-cols-4 max-sm:grid-cols-1">
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-[#1F1D1B]">{totals?.workerCount ?? 0}</p>
+            <p className="text-2xl font-bold text-[#1F1D1B]">{figureOrDash(loading && !resp, totals?.workerCount ?? 0)}</p>
             <p className="text-xs text-[#6B7280]">Workers</p>
           </CardContent>
         </Card>
