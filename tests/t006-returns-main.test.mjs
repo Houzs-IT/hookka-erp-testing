@@ -73,7 +73,7 @@ function poDb(b) {
       b.returns = b.returns.filter((r) => r.id !== a[0]);
     } else if (execPoReceiptSql(q, a, { purchase_order_items: b.poItems, purchase_orders: b.pos, goods_in_transit: [] })) {
       // PO status: poStatusStatements' EXISTS-conditioned updates.
-    } else if (!/^(ALTER|CREATE|DELETE FROM goods_in_transit)/.test(q)) throw new Error("unexpected write: " + q);
+    } else if (!/^(ALTER|CREATE|DELETE FROM goods_in_transit|SELECT pg_advisory_xact_lock|SELECT CAST\('DOC_NO_TAKEN)/.test(q)) throw new Error("unexpected write: " + q);
     return { success: true, meta: { changes: 1 } };
   };
   return {

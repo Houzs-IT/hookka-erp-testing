@@ -46,3 +46,49 @@ test("B1: consignment-note PUT and return are compare-and-set", () => {
   assert.match(r, /CAST\('\$\{CN_RETURN_RACE\} ' \|\| cn\.id AS INTEGER\)/);
   assert.match(r, /msg\.includes\(CN_RETURN_RACE\)[\s\S]{0,300}409/);
 });
+
+// ── H3 B2: two saves at once cannot take the same number ──────────────────
+import { docNoGuardSql, docNoGuardStatements, isDocNoTaken, withDocNoRetry } from "../src/api/lib/doc-no-guard.ts";
+
+test("B2: guard SQL locks the table's numbering and fails when the number exists", () => {
+  const g = docNoGuardSql("delivery_returns");
+  assert.equal(g.lock, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)");
+  // The CAST names a column, so Postgres cannot fold it into an error that
+  // fires even when the number is free (zero rows -> no error).
+  assert.match(g.free, /^SELECT CAST\('DOC_NO_TAKEN ' \|\| return_no AS INTEGER\) AS "docNoFree" FROM delivery_returns WHERE return_no = \?$/);
+  assert.match(docNoGuardSql("stock_adjustments").free, /FROM stock_adjustments WHERE adjNo = \?/);
+  const bound = [];
+  const db = { prepare: (sql) => ({ bind: (...a) => { bound.push([sql, a]); return { sql, a }; } }) };
+  docNoGuardStatements(db, "purchase_returns", "PR-2611-004");
+  assert.deepEqual(bound.map((b) => b[1]), [["docno:purchase_returns"], ["PR-2611-004"]]);
+});
+
+test("B2: a taken number is retried with a fresh one; other errors are not", async () => {
+  assert.equal(isDocNoTaken(new Error('invalid input syntax for type integer: "DOC_NO_TAKEN DR-2611-003"')), true);
+  assert.equal(isDocNoTaken(new Error("division by zero")), false);
+  let n = 0;
+  const seen = [];
+  const out = await withDocNoRetry(async (tryNo) => {
+    seen.push(tryNo);
+    if (++n < 3) throw new Error("DOC_NO_TAKEN DR-2611-00" + n);
+    return "saved";
+  });
+  assert.equal(out, "saved");
+  assert.deepEqual(seen, [0, 1, 2]);
+  await assert.rejects(withDocNoRetry(async () => { throw new Error("division by zero"); }), /division by zero/);
+  let tries = 0;
+  await assert.rejects(withDocNoRetry(async () => { tries++; throw new Error("DOC_NO_TAKEN x"); }), /DOC_NO_TAKEN/);
+  assert.equal(tries, 5, "gives up after five tries");
+});
+
+test("B2: DR / PR / stock adjustment batches open with the guard and retry", () => {
+  const dr = read("src/api/lib/delivery-return-create.ts");
+  assert.match(dr, /\.\.\.docNoGuardStatements\(db, "delivery_returns", returnNo\),/);
+  assert.match(dr, /withDocNoRetry\(async \(tryNo\) => \{\s*if \(tryNo > 0\) \{\s*returnNo = await nextReturnNo\(db\);/);
+  const pr = read("src/api/lib/purchase-return-create.ts");
+  assert.match(pr, /stmts\.push\(\.\.\.docNoGuardStatements\(db, "purchase_returns", returnNo\), headerInsert\(returnNo\)\);/);
+  assert.match(pr, /returnNo = await nextPurchaseReturnNo\(db\);\s*stmts\.splice\(0, 3,/);
+  const sa = read("src/api/routes/stock-adjustments.ts");
+  assert.match(sa, /stmts\.push\(\.\.\.docNoGuardStatements\(c\.var\.DB, "stock_adjustments", adjNo\), headerInsert\(adjNo\)\);/);
+  assert.match(sa, /adjNo = await nextAdjNo\(c\.var\.DB\);\s*stmts\.splice\(0, 3,/);
+});

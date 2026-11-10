@@ -15,6 +15,7 @@ import {
 } from "./journal-hash";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import { mytYymm } from "../../lib/doc-number";
+import { docNoGuardStatements, withDocNoRetry } from "./doc-no-guard";
 
 export type PRCreateItem = {
   purchaseInvoiceItemId?: string;
@@ -598,11 +599,14 @@ export async function createPurchaseReturn(
     return { ok: false, error: "Only a received (POSTED) goods receipt can be returned." };
   }
   const id = genPurchaseReturnId();
-  const returnNo = await nextPurchaseReturnNo(db);
+  let returnNo = await nextPurchaseReturnNo(db);
   const now = new Date().toISOString();
   const stmts: D1PreparedStatement[] = [];
   const poIds = new Set<string>();
-  stmts.push(db
+  // H3 B2: the batch opens with the numbering lock + "still free" check
+  // (doc-no-guard.ts); on a clash the number is re-read and both swapped.
+  const headerInsert = (no: string): D1PreparedStatement =>
+    db
     .prepare(
       `INSERT INTO purchase_returns
          (id, return_no, purchase_invoice_id, pi_no, grn_id, grn_no,
@@ -612,7 +616,7 @@ export async function createPurchaseReturn(
     )
     .bind(
       id,
-      returnNo,
+      no,
       input.purchaseInvoiceId ?? "",
       input.piNo ?? "",
       input.grnId ?? "",
@@ -627,7 +631,8 @@ export async function createPurchaseReturn(
       now,
       now,
       input.orgId ?? null,
-    ));
+    );
+  stmts.push(...docNoGuardStatements(db, "purchase_returns", returnNo), headerInsert(returnNo));
   for (const it of items) {
     const qty = Number(it.quantity);
     const unit = roundUnitPriceSen(Number(it.unitCostSen ?? 0));
@@ -662,7 +667,13 @@ export async function createPurchaseReturn(
     }
   }
   // One batch: the return and the PO counter it moves land together.
-  await db.batch(stmts);
+  await withDocNoRetry(async (tryNo) => {
+    if (tryNo > 0) {
+      returnNo = await nextPurchaseReturnNo(db);
+      stmts.splice(0, 3, ...docNoGuardStatements(db, "purchase_returns", returnNo), headerInsert(returnNo));
+    }
+    await db.batch(stmts);
+  });
   return { ok: true, id, returnNo, poIds: [...poIds] };
 }
 
