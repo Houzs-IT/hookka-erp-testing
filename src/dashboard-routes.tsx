@@ -75,6 +75,7 @@ const GRN = lazy(() => import('./pages/procurement/grn'))
 const GRNCreate = lazy(() => import('./pages/procurement/grn/create'))
 const GRNDetail = lazy(() => import('./pages/procurement/grn-detail'))
 const ProcurementMaintenance = lazy(() => import('./pages/procurement/maintenance'))
+const ProcurementReports = lazy(() => import('./pages/procurement/reports'))
 const PI = lazy(() => import('./pages/procurement/pi'))
 const PICreate = lazy(() => import('./pages/procurement/pi/create'))
 const PIDetail = lazy(() => import('./pages/procurement/PurchaseInvoiceDetail'))
@@ -386,6 +387,8 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
   // /procurement/create must come before the :id wildcard so React Router
   // matches the literal path first (otherwise "create" is captured as :id).
   { path: '/procurement/create', element: <S><ProcurementCreate /></S> },
+  // Procurement › Reports (review pass 2, H2-5 / H2-6) — also before :id.
+  { path: '/procurement/reports', element: <S><ProcurementReports /></S> },
   { path: '/procurement/:id', element: <S><ProcurementDetail /></S> },
   { path: '/procurement/grn', element: <S><GRN /></S> },
   // /procurement/grn/create must precede /procurement/grn/:id so React Router
@@ -684,6 +687,7 @@ const ROUTE_CHUNK_LOADERS: Record<string, () => Promise<unknown>> = {
   '/procurement/grn/create': () => import('./pages/procurement/grn/create'),
   '/procurement/pi': () => import('./pages/procurement/pi'),
   '/procurement/maintenance': () => import('./pages/procurement/maintenance'),
+  '/procurement/reports': () => import('./pages/procurement/reports'),
   '/rd': () => import('./pages/rd'),
   '/rd/maintenance': () => import('./pages/rd/maintenance'),
   '/quality': () => import('./pages/quality'),

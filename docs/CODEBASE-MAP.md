@@ -490,6 +490,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | `src/pages/procurement/maintenance.tsx` — bindings mgmt (1336) | `src/api/routes/scan-supplier.ts` — OCR extract (catalog-snap back-door) | | |
 | `src/pages/procurement/sku-form-dialog.tsx` (410) / `supplier-form-dialog.tsx` (199) | | | |
 | `src/pages/suppliers/detail.tsx` — supplier profile/scorecard/history (1082) | | | |
+| `src/pages/procurement/reports.tsx` — Procurement › Reports (`/procurement/reports`, sidebar "Procurement Reports"; review pass 2 H2-5 / H2-6): `?tab=delay` supplier delay score (grid `procurement-supplier-delay`, click → that supplier's late lines) and `?tab=lines` outstanding PO lines (grid `procurement-outstanding-po-lines`, `?layer=` / `?supplier=` / `?group=supplierName|category`) (309) | `src/api/routes/procurement-reports.ts` — read-only `GET /api/procurement-reports/outstanding-lines` + `/supplier-delay`, `purchase-orders:read` (amounts go to the same readers as the PO list — no PO-price permission exists); rules in `src/lib/procurement-reports.ts` | `purchase_orders` / `purchase_order_items` / `purchase_invoices` / `purchase_invoice_items` / `grns` / `grn_items` / `purchase_returns` / `purchase_return_items` | `tests/procurement-reports.test.mjs` |
 
 **Big-file section index**
 - `src/pages/procurement/index.tsx`
@@ -584,6 +585,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 - **Status tab strips (count + money per state)** are ONE component: `src/components/ui/status-tab-strip.tsx` + `src/lib/status-tab-strip.ts`. Feed it `tabTotals(rowsThisTabLists, valueOf)` so the badge and the RM figure can never describe different rows; a bucket that sums to nothing renders its count alone (never RM 0.00). Do not hand-roll a new one.
 
 - `GET /api/purchase-orders` and `GET /api/grn` each bucket their line items by parent id ONCE and hand `rowToPO` / `rowToGRN` its own bucket (BUG-2026-08-13-003, class C14). Both mappers still `.filter()` — as a passthrough, which is what keeps the payload byte-identical — so re-passing the whole items array is a silent O(N×M) regression, not a compile error. Cheap today (165 PO × 369 items = 61 K comparisons / 1.3 ms; 37 GRN × 45 items = 1.7 K) but both lists are **unbounded unless the caller opts into `?page`**, so cost is ~2.24·N² and ~1.2·N² and grows with purchasing forever. Same reason the two `IN (...)` item fetches above them were narrowed. Pinned by `tests/list-endpoint-child-grouping.test.mjs`.
+- **Procurement Reports (review pass 2, H2-5 / H2-6):** a PO line is covered by max(received, confirmed-invoiced) in the same HK-0114 buckets as `src/api/lib/po-delivered.ts` (a covered bucket covers every line; otherwise the bucket's billed qty goes to its lines in line order) — so the outstanding list agrees with the PO list's Overdue widget. Due date = `purchase_orders.expected_date` (lines carry none). Open = SUBMITTED / CONFIRMED / PARTIAL_RECEIVED (DRAFT is not owed yet). Score = on time 40 · how late 20 (0 at 10 days) · overdue share of outstanding value 30 · quality cases per 100 received lines 10 (0 at 20); missing parts re-weighted; received lines = POs due in the last 90 Malaysian days, arrival = GRN date, else the invoice date (billed without a GRN), else `purchase_orders.received_date`. Quality cases = GRN lines with `rejected_qty` > 0 + purchase-return lines, deduped by GRN line; `service_cases` carry no supplier and are not counted.
 - **PO save race (review pass 2, H3 B4, BUG-2026-11-10-488):** when the edit form sends `expectedUpdatedAt`, the `PUT /api/purchase-orders/:id` batch opens with a `FOR UPDATE` row lock that re-checks `updated_at` (to the ms) against the value the request read (`PO_EDIT_CONFLICT` → the same 409 as `editConflictMessage`). **Purchase-return numbers** (H3 B2, BUG-2026-11-10-487): `createPurchaseReturn` opens its batch with `docNoGuardStatements` and retries via `withDocNoRetry` (`src/api/lib/doc-no-guard.ts`).
 
 **Start here:** Open `src/pages/procurement/index.tsx` (PO list + POFormDialog) or `src/pages/procurement/detail.tsx` (PO detail + ThreeWayMatchPanel); for receiving/stock start at `src/api/routes/grn.ts`.
@@ -2767,7 +2769,7 @@ deliberately not dropped.
 **This field is NOT the tenant boundary, and never was.** `getOrgId(c)`
 (`src/api/lib/tenant.ts:109`) resolves the request's org from the session's `users.orgId`
 and never reads `inter_company_config`, so switching company has never rescoped a single
-query — despite `switchOrg` in `sidebar.tsx:470` doing a full `window.location.reload()`,
+query — despite `switchOrg` in `sidebar.tsx:482` doing a full `window.location.reload()`,
 which reads as though it should. `activeOrgId` drives exactly two things: the switcher's
 label + tick (`sidebar.tsx:894`/`:949`) and the highlight ring on Settings → Organisations
 (`settings/organisations.tsx:329`). **Open owner question:** `PUT /api/organisations` is

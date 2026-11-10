@@ -144,6 +144,7 @@ const PAGE_RESULTS: SearchResult[] = [
   { id: "p-grn", label: "GRN", href: "/procurement/grn", icon: ClipboardList, category: "pages" },
   { id: "p-purchase-invoice", label: "Purchase Invoice", href: "/procurement/pi", icon: CreditCard, category: "pages" },
   { id: "p-maintenance", label: "Suppliers", href: "/procurement/maintenance", icon: Building2, category: "pages" },
+  { id: "p-procurement-reports", label: "Procurement Reports", description: "Supplier delay score, outstanding PO lines", href: "/procurement/reports", icon: ClipboardList, category: "pages" },
   { id: "p-quality", label: "QC / Quality", href: "/quality", icon: ShieldCheck, category: "pages" },
   { id: "p-accounting", label: "Accounting", href: "/accounting", icon: BookOpen, category: "pages" },
   { id: "p-cash-flow", label: "Cash Flow", href: "/accounting/cash-flow", icon: Wallet, category: "pages" },
