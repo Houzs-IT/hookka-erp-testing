@@ -3,8 +3,9 @@
 // owner 2026-10-26). Three views behind one switch:
 //   • Racks        — search (+ scan-rack icon → the existing /r/:id flow), the
 //                    occupancy card, All/Occupied/Empty/Reserved chips, 2-column
-//                    rack tiles and the rack bottom sheet. (Find is merged into
-//                    the search; it still calls GET /api/warehouse/locate.)
+//                    rack tiles and the rack bottom sheet. (The search
+//                    finds racks by name; the piece search through GET /api/warehouse/locate
+//                    is not in this change, that route is not on main yet.)
 //   • Stock In/Out — desktop fields behind picker sheets + a sticky confirm bar.
 //                    UI ONLY: Stock In/Out saving is NOT enabled, see
 //                    docs/WAREHOUSE-STOCK-LIMITATIONS.md.
@@ -17,7 +18,7 @@
 // resolve, move-aware stock-in). /m does NOT re-implement it: the scan icon
 // decodes the rack QR and navigates there, so the movement records the user.
 //
-// READS: GET /api/warehouse · /api/warehouse/:id/details · /locate · /movements
+// READS: GET /api/warehouse · /api/warehouse/:id/details · /movements
 //        · /api/production-orders?fields=minimal&include= (Stock In picker).
 // WRITES here: POST /api/warehouse/racks (Create Rack) only. No API, permission,
 // status rule or movement logic changes — the screen files live in ./warehouse/.

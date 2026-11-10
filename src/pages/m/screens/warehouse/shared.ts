@@ -56,21 +56,6 @@ export type RackDetailsResp = {
   success?: boolean;
   data?: { rack?: Rack; contents?: RackItem[]; movements?: Movement[] };
 };
-export type LocateHit = {
-  rackItemId: string;
-  rackLocationId: string;
-  rackLabel: string;
-  description: string;
-  notes: string;
-  stockedInDate: string;
-  poNo: string;
-  customerPO: string;
-  salesOrderNo: string;
-  itemCode: string;
-  customerName: string;
-};
-export type LocateResp = { success?: boolean; data?: LocateHit[] };
-
 export type WarehouseToast = { kind: "ok" | "err"; text: string };
 
 // ---- rack naming / ordering ----

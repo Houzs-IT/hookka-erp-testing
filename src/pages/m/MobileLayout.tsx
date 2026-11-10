@@ -36,9 +36,13 @@ import { ProductionScreen } from "./screens/ProductionScreen";
 import { SalesScreen } from "./screens/SalesScreen";
 import { ProductsScreen } from "./screens/ProductsScreen";
 import { ProductDetailScreen } from "./screens/ProductDetailScreen";
-import { SalesDetailScreen } from "./screens/SalesDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
+import { ServiceOrdersScreen } from "./screens/orders/ServiceOrdersScreen";
+import { LegacyOrderDetail } from "./screens/orders/LegacyOrderDetail";
+import { SvOrderDetail } from "./screens/orders/SvOrderDetail";
+import { SvOrderForm } from "./screens/orders/SvOrderForm";
+import { SalesDetailGate } from "./screens/orders/SalesDetailGate";
 import { CaseDetailScreen } from "./screens/cases/CaseDetailScreen";
 import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
 import { UpdatesScreen } from "./screens/UpdatesScreen";
@@ -210,6 +214,8 @@ bootstrapMobileTheme();
 const CUSTOM_L1: Record<string, ComponentType> = {
   sales: SalesScreen,
   servicecases: ServiceCasesScreen,
+  // Claude Design "Service Orders": SV orders + Legacy repair orders behind a family switch.
+  serviceorders: ServiceOrdersScreen,
   announcements: AnnouncementsScreen,
   "mail-center": MailCenterScreen,
   warehouse: WarehouseScreen,
@@ -237,7 +243,10 @@ const CUSTOM_L1: Record<string, ComponentType> = {
 // generic DocumentDetailScreen. Sales = the locked create-form + Total/Paid/
 // Balance KPI strip + status action bar (v20 MobileSoDetail).
 const CUSTOM_L2: Record<string, ComponentType> = {
-  sales: SalesDetailScreen,
+  // An SV Service Order opened via /m/sales/:id is sent to its own detail; Sales Orders are unchanged.
+  sales: SalesDetailGate,
+  // /m/serviceorders/:id is a LEGACY repair order (SV orders live under /m/serviceorders/sv/:id).
+  serviceorders: LegacyOrderDetail,
   production: ProductionDetailScreen,
   "mail-center": MailThreadScreen,
   // The DO detail with desktop's per-status actions, phone and tablet.
@@ -434,6 +443,11 @@ export default function MobileLayout() {
               phone (or list-only routes) it's the standard single-pane.
               Each module with `detail` also gets /:id/item/:itemId for the
               L3 line-item screen. */}
+          {/* SV Service Orders (sales_orders, isServiceOrder=true): detail + full-screen create / edit. */}
+          <Route path="serviceorders/sv/new" element={<SvOrderForm />} />
+          <Route path="serviceorders/sv/:id/edit" element={<SvOrderForm />} />
+          <Route path="serviceorders/sv/:id" element={layout.canSplitDetail ? <TwoPane left={<ServiceOrdersScreen />} right={<SvOrderDetail />} /> : <SvOrderDetail />} />
+
           {MODULE_CONFIGS.map((cfg) => {
             const CustomL1 = CUSTOM_L1[cfg.slug];
             const L1 = CustomL1 ? <CustomL1 /> : <ModuleListScreen config={cfg} />;

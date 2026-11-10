@@ -15,8 +15,6 @@ import {
   type RackItem,
   type RackStatus,
   type WarehouseSummary,
-  type LocateResp,
-  type LocateHit,
   type RackDetailsResp,
   type Movement,
   TILE,
@@ -34,7 +32,7 @@ import {
   movementLook,
   movementRackText,
 } from "./shared";
-import { Pill, SectionLabel, Notice } from "./atoms";
+import { Pill, SectionLabel } from "./atoms";
 
 type Filter = "ALL" | RackStatus;
 const PAGE = 40;
@@ -84,12 +82,9 @@ export function RacksTab({
   );
   const openRack = racks.find((r) => r.id === openId) ?? null;
 
-  // Typing: pieces (server search, read-gated) + racks whose NAME matches.
+  // Typing: racks whose NAME matches. The piece search (SO / PO / customer / item) calls
+  // GET /api/warehouse/locate, which is not on main yet, so it is not in this change.
   const searching = term.length >= 2;
-  const url = searching ? `/api/warehouse/locate?q=${encodeURIComponent(term)}` : null;
-  // Short TTL: a location is exactly the thing that changes under you.
-  const { data: hitResp, loading: hitLoading, error: hitError } = useCachedJson<LocateResp>(url, 10);
-  const hits = searching ? (hitResp?.data ?? []) : [];
   const nameMatches = useMemo(
     () => (searching ? racks.filter((r) => rackLabel(r).toLowerCase().includes(term.toLowerCase())) : []),
     [racks, term, searching],
@@ -119,8 +114,8 @@ export function RacksTab({
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Find SO, PO, customer, item"
-          aria-label="Find SO, PO, customer or item"
+          placeholder="Find rack"
+          aria-label="Find rack"
           style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: 15, color: M.raisin, fontFamily: "inherit", padding: "0 8px" }}
         />
         <button
@@ -134,14 +129,7 @@ export function RacksTab({
       </div>
 
       {searching ? (
-        <SearchResults
-          racks={racks}
-          nameMatches={nameMatches}
-          hits={hits}
-          loading={hitLoading}
-          error={!!hitError}
-          onOpen={setOpenId}
-        />
+        <SearchResults nameMatches={nameMatches} onOpen={setOpenId} />
       ) : (
         <>
           <OccupancyCard rate={rate} pieces={pieces} total={total} occupied={occupied} reserved={reserved} empty={empty} />
@@ -339,22 +327,7 @@ function TileItem({ it }: { it: RackItem }) {
 }
 
 // ---------------------------------------------------------------------------
-function SearchResults({
-  racks,
-  nameMatches,
-  hits,
-  loading,
-  error,
-  onOpen,
-}: {
-  racks: Rack[];
-  nameMatches: Rack[];
-  hits: LocateHit[];
-  loading: boolean;
-  error: boolean;
-  onOpen: (id: string) => void;
-}) {
-  const byId = useMemo(() => new Map(racks.map((r) => [r.id, r])), [racks]);
+function SearchResults({ nameMatches, onOpen }: { nameMatches: Rack[]; onOpen: (id: string) => void }) {
   return (
     <>
       {nameMatches.length > 0 ? (
@@ -363,42 +336,11 @@ function SearchResults({
           <RackGrid racks={nameMatches.slice(0, 12)} onOpen={onOpen} />
         </>
       ) : null}
-      <SectionLabel>Pieces</SectionLabel>
-      {error ? (
-        <Notice tone="err">Couldn’t search pieces. You may not have access to warehouse search.</Notice>
-      ) : loading && hits.length === 0 ? (
-        <div style={{ color: M.muted, fontSize: 13, padding: "6px 2px" }}>Searching…</div>
-      ) : hits.length === 0 ? (
+      {nameMatches.length === 0 ? (
         <MobileCard radius={14} style={{ padding: 18 }}>
-          <div style={{ color: M.muted, fontSize: 13, textAlign: "center" }}>No pieces match your search.</div>
+          <div style={{ color: M.muted, fontSize: 13, textAlign: "center" }}>No racks match your search.</div>
         </MobileCard>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {hits.map((h) => {
-            const rec = h as unknown as Record<string, unknown>;
-            const id = str(rec, "rackLocationId", "rack_location_id");
-            const rack = byId.get(id);
-            const label = rack ? rackLabel(rack) : str(rec, "rackLabel", "rack_label");
-            const refs = [str(rec, "customerPO", "customer_po"), str(rec, "salesOrderNo", "sales_order_no")].filter(Boolean).join(" · ");
-            return (
-              <MobileCard key={str(rec, "rackItemId", "rack_item_id") || `${id}-${str(rec, "description")}`} radius={14} onClick={() => onOpen(id)} style={{ padding: "12px 14px" }}>
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  <span style={{ flex: "none", maxWidth: 110, padding: "6px 10px", borderRadius: 10, background: TILE.OCCUPIED.bg, color: "#fff", fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {label || "—"}
-                  </span>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: M.raisin, overflowWrap: "anywhere" }}>{str(rec, "description") || "Item"}</div>
-                    {str(rec, "customerName", "customer_name") ? (
-                      <div style={{ fontSize: 12, color: M.ink, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{str(rec, "customerName", "customer_name")}</div>
-                    ) : null}
-                    {refs ? <div style={{ fontSize: 11.5, color: M.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{refs}</div> : null}
-                  </div>
-                </div>
-              </MobileCard>
-            );
-          })}
-        </div>
-      )}
+      ) : null}
     </>
   );
 }
