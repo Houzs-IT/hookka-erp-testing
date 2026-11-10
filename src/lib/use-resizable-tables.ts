@@ -67,6 +67,17 @@ function keyOf(scope: string, t: HTMLTableElement, firstOnly: boolean): string {
   return colWidthKey(scope, t.dataset.colKey ?? "", topCells(t).map(cellText), firstOnly);
 }
 
+// What the pinned widths were measured for: the width key plus every top
+// header cell and the columns it spans. A report's width key names its
+// description column only, so on its own it cannot see columns come or go —
+// Cash Flow's Forecast toggle turned 5 columns into 35 under the same key,
+// the colgroup stayed at 5 and the other 30 shrank to nothing (prod
+// 2026-11-10, BUG-2026-11-10-444). Any change here lays the table out again,
+// the dragged width put back.
+export function colLayoutSig(widthKey: string, headers: string[], spans: number[]): string {
+  return `${widthKey}#${headers.map((h, i) => `${h}~${spans[i] > 0 ? spans[i] : 1}`).join("|")}`;
+}
+
 function readWidths(key: string): number[] | null {
   try {
     const raw = localStorage.getItem(STORE + key);
@@ -132,25 +143,27 @@ function enhance(t: HTMLTableElement, scope: string) {
   const cells = topCells(t);
   if (!cells.length) return;
   const firstOnly = mode === "first";
-  const n = columnCount(cells.map((c) => c.colSpan));
+  const spans = cells.map((c) => c.colSpan);
+  const n = columnCount(spans);
   const key = keyOf(scope, t, firstOnly);
-  if (t.dataset.colSig !== key) {
+  const sig = colLayoutSig(key, cells.map(cellText), spans);
+  if (t.dataset.colSig !== sig) {
     // A new table, or its header changed (columns came or went): start over.
     if (t.dataset.colSig) { unfreeze(t); delete t.dataset.colSig; }
     const saved = readWidths(key);
     const natural = saved && firstOnly ? measureColumns(t, n) : null;
     if (saved && !firstOnly && saved.length === n) {
       freeze(t, saved);
-      t.dataset.colSig = key;
+      t.dataset.colSig = sig;
     } else if (saved && firstOnly && natural) {
       natural[0] = saved[0];
       freeze(t, natural);
-      t.dataset.colSig = key;
+      t.dataset.colSig = sig;
     } else if (!saved || !firstOnly) {
-      t.dataset.colSig = key;
+      t.dataset.colSig = sig;
     } // else: not laid out yet — the next pass restores it
   }
-  const edges = edgeColumns(cells.map((c) => c.colSpan));
+  const edges = edgeColumns(spans);
   cells.forEach((cell, i) => {
     if (firstOnly && i > 0) return;
     if (cell.querySelector(":scope > [data-fin-col-handle]")) return;

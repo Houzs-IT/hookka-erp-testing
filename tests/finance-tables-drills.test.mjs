@@ -36,6 +36,25 @@ test("widths are kept per page/tab and header; a report by its description colum
   assert.equal(rt.colWidthKey("accounting:plmonthly", "", ["Item", "Accumulated", "Sep 2026"], true), "accounting:plmonthly||first|Item", "new months do not lose the width");
 });
 
+test("a report lays out again when its columns come or go, keeping the dragged description width (BUG-2026-11-10-444)", () => {
+  // Prod 2026-11-10, owner's screenshot: Cash Flow with a dragged Item width, Forecast pressed —
+  // 5 columns became 35, the colgroup stayed pinned to 5 and the other 30 shrank to nothing.
+  const actualHeads = ["Item", "Accumulated", "Nov'26", "Oct'26", "Sep'26"];
+  const forecastHeads = ["Item", "Accumulated", "Nov'27", "Oct'27", "Nov'26", "Oct'26", "Sep'26"];
+  const key = rt.colWidthKey("accounting:cashflow", "", actualHeads, true);
+  assert.equal(rt.colWidthKey("accounting:cashflow", "", forecastHeads, true), key, "the dragged Item width is still found");
+  assert.notEqual(
+    rt.colLayoutSig(key, forecastHeads, [1, 1, 2, 2, 3, 3, 3]),
+    rt.colLayoutSig(key, actualHeads, [1, 1, 1, 1, 1]),
+    "Forecast on: the columns changed, so the table is laid out again",
+  );
+  assert.notEqual(rt.colLayoutSig(key, ["Item", "Nov'26"], [1, 2]), rt.colLayoutSig(key, ["Item", "Nov'26"], [1, 3]), "a month gaining a column is a new layout");
+  assert.equal(rt.colLayoutSig(key, ["Item", "Nov'26"], [1, 2]), rt.colLayoutSig(key, ["Item", "Nov'26"], [1, 2]), "the same header keeps its layout");
+  // The enhancer compares the layout, never the width key alone.
+  assert.match(lib, /const sig = colLayoutSig\(key, cells\.map\(cellText\), spans\);\n  if \(t\.dataset\.colSig !== sig\) \{/);
+  assert.doesNotMatch(lib, /t\.dataset\.colSig = key;/, "the width key is not the layout");
+});
+
 test("the enhancer: one column changes, the table is the sum of its columns, a colgroup pins them", () => {
   assert.match(lib, /t\.style\.tableLayout = "fixed";\n  t\.style\.width = `\$\{sumWidths\(widths\)\}px`;\n  t\.style\.minWidth = t\.hasAttribute\("data-fin-report"\) \? "0" : "100%";/, "a list never ends short of its box (owner 2026-10-21); a report keeps to its columns");
   assert.match(lib, /widths\[col\] = Math\.max\(MIN_W, startW \+ ev\.clientX - startX\);/);
