@@ -109,6 +109,16 @@ export function todayYmdMY(): string {
   return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/**
+ * The Malaysia wall clock as a Date whose UTC fields read Malaysian time.
+ * Read it ONLY through getUTC* / setUTC* / toISOString — the local getters
+ * would add the machine's own offset on top. For "today + N days" style maths:
+ * `const d = mytWallClock(); d.setUTCDate(d.getUTCDate() + 14); d.toISOString().slice(0, 10)`.
+ */
+export function mytWallClock(): Date {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000);
+}
+
 export function formatDateTime(date: Date | string): string {
   return new Date(date).toLocaleDateString("en-MY", {
     day: "2-digit",

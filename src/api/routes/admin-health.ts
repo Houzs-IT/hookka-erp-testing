@@ -40,6 +40,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { getOrgId } from "../lib/tenant";
+import { computeHealthStatus, type HealthInputs } from "../../lib/health-status";
 
 const app = new Hono<Env>();
 
@@ -739,10 +740,14 @@ app.get("/errors-hourly", async (c) => {
 // surface each specific code (401 = token expired, 403 = RBAC, 404 =
 // FE bug fetching wrong URL, 422 = validation reject, 429 = rate limit,
 // 500 = server bug, etc). Each code maps to a different root cause.
-app.get("/status-breakdown", async (c) => {
-  const { WINDOW } = rangeWindow(parseRange(c.req.query("range")));
-  const data = await withAe(c, async (accountId, token) => {
-    const sql = `
+// Shared with measureHealthBanner (the red-alert email reads the same rows
+// the page's banner does).
+async function statusBreakdownRows(
+  accountId: string,
+  token: string,
+  WINDOW: string,
+): Promise<Array<{ status: string; count: number }>> {
+  const sql = `
       SELECT blob3 AS status, count() AS n
       FROM hookka_erp_metrics
       WHERE blob1 = 'req'
@@ -751,15 +756,21 @@ app.get("/status-breakdown", async (c) => {
       GROUP BY status
       ORDER BY n DESC
     `;
-    const resp = await runAeSql(accountId, token, sql);
-    return (resp.data ?? []).map((r) => {
-      const row = r as Record<string, unknown>;
-      return {
-        status: String(row.status ?? ""),
-        count: Number(row.n) || 0,
-      };
-    });
+  const resp = await runAeSql(accountId, token, sql);
+  return (resp.data ?? []).map((r) => {
+    const row = r as Record<string, unknown>;
+    return {
+      status: String(row.status ?? ""),
+      count: Number(row.n) || 0,
+    };
   });
+}
+
+app.get("/status-breakdown", async (c) => {
+  const { WINDOW } = rangeWindow(parseRange(c.req.query("range")));
+  const data = await withAe(c, (accountId, token) =>
+    statusBreakdownRows(accountId, token, WINDOW),
+  );
   return c.json({ success: true, data: data ?? [] });
 });
 
@@ -1572,46 +1583,55 @@ app.get("/security-events", async (c) => {
 // Top FE error messages — aggregate by (route, msg). Operator sees
 // "TypeError: Cannot read 'x' of undefined" with hit count + a
 // representative stack head so they can pinpoint the bug.
+// Shared with measureHealthBanner.
+async function feErrorRows(
+  accountId: string,
+  token: string,
+  WINDOW: string,
+): Promise<Array<{ route: string; msg: string; stack: string; n: number }>> {
+  const sql = `
+    SELECT blob2 AS route,
+           blob3 AS msg,
+           blob4 AS stack,
+           count() AS n
+    FROM hookka_erp_metrics
+    WHERE blob1 = 'fe_error'
+      AND timestamp > NOW() - ${WINDOW}
+    GROUP BY route, msg, stack
+    ORDER BY n DESC
+    LIMIT 50
+  `;
+  const resp = await runAeSql(accountId, token, sql);
+  // Collapse rows with same (route, msg) but different stack into a
+  // single entry (keep first stack as representative). Without this
+  // collapse, the same bug logged from two minified bundles would
+  // show twice.
+  const grouped = new Map<
+    string,
+    { route: string; msg: string; stack: string; n: number }
+  >();
+  for (const r of resp.data ?? []) {
+    const row = r as Record<string, unknown>;
+    const route = String(row.route ?? "");
+    const msg = String(row.msg ?? "");
+    const stack = String(row.stack ?? "");
+    const n = Number(row.n) || 0;
+    const key = `${route}|${msg}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, { route, msg, stack, n: 0 });
+    }
+    const g = grouped.get(key)!;
+    g.n += n;
+    if (!g.stack && stack) g.stack = stack;
+  }
+  return [...grouped.values()].sort((a, b) => b.n - a.n).slice(0, 20);
+}
+
 app.get("/fe-errors", async (c) => {
   const { WINDOW } = rangeWindow(parseRange(c.req.query("range")));
-  const data = await withAe(c, async (accountId, token) => {
-    const sql = `
-      SELECT blob2 AS route,
-             blob3 AS msg,
-             blob4 AS stack,
-             count() AS n
-      FROM hookka_erp_metrics
-      WHERE blob1 = 'fe_error'
-        AND timestamp > NOW() - ${WINDOW}
-      GROUP BY route, msg, stack
-      ORDER BY n DESC
-      LIMIT 50
-    `;
-    const resp = await runAeSql(accountId, token, sql);
-    // Collapse rows with same (route, msg) but different stack into a
-    // single entry (keep first stack as representative). Without this
-    // collapse, the same bug logged from two minified bundles would
-    // show twice.
-    const grouped = new Map<
-      string,
-      { route: string; msg: string; stack: string; n: number }
-    >();
-    for (const r of resp.data ?? []) {
-      const row = r as Record<string, unknown>;
-      const route = String(row.route ?? "");
-      const msg = String(row.msg ?? "");
-      const stack = String(row.stack ?? "");
-      const n = Number(row.n) || 0;
-      const key = `${route}|${msg}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, { route, msg, stack, n: 0 });
-      }
-      const g = grouped.get(key)!;
-      g.n += n;
-      if (!g.stack && stack) g.stack = stack;
-    }
-    return [...grouped.values()].sort((a, b) => b.n - a.n).slice(0, 20);
-  });
+  const data = await withAe(c, (accountId, token) =>
+    feErrorRows(accountId, token, WINDOW),
+  );
   return c.json({ success: true, data: data ?? [] });
 });
 
@@ -2330,3 +2350,40 @@ app.post("/db-fix-superking-2038", async (c) => {
 
   return c.json({ success: true, data: { mode: apply ? "apply" : "dry-run", count: changes.length, changes } });
 });
+
+// ---------------------------------------------------------------------------
+// The System Health banner, measured on the server (cross-system review P4).
+// Same inputs as the page's banner over the page's default 24 h window, fed to
+// the same computeHealthStatus — the red-alert email (lib/health-alert.ts)
+// reads this. `live: false` when Analytics Engine is not wired or a query
+// failed: the page shows MOCK numbers then, and nobody is emailed about them.
+// ---------------------------------------------------------------------------
+export async function measureHealthBanner(env: unknown): Promise<
+  | { live: true; inputs: HealthInputs; status: ReturnType<typeof computeHealthStatus> }
+  | { live: false; reason: string }
+> {
+  const e = env as { ERP_METRICS?: unknown; CF_ACCOUNT_ID?: string; AE_QUERY_TOKEN?: string };
+  if (!e.ERP_METRICS || !e.CF_ACCOUNT_ID || !e.AE_QUERY_TOKEN) {
+    return { live: false, reason: "Analytics Engine is not configured" };
+  }
+  try {
+    const { WINDOW } = rangeWindow("24h");
+    const [kpis, statuses, feErrors] = await Promise.all([
+      liveKpis(e.CF_ACCOUNT_ID, e.AE_QUERY_TOKEN, "24h"),
+      statusBreakdownRows(e.CF_ACCOUNT_ID, e.AE_QUERY_TOKEN, WINDOW),
+      feErrorRows(e.CF_ACCOUNT_ID, e.AE_QUERY_TOKEN, WINDOW),
+    ]);
+    if (kpis._mock) return { live: false, reason: "metrics are mock" };
+    const inputs: HealthInputs = {
+      p50: kpis.p50,
+      p95: kpis.p95,
+      longTaskCount: kpis.longTaskCount,
+      cacheHitRatio: kpis.cacheHitRatio,
+      fiveXX: statuses.filter((s) => s.status.startsWith("5")).reduce((a, b) => a + b.count, 0),
+      feErrCount: feErrors.reduce((a, b) => a + b.n, 0),
+    };
+    return { live: true, inputs, status: computeHealthStatus(inputs) };
+  } catch (err) {
+    return { live: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}

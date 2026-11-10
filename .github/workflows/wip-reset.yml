@@ -11,8 +11,14 @@ name: WIP quantity reset
 # has to keep it true afterwards. By construction the result has no negatives.
 #
 # PLAN writes nothing. APPLY additionally requires typing the confirm phrase,
-# and uploads the pre-write snapshot of every row as an artifact — that snapshot
-# is the way back.
+# and stores the pre-write snapshot of every row in the database itself
+# (table `wip_reset_backups`, `--backup-to-db`) — that snapshot is the way back.
+#
+# NEVER upload production rows as an artifact here. THIS REPOSITORY IS PUBLIC:
+# workflow artifacts AND job logs are readable by anyone with a GitHub account
+# (cross-system review O7, Houzs#5516). The job log prints only totals
+# (`--limit 0`), never per-item quantities. tests/workflow-no-prod-artifacts
+# fails CI if an upload-artifact step comes back.
 #
 # Run the fix FIRST. Repairing balances while the cause is still live just
 # rebuilds the damage.
@@ -30,11 +36,6 @@ on:
         description: 'For apply only — type: RESET WIP QUANTITIES'
         required: false
         default: ''
-        type: string
-      limit:
-        description: 'How many changed rows to print'
-        required: false
-        default: '40'
         type: string
 
 concurrency:
@@ -65,7 +66,7 @@ jobs:
         if: inputs.mode == 'plan'
         env:
           HOOKKA_PROD_DB_URL: ${{ secrets.PROD_DATABASE_URL }}
-        run: node --import tsx/esm scripts/reset-wip-quantities.mjs --limit "${{ inputs.limit }}"
+        run: node --import tsx/esm scripts/reset-wip-quantities.mjs --limit 0
 
       - name: Apply
         if: inputs.mode == 'apply'
@@ -73,16 +74,10 @@ jobs:
           HOOKKA_PROD_DB_URL: ${{ secrets.PROD_DATABASE_URL }}
         run: |
           node --import tsx/esm scripts/reset-wip-quantities.mjs \
-            --limit "${{ inputs.limit }}" --apply --i-have-read-the-report
+            --limit 0 --apply --i-have-read-the-report --backup-to-db
 
-      # The script writes every prior value to scripts/_wip-reset-backup-*.json
-      # BEFORE its first UPDATE. On a runner that file dies with the job unless
-      # it is carried out — and without it the reset is not reversible.
-      - name: Keep the pre-write snapshot
-        if: inputs.mode == 'apply'
-        uses: actions/upload-artifact@v4
-        with:
-          name: wip-reset-backup
-          path: scripts/_wip-reset-backup-*.json
-          retention-days: 90
-          if-no-files-found: error
+      # The local scripts/_wip-reset-backup-*.json dies with the runner on
+      # purpose; the copy that matters is in wip_reset_backups (id in the log).
+      - name: Remove the local snapshot file
+        if: always()
+        run: rm -f scripts/_wip-reset-backup-*.json

@@ -149,6 +149,8 @@ export const SUPPLIER_CAPS: TextCaps = {
   agent: NAME_MAX,
   businessNature: NAME_MAX,
   email: NAME_MAX,
+  email2: NAME_MAX,
+  email3: NAME_MAX,
   website: NAME_MAX,
   phone: SHORT_MAX,
   phone2: SHORT_MAX,

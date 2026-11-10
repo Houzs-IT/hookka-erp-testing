@@ -101,6 +101,7 @@ export type ComposeDialogProps = {
 
 export type ComposePrefill = {
   to: string[];
+  cc?: string[];
   subject: string;
   body: string;
   attachments?: ComposeAttachment[];
@@ -188,9 +189,10 @@ export function ComposeDialog({
       const draftBcc = parseAddressList(initialDraft?.bcc ?? "");
       const seed = initialDraft ? null : prefill;
       setTo(seed ? seed.to : parseAddressList(initialDraft?.to ?? ""));
-      setCc(draftCc);
+      const seedCc = seed ? seed.cc ?? [] : draftCc;
+      setCc(seedCc);
       setBcc(draftBcc);
-      setShowCc(draftCc.length > 0);
+      setShowCc(seedCc.length > 0);
       setShowBcc(draftBcc.length > 0);
       setSubject(seed ? seed.subject : initialDraft?.subject ?? "");
       setBody(seed ? seed.body : initialDraft?.body ?? "");

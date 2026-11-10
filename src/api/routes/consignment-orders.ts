@@ -76,7 +76,7 @@ import { resolveSpecialOrderPriceSen } from "../../lib/special-order-surcharge";
 import { resolveTotalHeightPriceSen } from "../../lib/total-height-surcharge";
 import { loadHeightsConfig, loadSpecialsConfig } from "../lib/specials-config";
 import { calculateUnitPrice, calculateLineTotalWithDiscount } from "../../lib/pricing";
-import { todayYmdMY } from "../../lib/utils";
+import { todayYmdMY, mytWallClock } from "../../lib/utils";
 import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
@@ -1433,7 +1433,7 @@ app.post("/:id/override-edit-lock", async (c) => {
   const earliestDue = earliestDueRes?.dueDate?.slice(0, 10) ?? "";
   let productionWindowActive = false;
   if (earliestDue.length === 10) {
-    const cutoff = new Date();
+    const cutoff = mytWallClock(); // Malaysia day + 2 (P2)
     cutoff.setUTCDate(cutoff.getUTCDate() + 2);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     if (earliestDue <= cutoffStr) productionWindowActive = true;

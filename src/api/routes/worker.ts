@@ -80,7 +80,7 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 // One shared completion core with the desktop QC page — see the QC-on-the-
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
-import { todayYmdMY } from "../../lib/utils";
+import { todayYmdMY, mytWallClock } from "../../lib/utils";
 
 const app = new Hono<Env>();
 
@@ -1512,7 +1512,8 @@ app.get("/history", async (c) => {
   const hoursPerDay =
     (auth.worker as { workingHoursPerDay?: number }).workingHoursPerDay ?? 9;
 
-  const today = new Date();
+  // Malaysia day — the Worker's clock is UTC (P2, check-clock-dates).
+  const today = mytWallClock();
   const defaultTo = today.toISOString().slice(0, 10);
   const thirtyAgo = new Date(today.getTime() - 30 * 86400000);
   const defaultFrom = thirtyAgo.toISOString().slice(0, 10);
@@ -3593,7 +3594,8 @@ app.get("/team-stats", async (c) => {
   const { worker } = auth;
 
   // Date defaults: last 7 days inclusive.
-  const today = new Date();
+  // Malaysia day — the Worker's clock is UTC (P2, check-clock-dates).
+  const today = mytWallClock();
   const defaultTo = today.toISOString().slice(0, 10);
   const sixDaysAgo = new Date(today.getTime() - 6 * 86400000);
   const defaultFrom = sixDaysAgo.toISOString().slice(0, 10);
@@ -3899,7 +3901,8 @@ app.get("/department-performance", async (c) => {
   const { worker } = auth;
 
   // Date defaults: last 7 days inclusive.
-  const today = new Date();
+  // Malaysia day — the Worker's clock is UTC (P2, check-clock-dates).
+  const today = mytWallClock();
   const defaultTo = today.toISOString().slice(0, 10);
   const sixDaysAgo = new Date(today.getTime() - 6 * 86400000);
   const defaultFrom = sixDaysAgo.toISOString().slice(0, 10);

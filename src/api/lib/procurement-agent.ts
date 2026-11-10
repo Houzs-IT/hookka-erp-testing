@@ -24,6 +24,7 @@
 // Readiness — is the Procurement Agent allowed to answer with confidence?
 // ---------------------------------------------------------------------------
 
+import { todayYmdMY } from "../../lib/utils";
 export interface ProcurementReadiness {
   ready: boolean;
   /** Human-readable list of the data gaps blocking full activation. */
@@ -351,13 +352,10 @@ type OpenPoLineRow = {
   poNo?: string | null;
 };
 
-/** Local YYYY-MM-DD (never toISOString — that shifts by timezone). */
+/** Today in Malaysia, YYYY-MM-DD. The local getters read the Worker's clock,
+ *  which is UTC — yesterday before 08:00 MYT (P2, check-clock-dates). */
 function todayLocalIso(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
+  return todayYmdMY();
 }
 
 /**

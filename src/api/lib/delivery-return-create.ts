@@ -13,6 +13,7 @@
 // migrations-postgres/0207_delivery_returns.sql for the record copy).
 // ---------------------------------------------------------------------------
 
+import { mytYymm } from "../../lib/doc-number";
 export type DRCreateItem = {
   /** The source delivery_order_items.id (picker only; not stored). */
   doItemId?: string;
@@ -121,10 +122,8 @@ function genItemId(): string {
 
 // DR-YYMM-NNN, sequential within the current year-month.
 export async function nextReturnNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear()).slice(2);
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const prefix = `DR-${yy}${mm}-`;
+  // The Malaysia month, like every other document number (#1247, P2).
+  const prefix = `DR-${mytYymm()}-`;
   const row = await db
     .prepare(
       `SELECT return_no AS "returnNo" FROM delivery_returns

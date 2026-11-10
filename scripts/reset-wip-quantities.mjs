@@ -31,6 +31,13 @@
 // The reset is reversible in the sense that matters: it prints the full before/
 // after and writes a JSON snapshot of every prior value to
 // scripts/_wip-reset-backup-<timestamp>.json BEFORE the first UPDATE.
+//
+// --backup-to-db (what the GitHub workflow uses) ALSO stores that snapshot in
+// the database itself, table `wip_reset_backups`, before the first UPDATE. The
+// repository is PUBLIC, so workflow artifacts are downloadable by anyone; the
+// workflow must never carry production rows out as an artifact (cross-system
+// review O7, Houzs#5516). The snapshot stays where the data already lives.
+// Restore: SELECT rows FROM wip_reset_backups WHERE id = <id printed below>.
 // ---------------------------------------------------------------------------
 import { writeFileSync } from "node:fs";
 import postgres from "postgres";
@@ -41,6 +48,7 @@ const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
 const APPLY = has("--apply");
 const CONFIRMED = has("--i-have-read-the-report");
+const BACKUP_TO_DB = has("--backup-to-db");
 const limitIdx = argv.indexOf("--limit");
 const LIMIT = limitIdx >= 0 ? Number(argv[limitIdx + 1] || 25) : 25;
 
@@ -105,15 +113,27 @@ try {
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backup = `scripts/_wip-reset-backup-${stamp}.json`;
-  writeFileSync(
-    backup,
-    JSON.stringify(
-      stored.map((r) => ({ id: r.id, code: r.code, stockQty: Number(r.stockQty ?? 0) })),
-      null,
-      2,
-    ),
-  );
+  const snapshot = stored.map((r) => ({
+    id: r.id,
+    code: r.code,
+    stockQty: Number(r.stockQty ?? 0),
+  }));
+  writeFileSync(backup, JSON.stringify(snapshot, null, 2));
   console.log(`\nBackup of every prior value → ${backup}`);
+
+  if (BACKUP_TO_DB) {
+    // Lands BEFORE the first UPDATE; if it fails, nothing is written.
+    await sql`CREATE TABLE IF NOT EXISTS wip_reset_backups (
+                id BIGSERIAL PRIMARY KEY,
+                taken_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                row_count INTEGER NOT NULL,
+                rows JSONB NOT NULL
+              )`;
+    const [saved] = await sql`INSERT INTO wip_reset_backups (row_count, rows)
+                              VALUES (${snapshot.length}, ${sql.json(snapshot)})
+                              RETURNING id`;
+    console.log(`Backup also stored in the database → wip_reset_backups.id = ${saved.id}`);
+  }
 
   // One statement per row, keyed by id. `status` is deliberately untouched:
   // this reset is about QUANTITY only (owner 2026-08-08 — "先看数量").

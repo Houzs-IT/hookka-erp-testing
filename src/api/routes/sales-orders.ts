@@ -129,7 +129,7 @@ import type {
   SOListDueLike,
   SOCascadeResult,
 } from "./sales-orders/_helpers";
-import { todayYmdMY } from "../../lib/utils";
+import { todayYmdMY, mytWallClock } from "../../lib/utils";
 import { editConflictMessage } from "../lib/edit-conflict";
 
 // Re-export the helpers that external modules / tests import from this route
@@ -1686,7 +1686,7 @@ app.post("/:id/override-edit-lock", async (c) => {
   const earliestDue = earliestDueRes?.dueDate?.slice(0, 10) ?? "";
   let productionWindowActive = false;
   if (earliestDue.length === 10) {
-    const cutoff = new Date();
+    const cutoff = mytWallClock(); // Malaysia day + 2 (P2)
     cutoff.setUTCDate(cutoff.getUTCDate() + 2);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     if (earliestDue <= cutoffStr) productionWindowActive = true;

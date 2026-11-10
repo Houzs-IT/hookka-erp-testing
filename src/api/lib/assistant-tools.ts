@@ -1799,9 +1799,9 @@ const getCustomer360: ToolDefinition = {
 
     if (!cust) return { error: "Customer not found" };
 
-    const today = new Date();
+    const today = mytWallClock(); // Malaysia day (P2)
     const yearAgo = new Date(today);
-    yearAgo.setFullYear(today.getFullYear() - 1);
+    yearAgo.setUTCFullYear(today.getUTCFullYear() - 1);
     const yearAgoStr = yearAgo.toISOString().slice(0, 10);
     const todayStr = today.toISOString().slice(0, 10);
 
@@ -1990,8 +1990,8 @@ const getProduct360: ToolDefinition = {
       }>();
     if (!p) return { error: `Product not found: ${code}` };
 
-    const sixAgo = new Date();
-    sixAgo.setMonth(sixAgo.getMonth() - 6);
+    const sixAgo = mytWallClock(); // Malaysia day (P2)
+    sixAgo.setUTCMonth(sixAgo.getUTCMonth() - 6);
     const sixAgoStr = sixAgo.toISOString().slice(0, 10);
 
     const [bomTpl, wip, fg, vol, topCust] = await Promise.all([
@@ -2198,15 +2198,11 @@ export function generateLookupPatterns(raw: string, currentYYMM: string): string
 }
 
 /**
- * Current YYMM string for the lookup-pattern generator. Uses UTC; close
- * enough for ERP search heuristics (the model can always retry with an
- * explicit year-month hint).
+ * Current YYMM string for the lookup-pattern generator — the Malaysia month,
+ * the same one document numbers carry (mytYymm, #1247 / P2).
  */
 function currentYYMM(): string {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear() % 100).padStart(2, "0");
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  return `${yy}${mm}`;
+  return mytYymm();
 }
 
 const smart_lookup: ToolDefinition = {
@@ -4223,7 +4219,7 @@ const findEmployee: ToolDefinition = {
     if (!q) return { error: "query is required" };
 
     // Default period = last 7 days (covers "last week" with zero questions).
-    const now = new Date();
+    const now = mytWallClock(); // Malaysia day (P2)
     const todayStr = now.toISOString().slice(0, 10);
     const weekAgoStr = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
     const from = ymdOrNull(args.periodFrom) ?? weekAgoStr;
@@ -4331,8 +4327,8 @@ const getDashboardKpis: ToolDefinition = {
   },
   execute: async (c, args) => {
     const orgId = getOrgId(c);
-    const now = new Date();
-    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const now = mytWallClock(); // Malaysia day (P2)
+    const monthStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
     const todayStr = now.toISOString().slice(0, 10);
     const dateFrom = ymdOrNull(args.dateFrom) ?? monthStart;
     const dateTo = ymdOrNull(args.dateTo) ?? todayStr;
@@ -5402,7 +5398,8 @@ import {
   getReportTemplate,
   listReportTemplates,
 } from "./assistant-skills";
-import { todayYmdMY } from "../../lib/utils";
+import { todayYmdMY, mytWallClock } from "../../lib/utils";
+import { mytYymm } from "../../lib/doc-number";
 
 function asRowArray(v: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(v)) return [];

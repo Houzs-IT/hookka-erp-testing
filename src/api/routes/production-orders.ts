@@ -105,7 +105,7 @@ import type {
   PiecePicRow,
   ProductionOrderRow,
 } from "./production-orders/_helpers";
-import { todayYmdMY } from "../../lib/utils";
+import { todayYmdMY, mytWallClock } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -463,7 +463,7 @@ app.get("/tracker-summary", async (c) => {
   const db = c.var.DB;
   const today = todayYmdMY();
   // Throughput window: 14 days back, inclusive of today.
-  const since = new Date(Date.now() - 13 * 86400000).toISOString().slice(0, 10);
+  const since = new Date(mytWallClock().getTime() - 13 * 86400000).toISOString().slice(0, 10);
 
   const [statusRows, overdueRow, deptRows, throughputRows] = await Promise.all([
     db

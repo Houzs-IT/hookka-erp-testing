@@ -17,6 +17,7 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { formatTimestampMY } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { computeHealthStatus } from "@/lib/health-status";
 import {
   Activity,
   AlertTriangle,
@@ -707,33 +708,17 @@ export default function AdminHealthPage() {
     detail: string;
   }>(() => {
     if (!kpis) return { tone: "loading", label: "Loading…", detail: "" };
-    const issues: string[] = [];
-    if (kpis.p95 >= 1500) issues.push(`P95 latency ${kpis.p95}ms`);
-    if (kpis.longTaskCount > 500) issues.push(`${kpis.longTaskCount} long tasks`);
-    const fiveXX = statusBreakdown
-      .filter((s) => s.status.startsWith("5"))
-      .reduce((a, b) => a + b.count, 0);
-    if (fiveXX > 0) issues.push(`${fiveXX} server errors`);
-    const feErrCount = feErrors.reduce((a, b) => a + b.n, 0);
-    if (feErrCount > 10) issues.push(`${feErrCount} FE errors`);
-    if (issues.length === 0) {
-      return {
-        tone: "green",
-        label: "All systems normal",
-        detail: `P50 ${kpis.p50}ms · P95 ${kpis.p95}ms · Cache ${Math.round(kpis.cacheHitRatio * 100)}% · No 5xx`,
-      };
-    }
-    // Critical thresholds — any of these alone is enough to escalate.
-    const critical =
-      kpis.p95 >= 2000 ||
-      fiveXX > 10 ||
-      feErrCount > 50 ||
-      issues.length >= 3;
-    return {
-      tone: critical ? "red" : "amber",
-      label: critical ? "Critical — investigate now" : "Investigate",
-      detail: issues.join(" · "),
-    };
+    // Same verdict the red-alert email uses (src/lib/health-status.ts, P4).
+    return computeHealthStatus({
+      p50: kpis.p50,
+      p95: kpis.p95,
+      longTaskCount: kpis.longTaskCount,
+      cacheHitRatio: kpis.cacheHitRatio,
+      fiveXX: statusBreakdown
+        .filter((s) => s.status.startsWith("5"))
+        .reduce((a, b) => a + b.count, 0),
+      feErrCount: feErrors.reduce((a, b) => a + b.n, 0),
+    });
   }, [kpis, statusBreakdown, feErrors]);
 
   return (
