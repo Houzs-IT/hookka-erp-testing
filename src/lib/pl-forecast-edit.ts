@@ -33,3 +33,17 @@ export function plEditKey(row: Pick<PnlMatrixRow, "fcKey">, g: FcLineGroups): st
 export function deptsPostingTo(code: string, g: FcLineGroups, deptAccount: (dept: string) => string | null): FcAccount[] {
   return [...g.labour, ...g.labourOvhDepts, ...g.labourExpDepts].filter((d) => deptAccount(d.name) === code);
 }
+
+/** A past month's Forecast column (owner 2026-11-10 「我也要一个按钮和cash flow
+ *  一样，hide 已经过了的month」): what Hide past months takes away. Its Actual,
+ *  the Accumulated columns, this month and the months ahead stay — as on
+ *  Cash Flow (pastForecastCol). */
+export function plPastForecastCol(c: { forecast?: boolean; accum: boolean; ym?: string }, curYm: string): boolean {
+  return !!c.forecast && !c.accum && !!c.ym && c.ym < curYm;
+}
+
+/** A row with no figure in any column: what Hide unused takes away (owner
+ *  2026-11-10 「点开全部和收起没用到的」). */
+export function plRowUnused(row: { values: readonly number[] }): boolean {
+  return row.values.every((v) => !v);
+}

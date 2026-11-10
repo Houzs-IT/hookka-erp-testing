@@ -21,6 +21,7 @@ import { nextCell, caretEdges, type CellPos } from "@/lib/grid-keys";
 import { forecastSnapshot } from "@/lib/forecast-snapshot";
 import {
   cellKeyed,
+  customersKeyed,
   newSheetMonth,
   partySen,
   sheetFromSaved,
@@ -267,7 +268,9 @@ export default function ForecastPage() {
     [customerMaster, months],
   );
   const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
-  const customerKeyed = (ym: string) => Object.values(months[ym]?.customers ?? {}).some((v) => (v ?? "").trim() !== "");
+  // Only a customer figure above 0 locks Sales to their total (owner
+  // 2026-11-10 「我这里无法直接填total?」; customersKeyed, forecast-sheet.ts).
+  const customerKeyed = (ym: string) => customersKeyed(months[ym]);
   const customerRowHasData = (id: string) => yms.some((ym) => (months[ym]?.customers?.[id] ?? "").trim() !== "");
   // Suppliers under each material (owner 2026-11-10 「让他在每个categories 出现
   // 相关的supplier, 我从那边填」): the active suppliers that sold us that

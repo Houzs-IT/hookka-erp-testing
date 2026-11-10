@@ -202,3 +202,10 @@ export function newSheetMonth(months: Record<string, SheetMonth>, ym: string): S
   const inherited = prevYm ? { ...months[prevYm].pct } : {};
   return { salesStr: "", pct: inherited, customers: {}, suppliers: {} };
 }
+
+/** Whether a month's Sales is its customers' total: only a customer figure
+ *  above 0 counts (owner 2026-11-10 「我这里无法直接填total?」 — a box left at
+ *  0 had kept Sales locked while the figure came from the Sales box). Empty,
+ *  0 and unreadable boxes are no customer figure, so Sales is typed again;
+ *  an unreadable one is still refused on Save (sheetMoneyFields). */
+export const customersKeyed = (m: SheetMonth | undefined): boolean => Object.keys(partySen(m?.customers)).length > 0;

@@ -47,8 +47,9 @@ test("the page: a Forecast switch for Overall, off on every load; a month over i
   const tab = slice(ui, "function MonthlyPlTab(", "\nfunction ");
   assert.match(tab, /const \[forecast, setForecast\] = useState\(false\);/);
   assert.match(tab, /const fcOn = forecast && line === "all";/);
-  assert.match(tab, /\{line === "all" && <ForecastToggle on=\{forecast\} onToggle=\{\(\) => setForecast\(\(v\) => !v\)\} \/>\}/);
-  assert.match(tab, /plMonthHeads\(cols\)\.map/);
+  // Since 2026-11-10 switching Forecast also shows every month again (Hide past months, tests/monthly-pl-edit-tools.test.mjs).
+  assert.match(tab, /\{line === "all" && <ForecastToggle on=\{forecast\} onToggle=\{\(\) => \{ setForecast\(\(v\) => !v\); setHidePast\(false\); \}\} \/>\}/);
+  assert.match(tab, /plMonthHeads\(visCols\)\.map/, "the columns on screen (Hide past months, 2026-11-10)");
   assert.match(tab, /\{c\.forecast \? "Forecast" : "Actual"\}/);
   assert.match(tab, /\$\{c\.forecast \? " fc fp" : ""\}/, "the Forecast P&L's colour, lavender as on Cash Flow (2026-11-09: no red)");
   assert.match(tab, /Forecast \(purple\)<\/span>/);
