@@ -54,7 +54,17 @@ export async function buildRmRenameStatements(
   return {
     carried: true,
     statements: [
-      db.prepare("UPDATE supplier_material_bindings SET materialCode = ? WHERE UPPER(TRIM(materialCode)) = ?").bind(newCode.trim(), from),
+      // O4: a supplier already bound to the new code keeps that binding (the
+      // unique supplier+material index would refuse the whole rename batch).
+      db
+        .prepare(
+          `UPDATE supplier_material_bindings SET materialCode = ?
+            WHERE UPPER(TRIM(materialCode)) = ?
+              AND supplierId NOT IN (
+                SELECT supplierId FROM supplier_material_bindings WHERE UPPER(TRIM(materialCode)) = ?
+              )`,
+        )
+        .bind(newCode.trim(), from, to),
       db.prepare("UPDATE component_bom_lines SET child_code = ? WHERE UPPER(TRIM(child_code)) = ?").bind(newCode.trim(), from),
       db.prepare("UPDATE price_histories SET material_code = ? WHERE UPPER(TRIM(material_code)) = ?").bind(newCode.trim(), from),
     ],

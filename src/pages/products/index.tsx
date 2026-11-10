@@ -16,6 +16,7 @@ import { DEFAULT_EXTRA_WIP_TYPES, BUILT_IN_WIP_TYPES, wipTypeCode, wipTypeAllowe
 import { BOM_PRODUCT_TYPES, VARIANT_FIELDS, DEFAULT_VARIANT_FIELDS } from "@/lib/bom-variant-fields";
 import { MasterPriceHistoryDialog } from "./MasterPriceHistoryDialog";
 import { BatchImportDialog, type ImportColumn } from "@/components/ui/batch-import-dialog";
+import { PRODUCT_IMPORT_COLUMNS } from "@/lib/import-schemas";
 import { exportImportRows } from "@/components/ui/batch-import-dialog";
 import {
   EffectiveDateConfirmModal,
@@ -2953,21 +2954,7 @@ export default function ProductsPage() {
   // new/update/renamed, before/after diff, blank-never-overwrites, no-op
   // rows dropped. Replaces the old per-row-PUT CSV import, which had no
   // cap/preview/transaction and could look "stuck" for a large catalogue.
-  const productImportColumns: ImportColumn[] = [
-    { key: "id", label: "ID", hidden: true },
-    { key: "code", label: "Product Code", required: true, example: "2050(A)-(K)" },
-    { key: "name", label: "Product Name", required: true, example: "ROMA BEDFRAME (6FT)" },
-    { key: "category", label: "Category", required: true, enum: ["BEDFRAME", "SOFA", "ACCESSORY"], example: "BEDFRAME" },
-    { key: "description", label: "Description", example: "" },
-    { key: "baseModel", label: "Base Model", example: "2050(A)" },
-    { key: "sizeCode", label: "Size Code", example: "K", help: "K / Q / S / SS / SK / SP" },
-    { key: "sizeLabel", label: "Size Label", example: "6FT" },
-    { key: "fabricUsage", label: "Fabric Usage (m)", type: "number", example: 8 },
-    { key: "unitM3", label: "Unit m³", type: "number", example: 0 },
-    { key: "status", label: "Status", enum: ["ACTIVE", "INACTIVE"], example: "ACTIVE" },
-    { key: "costPriceSen", label: "Cost Price (RM)", type: "money", example: 1500 },
-    { key: "basePriceSen", label: "Base Price (RM)", type: "money", example: 2500 },
-  ];
+  const productImportColumns: ImportColumn[] = PRODUCT_IMPORT_COLUMNS;
 
   async function handleProductBulkImport(rows: Record<string, unknown>[]) {
     const res = await fetch("/api/products/bulk-import", {

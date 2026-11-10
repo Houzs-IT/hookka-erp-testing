@@ -141,10 +141,11 @@ test('Inventory Batch Import RM calls the existing raw-materials endpoint', () =
 });
 
 test('a blank optional cell in BatchImportDialog is omitted, not coerced to 0/""', () => {
-  const src = readFileSync('src/components/ui/batch-import-dialog.tsx', 'utf8');
+  // The cell rules moved to the shared table-import parser (O6).
+  const src = readFileSync('src/lib/table-import.ts', 'utf8');
   assert.match(
     src,
-    /values\[col\.key\] = undefined;/,
+    /if \(!str\) return \{ value: undefined \};/,
     'R5: empty optional number must become undefined (omitted from JSON), not 0',
   );
 });
@@ -209,7 +210,7 @@ test('raw-materials.ts bulk-import matches by id and updates itemCode on rename'
 test('BatchImportDialog resolves the matched record onto the row for diff display', () => {
   const src = readFileSync('src/components/ui/batch-import-dialog.tsx', 'utf8');
   assert.match(src, /existing\?: ImportRow;/, 'ParsedRow must carry the matched record');
-  assert.match(src, /return \{ idx: i \+ 2, values, errors, keyValue, category, unchanged, existing \};/);
+  assert.match(src, /return \{ idx, values, errors, keyValue, category, unchanged, existing \};/);
 });
 
 test('renderCell shows old → new only for fields that actually changed', () => {
@@ -227,7 +228,8 @@ test('renderCell shows old → new only for fields that actually changed', () =>
 
 test('a hidden ImportColumn is excluded from the legend and preview table, but still exported/parsed', () => {
   const dialogSrc = readFileSync('src/components/ui/batch-import-dialog.tsx', 'utf8');
-  assert.match(dialogSrc, /hidden\?: boolean;/, 'ImportColumn must support a hidden flag');
+  // ImportColumn lives in the shared table-import parser (O6).
+  assert.match(readFileSync('src/lib/table-import.ts', 'utf8'), /hidden\?: boolean;/, 'ImportColumn must support a hidden flag');
   assert.match(
     dialogSrc,
     /columns\.filter\(\(c\) => !c\.hidden\)\.map\(\(c\) =>/g,
@@ -243,9 +245,13 @@ test('a hidden ImportColumn is excluded from the legend and preview table, but s
 });
 
 test('the id column on FG/RM import is marked hidden, not shown as a regular field', () => {
-  const src = readFileSync('src/pages/inventory/index.tsx', 'utf8');
+  // The schemas moved to src/lib/import-schemas.ts (O6); the page takes them from there.
+  const src = readFileSync('src/lib/import-schemas.ts', 'utf8');
   const idCols = src.match(/\{ key: "id", label: "ID", hidden: true \}/g) ?? [];
-  assert.equal(idCols.length, 2, 'both fgImportColumns and rmImportColumns must hide their id column');
+  assert.equal(idCols.length, 3, 'products, fgImportColumns and rmImportColumns must all hide their id column');
+  const page = readFileSync('src/pages/inventory/index.tsx', 'utf8');
+  assert.match(page, /const fgImportColumns: ImportColumn\[\] = FG_IMPORT_COLUMNS;/);
+  assert.match(page, /const rmImportColumns: ImportColumn\[\] = RM_IMPORT_COLUMNS;/);
 });
 
 // --- Products page migrated onto the shared BatchImportDialog ------------
@@ -267,6 +273,7 @@ test('Products page bulk import posts to the real endpoint and refreshes state',
 });
 
 test('Products page id column is hidden, like Inventory', () => {
-  const src = readFileSync('src/pages/products/index.tsx', 'utf8');
-  assert.match(src, /\{ key: "id", label: "ID", hidden: true \}/);
+  const src = readFileSync('src/lib/import-schemas.ts', 'utf8');
+  assert.match(src, /PRODUCT_IMPORT_COLUMNS: ImportColumn\[\] = \[\n  \{ key: "id", label: "ID", hidden: true \}/);
+  assert.match(readFileSync('src/pages/products/index.tsx', 'utf8'), /const productImportColumns: ImportColumn\[\] = PRODUCT_IMPORT_COLUMNS;/);
 });

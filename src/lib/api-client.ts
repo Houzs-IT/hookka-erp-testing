@@ -29,6 +29,8 @@
 import { clearAuth } from "./auth";
 import { readCsrfCookie, CSRF_HEADER_NAME } from "./csrf";
 import { reportApiCall } from "./fe-rum";
+import { invalidateCachePrefix } from "./cached-fetch";
+import { uploadInvalidationPrefixes } from "./upload-cache-invalidation";
 
 const originalFetch = window.fetch.bind(window);
 
@@ -180,6 +182,20 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     clearAuth();
     const intended = window.location.pathname + window.location.search;
     window.location.href = `/login?next=${encodeURIComponent(intended)}`;
+  }
+
+  // ---- uploads clear the read cache (O5) ----------------------------------
+  // A successful upload / file-store write drops the cached reads it changed,
+  // so the new file shows at once instead of after the cache ages out. A
+  // failed one changes nothing on the server and leaves the cache alone.
+  if (isApiRequest(url) && response.ok) {
+    for (const prefix of uploadInvalidationPrefixes(methodOf(input, init), pathOf(url), init?.body)) {
+      try {
+        invalidateCachePrefix(prefix);
+      } catch {
+        // The cache is an optimisation; never fail the caller's request over it.
+      }
+    }
   }
 
   // ---- capped lists ------------------------------------------------------

@@ -30,7 +30,9 @@ import { humanizeError } from "./humanize-error";
 // orphan automatically — no manual localStorage clear, no version
 // bump, no stale data after a backend reset.
 declare const __BUILD_ID__: string;
-const NAMESPACE = `hookka-cache:${__BUILD_ID__}:`;
+// `typeof` guard: node tests import api-client.ts (which imports this module
+// for the upload invalidation, O5) without Vite's define.
+const NAMESPACE = `hookka-cache:${typeof __BUILD_ID__ === "undefined" ? "dev" : __BUILD_ID__}:`;
 
 // One-shot cleanup: when this module loads (i.e. once per browser
 // session, on the first import), sweep localStorage for any

@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { csrfHeaders } from "@/lib/csrf";
 import { DEPARTMENTS } from "./utils";
 import { useUrlState, useUrlStateBool } from "@/lib/use-url-state";
+import { findHeaderIndex } from "@/lib/table-import";
 import type * as XlsxNs from "xlsx";
 type XLSXModule = typeof XlsxNs;
 
@@ -525,13 +526,9 @@ export default function WipTimesPage() {
       const headers = headerRow.map((h) =>
         typeof h === "string" ? h.trim().toLowerCase() : "",
       );
-      const findCol = (...names: string[]): number => {
-        for (const n of names) {
-          const i = headers.indexOf(n.toLowerCase());
-          if (i >= 0) return i;
-        }
-        return -1;
-      };
+      // The shared table-import header rule (O6): case, spaces, `_` and a
+      // trailing "*" never decide whether a column is found.
+      const findCol = (...names: string[]): number => findHeaderIndex(headerRow, ...names);
       const colWip = findCol("WIP");
       const colDept = findCol("Department");
       const colMinutes = findCol("BOM Avg Minutes", "BOM Minutes", "Minutes");
