@@ -15,6 +15,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
 import { todayYmdMY } from "../../lib/utils";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -395,8 +396,9 @@ app.post("/", async (c) => {
     }
 
     const now = new Date();
-    const yy = String(now.getFullYear()).slice(-2);
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const yymmMy = mytYymm(now);
+    const yy = yymmMy.slice(0, 2);
+    const mm = yymmMy.slice(2);
     const countRes = await c.var.DB.prepare(
       "SELECT COUNT(*) as n FROM rd_projects",
     ).first<{ n: number }>();

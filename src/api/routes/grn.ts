@@ -39,6 +39,7 @@ import {
 } from "../../lib/purchase-edit-rules";
 import { PO_ITEMS_ORDER, ensurePoItemLineNo } from "./purchase-orders";
 import { todayYmdMY } from "../../lib/utils";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -449,8 +450,7 @@ function genBatchId(grnId: string, lineIdx: number): string {
 // prefix and increments. Falls back to 001. Matches the in-memory
 // "GRN-YYMM-NNN" format.
 export async function generateGrnNumber(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `GRN-${yymm}-`;
   const res = await db
     .prepare(

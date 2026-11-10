@@ -18,6 +18,7 @@ import {
   serializeRepairScope,
   canonicalizeComponentPicks,
 } from "../../../lib/repair-scope";
+import { mytYymm } from "../../../lib/doc-number";
 
 export type SalesOrderRow = {
   id: string;
@@ -669,8 +670,7 @@ export async function generateCompanySOId(
   if (m) {
     yymm = `${m[1].slice(2)}${m[2]}`;
   } else {
-    const now = new Date();
-    yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    yymm = mytYymm();
   }
   const prefix = isServiceOrder ? `SV-${yymm}-` : `SO-${yymm}-`;
   // MAX+1 read-then-write. Two concurrent creates both read the same maximum

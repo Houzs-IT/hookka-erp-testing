@@ -24,6 +24,7 @@ import { createPurchaseOrderMirror } from "../lib/intercompany-mirror-create";
 import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
 import { editConflictMessage } from "../lib/edit-conflict";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -246,8 +247,7 @@ function genItemId(): string {
 // Compute the next-suffix poNo for the current YYMM prefix. Pure scan-and-
 // increment — concurrency safety lives in the retry wrapper below.
 async function nextPoNoCandidate(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `PO-${yymm}-`;
   const res = await db
     .prepare(

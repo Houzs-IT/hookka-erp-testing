@@ -77,6 +77,7 @@ import { resolveTotalHeightPriceSen } from "../../lib/total-height-surcharge";
 import { loadHeightsConfig, loadSpecialsConfig } from "../lib/specials-config";
 import { calculateUnitPrice, calculateLineTotalWithDiscount } from "../../lib/pricing";
 import { todayYmdMY } from "../../lib/utils";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -372,8 +373,9 @@ async function nextCompanyCOId(db: D1Database, now: Date): Promise<string> {
   // is a worse outcome than a tenant learning how many COs exist this month,
   // and this query returns no customer, money, or content. Revisit only
   // alongside a per-org number series.
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yymmMy = mytYymm(now);
+  const yy = yymmMy.slice(0, 2);
+  const mm = yymmMy.slice(2);
   const prefix = `CO-${yy}${mm}-`;
   const res = await db
     .prepare(

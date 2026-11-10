@@ -46,6 +46,7 @@ import {
   type ValidatedLine,
 } from "../../lib/service-order-modes";
 import { capList } from "../lib/list-cap";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -269,8 +270,9 @@ async function nextServiceOrderNo(
   db: D1Database,
   now: Date,
 ): Promise<string> {
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yymmMy = mytYymm(now);
+  const yy = yymmMy.slice(0, 2);
+  const mm = yymmMy.slice(2);
   const prefix = `SVC-${yy}${mm}`;
   const res = await db
     .prepare(

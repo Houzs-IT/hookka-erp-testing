@@ -39,6 +39,7 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { capList } from "../lib/list-cap";
+import { mytYymm } from "../../lib/doc-number";
 
 const app = new Hono<Env>();
 
@@ -107,10 +108,7 @@ function genId(): string {
 // ADJ-YYMM-NNN sequential, human-readable adjustment number. Added
 // 2026-04-28 — older rows have NULL adjNo until backfilled.
 async function nextAdjNo(db: D1Database): Promise<string> {
-  const now = new Date();
-  const yymm = `${String(now.getFullYear()).slice(2)}${String(
-    now.getMonth() + 1,
-  ).padStart(2, "0")}`;
+  const yymm = mytYymm();
   const prefix = `ADJ-${yymm}-`;
   const res = await db
     .prepare(

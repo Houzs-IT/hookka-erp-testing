@@ -17,6 +17,7 @@ import {
   SYSTEM_ACTOR,
 } from "./fg-stock-events";
 import { memoizeSelfApply, runSelfApply } from "./self-apply";
+import { mytYymm } from "../../lib/doc-number";
 
 // ---------------------------------------------------------------------------
 // Shared row types + mappers for the consignment_notes / consignment_items
@@ -164,8 +165,9 @@ export async function nextConsignmentNoteNumber(
   db: D1Database,
   now: Date,
 ): Promise<string> {
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yymmMy = mytYymm(now);
+  const yy = yymmMy.slice(0, 2);
+  const mm = yymmMy.slice(2);
   const prefix = `CGN-${yy}${mm}-`;
   const res = await db
     .prepare(

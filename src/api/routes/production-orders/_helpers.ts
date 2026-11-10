@@ -97,6 +97,7 @@ import {
   wipTerminalCards,
 } from "../../lib/wip-expected";
 import { todayYmdMY } from "../../../lib/utils";
+import { mytYymm } from "../../../lib/doc-number";
 
 // Self-applying migrations for the production-orders / job-cards space.
 // Mirrors the pattern in src/api/routes/sales-orders.ts:1492 — each ALTER
@@ -2514,8 +2515,9 @@ export async function ensurePiecePicsForJc(
 // Month-based SOH counter.
 export async function nextSOHNumber(db: D1Database): Promise<string> {
   const now = new Date();
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yymmMy = mytYymm(now);
+  const yy = yymmMy.slice(0, 2);
+  const mm = yymmMy.slice(2);
   const prefix = `SOH-${yy}${mm}-`;
   const res = await db
     .prepare(
