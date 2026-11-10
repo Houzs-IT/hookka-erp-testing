@@ -103,13 +103,13 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 - ~~~40 lesser saves ignore the server response~~ — done in #1240 (merged) (15 real fixes; the rest are deliberate best-effort or already checked, listed in `docs/bugs/BUG-2026-11-09-435.md`).
 - ~~Backfill of pre-#1218 system GRNs~~ — owner approved 2026-11-10; endpoint shipped in #1245; preview on prod found **0** such GRNs (37 GRNs in total, none from PI auto stock-in), so there is nothing to write.
 
+## Shipped 2026-11-10 — Dashboard › Operations › Floor Live
+
+#1288 (feature) + #1291 (owner feedback). Who is in which department now from department QR scans; production rows show last check-in to the department, pieces done and live efficiency (number red only below 80%); non-production rows show scan-in time and the whole row turns red after 1 hour while still punched in; names only; owner card order; refresh every 5 min. Code: `src/api/routes/floor-live.ts`, `src/api/lib/floor-live.ts`, `src/pages/dashboards/FloorLiveView.tsx`, `floor-live-lib.ts`; guide: `docs/modules/dashboard.md`. Verified on prod 2026-11-10 (desktop + 390 px phone width) against the day's real data.
+
 ## Waiting on the OWNER (decide / provide)
 
-1. **Money / process items A–H** (from the Houzs review; not touched):
-   A. re-cost by PI price incl. multi-PO lines · B. editing a payment resets the bank to Hong Leong ·
-   C. first DO flips the whole SO to shipped · D. partial completion locks the whole SO ·
-   E. document numbers by creation month can collide · F. bank reconciliation duplicates & closing ·
-   G. automatic month-end stock posting · H. SO amendment flow.
+1. ~~**Money / process items A–H**~~ — **owner decided 2026-11-10: not needed, do not build** (A re-cost by PI price · B payment edit resets bank · C first DO flips SO to shipped · D partial completion locks SO · E document-number collisions · F bank reconciliation duplicates & closing · G month-end stock posting · H SO amendment flow). Do not reopen unless the owner asks.
 2. **Item 9 — enforce PO→GRN→PI link in the DB:** recommended **not** to do (office bills straight from the PO; most PIs since June have no GRN). Confirm drop.
 3. **SO edit lock:** should a BLOCKED job card count as "production started"? (today it does, so the SO locks). Also send the SO number that could not be edited so it can be checked.
 4. **Mail Center:** the ERP "Sent" (outbox) list is not filtered by mailbox — anyone with Mail Center access sees every ERP-sent email. Keep, or limit to own + subordinates?
