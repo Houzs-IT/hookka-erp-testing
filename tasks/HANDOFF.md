@@ -90,7 +90,8 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 - #1235: a real Ctrl/Cmd+C from a grid pastes into Excel.
 - #1240: a refused save (e.g. a leave request the server rejects) shows the server's reason and the form stays open.
 - Lead create with a phone already on a lead → "Possible duplicate lead" dialog (#1229).
-- Forecast saves, unverified until the owner's first Save (prod writes): Forecast P&L sales by customer (#1222), the trade-finance plan (#1227), Capex & financing (#1211), and the Cash Flow copy dropped on a Forecast P&L save (#1238).
+- Forecast saves, unverified until the owner's first Save (prod writes): Forecast P&L sales by customer (#1222), the trade-finance plan (#1227), Capex & financing (#1211), the Cash Flow copy dropped on a Forecast P&L save (#1238), and materials keyed by supplier (`feat/forecast-suppliers-hide-past`).
+- Bug-number collision, 2026-11-10: #1254 filed the Cash Flow column bug as BUG-2026-11-10-444 and #1259 then used 444 for the consignment-note pager, its file replacing the first one. The Cash Flow entry is now BUG-2026-11-10-462. Check `git ls-tree origin/main docs/bugs/` and the open PRs before picking a number.
 - ~~Two-word grid search~~ **verified 2026-11-10** on Products: "kabbin 1a" → only the two KABBIN 1A rows (#1231). Save-blocker toast listing several problems (#1231): still unobserved.
 - ~~#1241 new models export~~ **verified 2026-11-10** on prod: Nov = KABBIN, BANGGAU (5569), 5567 with photos; Oct = 5536, BC06, BC06-MF. 272 active products have no `created_at` (made before the column existed) and are never "new". Re-check after #1243 deployed: 5567 / 5569 read "No price set yet", SERVICE CHARGE gone.
 
@@ -113,7 +114,7 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 6. **6 retired raw-material unit rows** (merged by mistake across units): PC151-01 / PC151-02 / PC151-17 (MTR), NON WOVEN BLACK (ROLL), MHW 1 X 2 (CTN), TARONI-NAVY BLUE (PCS) — restore needs owner authorisation (or restore in Raw Materials).
 7. **Supplier ↔ material bindings:** waiting for the owner's checked raw-material list (`Raw-Material-Supplier-List-2026-11-07.xlsx`, `Supplier-Binding-Plan-2026-11-07.xlsx`).
 8. **Finance to confirm:** Oct staff cost RM 1,733 looks incomplete; equity rose 73,279 more than profit; Oct fabric stock-take RM 14,877 stored vs RM 97,660 from lines; Monthly P&L Oct net 136,271 vs /pl report 194,914.
-9. **Forecast proposals (Windows session, 2026-11-10; nothing built):** (a) suppliers keyed like customers on the Forecast P&L — the owner said 「这个我确定先」 (deciding first); (b) a "Hide past months" toggle on the Cash Flow forecast — waiting for 「做」. Details: `docs/WORK-TRACKER.md`, Cash Flow forecast item 14.
+9. ~~Forecast proposals~~ — **the owner said do both (2026-11-10, Windows session)**: materials by ratio or by supplier on the Forecast P&L, and Hide past months on the Cash Flow forecast. Built on `feat/forecast-suppliers-hide-past`; details in `docs/WORK-TRACKER.md`, Cash Flow forecast item 14.
 
 ## Board report inside the ERP (item 115 — merged #1252, verified on prod 2026-11-10)
 

@@ -9,17 +9,28 @@
 // ---------------------------------------------------------------------------
 import { pnlBucketFor } from "./pnl-bucket";
 import { monthHasDeptForecast, forecastEntryKind } from "./salary-dept";
+import { splitByLargestRemainder } from "./cashflow-engine";
 
 /** One keyed cell as stored in kv `forecast_pnl`: a legacy bare basis-point
  *  number, `{ bp }` (a % of sales) or `{ amtSen }` (an RM amount). */
 export type FcEntry = number | { bp?: number; amtSen?: number };
 /** One month of kv `forecast_pnl.months`. `salesByCustomer` (owner
  *  2026-11-09): customer id (or FC_OTHER_CUSTOMER) → sen; when it has any
- *  cell, the month's sales are their sum (forecastSalesSen). */
-export type FcMonth = { salesSen?: number; salesByCustomer?: Record<string, number>; pct?: Record<string, FcEntry> };
+ *  cell, the month's sales are their sum (forecastSalesSen).
+ *  `purchasesBySupplier` (owner 2026-11-10): supplier id (or
+ *  FC_OTHER_SUPPLIER) → sen; when it has any cell, the month's materials are
+ *  their sum, spread over the material rows (forecastSupplierSplit). */
+export type FcMonth = {
+  salesSen?: number;
+  salesByCustomer?: Record<string, number>;
+  purchasesBySupplier?: Record<string, number>;
+  pct?: Record<string, FcEntry>;
+};
 
 /** The sales-by-customer row for customers not in the list yet. */
 export const FC_OTHER_CUSTOMER = "other";
+/** The purchases-by-supplier row for suppliers not in the list yet. */
+export const FC_OTHER_SUPPLIER = "other";
 
 /** A month's sales: the sum of its customer rows once any is keyed (owner
  *  2026-11-09 「根据 customer 去 key-in 他的预计 sales」, the total is their
@@ -30,9 +41,10 @@ export function forecastSalesSen(m: FcMonth | undefined): number {
   return Math.max(0, Math.round(Number(m?.salesSen) || 0));
 }
 
-/** A month's customer cells as stored: whole sen, positive only, a real key
- *  (no longer than any id the system makes). Anything else reads as nothing. */
-export function cleanSalesByCustomer(raw: unknown): Record<string, number> {
+/** A month's customer or supplier cells as stored: whole sen, positive only,
+ *  a real key (no longer than any id the system makes). Anything else reads
+ *  as nothing. */
+function cleanPartyCells(raw: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   if (!raw || typeof raw !== "object") return out;
   for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -42,6 +54,119 @@ export function cleanSalesByCustomer(raw: unknown): Record<string, number> {
     out[key] = sen;
   }
   return out;
+}
+export const cleanSalesByCustomer = (raw: unknown): Record<string, number> => cleanPartyCells(raw);
+export const cleanPurchasesBySupplier = (raw: unknown): Record<string, number> => cleanPartyCells(raw);
+
+/** The keyed supplier cells, positive whole sen only (as cleanPurchasesBySupplier keeps them). */
+function supplierCells(m: FcMonth | undefined): [string, number][] {
+  return Object.entries(m?.purchasesBySupplier ?? {})
+    .map(([id, v]) => [id, Math.round(Number(v) || 0)] as [string, number])
+    .filter(([, v]) => v > 0);
+}
+/** A month's purchases keyed by supplier (0 when it is keyed the ratio way). */
+export function forecastPurchasesSen(m: FcMonth | undefined): number {
+  return supplierCells(m).reduce((s, [, v]) => s + v, 0);
+}
+
+/** What each supplier sold us lately, by material type (sen weights), and all
+ *  suppliers together (spec 2026-11-10-forecast-suppliers-design.md 4). */
+export type FcSupplierMix = { bySupplier: Record<string, Record<string, number>>; all: Record<string, number> };
+export const EMPTY_SUPPLIER_MIX: FcSupplierMix = { bySupplier: {}, all: {} };
+
+/** The weights from the recent purchase invoices' ledger legs: debit minus
+ *  credit on the material purchase accounts (`typeOf` names an account's
+ *  material type, undefined for any other account), by supplier and type;
+ *  nothing that nets to zero or less. */
+export function supplierMixFromLegs(
+  legs: readonly { supplierId: string; accountCode: string; debitSen: number; creditSen: number }[],
+  typeOf: (code: string) => string | undefined,
+): FcSupplierMix {
+  const net = new Map<string, Map<string, number>>();
+  for (const l of legs) {
+    const type = typeOf(l.accountCode);
+    if (!type || !l.supplierId) continue;
+    const m = net.get(l.supplierId) ?? new Map<string, number>();
+    m.set(type, (m.get(type) ?? 0) + Math.round(Number(l.debitSen) || 0) - Math.round(Number(l.creditSen) || 0));
+    net.set(l.supplierId, m);
+  }
+  const bySupplier: Record<string, Record<string, number>> = {};
+  const all: Record<string, number> = {};
+  for (const [sup, m] of [...net].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [type, sen] of [...m].sort(([a], [b]) => a.localeCompare(b))) {
+      if (sen <= 0) continue;
+      (bySupplier[sup] ??= {})[type] = sen;
+      all[type] = (all[type] ?? 0) + sen;
+    }
+  }
+  return { bySupplier, all };
+}
+
+/** A supplier-keyed month spread over the material rows: per supplier and in
+ *  total, by material type. */
+export type FcSupplierSplit = {
+  totalSen: number;
+  byType: Record<string, number>;
+  suppliers: { id: string; sen: number; byType: Record<string, number> }[];
+};
+
+/** Owner 2026-11-10 「根据 ratio 也可以，一个个也可以」: a month with any
+ *  supplier cell has the suppliers' sum as its materials. Each supplier's
+ *  amount spreads over the material types (`types`, the page's material rows)
+ *  by what it sold us lately; Other, and a supplier with nothing lately, by
+ *  all suppliers' weights; with nothing to go by at all, on the OTHERS row
+ *  (else the first), so the month's total is never lost. Parts add up to each
+ *  cell to the sen. Null for a month keyed the ratio way, or with no rows. */
+export function forecastSupplierSplit(
+  m: FcMonth | undefined,
+  types: readonly string[],
+  mix: FcSupplierMix,
+): FcSupplierSplit | null {
+  const cells = supplierCells(m);
+  if (!cells.length || !types.length) return null;
+  const allowed = new Set(types);
+  const weightsOf = (w: Record<string, number> | undefined) =>
+    Object.entries(w ?? {})
+      .filter(([t, v]) => allowed.has(t) && v > 0)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, weight]) => ({ key, weight }));
+  const everyone = weightsOf(mix.all);
+  const lastResort = [{ key: allowed.has("OTHERS") ? "OTHERS" : types[0], weight: 1 }];
+  const byType: Record<string, number> = {};
+  const suppliers = cells.map(([id, sen]) => {
+    const own = id === FC_OTHER_SUPPLIER ? [] : weightsOf(mix.bySupplier[id]);
+    const parts = splitByLargestRemainder(sen, own.length ? own : everyone.length ? everyone : lastResort);
+    const mine: Record<string, number> = {};
+    for (const [t, v] of Object.entries(parts)) {
+      if (!v) continue;
+      mine[t] = v;
+      byType[t] = (byType[t] ?? 0) + v;
+    }
+    return { id, sen, byType: mine };
+  });
+  return { totalSen: cells.reduce((s, [, v]) => s + v, 0), byType, suppliers };
+}
+
+/** The Forecast page's supplier rows (owner 2026-11-10: 太久没使用的 supplier
+ *  就不在选项): active suppliers bought from lately (`recentIds`), and any
+ *  supplier keyed in some month, active or not (an id the master no longer
+ *  knows is named as such), by name; Other last. */
+export function forecastSupplierRows(
+  master: readonly { id: string; name: string; isActive?: boolean | null }[],
+  recentIds: Iterable<string>,
+  keyedIds: Iterable<string>,
+): { id: string; name: string }[] {
+  const recent = new Set(recentIds);
+  const keyed = new Set([...keyedIds].filter((id) => id !== FC_OTHER_SUPPLIER));
+  const rows: { id: string; name: string }[] = [];
+  const known = new Set<string>();
+  for (const s of master) {
+    known.add(s.id);
+    if ((recent.has(s.id) && s.isActive !== false) || keyed.has(s.id)) rows.push({ id: s.id, name: s.name });
+  }
+  for (const id of keyed) if (!known.has(id)) rows.push({ id, name: `Unknown supplier (${id})` });
+  rows.sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+  return [...rows, { id: FC_OTHER_SUPPLIER, name: "Other (new suppliers)" }];
 }
 
 /** The Forecast page's customer rows: every active customer and any customer
@@ -110,6 +235,26 @@ export function forecastMaterialType(name: string): string {
   return cat || stripped;
 }
 
+/** A material purchase account: what the Forecast page folds into its
+ *  material rows (a postable cost account outside the P&L's labour /
+ *  overhead buckets, not carriage, SST, stock or work in progress). */
+function isForecastMaterialAccount(a: FcAccount, override: Record<string, string>): boolean {
+  return (
+    a.isPostable !== false &&
+    a.type === "COST" &&
+    pnlBucketFor(a.code, a.type, override) === null &&
+    a.code !== FC_CARRIAGE &&
+    a.code !== FC_SST &&
+    !/STOCK|PROGRESS/i.test(a.name)
+  );
+}
+
+/** Each material purchase account's material type (its row on the Forecast
+ *  page): where a supplier's purchases say what it sells us. */
+export function forecastMaterialAccountTypes(accounts: readonly FcAccount[], override: Record<string, string>): Map<string, string> {
+  return new Map(accounts.filter((a) => isForecastMaterialAccount(a, override)).map((a) => [a.code, forecastMaterialType(a.name)] as const));
+}
+
 /** The Forecast page's line structure (same classification as the real P&L,
  *  the owner's section-map overrides included). */
 export function forecastLineGroups(
@@ -118,16 +263,7 @@ export function forecastLineGroups(
   depts: readonly FcDept[],
 ): FcLineGroups {
   const postable = accounts.filter((a) => a.isPostable !== false);
-  const materialAccts = postable
-    .filter(
-      (a) =>
-        a.type === "COST" &&
-        pnlBucketFor(a.code, a.type, override) === null &&
-        a.code !== FC_CARRIAGE &&
-        a.code !== FC_SST &&
-        !/STOCK|PROGRESS/i.test(a.name),
-    )
-    .sort(byCode);
+  const materialAccts = postable.filter((a) => isForecastMaterialAccount(a, override)).sort(byCode);
   // Owner 2026-07-29: materials forecast by TYPE, not by sofa/bedframe —
   // "PURCHASE - B.M FABRIC" / "S FABRIC" / "S.M FABRIC" fold into ONE
   // FABRIC row (likewise FILLER / WEBBING / …). Percentages store under a
@@ -198,6 +334,8 @@ export type FcMonthFigures = {
   salesSen: number;
   amt: (code: string) => number;
   superseded: (code: string) => boolean;
+  /** The month's materials keyed by supplier, spread; null when keyed by ratio. */
+  supplierSplit: FcSupplierSplit | null;
   cogs: number;
   gp: number;
   oi: number;
@@ -205,14 +343,29 @@ export type FcMonthFigures = {
   np: number;
 };
 
-/** One month's figures, exactly as the Forecast page prints them. */
+/** A material row's type: `cat:<TYPE>`, or an account's by its name. */
+export const materialRowType = (a: FcAccount): string => (a.code.startsWith("cat:") ? a.code.slice(4) : forecastMaterialType(a.name));
+
+/** One month's figures, exactly as the Forecast page prints them. `mix`:
+ *  what each supplier sold us lately, for a month keyed by supplier (without
+ *  it such a month keeps its total, on the OTHERS row). */
 export function forecastMonthFigures(
   m: FcMonth | undefined,
   g: FcLineGroups,
   mappedAccounts: ReadonlySet<string>,
+  mix: FcSupplierMix = EMPTY_SUPPLIER_MIX,
 ): FcMonthFigures {
   const salesSen = forecastSalesSen(m);
-  const amt = (code: string) => forecastEntryAmount(salesSen, m?.pct?.[code]);
+  // A month keyed by supplier: its material rows are the suppliers' spread,
+  // their own % / RM set aside (kept, and read again once the supplier cells
+  // are cleared).
+  const supplierSplit = forecastSupplierSplit(m, g.materials.map(materialRowType), mix);
+  const materialType = new Map(g.materials.map((a) => [a.code, materialRowType(a)] as const));
+  const amt = (code: string) => {
+    const type = supplierSplit ? materialType.get(code) : undefined;
+    if (type !== undefined) return supplierSplit?.byType[type] ?? 0;
+    return forecastEntryAmount(salesSen, m?.pct?.[code]);
+  };
   const sum = (rows: FcAccount[]) => rows.reduce((s, r) => s + amt(r.code), 0);
   // Supersede rule (salary-dept.ts): a month with any dept row ignores the
   // 750-x accounts AND every account the labour map posts to — keying both
@@ -225,5 +378,5 @@ export function forecastMonthFigures(
   const oi = sum(g.otherIncome);
   const exp = sumGuard(g.expenses);
   const gp = salesSen - cogs;
-  return { salesSen, amt, superseded, cogs, gp, oi, exp, np: gp + oi - exp };
+  return { salesSen, amt, superseded, supplierSplit, cogs, gp, oi, exp, np: gp + oi - exp };
 }

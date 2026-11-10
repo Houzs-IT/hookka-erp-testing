@@ -273,7 +273,8 @@ test('Products page bulk import posts to the real endpoint and refreshes state',
 });
 
 test('Products page id column is hidden, like Inventory', () => {
-  const src = readFileSync('src/lib/import-schemas.ts', 'utf8');
+  // LF whatever the checkout (a Windows clone has CRLF on disk).
+  const src = readFileSync('src/lib/import-schemas.ts', 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /PRODUCT_IMPORT_COLUMNS: ImportColumn\[\] = \[\n  \{ key: "id", label: "ID", hidden: true \}/);
   assert.match(readFileSync('src/pages/products/index.tsx', 'utf8'), /const productImportColumns: ImportColumn\[\] = PRODUCT_IMPORT_COLUMNS;/);
 });

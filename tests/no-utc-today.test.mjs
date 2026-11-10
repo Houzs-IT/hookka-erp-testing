@@ -75,7 +75,8 @@ test("mytWallClock reads the Malaysia day through its UTC fields", () => {
 });
 
 test("the sites fixed in P2 use the Malaysia day", () => {
-  const src = (p) => readFileSync(p, "utf8");
+  // LF whatever the checkout (a Windows clone has CRLF on disk).
+  const src = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
   assert.match(src("src/api/lib/delivery-return-create.ts"), /`DR-\$\{mytYymm\(\)\}-`/);
   assert.match(src("src/api/lib/purchase-return-create.ts"), /`PR-\$\{mytYymm\(\)\}-`/);
   assert.match(src("src/api/lib/purchase-return-create.ts"), /`SDN-\$\{mytYymm\(\)\}-`/);

@@ -234,6 +234,22 @@ export function ForecastToggle({ on, onToggle }: { on: boolean; onToggle: () => 
   );
 }
 
+/** The forecast's second step (owner 2026-11-10 「先按 forecasting，然后再按不显示
+ *  past month」): hides the months before the statement's own. */
+export function HidePastMonthsToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onToggle}
+      title={on ? "Show the past months again" : "Hide the months before this one (Accumulated, this month and the months ahead stay)"}
+      className={`${CTRL_SHAPE} px-3 ${on ? "border-[#2F5F9E] bg-[#2F5F9E] text-white hover:bg-[#264D80]" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
+    >
+      Hide past months
+    </button>
+  );
+}
+
 /** One download icon; its menu lists the report's exports. */
 export function DownloadMenu({ items }: { items: { label: string; onSelect: () => void }[] }) {
   const { open, setOpen, boxRef } = usePopover();

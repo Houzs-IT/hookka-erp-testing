@@ -125,7 +125,7 @@ import { fmtDocDate, activeTotalSen, pvStatus, foreignPayStatus, receiptStatus, 
 import { drawCashPositionImage, tfDueByMonthEnd } from "@/lib/cash-position-image";
 import { financePage } from "@/lib/finance-nav";
 import { glLink, monthEnd, asAtDate, monthOptions, tbSections, fmtAmt, fmtLedgerBal, fmtPctOfSales, checkLabel, periodLabel, periodMonths, foldStatementRows, type TbSectionKey } from "@/lib/finance-reports";
-import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner, ForecastToggle } from "@/components/finance/report-shell";
+import { ReportToolbar, PeriodStepper, DetailLevels, DownloadMenu, CheckStrip, ReportFrame, AccountMultiPicker, SegmentedSwitch, EditLayoutToggle, EditLayoutBanner, KpiCards, StatusBanner, ForecastToggle, HidePastMonthsToggle } from "@/components/finance/report-shell";
 
 // =============== MULTI-COMPANY (Phase 2) — company selector ===============
 //
@@ -19277,7 +19277,22 @@ function CashFlowTab() {
   );
   const fcData = fcOn && fcResp?.success ? fcResp.data : undefined;
   const fcFailed = fcOn && !fcLoading && !fcData && (!!fcErr || (!!fcResp && !fcResp.success));
-  const cols: CfApiCol[] = (fcData ?? data)?.columns ?? [];
+  const allCols: CfApiCol[] = (fcData ?? data)?.columns ?? [];
+  // Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不显示 past
+  // month」): with the forecast on, the months before the statement's own go,
+  // every column of them; Accumulated, the statement's month and the months
+  // ahead stay. Off on every load, and again with any press of Forecast.
+  const [hidePast, setHidePast] = useState(false);
+  const pastMonths = !!fcData && fcData.columns.some((c) => !c.accum && !!c.ym && c.ym < period);
+  const hiddenIdx = useMemo(() => {
+    if (!hidePast || !fcData) return null;
+    const s = new Set<number>();
+    fcData.columns.forEach((c, i) => {
+      if (!c.accum && c.ym && c.ym < period) s.add(i);
+    });
+    return s.size ? s : null;
+  }, [hidePast, fcData, period]);
+  const cols: CfApiCol[] = hiddenIdx ? allCols.filter((_, i) => !hiddenIdx.has(i)) : allCols;
 
   // DEV-ONLY preview of the raw-material split (owner 2026-08-27: 「本地那边给
   // 我看不行吗」). The local vite server proxies /api to PRODUCTION, so the
@@ -19646,7 +19661,7 @@ function CashFlowTab() {
     return () => { stale = true; };
   }, [data]);
 
-  const rows = useMemo(() => {
+  const allRows = useMemo(() => {
     // The forecast statement is served whole; the DEV-only shims below work
     // on the actual statement's columns, so they stay out of it.
     if (fcData) return fcData.rows;
@@ -19738,6 +19753,12 @@ function CashFlowTab() {
     }
     return base;
   }, [data, devRp, devSalRows, fcData]);
+  // Past months hidden: every row loses the same columns as the heading, so
+  // the screen, the export and the print stay one table.
+  const rows = useMemo(
+    () => (hiddenIdx ? allRows.map((r) => ({ ...r, values: r.values.filter((_, i) => !hiddenIdx.has(i)) })) : allRows),
+    [allRows, hiddenIdx],
+  );
 
   useEffect(() => {
     if (!edit) return;
@@ -19874,7 +19895,7 @@ function CashFlowTab() {
   const fileBase = `CashFlow-${period}`;
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Statement of Cash Flow", buildExport()); } },
-    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}`, buildExport(), { print: true }); } },
+    { label: "Print / PDF", onSelect: () => { void exportReportPdf(`${fileBase}.pdf`, "Statement of Cash Flow", `Period: ${period}${hiddenIdx ? " · past months hidden" : ""}`, buildExport(), { print: true }); } },
   ];
 
   return (
@@ -19896,7 +19917,8 @@ function CashFlowTab() {
         <PeriodStepper value={period} options={periodOpts} onChange={setPeriod} today={today} />
         <EditLayoutToggle on={edit} onToggle={() => { const ne = !edit; setEdit(ne); if (ne) { setLevel(3); setCollapsed(new Set()); setForecast(false); } }} />
         {!edit && <DetailLevels levels={[1, 2, 3]} value={level} onChange={applyLevel} />}
-        {!edit && <ForecastToggle on={forecast} onToggle={() => setForecast((v) => !v)} />}
+        {!edit && <ForecastToggle on={forecast} onToggle={() => { setForecast((v) => !v); setHidePast(false); }} />}
+        {fcData && pastMonths && <HidePastMonthsToggle on={hidePast} onToggle={() => setHidePast((v) => !v)} />}
         {fcOn && (
           <Button variant="outline" size="sm" onClick={() => setInputsOpen(true)} title="Key forecast capex and financing amounts by month (forecast only, nothing is posted)">
             Capex &amp; financing
@@ -19956,7 +19978,7 @@ function CashFlowTab() {
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title="Statement Of Cash Flow"
-        note={`Prepared on cash basis · all figures RM · ${fcData ? "Actual and Forecast per month" : "Accumulated + trailing 12 months"} · view ${periodLabel(period, "")}`}
+        note={`Prepared on cash basis · all figures RM · ${fcData ? `Actual and Forecast per month${hiddenIdx ? " · past months hidden" : ""}` : "Accumulated + trailing 12 months"} · view ${periodLabel(period, "")}`}
         maxHeight="calc(100vh - 280px)"
       >
         {!data ? (

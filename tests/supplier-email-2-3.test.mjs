@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import { poEmailRecipients, supplierExtraEmailError, isOneEmailAddress } from "../src/lib/supplier-emails.ts";
 import { buildPoEmailDraft } from "../src/lib/po-email-draft.ts";
 
-const read = (p) => readFileSync(p, "utf8");
+// LF whatever the checkout (a Windows clone has CRLF on disk).
+const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
 test("To = main Email (all its addresses), Cc = Email 2 and Email 3", () => {
   assert.deepEqual(

@@ -25,8 +25,9 @@ test("the page lists the customers under Sales and saves their cells", () => {
   assert.match(page, /salesByCustomer/);
   // A month with any customer cell shows the sum, not the single input.
   assert.match(page, /customerKeyed\(ym\) \?/);
-  // A new month does not copy the previous month's customers.
-  assert.match(page, /\{ salesStr: "", pct: inherited, customers: \{\} \}/);
+  // A new month does not copy the previous month's customers (nor, since
+  // 2026-11-10, its suppliers).
+  assert.match(page, /\{ salesStr: "", pct: inherited, customers: \{\}, suppliers: \{\} \}/);
   // Every customer cell is checked before Save, like the other money cells.
   assert.match(page, /label: `\$\{ym\} \$\{/);
 });
