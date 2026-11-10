@@ -331,12 +331,20 @@ Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少
       - Pressed: 35 cells a row → 31. Oct'26 and Sep'26 each keep one column, Actual. Every remaining cell equals the full table's.
       - The note reads "past months' forecasts hidden".
       - With a dragged Item width: 5 → 35 → 31 columns, none 0 px, Item kept.
-15. 🔵 Suppliers under each material on the Forecast P&L (`feat/forecast-suppliers-by-material`). The owner, after #1266: 「现在填supplier amount 后是填total 后by ratio 还是 我自己选不同raw material 去填supplier」, then 「可以不可以这样，就是让他在每个categories 出现相关的supplier, 我从那边填」 (proposal given), then 「做」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md` sections 2–6.
+15. ✅ Suppliers under each material on the Forecast P&L (#1274). The owner, after #1266: 「现在填supplier amount 后是填total 后by ratio 还是 我自己选不同raw material 去填supplier」, then 「可以不可以这样，就是让他在每个categories 出现相关的supplier, 我从那边填」 (proposal given), then 「做」. Design: `docs/superpowers/specs/2026-11-10-forecast-suppliers-design.md` sections 2–6.
     - Each material row opens with ▸ to list the suppliers that sold us that material since the 1st of the month three months back, plus any keyed under it, plus Other. A supplier with a figure shows while closed.
     - Each material decides each month: no supplier figure means its % as before; any supplier figure means the material is their sum, greyed. Nothing is spread by ratio any more; #1266's flat By supplier block is gone.
     - The same figures reach the Cash Flow P&L forecast (each supplier after its own term on that material's line, Other after a month), Monthly P&L forecast and the Finance Dashboard.
     - Stored as kv `forecast_pnl.months[ym].purchasesByType`. #1266's `purchasesBySupplier` is no longer read.
-    - Not yet verified on prod.
+    - MEASURED on prod 2026-11-10, read only, nothing saved:
+      - Before the merge: none of the 11 stored months carried supplier figures in either shape, so nothing was left behind.
+      - After the deploy, the Forecast P&L table is identical to before (same fingerprint), minus #1266's empty By supplier row.
+      - FABRIC opened lists its 10 suppliers plus Other; FILLER its 6 plus Other (as measured that morning).
+      - Two supplier figures typed under FABRIC for one month (not saved) made FABRIC that month their sum, greyed. FABRIC's other months and FILLER that month kept their %. Raw Materials, Total COGS, Gross profit and Net profit moved by exactly the difference. Clearing them gave back the same fingerprint with nothing stored.
+      - Cash Flow forecast: all 90 month × material amounts from Sep'26 to Jun'27 land in full in the P&L forecast column.
+      - The statement's overall fingerprint differs from the morning's. The morning snapshot was lost when the browser restarted, so the difference is UNMEASURED; it is probably the day's postings.
+      - Monthly P&L forecast: each month's Net profit still equals the Forecast P&L page's.
+    - Saving supplier figures stays UNVERIFIED until the owner's first Save.
 
 ## ✅ Finance Dashboard Cash Flow card (fix/dashboard-cf-investing-financing, 2026-11-08)
 Shipped and verified on production 2026-11-08 (#1201, then #1202 for the snapshot key).
