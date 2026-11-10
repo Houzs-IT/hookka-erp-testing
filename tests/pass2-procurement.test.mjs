@@ -165,3 +165,133 @@ test("C2-8: PO POST and PUT refuse a newly added inactive material with 400 befo
   // One raw-material read serves both the unit map and the active check.
   assert.match(route, /SELECT itemCode, baseUOM, isActive, status FROM raw_materials/);
 });
+
+// ── H2 B1: saving a MAIN binding demotes the item's other main(s) ────────
+import { Hono } from "hono";
+import {
+  demoteOtherMainsStatement,
+  groupMultiMainRows,
+  isMainFlag,
+} from "../src/api/lib/supplier-main-binding.ts";
+import { resetBindingUniqueIndexMemo } from "../src/api/lib/supplier-binding-unique.ts";
+import supplierMaterialsApp from "../src/api/routes/supplier-materials.ts";
+
+const BINDING = {
+  id: "smb-1",
+  orgId: "org-1",
+  supplierId: "s-1",
+  materialCode: "FOAM-1",
+  materialName: "Foam",
+  supplierSku: "F1",
+  unitPrice: 100,
+  currency: "MYR",
+  leadTimeDays: 0,
+  paymentTerms: "NET30",
+  moq: 0,
+  isMainSupplier: 0,
+};
+
+function bindingHarness() {
+  const runs = [];
+  const batches = [];
+  const stmt = (sql, args = []) => ({
+    sql,
+    args,
+    bind: (...a) => stmt(sql, a),
+    async first() {
+      if (/COUNT\(\*\)/.test(sql)) return { n: 1 }; // old duplicates: index skipped
+      if (/SELECT \* FROM supplier_material_bindings WHERE id = \?/.test(sql)) return { ...BINDING, id: args[0] };
+      return null;
+    },
+    async all() {
+      return { results: [] };
+    },
+    async run() {
+      runs.push({ sql, args });
+      return { success: true, meta: { changes: 1 } };
+    },
+  });
+  const DB = {
+    prepare: (sql) => stmt(sql.replace(/\s+/g, " ").trim()),
+    async batch(list) {
+      batches.push(list.map((s) => ({ sql: s.sql, args: s.args })));
+      return list.map(() => ({ success: true, meta: { changes: 1 } }));
+    },
+  };
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("DB", DB);
+    c.set("orgId", "org-1");
+    c.set("userId", "u-1");
+    c.set("userRole", "SUPER_ADMIN");
+    await next();
+  });
+  app.route("/", supplierMaterialsApp);
+  return { app, runs, batches };
+}
+const send = (app, method, path, body) =>
+  app.request(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, { SESSION_CACHE: undefined });
+
+test("H2 B1: the demote statement keeps the saved row and stays in its org", () => {
+  const db = { prepare: (sql) => ({ sql, bind: (...args) => ({ sql, args }) }) };
+  const s = demoteOtherMainsStatement(db, "FOAM-1", "smb-9", "org-1");
+  assert.match(s.sql, /UPDATE supplier_material_bindings SET isMainSupplier = 0/);
+  assert.match(s.sql, /materialCode = \? AND id <> \? AND isMainSupplier = 1 AND \(orgId = \? OR orgId IS NULL\)/);
+  assert.deepEqual(s.args, ["FOAM-1", "smb-9", "org-1"]);
+  assert.deepEqual(demoteOtherMainsStatement(db, "X", "k").args, ["X", "k"]);
+  assert.equal(isMainFlag(1), true);
+  assert.equal(isMainFlag("0"), false);
+});
+
+test("H2 B1: POST as main = one batch [demote others, insert]; not main = no demote", async () => {
+  resetBindingUniqueIndexMemo();
+  const { app, runs, batches } = bindingHarness();
+  const body = { supplierId: "s-1", materialCode: "FOAM-1", materialName: "Foam", supplierSku: "F1", unitPrice: 100 };
+  const res = await send(app, "POST", "/", { ...body, isMainSupplier: true });
+  assert.equal(res.status, 201, await res.clone().text());
+  assert.equal(batches.length, 1);
+  assert.match(batches[0][0].sql, /^UPDATE supplier_material_bindings SET isMainSupplier = 0/);
+  assert.equal(batches[0][0].args[0], "FOAM-1");
+  assert.match(batches[0][1].sql, /^INSERT INTO supplier_material_bindings/);
+  assert.equal(batches[0][0].args[1], batches[0][1].args[0], "the new row itself is kept");
+
+  const plain = bindingHarness();
+  const res2 = await send(plain.app, "POST", "/", { ...body, isMainSupplier: false });
+  assert.equal(res2.status, 201);
+  assert.equal(plain.batches.length, 0);
+  assert.ok(!plain.runs.some((r) => /SET isMainSupplier = 0/.test(r.sql)));
+});
+
+test("H2 B1: PUT that makes a binding main demotes the others in the same batch", async () => {
+  resetBindingUniqueIndexMemo();
+  const { app, batches, runs } = bindingHarness();
+  const res = await send(app, "PUT", "/smb-1", { isMainSupplier: true });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0][0].args, ["FOAM-1", "smb-1", "org-1"]);
+  assert.match(batches[0][1].sql, /^UPDATE supplier_material_bindings SET supplierId = \?/);
+
+  const plain = bindingHarness();
+  const res2 = await send(plain.app, "PUT", "/smb-1", { moq: 5 }); // stays non-main
+  assert.equal(res2.status, 200);
+  assert.equal(plain.batches.length, 0);
+  assert.ok(!runs.some((r) => /SET isMainSupplier = 0/.test(r.sql)));
+});
+
+test("H2 B1: read-only list of items with more than one main; import path demotes too", () => {
+  const groups = groupMultiMainRows([
+    { id: "a", orgId: "o", materialCode: "M1", supplierId: "s1", supplierName: "A", unitPrice: 100 },
+    { id: "b", orgId: "o", materialCode: "M1", supplierId: "s2", supplierName: "B", unitPrice: 90 },
+    { id: "c", orgId: "o", materialCode: "M2", supplierId: "s1", supplierName: "A", unitPrice: 5 },
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].materialCode, "M1");
+  assert.deepEqual(groups[0].bindings.map((b) => b.id), ["a", "b"]);
+  const route = read("src/api/routes/supplier-materials.ts");
+  const list = route.slice(route.indexOf('app.get("/multiple-main"'), route.indexOf('app.get("/:id"'));
+  assert.ok(list.length > 0 && route.indexOf('app.get("/multiple-main"') < route.indexOf('app.get("/:id"'));
+  assert.match(list, /requirePermission\(c, "supplier-materials", "read"\)/);
+  assert.doesNotMatch(list, /\b(UPDATE|DELETE|INSERT)\b/);
+  const imp = read("src/api/routes/import-completion/procurement-backfills.ts");
+  assert.equal((imp.match(/demoteOtherMainsStatement\(db, materialCode,/g) ?? []).length, 2);
+});
