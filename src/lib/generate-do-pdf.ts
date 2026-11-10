@@ -8,6 +8,8 @@ import { fmtDate, drawLetterhead } from "@/lib/pdf-utils";
 // comparator without pulling jsPDF into the page bundle.
 import { compareDoLinesByCustomerPO } from "@/lib/do-item-order";
 import { todayYmdMY } from "./utils";
+import { deliverJsPdf, pdfFileName } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 // DO-document rack line: per-component rack groups, NO label prefix, joined by
 // " · " (owner's spec). Shares formatRacksCompact's dedup + numeric sort.
 
@@ -750,25 +752,19 @@ export function generateDOPdf(
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   renderDoInto(doc, order, extras);
   stampDoFooters(doc);
+  // A cancelled DO prints a red CANCELLED stamp on every page (review D2).
+  if (isCancelledStatus(order.status)) stampCancelledJsPdf(doc);
 
   // order.doNo already carries the "DO-" prefix (e.g. "DO-2605-094"), so
   // prepending another "DO-" produced "DO-DO-2605-094.pdf". Use it verbatim;
   // only add the prefix for any legacy doNo that lacks it.
-  const fileName = `${(order.doNo || "").startsWith("DO-") ? order.doNo : `DO-${order.doNo}`}.pdf`;
+  const fileName = pdfFileName(
+    (order.doNo || "").startsWith("DO-") ? order.doNo : `DO-${order.doNo}`,
+    order.customerName,
+  );
 
-  if (mode === "view") {
-    // Open to read on screen — no download. Fall back to save() if the
-    // browser blocks the blob window (popup blocker).
-    try {
-      const url = doc.output("bloburl");
-      const w = window.open(String(url), "_blank");
-      if (!w) doc.save(fileName);
-    } catch {
-      doc.save(fileName);
-    }
-    return;
-  }
-  doc.save(fileName);
+  // "view" opens the in-app preview (no popup to block); "download" saves.
+  deliverJsPdf(doc, fileName, mode);
 }
 
 // Same branded single-DO document as generateDOPdf, returned as a base64
@@ -1259,17 +1255,6 @@ export function generateConsolidatedDoPdf(
   const fileName = packingNo
     ? `PackingList-${packingNo}.pdf`
     : `PackingList-Run-${stamp}-${orders.length}DO.pdf`;
-  if (mode === "view") {
-    // Open to read on screen — no download. Fall back to save() if the
-    // browser blocks the blob window (popup blocker).
-    try {
-      const url = doc.output("bloburl");
-      const w = window.open(String(url), "_blank");
-      if (!w) doc.save(fileName);
-    } catch {
-      doc.save(fileName);
-    }
-    return;
-  }
-  doc.save(fileName);
+  // "view" opens the in-app preview (no popup to block); "download" saves.
+  deliverJsPdf(doc, fileName, mode);
 }

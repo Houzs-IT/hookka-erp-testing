@@ -22,5 +22,7 @@ test("inline only when asked AND the type is allowlisted", () => {
 
 test("the PI View source document button asks for inline", () => {
   const src = readFileSync(new URL("../src/pages/procurement/PurchaseInvoiceDetail.tsx", import.meta.url), "utf8");
-  assert.match(src, /\/download\?inline=1`;\s*window\.open\(/);
+  // Still inline=1; since #1250 it opens through openUrlInNewTab so a blocked
+  // tab says so (review P7) instead of window.open returning null silently.
+  assert.match(src, /\/download\?inline=1`;[\s\S]{0,200}?(window\.open|openUrlInNewTab)\(url\)/);
 });

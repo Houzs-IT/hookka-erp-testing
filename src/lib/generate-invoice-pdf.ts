@@ -9,6 +9,8 @@ import {
   drawLetterhead,
 } from "@/lib/pdf-utils";
 import { invoicePriceBuildUp } from "@/lib/invoice-line-price";
+import { deliverJsPdf, pdfFileName } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // Read-only print enrichment from GET /api/invoices/:id/print-extras.
 // All optional — the PDF still renders if not supplied.
@@ -665,6 +667,9 @@ function buildInvoiceDoc(
     doc.text(`Page ${p} of ${pages}`, pageW - m, fy, { align: "right" });
   }
 
+  // A cancelled invoice prints a red CANCELLED stamp on every page — the
+  // single, combined and emailed copies all build here (review D2).
+  if (isCancelledStatus(invoice.status)) stampCancelledJsPdf(doc);
   return doc;
 }
 
@@ -678,18 +683,9 @@ export function generateInvoicePdf(
   const doc = buildInvoiceDoc(invoice, extras);
   // invoiceNo already carries the "INV-" prefix (e.g. INV-2606-115) — don't
   // double it (was producing "INV-INV-2606-115.pdf"). Matches SO/PO/PI naming.
-  const fileName = `${invoice.invoiceNo || "INVOICE"}.pdf`;
-  if (mode === "view") {
-    try {
-      const url = doc.output("bloburl");
-      const w = window.open(String(url), "_blank");
-      if (!w) doc.save(fileName);
-    } catch {
-      doc.save(fileName);
-    }
-    return;
-  }
-  doc.save(fileName);
+  const fileName = pdfFileName(invoice.invoiceNo, invoice.customerName, "INVOICE");
+  // "view" opens the in-app preview (no popup to block); "download" saves.
+  deliverJsPdf(doc, fileName, mode);
 }
 
 // Same branded invoice document, returned as a base64 string instead of

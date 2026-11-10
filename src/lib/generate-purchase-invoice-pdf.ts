@@ -14,6 +14,8 @@ import {
 import { COMPANY } from "@/lib/constants";
 import { pdfText, pdfTextOr } from "@/lib/pdf-text";
 import type { LetterheadInfo } from "@/lib/generate-purchase-order-pdf";
+import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
+import { isCancelledStatus, stampCancelledJsPdf } from "./pdf-cancelled-stamp";
 
 // ---------------------------------------------------------------------------
 // Purchase Invoice (supplier invoice) PDF.
@@ -89,7 +91,8 @@ function defaultLetterhead(): LetterheadInfo {
 export function generatePurchaseInvoicePdf(
   pi: PurchaseInvoicePdfData,
   letterheadOverride?: LetterheadInfo,
-  opts?: { returnDoc?: boolean },
+  // mode: "view" opens the in-app preview instead of saving (review D1).
+  opts?: { returnDoc?: boolean; mode?: PdfOutputMode },
 ): jsPDF | void {
   const co = letterheadOverride ?? defaultLetterhead();
   const isHookkaLetterhead = co.code === "HOOKKA";
@@ -401,8 +404,10 @@ export function generatePurchaseInvoicePdf(
     doc.text(`Page ${p} of ${totalPages}`, pageW - margin, pageH - 16, { align: "right" });
   }
 
+  // A cancelled PI prints a red CANCELLED stamp on every page (review D2).
+  if (isCancelledStatus(pi.status)) stampCancelledJsPdf(doc);
   if (opts?.returnDoc) return doc;
-  doc.save(`${pi.piNo}.pdf`);
+  deliverJsPdf(doc, pdfFileName(pi.piNo, pi.supplierName, "PI"), opts?.mode);
 }
 
 // Merge several purchase invoices into ONE downloadable PDF (PI list → bulk

@@ -13,6 +13,7 @@
 // ===========================================================================
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { isCancelledStatus } from "@/lib/cancelled-doc";
 import { Search, SlidersHorizontal, Plus, ScanLine, FileSearch, ListChecks, X, Download, Check, PackageCheck } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { MobileHeader, DocCard, StatusPill, FormSheet, ScanSheet, ScanPOSheet } from "../components";
@@ -559,6 +560,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
               >
                 <DocCard
                   code={vm.code}
+                  cancelled={isCancelledStatus(vm.status?.label)}
                   title={vm.title}
                   items={vm.items}
                   subLine={vm.subLine}

@@ -4,6 +4,7 @@ import jsPDF from "jspdf";
 import autoTable, { type RowInput } from "jspdf-autotable";
 import { fmtDate, drawLetterhead } from "@/lib/pdf-utils";
 import { buildSpec } from "@/lib/doc-line-format";
+import { pdfFileName } from "./pdf-preview";
 
 export type DeliveryReturnPdfItem = {
   productCode?: string;
@@ -128,5 +129,5 @@ export function generateDeliveryReturnPdf(dr: DeliveryReturnPdf): void {
     doc.text(`Reason: ${dr.reason}`, m, afterY + 8);
   }
 
-  doc.save(`${dr.returnNo}.pdf`);
+  doc.save(pdfFileName(dr.returnNo, dr.customerName, "DeliveryReturn"));
 }

@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -612,7 +613,7 @@ export default function InvoicesPage() {
 
   // ---------- Invoice DataGrid Columns ----------
   const invoiceGridColumns: Column<Invoice>[] = useMemo(() => [
-    { key: "invoiceNo", label: "Invoice No", type: "docno", width: "120px", sortable: true },
+    { key: "invoiceNo", label: "Invoice No", type: "docno", width: "120px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
     { key: "doNo", label: "DO No", type: "docno", width: "120px", sortable: true },
     { key: "customerName", label: "Customer", type: "text", sortable: true },
     { key: "invoiceDate", label: "Invoice Date", type: "date", width: "110px", sortable: true },
@@ -899,6 +900,7 @@ export default function InvoicesPage() {
                 data={filteredInvoices}
                 loading={loading}
                 keyField="id"
+                rowClassName={(r) => cancelledRowClass(r.status)}
                 virtualize
                 // Stable id — the column picker / drag / resize state persists
                 // under it. Renaming it silently discards saved layouts.

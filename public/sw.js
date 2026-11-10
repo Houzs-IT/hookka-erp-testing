@@ -35,6 +35,13 @@ const BUILD_VERSION = (() => {
 })();
 const CACHE = `hookka-shell-${BUILD_VERSION}`;
 
+// The in-app PDF preview (src/lib/pdf-preview.ts) puts the PDF it is showing
+// here under /pdf-preview/<document name>.pdf, so the browser's own Save names
+// the file after the document instead of a blob GUID (review D1). Kept across
+// deploys (activate skips it); the page keeps only the latest preview in it.
+const PDF_PREVIEW_CACHE = 'hookka-pdf-preview';
+const PDF_PREVIEW_PREFIX = '/pdf-preview/';
+
 // The minimal app shell to pre-cache so a cold offline open still paints.
 // Keep this tiny: just the entry HTML + the manifest + icons. Hashed JS/CSS
 // are cached on-demand (runtime), not pre-cached, because their names change
@@ -136,7 +143,9 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((keys) =>
         Promise.all(
-          keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)),
+          keys
+            .filter((k) => k !== CACHE && k !== PDF_PREVIEW_CACHE)
+            .map((k) => caches.delete(k)),
         ),
       )
       .then(() => self.clients.claim()),
@@ -156,6 +165,27 @@ self.addEventListener('fetch', (event) => {
 
   // RULE 1: never cache the API — always live network, no fallback.
   if (url.pathname.startsWith('/api/')) return;
+
+  // The PDF preview path is answered from its own cache only — never the
+  // network (it does not exist there). Checked BEFORE the navigate rule: an
+  // iframe or tab loading it is a navigation.
+  if (url.pathname.startsWith(PDF_PREVIEW_PREFIX)) {
+    event.respondWith(
+      caches
+        .open(PDF_PREVIEW_CACHE)
+        .then((c) => c.match(url.origin + url.pathname))
+        .then(
+          (hit) =>
+            hit ||
+            new Response('This preview has expired. Open the document again.', {
+              status: 404,
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            }),
+        )
+        .catch(() => new Response('', { status: 504 })),
+    );
+    return;
+  }
 
   // RULE 2: navigations (page loads) = network-first with shell fallback.
   if (req.mode === 'navigate') {

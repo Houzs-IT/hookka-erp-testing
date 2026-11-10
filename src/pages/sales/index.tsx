@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -794,7 +795,7 @@ export default function SalesPage() {
   }, [orgsResp]);
 
   const columns: Column<SalesOrder>[] = useMemo<Column<SalesOrder>[]>(() => [
-    { key: "companySOId", label: "Company SO", type: "docno", width: "130px", sortable: true },
+    { key: "companySOId", label: "Company SO", type: "docno", width: "130px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
     {
       key: "salesOrgCode",
       label: "Company",
@@ -1767,7 +1768,7 @@ export default function SalesPage() {
             rowClassName={(row) =>
               row.status === "DRAFT"
                 ? "!bg-[#FAEFCB]/60 border-l-2 border-l-amber-400"
-                : ""
+                : cancelledRowClass(row.status)
             }
           />
 

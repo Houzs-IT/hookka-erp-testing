@@ -617,6 +617,7 @@ export default function GRNDetailPage() {
         poRef: grn.poNumber,
         supplierName: grn.supplierName,
         remarks: grn.notes ?? "",
+        status: grn.status, // CANCELLED → red stamp on the PDF
         items: items.map((it) => ({
           itemCode: it.materialCode,
           supplierSKU: it.supplierSKU,
@@ -626,7 +627,7 @@ export default function GRNDetailPage() {
           rejectedQty: it.rejectedQty,
           acceptedQty: it.acceptedQty,
         })),
-      }, lh);
+      }, lh, { mode: "view" }); // in-app preview: Print / Download (review D1)
     } catch {
       toast.error("Could not generate the PDF.");
     }

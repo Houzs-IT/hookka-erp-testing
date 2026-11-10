@@ -731,6 +731,16 @@ export default function PurchaseOrderDetailPage() {
             )}
             <Button variant="outline" onClick={async () => {
               const { generatePurchaseOrderPdf, letterheadForPurchaseOrg } = await import("@/lib/generate-purchase-order-pdf");
+              const sup = allSuppliers.find((s) => s.id === po.supplierId);
+              const purchaseOrgCode = sup?.purchaseOrgCode || "HOOKKA";
+              const lh = letterheadForPurchaseOrg(purchaseOrgCode, orgsResp?.organisations);
+              // In-app preview: Print / Download / Open in new tab (review D1).
+              generatePurchaseOrderPdf({ ...po, purchaseOrgCode }, lh, { mode: "view" });
+            }}>
+              <FileText className="h-4 w-4" /> Preview
+            </Button>
+            <Button variant="outline" onClick={async () => {
+              const { generatePurchaseOrderPdf, letterheadForPurchaseOrg } = await import("@/lib/generate-purchase-order-pdf");
               // Print under the supplier's Purchase Company letterhead (HOOKKA /
               // OHANA / any sister co in the organisations registry). Accounting
               // stays HOOKKA. Defaults to HOOKKA when no Purchase Company is set.
@@ -750,7 +760,8 @@ export default function PurchaseOrderDetailPage() {
                 // GRN prints under the supplier's Purchase Company; accounting stays HOOKKA.
                 const sup = allSuppliers.find((s) => s.id === po.supplierId);
                 const lh = letterheadForPurchaseOrg(sup?.purchaseOrgCode || "HOOKKA", orgsResp?.organisations);
-                generateGRNPdf(po, lh);
+                // Opens the in-app preview; its Print button prints (review D1).
+                generateGRNPdf(po, lh, { mode: "view" });
               }}>
                 <Printer className="h-4 w-4" /> Print GRN
               </Button>

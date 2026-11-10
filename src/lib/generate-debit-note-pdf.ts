@@ -2,6 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { COMPANY } from "@/lib/constants";
 import { fmtRM as fmtCurrency, fmtDate, amountInWords, drawLetterhead } from "@/lib/pdf-utils";
+import { pdfFileName } from "./pdf-preview";
 
 // Company name for the signature / footer lines (header now via drawLetterhead).
 const COMPANY_NAME = COMPANY.HOOKKA.name;
@@ -208,5 +209,5 @@ export function generateDebitNotePdf(data: any) {
   doc.text(`${COMPANY_NAME}  |  This is a computer-generated document.`, margin, footerY);
   doc.text(`Generated: ${fmtDate(new Date().toISOString())}`, pageW - margin, footerY, { align: "right" });
 
-  doc.save(`${data.dnNo ?? data.noteNumber ?? "DebitNote"}.pdf`);
+  doc.save(pdfFileName(data.dnNo ?? data.noteNumber, data.customerName, "DebitNote"));
 }

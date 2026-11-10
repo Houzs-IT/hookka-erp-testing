@@ -16,8 +16,10 @@ const addrOf = (c?: Customer | null): string | undefined =>
 export async function generateCOPdf(
   order: ConsignmentOrder,
   customer?: Customer | null,
+  // "view" opens the in-app preview instead of saving (review D1).
+  mode: "download" | "view" = "download",
 ): Promise<void> {
-  await downloadUnifiedConsignmentOrderPdf(order as unknown as LooseOrder, addrOf(customer));
+  await downloadUnifiedConsignmentOrderPdf(order as unknown as LooseOrder, addrOf(customer), mode);
 }
 
 export async function generateCombinedCOPdf(

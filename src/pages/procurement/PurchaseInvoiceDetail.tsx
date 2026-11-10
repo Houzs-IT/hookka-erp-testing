@@ -38,6 +38,7 @@ import type { RawMaterial } from "@/types";
 // One money parser. NOTE: `l.qty` on this page is a QUANTITY and deliberately
 // keeps `parseFloat` - it is not money and is not in this fix's scope.
 import { moneyFieldToRinggit } from "@/lib/money-field";
+import { BLOCKED_TAB_MESSAGE, openUrlInNewTab } from "@/lib/pdf-preview";
 import {
   roundUnitPriceSen,
   lineTotalSen,
@@ -314,6 +315,7 @@ export default function PurchaseInvoiceDetailPage() {
           supplierEmail: sup?.email,
         },
         lh,
+        { mode: "view" }, // in-app preview: Print / Download (review D1)
       );
     } catch {
       toast.error("Could not generate the PDF.");
@@ -649,7 +651,9 @@ export default function PurchaseInvoiceDetailPage() {
                   const url = `/api/files/${encodeURIComponent(
                     pi.sourceDocumentFileId as string,
                   )}/download?inline=1`;
-                  window.open(url, "_blank", "noopener,noreferrer");
+                  // "noopener" made window.open return null even on success, so a
+                  // blocked tab was silent. The helper says so instead (review P7).
+                  if (!openUrlInNewTab(url)) toast.error(BLOCKED_TAB_MESSAGE);
                 }}
                 disabled={busy}
               >

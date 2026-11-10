@@ -151,6 +151,10 @@ export type Column<T> = {
     highlight: (text: string) => React.ReactNode,
   ) => React.ReactNode;
   type?: "text" | "date" | "currency" | "number" | "docno" | "status";
+  // Extra classes on this column's body cell, per row. Keeps the default
+  // render (and its search highlight) — e.g. `cancelledDocNoClass` strikes a
+  // cancelled document's number through (review G5).
+  cellClassName?: (row: T) => string | false | null | undefined;
   // Freeze this column to the left edge so it stays visible during horizontal
   // scroll. Sticky columns must appear contiguously at the start of the
   // visible-column order (after the optional `selectable` checkbox column),
@@ -3902,6 +3906,7 @@ export function DataGrid<T extends Record<string, any>>({
                               isSticky && rowClassName?.(row),
                               isSticky && isSelected && "!bg-[#CCE0FF]",
                               inRange && "!bg-[#B9D3F5]",
+                              col.cellClassName?.(row),
                             )}
                             data-dg-col={colIdx}
                             style={{

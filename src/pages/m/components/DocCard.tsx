@@ -70,10 +70,13 @@ type Props = {
   /** Active search query — bolds matched terms in code/title/items/subLine
    * and string meta values (mirrors the desktop search). */
   highlight?: string;
+  /** Cancelled document: the code is struck through and the card faded
+   * (review G5, same rule as the desktop lists). */
+  cancelled?: boolean;
   onClick?: () => void;
 };
 
-export function DocCard({ code, title, items, subLine, meta, pill, highlight, onClick }: Props) {
+export function DocCard({ code, title, items, subLine, meta, pill, highlight, cancelled, onClick }: Props) {
   const interactive = typeof onClick === "function";
   const metas = (meta ?? []).filter(Boolean) as Meta[];
   const hl = (v: ReactNode) => highlightTerms(v, highlight);
@@ -99,6 +102,7 @@ export function DocCard({ code, title, items, subLine, meta, pill, highlight, on
         padding: "15px 16px",
         cursor: interactive ? "pointer" : undefined,
         WebkitTapHighlightColor: "transparent",
+        opacity: cancelled ? 0.6 : undefined,
       }}
     >
       {/* Row 1 — code + status */}
@@ -123,6 +127,7 @@ export function DocCard({ code, title, items, subLine, meta, pill, highlight, on
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
+            textDecoration: cancelled ? "line-through" : undefined,
           }}
         >
           {hl(code)}
