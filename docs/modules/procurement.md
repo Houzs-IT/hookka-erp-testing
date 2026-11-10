@@ -89,7 +89,7 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | Symbol / section | file:line | Role |
 |---|---|---|
 | `ProcurementPage` | `src/pages/procurement/index.tsx:812` | PO list, filters, banner, grid |
-| `POFormDialog` | `src/pages/procurement/index.tsx:63` | Create/edit PO modal (deep-link prefill) |
+| `POFormDialog` | `src/pages/procurement/index.tsx:71` | Create/edit PO modal (deep-link prefill) |
 | `PurchaseOrderDetailPage` | `src/pages/procurement/detail.tsx:122` | PO detail; status actions, 412-requiresGrn guard |
 | `ThreeWayMatchPanel` | `src/pages/procurement/detail.tsx:1461` | PO↔GRN↔PI variance panel (derived) |
 | `app.post("/")` (PO create) | `src/api/routes/purchase-orders.ts:461` | PO create; `body.status` verbatim |
