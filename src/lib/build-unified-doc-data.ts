@@ -8,6 +8,7 @@
 import { catRank, catLabel, fmtPieces, buildSpec, uomOf, type BuildSpecExtra } from "./doc-line-format";
 import { amountInWords } from "./amount-in-words";
 import { invoicePriceBuildUp, type InvoicePriceRow } from "./invoice-line-price";
+import { invoiceBalanceDueSen, type InvoicePrintPayment } from "./invoice-payments-print";
 import type { UnifiedDocData, UnifiedDocGroup } from "../api/lib/unified-do-invoice-pdf";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -203,6 +204,10 @@ export interface UnifiedInvoiceInput {
   taxSen?: number;
   totalSen: number;
   amountInWords?: string;
+  /** Payments received (print-extras `payments`, review H1-6). Display only. */
+  payments?: InvoicePrintPayment[];
+  /** Stored invoices.paidAmount (sen). With payments → the Balance due line. */
+  paidSen?: number;
 }
 
 export function buildUnifiedInvoiceData(input: UnifiedInvoiceInput, logoPngBase64?: string): UnifiedDocData {
@@ -271,7 +276,32 @@ export function buildUnifiedInvoiceData(input: UnifiedInvoiceInput, logoPngBase6
     taxSen: input.taxSen,
     totalSen: input.totalSen,
     amountInWords: input.amountInWords || amountInWords(input.totalSen),
+    // Payments received + balance due (review H1-6): only when something was
+    // paid — an unpaid invoice prints as before.
+    ...invoicePaymentsBlock(input),
     logoPngBase64,
+  };
+}
+
+const MAX_PAYMENT_ROWS = 20;
+
+/** The Payments received block for an invoice, or nothing when unpaid. */
+export function invoicePaymentsBlock(
+  input: Pick<UnifiedInvoiceInput, "payments" | "paidSen" | "totalSen">,
+): Pick<UnifiedDocData, "paymentsReceived" | "balanceDueSen"> {
+  const paid = Math.round(Number(input.paidSen) || 0);
+  let rows = (input.payments ?? []).filter((p) => Math.round(Number(p.amountSen) || 0) !== 0);
+  if (paid === 0 && rows.length === 0) return {};
+  // Keep the block on one page: past MAX rows the rest fold into one line
+  // (the printed rows still add up to the paid figure).
+  if (rows.length > MAX_PAYMENT_ROWS) {
+    const kept = rows.slice(0, MAX_PAYMENT_ROWS - 1);
+    const rest = rows.slice(MAX_PAYMENT_ROWS - 1);
+    rows = [...kept, { date: "", ref: `${rest.length} more payments`, amountSen: rest.reduce((t, p) => t + p.amountSen, 0) }];
+  }
+  return {
+    paymentsReceived: rows.map((p) => ({ date: p.date ? fmtDocDate(p.date) : "", ref: p.ref, amountSen: p.amountSen })),
+    balanceDueSen: invoiceBalanceDueSen(input.totalSen, paid),
   };
 }
 

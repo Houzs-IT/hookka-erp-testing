@@ -145,3 +145,107 @@ test("B7: the router closes the preview on every route change", () => {
   assert.match(r, /import \{ closePdfPreview \} from '\.\/lib\/pdf-preview'/);
   assert.match(r, /router\.subscribe\(\(state\) => \{[\s\S]*?closePdfPreview\('route'\)/);
 });
+
+// ── H1-6: a printed invoice lists each payment and the balance due ────────
+import { invoicePaymentLines, invoiceBalanceDueSen } from "../src/lib/invoice-payments-print.ts";
+import { buildUnifiedInvoiceData, invoicePaymentsBlock } from "../src/lib/build-unified-doc-data.ts";
+import { buildUnifiedDocPdf } from "../src/api/lib/unified-do-invoice-pdf.ts";
+import { loadInvoicePrintPayments } from "../src/api/lib/invoice-print-extras.ts";
+
+test("H1-6: receipts print their number; their invoice_payments twin is not doubled", () => {
+  const lines = invoicePaymentLines(
+    [
+      { receiptNumber: "OR-2611-002", date: "2026-11-05", status: "RECEIVED", amountSen: 30000 },
+      { receiptNumber: "OR-2611-001", date: "2026-11-01", status: "CLEARED", amountSen: 20000 },
+      { receiptNumber: "OR-2611-009", date: "2026-11-06", status: "BOUNCED", amountSen: 99900 },
+    ],
+    [
+      { date: "2026-11-01T00:00:00Z", amountSen: 20000, method: "BANK_TRANSFER", reference: "" },
+      { date: "2026-11-05", amountSen: 30000, method: "CHEQUE", reference: "CHQ 1" },
+      { date: "2026-11-03", amountSen: 5000, method: "CASH", reference: "" },
+    ],
+    55000,
+  );
+  assert.deepEqual(lines, [
+    { date: "2026-11-01", ref: "OR-2611-001", amountSen: 20000 },
+    { date: "2026-11-03T00:00:00Z".slice(0, 10), ref: "CASH", amountSen: 5000 },
+    { date: "2026-11-05", ref: "OR-2611-002", amountSen: 30000 },
+  ]);
+});
+
+test("H1-6: the rows always add up to the stored paidAmount", () => {
+  // A contra settled 10,000 sen with no receipt row.
+  const a = invoicePaymentLines([{ receiptNumber: "OR-1", date: "2026-11-01", amountSen: 20000 }], [], 30000);
+  assert.deepEqual(a.at(-1), { date: "", ref: "Other settlement", amountSen: 10000 });
+  // A stale row above the stored figure → a negative adjustment, never a fake paid.
+  const b = invoicePaymentLines([], [{ date: "2026-11-01", amountSen: 20000, reference: "TT" }], 15000);
+  assert.equal(b.reduce((s, l) => s + l.amountSen, 0), 15000);
+  assert.equal(b.at(-1).ref, "Adjustment");
+  assert.deepEqual(invoicePaymentLines([], [], 0), []);
+  assert.equal(invoiceBalanceDueSen(100000, 55000), 45000);
+  assert.equal(invoiceBalanceDueSen(100000, 120000), 0);
+});
+
+test("H1-6: an unpaid invoice prints as before; a paid one carries the block", async () => {
+  const base = {
+    invoiceNo: "INV-2611-001", docDate: "2026-11-01", customerName: "Acme",
+    items: [{ id: "i1", productCode: "BF-1", productName: "Bed", quantity: 1, priceSen: 100000, lineTotalSen: 100000 }],
+    subtotalSen: 100000, totalSen: 100000,
+  };
+  const unpaid = buildUnifiedInvoiceData(base);
+  assert.equal(unpaid.balanceDueSen, undefined);
+  assert.equal(unpaid.paymentsReceived, undefined);
+  const paid = buildUnifiedInvoiceData({
+    ...base,
+    paidSen: 60000,
+    payments: [{ date: "2026-11-05", ref: "OR-2611-002", amountSen: 60000 }],
+  });
+  assert.equal(paid.balanceDueSen, 40000);
+  assert.deepEqual(paid.paymentsReceived, [{ date: "05 Nov 2026", ref: "OR-2611-002", amountSen: 60000 }]);
+  const bytes = await buildUnifiedDocPdf(paid);
+  assert.ok(bytes.length > 1000);
+  // Many payments fold so the block stays on the page, still summing to paid.
+  const many = Array.from({ length: 30 }, (_, i) => ({ date: "2026-11-01", ref: `OR-${i}`, amountSen: 1000 }));
+  const blk = invoicePaymentsBlock({ payments: many, paidSen: 30000, totalSen: 100000 });
+  assert.equal(blk.paymentsReceived.length, 20);
+  assert.equal(blk.paymentsReceived.reduce((s, p) => s + p.amountSen, 0), 30000);
+  assert.match(blk.paymentsReceived.at(-1).ref, /11 more payments/);
+});
+
+test("H1-6: print-extras reads receipts allocated to THIS invoice only (read-only SQL)", async () => {
+  const seen = [];
+  const db = {
+    prepare(sql) {
+      seen.push(sql);
+      return {
+        bind: () => ({
+          all: async () => {
+            if (/FROM payment_records/.test(sql)) {
+              return { results: [
+                { receipt_number: "OR-7", date: "2026-11-02", status: "RECEIVED",
+                  allocations: JSON.stringify([{ invoiceId: "INV1", amount: 12000 }, { invoiceId: "INV10", amount: 5000 }]) },
+              ] };
+            }
+            if (/FROM invoice_payments/.test(sql)) return { results: [{ date: "2026-11-02", amount_sen: 12000, method: "CASH" }] };
+            return { results: [] };
+          },
+          first: async () => null,
+        }),
+      };
+    },
+  };
+  const rows = await loadInvoicePrintPayments(db, "INV1", "cust-1", 12000);
+  assert.deepEqual(rows, [{ date: "2026-11-02", ref: "OR-7", amountSen: 12000 }]);
+  assert.ok(seen.every((s) => /^\s*SELECT/i.test(s)), "display only — no writes");
+});
+
+test("H1-6: download, batch and the delivered e-mail all pass the payments through", () => {
+  const dl = read("src/lib/unified-doc-download.ts");
+  assert.match(dl, /payments: Array\.isArray\(extras\?\.payments\) \? extras\.payments : undefined/);
+  assert.match(dl, /paidSen: Number\(extras\?\.paidSen \?\? \(inv as \{ paidAmount\?: number \}\)\.paidAmount\) \|\| 0/);
+  const h = read("src/api/routes/delivery-orders/_helpers.ts");
+  assert.match(h, /payments: printExtras\?\.payments,\s*\n\s*paidSen: printExtras\?\.paidSen,/);
+  const r = read("src/api/lib/unified-do-invoice-pdf.ts");
+  assert.match(r, /"PAYMENTS RECEIVED"/);
+  assert.match(r, /sum\("Balance due"/);
+});

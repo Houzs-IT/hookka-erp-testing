@@ -89,6 +89,11 @@ export interface UnifiedDocData {
   taxSen?: number; // INVOICE
   totalSen?: number; // INVOICE
   amountInWords?: string; // INVOICE
+  // INVOICE: payments received against it (date, receipt no., amount) and the
+  // balance still due (review H1-6). Display only — absent on an unpaid
+  // invoice, an SO or a CO.
+  paymentsReceived?: Array<{ date: string; ref: string; amountSen: number }>;
+  balanceDueSen?: number;
   // Base64 PNG (no data-URI prefix) of the HOOKKA logo. Optional — omitted →
   // text-only letterhead. Backend passes HOOKKA_LOGO_PNG_BASE64; FE its inline.
   logoPngBase64?: string;
@@ -405,7 +410,9 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
       : [];
   // Reserve the WHOLE tail (totals + breakdown / invoice summary + signature
   // block) so it never crosses the footer — else push it to a fresh page.
-  ensureSpace((isDO ? 70 + gbLines.length * 11 : 138), false);
+  const payRows = !isDO && data.balanceDueSen != null ? (data.paymentsReceived ?? []) : [];
+  const payBlockH = !isDO && data.balanceDueSen != null ? 36 + payRows.length * 11 : 0;
+  ensureSpace((isDO ? 70 + gbLines.length * 11 : 138 + payBlockH), false);
   page.drawRectangle({ x: MARGIN, y: y + 2, width: PAGE_W - MARGIN * 2, height: 0.7, color: INK });
   y -= 6;
   rightText(page, "Total", xSet - 6, y, 8.5, fonts.bold);
@@ -435,6 +442,30 @@ export async function buildUnifiedDocPdf(data: UnifiedDocData): Promise<Uint8Arr
     sum("Total", `RM ${money(data.totalSen ?? 0)}`, true, true);
     if (data.amountInWords) {
       page.drawText(winAnsi(data.amountInWords), { x: MARGIN, y: y + 2, size: 8, font: fonts.helv, color: MUTED });
+    }
+
+    // ── Payments received + balance due (review H1-6) ──────────────────
+    if (data.balanceDueSen != null) {
+      y -= 6;
+      const xDate = PAGE_W - MARGIN - 250;
+      const xRef = xDate + 62;
+      page.drawText("PAYMENTS RECEIVED", { x: xDate, y, size: 8, font: fonts.bold, color: INK });
+      y -= 4;
+      page.drawRectangle({ x: xDate, y, width: PAGE_W - MARGIN - xDate, height: 0.5, color: RULE });
+      y -= 10;
+      if (payRows.length === 0) {
+        page.drawText("-", { x: xDate, y, size: 8, font: fonts.helv, color: MUTED });
+        y -= 11;
+      }
+      for (const p of payRows) {
+        page.drawText(winAnsi(p.date || ""), { x: xDate, y, size: 8, font: fonts.helv, color: MUTED });
+        const ref = wrap(fonts.helv, p.ref || "-", lblX - xRef + 40, 8, 1)[0] ?? "-";
+        page.drawText(ref, { x: xRef, y, size: 8, font: fonts.helv, color: INK });
+        rightText(page, `${p.amountSen < 0 ? "- " : ""}RM ${money(Math.abs(p.amountSen))}`, PAGE_W - MARGIN, y, 8, fonts.helv, INK);
+        y -= 11;
+      }
+      y -= 2;
+      sum("Balance due", `RM ${money(data.balanceDueSen)}`, true, true);
     }
   }
 

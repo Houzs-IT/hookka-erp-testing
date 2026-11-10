@@ -22,6 +22,12 @@
 // consumer has to re-derive it.
 import { readInvoiceItemPoLink } from "./invoice-po-link";
 import { invoiceBuildUpReconciles, invoiceLineUnitSen } from "../../lib/invoice-line-price";
+import {
+  invoicePaymentLines,
+  type DirectPaymentRow,
+  type InvoicePrintPayment,
+  type ReceiptAllocationRow,
+} from "../../lib/invoice-payments-print";
 
 interface DbLike {
   prepare(sql: string): {
@@ -76,6 +82,11 @@ export interface InvoicePrintExtras {
    *  cascade moved the stored totals by this much, so the printed invoice
    *  adds it back and shows what it was issued at (BUG-2026-10-17-315). */
   noteAdjustSen: number;
+  /** Payments received against the invoice, to list on the print (review
+   *  H1-6). Display only; sums to `paidSen`. */
+  payments: InvoicePrintPayment[];
+  /** The stored invoices.paidAmount (sen). */
+  paidSen: number;
 }
 
 /**
@@ -87,9 +98,17 @@ export async function computeInvoicePrintExtras(
   invoiceId: string,
 ): Promise<InvoicePrintExtras | null> {
   const inv = await db
-    .prepare("SELECT id, salesOrderId, deliveryOrderId FROM invoices WHERE id = ?")
+    .prepare("SELECT id, salesOrderId, deliveryOrderId, customerId, paidAmount FROM invoices WHERE id = ?")
     .bind(invoiceId)
-    .first<{ id: string; salesOrderId: string | null; deliveryOrderId: string | null }>();
+    .first<{
+      id: string;
+      salesOrderId: string | null;
+      deliveryOrderId: string | null;
+      customerId?: string | null;
+      customer_id?: string | null;
+      paidAmount?: number | null;
+      paid_amount?: number | null;
+    }>();
   if (!inv) return null;
 
   let customerSO = "";
@@ -464,5 +483,71 @@ export async function computeInvoicePrintExtras(
     /* notes unreadable → the stored totals print, as before */
   }
 
-  return { customerSO, customerRef, priceByCode, items, noteAdjustSen };
+  // Payments received (review H1-6) — read-only, best-effort: an unreadable
+  // receipt table just prints the invoice without the block's detail rows.
+  const paidSen = Number(inv.paidAmount ?? inv.paid_amount) || 0;
+  const payments = await loadInvoicePrintPayments(db, invoiceId, inv.customerId ?? inv.customer_id ?? null, paidSen);
+
+  return { customerSO, customerRef, priceByCode, items, noteAdjustSen, payments, paidSen };
+}
+
+/**
+ * The payment rows for the invoice print: official receipts allocated to it
+ * (receipt number + the amount allocated to THIS invoice) and payments
+ * recorded straight on the invoice. Shaped by `invoicePaymentLines`, which
+ * reconciles to the stored paidAmount. Never writes.
+ */
+export async function loadInvoicePrintPayments(
+  db: DbLike,
+  invoiceId: string,
+  customerId: string | null,
+  paidSen: number,
+): Promise<InvoicePrintPayment[]> {
+  const receipts: ReceiptAllocationRow[] = [];
+  const direct: DirectPaymentRow[] = [];
+  try {
+    if (customerId) {
+      const res = await db
+        .prepare(
+          `SELECT receiptNumber, date, status, allocations FROM payment_records
+            WHERE customerId = ? AND allocations LIKE ?`,
+        )
+        .bind(customerId, `%${invoiceId}%`)
+        .all<Record<string, unknown>>();
+      for (const r of res.results ?? []) {
+        let allocs: unknown = [];
+        try {
+          allocs = JSON.parse(String(r.allocations ?? "[]"));
+        } catch {
+          allocs = [];
+        }
+        if (!Array.isArray(allocs)) continue;
+        const amountSen = allocs
+          .filter((a) => a && (a as { invoiceId?: unknown }).invoiceId === invoiceId)
+          .reduce((s, a) => s + (Number((a as { amount?: unknown }).amount) || 0), 0);
+        if (!amountSen) continue;
+        receipts.push({
+          receiptNumber: String(r.receiptNumber ?? r.receipt_number ?? ""),
+          date: String(r.date ?? ""),
+          status: (r.status as string | null) ?? null,
+          amountSen,
+        });
+      }
+    }
+    const dp = await db
+      .prepare("SELECT date, amountSen, method, reference FROM invoice_payments WHERE invoiceId = ?")
+      .bind(invoiceId)
+      .all<Record<string, unknown>>();
+    for (const d of dp.results ?? []) {
+      direct.push({
+        date: String(d.date ?? ""),
+        amountSen: Number(d.amountSen ?? d.amount_sen) || 0,
+        method: (d.method as string | null) ?? null,
+        reference: (d.reference as string | null) ?? null,
+      });
+    }
+  } catch {
+    /* unreadable → only the reconciling row below */
+  }
+  return invoicePaymentLines(receipts, direct, paidSen);
 }

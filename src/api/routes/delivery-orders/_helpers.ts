@@ -4440,6 +4440,9 @@ export async function queueDoCustomerNotice(
                   subtotalSen,
                   taxSen,
                   totalSen,
+                  // Payments received + balance due, as the download prints them (H1-6).
+                  payments: printExtras?.payments,
+                  paidSen: printExtras?.paidSen,
                 },
                 HOOKKA_LOGO_PNG_BASE64,
               ),
