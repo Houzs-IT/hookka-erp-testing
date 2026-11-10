@@ -893,10 +893,13 @@ function ColumnFilterDropdown<T>({
     onApplyValues(new Set(matched));
     onClose();
   };
+  // Review G10 (Houzs#5499): "Today" / "This Week" / Overdue judge by the
+  // MALAYSIAN calendar day, not the device clock — a laptop set to another
+  // timezone used to shift every preset by a day around midnight. The rows'
+  // dates are compared as local y/m/d, so the MY day is built the same way.
   const today0 = () => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
+    const [y, m, d] = todayYmdMY().split("-").map(Number);
+    return new Date(y, m - 1, d);
   };
   const addDays = (d: Date, n: number) => {
     const x = new Date(d);

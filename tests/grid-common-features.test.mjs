@@ -276,6 +276,16 @@ test("G7: DataGrid shows a load error instead of the empty message, with Retry",
   assert.match(GRID, /Couldn&apos;t refresh this list: \{error\}/, "rows still shown → a banner, not a blank grid");
 });
 
+// ── G10 — date presets judge by the Malaysian day ────────────────────────
+test("G10: the column date presets' today is the Malaysian calendar day", () => {
+  const at = GRID.indexOf("const today0 = () => {");
+  assert.ok(at > 0);
+  const fn = GRID.slice(at, GRID.indexOf("};", at));
+  assert.match(fn, /todayYmdMY\(\)\.split\("-"\)\.map\(Number\)/);
+  assert.match(fn, /return new Date\(y, m - 1, d\);/);
+  assert.doesNotMatch(fn, /setHours/, "not the device clock's midnight");
+});
+
 // ── G5 — cancelled documents read as void ────────────────────────────────
 test("G5: DataGrid fades a cancelled row and strikes its document number", () => {
   assert.match(GRID, /cancelledRow\?: \(row: T\) => boolean;/);
