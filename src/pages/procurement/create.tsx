@@ -27,7 +27,8 @@ import { bindingIdForLine, cheapestBinding, sortCheapestFirst, uniqueSkuOptions 
 import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { todayYmdMY } from "@/lib/utils";
 import React, { useState, useCallback, useEffect, useMemo, Suspense } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { buildPoCopySeed, poCopyNotice } from "@/lib/po-copy";
 import { useToast } from "@/components/ui/toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -134,6 +135,15 @@ function CreatePurchaseOrderPage() {
   const isDirty = !saving && (!!expectedDate || !!notes || items.length > 0 || !!selectedSupplierId);
   const navGuard = useNavGuard(isDirty, "This purchase order is not saved. Leave without saving?");
 
+  // Review H2-2 / C2-5: "Copy as new" from a PO opens here with ?copyFrom=<poId>.
+  // Supplier, purchase company, notes and lines (qty + price) are copied; the
+  // number, status, dates, received qty and SO link are not. Deactivated /
+  // unknown / one-off promo lines are left out and named in a toast.
+  const [searchParams] = useSearchParams();
+  const copyFromId = searchParams.get("copyFrom") ?? "";
+  const [copiedFromNo, setCopiedFromNo] = useState("");
+  const copySeededRef = React.useRef(false);
+
   // Active Purchase Company options for the dropdown.
   const activeOrgs = useMemo(
     () => (orgsResp?.organisations ?? []).filter((o) => o.isActive !== false),
@@ -202,6 +212,51 @@ function CreatePurchaseOrderPage() {
     },
     [resolveSupplierName],
   );
+
+  useEffect(() => {
+    if (!copyFromId || copySeededRef.current) return;
+    // Wait for the catalogue: the copy re-checks every line against it.
+    if (rawMaterials.length === 0 || !bindingsResp || !supResp) return;
+    copySeededRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/purchase-orders/${encodeURIComponent(copyFromId)}`);
+        const body = (await res.json().catch(() => ({}))) as { success?: boolean; data?: Parameters<typeof buildPoCopySeed>[0]; error?: string };
+        if (cancelled) return;
+        if (!res.ok || !body.data) {
+          toast.error(body.error || `Couldn't load the PO to copy (HTTP ${res.status})`);
+          return;
+        }
+        const seed = buildPoCopySeed(body.data, rawMaterials);
+        const supplierName = resolveSupplierName(seed.supplierId);
+        setSelectedSupplierId(seed.supplierId);
+        setPurchaseOrgCode(seed.purchaseOrgCode);
+        setNotes(seed.notes);
+        setExpectedDate("");
+        setItems(
+          seed.lines.map((l) => {
+            const binding = getBindingsForRM(l.rmCode).find((b) => b.supplierId === seed.supplierId);
+            return {
+              ...l,
+              supplierId: seed.supplierId,
+              supplierName,
+              leadTimeDays: binding?.leadTimeDays ?? 0,
+              moq: binding?.moq ?? 0,
+            };
+          }),
+        );
+        setCopiedFromNo(String(body.data.poNo ?? ""));
+        const notice = poCopyNotice(seed);
+        if (notice) toast.warning(notice);
+      } catch {
+        if (!cancelled) toast.error("Couldn't load the PO to copy");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [copyFromId, rawMaterials, bindingsResp, supResp, resolveSupplierName, getBindingsForRM, toast]);
 
   // ── Derived: RM picker (category chips + search) ──────────────
   const activeRMs = useMemo(
@@ -578,7 +633,9 @@ function CreatePurchaseOrderPage() {
         </Button>
         <div className="flex-1">
           <h1 className="text-xl font-bold text-[#1F1D1B]">New Purchase Order</h1>
-          <p className="text-xs text-[#6B7280]">Procurement &rarr; New PO</p>
+          <p className="text-xs text-[#6B7280]">
+            Procurement &rarr; New PO{copiedFromNo ? ` · copy of ${copiedFromNo}` : ""}
+          </p>
         </div>
         <Button variant="outline" onClick={() => navigate("/procurement")} disabled={saving}>
           Cancel

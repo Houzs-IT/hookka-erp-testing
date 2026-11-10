@@ -20,6 +20,8 @@ import React, { useState, useEffect, useMemo, useCallback, Suspense } from "reac
 import { SaveBlockers, reportSaveBlockers } from "@/lib/save-blockers";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { savedDocHref, sourceBackLabel, sourceFromParams, sourceHref } from "@/lib/return-to-source";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -157,6 +159,22 @@ function CreatePurchaseInvoicePage() {
   // a retry after a lost response could bill the same invoice twice.
   const piIdem = useIdempotencyKey();
   const [searchParams] = useSearchParams();
+  const { confirm } = useConfirm();
+  // Review C2-6: a PI raised from a GRN (or a PO) offers "Back to GRN/PO" after save.
+  const saveSource = sourceFromParams(searchParams, ["GRN", "PO"]);
+  const leaveAfterSave = async (newId?: string | null) => {
+    if (!saveSource) {
+      navigate("/procurement/pi");
+      return;
+    }
+    const back = await confirm({
+      title: "Purchase invoice created",
+      message: `Go back to the ${saveSource.kind === "GRN" ? "goods receipt" : "purchase order"} this invoice was raised from, or open the new invoice?`,
+      confirmLabel: sourceBackLabel(saveSource),
+      cancelLabel: newId ? "Open invoice" : "Go to invoice list",
+    });
+    navigate(back ? sourceHref(saveSource) : savedDocHref("PI", newId));
+  };
 
   // Data fetches — same endpoints as pi.tsx; cache is shared.
   const { data: supResp } = useCachedJson<{
@@ -605,7 +623,7 @@ function CreatePurchaseInvoicePage() {
         }),
       );
       const j = (await res.json().catch(() => null)) as
-        | { success?: boolean; error?: string; data?: { piNo?: string } }
+        | { success?: boolean; error?: string; data?: { id?: string; piNo?: string } }
         | null;
       if (!res.ok || !j?.success) {
         toast.error(
@@ -624,7 +642,7 @@ function CreatePurchaseInvoicePage() {
           : "Purchase invoice created",
       );
       navGuard.allowNext();
-      navigate("/procurement/pi");
+      await leaveAfterSave(j.data?.id ?? null);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Network error creating invoice",
@@ -1219,7 +1237,7 @@ function CreatePurchaseInvoicePage() {
                 : `${ids.length} purchase invoices created`,
             );
             navGuard.allowNext();
-            navigate("/procurement/pi");
+            void leaveAfterSave(ids.length === 1 ? ids[0] : null);
           }
         }}
       />

@@ -31,7 +31,7 @@ import {
   Plus, ShoppingBag, Truck, Trash2, X, Package,
   FileText, Download, Filter, AlertTriangle,
   Eye, Pencil, Printer, RefreshCw, TrendingDown, ChevronDown, ChevronUp,
-  ClipboardCheck, Upload,
+  ClipboardCheck, Upload, Copy,
 } from "lucide-react";
 
 // PO statuses that the bulk Convert-to-GRN action accepts. Mirrors the
@@ -1663,6 +1663,29 @@ export default function ProcurementPage() {
     },
     { key: "orderDate", label: "Order Date", type: "date", width: "110px", sortable: true },
     { key: "expectedDate", label: "Expected Date", type: "date", width: "110px", sortable: true },
+    // Review H2-3 / C2-7: which GRN(s) received this PO, and when the goods
+    // actually arrived (latest GRN receive date). Cancelled GRNs left out.
+    { key: "grnNumbers", label: "GRN No.", type: "text", width: "140px", sortable: true,
+      render: (_v: unknown, row: PurchaseOrder) => {
+        const refs = row.grnRefs ?? [];
+        if (refs.length === 0) return <span className="text-[#9CA3AF]">—</span>;
+        return (
+          <span className="flex flex-wrap gap-x-1" title={row.grnNumbers}>
+            {refs.map((g, i) => (
+              <a
+                key={g.id}
+                href={`/procurement/grn/${g.id}`}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/procurement/grn/${g.id}`); }}
+                className="text-[#6B5C32] hover:underline"
+              >
+                {g.grnNumber}{i < refs.length - 1 ? "," : ""}
+              </a>
+            ))}
+          </span>
+        );
+      },
+    },
+    { key: "grnDate", label: "GRN Date", type: "date", width: "110px", sortable: true },
     { key: "items.length", label: "Items", type: "number", width: "70px", align: "right", sortable: true,
       render: (_v: unknown, row: PurchaseOrder) => <span>{row.items.length}</span>,
     },
@@ -1698,7 +1721,7 @@ export default function ProcurementPage() {
     },
     { key: "totalSen", label: "Total", type: "currency", width: "120px", sortable: true, total: "sum" },
     { key: "status", label: "Status", type: "status", width: "120px", sortable: true },
-  ], [otrMap, orgNameByCode]);
+  ], [otrMap, orgNameByCode, navigate]);
 
   const poGridContextMenu = useCallback((row: PurchaseOrder): ContextMenuItem[] => {
     return [
@@ -1712,6 +1735,12 @@ export default function ProcurementPage() {
         icon: <Pencil className="h-3.5 w-3.5" />,
         action: () => navigate(`/procurement/${row.id}`),
         disabled: row.status !== "DRAFT",
+      },
+      // Review H2-2 / C2-5: New PO pre-filled from this one (any status).
+      {
+        label: "Copy as new",
+        icon: <Copy className="h-3.5 w-3.5" />,
+        action: () => navigate(`/procurement/create?copyFrom=${encodeURIComponent(row.id)}`),
       },
       { label: "", separator: true, action: () => {} },
       {

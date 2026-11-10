@@ -18,6 +18,7 @@ import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { useUrlState } from "@/lib/use-url-state";
 import { buildGrnDetailListingAoa } from "@/lib/doc-detail-listings";
+import { grnPoRefs } from "@/lib/grn-line-po";
 import { DocImportDialog } from "@/components/doc-import-dialog";
 import { useBatchConfirm } from "@/components/batch-confirm";
 import type { GoodsReceiptNote, PurchaseOrder, ArrivalState } from "@/types";
@@ -670,7 +671,14 @@ export default function GRNPage() {
   // ---- Columns ----
   const grnGridColumns: Column<GoodsReceiptNote>[] = useMemo(() => [
     { key: "grnNumber", label: "GRN No.", type: "docno", width: "130px", sortable: true, cellClassName: (r) => cancelledDocNoClass(r.status) },
-    { key: "poNumber", label: "PO No.", type: "docno", width: "130px", sortable: true },
+    // Review H1-5: a receipt covering several POs lists every PO it draws from.
+    { key: "poNumber", label: "PO No.", type: "docno", width: "130px", sortable: true,
+      render: (_v: unknown, row: GoodsReceiptNote) => {
+        const refs = grnPoRefs(row);
+        if (refs.length <= 1) return <span>{row.poNumber || refs[0]?.poNumber || ""}</span>;
+        return <span title={refs.map((r) => r.poNumber).join(", ")}>{refs.map((r) => r.poNumber).join(", ")}</span>;
+      },
+    },
     { key: "supplierName", label: "Supplier", type: "text", sortable: true },
     // Supplier's own DO number (their delivery-order ref). First-class
     // column per owner ruling 2026-06-29 evening — AP team matches on it.

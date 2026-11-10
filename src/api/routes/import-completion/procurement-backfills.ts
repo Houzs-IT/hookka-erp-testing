@@ -10,6 +10,7 @@ import {
 } from "../../lib/unit-price-precision";
 import { type SuppliersFromHistoryBody, type BindingsFromHistoryBody, type BackfillBody, type BackfillBindingsBody, type BackfillBindingsMultiBody, type BackfillPhantomGrnsBody, type BackfillExpectedUnit, type LinenoFixRow } from "./_shared";
 import { todayYmdMY } from "../../../lib/utils";
+import { demoteOtherMainsStatement } from "../../lib/supplier-main-binding";
 
 const app = new Hono<Env>();
 
@@ -311,19 +312,24 @@ app.post("/supplier-bindings-from-history", async (c) => {
         .first<{ id: string }>();
 
       if (existing) {
-        await db
+        const updateRow = db
           .prepare(
             `UPDATE supplier_material_bindings
                 SET supplierSku = ?, unitPrice = ?, isMainSupplier = ?,
                     materialName = ?
               WHERE id = ?`,
           )
-          .bind(supplierSKU, unitPrice, isMain, materialName, existing.id)
-          .run();
+          .bind(supplierSKU, unitPrice, isMain, materialName, existing.id);
+        // H2 B1: a MAIN binding demotes the item's other main(s) first.
+        if (isMain === 1) {
+          await db.batch([demoteOtherMainsStatement(db, materialCode, existing.id), updateRow]);
+        } else {
+          await updateRow.run();
+        }
         updated++;
       } else {
         const id = `smb-${crypto.randomUUID().slice(0, 8)}`;
-        await db
+        const insertRow = db
           .prepare(
             `INSERT INTO supplier_material_bindings (id, supplierId, materialCode,
                materialName, supplierSku, unitPrice, currency, leadTimeDays,
@@ -339,8 +345,13 @@ app.post("/supplier-bindings-from-history", async (c) => {
             unitPrice,
             todayYmdMY(),
             isMain,
-          )
-          .run();
+          );
+        // H2 B1: a MAIN binding demotes the item's other main(s) first.
+        if (isMain === 1) {
+          await db.batch([demoteOtherMainsStatement(db, materialCode, id), insertRow]);
+        } else {
+          await insertRow.run();
+        }
         inserted++;
       }
     } catch (err) {

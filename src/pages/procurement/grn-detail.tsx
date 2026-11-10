@@ -46,6 +46,9 @@ import {
   describeGrnStockDelta,
 } from "@/lib/purchase-edit-rules";
 import type { ArrivalState } from "@/types";
+import { grnPoRefs, grnLinePoLabel } from "@/lib/grn-line-po";
+import { ResourceDocuments } from "@/components/resource-documents";
+import { GRN_PHOTO_RESOURCE } from "@/lib/grn-photos";
 
 // Arrival state pipeline sequences for the stepper
 const ARRIVAL_SEQUENCE: ArrivalState[] = ["NOT_ARRIVED", "IN_TRANSIT", "AT_CUSTOMS", "ARRIVED"];
@@ -94,6 +97,9 @@ type GRNItem = {
   rejectedQty: number;
   rejectionReason: string | null;
   unitPrice: number; // sen
+  // Review H1-5: the PO this line receives (server-filled).
+  poId?: string;
+  poNumber?: string;
   // Convert-chain: qty already pulled into a PI off this line (read-only here;
   // a POSTED-line edit can't drop accepted below this).
   invoicedQty?: number;
@@ -191,6 +197,8 @@ export default function GRNDetailPage() {
     fetchError ?? (resp && resp.success === false ? resp.error || "GRN not found" : null);
 
   const items = grn?.items ?? [];
+  // Review H1-5: every PO this receipt draws from (more than one = multi-PO).
+  const grnPoList = grn ? grnPoRefs(grn) : [];
 
   // PIs that reference the same PO as this GRN — derived client-side from the
   // shared PI list (no extra endpoint needed; list is small).
@@ -611,7 +619,11 @@ export default function GRNDetailPage() {
       ]);
       const sup = (supResp?.data ?? []).find((s) => s.id === grn.supplierId);
       const lh = letterheadForPurchaseOrg(sup?.purchaseOrgCode || "HOOKKA", orgsResp?.organisations);
+      // Review C2-4: receipt photos print after the GRN (downscaled).
+      const { loadGrnPhotoDataUrls } = await import("@/lib/grn-photos");
+      const photos = await loadGrnPhotoDataUrls(grn.id);
       generateGRNPdf({
+        photos,
         grnNo: grn.grnNumber,
         date: grn.receiveDate,
         poRef: grn.poNumber,
@@ -781,9 +793,17 @@ export default function GRNDetailPage() {
               <span className="text-[#6B7280]">Supplier</span>
               <span className="font-medium text-[#1F1D1B]">{grn.supplierName}</span>
 
-              <span className="text-[#6B7280]">Linked PO</span>
+              <span className="text-[#6B7280]">{grnPoList.length > 1 ? "Linked POs" : "Linked PO"}</span>
               <span>
-                {grn.poId ? (
+                {grnPoList.length > 1 ? (
+                  <span className="flex flex-wrap gap-x-2">
+                    {grnPoList.map((ref) => (
+                      <Link key={ref.poId} to={`/procurement/${ref.poId}`} className="text-[#6B5C32] font-medium hover:underline">
+                        {ref.poNumber}
+                      </Link>
+                    ))}
+                  </span>
+                ) : grn.poId ? (
                   <Link to={`/procurement/${grn.poId}`} className="text-[#6B5C32] font-medium hover:underline">
                     {grn.poNumber || grn.poId}
                   </Link>
@@ -974,6 +994,14 @@ export default function GRNDetailPage() {
                         <td className="h-12 px-3">
                           <div className="font-medium text-[#1F1D1B]">{it.materialName}</div>
                           <div className="text-xs text-[#6B5C32]">{it.materialCode}</div>
+                          {grnPoList.length > 1 && it.poId ? (
+                            <div className="text-xs text-[#4B5563]">
+                              PO{" "}
+                              <Link to={`/procurement/${it.poId}`} className="text-[#6B5C32] hover:underline">
+                                {grnLinePoLabel(it, grn)}
+                              </Link>
+                            </div>
+                          ) : null}
                           {lineLocked ? (
                             <div className="inline-flex items-center gap-1 text-xs text-amber-700">
                               <Lock className="h-3 w-3" /> Locked — {lineInvoiced} invoiced
@@ -1047,6 +1075,21 @@ export default function GRNDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Review C2-4: receipt photos (delivery note, damaged cartons) — shared
+          /api/files store, resourceType "grn"; they print on the GRN PDF. */}
+      <Card>
+        <CardContent className="pt-4">
+          <ResourceDocuments
+            resourceType={GRN_PHOTO_RESOURCE}
+            resourceId={grn.id}
+            title="Receipt photos"
+            hint="Proof of receipt — the supplier's delivery note, damaged cartons. They print on the GRN PDF."
+            photosOnly
+            emptyText="No photos yet."
+          />
+        </CardContent>
+      </Card>
 
       {/* ── Shipment Card (PO-linked GRNs only) ────────────────────────────── */}
       {grn.poId && (

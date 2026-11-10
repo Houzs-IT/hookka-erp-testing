@@ -629,6 +629,12 @@ export type PurchaseOrder = {
   orderDate: string;
   expectedDate: string;
   receivedDate: string | null;
+  // Review H2-3 / C2-7: GRNs that received this PO (list GET only).
+  grnRefs?: Array<{ id: string; grnNumber: string; receiveDate: string }>;
+  grnNumbers?: string;
+  grnDate?: string;
+  // Review H2-8: supplier delivery Date 1 + revised 2/3/4 (null = not given).
+  supplierDates?: [string | null, string | null, string | null, string | null];
   notes: string;
   // Purchase company that buys on this PO (HOOKKA / OHANA / sister co).
   // Mirrors the supplier-level default in Supplier.purchaseOrgCode but is
@@ -1630,6 +1636,10 @@ export type BalanceSheetEntry = {
 // --- GRN & 3-Way Matching ---
 export type GRNItem = {
   poItemIndex: number;
+  // Review H1-5: the PO this line receives (multi-PO receipts); the server
+  // fills the header PO on legacy lines.
+  poId?: string;
+  poNumber?: string;
   materialCode: string;
   supplierSKU?: string;
   materialName: string;

@@ -3,6 +3,7 @@ import { todayYmdMY } from "@/lib/utils";
 import { useMemo, useState, useCallback, lazy, Suspense } from "react";
 import { AuditHistoryPanel } from "@/components/audit/AuditHistoryPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PoSupplierDatesCard } from "@/components/po-supplier-dates-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,7 +31,7 @@ import type {
 import {
   ArrowLeft, Download, Printer, ChevronRight, Package, FileText,
   CheckCircle, Send, Lock, Pencil, Save, X, Trash2, AlertTriangle, Mail,
-  GitCompare, ChevronDown, ChevronUp, Receipt,
+  GitCompare, ChevronDown, ChevronUp, Receipt, Copy,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useParams, useNavigate } from "react-router-dom";
@@ -720,6 +721,16 @@ export default function PurchaseOrderDetailPage() {
                 <Pencil className="h-4 w-4" /> Edit
               </Button>
             )}
+            {/* Review H2-2 / C2-5: New PO pre-filled from this one. */}
+            {!editing && (
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/procurement/create?copyFrom=${encodeURIComponent(po.id)}`)}
+                title="Open a new PO with this supplier, lines and prices (dates and number blank)"
+              >
+                <Copy className="h-4 w-4" /> Copy as new
+              </Button>
+            )}
             {canEmail && !editing && (
               <div className="flex items-center gap-2">
                 {po.lastEmailedAt && (
@@ -851,6 +862,17 @@ export default function PurchaseOrderDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Review H2-8: supplier delivery Date 1 + revised 2/3/4 (never overwritten). */}
+      <PoSupplierDatesCard
+        poId={po.id}
+        dates={po.supplierDates}
+        cancelled={isCancelled}
+        onRecorded={() => {
+          invalidateCachePrefix("/api/purchase-orders");
+          fetchPO();
+        }}
+      />
 
       {/* Edit-mode form (editable until goods land — see isEditable). Replaces
           the read-only details/items cards while editing — the operator sees

@@ -278,6 +278,10 @@ type GRNItemRow = {
   // folds invoiced_qty → invoicedQty on read; dual-key for raw/mock rows.
   invoicedQty?: number | null;
   invoiced_qty?: number | null;
+  // The PO this line receives (multi-PO receipts own the PO per line).
+  // toCamel folds po_id → poId; dual-key.
+  poId?: string | null;
+  po_id?: string | null;
 };
 
 type PurchaseOrderRow = {
@@ -347,7 +351,52 @@ function rowToItem(r: GRNItemRow) {
     unitPrice: r.unitPrice,
     invoicedQty,
     availableQty: computeAvailableQty(Number(r.acceptedQty) || 0, invoicedQty),
+    // Review H1-5: the PO this line came from. Blank on legacy single-PO lines
+    // (the header PO owns them); poNumber is filled by fillGrnLinePoNumbers.
+    poId: String(r.poId ?? r.po_id ?? "").trim(),
+    poNumber: "",
   };
+}
+
+type GrnPoLike = { poId: string; poNumber: string; items: Array<{ poId: string; poNumber: string }> };
+
+/**
+ * Review H1-5 — name the PO on every GRN line. A line with its own `po_id`
+ * gets that PO's number; a line without one belongs to the header PO.
+ * Read-only: one SELECT over the distinct line PO ids. Mutates the built GRNs.
+ */
+export async function fillGrnLinePoNumbers(db: D1Database, grns: GrnPoLike[]): Promise<void> {
+  const ids = new Set<string>();
+  for (const g of grns) {
+    for (const it of g.items) {
+      if (it.poId && it.poId !== g.poId) ids.add(it.poId);
+    }
+  }
+  const numbers = new Map<string, string>();
+  if (ids.size > 0) {
+    const list = [...ids];
+    try {
+      const res = await db
+        .prepare(`SELECT id, poNo FROM purchase_orders WHERE id IN (${list.map(() => "?").join(", ")})`)
+        .bind(...list)
+        .all<{ id: string; poNo?: string | null; po_no?: string | null }>();
+      for (const r of res.results ?? []) numbers.set(r.id, String(r.poNo ?? r.po_no ?? ""));
+    } catch (err) {
+      console.warn("[grn] line PO numbers:", err);
+    }
+  }
+  for (const g of grns) {
+    for (const it of g.items) {
+      if (!it.poId) {
+        it.poId = g.poId;
+        it.poNumber = g.poNumber;
+      } else if (it.poId === g.poId) {
+        it.poNumber = g.poNumber;
+      } else {
+        it.poNumber = numbers.get(it.poId) || it.poId;
+      }
+    }
+  }
 }
 
 type GrnLike = { supplierId: string; items: Array<{ supplierSKU: string; materialCode: string; unitPrice: number }> };
@@ -1357,6 +1406,7 @@ app.get("/", async (c) => {
   }
   const data = grnRows.map((g) => rowToGRN(g, itemsByGrnId.get(g.id) ?? []));
   await fillGrnSupplierSku(c.var.DB, data);
+  await fillGrnLinePoNumbers(c.var.DB, data);
   return c.json(
     paginate
       ? { success: true, data, total, page, limit }
@@ -1908,6 +1958,7 @@ app.get("/:id", async (c) => {
     return c.json({ success: false, error: "GRN not found" }, 404);
   }
   await fillGrnSupplierSku(c.var.DB, [grn]);
+  await fillGrnLinePoNumbers(c.var.DB, [grn]);
   return c.json({ success: true, data: grn });
 });
 

@@ -24,6 +24,7 @@ import {
   isUniqueViolation,
   listDuplicateBindings,
 } from "../lib/supplier-binding-unique";
+import { demoteOtherMainsStatement, listMultiMainItems } from "../lib/supplier-main-binding";
 
 const app = new Hono<Env>();
 
@@ -300,7 +301,7 @@ app.post("/", async (c) => {
       await ensureCnyCurrency(c.var.DB, "supplier_material_bindings");
       await ensureCnyCurrency(c.var.DB, "price_histories");
     }
-    await c.var.DB.prepare(
+    const insertBinding = c.var.DB.prepare(
       `INSERT INTO supplier_material_bindings (id, orgId, supplierId, materialCode,
          materialName, supplierSku, supplierDescription, unitPrice, currency, leadTimeDays,
          paymentTerms, moq, effectiveFrom, priceValidFrom, isMainSupplier)
@@ -322,8 +323,16 @@ app.post("/", async (c) => {
         row.effectiveFrom,
         row.effectiveFrom,
         row.isMainSupplier,
-      )
-      .run();
+      );
+    // H2 B1: saving as MAIN demotes the item's other main(s) in the same batch.
+    if (row.isMainSupplier === 1) {
+      await c.var.DB.batch([
+        demoteOtherMainsStatement(c.var.DB, row.materialCode, id, orgId),
+        insertBinding,
+      ]);
+    } else {
+      await insertBinding.run();
+    }
     // Seed the Price Change Log with the opening price (old = 0 → "first
     // price"). Append-only audit row carries the effective date so the log
     // shows the real effective date, not the system clock. Best-effort.
@@ -391,6 +400,25 @@ app.get("/duplicates", async (c) => {
     summary: {
       pairs: groups.length,
       surplusRows: groups.reduce((n, g) => n + g.count - 1, 0),
+    },
+  });
+});
+
+// GET /api/supplier-materials/multiple-main — READ-ONLY (review pass 2, H2 B1).
+// Items that currently carry more than one main supplier binding. New saves
+// demote the old main, so this list only shrinks; repairing the rows already
+// there is a prod data write the owner decides on (Suppliers → SKU, or an
+// approved clean-up). Registered before "/:id".
+app.get("/multiple-main", async (c) => {
+  const denied = await requirePermission(c, "supplier-materials", "read");
+  if (denied) return denied;
+  const items = await listMultiMainItems(c.var.DB, getOrgId(c));
+  return c.json({
+    success: true,
+    data: items,
+    summary: {
+      items: items.length,
+      extraMains: items.reduce((n, g) => n + g.count - 1, 0),
     },
   });
 });
@@ -497,7 +525,7 @@ app.put("/:id", async (c) => {
     }
     // Write effectiveFrom (new) and mirror into priceValidFrom (legacy) so the
     // current price record always carries the effective date in both columns.
-    await c.var.DB.prepare(
+    const updateBinding = c.var.DB.prepare(
       `UPDATE supplier_material_bindings SET
          supplierId = ?, materialCode = ?, materialName = ?, supplierSku = ?,
          supplierDescription = ?, unitPrice = ?, currency = ?, leadTimeDays = ?,
@@ -520,8 +548,21 @@ app.put("/:id", async (c) => {
         merged.effectiveFrom,
         merged.isMainSupplier,
         id,
-      )
-      .run();
+      );
+    // H2 B1: saving as MAIN demotes the item's other main(s) in the same batch.
+    if (merged.isMainSupplier === 1) {
+      await c.var.DB.batch([
+        demoteOtherMainsStatement(
+          c.var.DB,
+          String(merged.materialCode),
+          id,
+          String(existing.orgId ?? getOrgId(c)),
+        ),
+        updateBinding,
+      ]);
+    } else {
+      await updateBinding.run();
+    }
     // Append a price-history entry whenever the unit price moves — the trail is
     // APPEND-ONLY (a new row per change; the prior price is never overwritten),
     // which is what makes the Price Change Log auditable. The row carries

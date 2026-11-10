@@ -25,6 +25,14 @@ import { openPoIdsDeliveredInFull } from "../lib/po-delivered";
 import { ensureGrnItemPoRef, GRN_OF_PO_SQL } from "./grn";
 import { editConflictMessage } from "../lib/edit-conflict";
 import { mytYymm } from "../../lib/doc-number";
+import {
+  inactiveCodesFromRows,
+  inactiveMaterialError,
+  newlyAddedCodes,
+  type RmActiveRow,
+} from "../../lib/po-inactive-material";
+import { pickSupplierDateSlot, readSupplierDates } from "../../lib/po-supplier-dates";
+import { summarizePoGrns, type GrnHeaderLite, type GrnLineLink } from "../../lib/po-grn-refs";
 
 const app = new Hono<Env>();
 
@@ -147,6 +155,8 @@ function rowToPO(row: PurchaseOrderRow, items: PurchaseOrderItemRow[] = []) {
     // Dual-keyed read — Postgres folds snake_case to camelCase on some adapters
     // but raw rows stay snake_case. Default to HOOKKA when both are null.
     purchaseOrgCode: row.purchaseOrgCode ?? row.purchase_org_code ?? "HOOKKA",
+    // Review H2-8: supplier delivery Date 1 + revised 2/3/4 (null = not given).
+    supplierDates: readSupplierDates(row as unknown as Record<string, unknown>),
     createdAt: row.createdAt ?? "",
     updatedAt: row.updatedAt ?? "",
   };
@@ -222,22 +232,35 @@ async function rmBaseUoms(
   db: D1Database,
   orgId: string,
   items: Array<Record<string, unknown>>,
-): Promise<Map<string, string>> {
+): Promise<{ uom: Map<string, string>; inactive: Set<string> }> {
   const codes = [...new Set(items.map((i) => String(i.materialCode ?? "").trim().toUpperCase()).filter(Boolean))];
-  if (codes.length === 0) return new Map();
+  if (codes.length === 0) return { uom: new Map(), inactive: new Set() };
   // D1 caps bound parameters at 100 per statement: orgId + 90 codes per query.
-  const rows: Array<{ itemCode: string; baseUOM: string | null }> = [];
+  // isActive / status ride along for review C2-8 (inactive codes) — same read.
+  const rows: Array<{ itemCode: string; baseUOM: string | null } & RmActiveRow> = [];
   for (let i = 0; i < codes.length; i += 90) {
     const chunk = codes.slice(i, i + 90);
     const { results } = await db
       .prepare(
-        `SELECT itemCode, baseUOM FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
+        `SELECT itemCode, baseUOM, isActive, status FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
       )
       .bind(orgId, ...chunk)
-      .all<{ itemCode: string; baseUOM: string | null }>();
+      .all<{ itemCode: string; baseUOM: string | null } & RmActiveRow>();
     rows.push(...(results ?? []));
   }
-  return rmUnitMap(rows);
+  return { uom: rmUnitMap(rows), inactive: inactiveCodesFromRows(rows) };
+}
+
+/**
+ * Review C2-8 — the material codes on the payload that the PO does not carry
+ * yet and whose every raw-material row is deactivated.
+ */
+function inactiveNewMaterials(
+  inactive: Set<string>,
+  items: Array<Record<string, unknown>>,
+  existingCodes: Iterable<unknown> = [],
+): string[] {
+  return newlyAddedCodes(items as Array<{ materialCode?: unknown }>, existingCodes).filter((c) => inactive.has(c));
 }
 
 function genItemId(): string {
@@ -433,12 +456,64 @@ app.get("/", async (c) => {
     poRows.map((p) => p.supplierId),
   );
   fillBlankSupplierSku(data, bindings);
+  // Review H2-3 / C2-7: each PO's GRN number(s) + received date (read-only).
+  await attachPoGrnRefs(c.var.DB, data);
   return c.json(
     paginate
       ? { success: true, data, total, page, limit }
       : { success: true, data },
   );
 });
+
+/**
+ * Review H2-3 / C2-7 — add `grnRefs` / `grnNumbers` / `grnDate` to each PO in
+ * the list (in place). Two read-only queries over the returned POs (header poId, and the
+ * line po_id of multi-PO receipts). A failure leaves the columns blank rather
+ * than failing the list.
+ */
+export async function attachPoGrnRefs<T extends { id: string }>(
+  db: D1Database,
+  pos: T[],
+): Promise<void> {
+  const ids = pos.map((p) => p.id);
+  let grns: GrnHeaderLite[] = [];
+  let links: GrnLineLink[] = [];
+  if (ids.length) {
+    try {
+      await ensureGrnItemPoRef(db);
+      const ph = ids.map(() => "?").join(", ");
+      const [gRes, lRes] = await Promise.all([
+        db
+          .prepare(
+            `SELECT id, grnNumber, poId, receiveDate, status FROM grns WHERE poId IN (${ph}) OR id IN (SELECT grnId FROM grn_items WHERE po_id IN (${ph}))`,
+          )
+          .bind(...ids, ...ids)
+          .all<Record<string, unknown>>(),
+        db
+          .prepare(`SELECT grnId, po_id FROM grn_items WHERE po_id IN (${ph})`)
+          .bind(...ids)
+          .all<Record<string, unknown>>(),
+      ]);
+      grns = (gRes.results ?? []).map((r) => ({
+        id: String(r.id ?? ""),
+        grnNumber: String(r.grnNumber ?? r.grn_number ?? ""),
+        poId: String(r.poId ?? r.po_id ?? ""),
+        receiveDate: String(r.receiveDate ?? r.receive_date ?? ""),
+        status: String(r.status ?? ""),
+      }));
+      links = (lRes.results ?? []).map((r) => ({
+        grnId: String(r.grnId ?? r.grn_id ?? ""),
+        poId: String(r.poId ?? r.po_id ?? ""),
+      }));
+    } catch (err) {
+      console.warn("[purchase-orders] GRN refs:", err);
+    }
+  }
+  const summary = summarizePoGrns(ids, grns, links);
+  for (const p of pos) {
+    Object.assign(p, summary.get(p.id) ?? { grnRefs: [], grnNumbers: "", grnDate: "" });
+  }
+}
 
 // GET /api/purchase-orders/stats — whole-dataset PO header rows (NO line items),
 // so the list page's summary widgets (Draft / Confirmed counts, the overdue
@@ -542,7 +617,12 @@ app.post("/", idempotent(), async (c) => {
         return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
       }
     }
-    const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), poItems);
+    const { uom: rmUom, inactive: rmInactive } = await rmBaseUoms(c.var.DB, getOrgId(c), poItems);
+    // Review C2-8: a deactivated material can't be put on a new PO.
+    const inactiveNew = inactiveNewMaterials(rmInactive, poItems);
+    if (inactiveNew.length > 0) {
+      return c.json({ success: false, error: inactiveMaterialError(inactiveNew) }, 400);
+    }
     const items = poItems.map((item) => {
       const quantity = Number(item.quantity) || 0;
       const unitPriceSen = Number(item.unitPriceSen) || 0;
@@ -932,7 +1012,7 @@ app.put("/:id", async (c) => {
           return c.json({ success: false, error: `items[${i}]: unitPriceSen must be a number >= 0` }, 400);
         }
       }
-      const rmUom = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
+      const { uom: rmUom, inactive: rmInactive } = await rmBaseUoms(c.var.DB, getOrgId(c), rawItems);
       // What is stored now decides whether a line was already received: the
       // payload's receivedQty is client-supplied and can be 0 or missing.
       const { results: storedLines } = await c.var.DB
@@ -941,6 +1021,16 @@ app.put("/:id", async (c) => {
         )
         .bind(id)
         .all<{ id: string; material_code: string | null; unit: string | null; receivedQty: number | null }>();
+      // Review C2-8: lines already on the PO stay editable; a material the PO
+      // does not carry yet must be active.
+      const inactiveNew = inactiveNewMaterials(
+        rmInactive,
+        rawItems,
+        (storedLines ?? []).map((l) => l.material_code ?? (l as { materialCode?: string | null }).materialCode ?? ""),
+      );
+      if (inactiveNew.length > 0) {
+        return c.json({ success: false, error: inactiveMaterialError(inactiveNew) }, 400);
+      }
       const stored = new Map((storedLines ?? []).map((l) => [l.id, l]));
       // A payload line with no id (or an id we do not hold) is matched to the
       // stored line with the same materialCode, in line order, so a received
@@ -1178,6 +1268,84 @@ function ensurePendingMigrations(db: D1Database): Promise<void> {
   });
   return pendingMigrations;
 }
+
+// Review H2-8 — supplier delivery dates (Date 1, revised 2/3/4). Own memo so
+// the four columns land even when the main self-apply round already ran.
+let supplierDateColumnsEnsured: Promise<void> | null = null;
+export function ensureSupplierDateColumns(db: D1Database): Promise<void> {
+  if (supplierDateColumnsEnsured) return supplierDateColumnsEnsured;
+  supplierDateColumnsEnsured = runSelfApply(db, "purchase-orders:supplier-dates", [
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_1 TEXT",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_2 TEXT",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_3 TEXT",
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_4 TEXT",
+  ]).catch((err) => {
+    supplierDateColumnsEnsured = null;
+    throw err;
+  });
+  return supplierDateColumnsEnsured;
+}
+
+// POST /api/purchase-orders/:id/supplier-date — review H2-8. Body
+// { date: "YYYY-MM-DD", slot?: 1|2|3|4|"next" } records a delivery date the
+// supplier gave into the next empty slot (or the named one). A recorded slot
+// is never overwritten or cleared: 409. The write is compare-and-set
+// (`WHERE supplier_date_N IS NULL`), so two clicks cannot both fill a slot;
+// the same date sent again is a no-op. Dates only — nothing is recomputed.
+app.post("/:id/supplier-date", async (c) => {
+  const denied = await requirePermission(c, "purchase-orders", "update");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  let body: { date?: unknown; slot?: unknown };
+  try {
+    body = (await c.req.json()) as { date?: unknown; slot?: unknown };
+  } catch {
+    return c.json({ success: false, error: "Invalid JSON in request body" }, 400);
+  }
+  // Columns first, before the read that judges the slots and the write.
+  await ensureSupplierDateColumns(c.var.DB);
+  const row = await c.var.DB
+    .prepare("SELECT * FROM purchase_orders WHERE id = ?")
+    .bind(id)
+    .first<Record<string, unknown>>();
+  if (!row) return c.json({ success: false, error: "Purchase order not found" }, 404);
+  if (String(row.status ?? "") === "CANCELLED") {
+    return c.json({ success: false, error: "This purchase order is cancelled." }, 409);
+  }
+  const date = String(body.date ?? "").trim();
+  const pick = pickSupplierDateSlot(readSupplierDates(row), date, body.slot);
+  if (!pick.ok) {
+    return c.json({ success: false, code: pick.status === 409 ? "supplier_date_recorded" : undefined, error: pick.error }, pick.status);
+  }
+  if (pick.unchanged) {
+    return c.json({ success: true, unchanged: true, data: await fetchPOWithItems(c.var.DB, id) });
+  }
+  const col = `supplier_date_${pick.slot}`; // slot is 1..4, validated above
+  const now = new Date().toISOString();
+  const res = await c.var.DB
+    .prepare(`UPDATE purchase_orders SET ${col} = ?, updated_at = ? WHERE id = ? AND ${col} IS NULL`)
+    .bind(date, now, id)
+    .run();
+  if (!res.meta?.changes) {
+    return c.json(
+      {
+        success: false,
+        code: "supplier_date_recorded",
+        error: "Someone recorded this supplier date a moment ago. Reload the PO to see it.",
+      },
+      409,
+    );
+  }
+  const updated = await fetchPOWithItems(c.var.DB, id);
+  await emitAudit(c, {
+    resource: "purchase-orders",
+    resourceId: id,
+    action: "update",
+    before: { [col]: null },
+    after: { [col]: date },
+  });
+  return c.json({ success: true, slot: pick.slot, data: updated });
+});
 
 // POST /api/purchase-orders/:id/mark-emailed — stamps lastEmailedAt after the
 // PO detail page sent the PO through Mail Center (HK-0113). The mail itself
