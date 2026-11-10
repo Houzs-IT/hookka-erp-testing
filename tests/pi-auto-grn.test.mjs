@@ -110,6 +110,9 @@ test("both confirm paths post the receipt, and the preview route is read-only", 
   assert.match(preview, /requirePermission\(c, "purchase-invoices", "read"\)/);
   assert.ok(preview.indexOf('app.get("/auto-grn-preview"') >= 0);
   const lib = readFileSync(resolve(process.cwd(), "src/api/lib/pi-auto-grn.ts"), "utf8");
-  const previewFn = lib.slice(lib.indexOf("export async function previewPiAutoGrn"));
+  // Just the preview function — the backfill writer after it does write.
+  const start = lib.indexOf("export async function previewPiAutoGrn");
+  const end = lib.indexOf("\n// ----", start);
+  const previewFn = lib.slice(start, end > start ? end : undefined);
   assert.doesNotMatch(previewFn, /INSERT|UPDATE|DELETE|\.batch\(/);
 });
