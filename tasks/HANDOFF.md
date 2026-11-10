@@ -1,6 +1,6 @@
 # Handoff — current state, what's next, what's blocked
 
-_Last updated: 2026-11-10 (MacBook session: #1241–#1243 merged, prod checks done, board report rebuilt)._
+_Last updated: 2026-11-10 evening (MacBook session). Read the **Master checklist** first — it is the single list of everything open._
 Keep this file current in the same PR that changes state (global rule §6/§8).
 
 ## How to pick this up on another machine (MacBook)
@@ -22,15 +22,34 @@ Every task: new worktree from `origin/main` → `npm install` → change →
 `npx tsc -p tsconfig.app.json --noEmit` → commit (hooks run the full suite) →
 PR → CI green → squash-merge → delete branch → verify on prod.
 
-## Open PRs (at time of writing)
+## Open PRs / work in flight (at time of writing)
 
-None — everything from 2026-11-09/10 is merged (#1234, #1235, #1239, #1240, #1241, #1242, #1243).
+- `feat/pdf-preview-and-documents` — agent batch: D1 shared PDF preview + file named after the document, P7 blocked-tab helper, D2 CANCELLED stamp, G5 struck-through cancelled numbers, D3/D4 POD photos. PR opens when done; check `gh pr list`.
+- `feat/grid-common-features` — agent batch: G1 header menu + reorder on every list, G2 URL filters, G3 paged-list filter check/fix, G4 footer totals, G7 load-error Retry.
+If a branch exists with no PR, the agent was interrupted: open the PR from it or redo the item. Merge rule: CI green → squash-merge (owner wants it done without asking, except the approval items below).
 
-If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONFLICTING (conflicts are almost always only `docs/WORK-TRACKER.md` — keep both sides).
+**Memory budget:** the owner runs a Houzs ERP session on the same MacBook — keep all sessions under **16 GB**. At most 2 agents at once, each in its own worktree with `node_modules` symlinked from the main checkout (no `npm install`), targeted tests only; CI runs the full suite.
 
-~~Known local issue (MacBook): 4 GRN test failures~~ — fixed in #1242 (node:sqlite on Node 22.14 swallowed the test shim's thrown cast error; CI's Node 20 skips these tests). Two date tests that failed 00:00–08:00 MYT since #1217 were fixed in #1241.
+## Master checklist (2026-11-10) — everything still open
 
-**Memory budget:** the owner runs a Houzs ERP session on the same MacBook — keep all sessions under **16 GB**. Run targeted tests locally and leave the full suite to CI.
+Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what Houzs / Conts did since 2026-10-01 vs Hookka).
+
+**Done today:** P1 document numbers in the Malaysia month (#1247) · new models export (#1241, #1243) · GRN-link backfill endpoint (#1245; measured on prod: **0** pre-#1218 system GRNs exist, nothing to link) · cross-system review saved (#1246).
+
+**In flight (agent batches above):** D1, D2, D3, D4, P7, G1, G2, G3, G4, G5, G7.
+
+**Next batches (no approval needed — do them, then merge):**
+1. Ported-and-improved: P2 UTC-date guard (Houzs#5517), P3 ETag/304 on every polled list (Houzs#5484), P4 health-red alert email to management (Conts#420/#424), P6 PO email Cc supplier email 2/3 (Houzs#5435 — carries a migration: self-apply the columns).
+2. Documents/grid leftovers: D5 item codes on one line on PO/GRN/PI PDFs, D6 warehouse named on DO/GRN papers, G6 share a column layout with the team, G8 grouped lists keep virtual scroll, G9 fewer re-draws on long lists, G10 date filters judge by the Malaysian day.
+3. Other: O4 supplier bound to the same item once (unique index, 409), O5 upload clears the read cache, O6 shared CSV/Excel import parser, **O7 stop uploading production WIP data as a workflow artifact on the public repo** (do soon).
+4. **Board report inside the ERP** (owner 2026-11-10: every figure from live ERP data, nobody has to ask Claude). Decided: menu **Forecasting → Board Report**; visible to **accounting:read**; Notes page = **automatic flags + Finance-editable notes per month**; PDF = **browser print to PDF** (A4 page per section). Data sources mapped: `/api/accounting/dashboard` (monthly P&L actual+forecast, balance-sheet totals, ratios, cash-flow totals, salary by dept, cost structure, production revenue, labour base), `/api/accounting/pl-monthly`, `/api/accounting/pl` (balance sheet; call M and M-1), `/api/accounting/cashflow-statement` + `/cashflow-forecast`, `/api/dashboard/overview` (customers + concentration) and `/overview/revenue-split` (dept production revenue), `/api/products/new-models`. Gaps to build: P&L prev column, balance-sheet prev, server-side defect rates, efficiency bands (none today — use workforce top/bottom). Layout reference: the Claude artifact https://claude.ai/artifact/GvMT67d19bgmqvHXQpSmDg (13 pages + appendices).
+
+**Needs the owner's approval first (money / inventory) — do NOT start without a yes:** P5 credit note from a delivery return capped at the returned qty · G11 batch confirm GRN/PI · O1 delivery-return status compare-and-set · O2 MRP refuses a stale plan · O3 partial DO/invoice carries its share of the line discount.
+
+**Owner to do himself (Claude cannot):**
+- Repo `Houzs-IT/hookka-erp-testing` is **PUBLIC** (measured 2026-11-10) and an old prod DB password is in its git history: decide private, rotate the password.
+- Try on prod (these write data): sign one device out → it gets 401; a 5,001-char SO note → 400; a lead with a phone already on file → "Possible duplicate"; Ctrl/Cmd+C from a grid into Excel; a save with several problems lists them all.
+- Upload missing Catalog photos: BC06, BC06-MF, SQUARE PILLOW, HIPSTER (its photo file is missing from storage).
 
 ## Merged in this run (2026-11-08/09) — from the Houzs / Conts review list
 
@@ -43,6 +62,7 @@ If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONF
 #1230 locked SO says which department holds it · #1231 in-app confirms, multi-word search, consolidated save blockers ·
 #1233 FE quality batch (real error reasons, PDF text clean-up, number-input wheel guard, dropdown flip, MRP sticky header, header wrap) ·
 #1234 security batch (default-deny RBAC test, text caps, signed-in devices, query-in-loop guard) · #1235 grid copy / range sum / URL filters ·
+#1244 handoff · #1245 GRN-link backfill endpoint · #1246 cross-system review · #1247 document numbers in the Malaysia month ·
 #1240 batch B of saves that acted "saved" on a refusal (cash flow, employees/payroll/leave, PO mark-emailed, organisations, assistant; BOM migration data-loss guard) ·
 #1241 `GET /api/products/new-models?from=&to=` — new models by product created date, one per family, Catalog cover photo inlined, bedframe Q/K/SK + sofa combo prices (no UI button, owner's choice) · #1242 GRN test shim fix · #1243 export polish (unpriced → "No price set yet", per-customer combo ranges, charge lines skipped).
 
@@ -60,7 +80,7 @@ If one is still open, check `gh pr checks <n>`; rebase onto main if it says CONF
 ## Follow-ups (approved, not done yet)
 
 - ~~~40 lesser saves ignore the server response~~ — done in #1240 (merged) (15 real fixes; the rest are deliberate best-effort or already checked, listed in `docs/bugs/BUG-2026-11-09-435.md`).
-- Backfill: system GRNs created by PI auto stock-in **before** #1218 are not linked back (still read "received, not billed"). Needs owner approval — production data write.
+- ~~Backfill of pre-#1218 system GRNs~~ — owner approved 2026-11-10; endpoint shipped in #1245; preview on prod found **0** such GRNs (37 GRNs in total, none from PI auto stock-in), so there is nothing to write.
 
 ## Waiting on the OWNER (decide / provide)
 
@@ -94,6 +114,7 @@ Claude artifact "Hookka Monthly Board Report" (https://claude.ai/artifact/GvMT67
 
 ## Working agreements with the owner (carried over — the Windows machine's Claude memory does not travel)
 
+- The owner wants the work **done, not a stream of choices**: split work across agents and merge when CI is green; only stop for the approval items and prod data writes (2026-11-10: 「为什么要选择 一直按button呢」).
 - The owner is **not technical**: reply in plain Chinese — he asked again on 2026-11-10 (UI stays 100% English), say what shipped and how to use it, no code dumps. Only pull him in for real business decisions.
 - Low-risk docs / chore / navigation work may be finished and **merged autonomously**. Anything touching **money, inventory, payroll, auth or cascades**: propose → owner confirms → then code; do not auto-merge.
 - Production data writes need explicit owner approval each time. Salary figures only for accounts with Payroll permission. Never print `.dev.vars` or secrets.

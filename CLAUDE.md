@@ -1,5 +1,7 @@
 # Hookka ERP — Start Here (read before any task)
 
+> **Open work lives in [`tasks/HANDOFF.md`](tasks/HANDOFF.md)** — its *Master checklist* is the single list of what is in flight, queued, waiting on the owner, and needing his approval. Read it at the start of every session; keep it current in the PR that changes state. Reply to the owner in Chinese.
+
 > **Last verified: 2026-10-09** (branch `feat/dev63-bank-charges-to-main`, to `main`): `docs/API.md` regenerated after adding `PUT /api/accounting/trade-finance/draw-bank-charge`; the mount/handler counts below restamped (143 / 1015). Nothing else on this page re-checked.
 
 > **Last verified: 2026-09-29** — Environment table: project refs moved out of the repo (it is
