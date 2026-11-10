@@ -57,7 +57,7 @@ Two unrelated report worlds share the name **Reports**:
 | `TABS` | `reports.tsx:406` | Tab definitions |
 | `DailyReportPage` | `src/pages/daily-report.tsx:1009` | Compliance exceptions page |
 | `ForecastPage` | `src/pages/analytics/forecast.tsx:50` | Forecast vs historical-sales view |
-| `GET /compliance.json` | `src/api/routes/reports.ts:674` | Daily Report JSON (cached) |
+| `GET /compliance.json` | `src/api/routes/reports.ts:716` | Daily Report JSON (cached) |
 | `buildComplianceCached` | `reports.ts:672` | SWR snapshot wrapper (serve-stale) |
 | `collectComplianceData` | `src/api/lib/compliance-report.ts:1412` | Daily Report exception engine |
 | `dispatchReport` | `reports.ts:783` | Shared send path (cron + Agent Console + manual) |
@@ -95,3 +95,9 @@ Two unrelated report worlds share the name **Reports**:
 
 ## Related modules
 [[sales]] [[production]] [[procurement]] [[delivery]] [[accounting]] [[inventory]]
+
+## Board Report — built once, in the background (2026-11-10)
+
+`GET /api/reports/board?month=` keeps the built report in kv_config `board_report_cache:<YYYY-MM>` and serves it at once; `&rebuild=1` (the page's Refresh) builds again. One build per month at a time: an atomic lock row `board_report_build:<YYYY-MM>` (taken over after 3 min if a build crashed); a request that finds a build running answers `{ building: true }` (202) and the page polls every 5 s, telling the reader they can leave. The build runs under `waitUntil`, so closing the page does not stop it. Finance's notes are overlaid fresh on every read. Why: concurrent builds of the same month blocked each other and the page sat on "Building…" for minutes (owner 2026-11-10). Helper: `src/api/lib/board-report-cache.ts`; test `tests/board-report-background.test.mjs`.
+
+**Month-start pre-build:** `POST /api/internal/board-report-prebuild` (CRON_SECRET) runs daily at 00:30 MYT (`.github/workflows/board-report-prebuild.yml`) and keeps the last closed month's report if it is not kept yet — on the 1st it builds the month that just closed, so the first open is instant. It runs as a system super-admin for the default org (read-only). Manual run takes an optional month and "force".

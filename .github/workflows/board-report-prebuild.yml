@@ -1,0 +1,57 @@
+# Board Report pre-build (owner 2026-11-10: the first open of a month was slow).
+#
+# 00:30 Malaysia time (16:30 UTC) every day: build and keep the LAST CLOSED
+# month's Board Report if it is not kept yet. On the 1st of a month this builds
+# the month that just closed, so the first open is instant; on other days it
+# finds the report already kept and does nothing.
+#
+# Manual run: Actions › Board Report pre-build › Run workflow (optional month
+# YYYY-MM, tick "force" to rebuild a kept month).
+# Uses the same CRON_SECRET repo secret as rebuild-dashboard-snapshot.yml.
+name: Board Report pre-build (daily)
+
+on:
+  schedule:
+    - cron: '30 16 * * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Month to build (YYYY-MM) — empty = last closed month'
+        required: false
+        default: ''
+      force:
+        description: 'Rebuild even if already kept'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  prebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/internal/board-report-prebuild
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          MONTH: ${{ github.event.inputs.month }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repo secret is empty. See refresh-mvs.yml header for setup."
+            exit 1
+          fi
+          data=$(jq -nc --arg m "$MONTH" --arg f "$FORCE" '{} + (if $m != "" then {month:$m} else {} end) + (if $f == "true" then {force:true} else {} end)')
+          response=$(curl --silent --show-error --write-out '\nHTTP_STATUS:%{http_code}' \
+            --max-time 240 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-cron-secret: $CRON_SECRET" \
+            --data "$data" \
+            'https://hookka-erp-testing.pages.dev/api/internal/board-report-prebuild')
+          status=$(echo "$response" | tail -n1 | sed 's/HTTP_STATUS://')
+          body=$(echo "$response" | sed '$d')
+          echo "Status: $status"
+          echo "Body: $(printf '%s' "$body" | jq -rc '{ok, month, built, note, elapsedMs, error}' 2>/dev/null || echo "<${#body} bytes, not JSON>")"
+          if [ "$status" != "200" ]; then
+            echo "::error::Board Report pre-build failed with status $status"
+            exit 1
+          fi

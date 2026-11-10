@@ -464,6 +464,56 @@ app.post("/api/internal/floor-live-snapshot", async (c) => {
   }
 });
 
+// Board Report pre-build (owner 2026-11-10: the first open of a month was
+// slow). Daily at 00:30 MYT (.github/workflows/board-report-prebuild.yml):
+// builds and keeps the LAST CLOSED month's report if it is not kept yet, so
+// the first open after month end is instant. Body: {} or {"month":"YYYY-MM"}
+// (+ "force": true to rebuild). Runs as a system super-admin for the default
+// org — the report only reads.
+app.post("/api/internal/board-report-prebuild", async (c) => {
+  const expected = c.env.CRON_SECRET;
+  if (!expected || expected.length < 16) {
+    console.error("[board-report-prebuild] CRON_SECRET unset or too short — refusing");
+    return c.json({ ok: false, error: "service unavailable" }, 503);
+  }
+  const given = c.req.header("x-cron-secret") || "";
+  if (!(await constantTimeEqual(given, expected))) {
+    return c.json({ ok: false, error: "forbidden" }, 403);
+  }
+  const t0 = Date.now();
+  const body = (await c.req.json().catch(() => ({}))) as { month?: string; force?: boolean };
+  try {
+    const { resolveBoardMonth, shapeBoardReport } = await import("../lib/board-report");
+    const { loadBoardSources } = await import("./lib/board-report-sources");
+    const cache = await import("./lib/board-report-cache");
+    const { DEFAULT_ORG_ID } = await import("./lib/tenant");
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const month = resolveBoardMonth(body.month, today);
+    const db = c.var.DB;
+    if (!body.force && (await cache.readBoardCache(db, month))) {
+      return c.json({ ok: true, month, built: false, note: "already kept", elapsedMs: Date.now() - t0 });
+    }
+    if (!(await cache.takeBuildLock(db, month))) {
+      return c.json({ ok: true, month, built: false, note: "a build is already running", elapsedMs: Date.now() - t0 });
+    }
+    try {
+      const setVar = c.set as unknown as (k: string, v: unknown) => void;
+      setVar("orgId", DEFAULT_ORG_ID);
+      setVar("userRole", "SUPER_ADMIN");
+      setVar("userId", "system:board-report-prebuild");
+      const sources = await loadBoardSources(c as never, month, today);
+      const report = shapeBoardReport(sources, month, today, new Date().toISOString());
+      await cache.writeBoardCache(db, month, report);
+    } finally {
+      await cache.releaseBuildLock(db, month).catch(() => {});
+    }
+    return c.json({ ok: true, month, built: true, elapsedMs: Date.now() - t0 });
+  } catch (e) {
+    console.error("[board-report-prebuild]", e);
+    return c.json({ ok: false, error: e instanceof Error ? e.message : "prebuild failed" }, 500);
+  }
+});
+
 app.post("/api/internal/rebuild-dashboard-snapshot", async (c) => {
   const expected = c.env.CRON_SECRET;
   if (!expected || expected.length < 16) {

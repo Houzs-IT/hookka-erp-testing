@@ -190,6 +190,9 @@ const EXPECTED_PRE_AUTH_ROUTES = [
   // Floor Live daily snapshot (added 2026-11-10). CRON_SECRET-gated; saves
   // each closed day once into floor_live_snapshots (never overwrites).
   "POST /api/internal/floor-live-snapshot",
+  // Board Report pre-build (added 2026-11-10). CRON_SECRET-gated; keeps the
+  // last closed month's report so the first open of a month is instant.
+  "POST /api/internal/board-report-prebuild",
   "POST /api/internal/rebuild-dashboard-snapshot",
   "POST /api/internal/process-email-outbox",
   "POST /api/internal/replay-audit-dlq",

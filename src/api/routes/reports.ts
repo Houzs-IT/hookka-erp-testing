@@ -403,18 +403,60 @@ app.get("/operations.json", async (c) => {
 // PUT /api/reports/board/notes  body = { month, text } — Finance's notes for
 // page 13, stored in kv_config `board_report_notes:<YYYY-MM>`.
 // ---------------------------------------------------------------------------
+// Built once and kept (src/api/lib/board-report-cache.ts, owner 2026-11-10):
+// ?rebuild=1 builds again. One build per month at a time; a request that
+// finds a build running answers { building: true } and the page polls. The
+// build runs under waitUntil, so closing the page does not stop it.
 app.get("/board", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   try {
-    const { resolveBoardMonth, shapeBoardReport } = await import("../../lib/board-report");
+    const { resolveBoardMonth, shapeBoardReport, notesKey, parseNotes } = await import("../../lib/board-report");
     const { loadBoardSources } = await import("../lib/board-report-sources");
+    const cache = await import("../lib/board-report-cache");
     const today = todayYmdSgt();
     const month = resolveBoardMonth(c.req.query("month"), today);
-    const sources = await loadBoardSources(c, month, today);
-    const report = shapeBoardReport(sources, month, today, new Date().toISOString());
+    const rebuild = c.req.query("rebuild") === "1";
+    const db = c.var.DB;
     const canEditNotes = await hasPermission(c, "accounting", "update");
-    return c.json({ success: true, data: { ...report, canEditNotes } });
+    type Report = ReturnType<typeof shapeBoardReport>;
+
+    // Finance's notes change without a rebuild — always the latest.
+    const withFreshNotes = async (r: Report) => {
+      const row = await db.prepare("SELECT value FROM kv_config WHERE key = ?").bind(notesKey(month)).first<{ value: string }>();
+      const n = parseNotes(row?.value ?? null);
+      return { ...r, notes: { ...r.notes, text: n.text, updatedAt: n.updatedAt, updatedBy: n.updatedBy } };
+    };
+
+    if (!rebuild) {
+      const kept = await cache.readBoardCache<Report>(db, month);
+      if (kept) return c.json({ success: true, data: { ...(await withFreshNotes(kept)), canEditNotes, cached: true } });
+    }
+
+    if (!(await cache.takeBuildLock(db, month))) {
+      // Another build of this month is running — do not start a second one.
+      return c.json({ success: true, building: true, startedAt: await cache.buildStartedAt(db, month) }, 202);
+    }
+
+    const build = (async () => {
+      try {
+        const sources = await loadBoardSources(c, month, today);
+        const report = shapeBoardReport(sources, month, today, new Date().toISOString());
+        await cache.writeBoardCache(db, month, report);
+        return report;
+      } finally {
+        await cache.releaseBuildLock(db, month).catch(() => {});
+      }
+    })();
+    // Keep building if the page is closed (executionCtx throws outside Workers).
+    try {
+      c.executionCtx.waitUntil(build.catch((e) => console.error("[reports/board] background build failed:", e)));
+    } catch {
+      void build.catch(() => {});
+    }
+    const done = await cache.within(build, cache.BUILD_WAIT_MS);
+    if (!done) return c.json({ success: true, building: true, startedAt: new Date().toISOString() }, 202);
+    return c.json({ success: true, data: { ...(await withFreshNotes(done)), canEditNotes, cached: false } });
   } catch (err) {
     console.error("[reports/board] failed:", err);
     return c.json({ success: false, error: "The board report could not be built" }, 500);
