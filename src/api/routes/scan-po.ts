@@ -16,7 +16,7 @@
 //   • /customer-rules CRUD for per-customer prompt rules
 //
 // Cost: ~$0.01-0.05 per PO page using claude-sonnet-4-6.
-// Setup: `npx wrangler secret put ANTHROPIC_API_KEY`.
+// Setup: a Pages secret, see MISSING_ANTHROPIC_KEY_ERROR in lib/claude-fetch.ts.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../worker";

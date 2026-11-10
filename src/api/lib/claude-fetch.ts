@@ -11,6 +11,14 @@ import { recordAiCall } from "./ai-usage";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
+// Shown to users when the key is unset. The app runs on Cloudflare Pages, so a
+// plain `wrangler secret put` (Workers) sets nothing; staging reads the Preview
+// environment. Callers match on the leading "ANTHROPIC_API_KEY not configured".
+export const MISSING_ANTHROPIC_KEY_ERROR =
+  "ANTHROPIC_API_KEY not configured. Add it as a Cloudflare Pages secret, then redeploy: " +
+  "`npx wrangler pages secret put ANTHROPIC_API_KEY --project-name hookka-erp-testing --env preview` " +
+  "for staging (`--env production` for production).";
+
 let forwarder: Fetcher | undefined;
 
 /** Called once per request from functions/api/[[route]].ts. */

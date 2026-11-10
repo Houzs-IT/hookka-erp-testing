@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 
 import { runSelfApply } from "../lib/self-apply";
-import { claudeFetch } from "./claude-fetch";
+import { claudeFetch, MISSING_ANTHROPIC_KEY_ERROR } from "./claude-fetch";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 
@@ -131,8 +131,7 @@ export async function distillCustomerRules(
   if (!apiKey) {
     return {
       status: "error",
-      reason:
-        "ANTHROPIC_API_KEY not configured. Run `npx wrangler secret put ANTHROPIC_API_KEY` to enable rule distillation.",
+      reason: MISSING_ANTHROPIC_KEY_ERROR,
     };
   }
 
@@ -438,8 +437,7 @@ export async function distillSupplierRules(
   if (!apiKey) {
     return {
       status: "error",
-      reason:
-        "ANTHROPIC_API_KEY not configured. Run `npx wrangler secret put ANTHROPIC_API_KEY` to enable rule distillation.",
+      reason: MISSING_ANTHROPIC_KEY_ERROR,
     };
   }
 

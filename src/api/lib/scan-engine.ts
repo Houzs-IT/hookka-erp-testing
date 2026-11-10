@@ -49,7 +49,7 @@ import type { Env } from "../worker";
 import { cleanCustomerHint } from "../../lib/customer-hint";
 import { matchByCompanyName } from "../../lib/company-name-match";
 import { loadCorrections, applyCorrections } from "./scan-corrections";
-import { claudeFetch } from "./claude-fetch";
+import { claudeFetch, MISSING_ANTHROPIC_KEY_ERROR } from "./claude-fetch";
 
 // ---------- Anthropic config ------------------------------------------------
 // Owner ruling 2026-06-29 evening: scans were timing out on Sonnet
@@ -834,8 +834,7 @@ export async function runExtract(
   if (!apiKey) {
     return {
       ok: false,
-      error:
-        "ANTHROPIC_API_KEY not configured. Run `npx wrangler secret put ANTHROPIC_API_KEY` to enable scanning.",
+      error: MISSING_ANTHROPIC_KEY_ERROR,
     };
   }
 
