@@ -518,6 +518,7 @@ export const PEOPLE_SUBS = [
 export const OPS_SUBS = [
   { key: "overview", label: "Overview" },
   { key: "production", label: "Output & Cost" }, // completed, plan vs actual, cost, materials (owner 2026-10-17)
+  { key: "floor", label: "Floor Live" }, // who is where right now, from dept QR scans (owner 2026-11-10)
 ] as const;
 export type PeopleSub = (typeof PEOPLE_SUBS)[number]["key"];
 export type OpsSub = (typeof OPS_SUBS)[number]["key"];

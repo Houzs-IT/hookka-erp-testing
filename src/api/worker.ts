@@ -1168,6 +1168,7 @@ import jobCards from "./routes/job-cards";
 import auditEvents from "./routes/audit-events";
 import dashboardOverview from "./routes/dashboard-overview";
 import dashboardPrototype from "./routes/dashboard-prototype";
+import floorLive from "./routes/floor-live";
 import dashboardFinance from "./routes/dashboard-finance";
 import kpi from "./routes/kpi";
 import itSupport from "./routes/it-support";
@@ -1415,6 +1416,7 @@ app.route("/api/audit-events", auditEvents);
 app.route("/api/dashboard/overview", dashboardOverview);
 // Read-only feed for the /dashboard-experimental page.
 app.route("/api/dashboard/prototype", dashboardPrototype);
+app.route("/api/dashboard/floor-live", floorLive);
 // Finance tab: ledger-derived, accounting-permission gated, never cached/shared.
 app.route("/api/dashboard/finance", dashboardFinance);
 // KPI module (owner 2026-08-06). /me is self-only; every other route is
