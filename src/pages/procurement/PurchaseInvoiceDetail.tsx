@@ -46,6 +46,10 @@ import {
   formatUnitPriceInput,
 } from "@/lib/unit-price";
 import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
+// Review C1-5: line files (own + carried down from the GRN and PO lines) and
+// the invoice's own attachments.
+import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
+import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 
 const VALID_LINE_TYPES: LineType[] = ["STOCKED", "FEE", "TAX", "REBATE", "DISCOUNT", "OTHER"];
 
@@ -235,6 +239,8 @@ export default function PurchaseInvoiceDetailPage() {
     ?? (resp && resp.success === false ? resp.error || "Purchase invoice not found" : null);
 
   const items = pi?.items ?? [];
+  // Review C1-5: every line's files in one request (rights: the component).
+  const lineFiles = useFlowLineFiles("PI", pi?.id);
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
   // SST breakdown (owner 2026-06-30): header subtotal/tax come from the
   // backend; for legacy rows the backend already synthesizes them from the
@@ -924,6 +930,15 @@ export default function PurchaseInvoiceDetailPage() {
                             >
                               {it.lineType}
                             </span>
+                            {/* Review C1-5: this line's files + the GRN / PO line's. */}
+                            <div className="mt-0.5">
+                              <LineFilesButton
+                                lineType="PI_LINE"
+                                lineId={it.id}
+                                files={lineFiles}
+                                lineLabel={`Line ${idx + 1} — ${resolvedCode || resolvedDescription}`}
+                              />
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1319,6 +1334,10 @@ export default function PurchaseInvoiceDetailPage() {
       </Card>
 
       {/* Audit trail for this PI */}
+      {/* Review C1-5: photos, videos and PDFs on this invoice (resourceType "PI",
+          the phone app's type). */}
+      <FlowFilesCard resourceType="PI" resourceId={pi.id} />
+
       <AuditHistoryPanel resource="purchase-invoices" resourceId={pi.id} />
     </div>
   );

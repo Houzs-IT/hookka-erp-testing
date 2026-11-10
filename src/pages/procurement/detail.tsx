@@ -39,6 +39,9 @@ import { ObjectPageHeader } from "@/components/ui/object-page-header";
 import { buildPoEmailDraft, type PoEmailDraft } from "@/lib/po-email-draft";
 import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
 import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
+// Review C1-5: photos / videos / PDFs on the PO and on each of its lines.
+import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
+import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 
 const ComposeDialog = lazy(() =>
   import("@/pages/mail-center/compose").then((m) => ({ default: m.ComposeDialog })),
@@ -147,6 +150,8 @@ export default function PurchaseOrderDetailPage() {
     [resp]
   );
   const error: string | null = fetchError ?? (resp && resp.success === false ? resp.error || "Purchase order not found" : null);
+  // Review C1-5: every line's files in one request (rights: the component).
+  const lineFiles = useFlowLineFiles("PO", po?.id);
 
   // Auxiliary data needed for inline edit. Same endpoints procurement/index
   // already pulls — useCachedJson dedupes if the user navigated from there.
@@ -1180,6 +1185,7 @@ export default function PurchaseOrderDetailPage() {
                       <th className="h-10 px-4 text-right font-medium text-[#374151]">Received</th>
                       <th className="h-10 px-4 text-right font-medium text-[#374151]">Unit Price</th>
                       <th className="h-10 px-4 text-right font-medium text-[#374151]">Total</th>
+                      <th className="h-10 px-2 text-center font-medium text-[#374151]" title="Files on this line">Files</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1230,6 +1236,14 @@ export default function PurchaseOrderDetailPage() {
                           </td>
                           <td className="h-12 px-4 text-right text-[#4B5563]">{formatCurrency(item.unitPriceSen)}</td>
                           <td className="h-12 px-4 text-right font-medium text-[#1F1D1B]">{formatCurrency(item.totalSen)}</td>
+                          <td className="h-12 px-2 text-center">
+                            <LineFilesButton
+                              lineType="PO_LINE"
+                              lineId={item.id}
+                              files={lineFiles}
+                              lineLabel={`Line ${idx + 1} — ${internalCode || description}`}
+                            />
+                          </td>
                         </tr>
                       );
                     })}
@@ -1241,6 +1255,7 @@ export default function PurchaseOrderDetailPage() {
                       <td className="h-10 px-4 text-right font-semibold text-[#374151]">{totalReceived}</td>
                       <td className="h-10 px-4"></td>
                       <td className="h-10 px-4 text-right font-bold text-[#6B5C32]">{formatCurrency(po.totalSen)}</td>
+                      <td className="h-10 px-2"></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1433,6 +1448,10 @@ export default function PurchaseOrderDetailPage() {
           />
         </CardContent>
       </Card>
+
+      {/* Review C1-5: photos, videos and PDFs on this PO (shared /api/files,
+          resourceType "PO" — the same files the phone app shows). */}
+      {po && <FlowFilesCard resourceType="PO" resourceId={po.id} />}
 
       {/* Three-Way Match panel (Phase 4.3) — collapsible "tab" surfacing
           PO ↔ GRN ↔ PI variance per material. Hidden until the user clicks
