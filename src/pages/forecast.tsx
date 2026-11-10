@@ -10,7 +10,7 @@
 // operating expenses — classified with the SAME pnl-bucket rules (incl. the
 // owner's section-map overrides) so the forecast rows match the real report.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinancePageTitle } from "@/components/finance/page-title";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,18 @@ import { invalidateCachePrefix } from "@/lib/cached-fetch";
 import { todayYmdMY } from "@/lib/utils";
 import { TrendingUp, X, Save, Eye, EyeOff, ChevronDown, ChevronRight } from "lucide-react";
 import { monthHasDeptForecast } from "@/lib/salary-dept";
-import { forecastCustomerRows, forecastDepts, forecastLineGroups, forecastMonthFigures, type FcEntry, type FcMonth } from "@/lib/forecast-pnl";
+import {
+  EMPTY_SUPPLIER_MIX,
+  forecastCustomerRows,
+  forecastDepts,
+  forecastLineGroups,
+  forecastMonthFigures,
+  forecastSupplierRows,
+  type FcEntry,
+  type FcMonth,
+  type FcMonthFigures,
+  type FcSupplierMix,
+} from "@/lib/forecast-pnl";
 // One money parser. NOTE `strToBp` below is a PERCENTAGE and deliberately
 // keeps `parseFloat` - it is not money and is not in this fix's scope.
 import { parseMoneyInput } from "@/lib/parse-money";
@@ -37,7 +48,10 @@ type CellEntry = { p?: string; a?: string };
 // `customers` (owner 2026-11-09 「根据 customer 去 key-in 他的预计 sales」):
 // customer id (or "other") → RM as typed. Once any is keyed, the month's
 // sales are their sum and the single Sales box steps aside.
-type MonthState = { salesStr: string; pct: Record<string, CellEntry>; customers?: Record<string, string> };
+// `suppliers` (owner 2026-11-10 「根据 ratio 也可以，一个个也可以」): supplier
+// id (or "other") → RM as typed. Once any is keyed, the month's materials are
+// their sum, spread over the material rows; the rows' own % steps aside.
+type MonthState = { salesStr: string; pct: Record<string, CellEntry>; customers?: Record<string, string>; suppliers?: Record<string, string> };
 type CustomerLite = { id: string; name: string; isActive?: boolean };
 
 
@@ -119,19 +133,26 @@ function toFcMonth(m: MonthState | undefined): FcMonth | undefined {
   for (const [code, e] of Object.entries(m.pct)) {
     pct[code] = e.a !== undefined && e.a !== "" ? { amtSen: moneyFieldToSen(e.a) ?? 0 } : { bp: strToBp(e.p ?? "") };
   }
-  return { salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0), salesByCustomer: customerSen(m), pct };
+  return {
+    salesSen: Math.max(0, moneyFieldToSen(m.salesStr ?? "") ?? 0),
+    salesByCustomer: partySen(m.customers),
+    purchasesBySupplier: partySen(m.suppliers),
+    pct,
+  };
 }
-// The month's customer cells in sen, for the screen only (the live total and
-// each customer's share). An unreadable cell shows as nothing here; Save
+// A month's customer or supplier cells in sen, for the screen only (the live
+// total and each one's share). An unreadable cell shows as nothing here; Save
 // refuses it first (forecastMoneyError) and builds its own payload.
-function customerSen(m: MonthState | undefined): Record<string, number> {
+function partySen(cells: Record<string, string> | undefined): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const [id, s] of Object.entries(m?.customers ?? {})) {
+  for (const [id, s] of Object.entries(cells ?? {})) {
     const sen = (s ?? "").trim() === "" ? 0 : moneyFieldToSen(s) ?? 0;
     if (sen > 0) out[id] = sen;
   }
   return out;
 }
+const customerSen = (m: MonthState | undefined) => partySen(m?.customers);
+const supplierSen = (m: MonthState | undefined) => partySen(m?.suppliers);
 
 export default function ForecastPage() {
   const { toast } = useToast();
@@ -157,6 +178,12 @@ export default function ForecastPage() {
   const [mappedAccounts, setMappedAccounts] = useState<Set<string>>(new Set());
   // The customers master, for the sales-by-customer rows (owner 2026-11-09).
   const [customerMaster, setCustomerMaster] = useState<CustomerLite[]>([]);
+  // The suppliers master and what each sold us lately by material type, for
+  // the materials-by-supplier rows (owner 2026-11-10): the same weights every
+  // other reader spreads a supplier month by (GET /forecast/suppliers).
+  const [supplierMaster, setSupplierMaster] = useState<CustomerLite[]>([]);
+  const [supplierMix, setSupplierMix] = useState<FcSupplierMix>(EMPTY_SUPPLIER_MIX);
+  const [suppliersFailed, setSuppliersFailed] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -167,8 +194,9 @@ export default function ForecastPage() {
       fetch("/api/accounting/forecast").then((r) => r.json() as Promise<Wrapped>),
       fetch("/api/accounting/labor/departments").then((r) => r.json() as Promise<Wrapped>).catch(() => ({}) as Wrapped),
       fetch("/api/customers").then((r) => r.json() as Promise<Wrapped>).catch(() => ({}) as Wrapped),
+      fetch("/api/accounting/forecast/suppliers").then((r) => r.json() as Promise<Wrapped>).catch(() => ({}) as Wrapped),
     ])
-      .then(([coaJ, mapJ, fcJ, deptJ, custJ]) => {
+      .then(([coaJ, mapJ, fcJ, deptJ, custJ, supJ]) => {
         if (stale) return;
         const coa = (coaJ?.data ?? coaJ ?? []) as CoaAcct[];
         setAccounts(Array.isArray(coa) ? coa : []);
@@ -181,7 +209,12 @@ export default function ForecastPage() {
                 .map((x) => ({ id: String(x.id), name: String(x.name ?? x.id), isActive: x.isActive !== false }))
             : [],
         );
-        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; salesByCustomer?: Record<string, number>; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
+        const sup = supJ?.success ? (supJ.data as { suppliers?: CustomerLite[]; mix?: FcSupplierMix } | undefined) : undefined;
+        if (sup?.mix && Array.isArray(sup.suppliers)) {
+          setSupplierMaster(sup.suppliers.filter((s) => typeof s?.id === "string" && s.id !== ""));
+          setSupplierMix({ bySupplier: sup.mix.bySupplier ?? {}, all: sup.mix.all ?? {} });
+        } else setSuppliersFailed(true);
+        const saved = ((fcJ?.data as { months?: Record<string, { salesSen?: number; salesByCustomer?: Record<string, number>; purchasesBySupplier?: Record<string, number>; pct?: Record<string, number | { bp?: number; amtSen?: number }> }> } | undefined)?.months ?? {});
         const next: Record<string, MonthState> = {};
         for (const [ym, m] of Object.entries(saved)) {
           const pct: Record<string, CellEntry> = {};
@@ -197,7 +230,10 @@ export default function ForecastPage() {
           const customers: Record<string, string> = {};
           for (const [id, sen] of Object.entries(m.salesByCustomer ?? {}))
             if (Number(sen) > 0) customers[id] = (Number(sen) / 100).toFixed(2);
-          next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct, customers };
+          const suppliers: Record<string, string> = {};
+          for (const [id, sen] of Object.entries(m.purchasesBySupplier ?? {}))
+            if (Number(sen) > 0) suppliers[id] = (Number(sen) / 100).toFixed(2);
+          next[ym] = { salesStr: m.salesSen ? (Number(m.salesSen) / 100).toFixed(2) : "", pct, customers, suppliers };
         }
         setMonths(next);
         setSavedSnap(forecastSnapshot(next));
@@ -237,8 +273,16 @@ export default function ForecastPage() {
   // The sheet keeps strings while the owner types; each month is read in the
   // kv shape it saves to (toFcMonth) and the shared rule does the arithmetic:
   // amount-keyed cells win, %-keyed cells derive from sales, and a month with
-  // any dept row supersedes the 750-x and labour-map accounts.
-  const calc = (ym: string) => forecastMonthFigures(toFcMonth(months[ym]), lines, mappedAccounts);
+  // any dept row supersedes the 750-x and labour-map accounts. A month keyed
+  // by supplier spreads by the same weights every other reader uses. Worked
+  // out once per change, not once per cell.
+  const figures = useMemo(() => {
+    const out: Record<string, FcMonthFigures> = {};
+    for (const ym of Object.keys(months)) out[ym] = forecastMonthFigures(toFcMonth(months[ym]), lines, mappedAccounts, supplierMix);
+    return out;
+  }, [months, lines, mappedAccounts, supplierMix]);
+  const calc = (ym: string): FcMonthFigures => figures[ym] ?? forecastMonthFigures(undefined, lines, mappedAccounts, supplierMix);
+  const materialCodes = useMemo(() => new Set(lines.materials.map((a) => a.code)), [lines]);
 
   // Keying one side CLEARS the other (owner: "就是其中一个").
   const setPctStr = (ym: string, code: string, v: string) =>
@@ -262,6 +306,21 @@ export default function ForecastPage() {
   const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
   const customerKeyed = (ym: string) => Object.values(months[ym]?.customers ?? {}).some((v) => (v ?? "").trim() !== "");
   const customerRowHasData = (id: string) => yms.some((ym) => (months[ym]?.customers?.[id] ?? "").trim() !== "");
+  // Materials by supplier (owner 2026-11-10 「一个个也可以」): active suppliers
+  // bought from lately plus any keyed one, by name, then Other.
+  const setSupplier = (ym: string, id: string, v: string) =>
+    setMonths((prev) => ({ ...prev, [ym]: { ...prev[ym], suppliers: { ...(prev[ym].suppliers ?? {}), [id]: v } } }));
+  const supplierRows = useMemo(
+    () =>
+      forecastSupplierRows(
+        supplierMaster,
+        Object.keys(supplierMix.bySupplier),
+        Object.values(months).flatMap((m) => Object.entries(m.suppliers ?? {}).filter(([, v]) => (v ?? "").trim() !== "").map(([id]) => id)),
+      ),
+    [supplierMaster, supplierMix, months],
+  );
+  const supplierName = (id: string) => supplierRows.find((r) => r.id === id)?.name ?? id;
+  const supplierRowHasData = (id: string) => yms.some((ym) => (months[ym]?.suppliers?.[id] ?? "").trim() !== "");
 
   const addMonth = (ym: string) => {
     if (!/^\d{4}-\d{2}$/.test(ym)) {
@@ -276,8 +335,9 @@ export default function ForecastPage() {
     // the very first month starts blank — the owner keys every % himself.
     const prevYm = [...yms].filter((k) => k < ym).pop() ?? [...yms].pop();
     const inherited = prevYm ? { ...months[prevYm].pct } : {};
-    // The customer cells are not copied (spec 2026-11-09 section 4).
-    setMonths((prev) => ({ ...prev, [ym]: { salesStr: "", pct: inherited, customers: {} } }));
+    // The customer and supplier cells are not copied (spec 2026-11-09 section
+    // 4, spec 2026-11-10 section 3).
+    setMonths((prev) => ({ ...prev, [ym]: { salesStr: "", pct: inherited, customers: {}, suppliers: {} } }));
   };
 
   const { confirm } = useConfirm();
@@ -338,6 +398,9 @@ export default function ForecastPage() {
       ...Object.entries(m.customers ?? {})
         .filter(([, v]) => (v ?? "").trim() !== "")
         .map(([id, v]) => ({ label: `${ym} ${customerName(id)} sales`, value: v })),
+      ...Object.entries(m.suppliers ?? {})
+        .filter(([, v]) => (v ?? "").trim() !== "")
+        .map(([id, v]) => ({ label: `${ym} ${supplierName(id)} purchases`, value: v })),
       ...Object.entries(m.pct)
         .filter(([, e]) => e.a !== undefined && e.a !== "")
         .map(([code, e]) => ({ label: `${ym} ${code} amount`, value: e.a as string })),
@@ -348,7 +411,7 @@ export default function ForecastPage() {
     if (forecastMoneyError) { toast.error(forecastMoneyError); return; }
     setSaving(true);
     try {
-      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number> }> = {};
+      const payload: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesBySupplier?: Record<string, number> }> = {};
       for (const [ym, m] of Object.entries(months)) {
         const pct: Record<string, { bp?: number; amtSen?: number }> = {};
         for (const [code, e] of Object.entries(m.pct)) {
@@ -370,9 +433,19 @@ export default function ForecastPage() {
           if (sen > 0) salesByCustomer[id] = sen;
         }
         const customerTotal = Object.values(salesByCustomer).reduce((s, v) => s + v, 0);
-        payload[ym] = customerTotal > 0
-          ? { salesSen: customerTotal, pct, salesByCustomer }
-          : { salesSen: Math.max(0, moneyFieldToSen(m.salesStr) as number), pct };
+        // Supplier cells: kept as keyed; every reader spreads them itself.
+        const purchasesBySupplier: Record<string, number> = {};
+        for (const [id, v] of Object.entries(m.suppliers ?? {})) {
+          if ((v ?? "").trim() === "") continue;
+          const sen = moneyFieldToSen(v) as number;
+          if (sen > 0) purchasesBySupplier[id] = sen;
+        }
+        payload[ym] = {
+          ...(customerTotal > 0
+            ? { salesSen: customerTotal, pct, salesByCustomer }
+            : { salesSen: Math.max(0, moneyFieldToSen(m.salesStr) as number), pct }),
+          ...(Object.keys(purchasesBySupplier).length ? { purchasesBySupplier } : {}),
+        };
       }
       const res = await fetch("/api/accounting/forecast", {
         method: "PUT",
@@ -404,6 +477,18 @@ export default function ForecastPage() {
       return (
         <span className="text-[11px] text-[#C7C1BA]" title="Superseded by the department rows for this month">
           —
+        </span>
+      );
+    }
+    // A month keyed by supplier owns its materials there: the row shows its
+    // share of the suppliers' spread, greyed, and keeps its own % for a month
+    // whose supplier cells are cleared again.
+    if (c.supplierSplit && materialCodes.has(code)) {
+      const sen = c.amt(code);
+      return (
+        <span className="inline-flex items-center justify-end gap-1" title="From the By supplier rows: each supplier's figure spread by what it sold us lately">
+          <span className={`${AMT_SLOT} px-1 py-0.5 text-right text-[12px] tabular-nums text-[#9CA3AF]`}>{fmtRM(sen)}</span>
+          <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>{sen ? pctOfSales(sen, c.salesSen) : "-"}</span>
         </span>
       );
     }
@@ -467,14 +552,18 @@ export default function ForecastPage() {
       ))}
     </tr>
   );
-  // A line "has a figure" when any month carries a keyed % or RM.
+  // A line "has a figure" when any month carries a keyed % or RM — or, for a
+  // material row, a share of a supplier month's spread.
   const rowHasData = (code: string) =>
     yms.some((ym) => {
       const e = months[ym]?.pct[code];
+      if (materialCodes.has(code) && calc(ym).supplierSplit && calc(ym).amt(code) !== 0) return true;
       return !!e && ((e.p !== undefined && e.p !== "") || (e.a !== undefined && e.a !== ""));
     });
-  // Parent section row: collapse toggle + per-month section totals.
-  const section = (key: string, title: string, rows: CoaAcct[]) => {
+  // Parent section row: collapse toggle + per-month section totals. `lead`:
+  // rows of its own under the heading, before the account rows (the
+  // materials' By supplier block).
+  const section = (key: string, title: string, rows: CoaAcct[], lead?: () => ReactNode) => {
     if (rows.length === 0) return null;
     const open = !collapsed[key];
     const visible = showEmpty ? rows : rows.filter((r) => rowHasData(r.code));
@@ -503,7 +592,90 @@ export default function ForecastPage() {
             );
           })}
         </tr>
+        {open && lead?.()}
         {open && visible.map((a) => acctRow(a))}
+      </>
+    );
+  };
+  // Materials by supplier (owner 2026-11-10 「supplier 那边还是你可以 set 根据
+  // ratio 也可以，一个个也可以」): a month with any supplier figure takes their
+  // sum as its materials, spread over the material rows by what each supplier
+  // sold us lately; a month left empty here keeps the % rows. Each supplier's
+  // % column is its share of the month's sales.
+  const supplierBlock = (): ReactNode => {
+    if (suppliersFailed)
+      return (
+        <tr className="border-b border-[#F0ECE9]">
+          <td colSpan={yms.length + 1} className="px-3 py-1 pl-7 text-[11px] text-[#9A3412]">
+            Could not load the suppliers, so the By supplier rows are not shown. Reload the page to key materials by supplier.
+          </td>
+        </tr>
+      );
+    const open = !collapsed.sup;
+    const visible = showEmpty ? supplierRows : supplierRows.filter((r) => supplierRowHasData(r.id));
+    return (
+      <>
+        <tr className="border-b border-[#F0ECE9]">
+          <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7">
+            <button
+              onClick={() => setCollapsed((p) => ({ ...p, sup: open }))}
+              title="Key what you expect to buy from each supplier: that month's materials are then their sum, spread over the rows below by what each supplier sold us lately. Leave a month empty to use the % rows."
+              className="cursor-pointer inline-flex items-center gap-1 text-[12px] font-semibold text-[#6B5C32]"
+            >
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              By supplier
+              {!showEmpty && visible.length < supplierRows.length && (
+                <span className="font-normal text-[#9CA3AF]">({supplierRows.length - visible.length} empty hidden)</span>
+              )}
+            </button>
+          </td>
+          {yms.map((ym) => {
+            const c = calc(ym);
+            return (
+              <td key={ym} className="px-2 py-1 text-right border-l border-[#F0ECE9]">
+                {c.supplierSplit ? (
+                  amtWithPct(c.supplierSplit.totalSen, c.salesSen, true)
+                ) : (
+                  <span className="inline-flex items-center justify-end gap-1" title="Not keyed by supplier: this month's materials are the % rows below">
+                    <span className={`${AMT_SLOT} px-1 text-right tabular-nums text-[#C7C1BA]`}>-</span>
+                    <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#C7C1BA]`}>-</span>
+                  </span>
+                )}
+              </td>
+            );
+          })}
+        </tr>
+        {open &&
+          visible.map((r) => (
+            <tr key={`sup-${r.id}`} className="border-b border-[#F0ECE9]">
+              <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-11">
+                <span className="text-[#1F1D1B]">{r.name}</span>
+              </td>
+              {yms.map((ym) => {
+                const sen = supplierSen(months[ym])[r.id] ?? 0;
+                return (
+                  <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
+                    <span className="inline-flex items-center justify-end gap-1">
+                      <span className={`${AMT_SLOT} inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1`}>
+                        <span className="text-[10px] text-[#9CA3AF] mr-0.5">RM</span>
+                        <AmountInput
+                          col={yms.indexOf(ym) * 2}
+                          onKeyDown={onCellKey}
+                          value={months[ym]?.suppliers?.[r.id] ?? ""}
+                          onChange={(v) => setSupplier(ym, r.id, v)}
+                          placeholder="-"
+                          className="w-full min-w-0 bg-transparent py-0.5 text-right text-[12px] tabular-nums outline-none placeholder:text-[#C7C1BA]"
+                        />
+                      </span>
+                      <span className={`${PCT_SLOT} px-1 text-right text-[11px] tabular-nums text-[#9CA3AF]`}>
+                        {sen > 0 ? pctOfSales(sen, calc(ym).salesSen) : "-"}
+                      </span>
+                    </span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
       </>
     );
   };
@@ -614,7 +786,7 @@ export default function ForecastPage() {
         <FinancePageTitle
           title="Forecast P&L"
           icon={<TrendingUp className="h-5 w-5 text-[#6B5C32]" />}
-          explain="Planning only — nothing here touches the books. Key the sales per month, as one total or per customer (the total is then their sum); every line is a % of sales; a new month starts with the previous month's percentages."
+          explain="Planning only — nothing here touches the books. Key the sales per month, as one total or per customer (the total is then their sum); every line is a % of sales; raw materials can also be keyed per supplier (that month's materials are then their sum); a new month starts with the previous month's percentages."
         />
         <div className="ml-auto flex items-center gap-2">
           {/* Finance v2: one control — picking a month adds it (it starts
@@ -688,7 +860,7 @@ export default function ForecastPage() {
               </thead>
               <tbody>
                 {salesBlock()}
-                {section("mat", "RAW MATERIALS / PURCHASES", [...lines.materials, ...lines.direct])}
+                {section("mat", "RAW MATERIALS / PURCHASES", [...lines.materials, ...lines.direct], lines.materials.length ? supplierBlock : undefined)}
                 {section("lab", "DIRECT LABOUR — BY DEPARTMENT", lines.labour)}
                 {/* Legacy account-keyed labour: visible only where it holds
                     data; a month that has dept rows supersedes these cells

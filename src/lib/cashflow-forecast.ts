@@ -15,7 +15,7 @@ import {
   type ForecastItem,
   type ForecastLeg,
 } from "./cashflow-engine";
-import { FC_OTHER_CUSTOMER, forecastEntryRatio, forecastMonthFigures, forecastSalesSen, type FcAccount, type FcLineGroups, type FcMonth } from "./forecast-pnl";
+import { FC_OTHER_CUSTOMER, FC_OTHER_SUPPLIER, EMPTY_SUPPLIER_MIX, forecastEntryRatio, forecastMonthFigures, forecastSalesSen, materialRowType, type FcAccount, type FcLineGroups, type FcMonth, type FcSupplierMix } from "./forecast-pnl";
 import { pnlBucketFor } from "./pnl-bucket";
 
 export type TermInfo = { months: number; flagged: boolean };
@@ -739,6 +739,12 @@ export type PnlForecastInput = {
   receiptMix: TermMix;
   /** A material type's term mix, from its suppliers' recent purchases (3.2). */
   materialMix: (type: string) => TermMix;
+  /** What each supplier sold us lately, for a month keyed by supplier (spec
+   *  2026-11-10-forecast-suppliers-design.md 4), and each supplier's term in
+   *  months and name (6). */
+  supplierMix?: FcSupplierMix;
+  supplierTerm?: (supplierId: string) => number;
+  supplierName?: (supplierId: string) => string;
   /** The Docs forecast's last future month: the P&L forecast's months reach
    *  at least that far, so the money both carry lands in both (3.3). */
   minHorizon?: string;
@@ -784,20 +790,34 @@ export function buildPnlForecastLegs(input: PnlForecastInput): { columns: Foreca
         add(to, p.sen, { accountCode: arAcct, item: item("Forecast sales", "sales", to, `${from} sales · ${termWords(p.months)} (recent invoices' terms)`) });
       }
     }
-    const f = forecastMonthFigures(m, groups, mappedAccounts);
+    const f = forecastMonthFigures(m, groups, mappedAccounts, input.supplierMix ?? EMPTY_SUPPLIER_MIX);
     for (const a of groups.otherIncome) {
       const amt = f.amt(a.code);
       if (amt) add(S, amt, { accountCode: resolveAcct(a.code), item: item(a.name, a.code, S, from) });
     }
-    // Materials: on the type's own Raw Materials line, after its suppliers'
-    // terms.
-    for (const a of groups.materials) {
-      const amt = f.amt(a.code);
-      if (!amt) continue;
-      const type = a.code.startsWith("cat:") ? a.code.slice(4) : a.name;
-      for (const p of spreadByMix(amt, materialMix(type))) {
-        const to = addMonthsYm(S, p.months);
-        add(to, -p.sen, { section: "RAW_MATERIALS", label: type, item: item(type, a.code, to, `${from} · ${termWords(p.months)} (its suppliers' terms)`) });
+    if (f.supplierSplit) {
+      // Keyed by supplier (owner 2026-11-10 「一个个也可以」): each supplier
+      // after its own term, Other after a month, on the lines of the types
+      // its spread gives.
+      for (const s of f.supplierSplit.suppliers) {
+        const other = s.id === FC_OTHER_SUPPLIER;
+        const delay = other ? 1 : (input.supplierTerm?.(s.id) ?? 1);
+        const to = addMonthsYm(S, delay);
+        const party = other ? "Other (new suppliers)" : (input.supplierName?.(s.id) ?? s.id);
+        for (const [type, sen] of Object.entries(s.byType))
+          add(to, -sen, { section: "RAW_MATERIALS", label: type, item: item(party, `cat:${type}`, to, `${from} · ${type} · ${termWords(delay)}`) });
+      }
+    } else {
+      // Keyed by ratio: on the type's own Raw Materials line, after its
+      // suppliers' terms.
+      for (const a of groups.materials) {
+        const amt = f.amt(a.code);
+        if (!amt) continue;
+        const type = materialRowType(a);
+        for (const p of spreadByMix(amt, materialMix(type))) {
+          const to = addMonthsYm(S, p.months);
+          add(to, -p.sen, { section: "RAW_MATERIALS", label: type, item: item(type, a.code, to, `${from} · ${termWords(p.months)} (its suppliers' terms)`) });
+        }
       }
     }
     for (const a of groups.direct) {

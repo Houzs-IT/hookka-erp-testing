@@ -64,7 +64,8 @@ import {
   type TfPlanFacility,
   type TfPlanStore,
 } from "../../lib/cashflow-forecast";
-import { cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, type FcMonth } from "../../lib/forecast-pnl";
+import { EMPTY_SUPPLIER_MIX, cleanPurchasesBySupplier, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastSalesSen, forecastSupplierSplit, type FcMonth, type FcSupplierMix } from "../../lib/forecast-pnl";
+import { anySupplierMonth, loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
 import { computeDiscountAlloc, type PiOpen } from "../../lib/discount-alloc";
@@ -10483,6 +10484,16 @@ async function loadMonthlyPlForecast(db: Env["Variables"]["DB"], orgId: string, 
   );
   const deptAcct = new Map(labour.departments.map((d) => [d.code, d.account] as const));
   const coaBy = new Map(coaList.map((a) => [a.code, { name: a.name, type: a.type }] as const));
+  // A month keyed by supplier spreads as on the Forecast page (spec
+  // 2026-11-10-forecast-suppliers-design.md 5); read only when needed.
+  const supplierMix: FcSupplierMix = anySupplierMonth(months)
+    ? await loadForecastSupplierMix(db, {
+        today: todayMyt(),
+        accounts: coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
+        override,
+        resolveAcct: await loadAccountResolver(db),
+      })
+    : EMPTY_SUPPLIER_MIX;
   return {
     months,
     groups,
@@ -10491,6 +10502,7 @@ async function loadMonthlyPlForecast(db: Env["Variables"]["DB"], orgId: string, 
       mappedAccounts: new Set(labour.mappedAccounts),
       deptAccount: (d: string) => deptAcct.get(d) ?? null,
       accountOf: (code: string) => coaBy.get(code),
+      supplierMix,
     },
   };
 }
@@ -10977,7 +10989,7 @@ async function loadCashflowForecast(
   const mixTo = `${curYm}-01`;
   const [custRes, supRes, piRes, mixRes, recentInv, recentPi] = await Promise.all([
     db.prepare("SELECT id, name, creditTerms FROM customers").all<Record<string, unknown>>(),
-    db.prepare("SELECT id, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, name, paymentTerms FROM suppliers").all<Record<string, unknown>>(),
     db.prepare("SELECT id, piNo, supplierId FROM purchase_invoices").all<Record<string, unknown>>(),
     db.prepare("SELECT billId AS bill_id, counterAccount AS counter_account, amountSen AS amount_sen FROM other_party_bill_items").all<Record<string, unknown>>(),
     db.prepare(`SELECT customerId, totalSen FROM invoices WHERE status NOT IN ('DRAFT','CANCELLED') AND invoiceDate >= ? AND invoiceDate < ?`)
@@ -11107,6 +11119,16 @@ async function loadCashflowForecast(
     forecastDepts(labour.departments, Object.values(fcMonths).map((m) => m.pct)),
   );
   const mapped = new Set(labour.mappedAccounts);
+  // A month keyed by supplier spreads by what each supplier sold us lately
+  // (spec 2026-11-10-forecast-suppliers-design.md 4); read only when needed.
+  const supplierMix: FcSupplierMix = anySupplierMonth(fcMonths)
+    ? await loadForecastSupplierMix(db, {
+        today,
+        accounts: coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
+        override,
+        resolveAcct,
+      })
+    : EMPTY_SUPPLIER_MIX;
   const nonCash = (code: string, name: string) => isNonCashAccount(code, name, TF_INTEREST_ACCT.code);
   const pnl = new Map<string, { salesSen: number; lines: FcCashLine[] }>();
   const excluded: CashflowForecastMeta["excluded"] = [];
@@ -11194,6 +11216,7 @@ async function loadCashflowForecast(
   }
   const catMix = new Map<string, TermMix>([...byCategory].map(([cat, rows]) => [cat, termMixOf(rows)] as const));
   const futureDocs = built.columns.filter((c) => c.future).map((c) => c.ym).sort();
+  const supName = new Map((supRes.results ?? []).map((r) => [String(r.id), String(r.name ?? r.id)] as const));
   const pnlBuilt = buildPnlForecastLegs({
     today, period, months, openingYm, fcMonths, groups, override, mappedAccounts: mapped,
     salaryAccount: LABOUR_ACCRUAL_ACCT, arAcct, nonCash, resolveAcct,
@@ -11201,6 +11224,9 @@ async function loadCashflowForecast(
     customerName: (id) => custName.get(id) ?? id,
     receiptMix,
     materialMix: (type) => catMix.get(rawMaterialLineFor(type, sgOverride)) ?? termMixOf([]),
+    supplierMix,
+    supplierTerm: (id) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1),
+    supplierName: (id) => supName.get(id) ?? id,
     minHorizon: futureDocs[futureDocs.length - 1],
     tfPlans, tfDrawnThisMonth, tfInterestAccount,
   });
@@ -16946,11 +16972,22 @@ app.get("/dashboard", async (c) => {
 
   // --- Forecast overlay (same percent-or-amount rule as the Forecast page) --
   const fcRow = await db.prepare("SELECT value FROM kv_config WHERE key = 'forecast_pnl'").first<{ value: string }>();
-  type FcMonth = { salesSen?: number; pct?: Record<string, number | { bp?: number; amtSen?: number }> };
+  type FcMonth = { salesSen?: number; purchasesBySupplier?: Record<string, number>; pct?: Record<string, number | { bp?: number; amtSen?: number }> };
   let fcMonths: Record<string, FcMonth> = {};
   try {
     fcMonths = (JSON.parse(fcRow?.value ?? "{}") as { months?: Record<string, FcMonth> }).months ?? {};
   } catch { /* none yet */ }
+  // A month keyed by supplier (owner 2026-11-10, spec 2026-11-10-forecast-
+  // suppliers-design.md 5): its materials are the suppliers' sum, spread over
+  // the material types by what each supplier sold us lately — the Forecast
+  // page's own figures. Read only when a month is keyed that way.
+  let supplierSplitOf: (m: FcMonth) => ReturnType<typeof forecastSupplierSplit> = () => null;
+  if (anySupplierMonth(fcMonths)) {
+    const acctsDash = (await loadCoaList(db, false)).map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable }));
+    const typesDash = [...new Set(forecastMaterialAccountTypes(acctsDash, overrideDash).values())].sort();
+    const mixDash = await loadForecastSupplierMix(db, { today: todayMyt(), accounts: acctsDash, override: overrideDash, resolveAcct: resolveDash });
+    supplierSplitOf = (m) => forecastSupplierSplit(m, typesDash, mixDash);
+  }
   const fcLineAmt = (m: FcMonth, v: number | { bp?: number; amtSen?: number }): number => {
     const salesSen = Math.max(0, Math.round(Number(m.salesSen) || 0));
     if (typeof v === "number") return Math.round((salesSen * v) / 10000);
@@ -16985,8 +17022,10 @@ app.get("/dashboard", async (c) => {
   for (const [ym, m] of Object.entries(fcMonths)) {
     const slice = zero();
     slice.sales = Math.max(0, Math.round(Number(m.salesSen) || 0));
+    const split = supplierSplitOf(m);
     const cats = new Map<string, number>();
-    for (const [code, v] of Object.entries(m.pct ?? {})) {
+    if (split) for (const [type, sen] of Object.entries(split.byType)) cats.set(type, (cats.get(type) ?? 0) + sen);
+    else for (const [code, v] of Object.entries(m.pct ?? {})) {
       if (!code.startsWith("cat:")) continue;
       const name = code.slice(4);
       cats.set(name, (cats.get(name) ?? 0) + fcLineAmt(m, v));
@@ -17014,6 +17053,8 @@ app.get("/dashboard", async (c) => {
         continue;
       }
       if (deptForecast && (kind === "labourAccount" || labourMappedDash.has(code))) continue;
+      // Keyed by supplier: the spread below stands in for the rows' own figures.
+      if (split && code.startsWith("cat:")) continue;
       const amt = fcLineAmt(m, v);
       const meta = code.startsWith("cat:") ? { type: "COST" } : coaDash.get(code);
       if (!meta) { slice.materials += amt; slice.cogs += amt; continue; }
@@ -17025,6 +17066,7 @@ app.get("/dashboard", async (c) => {
       else if (bucket === "FACTORY_OVERHEAD") { slice.overhead += amt; slice.cogs += amt; }
       else { slice.materials += amt; slice.cogs += amt; } // materials incl. cat: rows
     }
+    if (split) { slice.materials += split.totalSen; slice.cogs += split.totalSen; }
     slice.gross = slice.sales - slice.cogs;
     slice.net = slice.gross + slice.otherIncome - slice.expenses;
     fcByMonth.set(ym, slice);
@@ -17223,12 +17265,45 @@ app.get("/forecast", async (c) => {
   return c.json({ success: true, data: { months } });
 });
 
+// The Forecast P&L's supplier rows (owner 2026-11-10 「supplier part 我也像
+// customer 这样 key in amount」「太久没使用的 supplier 就不在选项」; spec
+// 2026-11-10-forecast-suppliers-design.md 3–4): the suppliers master, and what
+// each supplier sold us lately by material type — the page lists those bought
+// from and spreads a supplier-keyed month by the same weights every other
+// reader uses. Read only.
+app.get("/forecast/suppliers", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const today = todayMyt();
+  const [coaList, override, resolveAcct, supRes] = await Promise.all([
+    loadCoaList(db, false),
+    getPnlSectionMap(db),
+    loadAccountResolver(db),
+    db.prepare("SELECT * FROM suppliers").all<Record<string, unknown>>(),
+  ]);
+  const mix = await loadForecastSupplierMix(db, {
+    today,
+    accounts: coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })),
+    override,
+    resolveAcct,
+  });
+  const suppliers = (supRes.results ?? [])
+    .map((r) => ({
+      id: String(r.id ?? ""),
+      name: String(r.name ?? r.id ?? ""),
+      isActive: !(r.isActive === false || r.isActive === 0 || r.is_active === false || r.is_active === 0),
+    }))
+    .filter((s) => s.id !== "");
+  return c.json({ success: true, data: { suppliers, mix, from: supplierMixFrom(today), to: today } });
+});
+
 app.put("/forecast", async (c) => {
   const denied = await requirePermission(c, "accounting", "update");
   if (denied) return denied;
   try {
     const body = (await c.req.json()) as {
-      months?: Record<string, { salesSen?: number; salesByCustomer?: unknown; pct?: Record<string, number | { bp?: number; amtSen?: number }> }>;
+      months?: Record<string, { salesSen?: number; salesByCustomer?: unknown; purchasesBySupplier?: unknown; pct?: Record<string, number | { bp?: number; amtSen?: number }> }>;
     };
     if (!body.months || typeof body.months !== "object") {
       return c.json({ success: false, error: "months required" }, 400);
@@ -17239,7 +17314,10 @@ app.put("/forecast", async (c) => {
     // Sales by customer (owner 2026-11-09, spec 2026-11-09-forecast-three-
     // columns-design.md 4): kept as `salesByCustomer`, and `salesSen` is then
     // their sum, so every reader of salesSen keeps reading the month's total.
-    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number> }> = {};
+    // Purchases by supplier (owner 2026-11-10, spec 2026-11-10-forecast-
+    // suppliers-design.md 3): kept as `purchasesBySupplier`; nothing derived
+    // is stored — every reader spreads them by the current purchases.
+    const months: Record<string, { salesSen: number; pct: Record<string, { bp?: number; amtSen?: number }>; salesByCustomer?: Record<string, number>; purchasesBySupplier?: Record<string, number> }> = {};
     for (const [ym, m] of Object.entries(body.months)) {
       if (!/^\d{4}-\d{2}$/.test(ym) || !m || typeof m !== "object") continue;
       const pct: Record<string, { bp?: number; amtSen?: number }> = {};
@@ -17255,10 +17333,12 @@ app.put("/forecast", async (c) => {
         }
       }
       const salesByCustomer = cleanSalesByCustomer(m.salesByCustomer);
+      const purchasesBySupplier = cleanPurchasesBySupplier(m.purchasesBySupplier);
       months[ym] = {
         salesSen: forecastSalesSen({ salesSen: m.salesSen, salesByCustomer }),
         pct,
         ...(Object.keys(salesByCustomer).length ? { salesByCustomer } : {}),
+        ...(Object.keys(purchasesBySupplier).length ? { purchasesBySupplier } : {}),
       };
     }
     await c.var.DB.prepare(

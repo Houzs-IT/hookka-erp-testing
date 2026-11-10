@@ -19,7 +19,7 @@ test("the toggle is off on every load, never in Edit, and fetches the forecast o
   assert.match(tab, /const \[forecast, setForecast\] = useState\(false\);/);
   assert.match(tab, /const fcOn = forecast && !edit;/);
   assert.match(tab, /fcOn \? `\/api\/accounting\/cashflow-forecast\?period=\$\{period\}` : null/);
-  assert.match(tab, /\{!edit && <ForecastToggle on=\{forecast\} onToggle=\{\(\) => setForecast\(\(v\) => !v\)\} \/>\}/);
+  assert.match(tab, /\{!edit && <ForecastToggle on=\{forecast\} onToggle=\{\(\) => \{ setForecast\(\(v\) => !v\); setHidePast\(false\); \}\} \/>\}/);
   assert.match(tab, /setCollapsed\(new Set\(\)\); setForecast\(false\);/, "Edit Layout turns the forecast off");
   // Toggle off: the statement request is exactly as before.
   assert.match(tab, /`\/api\/accounting\/cashflow-statement\?period=\$\{period\}\$\{edit \? "&editable=1" : ""\}`/);
@@ -138,6 +138,24 @@ test("forecast colours run down to the totals: a subtotal or result row keeps it
     const fp = css.indexOf(`tr[data-row="${row}"] > td[data-cell~="fp"] {`);
     assert.ok(fc >= 0 && fp > fc, `${row}: lavender after blue`);
   }
+});
+
+test("Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不显示 past month」): with the forecast on only; the months before the statement's go, Accumulated and the rest stay; the export follows; any press of Forecast shows them again", () => {
+  assert.match(tab, /const \[hidePast, setHidePast\] = useState\(false\);/, "off on every load");
+  assert.match(tab, /\{fcData && pastMonths && <HidePastMonthsToggle on=\{hidePast\} onToggle=\{\(\) => setHidePast\(\(v\) => !v\)\} \/>\}/, "only beside a forecast that has past months");
+  // Which columns go: a month before the statement's own, never Accumulated.
+  assert.match(tab, /if \(!c\.accum && c\.ym && c\.ym < period\) s\.add\(i\);/);
+  assert.match(tab, /const cols: CfApiCol\[\] = hiddenIdx \? allCols\.filter\(\(_, i\) => !hiddenIdx\.has\(i\)\) : allCols;/);
+  assert.match(tab, /hiddenIdx \? allRows\.map\(\(r\) => \(\{ \.\.\.r, values: r\.values\.filter\(\(_, i\) => !hiddenIdx\.has\(i\)\) \}\)\) : allRows/, "every row loses the same columns");
+  // The export and print read the same cols and rows the screen does.
+  const at = tab.indexOf("const buildExport = (): Aoa => {");
+  assert.ok(at >= 0, "Cash Flow's own export");
+  const exp = tab.slice(at, tab.indexOf("\n  };", at));
+  assert.match(exp, /cols\.map\(/);
+  assert.match(exp, /for \(const r of cleanRows\)/);
+  assert.match(tab, /past months hidden/, "the note and the printout say so");
+  const shell = read("src/components/finance/report-shell.tsx");
+  assert.match(shell, /export function HidePastMonthsToggle\(\{ on, onToggle \}: \{ on: boolean; onToggle: \(\) => void \}\)/);
 });
 
 test("Daily Cash Position: Mark paid, and the Planned payments hint", () => {

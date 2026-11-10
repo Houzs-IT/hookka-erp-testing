@@ -72,7 +72,7 @@ function keyOf(scope: string, t: HTMLTableElement, firstOnly: boolean): string {
 // description column only, so on its own it cannot see columns come or go —
 // Cash Flow's Forecast toggle turned 5 columns into 35 under the same key,
 // the colgroup stayed at 5 and the other 30 shrank to nothing (prod
-// 2026-11-10, BUG-2026-11-10-444). Any change here lays the table out again,
+// 2026-11-10, BUG-2026-11-10-462). Any change here lays the table out again,
 // the dragged width put back.
 export function colLayoutSig(widthKey: string, headers: string[], spans: number[]): string {
   return `${widthKey}#${headers.map((h, i) => `${h}~${spans[i] > 0 ? spans[i] : 1}`).join("|")}`;

@@ -36,7 +36,7 @@ test("widths are kept per page/tab and header; a report by its description colum
   assert.equal(rt.colWidthKey("accounting:plmonthly", "", ["Item", "Accumulated", "Sep 2026"], true), "accounting:plmonthly||first|Item", "new months do not lose the width");
 });
 
-test("a report lays out again when its columns come or go, keeping the dragged description width (BUG-2026-11-10-444)", () => {
+test("a report lays out again when its columns come or go, keeping the dragged description width (BUG-2026-11-10-462)", () => {
   // Prod 2026-11-10, owner's screenshot: Cash Flow with a dragged Item width, Forecast pressed —
   // 5 columns became 35, the colgroup stayed pinned to 5 and the other 30 shrank to nothing.
   const actualHeads = ["Item", "Accumulated", "Nov'26", "Oct'26", "Sep'26"];

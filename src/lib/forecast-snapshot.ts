@@ -9,10 +9,21 @@
 // ---------------------------------------------------------------------------
 
 export type ForecastCell = { p?: string; a?: string };
-/** `customers` (owner 2026-11-09): the sales keyed per customer, as typed. */
-export type ForecastMonth = { salesStr: string; pct: Record<string, ForecastCell>; customers?: Record<string, string> };
+/** `customers` (owner 2026-11-09): the sales keyed per customer, as typed.
+ *  `suppliers` (owner 2026-11-10): the purchases keyed per supplier, as typed. */
+export type ForecastMonth = {
+  salesStr: string;
+  pct: Record<string, ForecastCell>;
+  customers?: Record<string, string>;
+  suppliers?: Record<string, string>;
+};
 
 const byKey = (x: string[], y: string[]) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+const keyedCells = (cells: Record<string, string> | undefined): string[][] =>
+  Object.entries(cells ?? {})
+    .map(([id, v]) => [id, (v ?? "").trim()])
+    .filter(([, v]) => v !== "")
+    .sort(byKey);
 
 export function forecastSnapshot(months: Record<string, ForecastMonth>): string {
   return JSON.stringify(
@@ -24,13 +35,14 @@ export function forecastSnapshot(months: Record<string, ForecastMonth>): string 
           .filter(([, e]) => (e.a ?? "") !== "" || (e.p ?? "") !== "")
           .map(([code, e]) => [code, (e.a ?? "") !== "" ? `a:${e.a}` : `p:${e.p}`])
           .sort(byKey);
-        // Customer cells only when there are any, so a month keyed the old
-        // way reads exactly as before.
-        const customers = Object.entries(m.customers ?? {})
-          .map(([id, v]) => [id, (v ?? "").trim()])
-          .filter(([, v]) => v !== "")
-          .sort(byKey);
-        return customers.length ? [ym, (m.salesStr ?? "").trim(), cells, customers] : [ym, (m.salesStr ?? "").trim(), cells];
+        // Customer and supplier cells only when there are any, so a month
+        // keyed the old way reads exactly as before.
+        const customers = keyedCells(m.customers);
+        const suppliers = keyedCells(m.suppliers);
+        const out: unknown[] = [ym, (m.salesStr ?? "").trim(), cells];
+        if (customers.length || suppliers.length) out.push(customers);
+        if (suppliers.length) out.push(suppliers);
+        return out;
       }),
   );
 }

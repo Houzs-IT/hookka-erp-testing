@@ -9,7 +9,7 @@
 // profit therefore equals the Forecast P&L page's; gross profit differs only
 // by what posts outside COGS. Tests: tests/pnl-forecast.test.mjs.
 // ---------------------------------------------------------------------------
-import { FC_CARRIAGE, FC_SST, forecastMaterialType, forecastMonthFigures, type FcLineGroups, type FcMonth } from "./forecast-pnl";
+import { EMPTY_SUPPLIER_MIX, FC_CARRIAGE, FC_SST, forecastMaterialType, forecastMonthFigures, materialRowType, type FcLineGroups, type FcMonth, type FcSupplierMix } from "./forecast-pnl";
 import { pnlBucketFor } from "./pnl-bucket";
 import { FORECAST_TYPE_GROUP_PREFIX, type PnlExpenseLine, type PnlLine, type PnlRmGroup, type PnlWindowLike } from "./pnl-matrix";
 
@@ -20,6 +20,9 @@ export type ForecastPnlOpts = {
   deptAccount: (dept: string) => string | null;
   /** The chart's name and type of an account. */
   accountOf: (code: string) => { name: string; type: string } | undefined;
+  /** What each supplier sold us lately: a month keyed by supplier spreads by
+   *  it, as on the Forecast page (spec 2026-11-10-forecast-suppliers-design.md 5). */
+  supplierMix?: FcSupplierMix;
 };
 
 /** A purchase group's material type: a forecast type group says it; an actual
@@ -32,7 +35,7 @@ export function rmTypeOf(rg: PnlRmGroup): string {
  *  (forecastMonthFigures, supersede rule included); nothing for stock
  *  movements, which the plan does not forecast. */
 export function forecastPnlWindow(m: FcMonth | undefined, g: FcLineGroups, o: ForecastPnlOpts): PnlWindowLike {
-  const f = forecastMonthFigures(m, g, o.mappedAccounts);
+  const f = forecastMonthFigures(m, g, o.mappedAccounts, o.supplierMix ?? EMPTY_SUPPLIER_MIX);
   const labour = new Map<string, PnlLine>();
   const overhead = new Map<string, PnlLine>();
   const other = new Map<string, PnlLine>();
@@ -63,7 +66,7 @@ export function forecastPnlWindow(m: FcMonth | undefined, g: FcLineGroups, o: Fo
   for (const a of g.materials) {
     const amt = f.amt(a.code);
     if (!amt) continue;
-    const type = a.code.startsWith("cat:") ? a.code.slice(4) : forecastMaterialType(a.name);
+    const type = materialRowType(a);
     rmGroups.push({ group: `${FORECAST_TYPE_GROUP_PREFIX}${type}`, description: type, openingSen: 0, purchasesSen: amt, closingSen: 0 });
   }
   const has = (code: string) => g.direct.some((a) => a.code === code);

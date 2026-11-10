@@ -67,6 +67,8 @@ test("a control carries one colour set at a time: pressed Forecast / Edit Layout
     EditLayoutToggle: "border-[#1F1D1B] bg-[#1F1D1B] text-white hover:bg-black",
     // Blue since 2026-11-09 (owner: red reads as a negative).
     ForecastToggle: "border-[#2F5F9E] bg-[#2F5F9E] text-white hover:bg-[#264D80]",
+    // The forecast's own second step (2026-11-10), pressed the same blue.
+    HidePastMonthsToggle: "border-[#2F5F9E] bg-[#2F5F9E] text-white hover:bg-[#264D80]",
   };
   for (const [name, on] of Object.entries(pressed)) {
     assert.ok(part(name).includes(`className={\`\${CTRL_SHAPE} px-3 \${on ? "${on}" : \`\${CTRL_IDLE} hover:bg-[#F4F6F8]\`}\`}`), name);
