@@ -1,5 +1,7 @@
 # Refined look (preview) — design system v2
 
+> **Last verified: 2026-11-12** (branch `feat/refined-look-preview`): tokens, generator and toggle as described; visual check on prod pending.
+
 Owner 2026-11-12: "我要像 Houzs ERP 那么漂亮的 或者更加漂亮" + "不要看久眼睛痛". Design canvas
 (17 boards: principles, Houzs reference, eye comfort, foundations, palette A/B, components, layout,
 data viz, forms, states, status, screens, dark, print, brand, phone):
