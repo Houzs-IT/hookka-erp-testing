@@ -46,9 +46,14 @@ test("HomeDashboard mounts Operations beside Sales and the Sales path is unchang
 });
 
 // ---- Overview <-> Output & Cost -------------------------------------------
-test("Operations sub-tabs are the desktop's two, in the URL's ?sub=", () => {
-  // The desktop now also has "Floor Live" (owner 2026-11-10); the phone Home carries the first two and a
-  // ?sub=floor link falls back to Overview (Home.tsx / HomeDashboard.tsx opsSub).
+test("Operations sub-tabs are the desktop's three, in the URL's ?sub=", () => {
+  // Floor Live (owner 2026-11-10 desktop; 2026-11-11 phone: "我的floorlive也没有看到") is the third sub-tab on
+  // the phone Home too, rendering the desktop FloorLiveView and opening on today.
+  assert.deepEqual(TAB_SUBS.operations.map((s) => s.key), ["overview", "production", "floor"]);
+  const home = read("HomeDashboard.tsx");
+  assert.match(home, /\["floor", "Floor Live"\]/);
+  assert.match(home, /<FloorLiveView period=\{period\} today=\{today\} onPeriodChange=\{setPeriod\} \/>/);
+  assert.match(home, /if \(k === "floor" && !period\.day\) setPeriod\(/);
   assert.deepEqual(TAB_SUBS.operations.slice(0, 2).map((s) => s.key), ["overview", "production"]);
   assert.deepEqual(TAB_SUBS.operations.slice(0, 2).map((s) => s.label), ["Overview", "Output & Cost"]);
   const src = read("HomeDashboard.tsx");

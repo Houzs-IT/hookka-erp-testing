@@ -1,5 +1,5 @@
 // The /m Home (Home v10). Replaces the old Home presentation: header, greeting,
-// Scan to Create tiles, Today's problems, a six-view selector and the period bar, then
+// Scan to Create tiles, a six-view selector (no Today's problems — owner 2026-11-11) and the period bar, then
 // the selected view. Sales, Operations and Employees are built; the other three show one Coming Soon
 // state. Access follows the desktop dashboard (nav gate + tab list); a user with
 // no dashboard access gets a permission-filtered module list instead.
@@ -20,12 +20,9 @@ import { MobileHeader } from "../../components/MobileHeader";
 import { GlobalSearchSheet } from "../../components/GlobalSearchSheet";
 import { ModuleGroupList } from "../../components/ModuleMenu";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
-import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { useNotificationFeed } from "../../lib/use-notification-feed";
 import { visibleModuleGroups } from "../../nav";
 import { M } from "../../theme";
-import { TONE, useProblemTiles, type Tile } from "../../../dashboards/use-problem-tiles";
-import type { OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
 import {
   monthLabel, quarterKeyOf, quarterPeriod, widgetPeriod, widgetPeriodLabel, yearsWithData, ymd, type Period,
 } from "../../../dashboards/dashboard-shared-lib";
@@ -34,10 +31,11 @@ import { DASHBOARD_FEED_URL } from "./types";
 import { useDashboardPeriod, useDashboardSub } from "./hooks";
 import { useSalesData, type ProtoFeed, type SalesAccess } from "./home-data";
 import {
-  DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, opsPeriodLabel, periodResolved, periodMode, problemDest, resolveView, stepOps, stepSales, switchMode, switchOpsMode, todayLabel, type DashView, type PeriodMode4,
+  DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, opsPeriodLabel, periodResolved, periodMode, resolveView, stepOps, stepSales, switchMode, switchOpsMode, type DashView, type PeriodMode4,
 } from "./home-lib";
 import { SalesView } from "./SalesView";
 import { OpsView, type OpsSubKey } from "./OpsView";
+import { FloorLiveView } from "../../../dashboards/FloorLiveView";
 import { EmpView } from "./EmpView";
 import type { EmpAccess } from "./emp-data";
 import type { OpsAccess } from "./ops-data";
@@ -119,38 +117,6 @@ function FallbackHome() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Today's problems
-// ---------------------------------------------------------------------------
-// "Bad" tiles use the bright red in both themes (the tone's own dark red is dim on a dark card).
-const toneValue = (t: Tile) => (t.tone === "bad" ? "#DC2626" : TONE[t.tone].value === "#1F1D1B" ? M.raisin : TONE[t.tone].value);
-
-function ProblemsSection({ tiles, onTap }: { tiles: Tile[]; onTap: (t: Tile) => void }) {
-  const wide = useResponsiveLayout().mode !== "phone";
-  if (tiles.length === 0) return null;
-  return (
-    <section aria-label="Today's problems" style={{ padding: "14px 16px 14px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, paddingBottom: 10 }}>
-        <Label style={{ whiteSpace: "nowrap" }}>TODAY’S PROBLEMS</Label>
-        <span style={{ fontSize: 12, fontWeight: 600, color: M.raisin, lineHeight: "14px", whiteSpace: "nowrap" }}>{todayLabel()}</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? 5 : 2},minmax(0,1fr))`, gap: 8 }}>
-        {tiles.map((p) => (
-          <button key={p.key} type="button" onClick={() => onTap(p)} aria-label={`${p.value} ${p.label}${p.hint ? `, ${p.hint}` : ""}`}
-            style={{ position: "relative", overflow: "hidden", minWidth: 0, display: "flex", alignItems: "center", gap: 6, boxSizing: "border-box", padding: "9px 6px 10px 14px", borderRadius: 12, border: "none", backgroundColor: M.card, boxShadow: SHADOW_SMALL, fontFamily: "inherit", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
-            <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: TONE[p.tone].bar }} />
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 18, fontWeight: 700, lineHeight: "22px", color: toneValue(p), ...TNUM }}>{p.value}</span>
-              <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, lineHeight: "16px", color: M.raisin, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}</span>
-              {p.hint ? <span style={{ display: "block", fontSize: 11, lineHeight: "14px", color: M.muted, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.hint}</span> : null}
-            </span>
-            <ChevronRight size={16} strokeWidth={2} color={M.gold} aria-hidden="true" />
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // View selector + period bar
@@ -158,7 +124,9 @@ function ProblemsSection({ tiles, onTap }: { tiles: Tile[]; onTap: (t: Tile) => 
 const MODES = [["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]] as const;
 /** Operations adds Day (desktop: Operations is a day tab). */
 const OPS_MODES = [["day", "Day"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]] as const;
-const OPS_SUB_OPTIONS: readonly (readonly [OpsSubKey, string])[] = [["overview", "Overview"], ["production", "Output & Cost"]];
+// Floor Live (owner 2026-11-11: "我的floorlive也没有看到") is the desktop's third Operations sub-tab, the same FloorLiveView.
+type HomeOpsSub = OpsSubKey | "floor";
+const OPS_SUB_OPTIONS: readonly (readonly [HomeOpsSub, string])[] = [["overview", "Overview"], ["production", "Output & Cost"], ["floor", "Floor Live"]];
 
 function PeriodCalendar({
   period, months, today, onPick, onClose,
@@ -246,7 +214,7 @@ function PeriodCalendar({
 
 function ViewBar({
   view, canSwitch, onViews, period, months, today, onPeriod, sub, onSub,
-}: { view: DashView; canSwitch: boolean; onViews: () => void; period: Period | null; months: string[]; today: string; onPeriod: (p: Period) => void; sub?: OpsSubKey; onSub?: (k: OpsSubKey) => void }) {
+}: { view: DashView; canSwitch: boolean; onViews: () => void; period: Period | null; months: string[]; today: string; onPeriod: (p: Period) => void; sub?: HomeOpsSub; onSub?: (k: HomeOpsSub) => void }) {
   const top = useStickyBelowHeader();
   const [cal, setCal] = useState(false);
   const closeCal = useCallback(() => setCal(false), []);
@@ -376,9 +344,8 @@ function NotAvailable({ view, onFirst, firstLabel }: { view: DashView; onFirst: 
 // The dashboard proper (mounted only for users who may open it)
 // ---------------------------------------------------------------------------
 function Dashboard() {
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const { hasPermission, isNavAllowed, dashboardTabs } = usePermissions();
+  const { hasPermission, dashboardTabs } = usePermissions();
   const allowed = useMemo(() => allowedViews(dashboardTabs), [dashboardTabs]);
   const resolved = resolveView(params.get("view"), allowed);
   const view: DashView | null = resolved.kind === "view" ? resolved.view : null;
@@ -418,9 +385,10 @@ function Dashboard() {
     payslips: hasPermission("payslips", "read"),
     revenueFigures: hasPermission("revenue-figures", "read"),
   };
-  const [logSignal, setLogSignal] = useState(0);
+  // The removed "Not in" tile used to bump this to open the attendance log.
+  const logSignal = 0;
   const { sub: rawSub, setSub } = useDashboardSub("operations");
-  const opsSub: OpsSubKey = rawSub === "production" ? "production" : "overview";
+  const opsSub: HomeOpsSub = rawSub === "production" ? "production" : rawSub === "floor" ? "floor" : "overview";
 
   // The month list drives the period model; it is the prototype feed the desktop page reads.
   const proto = useCachedJson<ProtoFeed>((onSales && base.view) || (onOps && opsView) || (onPeople && peopleView) ? DASHBOARD_FEED_URL : null);
@@ -434,42 +402,13 @@ function Dashboard() {
   // No fetch runs off an unresolved period (the month list has not loaded yet).
   const data = useSalesData(periodKey, { ...access, view: access.view && ready });
 
-  const tiles = useProblemTiles(allowed);
   const [viewsOpen, setViewsOpen] = useState(false);
-  const [problem, setProblem] = useState<Tile | null>(null);
-  // A tile that scrolls to a card: once the card is in the page (after the sub-tab and the data have rendered) go to it.
-  const scrollTo = useRef<string | null>(null);
-  const goToCard = (id: string): boolean => {
-    const el = document.getElementById(id);
-    if (!el) return false;
-    el.style.scrollMarginTop = "200px";
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-    return true;
-  };
-  useEffect(() => {
-    if (scrollTo.current && goToCard(scrollTo.current)) scrollTo.current = null;
-  });
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const closeViews = useCallback(() => setViewsOpen(false), []);
-  const closeProblem = useCallback(() => setProblem(null), []);
 
   const setView = (v: DashView) => {
     setParams((prev) => { const n = new URLSearchParams(prev); n.set("view", v); return n; });
     setViewsOpen(false);
-  };
-  const onTile = (t: Tile) => {
-    // On Operations the overdue tile scrolls to the list behind its number (as on the desktop), not away from the dashboard.
-    if (t.key === "overdue" && onOps && opsView) {
-      if (opsSub === "overview" && goToCard("ops-overdue")) return;
-      scrollTo.current = "ops-overdue";
-      setSub("overview");
-      return;
-    }
-    // On Employees the Not in tile opens the attendance log it counts (as on the desktop, where it scrolls to that card).
-    if (t.key === "absent" && onPeople && peopleView) { setLogSignal((n) => n + 1); return; }
-    const d = problemDest(t.key);
-    if (d.kind === "route" && isNavAllowed(d.navGate)) navigate(d.to);
-    else setProblem(t);
   };
   const refresh = () => { data.refresh(); setRefreshedAt(new Date()); };
   const firstAllowed = allowed[0];
@@ -479,7 +418,8 @@ function Dashboard() {
     <HomeTop>
       {/* Home v10 sets no line-height (browser `normal`); the /m shell inherits 1.5. Scoped to this screen's content. */}
       <div style={{ lineHeight: "normal" }}>
-      <ProblemsSection tiles={tiles} onTap={onTile} />
+      {/* Today's problems removed from the phone Home (owner 2026-11-11: "整个手机版本
+          dashboard都不要看到这个上面的"); the desktop dashboard keeps its strip. */}
       <ViewBar
         view={view ?? (resolved.kind === "blocked" ? resolved.view : "sales")}
         canSwitch={allowed.length > 1}
@@ -489,7 +429,8 @@ function Dashboard() {
         today={today}
         onPeriod={setPeriod}
         sub={onOps && opsView ? opsSub : undefined}
-        onSub={onOps && opsView ? setSub : undefined}
+        // Floor Live opens on today's live board (as on the desktop); the other sub-tabs keep the period.
+        onSub={onOps && opsView ? (k: HomeOpsSub) => { setSub(k); if (k === "floor" && !period.day) setPeriod({ mode: "monthly", month: today.slice(0, 7), day: today }); } : undefined}
       />
       {resolved.kind === "none" ? (
         <div style={{ padding: 16 }}><div role="status" style={{ padding: 20, borderRadius: 16, backgroundColor: M.card, boxShadow: SHADOW_CARD, fontSize: 13, color: M.ink }}>No dashboard views are available for your role.</div></div>
@@ -507,7 +448,13 @@ function Dashboard() {
             />
           </div>
         ) : (
-          <OpsView access={opsAccess} period={period} periodKey={periodKey} sub={opsSub} today={today} onPeriod={setPeriod} />
+          opsSub === "floor" ? (
+            <div style={{ padding: "14px 16px 120px" }} data-testid="ops-floor-live">
+              <FloorLiveView period={period} today={today} onPeriodChange={setPeriod} />
+            </div>
+          ) : (
+            <OpsView access={opsAccess} period={period} periodKey={periodKey} sub={opsSub} today={today} onPeriod={setPeriod} />
+          )
         )
       ) : onPeople ? (
         !peopleView ? (
@@ -541,61 +488,11 @@ function Dashboard() {
         </>
       )}
       <ViewsSheet open={viewsOpen} allowed={allowed} current={view} onPick={setView} onClose={closeViews} />
-      {problem ? <ProblemSheet tile={problem} onClose={closeProblem} onOpen={(to) => { setProblem(null); navigate(to); }} isNavAllowed={isNavAllowed} /> : null}
       </div>
     </HomeTop>
   );
 }
 
-// "Not in" and "Efficiency" are computed from attendance and job-card data that
-// no /m screen lists, so the tile explains itself instead of faking a list.
-function OverdueSetsSheet({ tile, onClose }: { tile: Tile; onClose: () => void }) {
-  const { data } = useCachedJson<{ sales?: { overdueSets?: OverdueSetsSummary | null } | null }>(DASHBOARD_FEED_URL);
-  const customers = data?.sales?.overdueSets?.customers ?? [];
-  return (
-    <SheetFrame open title={tile.label} sub="Sets not yet delivered, past the customer's date" onClose={onClose}>
-      <SheetCard>
-        {customers.length === 0 ? (
-          <div style={{ padding: "12px 0", fontSize: 13, color: M.ink }}>Nothing overdue.</div>
-        ) : customers.map((customer) => (
-          <div key={customer.customerId ?? customer.customerName} style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, padding: "8px 0", borderBottom: `1px solid ${M.hairline}` }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: M.raisin, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{customer.customerName}</div>
-              <div style={{ fontSize: 11.5, color: M.muted }}>{customer.orders.length} {customer.orders.length === 1 ? "order" : "orders"} · oldest due {customer.oldestDueDate}</div>
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: toneValue(tile), ...TNUM }}>{customer.overdueSets}<span style={{ fontSize: 11, fontWeight: 500, color: M.muted }}> sets</span></div>
-          </div>
-        ))}
-      </SheetCard>
-    </SheetFrame>
-  );
-}
-
-function ProblemSheet({ tile, onClose, onOpen, isNavAllowed }: { tile: Tile; onClose: () => void; onOpen: (to: string) => void; isNavAllowed: (h: string) => boolean }) {
-  if (tile.key === "overdueSets") return <OverdueSetsSheet tile={tile} onClose={onClose} />;
-  const d = problemDest(tile.key);
-  const blockedRoute = d.kind === "route";
-  const canEmployees = isNavAllowed("/employees");
-  return (
-    <SheetFrame open title={tile.label} sub={tile.hint} onClose={onClose}>
-      <SheetCard pad="14px 16px">
-        <div style={{ fontSize: 22, fontWeight: 700, color: toneValue(tile), ...TNUM }}>{tile.value}</div>
-        <div style={{ fontSize: 13, color: M.ink, lineHeight: 1.5, marginTop: 6 }}>
-          {blockedRoute
-            ? `Your role can't open ${d.where} on mobile, so the list behind this number is not available here.`
-            : `The detailed ${d.where.toLowerCase()} list is part of the desktop dashboard and is not on mobile yet. The Employees list shows people, not today’s attendance or efficiency.`}
-        </div>
-      </SheetCard>
-      {!blockedRoute && canEmployees ? (
-        <button type="button" onClick={() => onOpen("/m/employees")} style={{ marginTop: 12, width: "100%", height: 44, border: "none", borderRadius: 12, backgroundColor: M.taupe, color: M.paper, fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Employees</button>
-      ) : null}
-    </SheetFrame>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Route component
-// ---------------------------------------------------------------------------
 export function HomeDashboard() {
   const { isNavAllowed, loading } = usePermissions();
   // Wait for the permission set (first visit only; it is cached after), so a
