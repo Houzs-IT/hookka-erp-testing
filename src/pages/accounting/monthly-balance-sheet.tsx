@@ -17,6 +17,7 @@ import { todayYmdMY } from "@/lib/utils";
 import { groupBsEntries } from "@/lib/bs-groups";
 import { buildBsMatrix, fyMonthsShown, type BsMatrixRow, type BsMonthEntry } from "@/lib/bs-monthly";
 import type { BsSection } from "@/lib/bs-section";
+import { FC_CASH, forecastBsEntries } from "@/lib/forecast-bs";
 import { useFiscalYears } from "./use-fiscal-years";
 import { orgIdParam } from "./shared";
 
@@ -62,14 +63,68 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
     return () => { live = false; };
   }, [monthsKey, company]);
 
-  const matrix = useMemo(() => buildBsMatrix(months, byMonth), [months, byMonth]);
-  const loaded = (i: number) => !!byMonth[months[i]];
+  // Forecast (owner 2026-11-11 「…是不是可以做forecast balance sheet?」, start
+  // point 「可以」 = last month-end's actual sheet): the months ahead, rolled
+  // forward from last month-end's sheet by GET /bs-forecast (src/lib/forecast-bs.ts),
+  // newest first on the left as on the Monthly P&L. The current year only.
+  // The forecast is the whole business's, so it shows on the all-companies sheet.
+  const isCurrentFy = !!fy && fy.startYm <= curYm && curYm <= fy.endYm && company === "";
+  const [forecastOn, setForecastOn] = useState(false);
+  type BsForecastResp = { startYm: string; months: string[]; deltas: Record<string, Record<string, number>>; accounts: Record<string, { name: string; section: string }>; salaryAccount: string };
+  const [fc, setFc] = useState<BsForecastResp | null>(null);
+  const [fcOpening, setFcOpening] = useState<BsMonthEntry[] | null>(null);
+  const [fcError, setFcError] = useState<string | null>(null);
+  const showForecast = forecastOn && isCurrentFy;
+  useEffect(() => {
+    if (!showForecast || fc) return;
+    let live = true;
+    fetch("/api/accounting/bs-forecast", { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: BsForecastResp }>)
+      .then(async (j) => {
+        if (!live) return;
+        if (!j?.success || !j.data) { setFcError(j?.error || "The forecast could not be loaded"); return; }
+        const data = j.data;
+        // Last month-end's actual sheet: the forecast's start.
+        const r = await fetch(`/api/accounting/pl?period=${data.startYm}${orgIdParam(company)}`);
+        const pj = (await r.json()) as { success?: boolean; data?: { balanceSheet?: BsMonthEntry[] } };
+        if (!live) return;
+        if (!pj?.success || !Array.isArray(pj.data?.balanceSheet)) { setFcError("Last month-end's Balance Sheet could not be loaded"); return; }
+        setFcOpening(pj.data.balanceSheet);
+        setFc(data);
+      })
+      .catch(() => { if (live) setFcError("The forecast could not be loaded"); });
+    return () => { live = false; };
+  }, [showForecast, fc, company]);
+  // A forecast column's key ("f:YYYY-MM") and its sheet: the start's sheet
+  // with the movements so far; the salaries owed at the start are paid in the
+  // first month.
+  const fcKeys = useMemo(() => (showForecast && fc ? [...fc.months].reverse().map((ym) => `f:${ym}`) : []), [showForecast, fc]);
+  const fcByKey = useMemo(() => {
+    const out: Record<string, BsMonthEntry[]> = {};
+    if (!showForecast || !fc || !fcOpening) return out;
+    const owed = fcOpening.find((e) => e.accountCode === fc.salaryAccount && e.category === "CURRENT_LIABILITY")?.balance ?? 0;
+    const cum: Record<string, number> = {};
+    fc.months.forEach((ym, i) => {
+      const step = { ...(fc.deltas[ym] ?? {}) };
+      if (i === 0 && owed > 0) {
+        step[fc.salaryAccount] = (step[fc.salaryAccount] ?? 0) + owed;
+        step[FC_CASH] = (step[FC_CASH] ?? 0) - owed;
+      }
+      for (const [code, sen] of Object.entries(step)) cum[code] = (cum[code] ?? 0) + sen;
+      out[`f:${ym}`] = forecastBsEntries(fcOpening, cum, fc.accounts);
+    });
+    return out;
+  }, [showForecast, fc, fcOpening]);
+  const cols = useMemo(() => [...fcKeys, ...months], [fcKeys, months]);
+  const all = useMemo(() => ({ ...byMonth, ...fcByKey }), [byMonth, fcByKey]);
+  const matrix = useMemo(() => buildBsMatrix(cols, all), [cols, all]);
+  const loaded = (i: number) => !!all[cols[i]];
   const amt = (v: number, i: number) => (loaded(i) ? fmtAmt(v) : "…");
   const nums = (vals: number[]) =>
     vals.map((v, i) => (
-      <td key={months[i]} data-cell="num split" data-neg={loaded(i) && v < 0 ? "" : undefined}>{amt(v, i)}</td>
+      <td key={cols[i]} data-cell={`num split${cols[i].startsWith("f:") ? " fc fp" : ""}`} data-neg={loaded(i) && v < 0 ? "" : undefined}>{amt(v, i)}</td>
     ));
-  const span = months.length + 1;
+  const span = cols.length + 1;
 
   // A section: heading, its accounts (parents with their subtotal), total.
   const section = (key: BsSection, title: string) => {
@@ -91,7 +146,7 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
         {items.map((it) => {
           if (it.kind === "line") return line(rowOf.get(it.entry.accountCode)!, false);
           const members = it.members.map((m) => rowOf.get(m.accountCode)!);
-          const sub = months.map((_, i) => members.reduce((t, m) => t + m.values[i], 0));
+          const sub = cols.map((_, i) => members.reduce((t, m) => t + m.values[i], 0));
           return (
             <Fragment key={`g-${it.code}`}>
               <tr data-row="sub">
@@ -129,8 +184,16 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
               <option key={y.startYm} value={y.startYm}>{y.name}</option>
             ))}
           </select>
+          {isCurrentFy && (
+            <label className="inline-flex items-center gap-1.5 text-xs text-[#4B5563]" title="The months ahead, rolled forward from last month-end's sheet by the Forecast P&L and the documents' payment terms">
+              <input type="checkbox" checked={forecastOn} onChange={(e) => setForecastOn(e.target.checked)} className="accent-[#6B5C32]" />
+              Forecast
+            </label>
+          )}
         </ReportToolbar>
       </FinanceTitleActions>
+      {showForecast && fcError && <p className="text-xs text-[#9A3412]">{fcError} — reload the page to try again.</p>}
+      {showForecast && !fc && !fcError && <p className="text-xs text-[#6B7280]">Working out the forecast…</p>}
       {failed.length > 0 && (
         <p className="text-xs text-[#9A3412]">Could not load {failed.map(labelOfYm).join(", ")} — reload the page to try again.</p>
       )}
@@ -142,14 +205,16 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
         <ReportFrame
           company={COMPANY.HOOKKA.name}
           title={`Monthly Balance Sheet — ${fy.name}`}
-          note="All figures RM · each column is that month-end's Balance Sheet (this month: so far) · brackets = negative · stock = the P&L's closing stock"
+          note={`All figures RM · each column is that month-end's Balance Sheet (this month: so far) · brackets = negative · stock = the P&L's closing stock${showForecast && fc ? ` · forecast columns: ${labelOfYm(fc.startYm)}'s month-end sheet moved by the Forecast P&L and the documents' payment terms; stock and other balances stay as they were` : ""}`}
         >
           <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
               <tr>
                 <th data-cell="stick" className="min-w-[280px]">Account</th>
-                {months.map((ym) => (
-                  <th key={ym} data-cell="num split">{labelOfYm(ym)}{ym === curYm ? " (so far)" : ""}</th>
+                {cols.map((k) => (
+                  k.startsWith("f:")
+                    ? <th key={k} data-cell="num split fc fp">{labelOfYm(k.slice(2))} · forecast</th>
+                    : <th key={k} data-cell="num split">{labelOfYm(k)}{k === curYm ? " (so far)" : ""}</th>
                 ))}
               </tr>
             </thead>
