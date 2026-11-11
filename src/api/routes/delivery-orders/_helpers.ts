@@ -778,6 +778,136 @@ export async function resolveSalesOrderDoIds(
   return Array.from(ids);
 }
 
+// Does another DO that has left the warehouse still carry this SO's goods?
+// Then that delivery is real and the SO keeps its status.
+async function soRidesOtherLiveDo(
+  db: D1Database,
+  soId: string,
+  doId: string,
+): Promise<boolean> {
+  const soDoIds = (await resolveSalesOrderDoIds(db, soId)).filter((x) => x !== doId);
+  if (soDoIds.length === 0) return false;
+  const ph = soDoIds.map(() => "?").join(",");
+  const siblingLive = await db
+    .prepare(
+      `SELECT id FROM delivery_orders
+        WHERE id IN (${ph})
+          AND status IN ('LOADED','IN_TRANSIT','DELIVERED','INVOICED')
+        LIMIT 1`,
+    )
+    .bind(...soDoIds)
+    .first<{ id: string }>();
+  return !!siblingLive;
+}
+
+// ---------------------------------------------------------------------------
+// buildDoItemEditSoStatements — the sales-order side of a DO save that may
+// replace the line items (office PUT and the QR scan's "Adjust load").
+//
+// The item DELETE/INSERT only rides the caller's batch, so here
+// delivery_order_items still holds the OLD rows: resolveDoSalesOrderIds gives
+// the SOs BEFORE the save; the SOs AFTER come from the new production orders.
+//   • DRAFT → LOADED: only the SOs still on the DO go SHIPPED. Reading the old
+//     rows marked an order unticked at dispatch SHIPPED with nothing on any
+//     DO (SO-2610-074/-077/-189 on DO-2611-026, 10 Nov 2026).
+//   • items replaced on a DO that already left: an SO that lost its last piece
+//     goes SHIPPED → READY_TO_SHIP (owner 11 Nov 2026: "Should go back"),
+//     unless another dispatched DO still carries it. DELIVERED / INVOICED /
+//     CLOSED SOs are never touched.
+// ---------------------------------------------------------------------------
+const DO_LEFT_WAREHOUSE = ["LOADED", "IN_TRANSIT", "DELIVERED", "INVOICED"];
+
+export async function buildDoItemEditSoStatements(
+  db: D1Database,
+  doRow: { id: string; doNo: string; salesOrderId: string | null },
+  fromStatus: string,
+  toStatus: string,
+  newPoIds: string[] | null,
+  now: string,
+): Promise<D1PreparedStatement[]> {
+  const dispatch = fromStatus === "DRAFT" && toStatus === "LOADED";
+  const editAfterDispatch =
+    newPoIds !== null &&
+    DO_LEFT_WAREHOUSE.includes(fromStatus) &&
+    DO_LEFT_WAREHOUSE.includes(toStatus);
+  if (!dispatch && !editAfterDispatch) return [];
+
+  const before = await resolveDoSalesOrderIds(db, doRow.id, doRow.salesOrderId);
+  let after = before;
+  if (newPoIds !== null) {
+    const poIds = [...new Set(newPoIds.filter(Boolean))];
+    const set = new Set<string>();
+    if (poIds.length > 0) {
+      const rows = await db
+        .prepare(
+          `SELECT DISTINCT salesOrderId AS "soId" FROM production_orders
+            WHERE id IN (${poIds.map(() => "?").join(",")})`,
+        )
+        .bind(...poIds)
+        .all<{ soId: string | null }>();
+      for (const r of rows.results ?? []) if (r.soId) set.add(r.soId);
+    }
+    // A legacy line with no production order can only belong to the DO's own SO.
+    if (doRow.salesOrderId && newPoIds.some((p) => !p)) set.add(doRow.salesOrderId);
+    after = [...set];
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  const auditRow = (soId: string, from: string, to: string, notes: string, action: string) =>
+    db
+      .prepare(
+        `INSERT INTO so_status_changes
+           (id, soId, fromStatus, toStatus, changedBy, timestamp, notes, autoActions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(genStatusChangeId(), soId, from, to, "System", now, notes, JSON.stringify([action]));
+  const readSo = (soId: string) =>
+    db
+      .prepare("SELECT id, status FROM sales_orders WHERE id = ?")
+      .bind(soId)
+      .first<{ id: string; status: string }>();
+
+  if (dispatch) {
+    // BUG-2026-10-17: goods often leave before the last job card is scanned,
+    // so an SO still IN_PRODUCTION (or CONFIRMED) at dispatch is shipped too.
+    for (const soId of after) {
+      const soRow = await readSo(soId);
+      if (soRow && ["READY_TO_SHIP", "IN_PRODUCTION", "CONFIRMED"].includes(soRow.status)) {
+        statements.push(
+          db
+            .prepare("UPDATE sales_orders SET status = 'SHIPPED', updated_at = ? WHERE id = ?")
+            .bind(now, soRow.id),
+          auditRow(soRow.id, soRow.status, "SHIPPED", "DO dispatched", `${doRow.doNo} dispatched (LOADED)`),
+        );
+      }
+    }
+  }
+
+  if (editAfterDispatch) {
+    for (const soId of before) {
+      if (after.includes(soId)) continue;
+      const soRow = await readSo(soId);
+      if (!soRow || soRow.status !== "SHIPPED") continue;
+      if (await soRidesOtherLiveDo(db, soId, doRow.id)) continue;
+      statements.push(
+        db
+          .prepare(
+            "UPDATE sales_orders SET status = 'READY_TO_SHIP', updated_at = ? WHERE id = ? AND status = 'SHIPPED'",
+          )
+          .bind(now, soId),
+        auditRow(
+          soId,
+          "SHIPPED",
+          "READY_TO_SHIP",
+          "Removed from DO",
+          `${doRow.doNo}: last piece taken off the delivery order`,
+        ),
+      );
+    }
+  }
+  return statements;
+}
+
 // ---------------------------------------------------------------------------
 // buildInvoiceDeathReleaseStatements — when an invoice DIES, its source must
 // be handed back.
@@ -1217,22 +1347,7 @@ export async function buildDoCancelReleaseStatements(
     if (!soRow) continue;
     if (soRow.status !== "SHIPPED" && soRow.status !== "DELIVERED") continue;
 
-    const soDoIds = (await resolveSalesOrderDoIds(db, soId)).filter(
-      (x) => x !== doRow.id,
-    );
-    if (soDoIds.length > 0) {
-      const ph = soDoIds.map(() => "?").join(",");
-      const siblingLive = await db
-        .prepare(
-          `SELECT id FROM delivery_orders
-            WHERE id IN (${ph})
-              AND status IN ('LOADED','IN_TRANSIT','DELIVERED','INVOICED')
-            LIMIT 1`,
-        )
-        .bind(...soDoIds)
-        .first<{ id: string }>();
-      if (siblingLive) continue;
-    }
+    if (await soRidesOtherLiveDo(db, soId, doRow.id)) continue;
 
     releasedSoIds.push(soId);
     statements.push(
@@ -5279,54 +5394,22 @@ export async function applyDeliveryOrderUpdate(
     }
 
     // -------------------------------------------------------------------
-    // Wei Siang 2026-05-16: SO status cascade on dispatch.
-    // DRAFT → LOADED = goods left the warehouse = "dispatched". The SO
-    // is no longer Outstanding (operator's definition: dispatched =
-    // sent out). Flip every READY_TO_SHIP SO this DO touches →
-    // SHIPPED. Multi-SO DOs handled via resolveDoSalesOrderIds.
-    // Guard: READY_TO_SHIP / IN_PRODUCTION / CONFIRMED advance (2026-10-17 —
-    // dispatch can come before the last job card scan); SOs already
-    // DELIVERED/INVOICED/CLOSED or ON_HOLD are left alone.
+    // SO status cascade (Wei Siang 2026-05-16, item edits 2026-11-11):
+    // DRAFT → LOADED marks SHIPPED every SO still on the DO after this
+    // save's item edit; an item edit on a DO that already left sends an SO
+    // that lost its last piece back to READY_TO_SHIP. See
+    // buildDoItemEditSoStatements.
     // -------------------------------------------------------------------
-    if (stampedOnDispatch) {
-      const soIds = await resolveDoSalesOrderIds(
+    statements.push(
+      ...(await buildDoItemEditSoStatements(
         c.var.DB,
-        id,
-        existing.salesOrderId,
-      );
-      for (const soId of soIds) {
-        const soRow = await c.var.DB.prepare(
-          "SELECT id, status FROM sales_orders WHERE id = ?",
-        )
-          .bind(soId)
-          .first<{ id: string; status: string }>();
-        // BUG-2026-10-17: goods often leave before the last job card is
-        // scanned, so an SO still IN_PRODUCTION (or CONFIRMED) at dispatch is
-        // shipped too. It used to stay behind and production finishing later
-        // parked it at READY_TO_SHIP for good.
-        if (soRow && ["READY_TO_SHIP", "IN_PRODUCTION", "CONFIRMED"].includes(soRow.status)) {
-          statements.push(
-            c.var.DB.prepare(
-              "UPDATE sales_orders SET status = 'SHIPPED', updated_at = ? WHERE id = ?",
-            ).bind(now, soRow.id),
-            c.var.DB.prepare(
-              `INSERT INTO so_status_changes
-                 (id, soId, fromStatus, toStatus, changedBy, timestamp, notes, autoActions)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            ).bind(
-              genStatusChangeId(),
-              soRow.id,
-              soRow.status,
-              "SHIPPED",
-              "System",
-              now,
-              "DO dispatched",
-              JSON.stringify([`${existing.doNo} dispatched (LOADED)`]),
-            ),
-          );
-        }
-      }
-    }
+        existing,
+        existing.status,
+        nextStatus,
+        newItems ? newItems.map((i) => i.productionOrderId) : null,
+        now,
+      )),
+    );
 
     // -------------------------------------------------------------------
     // Reversal on LOADED → DRAFT transition (phase-4 finish, 2026-04-26):
