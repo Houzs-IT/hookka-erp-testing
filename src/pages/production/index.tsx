@@ -5,7 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
 import { useSessionState } from "@/lib/use-session-state";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Plus, Lock, ExternalLink, Filter, ChevronDown } from "lucide-react";
@@ -61,6 +61,7 @@ import {
   todayISO,
   CARD_HEIGHT,
   overviewRowLook,
+  overviewSoFilterFromSearch,
   stageTint,
   type LiveDepartment,
   type StageClick,
@@ -1250,7 +1251,15 @@ export default function ProductionPage({
       return { sort: null, filters: emptyOverviewFilters };
     }
   };
-  const initialOverviewState = loadOverviewTableState();
+  // HK-0144: `/production?soId=<value>` opens with ONLY that SO ID filter (so a
+  // saved filter can't hide the rows), and the visit is not persisted below, so
+  // the user's saved table state is untouched for later plain visits.
+  const [searchParams] = useSearchParams();
+  const urlSoFilter = overviewSoFilterFromSearch(searchParams.toString());
+  const savedOverviewState = loadOverviewTableState();
+  const initialOverviewState: OverviewTableState = urlSoFilter
+    ? { sort: savedOverviewState.sort, filters: { ...emptyOverviewFilters, soId: urlSoFilter } }
+    : savedOverviewState;
   const [overviewSort, setOverviewSort] = useState<OverviewSort>(initialOverviewState.sort);
   const [overviewFilters, setOverviewFilters] = useState<OverviewFilters>(initialOverviewState.filters);
   const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
@@ -1363,6 +1372,7 @@ export default function ProductionPage({
   }, []);
   // Persist sort + filter to localStorage on change.
   useEffect(() => {
+    if (urlSoFilter) return;
     try {
       localStorage.setItem(
         OVERVIEW_TABLE_LS_KEY,
@@ -1371,7 +1381,7 @@ export default function ProductionPage({
     } catch {
       // ignore quota / private-mode failures
     }
-  }, [overviewSort, overviewFilters]);
+  }, [overviewSort, overviewFilters, urlSoFilter]);
   // Cycle a column's sort: unset → asc → desc → unset.
   const cycleOverviewSort = useCallback((key: OverviewSortKey) => {
     setOverviewSort((prev) => {

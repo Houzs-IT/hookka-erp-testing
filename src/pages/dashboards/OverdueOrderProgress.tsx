@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { Badge } from "@/components/ui/badge";
 import { deptName } from "./ops-floor-lib";
+import { productionOverviewHref } from "@/pages/production/utils";
 
 export interface OrderLineProgress {
   id: string;
@@ -95,10 +96,10 @@ export function OverdueOrderProgress({ soId, soNo }: { soId: string; soNo: strin
     <div className="rounded-lg border border-[#E2DDD8] bg-white px-3 py-1 text-xs">
       {body}
       <Link
-        to={`/sales/${soId}`}
+        to={soNo ? productionOverviewHref(soNo) : "/production"}
         className="inline-flex min-h-11 items-center font-medium text-[#6B5C32] underline-offset-2 hover:underline sm:min-h-8"
       >
-        Open {soNo ?? "sales order"}
+        Open {soNo ?? "sales order"} in Production Overview
       </Link>
     </div>
   );
