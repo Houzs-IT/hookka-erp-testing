@@ -50,6 +50,8 @@ const T = {
   "sage-100": "#E4EBE0", "sage-600": "#5A7353",
   "slate-100": "#E1E8EF", "slate-600": "#51677D",
   "clay-100": "#F5E3DA", "clay-600": "#985A40",
+  "chart-1": "#8A7238", "chart-2": "#4D828E", "chart-3": "#8C6A8E",
+  "chart-4": "#6F8F4E", "chart-5": "#C2A36B", "chart-6": "#8F877B",
 };
 const ROLE = {
   // backgrounds: surfaces, soft fills, solid fills (buttons, dark bars)
@@ -59,6 +61,11 @@ const ROLE = {
   // text / icons
   t: ["ink", "ink-2", "ink-muted", "ink-faint", "primary", "primary-ink", "gold", "success", "warning", "danger", "info",
       "sage-600", "slate-600", "clay-600", "border-strong", "surface"],
+  // chart marks (SVG fill / stroke / stop-color written by recharts from JS
+  // constants): the chart set, the B-lite series shades, status lines, neutrals
+  c: ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5", "chart-6", "slate-600", "sage-600", "clay-600",
+      "primary", "gold", "success-line", "warning-line", "danger-line", "info-line", "danger",
+      "ink", "ink-2", "ink-muted", "ink-faint", "border", "border-strong", "surface", "surface-2", "primary-soft"],
   // lines
   l: ["border", "border-subtle", "border-strong", "ink-faint", "primary", "focus", "success-line", "warning-line",
       "danger-line", "info-line", "ink"],
@@ -97,7 +104,11 @@ export function snap(kind, hex) {
   for (const name of ROLE[kind]) {
     const [L2, A2, B2] = LAB[name];
     const C2 = Math.hypot(A2, B2);
-    const d = (L - L2) ** 2 + (A - A2) ** 2 + (B - B2) ** 2 + 2 * (C - C2) ** 2;
+    // Chart marks: a coloured series stays a coloured series (never a grey),
+    // and hue outweighs lightness — a navy line wants slate, a teal bar teal.
+    if (kind === "c" && C > 0.04 && C2 < 0.03) continue;
+    const wL = kind === "c" ? 0.35 : 1;
+    const d = wL * (L - L2) ** 2 + (A - A2) ** 2 + (B - B2) ** 2 + 2 * (C - C2) ** 2;
     if (d < bestD) { bestD = d; best = name; }
   }
   return best;
@@ -210,14 +221,50 @@ for (const f of files) {
   }
 }
 
+// ── chart marks: hex string literals rendered as SVG presentation attributes ──
+// recharts writes `fill="#2A9D8F"` / `stroke="#1F3B63"` / `stop-color` straight
+// from JS constants (owner screenshot 2026-11-12: bright teal + navy on the
+// Accounting overview). CSS can override presentation attributes, so every
+// hex literal in the app becomes an attribute rule scoped to <svg>, snapped
+// onto the chart set. Near-white stays (labels on bars).
+const HEXLIT = /["'`](#[0-9a-fA-F]{6})["'`]/g;
+const chartHex = new Set();
+for (const f of files) {
+  const src = readFileSync(f, "utf8");
+  for (const m of src.matchAll(HEXLIT)) chartHex.add(m[1].toUpperCase());
+}
+const chartLines = [];
+for (const hex of [...chartHex].sort()) {
+  if (oklab(hexToRgb(hex))[0] > 0.97) continue;
+  const v = `var(--hk-${snap("c", hex)})`;
+  for (const attr of ["fill", "stroke", "stop-color"]) {
+    const prop = attr === "stop-color" ? "stop-color" : attr;
+    chartLines.push(`  :root.refined:not(.dark) svg [${attr}="${hex}" i]:not(:where([data-theme="light"]:not(body) *)) { ${prop}:${v}; }`);
+  }
+}
+
 // Tailwind's grey families → the warm neutral ramp under .refined.
 const NEUTRAL = {
   50: "#FDFBF7", 100: "#F8F5EF", 200: "#EDE8DF", 300: "#E4DDD1", 400: "#D3CABB", 500: "#938A7D",
   600: "#6B6358", 700: "#4F483F", 800: "#3A342D", 900: "#24201B", 950: "#1A1815",
 };
+// Tailwind's status families (bg-red-600 buttons, text-green-700, bg-amber-50 …)
+// → the refined status ramps, so a "Cancel" button is the soft danger red, not
+// Tailwind's bright #DC2626 (owner review 2026-11-12, DO drawer).
+const DANGER = { 50: "#FBEDE8", 100: "#F6DED6", 200: "#EDC1B5", 300: "#DE9C8B", 400: "#C9705E", 500: "#C0533F", 600: "#9A3A2D", 700: "#82301F", 800: "#6A281B", 900: "#521F16", 950: "#3A160F" };
+const SUCCESS = { 50: "#F1F6EA", 100: "#E9F0DF", 200: "#D2E2C0", 300: "#B2CC97", 400: "#8BB06D", 500: "#6A9A4E", 600: "#4F7A3B", 700: "#3D6030", 800: "#304C26", 900: "#24391D", 950: "#182614" };
+const WARNING = { 50: "#FDF8EA", 100: "#FAF0D2", 200: "#F3DFA6", 300: "#E6C574", 400: "#D4A94A", 500: "#C18F2C", 600: "#9C731F", 700: "#7A5718", 800: "#5E4313", 900: "#45310E", 950: "#2E2009" };
+const INFO = { 50: "#EEF5F6", 100: "#E3EEF0", 200: "#C6DBDF", 300: "#A0C1C8", 400: "#75A1AB", 500: "#4D828E", 600: "#3E6A74", 700: "#31505A", 800: "#263F47", 900: "#1C2F35", 950: "#132024" };
 const paletteLines = [];
-for (const fam of ["gray", "slate", "zinc", "neutral", "stone"]) {
-  for (const [step, hex] of Object.entries(NEUTRAL)) paletteLines.push(`    --color-${fam}-${step}: ${hex};`);
+const ramps = [
+  [["gray", "slate", "zinc", "neutral", "stone"], NEUTRAL],
+  [["red", "rose"], DANGER],
+  [["green", "emerald", "lime"], SUCCESS],
+  [["amber", "yellow", "orange"], WARNING],
+  [["blue", "sky", "cyan", "teal", "indigo"], INFO],
+];
+for (const [fams, ramp] of ramps) {
+  for (const fam of fams) for (const [step, hex] of Object.entries(ramp)) paletteLines.push(`    --color-${fam}-${step}: ${hex};`);
 }
 
 const byMedia = new Map();
@@ -235,6 +282,7 @@ let out = `/* GENERATED by scripts/gen-refined-theme.mjs — do not edit. Re-run
 ${paletteLines.join("\n")}
   }
 `;
+out += `  /* chart marks: ${chartLines.length / 3} hex literals */\n` + chartLines.join("\n") + "\n";
 for (const [media, rules] of byMedia) {
   if (!media) out += rules.join("\n") + "\n";
   else out += `  @media ${media} {\n${rules.map((r) => "  " + r).join("\n")}\n  }\n`;

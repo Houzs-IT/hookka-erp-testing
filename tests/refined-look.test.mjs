@@ -50,3 +50,25 @@ test("polish 1: .font-mono keeps the UI font; production grid cells become soft 
   assert.match(c, /data-cell="pending"/);
   assert.match(c, /data-cell="done"/);
 });
+
+test("polish 2: chart marks (SVG fill/stroke/stop-color from JS constants) snap onto the chart palette", () => {
+  execFileSync(process.execPath, ["scripts/gen-refined-theme.mjs"]);
+  const css = read("src/styles/refined-theme.generated.css");
+  const svg = css.split("\n").filter((l) => l.includes(" svg ["));
+  assert.ok(svg.length > 300, "covers the app's chart colours");
+  assert.ok(svg.every((l) => l.includes(":root.refined:not(.dark)")));
+  const map = (hex) => (svg.find((l) => l.includes(`[fill="${hex}" i]`)) ?? "").match(/var\(--hk-([a-z0-9-]+)\)/)?.[1];
+  assert.equal(map("#1F3B63"), "slate-600", "a navy series stays a coloured series");
+  assert.equal(map("#D9534F"), "danger-line");
+});
+
+test("polish 3: Tailwind status palettes follow the refined ramps; warehouse racks are soft", () => {
+  execFileSync(process.execPath, ["scripts/gen-refined-theme.mjs"]);
+  const css = read("src/styles/refined-theme.generated.css");
+  assert.match(css, /--color-red-600: #9A3A2D;/);
+  assert.match(css, /--color-green-700: #3D6030;/);
+  assert.match(css, /--color-amber-50: #FDF8EA;/);
+  assert.match(css, /--color-blue-600: #3E6A74;/);
+  assert.match(read("src/styles/refined-tokens.css"), /\[data-rack="OCCUPIED"\] \{/);
+  assert.match(read("src/pages/warehouse.tsx"), /data-rack=\{slot\.status\}/);
+});

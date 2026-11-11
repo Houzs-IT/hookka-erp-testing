@@ -105,6 +105,13 @@
     :root.refined:not(.dark) [data-cell="pending"]:hover { background-color: color-mix(in oklab, var(--hk-warning-fill) 80%, var(--hk-warning-line)) !important; }
   }
 
+  /* Warehouse rack cards: an occupied rack was a solid olive block with white
+     text — soft brass instead, with a brass edge (eye comfort). */
+  :root.refined:not(.dark) [data-rack="OCCUPIED"] {
+    background-color: var(--hk-primary-soft) !important; color: var(--hk-primary-ink) !important;
+    box-shadow: inset 3px 0 0 var(--hk-primary), var(--hk-shadow-1);
+  }
+
   /* Phone app (/m): its colours already run through --m-* variables. */
   /* Light phone theme only — the phone's own dark theme is left alone. */
   :root.refined:not(.dark) body[data-theme="light"] {
