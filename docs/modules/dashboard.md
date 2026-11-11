@@ -112,7 +112,8 @@ Who is in which department right now, from department QR scans. `GET /api/dashbo
 - **Daily snapshots** (owner 2026-11-10: "每天存一份"): `floor_live_snapshots(org_id, date, data)` — each closed day saved once at 00:05 MYT by `POST /api/internal/floor-live-snapshot` (`.github/workflows/floor-live-snapshot.yml`, CRON_SECRET; manual run back-fills a from/to range), `ON CONFLICT DO NOTHING`, never overwritten. A picked past day reads its snapshot (`frozen: true`); a day before snapshots began is recomputed and labelled so. A closed day is red when the last non-production stay ran over an hour before punch-out; `nonProdMinutes` sums the non-production scan segments.
 - **Month / Quarter / Year** → `GET /api/dashboard/floor-live/summary?from&to` sums the saved days per worker (`summarizeFloorLive`): days, pieces, efficiency, non-production hours, days over an hour in non-production. Floor Live opens on today (live); picking Month / Quarter / Year shows the summary, with a "Live now" button back.
 - On a phone the "Today's problems" strip is hidden under Floor Live (owner 2026-11-10: too narrow); desktop keeps it.
-- The /m phone dashboard (`src/pages/m/screens/dashboard/DashboardScreen.tsx`) shows no "Today's problems" tiles on any tab (owner 2026-11-11).
+- The /m phone Home's Operations has the Floor Live sub-tab too (same `FloorLiveView`, opens on today; owner 2026-11-11).
+- The /m phone app shows no "Today's problems" tiles — neither on the phone Home (`HomeDashboard.tsx`) nor on any dashboard tab (`DashboardScreen.tsx`) (owner 2026-11-11).
 - UI: names only (no EMP no.), 6 rows per card then "+N more", cards keep their own height, one card per row on a phone, refresh every 5 min (`useInterval`, paused when hidden).
 
 ## Related modules

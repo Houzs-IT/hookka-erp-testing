@@ -337,7 +337,7 @@ test("a user without dashboard access gets the permission-filtered module list a
   const src = read("screens/dashboard/HomeDashboard.tsx");
   assert.match(src, /if \(!isNavAllowed\(DASHBOARD_NAV_HREF\)\) return <FallbackHome \/>;/);
   assert.match(src, /visibleModuleGroups\(isNavAllowed\)/);
-  const fallback = src.slice(src.indexOf("function FallbackHome"), src.indexOf("// Today's problems"));
+  const fallback = src.slice(src.indexOf("function FallbackHome"), src.indexOf("function PeriodCalendar("));
   assert.doesNotMatch(fallback, /useSalesData|useProblemTiles|useCachedJson/);
 });
 
@@ -465,4 +465,10 @@ test("Phase 4 fixes: a label wraps to two lines when the name does not fit besid
   assert.equal(wrapLabel("Desa", "19%", 20, w, true).lines.length, 1, "a single word cannot wrap");
   const src = read("screens/dashboard/HomeDonut.tsx");
   assert.match(src, /\{` \$\{pct\}`\}/, "the percentage is always appended to the last line");
+});
+
+// Owner 2026-11-11: "整个手机版本dashboard都不要看到这个上面的" — no Today's problems on the phone Home.
+test("phone Home shows no Today's problems tiles", () => {
+  const src = readFileSync("src/pages/m/screens/dashboard/HomeDashboard.tsx", "utf8");
+  assert.doesNotMatch(src, /useProblemTiles|ProblemsSection|TODAY’S PROBLEMS/);
 });
