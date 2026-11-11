@@ -8,6 +8,7 @@
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { getOrgId } from "../lib/tenant";
 import { normalizePaymentMethod } from "../../lib/payment-method";
 import { ensurePaymentColumns } from "../lib/payment-columns";
 import { ensureLeaveEntitlementColumns } from "../lib/ensure-leave-columns";
@@ -791,6 +792,20 @@ app.put("/:id", async (c) => {
     // kicked. (Login already blocks non-ACTIVE, and getWorker now rejects a
     // non-ACTIVE worker on every request — this clears the lingering session
     // so the lock takes effect the moment you set the status, not on next login.)
+    // Helper / 杂工 changed (owner 2026-11-11): the workers table has no
+    // updated_at, so the saved dashboard feed cannot see this edit and would
+    // keep the old efficiency figures for up to half an hour. Drop the saved
+    // copies so the next dashboard read rebuilds with the new flag.
+    const wasHelper = Boolean(existing.isHelper ?? existing.is_helper ?? false);
+    const isHelperNow = merged.isHelper === true || merged.isHelper === 1;
+    if (wasHelper !== isHelperNow) {
+      try {
+        await c.var.DB.prepare("DELETE FROM dashboard_feed_snapshot WHERE org_id = ?").bind(getOrgId(c)).run();
+      } catch {
+        // No snapshot table yet (cold isolate) — nothing saved to drop.
+      }
+    }
+
     if (merged.status !== "ACTIVE") {
       await c.var.DB.prepare("DELETE FROM worker_tokens WHERE workerId = ?")
         .bind(id)
