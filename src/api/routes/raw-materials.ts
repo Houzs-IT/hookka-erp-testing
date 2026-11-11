@@ -28,6 +28,7 @@ import {
   checkRawMaterialDeleteLocked,
   checkRawMaterialUomLocked,
   lockedResponse,
+  uomChangeGate,
 } from "../lib/lock-helpers";
 import {
   isFractionOfWholeUom,
@@ -124,6 +125,8 @@ type RawMaterialBody = {
   itemType?: string | null;
   stockControl?: boolean | number;
   mainSupplierCode?: string | null;
+  /** The unit label was wrong; the quantities are already in the new unit (Super Admin only; see uomChangeGate). */
+  uomRelabel?: boolean;
 };
 
 function rowToApi(r: RawMaterialRow) {
@@ -499,7 +502,14 @@ app.put("/:id", async (c) => {
       );
     }
   }
-  if (uomChanged) {
+  // A relabel keeps the quantities (they were already in the new unit) and
+  // skips the stock lock; Super Admin only (owner 2026-11-11 「用mtr」).
+  const role = (c.get as unknown as (k: string) => string | undefined)("userRole");
+  const gate = uomChangeGate({ uomChanged, relabel: body.uomRelabel === true, role });
+  if (gate === "forbidden") {
+    return c.json({ success: false, error: "Only a Super Admin can relabel a unit (quantities kept as they are)." }, 403);
+  }
+  if (gate === "lock-check") {
     const lockMsg = await checkRawMaterialUomLocked(c.var.DB, { ...existing, orgId: getOrgId(c) });
     if (lockMsg) return c.json(lockedResponse(lockMsg), 409);
   }
@@ -609,7 +619,7 @@ app.put("/:id", async (c) => {
       resourceId: id,
       action: "update",
       before: { itemCode: existing.itemCode, baseUOM: existing.baseUOM },
-      after: { itemCode: merged.itemCode, baseUOM: merged.baseUOM },
+      after: { itemCode: merged.itemCode, baseUOM: merged.baseUOM, relabel: gate === "relabel", balanceQty: merged.balanceQty },
     });
   }
 

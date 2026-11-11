@@ -392,6 +392,19 @@ export async function checkRawMaterialUomLocked(
 }
 
 /**
+ * How a raw material's unit change is gated. A plain change runs the stock lock
+ * above (quantities are counted in the current unit). A relabel says the
+ * quantities are already in the new unit — the unit label was wrong, as with
+ * PC151-01 / 02 / 17 after a merge kept ROLL on metre stock (owner 2026-11-11
+ * 「用mtr」) — so it skips the lock, but only a Super Admin may do it.
+ */
+export function uomChangeGate(p: { uomChanged: boolean; relabel: boolean; role: string | undefined }): "none" | "lock-check" | "relabel" | "forbidden" {
+  if (!p.uomChanged) return "none";
+  if (!p.relabel) return "lock-check";
+  return (p.role ?? "").toUpperCase() === "SUPER_ADMIN" ? "relabel" : "forbidden";
+}
+
+/**
  * Standardised JSON response for a 403 lock denial. Each route returns this
  * with the message from one of the helpers above. Keeping the shape identical
  * to other error responses so the frontend can render the same toast / banner.
