@@ -41,8 +41,9 @@ test("More: the Finance row (any gate) and Receivables gated like Debtor Aging",
   const nav = read("src/pages/m/nav.ts");
   assert.match(nav, /\{ label: "Finance", icon: Landmark, path: "\/m\/finance", navGateAny: FINANCE_NAV_GATES \}/);
   assert.match(nav, /\{ label: "Receivables", icon: Wallet, path: "\/m\/receivables", navGate: "\/accounting\?tab=ar" \}/);
-  const more = read("src/pages/m/screens/More.tsx");
-  assert.match(more, /\(!i\.navGate \|\| isNavAllowed\(i\.navGate\)\) && \(!i\.navGateAny \|\| i\.navGateAny\.some\(isNavAllowed\)\)/);
+  // The gate filter lives in nav.ts's visibleModuleGroups; More and the phone drawer both call it.
+  assert.match(nav, /!i\.navGate \|\| isNavAllowed\(i\.navGate\)[\s\S]*?!i\.navGateAny \|\| i\.navGateAny\.some\(isNavAllowed\)/);
+  assert.match(read("src/pages/m/screens/More.tsx"), /visibleModuleGroups\(isNavAllowed\)/);
 });
 
 test("routes: /m/finance and /m/finance/:screen, code-split; a refused screen says No access", () => {

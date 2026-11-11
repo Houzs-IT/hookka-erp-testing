@@ -14,6 +14,114 @@
 /* Body bg matches theme so pull-to-refresh / overscroll show the right tint. */
 body[data-theme] {
   background-color: var(--m-paper);
+
+  /* -----------------------------------------------------------------------
+   * Mobile UI Foundation — Phase 0.
+   *
+   * These are additive contracts for future /m/* work. No existing screen
+   * consumes them yet, so introducing the foundation cannot change a current
+   * layout. See docs/MOBILE-UI-FOUNDATION.md before adopting a token.
+   * --------------------------------------------------------------------- */
+
+  /* Typography roles — keep the existing system-ui family from theme.ts. */
+  --m-type-page-title-size: 24px;
+  --m-type-page-title-line-height: 1.2;
+  --m-type-page-title-weight: 700;
+  --m-type-page-title-tracking: -0.3px;
+  --m-type-section-heading-size: 18px;
+  --m-type-section-heading-line-height: 1.3;
+  --m-type-section-heading-weight: 700;
+  --m-type-section-heading-tracking: -0.15px;
+  --m-type-card-title-size: 15px;
+  --m-type-card-title-line-height: 1.4;
+  --m-type-card-title-weight: 600;
+  --m-type-card-title-tracking: -0.1px;
+  --m-type-business-value-size: 24px;
+  --m-type-business-value-line-height: 1.15;
+  --m-type-business-value-weight: 700;
+  --m-type-business-value-tracking: -0.3px;
+  --m-type-description-size: 14px;
+  --m-type-description-line-height: 1.5;
+  --m-type-description-weight: 400;
+  --m-type-metadata-size: 12px;
+  --m-type-metadata-line-height: 1.4;
+  --m-type-metadata-weight: 400;
+  --m-type-label-size: 12px;
+  --m-type-label-line-height: 1.35;
+  --m-type-label-weight: 600;
+  --m-type-label-tracking: 0.02em;
+  --m-type-input-size: 16px;
+  --m-type-input-line-height: 1.5;
+  --m-type-input-weight: 400;
+  --m-type-button-size: 14px;
+  --m-type-button-line-height: 1.2;
+  --m-type-button-weight: 700;
+  --m-type-status-size: 11px;
+  --m-type-status-line-height: 1.2;
+  --m-type-status-weight: 600;
+  --m-type-status-tracking: 0.02em;
+
+  /* 4px base rhythm. Semantic aliases describe layout intent. */
+  --m-space-0: 0;
+  --m-space-1: 4px;
+  --m-space-2: 8px;
+  --m-space-3: 12px;
+  --m-space-4: 16px;
+  --m-space-5: 20px;
+  --m-space-6: 24px;
+  --m-space-8: 32px;
+  --m-space-10: 40px;
+  --m-space-12: 48px;
+  --m-page-gutter: 18px;
+  --m-page-gutter-compact: 14px;
+  --m-section-gap: 20px;
+  --m-card-gap: 12px;
+  --m-card-padding: 16px;
+  --m-content-readable-max: 680px;
+  --m-safe-top: env(safe-area-inset-top, 0px);
+  --m-safe-right: env(safe-area-inset-right, 0px);
+  --m-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --m-safe-left: env(safe-area-inset-left, 0px);
+
+  /* Shape, controls and icons. Compact controls are secondary-only; every
+     pointer target still needs at least --m-target-min in both dimensions. */
+  --m-radius-sm: 8px;
+  --m-radius-md: 12px;
+  --m-radius-lg: 16px;
+  --m-radius-xl: 20px;
+  --m-radius-pill: 999px;
+  --m-control-compact: 32px;
+  --m-control-default: 44px;
+  --m-control-comfortable: 48px;
+  --m-target-min: 44px;
+  --m-icon-xs: 14px;
+  --m-icon-sm: 16px;
+  --m-icon-md: 18px;
+  --m-icon-lg: 20px;
+  --m-icon-xl: 24px;
+
+  /* Elevation. Card is the existing Announcements/Notifications shadow. */
+  --m-shadow-none: none;
+  --m-shadow-card: 0 1px 0 rgba(31, 29, 27, 0.03), 0 6px 20px -12px rgba(31, 29, 27, 0.14);
+  --m-shadow-floating: 0 8px 24px -12px rgba(31, 29, 27, 0.25);
+  --m-shadow-sheet: 0 -8px 30px rgba(31, 29, 27, 0.18);
+  /* Segmented switch + filter chips (Claude Design handoff, owner 2026-10-21).
+     Read through src/pages/m/lib/control-styles.ts only. */
+  --m-shadow-segment-on: 0 1px 2px rgba(31, 29, 27, 0.08), 0 6px 14px -6px rgba(31, 29, 27, 0.2);
+  --m-shadow-chip: 0 1px 2px rgba(31, 29, 27, 0.06), 0 4px 10px -6px rgba(31, 29, 27, 0.16);
+  --m-shadow-chip-on: 0 6px 14px -6px rgba(107, 92, 50, 0.6);
+
+  /* Focus and interaction values are tokens only in Phase 0. Applying them
+     to existing controls is deliberately deferred to a migration task. */
+  --m-focus-ring-width: 2px;
+  --m-focus-ring-offset: 2px;
+  --m-focus-ring: 0 0 0 2px var(--m-card), 0 0 0 4px var(--m-focus-color);
+  --m-pressed-opacity: 0.86;
+  --m-disabled-opacity: 0.48;
+  --m-motion-fast: 120ms;
+  --m-motion-standard: 180ms;
+  --m-motion-slow: 240ms;
+  --m-ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
 body[data-theme="light"],
@@ -31,8 +139,94 @@ body:not([data-theme]) {
   --m-body: #6B7280;
   --m-muted: #9A9082;
   --m-faint: #9CA3AF;
+  --m-segment-track: #F0ECE9;  /* segmented switch track */
+  --m-chip-text: #3A352C;      /* inactive filter chip label */
+  /* Accessible semantic text roles. Normal text tokens are >=4.5:1 against
+     both --m-card and --m-paper; disabled text is the documented exception. */
+  --m-text-primary: #1F1D1B;
+  --m-text-secondary: #4D4630;
+  --m-text-subtle: #6B5C32;
+  --m-text-placeholder: #6B5C32;
+  --m-text-disabled: #9A9082;
+  --m-text-on-accent: #FFFFFF;
+  --m-text-status-success: #4F7C3A;
+  --m-text-status-warning: #95691A;
+  --m-text-status-danger: #9A3A2D;
+  --m-text-status-info: #3E6570;
+  --m-focus-color: #6B5C32;
   --m-logo-from: #8B7A4E;
   --m-logo-to: #6B5C32;
+  /* Notification severity (dot + left bar + severity word). Light = the
+     desktop dot colours (SEMANTIC DANGER / INFO hex), except Warning: the
+     desktop #9C6F1E is 4.46:1 as text on white, so it is darkened a touch to
+     #976B1C (4.73:1, owner 2026-10-13). */
+  --m-sev-critical: #9A3A2D;
+  --m-sev-warning: #976B1C;
+  --m-sev-info: #3E6570;
+  /* Product category tones — Claude Design `Products Hub v2` (owner
+     2026-10-21): fg on bg tint, plus the no-photo placeholder gradient.
+     Unknown / new categories use the neutral "other" tone. */
+  --m-cat-sofa-fg: #3E6570;
+  --m-cat-sofa-bg: #E3EEF1;
+  --m-cat-sofa-ph-from: #EAF2F4;
+  --m-cat-sofa-ph-to: #D3E3E8;
+  --m-cat-bedframe-fg: #6B4A6D;
+  --m-cat-bedframe-bg: #F1E7F0;
+  --m-cat-bedframe-ph-from: #F5EDF4;
+  --m-cat-bedframe-ph-to: #E6D6E4;
+  --m-cat-accessory-fg: #9C6F1E;
+  --m-cat-accessory-bg: #FAF0D6;
+  --m-cat-accessory-ph-from: #FBF4E2;
+  --m-cat-accessory-ph-to: #F1E2BC;
+  --m-cat-other-fg: #6B7280;
+  --m-cat-other-bg: #EEEBE6;
+  --m-cat-other-ph-from: #F4F2EE;
+  --m-cat-other-ph-to: #E4E0D9;
+  /* Products Hub v2 SKU card: spec chips + price box. */
+  --m-spec-chip-bg: #F6F2EB;
+  --m-spec-chip-text: #3A352C;
+  --m-spec-chip-icon: #8B7A4E;
+  --m-price-box-bg: #F4EFE3;
+  --m-price-box-label: #8B7A4E;
+  /* Product Detail BOM: hardware / other material icon (prototype #4B5260). */
+  --m-mat-hardware-fg: #4B5260;
+  /* Products search family-hit icon; BOM "Active" badge tint (text = success). */
+  --m-search-icon: #B5AC9C;
+  --m-pill-success-bg: #EEF3E4;
+  /* Products active-filter chips + "Exact" badge (HTML #F0EAD8). */
+  --m-gold-tint: #F0EAD8;
+  /* Invoices v2 (Claude Design `Invoices v2.dc.html`, owner 2026-10-21).
+     Status tones = desktop getStatusColor (src/lib/utils.ts): rail / dot
+     (--m-inv-<tone>) + pill (-bg / -fg). warning-high = desktop WARNING_HIGH
+     (Overdue). Read only by screens/invoices/* (list + detail). */
+  --m-inv-neutral: #6B7280;      --m-inv-neutral-bg: #EEEBE6;      --m-inv-neutral-fg: #4B5260;
+  --m-inv-info: #3E6570;         --m-inv-info-bg: #E0EDF0;         --m-inv-info-fg: #3E6570;
+  --m-inv-success: #4F7C3A;      --m-inv-success-bg: #EEF3E4;      --m-inv-success-fg: #4F7C3A;
+  --m-inv-warning: #9C6F1E;      --m-inv-warning-bg: #FAEFCB;      --m-inv-warning-fg: #85600F;
+  --m-inv-warning-high: #B8601A; --m-inv-warning-high-bg: #FBE4CE; --m-inv-warning-high-fg: #B8601A;
+  --m-inv-danger: #9A3A2D;       --m-inv-danger-bg: #F9E1DA;       --m-inv-danger-fg: #9A3A2D;
+  --m-inv-gold-box: #F7F1E3;     /* summary Outstanding tile, card amount box */
+  --m-inv-past-bg: #FCF3F0;      /* Past Due tile + past-due chip */
+  --m-inv-past-fg: #9A3A2D;
+  --m-inv-soon-fg: #9C6F1E;      /* due within 7 days */
+  --m-inv-tile-bg: #F4EFE6;      /* DO / SO ref chips, PDF View button */
+  --m-inv-ref-key: #6B6252;
+  --m-inv-icon: #8B7A4E;         /* chevrons, fact icons */
+  --m-inv-line: #E6E0D9;         /* timeline pending line, tab underline track */
+  --m-inv-dot-ring: #D9D2C6;     /* lifecycle pending-step ring (HTML dotRing) */
+  /* Invoices v2 AR Aging buckets (two-tab handoff README §2.6). <tone> = dot /
+     bar / rail, -bg = pill + tint, -fg = pill text. */
+  --m-age-current: #4F7C3A; --m-age-current-bg: #EEF3E4; --m-age-current-fg: #4F7C3A;
+  --m-age-d31: #9C6F1E;     --m-age-d31-bg: #FAEFCB;     --m-age-d31-fg: #85600F;
+  --m-age-d61: #B8601A;     --m-age-d61-bg: #FBE9DA;     --m-age-d61-fg: #B8601A;
+  --m-age-d90: #9A3A2D;     --m-age-d90-bg: #F9E1DA;     --m-age-d90-fg: #9A3A2D;
+  --m-age-divider: #EDE7DD;
+  --m-inv-note-bg: #FAF8F4;      /* lifecycle off-flow note */
+  --m-inv-body: #3A352C;
+  --m-inv-paid-label: #3D6229;   /* "Amount paid" tile label */
+  --m-po-done: #2D5A54;         /* Production Orders v3: Done stage (teal) */
+  /* Opt-in glass header (MobileHeader glass) + the row stuck under it. */
+  --m-header-glass: rgba(250, 248, 244, 0.92);
 }
 
 body[data-theme="dark"] {
@@ -48,12 +242,118 @@ body[data-theme="dark"] {
   --m-body: #B9B0A0;
   --m-muted: #8A8170;
   --m-faint: #6B6353;
+  --m-segment-track: #34302A;
+  --m-chip-text: #D4C9A8;
+  /* Dark-mode text roles are tuned independently, not inverted. */
+  --m-text-primary: #F0EBE2;
+  --m-text-secondary: #D4C9A8;
+  --m-text-subtle: #B9B0A0;
+  --m-text-placeholder: #B9B0A0;
+  --m-text-disabled: #8A8170;
+  --m-text-on-accent: #1A1816;
+  --m-text-status-success: #8FBE78;
+  --m-text-status-warning: #D9A441;
+  --m-text-status-danger: #D67B6B;
+  --m-text-status-info: #6FA3B0;
+  --m-focus-color: #D9BD7B;
   /* Accents kept BRAND-warm but slightly brighter for dark surface contrast */
   --m-taupe: #B59A5C;      /* lighter taupe — primary CTAs stay readable */
   --m-taupe-dark: #8B7A4E;
   --m-gold: #D9BD7B;
   --m-logo-from: #C9A961;
   --m-logo-to: #B59A5C;
+  /* Severity, lifted for the dark card (#2A2722): the light values measure
+     2.14 / 3.33 / 2.34, these 4.89 / 6.61 / 5.34 (non-text needs 3:1). */
+  --m-sev-critical: #D67B6B;
+  --m-sev-warning: #D9A441;
+  --m-sev-info: #6FA3B0;
+  /* Category tones, lifted fg on dark tints of the card (#2A2722). */
+  --m-cat-sofa-fg: #6FA3B0;
+  --m-cat-sofa-bg: #233438;
+  --m-cat-sofa-ph-from: #2A3B3F;
+  --m-cat-sofa-ph-to: #1F2C30;
+  --m-cat-bedframe-fg: #C49BC6;
+  --m-cat-bedframe-bg: #372A37;
+  --m-cat-bedframe-ph-from: #3D2F3D;
+  --m-cat-bedframe-ph-to: #2C222C;
+  --m-cat-accessory-fg: #D9A441;
+  --m-cat-accessory-bg: #3A3020;
+  --m-cat-accessory-ph-from: #403524;
+  --m-cat-accessory-ph-to: #2E271B;
+  --m-cat-other-fg: #B9B0A0;
+  --m-cat-other-bg: #34302A;
+  --m-cat-other-ph-from: #36322C;
+  --m-cat-other-ph-to: #26231F;
+  --m-spec-chip-bg: #34302A;
+  --m-spec-chip-text: #D4C9A8;
+  --m-spec-chip-icon: #B59A5C;
+  --m-price-box-bg: #36312A;
+  --m-price-box-label: #B59A5C;
+  --m-mat-hardware-fg: #B9B0A0;
+  --m-search-icon: #8A8170;
+  --m-pill-success-bg: #2B3324;
+  --m-gold-tint: #3A3324;
+  /* Invoices v2 — lifted for the dark card (same family as delivery-theme.css). */
+  --m-inv-neutral: #8A8170;      --m-inv-neutral-bg: rgba(155, 160, 170, 0.18); --m-inv-neutral-fg: #C9CCD2;
+  --m-inv-info: #6FA3B0;         --m-inv-info-bg: rgba(111, 163, 176, 0.18);    --m-inv-info-fg: #6FA3B0;
+  --m-inv-success: #8FBE78;      --m-inv-success-bg: rgba(143, 190, 120, 0.18); --m-inv-success-fg: #8FBE78;
+  --m-inv-warning: #D9A441;      --m-inv-warning-bg: rgba(217, 164, 65, 0.18);  --m-inv-warning-fg: #D9A441;
+  --m-inv-warning-high: #E08A4B; --m-inv-warning-high-bg: rgba(224, 138, 75, 0.18); --m-inv-warning-high-fg: #E08A4B;
+  --m-inv-danger: #D67B6B;       --m-inv-danger-bg: rgba(214, 123, 107, 0.18); --m-inv-danger-fg: #D67B6B;
+  --m-inv-gold-box: #36312A;
+  --m-inv-past-bg: rgba(214, 123, 107, 0.12);
+  --m-inv-past-fg: #D67B6B;
+  --m-inv-soon-fg: #D9A441;
+  --m-inv-tile-bg: #34302A;
+  --m-inv-ref-key: #B9B0A0;
+  --m-inv-icon: #B59A5C;
+  --m-inv-line: #3A352C;
+  --m-inv-dot-ring: #4A443A;
+  /* AR Aging buckets on the dark card (#2A2722). Measured 2026-10-22: tone on
+     card 4.89–6.94:1; pill text (-fg) on its tint 4.64–5.42:1 (d61 / d90 pill
+     text lifted — the tone alone measured 4.13 / 3.73 there). */
+  --m-age-current: #8FBE78; --m-age-current-bg: rgba(143, 190, 120, 0.18); --m-age-current-fg: #8FBE78;
+  --m-age-d31: #D9A441;     --m-age-d31-bg: rgba(217, 164, 65, 0.18);     --m-age-d31-fg: #D9A441;
+  --m-age-d61: #E08A4B;     --m-age-d61-bg: rgba(224, 138, 75, 0.18);     --m-age-d61-fg: #EB9D63;
+  --m-age-d90: #D67B6B;     --m-age-d90-bg: rgba(214, 123, 107, 0.18);    --m-age-d90-fg: #EBA192;
+  --m-age-divider: #3A352C;
+  --m-inv-note-bg: #211F1C;
+  --m-inv-body: #D4C9A8;
+  --m-inv-paid-label: #8FBE78;
+  --m-po-done: #7FB5A8;
+  --m-header-glass: rgba(26, 24, 22, 0.92);
+}
+
+/* Foundation breakpoints mirror the existing /m shell: phone first, Fold /
+ * tablet enhancement from 720px. Only foundation aliases change here; no
+ * existing selector or layout consumes them in Phase 0. */
+@media (min-width: 720px) {
+  body[data-theme] {
+    --m-page-gutter: 24px;
+    --m-section-gap: 24px;
+    --m-card-gap: 16px;
+    --m-card-padding: 20px;
+  }
+}
+
+@media (max-width: 719px) and (orientation: landscape) {
+  body[data-theme] {
+    --m-page-gutter: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-theme] {
+    --m-motion-fast: 0.01ms;
+    --m-motion-standard: 0.01ms;
+    --m-motion-slow: 0.01ms;
+  }
+}
+
+@media (forced-colors: active) {
+  body[data-theme] {
+    --m-focus-color: Highlight;
+  }
 }
 
 /* Logo + photos must NOT invert (per CHANGELOG: "logo/QR/photos

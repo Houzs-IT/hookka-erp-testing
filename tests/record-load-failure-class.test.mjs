@@ -128,12 +128,22 @@ const CONSUMERS = [
   ["src/components/ui/document-chain-map.tsx", "failure", '"No job cards on this production order yet."'],
   // --- already gated on the hook's error; correct the moment the primitive
   //     stopped swallowing the abort. Tracked, not exempt.
+  // Mobile Service Orders (2026-11): SV detail + legacy repair-order detail. "not found" only on failure.kind === "notFound".
+  ["src/pages/m/screens/orders/SvOrderDetail.tsx", "failure", "\"Order not found\" (mobile SV order detail)"],
+  ["src/pages/m/screens/orders/LegacyOrderDetail.tsx", "isUnknownOutcome", "\"Repair order not found\" (mobile legacy detail)"],
   ["src/pages/m/screens/SalesDetailScreen.tsx", "hook-error-gate", '"Order not found."'],
   ["src/pages/m/screens/ProductionDetailScreen.tsx", "hook-error-gate", '"Production order not found."'],
   ["src/pages/m/screens/MailCenterScreen.tsx", "hook-error-gate", '"Thread not found."'],
   ["src/pages/m/screens/DocumentDetailScreen.tsx", "hook-error-gate", '"Document not found."'],
   ["src/pages/mail-center/detail.tsx", "hook-error-gate", '"Thread not found."'],
   ["src/pages/mail-center/index.tsx", "hook-error-gate", '"Email not found."'],
+  // --- phone / tablet detail screens (mobile redesign): "not found" only after a read that did not fail ---
+  ["src/pages/m/screens/cases/CaseDetailScreen.tsx", "isUnknownOutcome", '"Case not found" (mobile Service Case detail)'],
+  ["src/pages/m/screens/delivery/DeliveryDetailPhone.tsx", "failure", '"Delivery order not found." ("not found" only on failure.kind === "notFound")'],
+  ["src/pages/m/screens/ProductDetailScreen.tsx", "failure", '"Product not found." ("not found" only on failure.kind === "notFound")'],
+  ["src/pages/m/screens/invoices/InvoiceDetailScreen.tsx", "failure", '"Invoice not found." ("not found" only on failure.kind === "notFound")'],
+  ["src/pages/m/screens/customers/CustomerDetailScreen.tsx", "failure", '"Customer not found." ("not found" only on failure.kind === "notFound")'],
+  ["src/pages/m/screens/SalesOrderDetail.tsx", "hook-error-gate", "Order not found."],
 ];
 
 for (const [file, guard, symptom] of CONSUMERS) {

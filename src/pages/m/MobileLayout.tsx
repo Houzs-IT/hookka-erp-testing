@@ -11,20 +11,21 @@
 //   • centers content to ~414px (phone width) on any viewport,
 //   • paints the paper background + system font,
 //   • renders its own nested <Routes> for the /m/* screens,
-//   • pins the 5-item BottomTabBar (Home · Sales · Production · Procure · More).
+//   • on phones pins the 5-tab BottomTabBar (Home · Sales · Products ·
+//     Delivery · Procurement) and owns the left NavDrawer opened by the header
+//     hamburger; on tablets renders the LeftRail instead (unchanged).
 //
 // Phase 1: Home + More + placeholders. Phase 2 (this): every module's L1 list
 // is wired to <ModuleListScreen> driven by its ModuleConfig (config-driven —
 // see src/pages/m/config/modules.ts). L2 detail routes (/m/<slug>/:id) land on
 // a ComingSoon detail until Phase 3 supplies the real detail screen.
 // ===========================================================================
-import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from "react";
-import { Route, Routes, useNavigate } from "react-router-dom";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { ToastProvider } from "@/components/ui/toast";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { BottomTabBar, LeftRail, MobileHeader } from "./components";
+import { BottomTabBar, LeftRail, MobileHeader, NavDrawer } from "./components";
+import { NavDrawerProvider } from "./lib/nav-drawer";
 import { M, M_FONT, M_MAX_WIDTH } from "./theme";
-import MobileHome from "./screens/Home";
 import MobileMore from "./screens/More";
 import { ComingSoon } from "./screens/ComingSoon";
 import { ModuleListScreen } from "./screens/ModuleListScreen";
@@ -33,21 +34,47 @@ import { LineItemDetailScreen } from "./screens/LineItemDetailScreen";
 import { WarehouseScreen } from "./screens/WarehouseScreen";
 import { ProductionScreen } from "./screens/ProductionScreen";
 import { SalesScreen } from "./screens/SalesScreen";
-import { SalesDetailScreen } from "./screens/SalesDetailScreen";
+import { ProductsScreen } from "./screens/ProductsScreen";
+import { ProductDetailScreen } from "./screens/ProductDetailScreen";
 import { ProductionDetailScreen } from "./screens/ProductionDetailScreen";
 import { ServiceCasesScreen } from "./screens/ServiceCasesScreen";
+import { ServiceOrdersScreen } from "./screens/orders/ServiceOrdersScreen";
+import { LegacyOrderDetail } from "./screens/orders/LegacyOrderDetail";
+import { SvOrderDetail } from "./screens/orders/SvOrderDetail";
+import { SvOrderForm } from "./screens/orders/SvOrderForm";
+import { SalesDetailGate } from "./screens/orders/SalesDetailGate";
+import { CaseDetailScreen } from "./screens/cases/CaseDetailScreen";
 import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
+import { UpdatesScreen } from "./screens/UpdatesScreen";
 import { MailCenterScreen, MailThreadScreen } from "./screens/MailCenterScreen";
 import { MODULE_CONFIGS } from "./config/modules";
 import { preloadMobileCritical } from "./lib/preload";
 import { useAutoUpdateOnNavigate } from "@/lib/use-version-check";
 import { bootstrapMobileTheme } from "./lib/theme-mode";
+import {
+  PaneProvider,
+  ResponsiveLayoutProvider,
+  estimatePaneWidths,
+  hasRailExpandedPreference,
+  railToggleOutcome,
+  readRailExpandedPreference,
+  resolveContainerLayout,
+  resolveRailExpanded,
+  resolveResponsiveLayout,
+  shouldAutoCompactRail,
+  useObservedWidth,
+  useResponsiveLayout,
+  writeRailExpandedPreference,
+} from "./lib/responsive-layout";
 import "./theme-vars.css";
 
-// The dashboard screen is code-split: it is the only /m screen that needs
-// recharts, and most phone sessions never open it.
-const DashboardScreen = lazy(() =>
-  import("./screens/dashboard/DashboardScreen").then((m) => ({ default: m.DashboardScreen })),
+// The Home dashboard (Home v10) is code-split; its Sales view draws the charts.
+const HomeDashboard = lazy(() =>
+  import("./screens/dashboard/HomeDashboard").then((m) => ({ default: m.HomeDashboard })),
+);
+// Old /m/dashboard[/:tab] links redirect to /m?view=<tab>, period parameters kept.
+const LegacyDashboardRedirect = lazy(() =>
+  import("./screens/dashboard/HomeDashboard").then((m) => ({ default: m.LegacyDashboardRedirect })),
 );
 // The Finance app (finance v2 mobile) is code-split too: its report screens
 // pull in recharts and most phone sessions never open them.
@@ -56,10 +83,9 @@ const FinanceRoute = lazy(() => import("./screens/finance/FinanceRoute"));
 // ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
 const ItSupportPage = lazy(() => import("@/pages/it-support"));
 function ItSupportRoute() {
-  const navigate = useNavigate();
   return (
     <ToastProvider>
-      <MobileHeader title="IT Support" onBack={() => navigate("/m/more")} />
+      <MobileHeader title="IT Support" menu />
       <div className="bg-[#FAF8F4] p-4">
         <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
           <ItSupportPage />
@@ -77,10 +103,104 @@ function FinanceRouteShell() {
   );
 }
 
-function DashboardRoute() {
+// The Delivery screens are code-split too (2026-10-20): the phone redesign
+// (lists, create sheets, DO detail) is ~85 kB that only Delivery needs, so the
+// shell chunk stays the size it was.
+const DeliveryScreenLazy = lazy(() =>
+  import("./screens/delivery/DeliveryScreen").then((m) => ({ default: m.DeliveryScreen })),
+);
+const DeliveryDetailLazy = lazy(() =>
+  import("./screens/delivery/DeliveryDetailScreen").then((m) => ({ default: m.DeliveryDetailScreen })),
+);
+function DeliveryRoute() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
-      <DashboardScreen />
+      <DeliveryScreenLazy />
+    </Suspense>
+  );
+}
+function DeliveryDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <DeliveryDetailLazy />
+    </Suspense>
+  );
+}
+
+// Procurement core (Orders · Receipts · Invoices) from Claude Design
+// `Procurement.dc.html` (2026-10-21), code-split like Delivery. The detail keeps
+// the old id-prefix dispatch (po- / grn- / pi-), so every /m/procurement/:id
+// link still lands on the right document.
+const ProcurementScreenLazy = lazy(() =>
+  import("./screens/procurement/ProcurementScreen").then((m) => ({ default: m.ProcurementScreen })),
+);
+const ProcurementDetailLazy = lazy(() =>
+  import("./screens/procurement/ProcurementDetailScreen").then((m) => ({ default: m.ProcurementDetailScreen })),
+);
+function ProcurementRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ProcurementScreenLazy />
+    </Suspense>
+  );
+}
+function ProcurementDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ProcurementDetailLazy />
+    </Suspense>
+  );
+}
+
+// Invoices v2 list + detail (Claude Design `Invoices v2.dc.html`, owner
+// 2026-10-21), code-split like Delivery. The six tabs keep their sources.
+const InvoicesScreenLazy = lazy(() =>
+  import("./screens/invoices/InvoicesScreen").then((m) => ({ default: m.InvoicesScreen })),
+);
+function InvoicesRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <InvoicesScreenLazy />
+    </Suspense>
+  );
+}
+const InvoiceDetailLazy = lazy(() =>
+  import("./screens/invoices/InvoiceDetailScreen").then((m) => ({ default: m.InvoiceDetailScreen })),
+);
+function InvoiceDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <InvoiceDetailLazy />
+    </Suspense>
+  );
+}
+
+// Customers v3 list + detail (Claude Design `Customers v3.dc.html`), code-split.
+const CustomersScreenLazy = lazy(() =>
+  import("./screens/customers/CustomersScreen").then((m) => ({ default: m.CustomersScreen })),
+);
+const CustomerDetailLazy = lazy(() =>
+  import("./screens/customers/CustomerDetailScreen").then((m) => ({ default: m.CustomerDetailScreen })),
+);
+function CustomersRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <CustomersScreenLazy />
+    </Suspense>
+  );
+}
+function CustomerDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <CustomerDetailLazy />
+    </Suspense>
+  );
+}
+
+function DashboardRoute({ legacy = false }: { legacy?: boolean }) {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      {legacy ? <LegacyDashboardRedirect /> : <HomeDashboard />}
     </Suspense>
   );
 }
@@ -94,6 +214,8 @@ bootstrapMobileTheme();
 const CUSTOM_L1: Record<string, ComponentType> = {
   sales: SalesScreen,
   servicecases: ServiceCasesScreen,
+  // Claude Design "Service Orders": SV orders + Legacy repair orders behind a family switch.
+  serviceorders: ServiceOrdersScreen,
   announcements: AnnouncementsScreen,
   "mail-center": MailCenterScreen,
   warehouse: WarehouseScreen,
@@ -101,16 +223,55 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // design v12) — the generic list flattens that signal. Detail route stays
   // generic via productionConfig.detail.
   production: ProductionScreen,
+  // SKU Master | Catalog hub (Products Hub v2) on phone AND tablet; in the
+  // tablet split pane it renders one column beside /m/products/:id.
+  products: ProductsScreen,
+  // Claude Design `Delivery.dc.html` on phone AND tablet (tabs, cards, Create
+  // DO / Packing List, bulk moves); the screen adapts to tablet widths and to
+  // the split view's list pane itself.
+  delivery: DeliveryRoute,
+  // Claude Design `Procurement.dc.html`: Orders · Receipts · Invoices, phone + tablet.
+  procurement: ProcurementRoute,
+  // Claude Design `Invoices v2.dc.html`: six tabs (each gated on its API read
+  // permission), status chips, summary, v2 invoice + record cards. Phone + tablet.
+  invoices: InvoicesRoute,
+  // Claude Design `Customers v3.dc.html` (design-only handoff).
+  customers: CustomersRoute,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
 // generic DocumentDetailScreen. Sales = the locked create-form + Total/Paid/
 // Balance KPI strip + status action bar (v20 MobileSoDetail).
 const CUSTOM_L2: Record<string, ComponentType> = {
-  sales: SalesDetailScreen,
+  // An SV Service Order opened via /m/sales/:id is sent to its own detail; Sales Orders are unchanged.
+  sales: SalesDetailGate,
+  // /m/serviceorders/:id is a LEGACY repair order (SV orders live under /m/serviceorders/sv/:id).
+  serviceorders: LegacyOrderDetail,
   production: ProductionDetailScreen,
   "mail-center": MailThreadScreen,
+  // The DO detail with desktop's per-status actions, phone and tablet.
+  delivery: DeliveryDetailRoute,
+  // Products Hub v2 SKU detail, phone AND tablet (owner 2026-10-21).
+  products: ProductDetailScreen,
+  // PO / GRN / PI detail with desktop's per-status actions.
+  procurement: ProcurementDetailRoute,
+  // Invoices v2 detail (Claude Design `Invoices v2.dc.html`, owner 2026-10-21).
+  // Also the left pane of the tablet /:id/item/:itemId line route (see below);
+  // that route's right pane stays LineItemDetailScreen.
+  invoices: InvoiceDetailRoute,
+  customers: CustomerDetailRoute,
+  // Service Cases Phase 4 detail (six pages + relationship map + edit sheets).
+  servicecases: CaseDetailScreen,
 };
+
+/** True on /m/<module>/<id>[/…] when that module has a detail screen, i.e. when the split view
+ * (TwoPane) is what renders on a wide enough tablet. */
+function isSplitDetailPath(pathname: string): boolean {
+  const [, base, slug, id] = pathname.split("/");
+  if (base !== "m" || !slug || !id) return false;
+  const cfg = MODULE_CONFIGS.find((c) => c.slug === slug);
+  return !!cfg && !!(CUSTOM_L2[slug] || cfg.detail);
+}
 
 export default function MobileLayout() {
   // Kick off background preload of high-traffic endpoints on mount — every
@@ -124,61 +285,157 @@ export default function MobileLayout() {
   // screen change (BUG-2026-09-23-184).
   useAutoUpdateOnNavigate();
 
-  // Fold detection — owner 2026-06-30: "折叠如果没有展开,应该是在电话
-  // 版本的;展开了之后,才在 Fold 版本". Galaxy Z Fold inner screen is
-  // ~884px wide in EITHER orientation (portrait or landscape) when unfolded,
-  // and the cover screen is ~390px wide when folded. So a single width
-  // threshold (>=720) is the correct gate — orientation does NOT enter the
-  // decision. Previously required landscape too, which made the inner screen
-  // in portrait incorrectly stay on phone mode.
-  const fold = useMediaQuery("(min-width: 720px)");
+  const [railPreferences, setRailPreferences] = useState(() => ({
+    "tablet-portrait": readRailExpandedPreference("tablet-portrait"),
+    "tablet-landscape": readRailExpandedPreference("tablet-landscape"),
+  }));
+  // Which modes the user has set the rail for themselves; an explicit choice is never overridden.
+  const [railExplicit, setRailExplicit] = useState(() => ({
+    "tablet-portrait": hasRailExpandedPreference("tablet-portrait"),
+    "tablet-landscape": hasRailExpandedPreference("tablet-landscape"),
+  }));
+  // Expanding the rail while it is auto-compacted is temporary: it is not saved
+  // and is dropped when auto-compact stops applying (see below).
+  const [railTempExpanded, setRailTempExpanded] = useState(false);
+  const { pathname } = useLocation();
+  const [shellRef, shellWidth] = useObservedWidth<HTMLDivElement>();
+  const shellLayout = resolveResponsiveLayout(shellWidth);
+  const railRule = shellLayout.mode === "phone"
+    ? null
+    : {
+        shellWidth,
+        preferred: railPreferences[shellLayout.mode],
+        explicit: railExplicit[shellLayout.mode],
+        splitDetailOpen: isSplitDetailPath(pathname),
+      };
+  const railAutoCompact = railRule != null && shouldAutoCompactRail(railRule);
+  // Closing the detail (or resizing out of the narrow range) ends the temporary
+  // expand, so the next detail auto-compacts again. Reset during render, as the
+  // drawer below does, so no frame shows a stale override.
+  if (!railAutoCompact && railTempExpanded) setRailTempExpanded(false);
+  const railExpanded = railRule == null
+    ? false
+    : resolveRailExpanded({ ...railRule, tempExpanded: railTempExpanded });
+  const preferredShellLayout = resolveResponsiveLayout(
+    shellWidth,
+    undefined,
+    railExpanded,
+  );
+  const [contentRef, measuredContentWidth] = useObservedWidth<HTMLDivElement>(
+    Math.max(0, shellWidth - preferredShellLayout.railWidth),
+  );
+  const expectedContentWidth = Math.max(
+    0,
+    shellWidth - preferredShellLayout.railWidth,
+  );
+  // ResizeObserver updates after the rail has painted. Use the immediately
+  // derivable width during that one render so split eligibility never lags a
+  // user toggle by one frame.
+  const effectiveContentWidth = Math.abs(measuredContentWidth - expectedContentWidth) <= 1
+    ? measuredContentWidth
+    : expectedContentWidth;
+  const layout = resolveResponsiveLayout(
+    shellWidth,
+    effectiveContentWidth,
+    railExpanded,
+  );
+  const tablet = layout.mode !== "phone";
+  const compactRail = tablet && !railExpanded;
+  const toggleRail = () => {
+    if (layout.mode === "phone") return;
+    const outcome = railToggleOutcome({ autoCompact: railAutoCompact, shown: railExpanded });
+    // While auto-compacted the toggle only flips a temporary expand: nothing is saved.
+    if (outcome.temporary) {
+      setRailTempExpanded((current) => !current);
+      return;
+    }
+    // Otherwise it is the user's own choice: save it.
+    const mode = layout.mode;
+    writeRailExpandedPreference(mode, outcome.expanded);
+    setRailPreferences((current) => ({ ...current, [mode]: outcome.expanded }));
+    setRailExplicit((current) => ({ ...current, [mode]: true }));
+  };
+  // Phone left drawer (hamburger → NavDrawer). Closes on any route change
+  // (incl. browser back) and whenever the shell leaves phone mode, so a
+  // rotated/resized device never keeps a stale overlay over the tablet rail.
+  const phone = layout.mode === "phone";
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  // Reset during render when the route or phone mode changes (React's
+  // "adjusting state when a prop changes" pattern) instead of in an effect,
+  // so there is no extra render with a stale open drawer.
+  const drawerKey = `${pathname}|${phone}`;
+  const [prevDrawerKey, setPrevDrawerKey] = useState(drawerKey);
+  if (drawerKey !== prevDrawerKey) {
+    setPrevDrawerKey(drawerKey);
+    setDrawerOpen(false);
+  }
+  const drawer = useMemo(
+    () => (phone ? { isOpen: drawerOpen, open: openDrawer, close: closeDrawer } : null),
+    [phone, drawerOpen, openDrawer, closeDrawer],
+  );
+
   return (
-    <div
-      style={{
-        minHeight: "100dvh",
-        backgroundColor: M.paper,
-        fontFamily: M_FONT,
-        color: M.raisin,
-        display: "flex",
-        // On fold, lay the left rail + content side-by-side; on phone, just
-        // center the content column (rail isn't rendered).
-        justifyContent: fold ? "flex-start" : "center",
-      }}
-    >
-      {fold ? <LeftRail /> : null}
+    <ResponsiveLayoutProvider value={layout}>
+      <NavDrawerProvider value={drawer}>
+      {/* Safe-area left/right (landscape notch / home indicator). The padding sits
+          on this outer box so the measured shell below sees only the usable width,
+          which keeps the layout mode and canSplitDetail honest. Zero on iPad/SE. */}
       <div
         style={{
-          width: "100%",
-          // Fold: take all available width (LeftRail eats 198 on the left;
-          // the rest is for content + the 2-pane list/detail split).
-          // Phone: cap at the centered phone column.
-          maxWidth: fold ? "none" : M_MAX_WIDTH,
-          flex: fold ? 1 : "none",
           minHeight: "100dvh",
-          paddingBottom: fold
-            ? "24px"
-            : "calc(72px + env(safe-area-inset-bottom))",
-          position: "relative",
-          // Safety net — clip horizontal overflow so a wide child (chip
-          // strip, toolbar buttons, flow indicator) can't cause the WHOLE
-          // page to scroll horizontally. Each scrolling sub-region keeps
-          // its own overflowX:auto (SubTabs, StatusFlow, etc.).
-          overflowX: "hidden",
+          backgroundColor: M.paper,
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
         }}
       >
-        <Routes>
-          <Route path="/" element={<MobileHome />} />
+      <div
+        ref={shellRef}
+        style={{
+          minHeight: "100dvh",
+          backgroundColor: M.paper,
+          fontFamily: M_FONT,
+          color: M.raisin,
+          display: "flex",
+          justifyContent: tablet ? "flex-start" : "center",
+        }}
+      >
+        {tablet ? (
+          <LeftRail compact={compactRail} onToggle={toggleRail} />
+        ) : null}
+        <div
+          ref={contentRef}
+          data-mobile-content
+          style={{
+            width: "100%",
+            maxWidth: tablet ? "none" : M_MAX_WIDTH,
+            flex: tablet ? 1 : "none",
+            minWidth: 0,
+            minHeight: "100dvh",
+            paddingBottom: layout.hasBottomNavigation
+              ? "calc(72px + env(safe-area-inset-bottom))"
+              : "calc(24px + env(safe-area-inset-bottom))",
+            position: "relative",
+            overflowX: "hidden",
+          }}
+        >
+          <Routes>
+          <Route path="/" element={<DashboardRoute />} />
           <Route path="/more" element={<MobileMore />} />
 
-          {/* Dashboard (lazy: pulls in recharts). Tab in the path, period in
-              the query string — see screens/dashboard/DashboardScreen.tsx. */}
-          <Route path="dashboard" element={<DashboardRoute />} />
-          <Route path="dashboard/:tab" element={<DashboardRoute />} />
+          {/* Old dashboard links: the view moves into ?view=, everything else is kept. */}
+          <Route path="dashboard" element={<DashboardRoute legacy />} />
+          <Route path="dashboard/:tab" element={<DashboardRoute legacy />} />
           <Route path="it-support" element={<ItSupportRoute />} />
+          {/* Updates: Notifications | Announcements (?view=). Not a module
+              config, so it sits beside the module routes, not inside them. */}
+          <Route path="updates" element={<UpdatesScreen />} />
           {/* Finance (finance v2 mobile): the menu and its read-only screens,
               each gated like its desktop page. */}
           <Route path="finance" element={<FinanceRouteShell />} />
           <Route path="finance/:screen" element={<FinanceRouteShell />} />
+          <Route path="finance/:screen/:id" element={<FinanceRouteShell />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders
@@ -186,6 +443,11 @@ export default function MobileLayout() {
               phone (or list-only routes) it's the standard single-pane.
               Each module with `detail` also gets /:id/item/:itemId for the
               L3 line-item screen. */}
+          {/* SV Service Orders (sales_orders, isServiceOrder=true): detail + full-screen create / edit. */}
+          <Route path="serviceorders/sv/new" element={<SvOrderForm />} />
+          <Route path="serviceorders/sv/:id/edit" element={<SvOrderForm />} />
+          <Route path="serviceorders/sv/:id" element={layout.canSplitDetail ? <TwoPane left={<ServiceOrdersScreen />} right={<SvOrderDetail />} /> : <SvOrderDetail />} />
+
           {MODULE_CONFIGS.map((cfg) => {
             const CustomL1 = CUSTOM_L1[cfg.slug];
             const L1 = CustomL1 ? <CustomL1 /> : <ModuleListScreen config={cfg} />;
@@ -204,7 +466,7 @@ export default function MobileLayout() {
                 path={`${cfg.slug}/:id`}
                 element={
                   L2 ? (
-                    fold ? (
+                    layout.canSplitDetail ? (
                       <TwoPane left={L1} right={L2} />
                     ) : (
                       L2
@@ -218,9 +480,12 @@ export default function MobileLayout() {
                 <Route
                   path={`${cfg.slug}/:id/item/:itemId`}
                   element={
-                    fold ? (
+                    layout.canSplitDetail ? (
                       <TwoPane
-                        left={<DocumentDetailScreen config={cfg} />}
+                        // Invoices only: the left pane is the dedicated Invoices v2
+                        // detail (owner 2026-10-22); every other module keeps the
+                        // generic detail. The right pane is unchanged.
+                        left={cfg.slug === "invoices" && CustomL2 ? <CustomL2 /> : <DocumentDetailScreen config={cfg} />}
                         right={<LineItemDetailScreen config={cfg} />}
                       />
                     ) : (
@@ -234,22 +499,37 @@ export default function MobileLayout() {
           })}
 
           {/* Unknown /m/* → Home. */}
-          <Route path="*" element={<MobileHome />} />
-        </Routes>
+          <Route path="*" element={<DashboardRoute />} />
+          </Routes>
+        </div>
+        {layout.hasBottomNavigation ? <BottomTabBar /> : null}
+        {phone ? <NavDrawer open={drawerOpen} onClose={closeDrawer} /> : null}
       </div>
-      {fold ? null : <BottomTabBar />}
-    </div>
+      </div>
+      </NavDrawerProvider>
+    </ResponsiveLayoutProvider>
   );
 }
 
 /** Fold-only 2-pane shell — list (~320px) left, detail right, independent
- * scrollbars. dc13 v13 Fold layout. */
+ * scrollbars. dc13 v13 Fold layout. Each pane reports its own measured width
+ * (PaneProvider), so a screen inside it arranges itself for the pane, not for
+ * the whole shell. */
 function TwoPane({ left, right }: { left: ReactNode; right: ReactNode }) {
+  const estimate = estimatePaneWidths(useResponsiveLayout());
+  const [leftRef, leftWidth] = useObservedWidth<HTMLDivElement>(estimate.list);
+  const [rightRef, rightWidth] = useObservedWidth<HTMLDivElement>(estimate.detail);
+  const leftPane = useMemo(() => resolveContainerLayout(leftWidth, "list"), [leftWidth]);
+  const rightPane = useMemo(() => resolveContainerLayout(rightWidth, "detail"), [rightWidth]);
   return (
-    <div style={{ display: "flex", height: "100dvh", overflow: "hidden" }}>
+    <div
+      data-mobile-split-view
+      style={{ display: "flex", height: "100dvh", overflow: "hidden" }}
+    >
       <div
+        ref={leftRef}
         style={{
-          width: 340,
+          width: "clamp(320px, 38%, 340px)",
           flex: "none",
           borderRight: `1px solid ${M.border}`,
           overflowY: "auto",
@@ -257,9 +537,10 @@ function TwoPane({ left, right }: { left: ReactNode; right: ReactNode }) {
           background: M.paper,
         }}
       >
-        {left}
+        <PaneProvider value={leftPane}>{left}</PaneProvider>
       </div>
       <div
+        ref={rightRef}
         style={{
           flex: 1,
           minWidth: 0,
@@ -267,7 +548,7 @@ function TwoPane({ left, right }: { left: ReactNode; right: ReactNode }) {
           overflowX: "hidden",
         }}
       >
-        {right}
+        <PaneProvider value={rightPane}>{right}</PaneProvider>
       </div>
     </div>
   );
