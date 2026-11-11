@@ -3,6 +3,8 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { buildAuditStatement } from "../lib/audit";
 import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
+import { invalidateProductionListCaches } from "../lib/po-list-cache";
+import { getOrgId } from "../lib/tenant";
 import { planSourceLineBackfill, type SourceLineFill } from "../lib/production-order-line-backfill";
 
 const app = new Hono<Env>();
@@ -39,6 +41,17 @@ async function writeSourceLines(c: Context<Env>, fills: readonly SourceLineFill[
   return updated;
 }
 
+async function clearProductionSheetCaches(c: Context<Env>): Promise<string | null> {
+  try {
+    await invalidateProductionListCaches(c, getOrgId(c));
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[production-order-lines] cache invalidation failed: ${message}`);
+    return message;
+  }
+}
+
 app.post("/backfill-source-lines", async (c) => {
   const denied = await requirePermission(c, "production-orders", "update");
   if (denied) return denied;
@@ -54,7 +67,8 @@ app.post("/backfill-source-lines", async (c) => {
   }
 
   const updated = await writeSourceLines(c, fills);
-  return c.json({ success: true, dryRun: false, toFill: fills.length, ...summary, updated });
+  const cacheInvalidationError = await clearProductionSheetCaches(c);
+  return c.json({ success: true, dryRun: false, toFill: fills.length, ...summary, updated, cacheInvalidationError });
 });
 
 export default app;
