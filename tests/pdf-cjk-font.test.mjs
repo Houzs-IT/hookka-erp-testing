@@ -22,7 +22,7 @@ import {
 import { buildUnifiedDocPdf } from "../src/api/lib/unified-do-invoice-pdf.ts";
 import { workerCjkFontLoader } from "../src/api/lib/worker-cjk-font.ts";
 
-const read = (p) => readFileSync(p, "utf8");
+const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const FONT_FILE = "public" + CJK_FONT_PATH;
 const fontBytes = () => new Uint8Array(readFileSync(FONT_FILE));
 // BaseFont names of every font dict in the PDF (pdf-lib writes object streams,
