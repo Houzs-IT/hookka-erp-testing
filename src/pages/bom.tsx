@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { cachedFetchJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { confirmJobCardImpact, previewBomTemplateSave } from "@/lib/job-card-impact";
 import { resolveWipTokens, type BomVariantContext } from "@/api/lib/bom-wip-breakdown";
 import { withProductCategory } from "./bom-category";
 import { removeWipLevel, moveWipNode, canMoveWipNode } from "@/lib/wip-tree-ops";
@@ -2997,6 +2998,7 @@ function EditBOMDialog({
   allTemplates: BOMTemplate[];
 }) {
   const { confirm } = useConfirm();
+  const [isCheckingJobCards, setIsCheckingJobCards] = useState(false);
   const [l1Processes, setL1Processes] = useState<BOMProcess[]>([]);
   const [l1Materials, setL1Materials] = useState<WIPMaterial[]>([]);
   const [wipComponents, setWipComponents] = useState<WIPComponent[]>([]);
@@ -3533,8 +3535,9 @@ function EditBOMDialog({
     );
   }
 
-  function handleSave() {
-    onSaved({
+  async function handleSave() {
+    if (isCheckingJobCards) return;
+    const savedTemplate: BOMTemplate = {
       ...template,
       l1Processes,
       l1Materials,
@@ -3542,7 +3545,15 @@ function EditBOMDialog({
         ...w,
         wipCode: w.wipCode || `${product.code}-WIP-${wipComponents.indexOf(w) + 1}`,
       })),
-    });
+    };
+    setIsCheckingJobCards(true);
+    try {
+      const impact = await previewBomTemplateSave(savedTemplate.id, savedTemplate);
+      if (!(await confirmJobCardImpact(confirm, impact))) return;
+    } finally {
+      setIsCheckingJobCards(false);
+    }
+    onSaved(savedTemplate);
     onClose();
   }
 
@@ -3857,7 +3868,13 @@ function EditBOMDialog({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[#E2DDD8] flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-[#E2DDD8] rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
-          <button onClick={handleSave} className="px-4 py-2 text-sm bg-[#6B5C32] text-white rounded-lg hover:bg-[#5A4D2A]">Save Changes</button>
+          <button
+            onClick={handleSave}
+            disabled={isCheckingJobCards}
+            className="px-4 py-2 text-sm bg-[#6B5C32] text-white rounded-lg hover:bg-[#5A4D2A] disabled:opacity-60 disabled:cursor-wait"
+          >
+            {isCheckingJobCards ? "Checking job cards…" : "Save Changes"}
+          </button>
         </div>
       </div>
     </div>

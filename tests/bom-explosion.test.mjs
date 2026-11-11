@@ -794,7 +794,7 @@ test("job card creators go through breakBomIntoJobCardWips and drop duplicate L1
   const { readFileSync } = await import("node:fs");
   for (const f of [
     "src/api/routes/_shared/production-builder.ts",
-    "src/api/routes/jobcard-sync.ts",
+    "src/api/lib/expected-job-cards.ts",
   ]) {
     const src = readFileSync(resolve(process.cwd(), f), "utf8");
     assert.match(src, /breakBomIntoJobCardWips\(/, `${f} must use the L1-aware breakdown`);

@@ -17,6 +17,11 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { buildAuditStatement, recordAuditCreatedMetric } from "../lib/audit";
+import {
+  previewJobCardMinutesForBomChanges,
+  syncJobCardMinutesToBomChanges,
+  type SavedBomChange,
+} from "../lib/bom-edit-card-sync";
 import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
@@ -35,6 +40,42 @@ type BOMTemplateRow = {
   effectiveTo: string | null;
   changeLog: string | null;
 };
+
+type BomMinutesSaveShape = Pick<BOMTemplateRow, "productCode" | "baseModel" | "l1Processes" | "wipComponents"> & {
+  versionStatus: string | null;
+};
+
+function savedActiveBomChanges(
+  before: BomMinutesSaveShape | null,
+  after: BomMinutesSaveShape,
+): SavedBomChange[] {
+  if (after.versionStatus?.toUpperCase() !== "ACTIVE") return [];
+  const isSameProduct = before !== null && before.productCode === after.productCode;
+  return [{ productCode: after.productCode, before: isSameProduct ? before : null, after }];
+}
+
+function patchedText(
+  patch: Record<string, string | number | null>,
+  key: string,
+  fallback: string | null,
+): string | null {
+  const value = patch[key];
+  return typeof value === "string" ? value : fallback;
+}
+
+function templateAfterPatch(
+  id: string,
+  existing: BOMTemplateRow | null,
+  patch: Record<string, string | number | null>,
+): BomMinutesSaveShape {
+  return {
+    productCode: patchedText(patch, "productCode", existing?.productCode ?? id) ?? id,
+    baseModel: patchedText(patch, "baseModel", existing?.baseModel ?? null),
+    l1Processes: patchedText(patch, "l1Processes", existing?.l1Processes ?? null),
+    wipComponents: patchedText(patch, "wipComponents", existing?.wipComponents ?? null),
+    versionStatus: patchedText(patch, "versionStatus", existing?.versionStatus ?? "ACTIVE"),
+  };
+}
 
 type BOMVersionRow = {
   id: string;
@@ -521,6 +562,14 @@ app.put("/templates/:id", async (c) => {
       patch.changeLog = body.changeLog;
     }
 
+    if (c.req.query("preview") === "true") {
+      const jobCardPreview = await previewJobCardMinutesForBomChanges(
+        c.var.DB,
+        savedActiveBomChanges(existing, templateAfterPatch(id, existing, patch)),
+      );
+      return c.json({ success: true, preview: true, jobCardPreview });
+    }
+
     // Diagnostic surface: the response carries `debug` so the network tab
     // shows exactly what the server tried to write. Once the BOM-edit
     // persistence regression is verified fixed across all entry points
@@ -582,7 +631,11 @@ app.put("/templates/:id", async (c) => {
         500,
       );
     }
-    return c.json({ success: true, data: rowToTemplate(refreshed), debug });
+    const hasMinutesChange = "l1Processes" in patch || "wipComponents" in patch;
+    const jobCardMinutes = hasMinutesChange
+      ? await syncJobCardMinutesToBomChanges(c, savedActiveBomChanges(existing, refreshed))
+      : null;
+    return c.json({ success: true, data: rowToTemplate(refreshed), jobCardMinutes, debug });
   } catch (err) {
     // Was bare `} catch {` returning 400 "Invalid request body" — masked
     // every internal error (DB constraint, schema mismatch, SQL syntax)
@@ -696,6 +749,7 @@ app.post("/templates/bulk-process-edit", async (c) => {
     let updated = 0;
     const failed: Array<{ templateId: string; error: string }> = [];
     const debug: Array<Record<string, unknown>> = [];
+    const savedChanges: SavedBomChange[] = [];
 
     for (const [templateId, templateEdits] of byTemplate) {
       try {
@@ -768,6 +822,13 @@ app.post("/templates/bulk-process-edit", async (c) => {
           updateMetaChanges: updateResult.meta?.changes,
         });
         updated += 1;
+        savedChanges.push(
+          ...savedActiveBomChanges(row, {
+            ...row,
+            l1Processes: JSON.stringify(l1Processes),
+            wipComponents: JSON.stringify(wipComponents),
+          }),
+        );
       } catch (err) {
         failed.push({
           templateId,
@@ -776,10 +837,12 @@ app.post("/templates/bulk-process-edit", async (c) => {
       }
     }
 
+    const jobCardMinutes = await syncJobCardMinutesToBomChanges(c, savedChanges);
     return c.json({
       success: true,
       updated,
       failed,
+      jobCardMinutes,
       debug: {
         incoming: incoming.length,
         validated: edits.length,

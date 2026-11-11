@@ -190,11 +190,9 @@ export default function DeliveryDetailPage() {
     const target = nextStatus || STATUS_FLOW[order.status]?.next;
     if (!target) return;
 
-    // Gate DELIVERED transition on proof of delivery
-    if (target === "DELIVERED" && !order.proofOfDelivery) {
-      setPodOpen(true);
-      return;
-    }
+    // Owner 2026-11-11: Mark Delivered no longer forces the Proof of Delivery
+    // form — the DO goes straight to DELIVERED. "Capture POD" below stays as
+    // an optional extra (photos / signature) — same as the bulk button.
 
     setUpdating(true);
     try {
