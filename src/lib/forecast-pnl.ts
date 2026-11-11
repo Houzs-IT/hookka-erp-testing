@@ -158,7 +158,7 @@ export function supplierMixFromLegs(
  *  that material's row). */
 /** Each month's actual purchases of each material type BY SUPPLIER: month →
  *  type → supplier id → sen (owner 2026-11-11 「我看不到actual 的fabric
- *  67559.67 是从谁买」). The supplier documents' ledger legs (purchase invoices,
+ *  … 是从谁买」). The supplier documents' ledger legs (purchase invoices,
  *  purchase credit notes) on the material purchase accounts, debit minus
  *  credit, in the month of the document's date — the way the P&L reads
  *  purchases. Anything else on those accounts (a journal, an other-creditor
@@ -430,4 +430,10 @@ export function forecastMonthFigures(
   const exp = sumGuard(g.expenses);
   const gp = salesSen - cogs;
   return { salesSen, amt, superseded, supplierKeyed, cogs, gp, oi, exp, np: gp + oi - exp };
+}
+
+/** A month the Forecast P&L has figures for: sales, a cost or other income
+ *  (a % of no sales is nothing; an RM amount counts). */
+export function forecastMonthHasFigures(f: Pick<FcMonthFigures, "salesSen" | "cogs" | "oi" | "exp">): boolean {
+  return f.salesSen !== 0 || f.cogs !== 0 || f.oi !== 0 || f.exp !== 0;
 }

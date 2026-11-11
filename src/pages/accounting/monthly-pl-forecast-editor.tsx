@@ -119,7 +119,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   // stays folded until Show detail.
   const [showDetail, setShowDetail] = useState(false);
   // Who each actual purchase was from (owner 2026-11-11 「我看不到actual 的fabric
-  // 67559.67 是从谁买」): month → material type → supplier → sen, for the
+  // … 是从谁买」): month → material type → supplier → sen, for the
   // supplier rows' Actual cells (GET /forecast/supplier-actuals).
   const [supplierActs, setSupplierActs] = useState<FcSupplierActuals>({});
 
@@ -373,7 +373,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
     </tr>
   );
   // A supplier's actual purchases of a material (owner 2026-11-11 「我看不到
-  // actual 的fabric 67559.67 是从谁买」): an Actual column's month, or the
+  // actual 的fabric … 是从谁买」): an Actual column's month, or the
   // year's months added up in Accumulated; the forecast columns are not theirs.
   const colSales = (c: PlForecastColumn) => (c.accum ? base.windows.acc?.netSalesSen : c.ym ? base.windows[c.ym]?.netSalesSen : 0) ?? 0;
   const pctOfSales = (sen: number, c: PlForecastColumn) => { const s = colSales(c); return s ? Math.round((sen / s) * 1000) / 10 : 0; };
