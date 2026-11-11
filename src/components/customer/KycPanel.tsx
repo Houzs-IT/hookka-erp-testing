@@ -6,11 +6,12 @@
 // /api/customer-crm/onboarding.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
-import { ShieldCheck, Send, Check, FileDown } from "lucide-react";
+import { ShieldCheck, Send, Check } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { FlowFilesCard } from "@/components/flow-files";
 import { responseErrorMessage } from "@/lib/response-error";
-import { CONSENT_FORM_DOCX, CONSENT_FORM_PDF, CUSTOMER_CONSENT_TYPE } from "@/lib/customer-consent";
+import { CUSTOMER_CONSENT_TYPE } from "@/lib/customer-consent";
+import { ConsentFormDownloads } from "@/components/customer/ConsentFormDownloads";
 
 // The driver camelCases every column, so the row arrives as tinNumber etc.;
 // reading only the snake_case keys left the panel blank after every reload, and
@@ -144,14 +145,11 @@ export function KycPanel({ customerId }: { customerId: string }) {
       {/* Consent form (owner 2026-11-11, WORK-TRACKER 134): the blank CTOS /
           CCRIS form to give the customer, and the signed copy kept here. */}
       <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-[#6B7280]">
-          <span>Consent form (CTOS credit check) — blank form to sign:</span>
-          <a href={CONSENT_FORM_PDF} download className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] px-2 py-1 text-[#6B5C32] hover:bg-[#F0ECE9]">
-            <FileDown className="w-3.5 h-3.5" /> PDF
-          </a>
-          <a href={CONSENT_FORM_DOCX} download className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] px-2 py-1 text-[#6B5C32] hover:bg-[#F0ECE9]">
-            <FileDown className="w-3.5 h-3.5" /> Word
-          </a>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[#6B7280]">
+          <span>
+            <span className="text-sm font-medium text-[#1F1D1B]">Consent form (CTOS credit check)</span> — blank form to sign:
+          </span>
+          <ConsentFormDownloads />
         </div>
         <FlowFilesCard
           resourceType={CUSTOMER_CONSENT_TYPE}
