@@ -18,7 +18,6 @@
 // October 2026 agree to the sen both ways.
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
-import { PO_SOURCE_LINE_JOINS, PO_SOURCE_LINE_PRICES } from "./po-source-line";
 
 export type ProductionCategory = "SOFA" | "BEDFRAME" | "ACCESSORY";
 
@@ -94,7 +93,6 @@ export async function loadProductionRevenue(
               -- product master fallback. Without the CO branch, every CO
               -- PO got 0 revenue contribution.
               COALESCE(
-                ${PO_SOURCE_LINE_PRICES},
                 soi.unitPriceSen,
                 coi.unitPriceSen,
                 (SELECT COALESCE(p.basePriceSen, p.price1Sen)
@@ -112,7 +110,6 @@ export async function loadProductionRevenue(
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId
                AND coi.lineNo = po.lineNo
-         ${PO_SOURCE_LINE_JOINS}
         WHERE po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
         ORDER BY per_po.unit_completed_at DESC`,
     )
@@ -248,7 +245,6 @@ export async function productionRevenueByDay(
        ), priced AS (
          SELECT to_char(per_po.unit_completed_at::date, 'YYYY-MM-DD') AS day,
                 COALESCE(
-                  ${PO_SOURCE_LINE_PRICES},
                   soi.unit_price_sen,
                   coi.unit_price_sen,
                   (SELECT COALESCE(p.base_price_sen, p.price1_sen)
@@ -264,7 +260,6 @@ export async function productionRevenueByDay(
                   ON soi.sales_order_id = po.sales_order_id AND soi.line_no = po.line_no
            LEFT JOIN consignment_order_items coi
                   ON coi.consignment_order_id = po.consignment_order_id AND coi.line_no = po.line_no
-           ${PO_SOURCE_LINE_JOINS}
           WHERE po.org_id = ?
             AND po.item_category IN ('SOFA','BEDFRAME','ACCESSORY')
             AND per_po.unit_completed_at IS NOT NULL

@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-11-11**: BUG-2026-11-11-426 marked reverted on staging (branch `fix/revert-1337-revenue-line-replay`); main's BUG-2026-11-11-498 (#1318) is the fix kept; nothing else re-checked.
 > **Last verified: 2026-11-11**: newest entry BUG-2026-11-11-426 (branch `fix/production-revenue-line-replay`, to `staging`; 394-425 not checked on other branches).
 > **Last verified: 2026-10-26**: newest entry BUG-2026-10-26-393 (branch `fix/staging-password-from-secret`, to `staging`; 383-392 are taken on other branches).
 > **Last verified: 2026-10-23**: newest entry BUG-2026-10-23-382 (branch `feat/2fa-login-code-step`, to `staging`).
@@ -236,7 +237,7 @@ Entries themselves stay newest-first.
 
 ## BUG-2026-11-11-426 — Production Revenue priced an order from the wrong sales-order line (piece number used as line number) `production` `pricing` 🟡
 
-🟡 **Fixed on branch** (`fix/production-revenue-line-replay`, to `staging`). Not deployed. Prod effect UNMEASURED by this fix; the owner's 2026-11-11 read-only snapshot put Jan–Nov at +RM 7,275.50 with a slightly different rule (see below).
+⚪ **Reverted** (2026-11-11, `fix/revert-1337-revenue-line-replay`, to `staging`). Merged as #1337 and deployed to staging, then backed out: the same bug is fixed on `main` by BUG-2026-11-11-498 (#1318, a stored `source_line_no` plus a one-off backfill), and the two fixes rewrite the same joins. Kept here so the number is not reused. Was: fixed on branch (`fix/production-revenue-line-replay`, to `staging`). Not deployed. Prod effect UNMEASURED by this fix; the owner's 2026-11-11 read-only snapshot put Jan–Nov at +RM 7,275.50 with a slightly different rule (see below).
 
 **Symptom.** Production Revenue (Labor Cost screen, both dashboards, department revenue, efficiency email) under- or over-priced some orders. SO-2610-074 line 3 (SB02, qty 4, RM 180) counted RM 180 + 80 + 150 + 0 = RM 410 instead of RM 720.
 

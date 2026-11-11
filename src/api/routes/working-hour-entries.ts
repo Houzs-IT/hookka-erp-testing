@@ -24,7 +24,6 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureNonprodRequests } from "./worker";
 import { loadProductionRevenue } from "../lib/production-revenue";
-import { PO_SOURCE_LINE_JOINS, PO_SOURCE_LINE_PRICES } from "../lib/po-source-line";
 
 const app = new Hono<Env>();
 
@@ -312,7 +311,6 @@ app.get("/production-revenue", async (c) => {
               po.quantity          AS "qty",
               COALESCE(jc.productionTimeMinutes, jc.estMinutes, 0) AS "jcMinutes",
               COALESCE(
-                ${PO_SOURCE_LINE_PRICES},
                 soi.unitPriceSen,
                 coi.unitPriceSen,
                 (SELECT COALESCE(p.basePriceSen, p.price1Sen)
@@ -330,7 +328,6 @@ app.get("/production-revenue", async (c) => {
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId
                AND coi.lineNo = po.lineNo
-         ${PO_SOURCE_LINE_JOINS}
         WHERE jc.status IN ('COMPLETED','TRANSFERRED')
           AND jc.completedDate IS NOT NULL
           AND jc.completedDate >= ?
@@ -749,7 +746,7 @@ app.get("/daily-breakdown", async (c) => {
                          THEN completedDate END) <= ?
        )
        SELECT substr(per_po.unit_completed_at, 1, 10) AS d,
-              SUM(COALESCE(${PO_SOURCE_LINE_PRICES}, soi.unitPriceSen, coi.unitPriceSen, p.basePriceSen, p.price1Sen, 0)
+              SUM(COALESCE(soi.unitPriceSen, coi.unitPriceSen, p.basePriceSen, p.price1Sen, 0)
                   * MAX(1, COALESCE(po.quantity, 1))) AS v
          FROM per_po
          JOIN production_orders po ON po.id = per_po.productionOrderId
@@ -759,7 +756,6 @@ app.get("/daily-breakdown", async (c) => {
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId
                AND coi.lineNo = po.lineNo
-         ${PO_SOURCE_LINE_JOINS}
          LEFT JOIN products p ON p.id = po.productId
         WHERE p.category IN ('SOFA','BEDFRAME','ACCESSORY')
           ${category ? "AND p.category = ?" : ""}
