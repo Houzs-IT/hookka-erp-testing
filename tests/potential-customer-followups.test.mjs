@@ -49,7 +49,10 @@ test("the UI filter is a convenience, NOT the control", () => {
 test("Customers page creates a POTENTIAL when standing on the Potential tab", () => {
   const f = flat("src/pages/customers.tsx");
   assert.match(f, /const addingPotential = stageFilter === "POTENTIAL"/);
-  assert.match(f, /customerStage: addingPotential \? "POTENTIAL" : "CONFIRMED"/);
+  // The POST body is built by newCustomerCreateBody (WORK-TRACKER 138), which
+  // turns the tab into the stage; tests/customer-new-form.test.mjs runs it.
+  assert.match(f, /JSON\.stringify\(newCustomerCreateBody\(addForm, addingPotential\)\)/);
+  assert.match(flat("src/lib/customer-new-form.ts"), /customerStage: potential \? "POTENTIAL" : "CONFIRMED"/);
 });
 
 test("creditor code is optional for a potential, required for a confirmed", () => {
