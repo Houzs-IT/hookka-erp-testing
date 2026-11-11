@@ -133,7 +133,7 @@ export default function StockTakePage() {
     if (!sheets.length) return;
     await exportStyledWorkbookXlsx(
       `stock-count-sheet-${ym}.xlsx`,
-      sheets.map((s) => ({ name: s.group, ...countSheetLayout(s, { company: COMPANY_NAME, ymLabel: ymLabel(ym) }), cols: COUNT_SHEET_COLS, writeCols: COUNT_SHEET_WRITE_COLS })),
+      sheets.map((s) => ({ name: s.group, ...countSheetLayout(s, { company: COMPANY_NAME, ymLabel: ymLabel(ym) }), cols: COUNT_SHEET_COLS, writeCols: COUNT_SHEET_WRITE_COLS, mono: true })),
     );
   };
 

@@ -95,6 +95,37 @@ test("buildStyledSheet: thin borders on every table cell, filled bold header, me
   assert.ok(ws["!margins"], "print margins set");
 });
 
+test("black & white count sheet (owner 「stock take 这个直接black & white」): no fill anywhere, black text and black lines", () => {
+  const { aoa, kinds } = countSheet();
+  const ws = buildStyledSheet(XLSX, { name: "S.FILLER", aoa, kinds, cols: COUNT_SHEET_COLS, writeCols: COUNT_SHEET_WRITE_COLS, mono: true });
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  let styled = 0;
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const s = cellAt(ws, r, c)?.s;
+      if (!s) continue;
+      styled++;
+      assert.ok(!s.fill, `row ${r} col ${c}: no fill`);
+      if (s.font?.color) assert.equal(s.font.color.rgb, "000000", `row ${r} col ${c}: black text`);
+      for (const side of ["top", "bottom", "left", "right"]) {
+        if (s.border?.[side]) assert.equal(s.border[side].color.rgb, "000000", `row ${r} col ${c}: black ${side} line`);
+      }
+    }
+  }
+  assert.ok(styled > 20, "the sheet is styled at all");
+  // Still a table to write on: a bold header with a heavier rule under it, bold
+  // series rows, and thin lines round every item cell (the write-in ones too).
+  const h = kinds.indexOf("header");
+  assert.equal(cellAt(ws, h, 0).s.font.bold, true);
+  assert.equal(cellAt(ws, h, 0).s.border.bottom.style, "medium");
+  assert.equal(cellAt(ws, kinds.indexOf("series"), 0).s.font.bold, true);
+  const it = kinds.indexOf("item");
+  for (const side of ["top", "bottom", "left", "right"]) assert.equal(cellAt(ws, it, 3).s.border[side].style, "thin");
+  // A negative never turns red on a black & white sheet.
+  const neg = buildStyledSheet(XLSX, { name: "x", aoa: [["Qty"], [-5]], kinds: ["header", "item"], cols: [10], negRedCols: [0], mono: true });
+  assert.equal(cellAt(neg, 1, 0).s.font.color.rgb, "000000");
+});
+
 test("printTitleNames: the header row repeats at the top of every printed page", () => {
   const { aoa, kinds } = countSheet();
   const names = printTitleNames([{ kinds }, { kinds: ["title"] }], ["B.M-FABR", "Notes"]);
@@ -234,7 +265,8 @@ test("financeCountAoa: the unit counted goes to Finance, not the master's", () =
 test("the page exports both sheets with lines and passes the item units to the import", () => {
   const page = read("src/pages/inventory/stock-take.tsx");
   assert.match(page, /exportStyledWorkbookXlsx\(\s*`stock-count-sheet-\$\{ym\}\.xlsx`/);
-  assert.match(page, /cols: COUNT_SHEET_COLS, writeCols: COUNT_SHEET_WRITE_COLS/);
+  // The count sheet prints black & white; the usage export keeps its colours.
+  assert.match(page, /cols: COUNT_SHEET_COLS, writeCols: COUNT_SHEET_WRITE_COLS, mono: true/);
   assert.match(page, /exportStyledWorkbookXlsx\(`stock-usage-\$\{ym\}\.xlsx`/);
   assert.match(page, /parseCountWorkbook\(await readWorkbook\(f\), masterUnits\)/);
   assert.match(page, /unitChanges/);
