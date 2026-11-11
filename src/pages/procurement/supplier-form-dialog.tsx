@@ -5,13 +5,12 @@
 // duplicating the form code, mirroring how sku-form-dialog.tsx was extracted.
 // Behaviour is unchanged from the previous inline definition in maintenance.tsx.
 // ---------------------------------------------------------------------------
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useFormDiscardGuard } from "@/lib/use-discard-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
-import { isValidEmail } from "@/lib/contact-format";
-import { isOneEmailAddress } from "@/lib/supplier-emails";
+import { isOneEmailAddress, supplierMainEmailError } from "@/lib/supplier-emails";
 import { X } from "lucide-react";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import type { PartyFinanceValue } from "@/lib/party-finance";
@@ -113,10 +112,27 @@ export function SupplierFormDialog({
     bankAccount: editData?.bankAccount || "",
   });
 
+  // The main Email is a list (the PO email sends To every address in it), so it
+  // is checked with that rule. A refused save says why beside the buttons and
+  // puts the cursor in the field — it used to return in silence, with the only
+  // hint under Email at the top, so an edit of the payment terms at the bottom
+  // "did not save" (BUG-2026-11-11-504).
+  const emailError = supplierMainEmailError(email);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isValidEmail(email)) return; // block save on a malformed email
-    if (!extraOk(email2) || !extraOk(email3)) return;
+    const problem =
+      emailError ??
+      (!extraOk(email2) ? `Email 2 (${email2.trim()}) is not one valid address.` : null) ??
+      (!extraOk(email3) ? `Email 3 (${email3.trim()}) is not one valid address.` : null);
+    if (problem) {
+      setSubmitError(problem);
+      if (emailError) emailRef.current?.focus();
+      return;
+    }
+    setSubmitError(null);
     onSave({
       code, name, contactPerson, phone, email, email2: email2.trim(), email3: email3.trim(),
       address, paymentTerms, rating, status, purchaseOrgCode,
@@ -173,8 +189,8 @@ export function SupplierFormDialog({
           </div>
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1">Email</label>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" className={!isValidEmail(email) ? "border-[#9A3A2D]" : undefined} />
-            {!isValidEmail(email) ? <span className="text-[11px] text-[#9A3A2D]">Enter a valid email address</span> : null}
+            <Input ref={emailRef} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com — several: a@x.com, b@y.com" className={emailError ? "border-[#9A3A2D]" : undefined} />
+            {emailError ? <span className="text-[11px] text-[#9A3A2D]">{emailError}</span> : null}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -250,6 +266,11 @@ export function SupplierFormDialog({
               </select>
             </div>
           </div>
+          {submitError && (
+            <p role="alert" className="rounded-md border border-[#E8D899] bg-[#FAEFCB] px-3 py-2 text-sm text-[#7A5A12]">
+              Can&apos;t save yet — {submitError}
+            </p>
+          )}
           <div className="flex justify-end gap-3 pt-4 border-t border-[#E2DDD8]">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             <Button type="submit" variant="primary">{editData ? "Update" : "Add Supplier"}</Button>

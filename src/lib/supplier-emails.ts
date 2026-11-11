@@ -7,7 +7,7 @@
 // suppliers already hold "a@x.com, b@x.com" there). Email 2 and Email 3 hold
 // ONE address each and are Cc'd — never a repeat of a To address.
 // ---------------------------------------------------------------------------
-import { parseAddressList } from "../api/lib/mail-threading";
+import { bareAddress, parseAddressList } from "../api/lib/mail-threading";
 
 const ONE_ADDRESS = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 
@@ -31,6 +31,20 @@ export function supplierExtraEmailError(body: Record<string, unknown>): string |
     }
   }
   return null;
+}
+
+/** The save's check for the main Email (BUG-2026-11-11-504): blank, or every
+ *  address the PO email will split out of it (comma / semicolon / new line)
+ *  must be one valid address — the same split `poEmailRecipients` sends To.
+ *  Returns the sentence to show, or null when fine. A slash is not a separator:
+ *  "a@x.com / b@y.com" was refused in silence and blocked every edit of that
+ *  supplier, its payment terms included. */
+export function supplierMainEmailError(v: string | null | undefined): string | null {
+  const t = (v ?? "").trim();
+  if (!t) return null;
+  const pieces = t.split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
+  if (pieces.length > 0 && pieces.every((p) => isOneEmailAddress(bareAddress(p)))) return null;
+  return `Email (${t}) is not a valid address. Separate several addresses with a comma, or put the second one in Email 2.`;
 }
 
 /** Who the PO email goes to: To = the main Email's addresses; Cc = Email 2 and
