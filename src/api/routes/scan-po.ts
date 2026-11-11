@@ -458,6 +458,16 @@ function validateAndEnrichPO(po: ExtractedPO, catalog: Catalog): Warning[] {
       }
     }
     if (item.transferredSO) item.transferredSO = item.transferredSO.toUpperCase();
+    // No leg on the PO (and no "No Leg" either) → the product's default leg
+    // (owner 2026-11-11), as the typed Sales Order form does on picking the
+    // product. The review screen shows it and it can still be changed.
+    const saysNoLeg = /\bno\s*legs?\b|\bnolegs?\b/i.test(
+      [item.rawSpec, item.description, item.specialOrder, item.specialNotes].filter(Boolean).join(" "),
+    );
+    if (item.productCode && item.legHeightInches == null && !item.noLeg && !saysNoLeg) {
+      const prod = [...catalog.bedframes, ...catalog.sofas, ...catalog.accessories].find((p) => p.code === item.productCode);
+      if (prod?.defaultLegInches) item.legHeightInches = prod.defaultLegInches;
+    }
   }
 
   if (po.deliveryHub) {
