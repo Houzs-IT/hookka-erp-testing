@@ -66,6 +66,36 @@ export async function exportReportXlsx(
   downloadBlob(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
 }
 
+/**
+ * An Excel sheet name: no `: \ / ? * [ ]`, at most 31 characters, unique within
+ * the workbook (a repeat gets " (2)"). `used` collects the names taken so far.
+ */
+export function safeSheetName(name: string, used: Set<string>): string {
+  const base = (name.replace(/[:\\/?*[\]]/g, "-").trim() || "Sheet").slice(0, 31);
+  let out = base;
+  for (let n = 2; used.has(out.toLowerCase()); n++) out = `${base.slice(0, 31 - ` (${n})`.length)} (${n})`;
+  used.add(out.toLowerCase());
+  return out;
+}
+
+/** One workbook, several sheets (e.g. one count sheet per stock type); `cols` = column widths in characters. */
+export async function exportWorkbookXlsx(
+  filename: string,
+  sheets: { name: string; aoa: Aoa; cols?: number[] }[],
+): Promise<void> {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.utils.book_new();
+  const used = new Set<string>();
+  for (const s of sheets) {
+    const ws = XLSX.utils.aoa_to_sheet(s.aoa);
+    if (s.cols) ws["!cols"] = s.cols.map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, ws, safeSheetName(s.name, used));
+  }
+  if (!sheets.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Nothing to export"]]), "Report");
+  const out = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+  downloadBlob(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
+}
+
 // Optional per-row styling for the PDF (owner 2026-07-09: doc rows and
 // subtotal rows looked identical, party sections had no visible boundary).
 // "group": a parent account's row with its subtotal (the Balance Sheet, 2026-10-21) — bold, no band.

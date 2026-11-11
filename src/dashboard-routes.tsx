@@ -86,6 +86,7 @@ const Inventory = lazy(() => import('./pages/inventory'))
 const Fabrics = lazy(() => import('./pages/inventory/fabrics'))
 const StockValue = lazy(() => import('./pages/inventory/stock-value'))
 const StockAdjustments = lazy(() => import('./pages/inventory/adjustments'))
+const StockTake = lazy(() => import('./pages/inventory/stock-take'))
 
 // BOM
 const BOM = lazy(() => import('./pages/bom'))
@@ -413,6 +414,7 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
   { path: '/inventory/fabrics', element: <S><Fabrics /></S> },
   { path: '/inventory/stock-value', element: <S><StockValue /></S> },
   { path: '/inventory/adjustments', element: <S><StockAdjustments /></S> },
+  { path: '/inventory/stock-take', element: <S><StockTake /></S> },
 
   // BOM
   { path: '/bom', element: <S><BOM /></S> },
@@ -681,6 +683,7 @@ const ROUTE_CHUNK_LOADERS: Record<string, () => Promise<unknown>> = {
   '/inventory/fabrics': () => import('./pages/inventory/fabrics'),
   '/inventory/stock-value': () => import('./pages/inventory/stock-value'),
   '/inventory/adjustments': () => import('./pages/inventory/adjustments'),
+  '/inventory/stock-take': () => import('./pages/inventory/stock-take'),
   '/warehouse': () => import('./pages/warehouse'),
   '/procurement': () => import('./pages/procurement'),
   '/procurement/grn': () => import('./pages/procurement/grn'),

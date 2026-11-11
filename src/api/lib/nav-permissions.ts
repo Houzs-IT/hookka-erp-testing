@@ -87,6 +87,8 @@ export const NAV_RESOURCE: Record<string, string> = {
   "/inventory/fabrics": "fabrics",
   "/inventory/stock-value": "stock-value",
   "/inventory/adjustments": "stock-movements",
+  // Warehouse › Stock Take — quantity-only count + usage (WORK-TRACKER 133).
+  "/inventory/stock-take": "inventory",
   "/inventory": "inventory",
   "/warehouse": "warehouse",
 
