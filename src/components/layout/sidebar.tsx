@@ -163,6 +163,9 @@ export const navigationGroups: NavGroup[] = [
       { name: "Fabrics", href: "/inventory/fabrics", icon: Shirt },
       { name: "Stock Value", href: "/inventory/stock-value", icon: Calculator },
       { name: "Stock Adjustments", href: "/inventory/adjustments", icon: Scale },
+      // Quantity-only month-end count: count sheet by type, the filled sheet
+      // read back, usage per item (owner 2026-11-11, WORK-TRACKER 133).
+      { name: "Stock Take", href: "/inventory/stock-take", icon: ClipboardCheck },
       { name: "Warehouse", href: "/warehouse", icon: Warehouse },
     ],
   },
@@ -691,8 +694,11 @@ export function Sidebar({
     if (href === "/inventory/adjustments") {
       return pathname === "/inventory/adjustments" || pathname.startsWith("/inventory/adjustments/");
     }
+    if (href === "/inventory/stock-take") {
+      return pathname === "/inventory/stock-take" || pathname.startsWith("/inventory/stock-take/");
+    }
     if (href === "/inventory") {
-      return pathname === "/inventory" || (pathname.startsWith("/inventory/") && !pathname.startsWith("/inventory/stock-value") && !pathname.startsWith("/inventory/fabrics") && !pathname.startsWith("/inventory/adjustments"));
+      return pathname === "/inventory" || (pathname.startsWith("/inventory/") && !pathname.startsWith("/inventory/stock-value") && !pathname.startsWith("/inventory/fabrics") && !pathname.startsWith("/inventory/adjustments") && !pathname.startsWith("/inventory/stock-take"));
     }
     if (href === "/accounting/cash-flow") {
       return pathname === "/accounting/cash-flow" || pathname.startsWith("/accounting/cash-flow/");

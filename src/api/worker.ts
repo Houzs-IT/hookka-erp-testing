@@ -1301,6 +1301,8 @@ import consignmentNotes from "./routes/consignment-notes";
 import cnPackingLists from "./routes/cn-packing-lists";
 import consignmentOrders from "./routes/consignment-orders";
 import stockAdjustments from "./routes/stock-adjustments";
+// Warehouse › Stock Take — quantity-only count + usage (WORK-TRACKER 133).
+import stockCount from "./routes/stock-count";
 import drivers from "./routes/drivers";
 import threePlVehicles from "./routes/three-pl-vehicles";
 import threePlDrivers from "./routes/three-pl-drivers";
@@ -1563,6 +1565,7 @@ app.route("/api/consignment-notes", consignmentNotes);
 app.route("/api/cn-packing-lists", cnPackingLists);
 app.route("/api/consignment-orders", consignmentOrders);
 app.route("/api/stock-adjustments", stockAdjustments);
+app.route("/api/stock-count", stockCount);
 app.route("/api/drivers", drivers);
 app.route("/api/three-pl-vehicles", threePlVehicles);
 app.route("/api/three-pl-drivers", threePlDrivers);

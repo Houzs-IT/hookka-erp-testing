@@ -24,7 +24,9 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs / work in flight (at time of writing)
 
-**None.** Everything through 2026-11-11 is merged and deployed (prod at `231d0778d` when this was written).
+- `feat/warehouse-stock-take-count-usage` — **Warehouse › Stock Take** (owner 2026-11-11 「先把我要做的 quantities usage 和 export for stock count 功能做好先」, WORK-TRACKER 133): count sheet per type grouped by item-code series (blank, no system quantity), import of the filled sheet (quantities only, kv `stock_count`), usage per item (last count + purchased − this count, unit factor per item), Download for Finance. After merge: verify on prod read only (page, count sheet, usage); the first real save is the warehouse's.
+
+Before it: everything through 2026-11-11 was merged and deployed (prod at `231d0778d` when this was written).
 
 Merge rule: CI green → squash-merge, then verify on prod (owner wants it done without asking, except the approval items and prod data writes). PRs that each append a WORK-TRACKER item collide on the number — merge one, rebase the next, renumber.
 
@@ -131,6 +133,7 @@ Source of the P/D/G/O ids: `docs/plans/2026-11-10-cross-system-review.md` (what 
 11. **Opening-period customer receipts (2026-11-11):** the owner asked to stop showing two customers' receipts that pay invoices from before the opening; 「可以」 to the proposal. Debtor Aging and TO RECEIVE leave the 8 receipts still on account out of their columns and name the total (#1317, verified on prod read only 2026-11-11; WORK-TRACKER, "Debtor Aging: opening-period receipts").
     - The owner's staff are checking the open end-of-May invoices behind the remaining 3+ months figures, from a CSV given in chat (names and amounts are in the handover file, not the repo).
     - Once the opening invoices are entered and the receipts knocked off, the note goes by itself.
+12. **Customer consent form (2026-11-11, WORK-TRACKER 134):** the owner wants a consent form to download when adding a customer, and the signed copy uploaded to the customer. **Waiting for the owner's sample form**; built in the Windows session after the Stock Take.
 
 ## Board report inside the ERP (item 115 — merged #1252, verified on prod 2026-11-10)
 
