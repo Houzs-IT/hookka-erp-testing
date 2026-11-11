@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-11**: Production Revenue line fix entry added (branch `fix/production-revenue-line-replay`, to `staging`, committed locally, not pushed); nothing else re-checked.
 > **Last verified: 2026-11-10**: mobile Service Orders entry added (branch `mobile/design-service-order`, frontend only, uncommitted); nothing else re-checked.
 > **Last verified: 2026-11-09**: mobile Service Cases entry added and updated for the visual-fidelity pass and the New SV action change (branch `feat/mobile-service-cases-v4`, frontend only, uncommitted); nothing else re-checked.
 > **Last verified: 2026-11-06**: mobile Home Operations entry added (branch `design/mobile-home-operationv3`, frontend only); nothing else re-checked.
@@ -10,6 +11,12 @@
 > **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+
+## Production Revenue priced from the wrong order line (BUG-2026-11-11-426, fix/production-revenue-line-replay, 2026-11-11)
+Ask: fix Production Revenue taking a piece's price from the wrong sales-order line; owner picked "replay piece order".
+1. DONE (local, tests only): all eight revenue queries price each piece from its own line via `src/api/lib/po-source-line.ts`; cache versions bumped. Tests: `tests/production-revenue-source-line.test.mjs`.
+2. OPEN, owner: past months restate on recompute, but main-dashboard months already frozen keep their stored figures; SV service orders are repriced from their own lines (some to RM 0); PR base not confirmed.
+3. UNMEASURED: effect on prod per month, and query time of the added joins on prod data.
 
 ## Mobile Service Orders (Claude Design "Service Orders", mobile/design-service-order, 2026-11-10)
 Ask: mobile SV list / detail / create-edit and legacy repair orders from the approved prototype; desktop code / APIs / permissions are the source of truth; no backend, pricing or permission change. Uncommitted, never pushed.
