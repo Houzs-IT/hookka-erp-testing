@@ -200,10 +200,11 @@ app.post("/", async (c) => {
 // is never filled.
 //
 // A card's minutes are copied from the BOM once, when the card is created.
-// Since BUG-2026-11-11-497 a BOM / WIP Times minutes save fills that product's
-// live cards, and cards completed this Malaysian month, still at 0
-// (fillZeroMinuteCardsForProducts); this endpoint is the manual sweep for
-// everything else (earlier completed cards, older gaps).
+// Since BUG-2026-11-11-497 a BOM / WIP Times minutes save updates that
+// product's live cards and cards completed this Malaysian month: cards at 0,
+// and cards whose BOM step the save changed (syncJobCardMinutesToBomChanges);
+// this endpoint is the manual sweep for everything else (earlier completed
+// cards, older gaps).
 // This fills ONLY cards still at 0. A card that has minutes is never touched,
 // even if the BOM has changed since: that is the BOM of its day, not a gap.
 // Each write is audited (before/after) so it can be traced and reversed.

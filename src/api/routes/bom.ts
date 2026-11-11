@@ -17,7 +17,10 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { buildAuditStatement, recordAuditCreatedMetric } from "../lib/audit";
-import { fillZeroMinuteCardsForProducts } from "../lib/fill-zero-minutes";
+import {
+  syncJobCardMinutesToBomChanges,
+  type SavedBomChange,
+} from "../lib/bom-edit-card-sync";
 import { todayYmdMY } from "../../lib/utils";
 
 const app = new Hono<Env>();
@@ -36,6 +39,15 @@ type BOMTemplateRow = {
   effectiveTo: string | null;
   changeLog: string | null;
 };
+
+function savedActiveBomChanges(
+  before: BOMTemplateRow | null,
+  after: BOMTemplateRow,
+): SavedBomChange[] {
+  if (after.versionStatus?.toUpperCase() !== "ACTIVE") return [];
+  const isSameProduct = before !== null && before.productCode === after.productCode;
+  return [{ productCode: after.productCode, before: isSameProduct ? before : null, after }];
+}
 
 type BOMVersionRow = {
   id: string;
@@ -584,10 +596,10 @@ app.put("/templates/:id", async (c) => {
       );
     }
     const hasMinutesChange = "l1Processes" in patch || "wipComponents" in patch;
-    const zeroMinuteCards = hasMinutesChange
-      ? await fillZeroMinuteCardsForProducts(c, [refreshed.productCode])
+    const jobCardMinutes = hasMinutesChange
+      ? await syncJobCardMinutesToBomChanges(c, savedActiveBomChanges(existing, refreshed))
       : null;
-    return c.json({ success: true, data: rowToTemplate(refreshed), zeroMinuteCards, debug });
+    return c.json({ success: true, data: rowToTemplate(refreshed), jobCardMinutes, debug });
   } catch (err) {
     // Was bare `} catch {` returning 400 "Invalid request body" — masked
     // every internal error (DB constraint, schema mismatch, SQL syntax)
@@ -701,7 +713,7 @@ app.post("/templates/bulk-process-edit", async (c) => {
     let updated = 0;
     const failed: Array<{ templateId: string; error: string }> = [];
     const debug: Array<Record<string, unknown>> = [];
-    const updatedProductCodes: string[] = [];
+    const savedChanges: SavedBomChange[] = [];
 
     for (const [templateId, templateEdits] of byTemplate) {
       try {
@@ -774,7 +786,13 @@ app.post("/templates/bulk-process-edit", async (c) => {
           updateMetaChanges: updateResult.meta?.changes,
         });
         updated += 1;
-        updatedProductCodes.push(row.productCode);
+        savedChanges.push(
+          ...savedActiveBomChanges(row, {
+            ...row,
+            l1Processes: JSON.stringify(l1Processes),
+            wipComponents: JSON.stringify(wipComponents),
+          }),
+        );
       } catch (err) {
         failed.push({
           templateId,
@@ -783,12 +801,12 @@ app.post("/templates/bulk-process-edit", async (c) => {
       }
     }
 
-    const zeroMinuteCards = await fillZeroMinuteCardsForProducts(c, updatedProductCodes);
+    const jobCardMinutes = await syncJobCardMinutesToBomChanges(c, savedChanges);
     return c.json({
       success: true,
       updated,
       failed,
-      zeroMinuteCards,
+      jobCardMinutes,
       debug: {
         incoming: incoming.length,
         validated: edits.length,

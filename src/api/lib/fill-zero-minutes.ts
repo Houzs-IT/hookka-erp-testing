@@ -1,6 +1,5 @@
 import type { Context } from "hono";
 import type { Env } from "../worker";
-import { todayYmdMY } from "../../lib/utils";
 import { buildAuditStatement, type AuditSource } from "./audit";
 import {
   computeExpectedJcs,
@@ -40,8 +39,6 @@ export interface ZeroMinuteScope {
   productCodes?: readonly string[];
 }
 
-export type ProductFillOutcome = { filled: number; scanned: number } | { error: string };
-
 type ZeroCard = ProductionOrderRow & {
   jcId: string;
   wipKey: string | null;
@@ -53,7 +50,7 @@ type ZeroCard = ProductionOrderRow & {
 
 type MinutesExpectation = Pick<ExpectedJc, "wipKey" | "deptCode" | "estMinutes">;
 
-const LIVE_STATUSES = "'WAITING','IN_PROGRESS','PAUSED','BLOCKED'";
+export const LIVE_STATUSES = "'WAITING','IN_PROGRESS','PAUSED','BLOCKED'";
 const WRITE_CHUNK_SIZE = 50;
 const PRODUCT_CODE_CHUNK_SIZE = 100;
 const SKIPPED_SAMPLE_LIMIT = 50;
@@ -89,7 +86,7 @@ export function bomMinutesForCard(
   return { minutes: steps.reduce((sum, e) => sum + e.estMinutes, 0) };
 }
 
-function chunkList<T>(items: readonly T[], size: number): T[][] {
+export function chunkList<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
@@ -135,7 +132,7 @@ async function loadZeroCards(db: D1Database, scope: ZeroMinuteScope): Promise<Ze
   return cards;
 }
 
-async function loadLiveDeptKeys(db: D1Database, poId: string): Promise<Map<string, string[]>> {
+export async function loadLiveDeptKeys(db: D1Database, poId: string): Promise<Map<string, string[]>> {
   const own = await db
     .prepare(
       `SELECT wipKey AS "wipKey", departmentCode AS "deptCode" FROM job_cards
@@ -232,27 +229,4 @@ export async function writeZeroMinuteFills(
     updated += part.length;
   }
   return updated;
-}
-
-export function currentMonthStartMY(): string {
-  return `${todayYmdMY().slice(0, 8)}01`;
-}
-
-export async function fillZeroMinuteCardsForProducts(
-  c: Context<Env>,
-  productCodes: readonly string[],
-): Promise<ProductFillOutcome> {
-  if (productCodes.length === 0) return { filled: 0, scanned: 0 };
-  try {
-    const plan = await planZeroMinuteFills(c.var.DB, {
-      productCodes,
-      completedFrom: currentMonthStartMY(),
-    });
-    const filled = await writeZeroMinuteFills(c, plan.fills, "system");
-    return { filled, scanned: plan.scanned };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[fill-zero-minutes] products=${productCodes.join(",")} err=${message}`);
-    return { error: message };
-  }
 }
