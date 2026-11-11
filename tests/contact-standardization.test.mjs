@@ -86,8 +86,11 @@ test("Customers page uses the shared inputs; inline hub-state array is gone", ()
 test("Supplier form uses the shared phone input + email validation", () => {
   const f = readFileSync(resolve(process.cwd(), "src/pages/procurement/supplier-form-dialog.tsx"), "utf8").replace(/\s+/g, " ");
   assert.match(f, /import \{ PhoneInput \} from "@\/components\/ui\/phone-input"/);
-  assert.match(f, /import \{ isValidEmail \} from "@\/lib\/contact-format"/);
   assert.match(f, /<PhoneInput value=\{phone\}/);
-  // Malformed email blocks save.
-  assert.match(f, /if \(!isValidEmail\(email\)\) return;/);
+  // A malformed Email still blocks the save — checked as the list the PO email
+  // sends To (several addresses, comma-separated), and never in silence: the
+  // reason shows beside the buttons (BUG-2026-11-11-504,
+  // tests/supplier-main-email.test.mjs).
+  assert.match(f, /const emailError = supplierMainEmailError\(email\);/);
+  assert.match(f, /if \(problem\) \{ setSubmitError\(problem\);/);
 });
