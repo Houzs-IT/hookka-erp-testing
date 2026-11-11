@@ -709,7 +709,7 @@ test("builder: L1 processes filtered by the same dept set; zero-step scope throw
 test("builder: production_orders INSERT stamps repairScope + self-applies the column", () => {
   assert.match(
     builderSrc,
-    /rackingNumber, stockedIn, repairScope, created_at, updated_at\)/,
+    /rackingNumber, stockedIn, repairScope, created_at, updated_at, source_line_no\)/,
     "INSERT column list must include repairScope",
   );
   assert.match(builderSrc, /serializeRepairScope\(repairScope\)/);

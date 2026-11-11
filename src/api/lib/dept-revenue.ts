@@ -29,6 +29,7 @@
 //   `unclassified`: it counts in All only, never guessed into Bedframe.
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
+import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "./production-order-line";
 
 type Db = Env["Variables"]["DB"];
 
@@ -91,6 +92,7 @@ export type DeptRevenueRow = { deptCode: string; date: string; category: RevCate
  * department as well.
  */
 export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: string): Promise<DeptRevenueRow[]> {
+  await ensureProductionOrderSourceLine(db);
   const res = await db
     .prepare(
       `WITH per_po_dept AS (
@@ -123,9 +125,9 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
          FROM per_po_dept d
          JOIN production_orders po ON po.id = d.productionOrderId
          LEFT JOIN sales_order_items soi
-                ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = po.lineNo
+                ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
          LEFT JOIN consignment_order_items coi
-                ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = po.lineNo
+                ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
         WHERE po.orgId = ?
           AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
           AND d.done_at IS NOT NULL

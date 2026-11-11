@@ -43,6 +43,7 @@ import {
   type BomVariantContext,
 } from "../../lib/bom-wip-breakdown";
 import { isHeadboardOnlySpecial } from "../fg-units";
+import { ensureProductionOrderSourceLine } from "../../lib/production-order-line";
 import {
   parseRepairScope,
   serializeRepairScope,
@@ -471,6 +472,8 @@ export async function createProductionOrdersForOrder(
     }
   }
 
+  await ensureProductionOrderSourceLine(db);
+
   // ---- Department lookup ----
   const deptRes = await db
     .prepare("SELECT id, code, name FROM departments")
@@ -782,8 +785,8 @@ export async function createProductionOrdersForOrder(
                itemCategory, sizeCode, sizeLabel, fabricCode, quantity, gapInches,
                divanHeightInches, legHeightInches, specialOrder, notes, status,
                currentDepartment, progress, startDate, targetEndDate, completedDate,
-               rackingNumber, stockedIn, repairScope, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               rackingNumber, stockedIn, repairScope, created_at, updated_at, source_line_no)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             poId,
@@ -822,6 +825,7 @@ export async function createProductionOrdersForOrder(
             serializeRepairScope(repairScope),
             nowIso,
             nowIso,
+            item.lineNo,
           ),
       );
 
