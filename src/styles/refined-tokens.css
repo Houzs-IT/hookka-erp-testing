@@ -68,8 +68,13 @@
     font-family: var(--hk-font-sans);
     font-feature-settings: "cv11", "ss01";
   }
+  /* .font-mono is on dates, quantities and codes all over the app (it only
+     means "tabular figures" here — see index.css), so it keeps the UI font:
+     a monospace face made dates like 2026-05-01 wide and odd (owner screenshot
+     2026-11-12). Tabular + slashed zero still come from index.css. */
   :root.refined .font-mono {
-    font-family: var(--hk-font-docno);
+    font-family: var(--hk-font-sans);
+    font-variant-numeric: tabular-nums slashed-zero;
   }
   /* Cards / panels get the soft two-layer shadow of the design. */
   :root.refined:not(.dark) .shadow-sm { box-shadow: var(--hk-shadow-1); }
@@ -77,6 +82,28 @@
   :root.refined:not(.dark) .shadow-md { box-shadow: var(--hk-shadow-2); }
   /* Focus ring: brass, always visible. */
   :root.refined :focus-visible { outline-color: var(--hk-focus); }
+
+  /* Production grid cells (CellBox): solid red / olive / teal blocks become
+     soft fills with coloured text and a thin edge — a wall of solid red is
+     exactly what the eye-comfort rule forbids (owner screenshot 2026-11-12). */
+  :root.refined:not(.dark) [data-cell="overdue"] {
+    background-color: var(--hk-danger-fill) !important; color: var(--hk-danger) !important;
+    box-shadow: inset 3px 0 0 var(--hk-danger-line);
+  }
+  :root.refined:not(.dark) [data-cell="pending"] {
+    background-color: var(--hk-warning-fill) !important; color: var(--hk-warning) !important;
+    box-shadow: inset 3px 0 0 var(--hk-warning-line);
+  }
+  :root.refined:not(.dark) [data-cell="done"] {
+    background-color: var(--hk-info-fill) !important; color: var(--hk-info) !important;
+  }
+  :root.refined:not(.dark) [data-cell][data-offplan] {
+    color: var(--hk-slate-600) !important; text-decoration: underline dotted;
+  }
+  @media (hover: hover) {
+    :root.refined:not(.dark) [data-cell="overdue"]:hover { background-color: color-mix(in oklab, var(--hk-danger-fill) 80%, var(--hk-danger-line)) !important; }
+    :root.refined:not(.dark) [data-cell="pending"]:hover { background-color: color-mix(in oklab, var(--hk-warning-fill) 80%, var(--hk-warning-line)) !important; }
+  }
 
   /* Phone app (/m): its colours already run through --m-* variables. */
   /* Light phone theme only — the phone's own dark theme is left alone. */

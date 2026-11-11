@@ -40,3 +40,13 @@ test("wiring: imported, generated on build, toggle in the user menu, applied bef
   assert.match(html, /localStorage\.getItem\("hookka-look"\) === "refined"/);
   assert.match(html, /get\("look"\)/);
 });
+
+test("polish 1: .font-mono keeps the UI font; production grid cells become soft fills", () => {
+  const t = read("src/styles/refined-tokens.css");
+  assert.match(t, /:root\.refined \.font-mono \{\n    font-family: var\(--hk-font-sans\);/);
+  assert.match(t, /\[data-cell="overdue"\] \{\n    background-color: var\(--hk-danger-fill\) !important;/);
+  const c = read("src/pages/production/components/CellBox.tsx");
+  assert.match(c, /data-cell="overdue"/);
+  assert.match(c, /data-cell="pending"/);
+  assert.match(c, /data-cell="done"/);
+});
