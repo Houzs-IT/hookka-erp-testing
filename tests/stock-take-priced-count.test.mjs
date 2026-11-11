@@ -84,7 +84,9 @@ test("server: the latest purchase price per code on or before month-end; hints n
   assert.match(r, /const unitSen = Math\.round\(\(total \/ qty\) \* 10000\) \/ 10000;/, "the line's own total ÷ its qty");
   assert.match(r, /if \(date > cur\.date \|\| \(date === cur\.date && piNo > cur\.piNo\)\) Object\.assign\(cur, \{ unitSen, piNo, date, supplier, qty \}\);/, "newest wins");
   assert.match(r, /cur\.minUnitSen = Math\.min\(cur\.minUnitSen, unitSen\);\n\s+cur\.maxUnitSen = Math\.max\(cur\.maxUnitSen, unitSen\);/);
-  assert.match(r, /return c\.json\(\{ success: true, data: \{ asOf, prices, priceList, batchCost \} \}\);/, "hints kept apart from prices");
+  // Hints (price list, batch cost) kept apart from prices; since 2026-11-11 the
+  // FIFO layers and the Warehouse unit factors ride along (tests/stock-take-fifo.test.mjs).
+  assert.match(r, /return c\.json\(\{ success: true, data: \{ asOf, prices, priceList, batchCost, layers, factors \} \}\);/, "hints kept apart from prices");
   // BUG-2026-10-09-273: the price list is kept in sen (the PO screen reads it
   // as unitPriceSen) — a ×100 made every hint 100× too high.
   assert.match(r, /const unitSen = Math\.round\(Number\(r\.unitPrice\) \* 10000\) \/ 10000;/);
