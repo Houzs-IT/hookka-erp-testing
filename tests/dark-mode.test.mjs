@@ -8,7 +8,8 @@ import { execFileSync } from "node:child_process";
 
 import { resolveTheme } from "../src/lib/theme.ts";
 
-const read = (p) => readFileSync(p, "utf8");
+// CRLF to LF: a Windows checkout (core.autocrlf) writes CRLF; the patterns below use \n.
+const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
 test("resolveTheme: light / dark as chosen, system follows the OS", () => {
   assert.equal(resolveTheme("light", true), "light");
