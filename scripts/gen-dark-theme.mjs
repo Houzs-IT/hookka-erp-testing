@@ -27,9 +27,11 @@
 // re-pointing its variables under `.dark` (50↔950, 100↔900, … 500 stays).
 // ---------------------------------------------------------------------------
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join, relative } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not .pathname — .pathname gives "/C:/…" on Windows.
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SRC = join(ROOT, "src");
 const OUT = join(ROOT, "src/styles/dark-theme.generated.css");
 

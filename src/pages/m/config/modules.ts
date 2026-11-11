@@ -21,11 +21,14 @@ import {
   type RowVM,
 } from "./types";
 import { logHoursSpec, hubFormSpec, addAffectedProductSpec } from "./forms";
+import { DO_STATUS_LABEL, TIMELINE_STEPS } from "../lib/do-mobile";
 import { normalizeStoredPcbStatus, pcbHasFigure } from "@/lib/pcb";
 import { todayYmdMY } from "@/lib/utils";
 import { createElement, lazy, Suspense } from "react";
 import { latestPayslips, PAYSLIPS_URL } from "./payroll";
 import { EmployeesPayrollPanel } from "../screens/EmployeesPayrollPanel";
+import { getStatusColor } from "@/lib/utils";
+import { PAYABLE_STATUSES, methodLabel } from "../lib/invoices-mobile";
 import {
   type DetailConfig,
   type FlowStep,
@@ -261,9 +264,10 @@ const SO_STATUSES = [
   "DRAFT", "CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED",
   "DELIVERED", "INVOICED", "CLOSED", "ON_HOLD", "CANCELLED",
 ];
+// The server's DO statuses (VALID_TRANSITIONS, delivery-orders/_helpers.ts).
+// There is no DISPATCHED or SIGNED status: "Dispatched" is LOADED's label.
 const DO_STATUSES = [
-  "DRAFT", "LOADED", "DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED",
-  "INVOICED", "CANCELLED",
+  "DRAFT", "LOADED", "IN_TRANSIT", "DELIVERED", "INVOICED", "CANCELLED",
 ];
 const PROD_STATUSES = [
   "PENDING", "IN_PROGRESS", "COMPLETED", "ON_HOLD", "PAUSED", "CANCELLED",
@@ -549,10 +553,12 @@ const deliveryOrdersSource: DataSource = {
   // Design 2026-07: a DO only exists from Pending Dispatch onward, so the DO
   // source only feeds Dispatch / Dispatched / Delivered. Planning + Pending
   // Delivery are SALES ORDERS (no DO yet) — see pendingSosSource below.
+  // Buckets = desktop TAB_DO_STATUSES (src/pages/delivery/index.tsx).
   subTabs: [
-    { key: "dispatch", label: "Pending Dispatch", match: (r) => ["DRAFT", "LOADED"].includes(str(r, "status")) },
-    { key: "dispatched", label: "Dispatched", match: (r) => ["DISPATCHED", "IN_TRANSIT"].includes(str(r, "status")) },
-    { key: "delivered", label: "Delivered", match: (r) => ["DELIVERED", "SIGNED", "INVOICED"].includes(str(r, "status")) },
+    { key: "dispatch", label: "Pending Dispatch", match: (r) => str(r, "status") === "DRAFT" },
+    { key: "dispatched", label: "Dispatched", match: (r) => ["LOADED", "IN_TRANSIT"].includes(str(r, "status")) },
+    { key: "delivered", label: "Delivered", match: (r) => ["DELIVERED", "INVOICED"].includes(str(r, "status")) },
+    { key: "cancelled", label: "Cancelled", match: (r) => str(r, "status") === "CANCELLED" },
   ],
 };
 
@@ -680,7 +686,8 @@ const deliveryDetail: DetailConfig = {
   title: (d) => str(d, "customerName") || "—",
   status: (d) => resolveStatus(str(d, "status"), STATUS_MAPS.delivery),
   flow: {
-    steps: flowSteps(["LOADED", "DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED"]),
+    // Desktop's Delivery Timeline: the five forward statuses, list labels.
+    steps: TIMELINE_STEPS.map((k) => ({ key: k, label: DO_STATUS_LABEL[k] })),
     current: (d) => str(d, "status"),
   },
   fields: [
@@ -736,11 +743,12 @@ const deliveryDetail: DetailConfig = {
     return out;
   },
   // "Mark Delivered" opens the POD capture sheet (signature + photos) and, on
-  // confirm, PUTs proofOfDelivery + status DELIVERED — the desktop flow. Hidden
-  // once the DO is delivered/invoiced.
+  // confirm, PUTs proofOfDelivery + status DELIVERED — the desktop flow. Only
+  // where desktop offers it: LOADED (its second button) and IN_TRANSIT. DRAFT
+  // must be loaded first; DRAFT / CANCELLED → DELIVERED is refused by the API.
   primaryCta: (d) => {
     const s = str(d, "status");
-    return s === "DELIVERED" || s === "INVOICED" ? undefined : "Mark Delivered";
+    return s === "LOADED" || s === "IN_TRANSIT" ? "Mark Delivered" : undefined;
   },
   // The desktop's per-row "Print DO": print-extras (best-effort) + the delivery
   // status QR, then the same generateDOPdf, opened to read on the phone.
@@ -821,22 +829,26 @@ const invoicesSource: DataSource = {
   subTabs: [{ key: "invoices", label: "Invoices", match: () => true }],
 };
 
+// GET /api/payments rows (payments.ts rowToPayment): receiptNumber, customerName,
+// date, amount (sen), method. The old keys (paymentNo / totalSen) are not on the
+// payload — the card showed the row id and RM 0.00 (owner D5, 2026-10-21).
 const paymentsSource: DataSource = {
   url: "/api/payments",
   select: selectData,
   toVM: (r): RowVM => ({
-    id: str(r, "id", "paymentNo"),
-    code: str(r, "paymentNo", "reference") || str(r, "id"),
+    id: str(r, "id", "receiptNumber"),
+    code: str(r, "receiptNumber") || str(r, "id"),
     title: str(r, "customerName") || "—",
-    subLine: str(r, "method", "paymentMethod") || undefined,
-    meta1: { label: "Order Date", value: dateOnly(r, "date", "paymentDate") || "—" },
-    meta2: { label: "Amount", value: money(num(r, "totalSen", "amountSen")) },
+    subLine: str(r, "method") ? methodLabel(str(r, "method")) : undefined,
+    meta1: { label: "Date", value: dateOnly(r, "date") || "—" },
+    meta2: { label: "Amount", value: money(num(r, "amount")) },
   }),
   columns: [
-    textCol("paymentNo", "Reference", (r) => str(r, "paymentNo")),
+    textCol("receiptNumber", "Receipt No", (r) => str(r, "receiptNumber")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
-    dateCol("date", "Order Date", (r) => dateOnly(r, "date", "paymentDate")),
-    numCol("amount", "Amount", (r) => num(r, "totalSen", "amountSen")),
+    textCol("method", "Method", (r) => methodLabel(str(r, "method"))),
+    dateCol("date", "Date", (r) => dateOnly(r, "date")),
+    numCol("amount", "Amount", (r) => num(r, "amount")),
   ],
   defaultSort: { key: "date", dir: "desc" },
   subTabs: [{ key: "payments", label: "Payments", match: () => true }],
@@ -922,7 +934,7 @@ const eInvoiceSource: DataSource = {
     status: resolveStatus(str(r, "status"), E_INVOICE_STATUS_MAP),
   }),
   columns: [
-    textCol("invoiceNo", "Reference", (r) => str(r, "invoiceNo")),
+    textCol("invoiceNo", "Invoice No", (r) => str(r, "invoiceNo")),
     textCol("customer", "Customer", (r) => str(r, "customerName")),
     numCol("amount", "Amount", (r) => num(r, "totalIncludingTax")),
     enumCol("status", "Status", (r) => str(r, "status"), ["PENDING", "SUBMITTED", "VALID", "INVALID", "REJECTED", "CANCELLED"]),
@@ -940,7 +952,13 @@ const invoiceDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "invoiceNo") || "—",
   title: (d) => str(d, "customerName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  // Desktop invoice status colours (getStatusColor: Overdue = WARNING_HIGH,
+  // Cancelled grey, Partial Paid amber) — invoice-only; the shared
+  // PAYMENT_STATUS_MAP is left as is for the modules that use it (owner 2026-10-21).
+  status: (d) => {
+    const st = str(d, "status").toUpperCase();
+    return { style: getStatusColor(st), label: st || "—" };
+  },
   flow: {
     steps: flowSteps(["UNPAID", "PARTIAL", "PAID"]),
     current: (d) => str(d, "status"),
@@ -1011,7 +1029,11 @@ const invoiceDetail: DetailConfig = {
     }
     return out;
   },
-  primaryCta: (d) => (str(d, "status") === "PAID" ? "Status" : "Record Payment"),
+  // No screen renders this config's action bar any more: the invoice detail —
+  // including the tablet line route's left pane — is InvoiceDetailScreen; this
+  // config only feeds LineItemDetailScreen. Kept restricted anyway (owner D2:
+  // never Draft / Cancelled / Paid, BUG-2026-10-22-347).
+  primaryCta: (d) => (PAYABLE_STATUSES.has(str(d, "status").toUpperCase()) ? "Record Payment" : undefined),
   attachmentsResource: (id) => ({ type: "INVOICE", id }),
   auditResource: () => "invoices",
   lineAttachmentsResource: (_parent, lineId) => ({ type: "INVOICE_LINE", id: lineId }),
@@ -1038,8 +1060,11 @@ export const invoicesConfig: ModuleConfig = {
 };
 
 // ---------------------------------------------------------------------------
-// PROCUREMENT — Purchase Orders / Goods Receipt / Purchase Invoice / Maintenance.
-// Maintenance has no list endpoint → reuse suppliers (the page is supplier mgmt).
+// PROCUREMENT — Purchase Orders / Goods Receipt / Purchase Invoice.
+// The /m/procurement screens are bespoke (screens/procurement/, CUSTOM_L1 /
+// CUSTOM_L2); this config still feeds the route, global search and the line-
+// item screen, so its statuses and labels follow the real documents
+// (docs/mobile/PROCUREMENT-MOBILE.md). Suppliers are their own module.
 // ---------------------------------------------------------------------------
 // Still owed by the supplier: issued to them and not fully received.
 const PO_OUTSTANDING = ["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED"];
@@ -1064,6 +1089,17 @@ function summariseOutstanding(r: RawRow, limit = 60): string {
   return joined.length > limit ? joined.slice(0, limit - 1) + "…" : joined;
 }
 
+// Status colour maps for the redesigned Procurement lists (from the Procurement core redesign).
+const PAY = PAYMENT_STATUS_MAP;
+const PO_STATUS_MAP = {
+  DRAFT: PAY.DRAFT, SUBMITTED: PAY.SUBMITTED, CONFIRMED: PAY.CONFIRMED, PARTIAL_RECEIVED: PAY.PARTIAL,
+  RECEIVED: PAY.RECEIVED, CLOSED: PAY.CLOSED, CANCELLED: PAY.CANCELLED,
+};
+const GRN_STATUS_MAP = { DRAFT: PAY.DRAFT, CONFIRMED: PAY.CONFIRMED, POSTED: PAY.RECEIVED, CANCELLED: PAY.CANCELLED };
+const PI_STATUS_MAP = {
+  DRAFT: PAY.DRAFT, PENDING_APPROVAL: PAY.CONFIRMED, APPROVED: PAY.CONFIRMED, CONFIRMED: PAY.CONFIRMED,
+  PARTIAL_PAID: PAY.PARTIAL, PAID: PAY.PAID, CANCELLED: PAY.CANCELLED,
+};
 const poSource: DataSource = {
   url: "/api/purchase-orders",
   select: selectData,
@@ -1130,7 +1166,7 @@ const grnSource: DataSource = {
         { label: "By", value: str(r, "receivedBy") || "—" },
         { label: "Lines", value: short === 0 ? `${items.length}` : `${items.length - short}/${items.length}` },
       ],
-      status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+      status: resolveStatus(str(r, "status"), GRN_STATUS_MAP),
     };
   },
   columns: [
@@ -1164,7 +1200,7 @@ const piSource: DataSource = {
         { label: "Due", value: shortDate(dateOnly(r, "dueDate")) || "—" },
         { label: "Amount", value: money(num(r, "amountSen", "totalSen")) },
       ],
-      status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
+      status: resolveStatus(str(r, "status"), PI_STATUS_MAP),
     };
   },
   columns: [
@@ -1181,30 +1217,6 @@ const piSource: DataSource = {
   subTabs: [{ key: "pi", label: "Purchase Invoice", match: () => true }],
 };
 
-// Maintenance sub-tab: no dedicated list endpoint — the desktop Maintenance
-// page is supplier management. Reuse /api/suppliers as the closest existing
-// list. TODO: if a real "maintenance" list endpoint lands, swap it here.
-const maintenanceSource: DataSource = {
-  url: "/api/suppliers",
-  select: selectData,
-  toVM: (r): RowVM => ({
-    id: str(r, "id", "code"),
-    code: str(r, "code") || "—",
-    title: str(r, "name") || "—",
-    subLine: [str(r, "contactPerson"), str(r, "phone")].filter(Boolean).join(" · ") || undefined,
-    meta1: { label: "State", value: str(r, "state") || "—" },
-    status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
-  }),
-  columns: [
-    textCol("code", "Reference", (r) => str(r, "code")),
-    textCol("name", "Customer", (r) => str(r, "name")),
-    textCol("state", "State", (r) => str(r, "state")),
-    enumCol("status", "Status", (r) => str(r, "status"), ["ACTIVE", "INACTIVE"]),
-  ],
-  defaultSort: { key: "name", dir: "asc" },
-  subTabs: [{ key: "maintenance", label: "Maintenance", match: () => true }],
-};
-
 // PROCUREMENT detail — three distinct doc types share one slug, dispatched by
 // the id prefix (PO = "po-", GRN = "grn-", PI = "pi-"). Each has its own
 // single-GET endpoint; suppliers (Maintenance) have no doc detail.
@@ -1213,7 +1225,7 @@ const poDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "poNo") || "—",
   title: (d) => str(d, "supplierName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  status: (d) => resolveStatus(str(d, "status"), PO_STATUS_MAP),
   flow: {
     steps: flowSteps(PO_STATUSES.filter((k) => k !== "CANCELLED")),
     current: (d) => str(d, "status"),
@@ -1342,7 +1354,7 @@ const poDetail: DetailConfig = {
   primaryCta: (d) => {
     const s = str(d, "status");
     if (["CONFIRMED", "SUBMITTED", "PARTIAL_RECEIVED"].includes(s)) return "Receive (GRN)";
-    return s === "DRAFT" ? "Submit" : "Status";
+    return "Status";
   },
   attachmentsResource: (id) => ({ type: "PO", id }),
   auditResource: () => "purchase-orders",
@@ -1354,7 +1366,7 @@ const grnDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "grnNumber", "grnNo") || "—",
   title: (d) => str(d, "supplierName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  status: (d) => resolveStatus(str(d, "status"), GRN_STATUS_MAP),
   flow: {
     steps: flowSteps(["DRAFT", "CONFIRMED", "POSTED"]),
     current: (d) => str(d, "status"),
@@ -1381,7 +1393,7 @@ const grnDetail: DetailConfig = {
     }
     return out;
   },
-  primaryCta: (d) => (str(d, "status") === "DRAFT" ? "Post to Stock" : "Status"),
+  primaryCta: () => "Status",
   attachmentsResource: (id) => ({ type: "GRN", id }),
   auditResource: () => "grn",
   lineAttachmentsResource: (_parent, lineId) => ({ type: "GRN_LINE", id: lineId }),
@@ -1392,7 +1404,7 @@ const piDetail: DetailConfig = {
   selectDoc: selectDocData,
   code: (d) => str(d, "piNo") || "—",
   title: (d) => str(d, "supplier", "supplierName") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
+  status: (d) => resolveStatus(str(d, "status"), PI_STATUS_MAP),
   flow: {
     steps: flowSteps(["DRAFT", "CONFIRMED", "PAID"]),
     current: (d) => str(d, "status"),
@@ -1432,7 +1444,7 @@ const piDetail: DetailConfig = {
     }
     return out;
   },
-  primaryCta: (d) => (str(d, "status") === "PAID" ? "Status" : "Record Payment"),
+  primaryCta: () => "Status",
   attachmentsResource: (id) => ({ type: "PI", id }),
   auditResource: () => "purchase-invoices",
   lineAttachmentsResource: (_parent, lineId) => ({ type: "PI_LINE", id: lineId }),
@@ -1465,13 +1477,13 @@ const procurementDetail: DetailConfig = {
 export const procurementConfig: ModuleConfig = {
   slug: "procurement",
   title: "Procurement",
-  // Suppliers (Maintenance) have no doc detail — only po/grn/pi ids navigate.
+  // Only po/grn/pi ids navigate (suppliers are their own module, /m/suppliers).
   detailPath: (vm) =>
     /^(po|grn|pi)-/.test(vm.id)
       ? `/m/procurement/${encodeURIComponent(vm.id)}`
       : null,
   detail: procurementDetail,
-  sources: [poSource, grnSource, piSource, maintenanceSource],
+  sources: [poSource, grnSource, piSource],
 };
 
 // ---------------------------------------------------------------------------
@@ -3272,7 +3284,7 @@ export const mailConfig: ModuleConfig = {
 // contact + phone, code as the right-aligned trailing meta). Add-Hub +
 // Exports buttons from the design are deferred — they need an edit form +
 // statement-PDF endpoints respectively (TODO: wire when those land).
-const customerDetail: DetailConfig = {
+export const customerDetail: DetailConfig = {
   url: (id) => `/api/customers/${encodeURIComponent(id)}`,
   selectDoc: selectDocData,
   code: (d) => str(d, "code") || "—",
@@ -4023,10 +4035,9 @@ const serviceCaseDetail: DetailConfig = {
       label: "Spawn SO",
       icon: "receipt",
       // Desktop service-cases creates a SV-prefixed sales-order seeded from
-      // the case (caseid → /api/sales-orders POST). Mobile deep-links to the
-      // existing /sales/create route with ?fromCase=<id> — desktop SO create
-      // recognises that and prefills from the case payload.
-      to: `/sales/create?fromCase=${encodeURIComponent(id)}`,
+      // the case (caseid → /api/sales-orders POST). Mobile opens its own SV
+      // form, which hydrates ?fromCase=<id> like desktop and keeps the case link.
+      to: `/m/serviceorders/sv/new?fromCase=${encodeURIComponent(id)}`,
     },
   ],
   // CHANGELOG G.5: Issue Photos upload section. Backend /api/files accepts

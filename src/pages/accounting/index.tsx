@@ -19,6 +19,7 @@ import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { plPastForecastCol } from "@/lib/pl-forecast-edit";
 import { MonthlyPlForecastEditor } from "./monthly-pl-forecast-editor";
+import type { OpeningCredits } from "@/lib/aging-opening-credits";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
 import { formatCurrency, formatDateDMY, formatRM, roundSen, todayYmdMY } from "@/lib/utils";
@@ -700,12 +701,13 @@ export default function AccountingPage() {
   const needsAging = tab === "overview" || tab === "ar" || tab === "ap";
   const { data: coaResp, loading: coaLoading, refresh: refreshCoa } = useCachedJson<{ success?: boolean; data?: ChartOfAccount[] }>("/api/accounting/coa");
   const { data: jeResp, loading: jeLoading, error: jeError, refresh: refreshJe } = useCachedJson<{ success?: boolean; data?: JournalEntry[] }>(needsJournals ? "/api/accounting/journals" : null);
-  const { data: agingResp, loading: agingLoading, error: agingError, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[] } }>(needsAging ? "/api/accounting/aging" : null);
+  const { data: agingResp, loading: agingLoading, error: agingError, refresh: refreshAging } = useCachedJson<{ success?: boolean; data?: { ar: ARAgingEntry[]; ap: APAgingEntry[]; arOpeningCredits?: OpeningCredits } }>(needsAging ? "/api/accounting/aging" : null);
 
   const accounts: ChartOfAccount[] = useMemo(() => (coaResp?.success ? coaResp.data ?? [] : []), [coaResp]);
   const journals: JournalEntry[] = useMemo(() => (jeResp?.success ? jeResp.data ?? [] : []), [jeResp]);
   const arData: ARAgingEntry[] = useMemo(() => (agingResp?.success ? agingResp.data?.ar ?? [] : []), [agingResp]);
   const apData: APAgingEntry[] = useMemo(() => (agingResp?.success ? agingResp.data?.ap ?? [] : []), [agingResp]);
+  const arOpening: OpeningCredits | null = agingResp?.success ? agingResp.data?.arOpeningCredits ?? null : null;
   // A load just switched on paints one frame before its fetch starts — no
   // data and no error yet still reads as loading.
   const jePending = needsJournals && (jeLoading || (!jeResp && !jeError));
@@ -771,7 +773,7 @@ export default function AccountingPage() {
           )}
           {tab === "tb" && <TrialBalanceTab />}
           {tab === "gl" && <GeneralLedgerTab accounts={accounts} />}
-          {tab === "ar" && <ARTab arData={arData} onRefresh={fetchAll} />}
+          {tab === "ar" && <ARTab arData={arData} arOpening={arOpening} onRefresh={fetchAll} />}
           {tab === "ap" && <APTab apData={apData} onRefresh={fetchAll} />}
           {tab === "supplier-discount" && <SupplierDiscountTab />}
           {tab === "debtors" && <PartyListTab side="DEBTOR" />}
@@ -4465,7 +4467,7 @@ function agingGroupsFor(show: AgingShow, all: AgingGroup[]): AgingGroup[] {
 const AGING_BUCKET_TONE = ["", "", "text-[#9C6F1E]", "text-[#B8601A] font-medium", "text-[#9A3A2D] font-medium"];
 
 function AgingListTable({
-  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue, renderDetail, groupExtra,
+  partyHeader, groups, sectioned, open, onToggle, typeLabel, nextDue, renderDetail, groupExtra, footNote,
 }: {
   partyHeader: string;
   groups: AgingGroup[];
@@ -4480,6 +4482,9 @@ function AgingListTable({
   renderDetail?: (r: AgingListRow) => ReactNode | null;
   /** Rows after a group's own (the repaid drawdowns' line). */
   groupExtra?: (g: AgingGroup, cols: number) => ReactNode;
+  /** One line under the total (Debtor Aging: the opening-period receipts
+      left out of the columns, owner 2026-11-11). */
+  footNote?: ReactNode;
 }) {
   const rows = groups.flatMap((g) => g.rows);
   const cols = 9 + (nextDue ? 1 : 0);
@@ -4572,6 +4577,11 @@ function AgingListTable({
           {AGING_KEYS.map((k) => <td key={k} className="py-3 px-4 text-right">{formatCurrency(sumOf(rows, k))}</td>)}
           <td className="py-3 px-4 text-right">{formatCurrency(rows.reduce((s, r) => s + agingListTotal(r), 0))}</td>
         </tr>
+        {footNote && (
+          <tr data-aging-opening="">
+            <td colSpan={cols} className="py-2 px-4 text-[12px] font-normal text-[#6B7280]">{footNote}</td>
+          </tr>
+        )}
       </tfoot>
     </table>
   );
@@ -4585,7 +4595,7 @@ const AGING_TYPE_TAG: Record<string, string> = {
   tf: "bg-[#E8EDF2] text-[#1F2A44]",
 };
 
-function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
+function ARTab({ arData, arOpening }: { arData: ARAgingEntry[]; arOpening?: OpeningCredits | null; onRefresh: () => void }) {
   // Expandable detail (owner 2026-07-08): click a row to show every open
   // document in its aging column — the old system's "Aging - Detail" layout.
   const [openAging, setOpenAging] = useState<Set<string>>(new Set());
@@ -4599,6 +4609,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   const [company, setCompany] = useState("");
   const companyOptions = useCompanyOptions();
   const [scopedAr, setScopedAr] = useState<ARAgingEntry[] | null>(null);
+  const [scopedOpening, setScopedOpening] = useState<OpeningCredits | null>(null);
   // Clearing scoped state on de-select happens in the selector's onChange (not
   // in the effect) to keep the effect side-effect-free per lint.
   const pickCompany = (v: string) => { setCompany(v); if (!v) setScopedAr(null); };
@@ -4606,26 +4617,32 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
     if (!company) return;
     let stale = false;
     fetch(`/api/accounting/aging?orgId=${encodeURIComponent(company)}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ar: ARAgingEntry[] } }>)
-      .then((j) => { if (!stale && j?.success && j.data) setScopedAr(j.data.ar ?? []); })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ar: ARAgingEntry[]; arOpeningCredits?: OpeningCredits } }>)
+      .then((j) => { if (!stale && j?.success && j.data) { setScopedAr(j.data.ar ?? []); setScopedOpening(j.data.arOpeningCredits ?? null); } })
       .catch(() => {});
     return () => { stale = true; };
   }, [company]);
   // As at a past month-end: the server rolls every invoice back (?asOf=).
   const at = useAgingAsAt();
   const pastKey = `${at.asOf}|${company}`;
-  const [pastAr, setPastAr] = useState<{ key: string; rows: ARAgingEntry[] } | null>(null);
+  const [pastAr, setPastAr] = useState<{ key: string; rows: ARAgingEntry[]; opening: OpeningCredits | null } | null>(null);
   useEffect(() => {
     if (!at.isPast) return;
     let stale = false;
     fetch(`/api/accounting/aging?asOf=${at.asOf}${company ? `&orgId=${encodeURIComponent(company)}` : ""}`)
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ar: ARAgingEntry[] } }>)
-      .then((j) => { if (!stale && j?.success && j.data) setPastAr({ key: `${at.asOf}|${company}`, rows: j.data.ar ?? [] }); })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { ar: ARAgingEntry[]; arOpeningCredits?: OpeningCredits } }>)
+      .then((j) => { if (!stale && j?.success && j.data) setPastAr({ key: `${at.asOf}|${company}`, rows: j.data.ar ?? [], opening: j.data.arOpeningCredits ?? null }); })
       .catch(() => {});
     return () => { stale = true; };
   }, [at.isPast, at.asOf, company]);
   const pastLoading = at.isPast && pastAr?.key !== pastKey;
   const rows = at.isPast ? (pastAr?.key === pastKey ? pastAr.rows : []) : company ? (scopedAr ?? []) : arData;
+  // Opening-period receipts not knocked off (owner 2026-11-11 「houzs 和 conts
+  // 的还之前的invoice的数额不要显示」): the server leaves them out of the rows;
+  // their total is named under the table, and the ledger still counts them.
+  const opening = at.isPast ? (pastAr?.key === pastKey ? pastAr.opening : null) : company ? scopedOpening : (arOpening ?? null);
+  const openingSen = opening?.receivedSen ?? 0;
+
 
   // Other debtors (owner 2026-10-17, Finance v2: "Debtor Aging includes
   // other-debtor aging"): their open bills from /other-party-aging, bucketed
@@ -4675,12 +4692,19 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
   const arCodes = (ctl.data?.controls ?? []).map((x) => x.code);
   const pastCtl = useControlsAsAt(at.isPast ? at.asOf : null, arCodes, company, "debit");
   const tradeList0 = tradeList.reduce((s, a) => s + agingListTotal(a), 0);
+  const openingCount = opening?.items.length ?? 0;
+  const openingText = openingSen > 0 && show !== "other"
+    ? `Not in the columns: ${openingCount} receipt${openingCount === 1 ? "" : "s"} from the opening period not knocked off yet, ${formatCurrency(openingSen)} — ${openingCount === 1 ? "it pays" : "they pay"} invoices from before the opening. The ledger still counts ${openingCount === 1 ? "it" : "them"}.`
+    : "";
+  const openingNote = openingText
+    ? <span title={(opening?.items ?? []).map((i) => `${i.customerName} · ${i.no} · ${formatDateDMY(i.date)} · ${formatCurrency(i.sen)}`).join("\n")}>{openingText}</span>
+    : null;
 
   // Finance v2 (2026-10-17): one download on the title row, Excel and PDF
   // only (owner), from the same aging builder.
   const asAt = at.asOf;
   const fileBase = `debtor-aging-${asAt}${company ? `-${company}` : ""}`;
-  const buildAging = () => buildGroupedAgingExportAoa("Customer", groups.map((g) => ({ label: g.label, parties: g.rows })));
+  const buildAging = () => buildGroupedAgingExportAoa("Customer", groups.map((g) => ({ label: g.label, parties: g.rows })), openingText || undefined);
   const downloads = [
     { label: "Export to Excel", onSelect: () => { void exportReportXlsx(`${fileBase}.xlsx`, "Debtor Aging (AR)", buildAging(), { moneyFormat: true }); } },
     {
@@ -4715,7 +4739,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
             value: pastCtl ? formatCurrency(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0)) : "—",
             tone: "info" as const,
             note: pastCtl && !pastLoading
-              ? <>per ledger as at {formatDateDMY(at.asOf)} · {controlDriftNote(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0) - tradeList0)}</>
+              ? <>per ledger as at {formatDateDMY(at.asOf)} · {controlDriftNote(ctl.data.controls.filter((x) => x.code !== "305-0000").reduce((t, x) => t + (pastCtl.get(x.code) ?? 0), 0) - (tradeList0 - openingSen))}</>
               : "per ledger",
           }] : []),
           {
@@ -4767,6 +4791,7 @@ function ARTab({ arData }: { arData: ARAgingEntry[]; onRefresh: () => void }) {
               open={openAging}
               onToggle={toggleAging}
               typeLabel={{ trade: "Trade", other: "Other debtor" }}
+              footNote={openingNote}
             />
           </div>
         </CardContent>
@@ -15758,6 +15783,8 @@ type CashPosPartyRow = { month: string; name: string; outstandingSen?: number; t
 type CashPosData = {
   date: string; accounts: CashPosAccount[]; totalBankEstSen: number; totalAvailableSen: number;
   repay: CashPosPartyRow[]; receive: CashPosPartyRow[];
+  /** Opening-period receipts not knocked off, left out of `receive` (2026-11-11). */
+  receiveOpeningCreditsSen?: number;
   planned: { id: string; partyName: string; ref: string; expectedDate: string; amountSen: number }[];
   tickWarnings: { account: string; day: string; sourceId: string; description: string; amountSen: number }[];
   openingMonth?: string | null;
@@ -15830,7 +15857,7 @@ function CashPosTfPanel({ rows, date, scope, onScope }: { rows: CashPosTfRow[]; 
 
 // Month-grouped breakdown the owner sketched: per month → one row per party
 // → month total → grand total.
-function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope, onScope, tone, collapseUpTo, collapseLabel }: {
+function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope, onScope, tone, collapseUpTo, collapseLabel, note }: {
   title: string;
   rows: CashPosPartyRow[];
   amountOf: (r: CashPosPartyRow) => number;
@@ -15842,6 +15869,8 @@ function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope,
   // grand total still counts them, same as the pending-list treatment.
   collapseUpTo?: string | null;
   collapseLabel?: string;
+  /** One line under the panel (TO RECEIVE: what is left out, as on Debtor Aging). */
+  note?: ReactNode;
 }) {
   const byMonth = new Map<string, CashPosPartyRow[]>();
   let collapsedSen = 0;
@@ -15916,6 +15945,7 @@ function CashPosPartyPanel({ title, rows, amountOf, scopeLabel, scopeAlt, scope,
             </tbody>
           </table>
         )}
+        {note && <div className="border-t border-[#F0ECE9] px-4 py-1.5 text-[11px] text-[#6B7280]">{note}</div>}
       </CardContent>
     </Card>
   );
@@ -16369,6 +16399,7 @@ function DailyCashTab() {
               tone="receive"
               collapseUpTo={cur.openingMonth ?? null}
               collapseLabel={cur.openingMonth ? `Opening era (≤ ${cur.openingMonth})` : "Opening era"}
+              note={(cur.receiveOpeningCreditsSen ?? 0) > 0 ? <>Left out, as on Debtor Aging: {formatCurrency(cur.receiveOpeningCreditsSen ?? 0)} received in the opening period and not knocked off yet — it pays invoices from before the opening.</> : undefined}
             />
           </div>
           <Card>

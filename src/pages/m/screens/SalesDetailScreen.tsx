@@ -20,9 +20,11 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { StatusPill } from "../components";
-import { FormSheet } from "../components";
+import { usePermissions } from "@/lib/use-permission";
+import { MobileHeader, StatusPill, FormSheet, ResponsiveActionDock } from "../components";
 import { M } from "../theme";
+import { useResponsiveLayout } from "../lib/responsive-layout";
+import { SalesOrderDetail } from "./SalesOrderDetail";
 import { editSalesOrderSpec, newDeliveryOrderSpec } from "../config/forms";
 import { type FormSpec } from "../config/form-types";
 import { mutateJson, refreshOne, refreshList } from "../config/mutate";
@@ -47,9 +49,23 @@ function arr(v: unknown): RawRow[] {
   return Array.isArray(v) ? (v as RawRow[]) : [];
 }
 
+// The Sales Order detail is ONE adaptive screen (SalesOrderDetail.tsx) for phone,
+// foldable and tablet (owner 2026-10-23, "Option A"): the approved read-only phone
+// design is unchanged, and wider screens add the Payments block and the status actions
+// the tablet detail always had.
+//
+// LEGACY: SalesDetailTablet below is the previous tablet screen. It is no longer
+// rendered; it stays until the tablet actions and Paid / Balance / Payments have been
+// verified against it in a non-production environment, then it is deleted. Do not add
+// features to it.
 export function SalesDetailScreen() {
+  return <SalesOrderDetail />;
+}
+
+export function SalesDetailTablet() {
   const navigate = useNavigate();
   const { confirm } = useConfirm();
+  const phone = useResponsiveLayout().mode === "phone";
   const { id = "" } = useParams();
   const url = `/api/sales-orders/${encodeURIComponent(id)}`;
   const { data, loading, error } = useCachedJson<Envelope>(url);
@@ -57,6 +73,8 @@ export function SalesDetailScreen() {
     id ? `/api/audit-events?resource=sales-orders&resourceId=${encodeURIComponent(id)}` : null,
   );
 
+  const { hasPermission } = usePermissions();
+  const canConfirm = hasPermission("sales-orders", "confirm");
   const [editSpec, setEditSpec] = useState<FormSpec | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -73,7 +91,7 @@ export function SalesDetailScreen() {
   };
 
   const onConfirm = async () => {
-    if (busy) return;
+    if (busy || !canConfirm) return;
     setBusy(true);
     const r = await mutateJson(`${url}/confirm`, "POST");
     setBusy(false);
@@ -111,9 +129,20 @@ export function SalesDetailScreen() {
     } else flash(r.error || "Undo failed");
   };
 
-  if (loading && !doc) return <Center text="Loading…" />;
-  if (error && !doc) return <Center text="Couldn’t load this order." />;
-  if (!doc) return <Center text="Order not found." />;
+  // Phones: the shared header (with back) shows on the loading / error states
+  // too, so the header does not jump once the document arrives.
+  const withHeader = (node: ReactNode) =>
+    phone ? (
+      <>
+        <MobileHeader title="Sales Order" onBack={() => navigate(-1)} />
+        {node}
+      </>
+    ) : (
+      node
+    );
+  if (loading && !doc) return withHeader(<Center text="Loading…" />);
+  if (error && !doc) return withHeader(<Center text="Couldn’t load this order." />);
+  if (!doc) return withHeader(<Center text="Order not found." />);
 
   const status = str(doc, "status");
   const pill = resolveStatus(status, STATUS_MAPS.so);
@@ -146,26 +175,35 @@ export function SalesDetailScreen() {
 
   return (
     <div style={{ paddingBottom: 92 }}>
-      {/* Header */}
+      {/* Header — phones: the shared MobileHeader (back arrow + status pill),
+          and the ID / name block below scrolls with the page. Tablets keep
+          the original sticky block with its text back link. */}
+      {phone ? (
+        <MobileHeader
+          title="Sales Order"
+          onBack={() => navigate(-1)}
+          trailing={<StatusPill style={pill.style} label={pill.label} size="sm" />}
+        />
+      ) : null}
       <div
         style={{
           background: M.card,
           padding: "14px 16px 12px",
           borderBottom: `1px solid ${M.divider}`,
-          position: "sticky",
-          top: 0,
-          zIndex: 5,
+          ...(phone ? null : { position: "sticky", top: 0, zIndex: 5 }),
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <button
-            onClick={() => navigate(-1)}
-            style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}
-          >
-            ‹ Sales Orders
-          </button>
-          <StatusPill style={pill.style} label={pill.label} size="sm" />
-        </div>
+        {phone ? null : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <button
+              onClick={() => navigate(-1)}
+              style={{ background: "none", border: "none", color: M.taupe, fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}
+            >
+              ‹ Sales Orders
+            </button>
+            <StatusPill style={pill.style} label={pill.label} size="sm" />
+          </div>
+        )}
         <div
           style={{
             fontSize: 10,
@@ -173,7 +211,7 @@ export function SalesDetailScreen() {
             letterSpacing: ".13em",
             textTransform: "uppercase",
             color: M.taupe,
-            marginTop: 7,
+            marginTop: phone ? 0 : 7,
           }}
         >
           {str(doc, "companySO", "companySOId")}
@@ -426,7 +464,7 @@ export function SalesDetailScreen() {
         {status === "DRAFT" ? (
           <>
             <Btn ghost flex={1} onClick={() => setEditSpec(editSalesOrderSpec(doc, id))}>Edit Draft</Btn>
-            <Btn flex={1.3} busy={busy} onClick={onConfirm}>Confirm Order</Btn>
+            {canConfirm ? <Btn flex={1.3} busy={busy} onClick={onConfirm}>Confirm Order</Btn> : null}
           </>
         ) : status === "CANCELLED" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
@@ -463,13 +501,11 @@ export function SalesDetailScreen() {
       />
 
       {toast ? (
+        <ResponsiveActionDock scope="detail" phoneBottom={84} zIndex={90}>
         <div
           style={{
-            position: "fixed",
-            left: 18,
-            right: 18,
-            bottom: "calc(84px + env(safe-area-inset-bottom))",
-            zIndex: 90,
+            width: "calc(100% - 36px)",
+            maxWidth: 520,
             background: M.raisin,
             color: "#fff",
             borderRadius: 13,
@@ -481,6 +517,7 @@ export function SalesDetailScreen() {
         >
           {toast}
         </div>
+        </ResponsiveActionDock>
       ) : null}
     </div>
   );

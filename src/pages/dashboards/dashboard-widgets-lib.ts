@@ -599,3 +599,29 @@ export function financeRatios(rows: FinanceDashRow[]) {
     quickRatio: bs && cl > 0 ? (bs.currentAssets - bs.inventory) / cl : null,
   };
 }
+
+/** A finished month's saved Pending Delivery / Outstanding (overview.stateKpis). */
+export type StateKpis = {
+  pendingDeliverySen: number | null;
+  outstandingSen: number | null;
+  asOf: string | null;
+};
+
+/**
+ * Pending Delivery / Outstanding tile for the picked period (owner 2026-10-09: a finished month
+ * keeps that month's figure). All-time and the current month stay live. Used by the mobile Home.
+ * NOTE: the server field overview.stateKpis is not on main yet, so until it is, a finished month
+ * reads "no record" on the phone Home.
+ */
+export function stateKpiTile(
+  period: string,
+  saved: number | null | undefined,
+  asOf: string | null | undefined,
+  liveSen: number,
+  curYm = new Date().toISOString().slice(0, 7),
+): { sen: number | null; tag: string; past: boolean } {
+  if (period === "all" || period >= curYm) return { sen: liveSen, tag: "live", past: false };
+  return saved == null
+    ? { sen: null, tag: "no record", past: true }
+    : { sen: saved, tag: `as of ${asOf}`, past: true };
+}

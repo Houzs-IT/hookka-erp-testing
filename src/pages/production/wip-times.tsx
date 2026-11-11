@@ -24,6 +24,13 @@ import { useUrlState, useUrlStateBool } from "@/lib/use-url-state";
 import { findHeaderIndex } from "@/lib/table-import";
 import type * as XlsxNs from "xlsx";
 import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  confirmJobCardImpact,
+  previewWipTimeEdits,
+  readJobCardImpact,
+} from "@/lib/job-card-impact";
+import { JobCardImpactNotice } from "./components/JobCardImpactNotice";
 type XLSXModule = typeof XlsxNs;
 
 type WipTimeRow = {
@@ -168,6 +175,7 @@ export default function WipTimesPage() {
   // edit each row in place. URL-stateful so the filter survives reloads.
   const [missingOnly, setMissingOnly] = useUrlStateBool("missing", false);
   const [exporting, setExporting] = useState(false);
+  const { confirm } = useConfirm();
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -196,6 +204,7 @@ export default function WipTimesPage() {
     skipped: number;
     appliedBomCount: number;
     itemErrors: { rowIdx: number; error: string }[];
+    jobCardPreview?: unknown;
     perItem: Array<{
       wipLabel: string;
       deptCode: string;
@@ -209,6 +218,10 @@ export default function WipTimesPage() {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportPreview | null>(null);
+  const importCardImpact = useMemo(
+    () => (importPreview ? readJobCardImpact(importPreview) : null),
+    [importPreview],
+  );
   // Esc or a backdrop click on a half-typed minutes edit asks "Discard your
   // changes?" first; nothing happens mid-save (review pass 2 C2-1 follow-up).
   const editGuard = useFormDiscardGuard({ draftMinutes: editing?.draftMinutes ?? "" }, {
@@ -314,15 +327,13 @@ export default function WipTimesPage() {
     }
     setSaving(true);
     try {
+      const edit = { wipLabel: editing.wipLabel, deptCode: editing.departmentCode, minutes: m };
+      if (!(await confirmJobCardImpact(confirm, await previewWipTimeEdits([edit])))) return;
       const res = await fetch("/api/wip-times", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          wipLabel: editing.wipLabel,
-          deptCode: editing.departmentCode,
-          minutes: m,
-        }),
+        body: JSON.stringify(edit),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -373,9 +384,11 @@ export default function WipTimesPage() {
       return;
     }
     setBatchSaving(true);
-    setBatchProgress({ done: 0, total: selectedRows.length });
     const failed: string[] = [];
     try {
+      const edits = selectedRows.map((r) => ({ wipLabel: r.wipLabel, deptCode: r.departmentCode, minutes: m }));
+      if (!(await confirmJobCardImpact(confirm, await previewWipTimeEdits(edits)))) return;
+      setBatchProgress({ done: 0, total: selectedRows.length });
       let done = 0;
       for (const r of selectedRows) {
         try {
@@ -1497,6 +1510,7 @@ export default function WipTimesPage() {
                       )}
                     </div>
                   )}
+                  {importCardImpact && <JobCardImpactNotice impact={importCardImpact} />}
                 </>
               )}
               {importResult && (

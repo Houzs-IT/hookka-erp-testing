@@ -8,7 +8,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
-import app, { bomMinutesForCard } from "../src/api/routes/jobcard-sync.ts";
+import app from "../src/api/routes/jobcard-sync.ts";
+import { bomMinutesForCard } from "../src/api/lib/fill-zero-minutes.ts";
 import { breakBomIntoWips } from "../src/api/lib/bom-wip-breakdown.ts";
 
 // ---- Part 1: matching rule -------------------------------------------------

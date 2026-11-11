@@ -1,0 +1,21 @@
+{
+  "_note": "sha256/16 of the server-rendered markup of the APPROVED phone Sales Order screens (fixture data, shell width 390/600), captured from upstream/staging c36fa4ddc BEFORE the Sales responsive migration. A phone-mode change must not alter these; if a phone change is intended, regenerate and have it reviewed. The three list entries were regenerated on 2026-10-26/27 for the Sales Orders v3 listing (intended) and are rendered under a frozen clock (GOLDEN_NOW in tests/_ssr-sales.mjs) because the cards show an Expected DD countdown; the detail entries are unchanged. The 11 detail entries were regenerated on 2026-10-27 for the Sales Order Detail v4 visual redesign (intended) and are also rendered under the frozen clock, because the overview shows a countdown to Hookka Expected DD.",
+  "detail": {
+    "detail-390-CANCELLED": "f561abc569b658d6",
+    "detail-390-CONFIRMED": "7b0148cd3f1d61d9",
+    "detail-390-DELIVERED": "47a56f94f0ec8eb5",
+    "detail-390-DRAFT": "badc53fe40b47de2",
+    "detail-390-IN_PRODUCTION": "a6b774947c11b85b",
+    "detail-390-ON_HOLD": "a800a53093dec585",
+    "detail-390-READY_TO_SHIP": "bf97002ec3aac956",
+    "detail-390-longnotes": "7b0148cd3f1d61d9",
+    "detail-390-noitems": "b467a65f19b3d432",
+    "detail-390-nonotes": "7b0148cd3f1d61d9",
+    "detail-600-CONFIRMED": "7b0148cd3f1d61d9"
+  },
+  "list": {
+    "list-390-empty": "3849c59a0935971f",
+    "list-390": "81ee8b7d7e0e14b3",
+    "list-600": "81ee8b7d7e0e14b3"
+  }
+}

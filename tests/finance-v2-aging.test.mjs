@@ -58,7 +58,8 @@ test("title row: the company picker, Recalculate counter (debtors), one download
 
 test("the download is the same aging builder: Excel and a printable PDF", () => {
   // Since the other debtors joined (owner 2026-10-17) the export is grouped.
-  assert.match(ar, /buildGroupedAgingExportAoa\("Customer", groups\.map\(\(g\) => \(\{ label: g\.label, parties: g\.rows \}\)\)\)/);
+  // Since 2026-11-11 the debtor export also names the opening-period receipts left out (tests/aging-opening-receipts.test.mjs).
+  assert.match(ar, /buildGroupedAgingExportAoa\("Customer", groups\.map\(\(g\) => \(\{ label: g\.label, parties: g\.rows \}\)\), openingText \|\| undefined\)/);
   assert.match(ap, /buildGroupedAgingExportAoa\("Creditor", groups\.map\(\(g\) => \(\{/);
   assert.match(ui, /const AGING_PDF: PdfExportOpts = \{ rowKind: agingRowKind, leftCols: \[1, 2\], colWidths: \{ 0: 168,/);
   for (const body of [ar, ap]) {

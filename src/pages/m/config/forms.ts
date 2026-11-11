@@ -26,6 +26,7 @@
 // ADDITIVE: imported only by files under src/pages/m/. No backend changes.
 // ===========================================================================
 import { type FormSpec, type FormValues, type SelectOption } from "./form-types";
+import { formLineFromServer, itemFromFormLine, soEditBlockers, soEditItemsBody, type SoEditHeader } from "../lib/so-edit";
 import { mutateJson, refreshList, refreshOne, newIdOf } from "./mutate";
 import { todayYmdMY } from "@/lib/utils";
 
@@ -281,16 +282,9 @@ export function newSalesOrderSpec(prefill?: SOCreatePrefill): FormSpec {
 
 /** Edit form — prefilled from the fetched SO doc. PUT merges header + items. */
 export function editSalesOrderSpec(doc: Record<string, unknown>, id: string): FormSpec {
-  const items = arr(doc.items).map((it) => ({
-    productId: s(it.productId),
-    productCode: s(it.productCode),
-    productName: s(it.productName),
-    itemCategory: s(it.itemCategory) || "BEDFRAME",
-    sizeLabel: s(it.sizeLabel),
-    fabricCode: s(it.fabricCode),
-    quantity: n(it.quantity) || 1,
-    basePriceSen: n(it.basePriceSen) || n(it.unitPriceSen),
-  }));
+  // Every stored line field rides through this form (`__src`) and comes back on save: the server replaces ALL
+  // of an order's lines, so a form that only knew a few of them used to erase the rest (lib/so-edit.ts).
+  const items = arr(doc.items).map((it) => formLineFromServer(it));
   return {
     title: "Edit Sales Order",
     submitLabel: "Save",
@@ -307,6 +301,10 @@ export function editSalesOrderSpec(doc: Record<string, unknown>, id: string): Fo
       notes: s(doc.notes),
       items,
     },
+    validate: (v) => {
+      const lines = arr(v.items).map((l, i) => itemFromFormLine(l, i));
+      return soEditBlockers({ customerId: s(v.customerId) } as SoEditHeader, lines)[0] ?? null;
+    },
     submit: async (v) => {
       const body = {
         customerId: s(v.customerId),
@@ -317,7 +315,7 @@ export function editSalesOrderSpec(doc: Record<string, unknown>, id: string): Fo
         customerDeliveryDate: s(v.customerDeliveryDate),
         hookkaExpectedDD: s(v.hookkaExpectedDD),
         notes: s(v.notes),
-        items: soItemsForServer(arr(v.items)),
+        items: soEditItemsBody(arr(v.items).map((l, i) => itemFromFormLine(l, i))),
       };
       const res = await mutateJson(`/api/sales-orders/${encodeURIComponent(id)}`, "PUT", body);
       if (!res.ok) return { ok: false, error: res.error };

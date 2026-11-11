@@ -272,17 +272,15 @@ test("source guard: the dashboard tile no longer pulls the whole PO dataset", ()
   assert.match(src, /"\/api\/delivery-orders\/pending-value"/);
 });
 
-test("source guard: the MOBILE Home shows the shared dashboard, not its own copy of the number", () => {
+test("source guard: the MOBILE Home takes Pending Delivery from the server's pre-summed figure, never the whole ready-planning row set", () => {
   const src = readFileSync(
     resolve(process.cwd(), "src/pages/m/screens/Home.tsx"),
     "utf8",
   );
-  // BUG-2026-08-13-011 kept the phone off the whole /ready-planning row set.
-  // Since 2026-10-24 Home renders DashboardBody (the merged dashboard — its
-  // Pending Delivery tile is the desktop KTile, guarded above), so Home must
-  // not fetch or re-derive the figure itself at all.
-  assert.match(src, /DashboardBody/);
+  // BUG-2026-08-13-011 kept the phone off the whole /ready-planning row set. Home v10 replaces the
+  // 2026-10-24 DashboardBody Home (see the PR description) and reads the SAME small server-computed
+  // fetch as the desktop KTile: /api/delivery-orders/pending-value (pre-summed) + /stats.
   assert.equal(src.includes('"/api/delivery-orders/ready-planning"'), false);
-  assert.equal(src.includes("/api/delivery-orders/pending-value"), false);
+  assert.match(src, /\/api\/delivery-orders\/pending-value/);
   assert.equal(/ready\s*\?\?\s*\[\]/.test(src), false);
 });

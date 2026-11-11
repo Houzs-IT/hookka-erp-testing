@@ -108,10 +108,13 @@ test("label maps: every dept picker lists FIBRE", () => {
     "src/pages/service-cases/detail.tsx",
     "src/pages/m/config/forms.ts",
     "src/pages/m/config/modules.ts",
-    "src/pages/m/screens/ProductionScreen.tsx",
     "src/pages/m/config/departments.ts",
   ];
   for (const f of files) assert.ok(read(f).includes("FIBRE"), `${f} missing FIBRE`);
+  // The phone Production list takes its departments from the desktop constant (which carries FIBRE),
+  // so it cannot drift from the Production page.
+  assert.match(read("src/pages/m/lib/production-ui.ts"), /import \{ DEPARTMENTS \} from "@\/pages\/production\/utils"/);
+  assert.match(read("src/pages/m/screens/ProductionScreen.tsx"), /\bDEPTS\b/);
   const bom = read("src/pages/bom.tsx");
   assert.ok(bom.includes('"FOAM", "FIBRE", "FRAMING", "WEBBING", "UPHOLSTERY", "PACKING"]'), "BOM DEPT_ORDER");
   assert.match(bom, /FIBRE: "Fibre",/);
