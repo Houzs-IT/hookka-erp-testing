@@ -9,7 +9,7 @@
 //     bar are built from THAT document, not the last one opened;
 //   • the sticky action bar offers only the moves that document's status
 //     allows, because it filters the grid's own row menu — a DRAFT delivery
-//     order is offered "Mark Dispatched" and NOT "Mark Delivered (DO Signed)";
+//     order is offered "Mark Dispatched" and NOT "Mark Delivered";
 //     a dispatched one is offered the sign-back and not the dispatch;
 //   • the one-line variant/spec description is the SHARED formatter the printed
 //     DO uses (buildSpec, src/lib/doc-line-format.ts), not a local copy that
@@ -66,7 +66,7 @@ function doRowMenu(status) {
       disabled: status !== "LOADED",
     },
     {
-      label: "Mark Delivered (DO Signed)",
+      label: "Mark Delivered",
       disabled: status !== "LOADED" && status !== "IN_TRANSIT",
     },
     { label: "Transfer to Invoice", disabled: status !== "DELIVERED" },
@@ -119,14 +119,14 @@ test("the delivery page opens the drawer without navigating away from the list",
 test("a DRAFT delivery order is offered dispatch, not sign-back", () => {
   const labels = barLabels("DRAFT");
   assert.ok(labels.includes("Mark Dispatched"));
-  assert.ok(!labels.includes("Mark Delivered (DO Signed)"));
+  assert.ok(!labels.includes("Mark Delivered"));
   assert.ok(!labels.includes("Transfer to Invoice"));
   assert.ok(!labels.includes("Reverse to Pending Dispatch"));
 });
 
 test("a dispatched delivery order is offered the sign-back, not the dispatch", () => {
   const labels = barLabels("LOADED");
-  assert.ok(labels.includes("Mark Delivered (DO Signed)"));
+  assert.ok(labels.includes("Mark Delivered"));
   assert.ok(labels.includes("Mark Out for Delivery (In Transit)"));
   assert.ok(labels.includes("Reverse to Pending Dispatch"));
   assert.ok(!labels.includes("Mark Dispatched"));
@@ -167,7 +167,7 @@ test("the bar renders in the type's configured order, whatever order the menu is
     [
       "Reverse to Pending Dispatch",
       "Mark Out for Delivery (In Transit)",
-      "Mark Delivered (DO Signed)",
+      "Mark Delivered",
       "Cancel Delivery Order",
     ],
   );
