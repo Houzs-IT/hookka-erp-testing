@@ -750,6 +750,9 @@ export async function productionEfficiency(
   let counted = 0;
   for (const w of byWorker.values()) {
     if (!(w.prodHours > 0)) continue;
+    // Production efficiency leaves helpers (杂工) out — owner 2026-11-11: the KPI
+    // follows production efficiency, the same figure the allowance uses.
+    if (w.isHelper) continue;
     minutes += w.prodMinutes;
     hours += w.prodHours;
     counted += 1;

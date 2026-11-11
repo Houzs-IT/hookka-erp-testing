@@ -79,6 +79,12 @@ export type EmployeeDraft = {
   bankAccount: string;
   /** Outsourced rather than own staff — drives the OSC-### series. */
   isOutsource: boolean;
+  /**
+   * Helper / 杂工 (owner 2026-11-11): assists others, scans no completions of
+   * their own. Hours still count as Production Hours; no personal efficiency,
+   * no efficiency allowance, left out of production efficiency.
+   */
+  isHelper: boolean;
   /** "MONTHLY" (default) or "DAILY". */
   payMode: string;
   /** Rate per day worked, sen. Only used when payMode is DAILY. */
@@ -342,6 +348,22 @@ export function EmployeeDrawer({
                 />
                 Outsourced (paid per day, numbered OSC-###)
               </label>
+            </Field>
+            <Field label="Role on the floor" full>
+              <label className="mt-1 flex items-center gap-2 text-[11px] text-[#374151]">
+                <input
+                  type="checkbox"
+                  checked={draft.isHelper}
+                  onChange={(e) => set("isHelper", e.target.checked)}
+                />
+                Helper (assists others — no personal efficiency, no efficiency allowance)
+              </label>
+              {draft.isHelper && (
+                <p className="mt-1 text-[10px] text-[#6B7280]">
+                  Their clocked hours still count as Production Hours. Department efficiency
+                  leaves them out and shows an &quot;Overall&quot; figure that includes them.
+                </p>
+              )}
             </Field>
             {draft.isOutsource && (
               <>

@@ -87,6 +87,8 @@ type WorkerRow = {
   bankAccount: string | null;
   isOutsource?: boolean | number | null;
   is_outsource?: boolean | number | null;
+  isHelper?: boolean | number | null;
+  is_helper?: boolean | number | null;
   payMode?: string | null;
   pay_mode?: string | null;
   dailyRateSen?: number | null;
@@ -244,6 +246,8 @@ function rowToWorker(row: WorkerRow) {
     // Dual-keyed per the repo rule — the driver camelCases, but a row read
     // through another path can arrive snake_case.
     isOutsource: Boolean(row.isOutsource ?? row.is_outsource ?? false),
+    // Helper / 杂工 (owner 2026-11-11): no personal efficiency, no efficiency allowance.
+    isHelper: Boolean(row.isHelper ?? row.is_helper ?? false),
     payMode: String(row.payMode ?? row.pay_mode ?? "MONTHLY") || "MONTHLY",
     dailyRateSen: Number(row.dailyRateSen ?? row.daily_rate_sen ?? 0),
   };
@@ -388,8 +392,8 @@ app.post("/", async (c) => {
          epfEnabled, socsoEnabled, eisEnabled, pcbEnabled,
          joinDate, icNumber, passportNumber, nationality,
          efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen,
-         paymentMethod, bankName, bankAccount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         paymentMethod, bankName, bankAccount, isHelper)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         id,
@@ -425,6 +429,8 @@ app.post("/", async (c) => {
         normalizePaymentMethod(paymentMethod),
         normalizePaymentMethod(paymentMethod) === "CASH" ? null : (typeof bankName === "string" ? bankName.trim() : null),
         normalizePaymentMethod(paymentMethod) === "CASH" ? null : (typeof bankAccount === "string" ? bankAccount.trim() : null),
+        // A real boolean — is_helper is a Postgres BOOLEAN (see the isOutsource note in PUT).
+        body.isHelper === true,
       )
       .run();
 
@@ -637,6 +643,7 @@ app.put("/:id", async (c) => {
       bankName: body.bankName ?? existing.bankName,
       bankAccount: body.bankAccount ?? existing.bankAccount,
       isOutsource: body.isOutsource ?? existing.isOutsource,
+      isHelper: body.isHelper ?? existing.isHelper ?? existing.is_helper ?? false,
       payMode: body.payMode ?? existing.payMode,
       dailyRateSen: body.dailyRateSen ?? existing.dailyRateSen,
       name: body.name ?? existing.name,
@@ -723,7 +730,7 @@ app.put("/:id", async (c) => {
          joinDate = ?, icNumber = ?, passportNumber = ?, nationality = ?, resignedAt = ?,
          efficiencyAllowanceSen = ?, efficiencyThresholdPct = ?, leadershipAllowanceSen = ?,
          paymentMethod = ?, bankName = ?, bankAccount = ?,
-         isOutsource = ?, payMode = ?, dailyRateSen = ?,
+         isOutsource = ?, payMode = ?, dailyRateSen = ?, isHelper = ?,
          annual_leave_entitlement_days = ?, medical_leave_entitlement_days = ?
        WHERE id = ?`,
     )
@@ -771,6 +778,8 @@ app.put("/:id", async (c) => {
         // Only DAILY is special; anything else means the ordinary monthly rule.
         String(merged.payMode ?? "MONTHLY") === "DAILY" ? "DAILY" : "MONTHLY",
         Math.max(0, Math.round(Number(merged.dailyRateSen) || 0)),
+        // Real boolean, same reason as isOutsource above.
+        merged.isHelper === true || merged.isHelper === 1,
         merged.annualLeaveEntitlementDays,
         merged.medicalLeaveEntitlementDays,
         id,

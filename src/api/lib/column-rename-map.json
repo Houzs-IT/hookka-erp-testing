@@ -56,6 +56,7 @@
   "baseUom": "base_uom",
   "customerStage": "customer_stage",
   "isOutsource": "is_outsource",
+  "isHelper": "is_helper",
   "payMode": "pay_mode",
   "dailyRateSen": "daily_rate_sen",
   "balanceSen": "balance_sen",
