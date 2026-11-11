@@ -9,6 +9,7 @@ import {
 } from "./expected-job-cards";
 import {
   LIVE_STATUSES,
+  LIVE_STATUS_LIST,
   bomMinutesForCard,
   chunkList,
   loadLiveDeptKeys,
@@ -31,16 +32,27 @@ export interface CardMinutesChange {
   deptCode: string;
   fromMinutes: number;
   toMinutes: number;
+  isCompleted: boolean;
 }
 
 export type CardMinutesSyncOutcome = { updated: number; scanned: number } | { error: string };
+
+export interface JobCardMinutesPreview {
+  toUpdate: number;
+  unfinished: number;
+  completedThisMonth: number;
+}
+
+export type JobCardMinutesPreviewOutcome = JobCardMinutesPreview | { error: string };
 
 type CandidateCard = ProductionOrderRow & {
   jcId: string;
   wipKey: string | null;
   deptCode: string | null;
+  status: string;
   minutes: number | null;
 };
+
 
 interface ProductBomChange {
   before: BomMinutesSource | null;
@@ -84,7 +96,7 @@ async function selectCandidateCards(
   const selection = await db
     .prepare(
       `SELECT jc.id AS "jcId", jc.wipKey AS "wipKey", jc.departmentCode AS "deptCode",
-              jc.productionTimeMinutes AS "minutes",
+              jc.status AS "status", jc.productionTimeMinutes AS "minutes",
               po.id, po.salesOrderId, po.productCode,
               po.itemCategory, po.quantity, po.currentDepartment, po.targetEndDate,
               po.startDate, po.sizeCode, po.sizeLabel, po.fabricCode, po.gapInches,
@@ -153,7 +165,13 @@ export async function planCardMinutesChanges(
       minutesFromBom(cardKey, expectedFor(card, "after", productChange.after), hasOtherCardInDept),
     );
     if (target === null) continue;
-    changes.push({ jcId: card.jcId, deptCode: cardKey.deptCode, fromMinutes: currentMinutes, toMinutes: target });
+    changes.push({
+      jcId: card.jcId,
+      deptCode: cardKey.deptCode,
+      fromMinutes: currentMinutes,
+      toMinutes: target,
+      isCompleted: !LIVE_STATUS_LIST.includes(card.status),
+    });
   }
   return { scanned: cards.length, changes };
 }
@@ -189,6 +207,25 @@ export async function writeCardMinutesChanges(
     updated += part.length;
   }
   return updated;
+}
+
+export function summarizeCardMinutesChanges(changes: readonly CardMinutesChange[]): JobCardMinutesPreview {
+  const completedThisMonth = changes.filter((change) => change.isCompleted).length;
+  return { toUpdate: changes.length, unfinished: changes.length - completedThisMonth, completedThisMonth };
+}
+
+export async function previewJobCardMinutesForBomChanges(
+  db: D1Database,
+  savedChanges: readonly SavedBomChange[],
+): Promise<JobCardMinutesPreviewOutcome> {
+  try {
+    const plan = await planCardMinutesChanges(db, savedChanges);
+    return summarizeCardMinutesChanges(plan.changes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[bom-edit-card-sync preview] err=${message}`);
+    return { error: message };
+  }
 }
 
 export async function syncJobCardMinutesToBomChanges(

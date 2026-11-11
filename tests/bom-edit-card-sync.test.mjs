@@ -73,7 +73,9 @@ function makeStore({ failCardSelect = false } = {}) {
     return cards
       .filter((c) => c.status !== "CANCELLED" && isInWindow(c))
       .filter((c) => productCodes.includes(orders[c.poId].productCode))
-      .map((c) => ({ ...orders[c.poId], jcId: c.jcId, wipKey: c.wipKey, deptCode: c.deptCode, minutes: c.minutes }));
+      .map((c) => ({
+        ...orders[c.poId], jcId: c.jcId, wipKey: c.wipKey, deptCode: c.deptCode, status: c.status, minutes: c.minutes,
+      }));
   }
 
   function rowsFor(sql, bound) {
@@ -183,15 +185,53 @@ test("wipTimesExcelImportMovesCardsOfEveryEditedProduct", async () => {
   assertUntouchedOutsideTheWindow(store);
 });
 
-test("wipTimesExcelImportDryRunTouchesNoCard", async () => {
+test("wipTimesExcelImportDryRunPreviewsCardsAndWritesNothing", async () => {
   const store = makeStore();
   const { body } = await send(wipTimesApp, store.db, "POST", "/bulk-import", {
     dryRun: true,
     items: [{ wipLabel: "BC05 Cover", deptCode: "FAB_SEW", minutes: 25 }],
   });
   assert.deepEqual(body.jobCardMinutes, { updated: 0, scanned: 0 });
-  assert.equal(store.cardSelects.length, 0);
+  assert.deepEqual(body.jobCardPreview, { toUpdate: 3, unfinished: 2, completedThisMonth: 1 });
+  assert.equal(store.cardUpdates.length, 0, "a preview never writes a card");
   assert.equal(store.minutesOf("live-15"), 15);
+});
+
+test("wipTimesLiveImportHasNoPreview", async () => {
+  const store = makeStore();
+  const { body } = await send(wipTimesApp, store.db, "POST", "/bulk-import", {
+    items: [{ wipLabel: "BC05 Cover", deptCode: "FAB_SEW", minutes: 25 }],
+  });
+  assert.equal(body.jobCardPreview, null);
+});
+
+test("editBomPreviewCountsCardsAndWritesNothing", async () => {
+  const store = makeStore();
+  const { status, body } = await send(bomApp, store.db, "PUT", "/templates/bom-bc05?preview=true",
+    { wipComponents: JSON.parse(coverBom("BC05", { sew: 18 })) });
+  assert.equal(status, 200);
+  assert.deepEqual(body.jobCardPreview, { toUpdate: 3, unfinished: 2, completedThisMonth: 1 });
+  assert.equal(store.cardUpdates.length, 0);
+  assert.equal(store.audits.length, 0);
+  const { body: reread } = await send(bomApp, store.db, "PUT", "/templates/bom-bc05?preview=true",
+    { wipComponents: JSON.parse(coverBom("BC05", { sew: 18 })) });
+  assert.deepEqual(reread.jobCardPreview, body.jobCardPreview, "the BOM itself was not saved by the preview");
+});
+
+test("editBomPreviewOfADraftCountsNothing", async () => {
+  const store = makeStore();
+  store.setBom("bom-bc05", { versionStatus: "DRAFT" });
+  const { body } = await send(bomApp, store.db, "PUT", "/templates/bom-bc05?preview=true",
+    { wipComponents: JSON.parse(coverBom("BC05", { sew: 18 })) });
+  assert.deepEqual(body.jobCardPreview, { toUpdate: 0, unfinished: 0, completedThisMonth: 0 });
+});
+
+test("aFailedPreviewIsReportedNotHidden", async () => {
+  const store = makeStore({ failCardSelect: true });
+  const { status, body } = await send(bomApp, store.db, "PUT", "/templates/bom-bc05?preview=true",
+    { wipComponents: JSON.parse(coverBom("BC05", { sew: 18 })) });
+  assert.equal(status, 200);
+  assert.deepEqual(body.jobCardPreview, { error: "connection reset" });
 });
 
 test("settingAStepToZeroNeverZeroesCards", async () => {

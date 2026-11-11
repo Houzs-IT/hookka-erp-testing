@@ -50,7 +50,8 @@ type ZeroCard = ProductionOrderRow & {
 
 type MinutesExpectation = Pick<ExpectedJc, "wipKey" | "deptCode" | "estMinutes">;
 
-export const LIVE_STATUSES = "'WAITING','IN_PROGRESS','PAUSED','BLOCKED'";
+export const LIVE_STATUS_LIST: readonly string[] = ["WAITING", "IN_PROGRESS", "PAUSED", "BLOCKED"];
+export const LIVE_STATUSES = LIVE_STATUS_LIST.map((status) => `'${status}'`).join(",");
 const WRITE_CHUNK_SIZE = 50;
 const PRODUCT_CODE_CHUNK_SIZE = 100;
 const SKIPPED_SAMPLE_LIMIT = 50;

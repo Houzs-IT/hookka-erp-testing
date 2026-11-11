@@ -36,6 +36,7 @@ import {
   countProductsWithoutActiveBom,
 } from "../lib/wip-times-core";
 import {
+  previewJobCardMinutesForBomChanges,
   syncJobCardMinutesToBomChanges,
   type SavedBomChange,
 } from "../lib/bom-edit-card-sync";
@@ -632,6 +633,14 @@ app.post("/bulk-import", async (c) => {
   const applied = perItem.filter((p) => p.updatedNodeCount > 0).length;
   const skipped = perItem.length - applied;
   const jobCardMinutes = await syncJobCardMinutesToBomChanges(c, savedChanges);
+  const jobCardPreview = dryRun
+    ? await previewJobCardMinutesForBomChanges(
+        c.var.DB,
+        bomCache
+          .filter((bom) => bom.dirty)
+          .map((bom) => savedBomChange(bom.row, JSON.stringify(bom.tree))),
+      )
+    : null;
 
   return c.json({
     success: true,
@@ -642,6 +651,7 @@ app.post("/bulk-import", async (c) => {
     skipped,
     appliedBomCount,
     jobCardMinutes,
+    jobCardPreview,
     itemErrors,
     perItem,
   });
