@@ -74,8 +74,15 @@ export type WorkerMonthlyEfficiency = {
  */
 export async function helperWorkerIds(db: DbLike): Promise<Set<string>> {
   try {
-    const r = await db.prepare("SELECT id FROM workers WHERE is_helper = TRUE").bind().all<{ id: string }>();
-    return new Set((r.results ?? []).map((x) => String(x.id)));
+    // Read the id under its own alias: a reader that ignores the WHERE (a test
+    // stub answering every workers query) returns rows without helper_id, so it
+    // can never turn everyone into a helper.
+    const r = await db
+      .prepare("SELECT id AS helper_id FROM workers WHERE is_helper = TRUE")
+      .bind()
+      .all<{ helperId?: unknown; helper_id?: unknown }>();
+    const ids = (r.results ?? []).map((x) => x.helperId ?? x.helper_id).filter((v) => v != null && v !== "");
+    return new Set(ids.map((v) => String(v)));
   } catch {
     return new Set();
   }

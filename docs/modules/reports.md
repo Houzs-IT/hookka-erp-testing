@@ -52,7 +52,7 @@ Two unrelated report worlds share the name **Reports**:
 ## Key functions / sections (locate-to-function)
 | Symbol / handler | file:line | Role |
 |---|---|---|
-| `ReportsPage` | `src/pages/reports.tsx:2039` | Tab router + `?tab=` sync (default export) |
+| `ReportsPage` | `src/pages/reports.tsx:2047` | Tab router + `?tab=` sync (default export) |
 | `SalesReportTab` … `EmployeeReportTab` | `reports.tsx:428 / 663 / 922 / 1090 / 1552` | The 5 client-side tabs (Sales/Prod/Inv/Fin/Emp) |
 | `TABS` | `reports.tsx:406` | Tab definitions |
 | `DailyReportPage` | `src/pages/daily-report.tsx:1009` | Compliance exceptions page |
