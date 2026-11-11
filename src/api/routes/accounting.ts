@@ -36,6 +36,7 @@ import { asAtNow, notesAfter, otherPartyPaymentsAfter, owedAt, receiptsAfter, re
 import { defaultPnlBucket, pnlBucketFor } from "../../lib/pnl-bucket";
 import { bsSectionFor, bsSectionClass } from "../../lib/bs-section";
 import type { BsSection } from "../../lib/bs-section";
+import { ADVANCE_DOC_SUFFIX, isOpeningCredit, splitArOpeningCredits } from "../../lib/aging-opening-credits";
 import { buildStatement, defaultSectionFor, fyMonths, splitByLargestRemainder, rawMaterialLineFor, RM_LINES, SUPPLIER_SECTION_TARGETS, payrollAccrualSections, displaySign, payrollMonthFrom, rawStockAccountSections } from "../../lib/cashflow-engine";
 import type { CfMap, ClassifiedLeg, BankLeg, RmSplit, CoaLite, CfSection, ForecastColumn, ForecastLeg } from "../../lib/cashflow-engine";
 import {
@@ -819,7 +820,7 @@ async function computeAgingData(
       const moAdv = monthsOverdue(it.date || null, nowRef);
       addToBucket(row, moAdv, -it.sen);
       row.docs.push({
-        no: `${it.paymentNo} · Advance`,
+        no: `${it.paymentNo}${ADVANCE_DOC_SUFFIX}`,
         date: it.date,
         mo: agingBucketIdx(moAdv),
         amountSen: -it.sen,
@@ -860,7 +861,7 @@ async function computeAgingData(
       const moAdv = monthsOverdue(it.date || null, nowRef);
       addToBucket(row, moAdv, -it.sen);
       row.docs.push({
-        no: `${it.receiptNumber} · Advance`,
+        no: `${it.receiptNumber}${ADVANCE_DOC_SUFFIX}`,
         date: it.date,
         mo: agingBucketIdx(moAdv),
         amountSen: -it.sen,
@@ -981,7 +982,14 @@ app.get("/aging", async (c) => {
   const data = asOf
     ? await buildAging()
     : await withSnapshot(c.var.DB, snapshotConfig, orgId, buildAging, cacheKey);
-  return c.json({ success: true, ...data, ...(asOf ? { asOf } : {}) });
+  // Opening-period receipts not knocked off (owner 2026-11-11 「houzs 和 conts
+  // 的还之前的invoice的数额不要显示」): they pay invoices from before the
+  // opening, so the Debtor Aging leaves them out of its columns and names
+  // their total apart, as the Cash Flow forecast does (same cutoff). Applied
+  // to the result, cached or not, so the snapshot itself is unchanged.
+  const openingCut = openingCreditCutoffYm(String((await getOpeningDate(c.var.DB)) ?? "").slice(0, 7) || null);
+  const split = splitArOpeningCredits(data.data.ar, openingCut);
+  return c.json({ success: true, ...data, data: { ...data.data, ar: split.rows, arOpeningCredits: split.openingCredits }, ...(asOf ? { asOf } : {}) });
 });
 
 app.post("/aging", async (c) => {
@@ -19822,8 +19830,13 @@ app.get("/cash-position", async (c) => {
     if (!i.dueDate || i.dueDate <= date) row.dueSen += out;
     recvAgg.set(k, row);
   }
+  // Opening-period receipts not knocked off wait for the opening balances,
+  // as on Debtor Aging (owner 2026-11-11); the board names their total.
+  const recvCutoffYm = openingCreditCutoffYm((obDateCp ?? "").slice(0, 7) || null);
+  let receiveOpeningCreditsSen = 0;
   for (const [, adv] of await loadUnappliedCustomerAdvances(c.var.DB, orgIdCp)) {
     for (const it of adv.items) {
+      if (isOpeningCredit(it.date, recvCutoffYm)) { receiveOpeningCreditsSen += it.sen; continue; }
       const month = String(it.date ?? "").slice(0, 7) || "unknown";
       const k = `${month}|${adv.customerName || "Unknown"}`;
       const row = recvAgg.get(k) ?? { totalSen: 0, dueSen: 0 };
@@ -19932,7 +19945,7 @@ app.get("/cash-position", async (c) => {
   tradeFinance.sort((x, y) => (x.dueDate || "9999-12-31").localeCompare(y.dueDate || "9999-12-31") || x.ref.localeCompare(y.ref));
   return c.json({
     success: true,
-    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, fxBankPending, tradeFinance },
+    data: { date, accounts, totalBankEstSen, totalAvailableSen, repay, receive, receiveOpeningCreditsSen, planned, tickWarnings, openingMonth, awaitingApproval, awaitingCheckedSen, fxBankPending, tradeFinance },
   });
 });
 

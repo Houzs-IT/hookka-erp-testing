@@ -70,7 +70,8 @@ test("unapplied customer advances are netted off the AR control", () => {
 
 test("…and appear in the AR aging as negative rows, like the supplier side", () => {
   assert.match(ACC, /loadUnappliedCustomerAdvances\(db, orgId\)/); // inside computeAgingData
-  assert.match(ACC, /no: `\$\{it\.receiptNumber\} · Advance`/);
+  // Since 2026-11-11 the " · Advance" suffix is shared (ADVANCE_DOC_SUFFIX, src/lib/aging-opening-credits.ts).
+  assert.match(ACC, /no: `\$\{it\.receiptNumber\}\$\{ADVANCE_DOC_SUFFIX\}`/);
   assert.match(ACC, /amountSen: -it\.sen,/);
 });
 

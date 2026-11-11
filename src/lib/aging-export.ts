@@ -116,11 +116,14 @@ export function buildAgingExportAoa(
  * The same report in groups (owner 2026-10-17, Finance v2: Debtor Aging lists
  * trade customers, then other debtors; Creditor Aging trade finance, suppliers,
  * other creditors): each group's band line, its parties, its total line; then
- * the grand total over every group. An empty group is left out.
+ * the grand total over every group. An empty group is left out. `note`, when
+ * given, is one line under the grand total (Debtor Aging: the opening-period
+ * receipts left out of the columns, 2026-11-11).
  */
 export function buildGroupedAgingExportAoa(
   partyHeader: string,
   groups: { label: string; parties: AgingExportParty[] }[],
+  note?: string,
 ): AgingAoa {
   const aoa: AgingAoa = [agingHeader(partyHeader)];
   const grand = [0, 0, 0, 0, 0];
@@ -133,5 +136,6 @@ export function buildGroupedAgingExportAoa(
     sum.forEach((v, i) => { grand[i] += v; });
   }
   aoa.push(grandRow(grand));
+  if (note) aoa.push([note, "", "", "", "", "", "", "", ""]);
   return aoa;
 }
