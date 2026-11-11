@@ -251,6 +251,10 @@ self.addEventListener('fetch', (event) => {
   // build's cache.
   if (url.pathname.startsWith('/fonts/')) return;
 
+  // Printable forms (/forms/*, e.g. the customer consent form): always from the
+  // network, so a replaced form is never served stale from this cache.
+  if (url.pathname.startsWith('/forms/')) return;
+
   // Everything else (icons, manifest, favicon): stale-while-revalidate.
   event.respondWith(
     caches.match(req).then((hit) => {
