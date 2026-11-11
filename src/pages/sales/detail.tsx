@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
+import { productionOverviewHref } from "@/pages/production/utils";
 import { useSOMode, soBasePath } from "@/lib/so-mode";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1353,7 +1354,7 @@ export default function SalesOrderDetailPage() {
                 size="sm"
                 onClick={() => {
                   setCancelBlocked({ open: false, items: [] });
-                  navigate(`/production?soId=${encodeURIComponent(id || "")}`);
+                  navigate(productionOverviewHref(order.companySOId));
                 }}
               >
                 Open Production Page

@@ -34,7 +34,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 - Pages
   - `/sales` → `src/pages/sales/index.tsx:195` (`SalesPage` — SO list, dual-mode SO vs service-order)
   - `/sales/create` → `src/pages/sales/create.tsx:213` (`CreateSalesOrderPage`; OCR/scan-PO lands here)
-  - `/sales/:id` → `src/pages/sales/detail.tsx:583` (`SalesOrderDetailPage`; linked POs/JCs/DOs/invoices)
+  - `/sales/:id` → `src/pages/sales/detail.tsx:585` (`SalesOrderDetailPage`; linked POs/JCs/DOs/invoices)
   - `/sales/:id/edit` → `src/pages/sales/edit.tsx` (Edit SO; re-runs sofa-combo on save)
   - `/consignment` list/create/edit/detail/return → `src/pages/consignment/{index,create,edit,detail,return}.tsx`
   - `/consignment/note` → `src/pages/consignment/note.tsx:462` (`ConsignmentNotePage`; 3 inline tabs)
@@ -76,7 +76,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `CreateSalesOrderPage` | `src/pages/sales/create.tsx:213` | Main create form (parties, items, totals) |
 | `CopyFromSourceModal` | `src/pages/sales/create.tsx:2446` | 2-step copy-draft picker |
 | `LineItemCard` | `src/pages/sales/create.tsx:3086` | Per-line item editor |
-| `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:583` | SO detail; linked POs/JCs/DOs/invoices |
+| `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:585` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1766` | SO create + combo pass + snapshot invalidation |
 | `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3281` | SO edit + re-run combo pass |
 | `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2555` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
@@ -107,7 +107,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 - **A refused save says why (BUG-2026-11-09-435, FE batch A 2026-11-09).** Leads (`src/pages/leads/index.tsx`: add / edit / move stage / delete / convert / catalogue SKUs) and Consignment (`consignment/detail.tsx` delete, `consignment/note.tsx` in-transit / delivered / acknowledged) check `res.ok` and toast the server's `error` via `responseErrorMessage` (`src/lib/response-error.ts`). The SO / DO / Invoice PDFs share `src/api/lib/unified-do-invoice-pdf.ts`, whose `wrap` / `wrapHard` now run every string through `pdfText` (`src/lib/pdf-text.ts`): null-ish values and stray "null" / "undefined" parts print as nothing, whitespace is tidied. Quantity inputs on `sales/create.tsx` / `sales/edit.tsx` / `consignment/edit.tsx` carry `inputMode`. Test: `tests/fe-quality-batch-a.test.mjs`.
 
 ## Common tasks (mini-playbook)
-- **Add a field to the SO** → column self-apply in `ensurePendingMigrations` (`sales-orders/_helpers.ts:1298`); persist in `app.post("/")` (`sales-orders.ts:1766`) and `app.put("/:id")` (`:3880`); surface in `rowToSO` (`_helpers.ts:243`) / `rowToSOList` (`:307`); render in `create.tsx:213` and `detail.tsx:583`. New column = snake_case (+ rename-map if camelCase).
+- **Add a field to the SO** → column self-apply in `ensurePendingMigrations` (`sales-orders/_helpers.ts:1298`); persist in `app.post("/")` (`sales-orders.ts:1766`) and `app.put("/:id")` (`:3880`); surface in `rowToSO` (`_helpers.ts:243`) / `rowToSOList` (`:307`); render in `create.tsx:213` and `detail.tsx:585`. New column = snake_case (+ rename-map if camelCase).
 - **Change the status cascade** → edit `cascadeSOStatusToPOs` (`sales-orders/_helpers.ts:788`) and the confirm handler (`sales-orders.ts:2517`); keep the `so_status_changes` autoActions JSON write in sync.
 - **Adjust sofa-combo pricing** → change the engine in `applySofaCombos` (`sofa-combo.ts:209`) / `findComboSubset` (`:98`); never touch the frontend. Rule data via `sofa-combos.ts` + grid `maintenance/sofa-combos.tsx:370`. Verify with `tests/sofa-combo.test.mjs`.
 - **Touch consignment flow** → CO in `consignment-orders.ts` (create `:663`, confirm `:1687`, edit `:1804`, cancel `:2421`, hub `:2564`); CN dispatch/delivered in `consignment-notes.ts`.
