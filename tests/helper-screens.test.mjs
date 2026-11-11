@@ -23,7 +23,7 @@ const whe = [
 const jobCards = [{ id: "J1", departmentCode: "UPHOLSTERY", completedDate: "2026-11-02", estMinutes: 450, actualMinutes: null, wipQty: 1, pic1Id: "P1", pic2Id: null }];
 
 test("perf engine: hours keep the helper, production efficiency leaves them out, Overall includes them", () => {
-  const { perfDays } = perf.buildPerfDays({ whe, jobCards, pics: [], productionDepts: new Set(["UPHOLSTERY"]), helperIds: new Set(["H1"]) });
+  const { perfDays } = perf.buildPerfDays({ whe, jobCards, pics: [], approvedExtraTime: [], productionDepts: new Set(["UPHOLSTERY"]), helperIds: new Set(["H1"]) });
   const d = perfDays[0];
   assert.equal(d.workingMinutes, 960, "Production Hours include the helper");
   assert.equal(d.helperWorkingMinutes, 480);
@@ -36,7 +36,7 @@ test("perf engine: hours keep the helper, production efficiency leaves them out,
 });
 
 test("perf engine: no helpers → identical to before", () => {
-  const { perfDays } = perf.buildPerfDays({ whe, jobCards, pics: [], productionDepts: new Set(["UPHOLSTERY"]) });
+  const { perfDays } = perf.buildPerfDays({ whe, jobCards, pics: [], approvedExtraTime: [], productionDepts: new Set(["UPHOLSTERY"]) });
   const r = perf.poolEfficiencyPct(perfDays, null, () => true);
   assert.equal(r.pct, r.overallPct);
   assert.equal(r.helperWorkingMinutes, 0);
