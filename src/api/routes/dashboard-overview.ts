@@ -36,6 +36,7 @@ import {
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
 import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
+import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
 import {
   allocateDocsByCategory,
   DEPT_REVENUE_ORDER,
@@ -286,6 +287,7 @@ app.get("/", async (c) => {
     // Sunday / public holiday counts only when production happened on it
     // (owner 2026-10-15), and that needs the job cards. See lib/working-days.
 
+    await ensureProductionOrderSourceLine(db);
     const [
       jcRes,
       activeJobsRes,
@@ -594,10 +596,10 @@ app.get("/", async (c) => {
              JOIN production_orders po ON po.id = per_po.productionOrderId
              LEFT JOIN sales_order_items soi
                     ON soi.salesOrderId = po.salesOrderId
-                   AND soi.lineNo = po.lineNo
+                   AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
              LEFT JOIN consignment_order_items coi
                     ON coi.consignmentOrderId = po.consignmentOrderId
-                   AND coi.lineNo = po.lineNo
+                   AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
             WHERE po.orgId = ?
               AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
               AND per_po.unit_completed_at IS NOT NULL
@@ -1429,6 +1431,7 @@ app.get("/", async (c) => {
       dailyBuckets
         ? `to_char(${col}::date, 'YYYY-MM-DD')`
         : `to_char(date_trunc('week', ${col}::date), 'YYYY-MM-DD')`;
+    await ensureProductionOrderSourceLine(db);
     const [soWeekRes, invWeekRes, prodWeekRes] = await Promise.all([
       db
         .prepare(
@@ -1484,9 +1487,9 @@ app.get("/", async (c) => {
              FROM per_po
              JOIN production_orders po ON po.id = per_po.productionOrderId
              LEFT JOIN sales_order_items soi
-                    ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = po.lineNo
+                    ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
              LEFT JOIN consignment_order_items coi
-                    ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = po.lineNo
+                    ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
             WHERE po.orgId = ?
               AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
               AND per_po.unit_completed_at IS NOT NULL
