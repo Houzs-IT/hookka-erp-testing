@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cachedFetchJson, useCachedJson } from "@/lib/cached-fetch";
 import { costByWorkerDaySen, costByWorkerDayDeptSen, type CostWorker } from "@/lib/labor-day-cost";
 import type { LabourMonth } from "@/lib/labour-to-date";
-import { scaleLabourToPayroll } from "@/lib/labour-to-payroll";
+import { keepDaysWithin, scaleLabourToPayroll, wholeMonthsAround } from "@/lib/labour-to-payroll";
 import type { PayRuleVersion } from "@/lib/pay-rules";
 
 // Labour cost over a date range, one entry per worker-day (`workerId|date` →
@@ -30,7 +30,8 @@ function monthsBetween(from: string, to: string): string[] {
 export function useLabourCost(from: string, to: string, enabled: boolean): { byWorkerDay: Map<string, number>; byWorkerDayDept: Map<string, number>; entries: Entry[]; months: LabourMonth[]; ready: boolean } {
   const on = enabled && !!from && !!to;
   const { data: workersResp } = useCachedJson<{ data?: (CostWorker & { id: string })[] }>(on ? "/api/workers" : null);
-  const { data: entriesResp } = useCachedJson<{ data?: Entry[] }>(on ? `/api/working-hour-entries?from=${from}&to=${to}` : null);
+  const hoursRange = on ? wholeMonthsAround(from, to) : null;
+  const { data: entriesResp } = useCachedJson<{ data?: Entry[] }>(hoursRange ? `/api/working-hour-entries?from=${hoursRange.from}&to=${hoursRange.to}` : null);
   const { data: holResp } = useCachedJson<{ data?: string[] }>(on ? "/api/kv-config/public_holidays" : null);
   const { data: rulesResp } = useCachedJson<{ data?: { versions?: PayRuleVersion[] } }>(on ? "/api/pay-rules" : null);
   const monthsKey = on ? monthsBetween(from, to).join(",") : "";
@@ -70,9 +71,9 @@ export function useLabourCost(from: string, to: string, enabled: boolean): { byW
     const home = new Map((workersResp?.data ?? []).map((w) => [w.id, (w as { departmentCode?: string | null }).departmentCode]));
     return scaleLabourToPayroll(logged.days, logged.depts, months, (id) => home.get(id));
   }, [logged, months, workersResp]);
-  const byWorkerDay = useMemo(() => scaled?.byWorkerDay ?? new Map<string, number>(), [scaled]);
-  const byWorkerDayDept = useMemo(() => scaled?.byWorkerDayDept ?? new Map<string, number>(), [scaled]);
-  const entries = useMemo(() => entriesResp?.data ?? [], [entriesResp]);
+  const byWorkerDay = useMemo(() => (scaled ? keepDaysWithin(scaled.byWorkerDay, from, to) : new Map<string, number>()), [scaled, from, to]);
+  const byWorkerDayDept = useMemo(() => (scaled ? keepDaysWithin(scaled.byWorkerDayDept, from, to) : new Map<string, number>()), [scaled, from, to]);
+  const entries = useMemo(() => (entriesResp?.data ?? []).filter((entry) => entry.date.slice(0, 10) >= from && entry.date.slice(0, 10) <= to), [entriesResp, from, to]);
   // Not ready until the payroll figures answered, or the first paint is the
   // logged-hours number and then jumps. A refused read falls back to logged.
   return { byWorkerDay, byWorkerDayDept, entries, months, ready: byWorkerDay.size > 0 && (!!labourResp || !!labourFailure) };
