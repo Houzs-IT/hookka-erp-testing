@@ -297,6 +297,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Debtor Aging: opening-period receipts out of the columns (feat/aging-opening-receipts, 2026-11-11)
+Ask (owner, with a screenshot of Debtor Aging's 3+ months column, one customer's figure negative): 「可以帮我把houzs 和 conts 的还之前的的invoice的数额不要显示吗？」. Proposal, then 「可以」, plus 「顺便帮我检查 RM49487 和 RM7045 是什么？我叫他们去核对」.
+1. 🔵 The rule the Cash Flow forecast already uses (#1210, `openingCreditCutoffYm`): a customer receipt still on account and dated up to the month after the opening month pays invoices from before the opening. MEASURED on prod 2026-11-11, read only: exactly 8 such receipts, at two customers.
+    - GET /aging leaves them out of the AR rows, so each one's bucket goes back up by it. The split (`splitArOpeningCredits`, `src/lib/aging-opening-credits.ts`) runs on the cached result, so the snapshot and its key are unchanged. `data.arOpeningCredits` carries the receipts and their total.
+    - Every screen reading GET /aging follows: Debtor Aging, Finance Overview, the debtor list, the dashboard widget and the phone.
+    - Debtor Aging names them under the total, with a hover listing each, and its Excel / PDF export carries the same line. Its as-at ledger check adds them back, since the ledger counts them.
+    - Daily Cash Position's TO RECEIVE leaves the same receipts out (`isOpeningCredit`) and names the total under the panel, so it still ties to Debtor Aging.
+    - Untouched: the receipts themselves, the ledger, `/ar-control`, customer statements, and the Cash Flow forecast (it already did this).
+2. ✅ Answered the second ask in chat, with a CSV for the owner's staff: the open invoices dated at the end of the opening month behind those two customers' remaining 3+ months figures, and the 8 receipts. No data changed.
+
 ## 🔵 Cash Flow forecast (feat/cashflow-forecast, 2026-11-08)
 Ask (owner, 2026-11-06 → 08): 「我要知道我未来几个月会收到多少钱，用多少钱」, settled item by item, then 「做」. Design: `docs/superpowers/specs/2026-11-08-cash-flow-forecast-design.md`; plan: `docs/superpowers/plans/2026-11-08-cash-flow-forecast.md`.
 1. ✅ Batch 1, engine and endpoint (#1203): shared Forecast P&L figures (`src/lib/forecast-pnl.ts`); pure schedule (`src/lib/cashflow-forecast.ts`); forecast columns in `buildStatement`; `GET /cashflow-forecast`; `POST /cash-position/planned/:id/paid`. MEASURED on prod 2026-11-08: 11 reused-route fingerprints identical before and after; every document-based forecast total and the salary reverse calculation match an independent recomputation; c/f = b/f + total in every forecast column; about 3 s per call.
