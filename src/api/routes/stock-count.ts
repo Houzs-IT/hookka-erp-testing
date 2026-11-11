@@ -29,6 +29,7 @@ import {
   buildUsage,
   countFromFinanceLines,
   countFromWarehouseLines,
+  countUnitsFromLines,
   normalizeCountLines,
   parseUomFactor,
   prevYm,
@@ -168,17 +169,21 @@ type CountMeta = { source: "warehouse" | "finance"; ym: string; savedAt: string 
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-/** The count a month is measured with: the warehouse's own, else Finance's priced count, else none. */
-function pickCount(ym: string, warehouse: unknown, finance: unknown): { qty: QtyByKey; meta: CountMeta } | null {
+/**
+ * The count a month is measured with: the warehouse's own, else Finance's
+ * priced count, else none — with the units it names per item (a warehouse line
+ * carries one only when the sheet changed it; Finance's lines always do).
+ */
+function pickCount(ym: string, warehouse: unknown, finance: unknown): { qty: QtyByKey; units: Record<string, string[]>; meta: CountMeta } | null {
   const w = countFromWarehouseLines(warehouse);
   if (w && Object.keys(w).length) {
     const r = warehouse as Record<string, unknown>;
-    return { qty: w, meta: { source: "warehouse", ym, savedAt: str(r.savedAt), savedBy: str(r.savedBy), file: str(r.file), lines: Object.keys(w).length } };
+    return { qty: w, units: countUnitsFromLines(warehouse, false), meta: { source: "warehouse", ym, savedAt: str(r.savedAt), savedBy: str(r.savedBy), file: str(r.file), lines: Object.keys(w).length } };
   }
   const f = countFromFinanceLines(finance);
   if (f && Object.keys(f).length) {
     const r = finance as Record<string, unknown>;
-    return { qty: f, meta: { source: "finance", ym, savedAt: str(r.savedAt), savedBy: null, file: str(r.file), lines: Object.keys(f).length } };
+    return { qty: f, units: countUnitsFromLines(finance, true), meta: { source: "finance", ym, savedAt: str(r.savedAt), savedBy: null, file: str(r.file), lines: Object.keys(f).length } };
   }
   return null;
 }
@@ -282,7 +287,16 @@ app.get("/usage", async (c) => {
   const closing = pickCount(ym, curW, curF);
   const opening = pickCount(prev, prevW, prevF);
   const groups = [...new Set(items.map((i) => i.group).filter(Boolean))].sort();
-  const usage = buildUsage({ items, groups, opening: opening?.qty ?? null, closing: closing?.qty ?? null, purchases, factors: cleanFactors(factorsRaw) });
+  const usage = buildUsage({
+    items,
+    groups,
+    opening: opening?.qty ?? null,
+    closing: closing?.qty ?? null,
+    openingUnits: opening?.units ?? {},
+    closingUnits: closing?.units ?? {},
+    purchases,
+    factors: cleanFactors(factorsRaw),
+  });
   return c.json({ success: true, data: { ym, prevYm: prev, opening: opening?.meta ?? null, closing: closing?.meta ?? null, defaultGroups, ...usage } });
 });
 

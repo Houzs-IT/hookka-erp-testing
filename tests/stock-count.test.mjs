@@ -15,6 +15,7 @@ import {
   countFromFinanceLines,
   countFromWarehouseLines,
   countSheetAoa,
+  countSheetLayout,
   financeCountAoa,
   normalizeCountLines,
   parseCountWorkbook,
@@ -114,30 +115,35 @@ test("buildCountSheets: one sheet per chosen type, active items, series sections
 
 test("countSheetAoa: title rows, the header, blank quantities — never a system quantity", () => {
   const [bm] = buildCountSheets(MASTER, ["B.M-FABR"]);
-  const aoa = countSheetAoa(bm, { company: "HOOKKA INDUSTRIES SDN BHD", ymLabel: "Nov 2026" });
-  const h = aoa.findIndex((r) => r[1] === "Item Code");
+  const { aoa, kinds } = countSheetLayout(bm, { company: "HOOKKA INDUSTRIES SDN BHD", ymLabel: "Nov 2026" });
+  assert.deepEqual(countSheetAoa(bm, { company: "HOOKKA INDUSTRIES SDN BHD", ymLabel: "Nov 2026" }), aoa);
+  const h = kinds.indexOf("header");
   assert.ok(h > 0, "the header comes after the title rows");
   assert.deepEqual(aoa[h], COUNT_SHEET_HEADER);
+  assert.equal(COUNT_SHEET_HEADER.length, 5, "five columns fit A4 portrait");
   assert.match(String(aoa[0][0]), /HOOKKA INDUSTRIES SDN BHD/);
   assert.ok(aoa.some((r) => r.includes("B.M-FABR")), "the type is named");
   assert.ok(aoa.some((r) => r.includes("Nov 2026")), "the month is named");
   assert.ok(aoa.some((r) => /Write 0 if there is none/.test(String(r[0] ?? ""))), "blank vs zero is explained");
-  const body = aoa.slice(h + 1);
-  const itemRows = body.filter((r) => r[1]);
+  const itemRows = aoa.filter((_, i) => kinds[i] === "item");
   assert.equal(itemRows.length, 7);
-  for (const r of itemRows) assert.equal(r[4], "", "Counted Qty is blank");
-  assert.deepEqual(itemRows[0], ["KS", "KS-01", "KS-01 desc", "MTR", "", ""]);
-  // A series header row carries no item code.
-  assert.deepEqual(body[0], ["KS (2 items)", "", "", "", "", ""]);
+  for (const r of itemRows) assert.equal(r[3], "", "Counted Qty is blank");
+  assert.deepEqual(itemRows[0], ["KS-01", "KS-01 desc", "MTR", "", ""]);
+  // A series header row carries no item code column of its own: just the family and its size.
+  assert.deepEqual(aoa[h + 1], ["KS (2 items)", "", "", "", ""]);
+  assert.equal(kinds[h + 1], "series");
 });
 
 // ── Reading the filled sheet back ─────────────────────────────────────────
 test("parseCountWorkbook: finds the header on every sheet, blank = not counted, 0 = counted", () => {
   const [bm] = buildCountSheets(MASTER, ["B.M-FABR"]);
-  const aoa = countSheetAoa(bm, { company: "X", ymLabel: "Nov 2026" });
-  const h = aoa.findIndex((r) => r[1] === "Item Code");
+  const { aoa, kinds } = countSheetLayout(bm, { company: "X", ymLabel: "Nov 2026" });
+  const h = kinds.indexOf("header");
   const fill = { "KS-01": 12.5, "KS-02": 0, "PC151-01": "1,333.2", "PC151-2": "  ", "NV-1WP": "abc", "PC151-10": -3 };
-  const filled = aoa.map((r, i) => (i > h && r[1] && fill[r[1]] !== undefined ? [r[0], r[1], r[2], r[3], fill[r[1]], r[1] === "KS-01" ? "rack A" : ""] : r));
+  const filled = aoa.map((r, i) => (kinds[i] === "item" && fill[r[0]] !== undefined ? [r[0], r[1], r[2], fill[r[0]], r[0] === "KS-01" ? "rack A" : ""] : r));
+  // A quantity written on a family heading is reported, not saved as a code.
+  const kRow = kinds.indexOf("series");
+  filled[kRow] = [filled[kRow][0], "", "", 4, ""];
   const out = parseCountWorkbook([{ name: "B.M-FABR", aoa: filled }, { name: "Notes", aoa: [["just text"]] }]);
   assert.deepEqual(out.lines, [
     { code: "KS-01", qty: 12.5, remark: "rack A" },
@@ -149,6 +155,7 @@ test("parseCountWorkbook: finds the header on every sheet, blank = not counted, 
   // PC151-2 (spaces) and FABR(W) B (empty) are blank: not counted.
   assert.equal(out.blank, 2);
   assert.deepEqual(out.problems.map((p) => [p.code, p.message]).sort(), [
+    ["KS (2 items)", "This is a family heading — write the quantity on the item rows"],
     ["NV-1WP", "Counted Qty is not a number"],
     ["PC151-10", "Counted Qty is below zero"],
   ]);
