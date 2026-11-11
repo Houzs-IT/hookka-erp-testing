@@ -33,7 +33,9 @@ import {
   forecastSupplierRows,
   forecastTypeSupplierCells,
   forecastTypeSuppliers,
+  supplierActualIds,
   type FcMonthFigures,
+  type FcSupplierActuals,
   type FcSupplierMix,
 } from "@/lib/forecast-pnl";
 import { forecastLinesWindow, forecastPnlWindow, plForecastMatrix, type PlForecastColumn } from "@/lib/pnl-forecast";
@@ -116,6 +118,10 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   // the stock detail under it (opening / purchase / closing per stock group)
   // stays folded until Show detail.
   const [showDetail, setShowDetail] = useState(false);
+  // Who each actual purchase was from (owner 2026-11-11 「我看不到actual 的fabric
+  // 67559.67 是从谁买」): month → material type → supplier → sen, for the
+  // supplier rows' Actual cells (GET /forecast/supplier-actuals).
+  const [supplierActs, setSupplierActs] = useState<FcSupplierActuals>({});
 
   useEffect(() => {
     let live = true;
@@ -157,6 +163,17 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       .catch((e) => { if (live) setLoadError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
   }, [anchor]);
+
+  useEffect(() => {
+    if (!base || base.months.length === 0) return;
+    let live = true;
+    const sorted = [...base.months].sort();
+    fetch(`/api/accounting/forecast/supplier-actuals?from=${sorted[0]}&to=${sorted[sorted.length - 1]}`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { months?: FcSupplierActuals } }>)
+      .then((j) => { if (live && j?.success) setSupplierActs(j.data?.months ?? {}); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [base]);
 
   // The forecast's line structure, the route's way (loadMonthlyPlForecast).
   const groups = useMemo(
@@ -224,7 +241,11 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   );
   const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
   const supplierRowsOf = (type: string) =>
-    forecastSupplierRows(supplierMaster, forecastTypeSuppliers(supplierMix, type), Object.values(sheet).flatMap((m) => Object.entries(m.suppliers?.[type] ?? {}).filter(([, e]) => cellKeyed(e)).map(([id]) => id)));
+    forecastSupplierRows(supplierMaster, forecastTypeSuppliers(supplierMix, type), [
+      ...Object.values(sheet).flatMap((m) => Object.entries(m.suppliers?.[type] ?? {}).filter(([, e]) => cellKeyed(e)).map(([id]) => id)),
+      // A supplier we actually bought this material from in the year shown, active or not.
+      ...supplierActualIds(supplierActs, type),
+    ]);
   const supplierNames = useMemo(() => new Map(supplierMaster.map((s) => [s.id, s.name] as const)), [supplierMaster]);
   const supplierName = (id: string) => (id === "other" ? "Other (new suppliers)" : supplierNames.get(id) ?? `Unknown supplier (${id})`);
 
@@ -337,18 +358,41 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       return boxes(c, label, m.pct[k] ?? {}, f.amt(k), f.salesSen, (v) => setLine(ym, k, side(v, "a")), (v) => setLine(ym, k, side(v, "p")));
     });
 
-  // A detail row under a keyed row: boxes in the forecast months only.
-  const detailRow = (key: string, depth: number, name: string, cell: (ym: string, c: PlForecastColumn) => ReactNode) => (
+  // A detail row under a keyed row: boxes in the forecast months; `actual`
+  // fills the other columns (a supplier's actual purchases), blank without it.
+  const blankPair = (c: PlForecastColumn) => <Fragment key={c.key}><td data-cell={`num split${tagOf(c)}`} /><td data-cell={`num pct${tagOf(c)}`} /></Fragment>;
+  const detailRow = (key: string, depth: number, name: string, cell: ((ym: string, c: PlForecastColumn) => ReactNode) | null, actual?: (c: PlForecastColumn, j: number) => ReactNode) => (
     <tr key={key} data-row="line">
       <td data-cell="stick" className="text-[12px] text-[#4B5563]" style={{ paddingLeft: `${14 + depth * 18}px` }}>{name}</td>
-      {vis.map(([c]) => {
+      {vis.map(([c, j]) => {
         const ym = keyMonth(c);
-        if (!ym) return <Fragment key={c.key}><td data-cell={`num split${tagOf(c)}`} /><td data-cell={`num pct${tagOf(c)}`} /></Fragment>;
+        if (!ym || !cell) return actual ? actual(c, j) : blankPair(c);
         if (!sheet[ym]) return noMonth(c);
         return cell(ym, c);
       })}
     </tr>
   );
+  // A supplier's actual purchases of a material (owner 2026-11-11 「我看不到
+  // actual 的fabric 67559.67 是从谁买」): an Actual column's month, or the
+  // year's months added up in Accumulated; the forecast columns are not theirs.
+  const colSales = (c: PlForecastColumn) => (c.accum ? base.windows.acc?.netSalesSen : c.ym ? base.windows[c.ym]?.netSalesSen : 0) ?? 0;
+  const pctOfSales = (sen: number, c: PlForecastColumn) => { const s = colSales(c); return s ? Math.round((sen / s) * 1000) / 10 : 0; };
+  const actualMonths = (c: PlForecastColumn) => (c.accum ? base.months : c.ym ? [c.ym] : []);
+  const supplierActualSen = (type: string, id: string, c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + (supplierActs[ym]?.[type]?.[id] ?? 0), 0);
+  const allSuppliersActualSen = (type: string, c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + Object.values(supplierActs[ym]?.[type] ?? {}).reduce((a, v) => a + v, 0), 0);
+  const supplierActualCell = (type: string, id: string) => (c: PlForecastColumn) => {
+    if (c.forecast) return blankPair(c);
+    const sen = supplierActualSen(type, id, c);
+    return figure(c, sen, pctOfSales(sen, c), true);
+  };
+  // What the supplier invoices do not explain of a material's purchases (a
+  // journal, an other-creditor bill): its row's purchases less the suppliers'.
+  const remainderOf = (k: string, c: PlForecastColumn, j: number) => {
+    const typeRow = matrix.rows.find((r) => r.kind === "group" && r.fcKey === k);
+    return (typeRow?.purchaseValues?.[j] ?? 0) - allSuppliersActualSen(k.slice(4), c);
+  };
   // A customer, supplier or department row with something keyed in some
   // month — Hide unused keeps only these.
   const detailUsed = (kind: "cu" | "su" | "de", type: string, id: string) =>
@@ -372,13 +416,23 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       );
     if (k.startsWith("cat:")) {
       const type = k.slice(4);
-      return supplierRowsOf(type).filter((sr) => !hideUnused || detailUsed("su", type, sr.id)).map((sr) =>
+      const rows = supplierRowsOf(type).filter((sr) => !hideUnused || detailUsed("su", type, sr.id) || supplierActualIds(supplierActs, type).includes(sr.id)).map((sr) =>
         detailRow(`su-${type}-${sr.id}`, depth, sr.name, (ym, c) => {
           const e = sheet[ym].suppliers?.[type]?.[sr.id] ?? {};
           const sen = new Map(forecastTypeSupplierCells(toFcMonth(sheet[ym]), type)).get(sr.id) ?? 0;
           return boxes(c, `${labelOfYm(ym)} ${type} ${sr.name}`, e, sen, figures.get(ym)?.salesSen ?? 0, (v) => setSupplier(ym, type, sr.id, side(v, "a")), (v) => setSupplier(ym, type, sr.id, side(v, "p")));
-        }),
+        }, supplierActualCell(type, sr.id)),
       );
+      // The rest of the material's actual purchases, so the rows add up to it.
+      const rest = vis.some(([c, j]) => !c.forecast && remainderOf(k, c, j) !== 0);
+      if (rest) {
+        rows.push(detailRow(`su-${type}-rest`, depth, "Other purchases (no supplier invoice)", null, (c, j) => {
+          if (c.forecast) return blankPair(c);
+          const sen = remainderOf(k, c, j);
+          return figure(c, sen, pctOfSales(sen, c), true, true);
+        }));
+      }
+      return rows;
     }
     return deptsPostingTo(k, groups, deptAccount).filter((d) => !hideUnused || detailUsed("de", "", d.code)).map((d) =>
       detailRow(`de-${k}-${d.code}`, depth, d.name, (ym, c) => {

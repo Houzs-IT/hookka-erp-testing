@@ -13,7 +13,9 @@ const perf = await imp("src/api/lib/workforce-perf.ts");
 const shared = await imp("src/pages/dashboards/dashboard-shared-lib.ts");
 const floor = await imp("src/pages/dashboards/floor-live-lib.ts");
 const floorSrv = await imp("src/api/lib/floor-live.ts");
-const read = (p) => readFileSync(p, "utf8");
+// CRLF → LF: on a Windows checkout the sources have CRLF line ends and the
+// multi-line patterns below would never match (same fix as #1317's tests).
+const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 
 // One day in Upholstery: producer P1 8h earning 7.5h; helper H1 8h earning 0.
 const whe = [

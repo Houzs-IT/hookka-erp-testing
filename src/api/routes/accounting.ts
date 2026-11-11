@@ -69,7 +69,7 @@ import {
   type TfPlanFacility,
   type TfPlanStore,
 } from "../../lib/cashflow-forecast";
-import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
+import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, supplierActualsFromLegs, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
 import { loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
@@ -17473,6 +17473,60 @@ app.get("/forecast/suppliers", async (c) => {
     }))
     .filter((s) => s.id !== "");
   return c.json({ success: true, data: { suppliers, mix, from: supplierMixFrom(today), to: today } });
+});
+
+// GET /api/accounting/forecast/supplier-actuals?from=YYYY-MM&to=YYYY-MM — each
+// month's actual purchases of each material type BY SUPPLIER (owner 2026-11-11
+// 「我看不到actual 的fabric 67559.67 是从谁买」): the Edit forecast lists them on
+// the supplier rows under a material. The legs of purchase invoices and
+// purchase credit notes on the material purchase accounts, debit minus credit,
+// in the month of the document's date — as the P&L reads purchases; legs
+// before the opening are left out, as the P&L leaves them. Read only.
+app.get("/forecast/supplier-actuals", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const from = String(c.req.query("from") ?? "");
+  const to = String(c.req.query("to") ?? "");
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to are months (YYYY-MM), from not after to" }, 400);
+  }
+  const db = c.var.DB;
+  const [coaList, override, resolveAcct, dc, piRes, cnRes, legRes] = await Promise.all([
+    loadCoaList(db, false),
+    getPnlSectionMap(db),
+    loadAccountResolver(db),
+    loadDocDateResolver(db),
+    db.prepare("SELECT id, pi_no, supplierId FROM purchase_invoices").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, noteNumber, supplierId FROM purchase_credit_notes").all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
+    db.prepare("SELECT accountCode, sourceId, sourceType, debitSen, creditSen, postedAt FROM ledger_journal_entries WHERE hidden = 0 AND (sourceType LIKE 'purchase_invoice%' OR sourceType LIKE 'purchase_credit_note%')").all<Record<string, unknown>>(),
+  ]);
+  const types = forecastMaterialAccountTypes(coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })), override);
+  // A document by its id or its number (posters set sourceId either way).
+  const supplierOf = new Map<string, string>();
+  for (const r of [...(piRes.results ?? []), ...(cnRes.results ?? [])]) {
+    const sup = String(r.supplierId ?? r.supplier_id ?? "");
+    if (!sup) continue;
+    for (const key of [r.id, r.piNo ?? r.pi_no, r.noteNumber ?? r.note_number]) if (key) supplierOf.set(String(key), sup);
+  }
+  const legs: { supplierId: string; accountCode: string; ym: string; debitSen: number; creditSen: number }[] = [];
+  for (const l of legRes.results ?? []) {
+    const sourceType = String(l.sourceType ?? l.source_type ?? "");
+    const sourceId = String(l.sourceId ?? l.source_id ?? "");
+    const dd = dc.docDate(sourceType, sourceId, String(l.postedAt ?? l.posted_at ?? ""));
+    if (legBeforeOpening(sourceType, dd, dc.openingDate)) continue;
+    const ym = dd.slice(0, 7);
+    if (ym < from || ym > to) continue;
+    const sup = supplierOf.get(sourceId) ?? supplierOf.get(stripSourceIdSuffix(sourceId));
+    if (!sup) continue;
+    legs.push({
+      supplierId: sup,
+      accountCode: resolveAcct(String(l.accountCode ?? l.account_code ?? "")),
+      ym,
+      debitSen: Number(l.debitSen ?? l.debit_sen) || 0,
+      creditSen: Number(l.creditSen ?? l.credit_sen) || 0,
+    });
+  }
+  return c.json({ success: true, data: { months: supplierActualsFromLegs(legs, (code) => types.get(code)) } });
 });
 
 app.put("/forecast", async (c) => {

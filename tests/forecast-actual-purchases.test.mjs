@@ -110,3 +110,38 @@ test("the months on the sheet from an earlier financial year get their actuals t
   const pg = readFileSync("src/pages/forecast.tsx", "utf8");
   assert.match(pg, /nextActualsAnchor\(/);
 });
+
+test("who the actual purchases were from (owner 「我看不到actual 的fabric 67559.67 是从谁买」): supplier documents' legs by month, type and supplier", async () => {
+  const { supplierActualsFromLegs, supplierActualIds } = await import("../src/lib/forecast-pnl.ts");
+  const typeOf = (code) => ({ "700-1000": "FABRIC", "700-1001": "FABRIC", "700-2000": "PLYWOOD" })[code];
+  const acts = supplierActualsFromLegs(
+    [
+      { supplierId: "s1", accountCode: "700-1000", ym: "2026-09", debitSen: 40_000, creditSen: 0 },
+      { supplierId: "s1", accountCode: "700-1001", ym: "2026-09", debitSen: 10_000, creditSen: 0 },
+      { supplierId: "s2", accountCode: "700-1000", ym: "2026-09", debitSen: 17_559, creditSen: 0 },
+      // A credit note nets against the supplier's month.
+      { supplierId: "s2", accountCode: "700-1000", ym: "2026-09", debitSen: 0, creditSen: 2_000 },
+      { supplierId: "s3", accountCode: "700-2000", ym: "2026-10", debitSen: 9_000, creditSen: 0 },
+      // Not a material account, no month, or no supplier: not counted.
+      { supplierId: "s1", accountCode: "400-0000", ym: "2026-09", debitSen: 0, creditSen: 50_000 },
+      { supplierId: "s1", accountCode: "700-1000", ym: "", debitSen: 1, creditSen: 0 },
+      { supplierId: "", accountCode: "700-1000", ym: "2026-09", debitSen: 1, creditSen: 0 },
+      // A supplier netting to zero in a month drops out.
+      { supplierId: "s4", accountCode: "700-1000", ym: "2026-09", debitSen: 500, creditSen: 500 },
+    ],
+    typeOf,
+  );
+  assert.deepEqual(acts, { "2026-09": { FABRIC: { s1: 50_000, s2: 15_559 } }, "2026-10": { PLYWOOD: { s3: 9_000 } } });
+  assert.deepEqual(supplierActualIds(acts, "FABRIC").sort(), ["s1", "s2"]);
+  assert.deepEqual(supplierActualIds(acts, "WEBBING"), []);
+});
+
+test("the route and Edit forecast: each supplier row's Actual cells, and what no supplier invoice explains", () => {
+  const route = read("src/api/routes/accounting.ts");
+  assert.match(route, /app\.get\("\/forecast\/supplier-actuals"/);
+  assert.match(route, /supplierActualsFromLegs\(/);
+  const ed = read("src/pages/accounting/monthly-pl-forecast-editor.tsx");
+  assert.match(ed, /\/api\/accounting\/forecast\/supplier-actuals\?from=\$\{/);
+  assert.match(ed, /supplierActualIds\(supplierActs, type\)/);
+  assert.match(ed, /Other purchases \(no supplier invoice\)/);
+});
