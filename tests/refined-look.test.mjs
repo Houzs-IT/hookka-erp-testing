@@ -61,3 +61,14 @@ test("polish 2: chart marks (SVG fill/stroke/stop-color from JS constants) snap 
   assert.equal(map("#1F3B63"), "slate-600", "a navy series stays a coloured series");
   assert.equal(map("#D9534F"), "danger-line");
 });
+
+test("polish 3: Tailwind status palettes follow the refined ramps; warehouse racks are soft", () => {
+  execFileSync(process.execPath, ["scripts/gen-refined-theme.mjs"]);
+  const css = read("src/styles/refined-theme.generated.css");
+  assert.match(css, /--color-red-600: #9A3A2D;/);
+  assert.match(css, /--color-green-700: #3D6030;/);
+  assert.match(css, /--color-amber-50: #FDF8EA;/);
+  assert.match(css, /--color-blue-600: #3E6A74;/);
+  assert.match(read("src/styles/refined-tokens.css"), /\[data-rack="OCCUPIED"\] \{/);
+  assert.match(read("src/pages/warehouse.tsx"), /data-rack=\{slot\.status\}/);
+});

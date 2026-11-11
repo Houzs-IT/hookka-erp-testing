@@ -30,6 +30,9 @@ https://claude.ai/artifact/Roh88iBS5bxpxjVQEkpYvq — owner chose palette **B-li
   attributes; the generator now turns every hex string literal into an svg-scoped attribute rule snapped
   onto the chart set (hue-weighted, a coloured series never turns grey). Fixes the bright teal/navy
   Accounting overview and every other chart without touching chart code.
+- 2026-11-12: Tailwind status families (red/rose, green/emerald/lime, amber/yellow/orange,
+  blue/sky/cyan/teal/indigo) re-pointed to refined status ramps (bright `bg-red-600` Cancel buttons →
+  soft danger); warehouse occupied racks (`data-rack`) soft brass instead of solid olive.
 
 ## Known gaps (phase 2)
 - Colours typed into inline `style={{…}}` on HTML elements and PDF generators are not caught by CSS —

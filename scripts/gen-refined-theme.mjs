@@ -248,9 +248,23 @@ const NEUTRAL = {
   50: "#FDFBF7", 100: "#F8F5EF", 200: "#EDE8DF", 300: "#E4DDD1", 400: "#D3CABB", 500: "#938A7D",
   600: "#6B6358", 700: "#4F483F", 800: "#3A342D", 900: "#24201B", 950: "#1A1815",
 };
+// Tailwind's status families (bg-red-600 buttons, text-green-700, bg-amber-50 …)
+// → the refined status ramps, so a "Cancel" button is the soft danger red, not
+// Tailwind's bright #DC2626 (owner review 2026-11-12, DO drawer).
+const DANGER = { 50: "#FBEDE8", 100: "#F6DED6", 200: "#EDC1B5", 300: "#DE9C8B", 400: "#C9705E", 500: "#C0533F", 600: "#9A3A2D", 700: "#82301F", 800: "#6A281B", 900: "#521F16", 950: "#3A160F" };
+const SUCCESS = { 50: "#F1F6EA", 100: "#E9F0DF", 200: "#D2E2C0", 300: "#B2CC97", 400: "#8BB06D", 500: "#6A9A4E", 600: "#4F7A3B", 700: "#3D6030", 800: "#304C26", 900: "#24391D", 950: "#182614" };
+const WARNING = { 50: "#FDF8EA", 100: "#FAF0D2", 200: "#F3DFA6", 300: "#E6C574", 400: "#D4A94A", 500: "#C18F2C", 600: "#9C731F", 700: "#7A5718", 800: "#5E4313", 900: "#45310E", 950: "#2E2009" };
+const INFO = { 50: "#EEF5F6", 100: "#E3EEF0", 200: "#C6DBDF", 300: "#A0C1C8", 400: "#75A1AB", 500: "#4D828E", 600: "#3E6A74", 700: "#31505A", 800: "#263F47", 900: "#1C2F35", 950: "#132024" };
 const paletteLines = [];
-for (const fam of ["gray", "slate", "zinc", "neutral", "stone"]) {
-  for (const [step, hex] of Object.entries(NEUTRAL)) paletteLines.push(`    --color-${fam}-${step}: ${hex};`);
+const ramps = [
+  [["gray", "slate", "zinc", "neutral", "stone"], NEUTRAL],
+  [["red", "rose"], DANGER],
+  [["green", "emerald", "lime"], SUCCESS],
+  [["amber", "yellow", "orange"], WARNING],
+  [["blue", "sky", "cyan", "teal", "indigo"], INFO],
+];
+for (const [fams, ramp] of ramps) {
+  for (const fam of fams) for (const [step, hex] of Object.entries(ramp)) paletteLines.push(`    --color-${fam}-${step}: ${hex};`);
 }
 
 const byMedia = new Map();
