@@ -23,6 +23,17 @@
           var p = localStorage.getItem("hookka-theme") || "light";
           var dark = p === "dark" || (p === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
           if (dark) { document.documentElement.classList.add("dark"); document.documentElement.style.colorScheme = "dark"; }
+          // Refined look (preview, src/lib/theme.ts applyLook): class + fonts before first paint.
+          // ?look=refined / ?look=classic switches it on a device with no menu at hand (the phone).
+          var lq = new URLSearchParams(location.search).get("look");
+          if (lq === "refined" || lq === "classic") localStorage.setItem("hookka-look", lq);
+          if (localStorage.getItem("hookka-look") === "refined") {
+            document.documentElement.classList.add("refined");
+            var f = document.createElement("link");
+            f.id = "hk-refined-fonts"; f.rel = "stylesheet";
+            f.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap";
+            document.head.appendChild(f);
+          }
         } catch (e) {}
       })();
     </script>
