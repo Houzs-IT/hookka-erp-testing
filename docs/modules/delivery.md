@@ -44,6 +44,10 @@ approve/reject proposals (POD chasing, delivered-not-invoiced, cheapest-3PL rout
 deliver write `stock_movements` and read `fg_units`, and fire idempotent customer emails
 (dispatch → DO PDF, delivered → Invoice PDF). Money is integer sen.
 
+**Mark Delivered needs no Proof of Delivery** (owner 2026-11-11): the row menu, the drawer and the
+DO page move the DO straight to DELIVERED; the POD form (receiver name, signature, photos) is only
+the optional "Capture POD" button on the DO page.
+
 ## Entry points
 - Pages
   - `/delivery` → `src/pages/delivery/index.tsx:882` (`DeliveryPage`) — DO workbench **and** the whole

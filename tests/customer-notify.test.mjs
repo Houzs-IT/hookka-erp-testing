@@ -678,9 +678,9 @@ test("frontend: bulk + single transition paths fire the notify flow", () => {
     "the drawer must not grow a second Mark Dispatched path",
   );
   assert.equal(
-    count(pageSrc, /notifyCustomersAfterTransition\(\[podDialog\], "DELIVERED"\)/g),
+    count(pageSrc, /notifyCustomersAfterTransition\(\[row\], "DELIVERED"\)/g),
     1,
-    "POD submit (Mark Delivered) must notify",
+    "single-DO Mark Delivered must notify",
   );
   // Summary toast shape from the spec.
   assert.match(pageSrc, /Dispatch notice emailed for \$\{queued\} DO\(s\)/);
@@ -1059,7 +1059,7 @@ test("frontend: Feature A Resend wiring (detail footer + row menu) + Feature B n
   assert.match(pageSrc, /not emailed —/);
   // Wired into the three success points (POD delivered, generate-invoice,
   // both dispatch paths). At least: delivered + dispatch + invoice.
-  assert.match(pageSrc, /warnIfNoCustomerEmail\(podDialog, "DELIVERED"\)/);
+  assert.match(pageSrc, /warnIfNoCustomerEmail\(row, "DELIVERED"\)/);
   assert.match(pageSrc, /warnIfNoCustomerEmail\(invoiceDialog, "DELIVERED"\)/);
   // ONE dispatch path now — the row action, which the detail drawer's action
   // bar reuses instead of keeping its own copy.

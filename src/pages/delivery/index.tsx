@@ -46,8 +46,7 @@ import {
   Upload,
 } from "lucide-react";
 import DeliveryAgentTab from "./agent-tab";
-import type { DeliveryOrder, ProofOfDelivery, ThreePLProvider, Customer } from "@/types";
-import PODDialog from "@/components/delivery/POD-dialog";
+import type { DeliveryOrder, ThreePLProvider, Customer } from "@/types";
 import DoQrDialog from "@/components/delivery/do-qr-dialog";
 import { fetchDoQrDataUrl } from "@/lib/do-qr";
 import PrintDO from "@/components/delivery/print-do";
@@ -1002,7 +1001,6 @@ export default function DeliveryPage() {
   const [plDialogVehicles, setPlDialogVehicles] = useState<ThreePLVehicle[]>([]);
   const [plDialogDrivers, setPlDialogDrivers] = useState<ThreePLDriverPerson[]>([]);
   const [invoiceDialog, setInvoiceDialog] = useState<DeliveryOrderRow | null>(null);
-  const [podDialog, setPodDialog] = useState<DeliveryOrderRow | null>(null);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
   // Partial billing (2026-08-07). One delivery order can be billed by several
   // invoices, so "Transfer to Invoice" is no longer a yes/no — the operator
@@ -3305,18 +3303,19 @@ export default function DeliveryPage() {
     }
   };
 
-  const handleSubmitPOD = async (pod: ProofOfDelivery) => {
-    if (!podDialog) return;
+  // Owner 2026-11-11: Mark Delivered goes straight to DELIVERED — no Proof of
+  // Delivery form (POD can still be captured on the DO page).
+  const handleMarkDeliveredOne = async (row: DeliveryOrderRow) => {
     try {
-      // 2026-05-27 verifiedSave migration. POD submit transitions DO to
+      // 2026-05-27 verifiedSave migration. Marking delivered transitions DO to
       // DELIVERED which cascades to SO + auto-invoice. Read back so a
       // stale-snapshot 200 doesn't show green when the row didn't move.
       const result = await verifiedSave<DeliveryOrder>({
-        endpoint: `/api/delivery-orders/${podDialog.id}`,
+        endpoint: `/api/delivery-orders/${row.id}`,
         method: "PUT",
-        body: { status: "DELIVERED", proofOfDelivery: pod },
+        body: { status: "DELIVERED" },
         readback: async () => {
-          const r = await fetch(`/api/delivery-orders/${podDialog.id}?_v=${Date.now()}`, {
+          const r = await fetch(`/api/delivery-orders/${row.id}?_v=${Date.now()}`, {
             credentials: "include",
             cache: "no-store",
           });
@@ -3331,12 +3330,11 @@ export default function DeliveryPage() {
       if (result.ok) {
         // Invoice notice (fire-and-forget) — the DELIVERED cascade just
         // auto-created the invoice; email it with the invoice PDF attached.
-        notifyCustomersAfterTransition([podDialog], "DELIVERED");
+        notifyCustomersAfterTransition([row], "DELIVERED");
         // Feature B — surface the silent skip: if the customer has no email
         // on file, nothing was emailed. Warn (non-blocking) so the operator
         // knows to add the email + Resend.
-        warnIfNoCustomerEmail(podDialog, "DELIVERED");
-        setPodDialog(null);
+        warnIfNoCustomerEmail(row, "DELIVERED");
         fetchData();
       } else if (result.reason === "mismatch") {
         toast.error(formatMismatchError(result.diffs));
@@ -4648,9 +4646,10 @@ export default function DeliveryPage() {
         disabled: row.status !== "LOADED",
       },
       {
-        label: "Mark Delivered (DO Signed)",
+        // Owner 2026-11-11: no Proof of Delivery form — straight to DELIVERED
+        label: "Mark Delivered",
         icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-        action: () => setPodDialog(row),
+        action: () => void handleMarkDeliveredOne(row),
         disabled: row.status !== "LOADED" && row.status !== "IN_TRANSIT",
       },
       {
@@ -7023,17 +7022,6 @@ export default function DeliveryPage() {
         </DocumentDetailDrawer>
       )}
 
-      {/* POD Capture Dialog */}
-      {podDialog && (
-        <PODDialog
-          open={!!podDialog}
-          doId={podDialog.id}
-          doNo={podDialog.doNo}
-          customerName={podDialog.customerName}
-          onClose={() => setPodDialog(null)}
-          onSubmit={handleSubmitPOD}
-        />
-      )}
       </>}
 
       {/* ================================================================ */}

@@ -51,7 +51,7 @@ export const DRAWER_DOC_CONFIG: Record<DrawerDocType, DrawerDocConfig> = {
       "Reverse to Pending Dispatch",
       "Mark Dispatched",
       "Mark Out for Delivery (In Transit)",
-      "Mark Delivered (DO Signed)",
+      "Mark Delivered",
       "Transfer to Invoice",
       "Resend invoice email",
       "Convert to Delivery Return",
@@ -60,7 +60,7 @@ export const DRAWER_DOC_CONFIG: Record<DrawerDocType, DrawerDocConfig> = {
     primaryActionLabels: [
       "Mark Dispatched",
       "Mark Out for Delivery (In Transit)",
-      "Mark Delivered (DO Signed)",
+      "Mark Delivered",
       "Transfer to Invoice",
     ],
   },
@@ -95,7 +95,7 @@ export type DrawerMenuEntry = {
  * document's current state.
  *
  * So a DRAFT delivery order offers "Mark Dispatched" and a dispatched one
- * offers "Mark Delivered (DO Signed)" for exactly the reason the row menu does
+ * offers "Mark Delivered" for exactly the reason the row menu does
  * — there is only one place that rule is written down.
  */
 export function drawerActionBar<T extends DrawerMenuEntry>(
