@@ -31,10 +31,21 @@ test("the blank form ships as PDF and Word, from the owner's sample", () => {
   assert.match(read("public/sw.js"), /if \(url\.pathname\.startsWith\('\/forms\/'\)\) return;/);
 });
 
+test("the blank-form downloads are solid buttons that say what they download (owner 「下载pdf, word 按钮明显一点」)", () => {
+  const btns = read("src/components/customer/ConsentFormDownloads.tsx");
+  assert.match(btns, /href=\{CONSENT_FORM_PDF\}/);
+  assert.match(btns, /href=\{CONSENT_FORM_DOCX\}/);
+  assert.equal((btns.match(/\bdownload\b(?=[\s>])/g) ?? []).length, 2, "both links download");
+  assert.match(btns, /Download PDF/);
+  assert.match(btns, /Download Word/);
+  // A filled brand button, not the small bordered link the owner could not spot.
+  assert.match(btns, /bg-\[#6B5C32\][^"]*text-white/);
+});
+
 test("customers page: the new-customer card offers the blank form and uploads a signed copy once the customer exists", () => {
   const page = read("src/pages/customers.tsx");
-  assert.match(page, /href=\{CONSENT_FORM_PDF\}/);
-  assert.match(page, /href=\{CONSENT_FORM_DOCX\}/);
+  assert.match(page, /<ConsentFormDownloads \/>/);
+  assert.doesNotMatch(page, /href=\{CONSENT_FORM_(PDF|DOCX)\}/, "the downloads live in the shared component");
   assert.match(page, /await uploadConsentForm\(json\.data\.id, addConsentFile\)/);
   // An upload that fails never undoes the customer: it says so and points to the customer.
   assert.match(page, /Customer created, but the consent form did not upload/);
@@ -45,5 +56,5 @@ test("customers page: the new-customer card offers the blank form and uploads a 
   assert.match(page, /<KycPanel customerId=\{cust\.id\} \/>/);
   const kyc = read("src/components/customer/KycPanel.tsx");
   assert.match(kyc, /<FlowFilesCard\s+resourceType=\{CUSTOMER_CONSENT_TYPE\}\s+resourceId=\{customerId\}/);
-  assert.match(kyc, /href=\{CONSENT_FORM_PDF\}/);
+  assert.match(kyc, /<ConsentFormDownloads \/>/);
 });

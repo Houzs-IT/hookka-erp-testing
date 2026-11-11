@@ -75,7 +75,8 @@ import {
 } from "./maintenance/SofaComboHistoryDialog";
 import { moneyFieldToSen } from "@/lib/money-field";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
-import { CONSENT_FORM_DOCX, CONSENT_FORM_PDF, uploadConsentForm } from "@/lib/customer-consent";
+import { uploadConsentForm } from "@/lib/customer-consent";
+import { ConsentFormDownloads } from "@/components/customer/ConsentFormDownloads";
 import { FLOW_FILE_ACCEPT } from "@/lib/flow-files";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
@@ -4112,15 +4113,10 @@ export default function CustomersPage() {
             {/* Consent form (owner 2026-11-11 「加新的customer 时可以下载consent form
                 给顾客填，填了后upload 会上去」, WORK-TRACKER 134). */}
             <div className="mt-4 rounded-lg border border-[#E2DDD8] bg-[#FAF9F7] p-3 text-xs text-[#6B7280] space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-[#1F1D1B]">Consent form (CTOS credit check)</span>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="text-sm font-medium text-[#1F1D1B]">Consent form (CTOS credit check)</span>
                 <span>— give the customer the blank form to sign:</span>
-                <a href={CONSENT_FORM_PDF} download className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] bg-white px-2 py-1 text-[#6B5C32] hover:bg-[#F0ECE9]">
-                  <FileDown className="h-3.5 w-3.5" /> PDF
-                </a>
-                <a href={CONSENT_FORM_DOCX} download className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] bg-white px-2 py-1 text-[#6B5C32] hover:bg-[#F0ECE9]">
-                  <FileDown className="h-3.5 w-3.5" /> Word
-                </a>
+                <ConsentFormDownloads />
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="inline-flex items-center gap-2">
