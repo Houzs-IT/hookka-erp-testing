@@ -95,3 +95,18 @@ test("Forecast P&L page: newest month on the left, an Accumulated column, actual
   assert.match(pg, /actualPurchasesByMonth\(/);
   assert.match(pg, /\/api\/accounting\/pl-monthly\?line=all&anchor=\$\{/);
 });
+
+test("the months on the sheet from an earlier financial year get their actuals too: one more request per year", async () => {
+  const { nextActualsAnchor } = await import("../src/lib/forecast-actuals.ts");
+  const sheet = ["2027-06", "2027-01", "2026-11", "2026-10", "2026-09", "2026-08"];
+  // First this month (its year); future months never ask.
+  assert.equal(nextActualsAnchor(sheet, "2026-11", {}, new Set()), "2026-11");
+  // This year's answer covers Sep–Nov; Aug 2026 is the year before (prod 2026-11-11: FY 2026/27 starts in September).
+  const got = { "2026-11": 1, "2026-10": 1, "2026-09": 1 };
+  assert.equal(nextActualsAnchor(sheet, "2026-11", got, new Set(["2026-11"])), "2026-08");
+  assert.equal(nextActualsAnchor(sheet, "2026-11", { ...got, "2026-08": 1 }, new Set(["2026-11", "2026-08"])), null);
+  // A month asked for and still without actuals (before the books) is not asked again.
+  assert.equal(nextActualsAnchor(sheet, "2026-11", got, new Set(["2026-11", "2026-08"])), null);
+  const pg = readFileSync("src/pages/forecast.tsx", "utf8");
+  assert.match(pg, /nextActualsAnchor\(/);
+});

@@ -52,7 +52,7 @@ import {
 // PERCENTAGE and deliberately keeps `parseFloat` - it is not money.
 import { parseMoneyInput } from "@/lib/parse-money";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
-import { actualPurchasesByMonth, sumActualPurchases, type MonthActualPurchases } from "@/lib/forecast-actuals";
+import { actualPurchasesByMonth, nextActualsAnchor, sumActualPurchases, type MonthActualPurchases } from "@/lib/forecast-actuals";
 import type { PnlWindowLike } from "@/lib/pnl-matrix";
 
 type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean };
@@ -172,19 +172,36 @@ export default function ForecastPage() {
   // 也要做成一样」; src/lib/forecast-actuals.ts). Months with no actuals show "-".
   const [actuals, setActuals] = useState<Record<string, MonthActualPurchases>>({});
   const [actualsFailed, setActualsFailed] = useState(false);
+  // One request per financial year the sheet's past months fall in
+  // (nextActualsAnchor): this month's year first, then an earlier one — the
+  // sheet started in August, the year in September (prod 2026-11-11).
   useEffect(() => {
+    if (!loaded) return;
     let stale = false;
-    fetch(`/api/accounting/pl-monthly?line=all&anchor=${todayYmdMY().slice(0, 7)}&forecast=1&edit=1`, { cache: "no-store" })
-      .then((r) => r.json() as Promise<{ success?: boolean; data?: { edit?: { windows?: Record<string, PnlWindowLike> } } }>)
-      .then((j) => {
+    const sheetYms = Object.keys(months);
+    void (async () => {
+      const cur = todayYmdMY().slice(0, 7);
+      const got: Record<string, MonthActualPurchases> = {};
+      const tried = new Set<string>();
+      for (let anchor = nextActualsAnchor(sheetYms, cur, got, tried); anchor && tried.size < 4; anchor = nextActualsAnchor(sheetYms, cur, got, tried)) {
+        tried.add(anchor);
+        try {
+          const r = await fetch(`/api/accounting/pl-monthly?line=all&anchor=${anchor}&forecast=1&edit=1`, { cache: "no-store" });
+          const j = (await r.json()) as { success?: boolean; data?: { edit?: { windows?: Record<string, PnlWindowLike> } } };
+          const w = j?.data?.edit?.windows;
+          if (!j?.success || !w) throw new Error("no windows");
+          Object.assign(got, actualPurchasesByMonth(w));
+        } catch {
+          if (!stale) setActualsFailed(true);
+          return;
+        }
         if (stale) return;
-        const w = j?.data?.edit?.windows;
-        if (j?.success && w) setActuals(actualPurchasesByMonth(w));
-        else setActualsFailed(true);
-      })
-      .catch(() => { if (!stale) setActualsFailed(true); });
+        setActuals({ ...got });
+      }
+    })();
     return () => { stale = true; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, with the months the sheet loaded with
+  }, [loaded]);
 
   useEffect(() => {
     let stale = false;
