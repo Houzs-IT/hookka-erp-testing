@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-11-11**: newest entry BUG-2026-11-11-426 (branch `fix/production-revenue-line-replay`, to `staging`; 394-425 not checked on other branches).
 > **Last verified: 2026-10-26**: newest entry BUG-2026-10-26-393 (branch `fix/staging-password-from-secret`, to `staging`; 383-392 are taken on other branches).
 > **Last verified: 2026-10-23**: newest entry BUG-2026-10-23-382 (branch `feat/2fa-login-code-step`, to `staging`).
 > **Last verified: 2026-10-22**: newest entry BUG-2026-10-22-381 (branch `feat/dashboard-feed-snapshot`, to `staging`; 347-380 are taken on `main`).
@@ -232,6 +233,24 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-11-11-426 — Production Revenue priced an order from the wrong sales-order line (piece number used as line number) `production` `pricing` 🟡
+
+🟡 **Fixed on branch** (`fix/production-revenue-line-replay`, to `staging`). Not deployed. Prod effect UNMEASURED by this fix; the owner's 2026-11-11 read-only snapshot put Jan–Nov at +RM 7,275.50 with a slightly different rule (see below).
+
+**Symptom.** Production Revenue (Labor Cost screen, both dashboards, department revenue, efficiency email) under- or over-priced some orders. SO-2610-074 line 3 (SB02, qty 4, RM 180) counted RM 180 + 80 + 150 + 0 = RM 410 instead of RM 720.
+
+**Root cause.** The production-order builder (`_shared/production-builder.ts`) writes a running piece number across the whole order into `production_orders.lineNo`. Eight revenue queries joined `sales_order_items.lineNo = po.lineNo` (and the same for consignment lines), so every piece after a qty>1 line read the next line's price, or no line.
+
+**Fix.** `src/api/lib/po-source-line.ts` replays the piece order per product: the k-th live (not cancelled) piece of product P on an order maps to the k-th piece across that order's P lines in line order (a sofa line counts 1, others their qty). Counting per product means stock-allocated or edited lines of other products cannot shift it. When no line matches, the piece keeps today's price, so nothing newly drops to RM 0. All eight queries (`production-revenue.ts` x2, `dept-revenue.ts`, `dashboard-overview.ts` x2, `working-hour-entries.ts` x2) use it. Cache versions bumped (`overviewV` v29, `DASH_PAYLOAD_V` v20). Main dashboard months already frozen by `freezeMonth` keep their stored figures.
+
+**Differs from the snapshot.** The snapshot replayed across all products and kept today's price on a product mismatch; this counts per product, so edited or stock-allocated orders get their own line instead of today's price. Service orders numbered `SV-YYMM-NNN` are sales orders built by the same builder, so they are repriced from their own lines like the snapshot (SV-2607-003, -013, -024, -029 drop to RM 0 / RM 100); the older repair inserts in `service-orders.ts` set no `itemCategory` and never counted. Known limit: the same product on two lines at different prices, with one line partly taken from stock, can still take the other line's price.
+
+**Class.** None in `BUG-CLASSES.md` fits (a column named for one thing holding another); the guard test below pins all eight copies to the shared join.
+
+**Prod check.** `scripts/check-production-revenue-line-fix.sql`, read-only, one statement: per month today vs fixed, RM 0 counts, and `orders` vs `distinct_orders` (must be equal, or a piece matched two lines).
+
+**Regression.** `tests/production-revenue-source-line.test.mjs` (runs the loader SQL on node:sqlite: SO-2610-074 shape, qty-3 line then a dearer line, product on no line, no line falls back to catalogue, stock-allocated earlier line, cancelled piece, consignment; plus a guard that every revenue query uses the shared join).
 
 ## BUG-2026-10-26-393: Staging test password was written in the public source and printed in the job log `security` 🟡
 
