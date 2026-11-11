@@ -45,6 +45,10 @@ import {
 } from "@/lib/invoice-line-price";
 import { useToast } from "@/components/ui/toast";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
+// Review C1-5: photos / videos / PDFs on the invoice and on each line (a line
+// also shows its DO line's and SO line's files, read-only).
+import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
+import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 
 const PAYMENT_METHODS = [
   { value: "BANK_TRANSFER", label: "Bank Transfer" },
@@ -93,6 +97,8 @@ export default function InvoiceDetailPage() {
     if (invResp.success && invResp.data) return invResp.data;
     return (invResp as unknown as Invoice) ?? null;
   }, [invResp]);
+  // Review C1-5: every line's files in one request (rights: the component).
+  const lineFiles = useFlowLineFiles("INVOICE", invoice?.id);
   const { data: allInvResp, refresh: refreshAllInvoices } = useCachedJson<{ success?: boolean; data?: Invoice[] }>(invoice ? "/api/invoices" : null);
   const customerInvoices: Invoice[] = useMemo(() => {
     if (!invoice) return [];
@@ -948,6 +954,15 @@ export default function InvoiceDetailPage() {
                         >
                           <td className="py-3.5 px-4 text-[#9CA3AF] align-top">
                             {idx + 1}
+                            {/* Review C1-5: this line's files + the DO / SO line's. */}
+                            <div className="mt-1">
+                              <LineFilesButton
+                                lineType="INVOICE_LINE"
+                                lineId={item.id}
+                                files={lineFiles}
+                                lineLabel={`Line ${idx + 1} — ${item.productCode || item.productName || ""}`}
+                              />
+                            </div>
                           </td>
                           <td className="py-3.5 px-4 align-top doc-number font-medium text-[#1F1D1B] whitespace-nowrap">
                             {companySO}
@@ -1587,6 +1602,10 @@ export default function InvoiceDetailPage() {
           currentDocNo={invoice.invoiceNo}
         />
       )}
+
+      {/* Review C1-5: photos, videos and PDFs on this invoice (resourceType
+          "INVOICE", the phone app's type). */}
+      {invoice && <FlowFilesCard resourceType="INVOICE" resourceId={invoice.id} />}
 
       {/* Audit trail for this invoice */}
       {invoice && <AuditHistoryPanel resource="invoices" resourceId={invoice.id} />}

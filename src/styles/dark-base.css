@@ -1,0 +1,38 @@
+/* ---------------------------------------------------------------------------
+   dark-base.css — the hand-written half of dark mode (the per-class half is
+   generated: dark-theme.generated.css). Screen only: print and PDFs stay light.
+   Anything under [data-theme="light"] (paper pages such as the Board Report)
+   keeps the light look even in dark mode.
+   --------------------------------------------------------------------------- */
+@media screen {
+  :root.dark {
+    color-scheme: dark;
+    --color-raisin: #ECE7E2;
+    --color-stone-white: #141210;
+    --color-border: #3A3632;
+    --color-border-light: #3A3632;
+    --color-text-secondary: #B5ADA6;
+    --color-text-tertiary: #8E8780;
+  }
+  :root.dark body {
+    background: #141210;
+    color: #ECE7E2;
+  }
+  :root.dark ::-webkit-scrollbar-thumb { background: #46413C; }
+  :root.dark ::-webkit-scrollbar-thumb:hover { background: #5A544E; }
+
+  /* Native controls with no colour class of their own. */
+  :root.dark :where(input, select, textarea):not([type="checkbox"], [type="radio"], [type="range"], [type="color"]):not(:where([data-theme="light"] *)) {
+    background-color: #1C1A18;
+    color: #ECE7E2;
+    border-color: #46413C;
+  }
+  :root.dark :where(input, textarea)::placeholder { color: #7D766F; }
+  :root.dark option { background-color: #1C1A18; color: #ECE7E2; }
+
+  /* Images and logos drawn for a white page: soften pure-white backgrounds. */
+  :root.dark img:not([data-keep-light]):not(:where([data-theme="light"] *)) { filter: brightness(0.92); }
+
+  /* Paper pages keep their light look inside the dark app. */
+  :root.dark [data-theme="light"] { color-scheme: light; }
+}

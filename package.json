@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test": "node --import tsx/esm --test tests/*.test.mjs",
-    "build": "vite build",
+    "build": "node scripts/gen-dark-theme.mjs && vite build",
     "build:strict": "npm run typecheck:app && npm run build",
     "typecheck": "tsc -b",
     "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
@@ -27,7 +27,8 @@
     "_LEGACY_db:seed:local": "echo 'LEGACY: D1 retired. Local Postgres seeding is via apply-postgres-migrations.mjs --reset (which also seeds via migrations-postgres/*.sql).'",
     "_LEGACY_db:studio": "echo 'LEGACY: D1 retired. Inspect Supabase via the Supabase dashboard or psql with DATABASE_URL from .dev.vars.'",
     "prepare": "husky",
-    "trust": "node scripts/trust-report.mjs"
+    "trust": "node scripts/trust-report.mjs",
+    "gen:dark": "node scripts/gen-dark-theme.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx}": "node node_modules/eslint/bin/eslint.js"
@@ -36,6 +37,7 @@
     "@fontsource/ibm-plex-sans": "5.3.0",
     "@hono/node-server": "^1.19.14",
     "@hookform/resolvers": "^5.2.2",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@sentry/react": "^10.50.0",
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/react-table": "^8.21.3",

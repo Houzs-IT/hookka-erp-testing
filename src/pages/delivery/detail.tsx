@@ -39,6 +39,10 @@ import { usePresence } from "@/lib/use-presence";
 import { PresenceBanner } from "@/components/presence-banner";
 import { FetchJsonError } from "@/lib/fetch-json";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
+// Review C1-5: photos / videos / PDFs on the DO and on each line (a line also
+// shows its SO line's files, read-only).
+import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
+import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -172,6 +176,8 @@ export default function DeliveryDetailPage() {
     [lorryResp]
   );
   const loading = doLoading || lorryLoading;
+  // Review C1-5: every line's files in one request (rights: the component).
+  const lineFiles = useFlowLineFiles("DO", order?.id);
   const [updating, setUpdating] = useState(false);
   const [podOpen, setPodOpen] = useState(false);
   // Delivery-status QR modal — drivers scan it to Mark Dispatched/Delivered
@@ -987,6 +993,7 @@ export default function DeliveryDetailPage() {
                   <th className="h-10 px-4 text-right font-medium text-[#374151]">Total M&sup3;</th>
                   <th className="h-10 px-4 text-left font-medium text-[#374151]">Rack #</th>
                   <th className="h-10 px-4 text-left font-medium text-[#374151]">Packing</th>
+                  <th className="h-10 px-2 text-center font-medium text-[#374151]" title="Files on this line">Files</th>
                 </tr>
               </thead>
               <tbody>
@@ -1037,6 +1044,14 @@ export default function DeliveryDetailPage() {
                         {item.packingStatus}
                       </Badge>
                     </td>
+                    <td className="h-12 px-2 text-center">
+                      <LineFilesButton
+                        lineType="DO_LINE"
+                        lineId={item.id}
+                        files={lineFiles}
+                        lineLabel={`Line ${idx + 1} — ${item.productCode || item.productName}`}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1052,6 +1067,7 @@ export default function DeliveryDetailPage() {
                   <td className="px-4 py-3 text-right font-bold">
                     {order.items.reduce((s, i) => s + i.itemM3 * i.quantity, 0).toFixed(2)}
                   </td>
+                  <td />
                   <td />
                   <td />
                 </tr>
@@ -1187,6 +1203,10 @@ export default function DeliveryDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Review C1-5: photos, videos and PDFs on this DO (resourceType "DO",
+          the phone app's type). The driver's POD photos stay on the POD. */}
+      <FlowFilesCard resourceType="DO" resourceId={order.id} />
 
       {/* Document Relationship — the same chain graph as the SO page, so you
           can see how THIS delivery order connects to its SO / invoice / payment

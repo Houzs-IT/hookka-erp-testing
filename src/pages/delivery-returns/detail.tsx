@@ -18,6 +18,10 @@ import { Loader2, ArrowLeft, Printer } from "lucide-react";
 import { generateDeliveryReturnPdf } from "@/lib/generate-delivery-return-pdf";
 import { deliveryReturnStatus } from "@/lib/delivery-return-status";
 import { returnCandidateBlock, type ReturnCreditCandidate } from "@/lib/cn-from-return";
+// Review C1-5: photos / videos / PDFs on the return and on each line (a line
+// also shows its DO line's and SO line's files, read-only).
+import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
+import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 
 interface DRItem {
   id: string;
@@ -74,6 +78,8 @@ export default function DeliveryReturnDetail() {
   );
   const dr = raw?.data ?? null;
   const [busy, setBusy] = useState(false);
+  // Review C1-5: every line's files in one request (rights: the component).
+  const lineFiles = useFlowLineFiles("DR", dr?.id);
   // Only asked while the return waits for its credit note (BUG-2026-10-17-318).
   const { data: cnCandidateResp } = useCachedJson<{ success?: boolean; data?: ReturnCreditCandidate[] }>(
     dr && deliveryReturnStatus(dr).awaitingCreditNote ? `/api/credit-notes/from-returns?returnId=${encodeURIComponent(String(id))}` : null,
@@ -222,7 +228,7 @@ export default function DeliveryReturnDetail() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-[#6B7280] border-b border-[#E2DDD8]">
-                <th className="py-2">Returned item</th><th>Size / Fabric</th><th>Qty</th><th>Problem</th><th>Invoiced?</th>
+                <th className="py-2">Returned item</th><th>Size / Fabric</th><th>Qty</th><th>Problem</th><th>Invoiced?</th><th title="Files on this line">Files</th>
               </tr>
             </thead>
             <tbody>
@@ -255,6 +261,14 @@ export default function DeliveryReturnDetail() {
                   <td>{it.quantity}</td>
                   <td>{it.problem ? <span className="text-[#9A3A2D] font-medium">{it.problem}</span> : "—"}</td>
                   <td>{it.wasInvoiced ? <span className="text-[#9A3A2D]">Invoiced</span> : <span className="text-[#6B7280]">Not yet</span>}</td>
+                  <td>
+                    <LineFilesButton
+                      lineType="DR_LINE"
+                      lineId={it.id}
+                      files={lineFiles}
+                      lineLabel={`${it.productCode || ""} ${it.productName || ""}`.trim()}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -411,6 +425,13 @@ export default function DeliveryReturnDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Review C1-5: photos, videos and PDFs on this return (resourceType "DR"). */}
+      <FlowFilesCard
+        resourceType="DR"
+        resourceId={dr.id}
+        hint="Photos, videos and PDFs for this return — the damage, the customer's note."
+      />
     </div>
   );
 }

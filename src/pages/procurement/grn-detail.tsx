@@ -36,6 +36,10 @@ import { RecordLoadError } from "@/components/ui/record-load-error";
 import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
 import { fetchFxRate } from "@/lib/fx-client";
 import { fmtFxRate } from "@/lib/fx";
+// Review C1-5: photos / videos / PDFs on the GRN and on each line (a line also
+// shows its PO line's files, read-only).
+import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
+import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 import {
   isGrnLineEditable,
   isGrnLineLockedByPi,
@@ -199,6 +203,8 @@ export default function GRNDetailPage() {
   const items = grn?.items ?? [];
   // Review H1-5: every PO this receipt draws from (more than one = multi-PO).
   const grnPoList = grn ? grnPoRefs(grn) : [];
+  // Review C1-5: every line's files in one request (rights: the component).
+  const lineFiles = useFlowLineFiles("GRN", grn?.id);
 
   // PIs that reference the same PO as this GRN — derived client-side from the
   // shared PI list (no extra endpoint needed; list is small).
@@ -980,6 +986,7 @@ export default function GRNDetailPage() {
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">Rejected</th>
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">Unit Price</th>
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">Line Total</th>
+                      <th className="h-10 px-2 text-center font-medium text-[#374151]" title="Files on this line">Files</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1042,6 +1049,14 @@ export default function GRNDetailPage() {
                               ? it.acceptedQty
                               : parseFloat(qtyEdit[idx]) || 0) * it.unitPrice,
                           )}
+                        </td>
+                        <td className="h-12 px-2 text-center">
+                          <LineFilesButton
+                            lineType="GRN_LINE"
+                            lineId={it.id}
+                            files={lineFiles}
+                            lineLabel={`Line ${idx + 1} — ${it.materialCode || it.materialName}`}
+                          />
                         </td>
                       </tr>
                       );
@@ -1390,6 +1405,15 @@ export default function GRNDetailPage() {
           />
         </CardContent>
       </Card>
+
+      {/* Review C1-5: photos, videos and PDFs on this GRN (resourceType "GRN",
+          the phone app's type). The receipt photos that print on the GRN PDF
+          stay in their own card (review C2-4). */}
+      <FlowFilesCard
+        resourceType="GRN"
+        resourceId={grn.id}
+        hint="Photos, videos and PDFs for this receipt. These don't print on the GRN PDF."
+      />
 
       <AuditHistoryPanel resource="grn" resourceId={grn.id} />
     </div>

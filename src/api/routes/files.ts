@@ -46,8 +46,16 @@ import {
   signedDownloadUrl,
   deleteFile,
 } from "../lib/supabase-storage";
-import { requirePermission } from "../lib/rbac";
+import { requirePermission, hasPermission } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
+import {
+  flowFileResource,
+  isFlowDoc,
+  FLOW_DOC_RESOURCE,
+  groupLineFiles,
+  normalizeFileRow,
+} from "../../lib/flow-files";
+import { resolveFlowLineScope, loadFilesForRefs } from "../lib/flow-line-files";
 
 const app = new Hono<Env>();
 
@@ -372,11 +380,27 @@ export async function removeStoredFile(
 }
 
 // ---------------------------------------------------------------------------
+// Review C1-5 — a file on a FLOW document (PO, GRN, PI, DO, invoice, delivery
+// return, and their lines) inherits that document's gate: viewing needs the
+// document's `read`, uploading / deleting its `update`. The resourceType →
+// resource map is src/lib/flow-files.ts; a type NOT in it keeps the old
+// file-store gate (files:create / files:delete / open read), so SO, products,
+// equipment … are unchanged. See docs/RBAC-REMEDIATION.md finding 1.
+// ---------------------------------------------------------------------------
+async function flowGate(
+  c: Parameters<typeof requirePermission>[0],
+  resourceType: string | null | undefined,
+  action: "read" | "update",
+): Promise<Response | null> {
+  const resource = flowFileResource(resourceType);
+  if (!resource) return null;
+  return requirePermission(c, resource, action);
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/files — multipart upload
 // ---------------------------------------------------------------------------
 app.post("/", async (c) => {
-  const denied = await requirePermission(c, "files", "create");
-  if (denied) return denied;
   if (!c.env.SUPABASE_PROJECT_REF || !c.env.SUPABASE_SERVICE_KEY) {
     return c.json({ success: false, error: "file storage unavailable" }, 503);
   }
@@ -391,6 +415,13 @@ app.post("/", async (c) => {
   const file = form.get("file");
   const resourceType = String(form.get("resourceType") ?? "").trim();
   const resourceId = String(form.get("resourceId") ?? "").trim();
+
+  // A flow document's file is gated on that document's update permission;
+  // everything else on files:create as before.
+  const denied = flowFileResource(resourceType)
+    ? await flowGate(c, resourceType, "update")
+    : await requirePermission(c, "files", "create");
+  if (denied) return denied;
 
   if (!(file instanceof File)) {
     return c.json({ success: false, error: "file field required" }, 400);
@@ -407,6 +438,10 @@ app.get("/", async (c) => {
   const orgId = getOrgId(c);
   const resourceType = c.req.query("resourceType");
   const resourceId = c.req.query("resourceId");
+  if (resourceType) {
+    const denied = await flowGate(c, resourceType, "read");
+    if (denied) return denied;
+  }
 
   let sql = "SELECT * FROM file_assets WHERE orgId = ?";
   const binds: unknown[] = [orgId];
@@ -423,7 +458,62 @@ app.get("/", async (c) => {
   const res = await c.var.DB.prepare(sql)
     .bind(...binds)
     .all<FileAssetRow>();
-  return c.json({ success: true, data: res.results ?? [] });
+  let data = res.results ?? [];
+  if (!resourceType) {
+    // Unfiltered list: drop the flow-document files this reader may not see.
+    const allowed = new Map<string, boolean>();
+    for (const r of data) {
+      const resource = flowFileResource(r.resourceType);
+      if (resource && !allowed.has(resource)) allowed.set(resource, await hasPermission(c, resource, "read"));
+    }
+    data = data.filter((r) => {
+      const resource = flowFileResource(r.resourceType);
+      return !resource || allowed.get(resource) === true;
+    });
+  }
+  return c.json({ success: true, data });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/files/flow-lines?doc=GRN&id=<grnId> — review C1-5. The files on
+// every line of one flow document, plus the files carried down READ-ONLY from
+// the lines it was made from (PO line → GRN line → PI line; SO line → DO line
+// → invoice / return line). Gate: the document's read; a carried-down file is
+// shown only when the reader may also read the document it sits on. Read-only.
+// Registered before "/:id" so "flow-lines" is not taken for a file id.
+// ---------------------------------------------------------------------------
+app.get("/flow-lines", async (c) => {
+  const doc = c.req.query("doc");
+  const docId = (c.req.query("id") ?? "").trim();
+  if (!isFlowDoc(doc) || !docId) {
+    return c.json({ success: false, error: "doc and id are required" }, 400);
+  }
+  const denied = await requirePermission(c, FLOW_DOC_RESOURCE[doc], "read");
+  if (denied) return denied;
+  const orgId = getOrgId(c);
+  const scope = await resolveFlowLineScope(c.var.DB, orgId, doc, docId);
+  if (!scope) return c.json({ success: false, error: "Not found" }, 404);
+
+  const idsByType = new Map<string, string[]>([[scope.ownType, scope.lineIds]]);
+  for (const refs of scope.upstream.values()) {
+    for (const ref of refs) {
+      const arr = idsByType.get(ref.type);
+      if (arr) arr.push(ref.id);
+      else idsByType.set(ref.type, [ref.id]);
+    }
+  }
+  // Leave out the upstream types this reader may not read (e.g. a GRN clerk
+  // without purchase-orders:read does not see the PO line's files).
+  for (const type of [...idsByType.keys()]) {
+    if (type === scope.ownType) continue;
+    const resource = flowFileResource(type);
+    if (resource && !(await hasPermission(c, resource, "read"))) idsByType.delete(type);
+  }
+  const rows = (await loadFilesForRefs(c.var.DB, orgId, idsByType)).map(normalizeFileRow);
+  return c.json({
+    success: true,
+    data: groupLineFiles(scope.lineIds, scope.ownType, scope.upstream, rows),
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -467,6 +557,8 @@ app.get("/:id", async (c) => {
     .bind(id, orgId)
     .first<FileAssetRow>();
   if (!row) return c.json({ success: false, error: "Not found" }, 404);
+  const denied = await flowGate(c, row.resourceType, "read");
+  if (denied) return denied;
   return c.json({ success: true, data: row });
 });
 
@@ -492,6 +584,8 @@ app.get("/:id/download", async (c) => {
     .bind(id, orgId)
     .first<FileAssetRow>();
   if (!row) return c.json({ success: false, error: "Not found" }, 404);
+  const deniedRead = await flowGate(c, row.resourceType, "read");
+  if (deniedRead) return deniedRead;
   const inline = wantsInline(c.req.query("inline"), row.contentType);
 
   try {
@@ -535,6 +629,8 @@ app.get("/:id/stream", async (c) => {
     .bind(id, orgId)
     .first<FileAssetRow>();
   if (!row) return c.json({ success: false, error: "Not found" }, 404);
+  const deniedRead = await flowGate(c, row.resourceType, "read");
+  if (deniedRead) return deniedRead;
 
   try {
     const obj = await getFile(c.env, row.r2Key);
@@ -568,7 +664,17 @@ app.get("/:id/stream", async (c) => {
 // DELETE /api/files/:id — removes row + R2 object
 // ---------------------------------------------------------------------------
 app.delete("/:id", async (c) => {
-  const denied = await requirePermission(c, "files", "delete");
+  // files:delete stays required for every file (an attachment is evidence —
+  // removing one is an admin action, tests/rbac-files-attachable.test.mjs). A
+  // flow document's file ALSO needs that document's update permission.
+  const target = await c.var.DB.prepare(
+    "SELECT resourceType FROM file_assets WHERE id = ? AND orgId = ?",
+  )
+    .bind(c.req.param("id"), getOrgId(c))
+    .first<{ resourceType?: string; resource_type?: string }>();
+  const targetType = target?.resourceType ?? target?.resource_type ?? null;
+  const denied =
+    (await requirePermission(c, "files", "delete")) ?? (await flowGate(c, targetType, "update"));
   if (denied) return denied;
   const removed = await removeStoredFile(c, c.req.param("id"));
   if (!removed.ok) return c.json({ success: false, error: removed.error }, removed.status);

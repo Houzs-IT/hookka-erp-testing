@@ -17,11 +17,10 @@ import { useDashboardFeed, useDashboardPeriod } from "./hooks";
 import { PeriodChip } from "./PeriodChip";
 import { MState } from "./primitives";
 import { TAB_REGISTRY } from "./registry";
-import { TONE, useProblemTiles } from "../../../dashboards/use-problem-tiles";
 import { quarterOfPeriod, type Period } from "../../../dashboards/dashboard-shared-lib";
 
 /**
- * The dashboard itself — section strip, Today's problems, the active tab —
+ * The dashboard itself — section strip and the active tab (no problem tiles — owner 2026-11-11) —
  * shared by /m/dashboard/:tab and the phone Home (owner 2026-10-24: "Home 应该
  * 要有全部各种各样的 dashboard"), so both show the same figures. `tab` and
  * `openTab` come from the caller: the URL on the dashboard page, local state
@@ -49,8 +48,7 @@ export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
     : rawPeriod.mode === "range" && !quarterOfPeriod(rawPeriod)
       ? { mode: "monthly", month: rawPeriod.month }
       : rawPeriod.day && !dayTab ? { ...rawPeriod, day: undefined } : rawPeriod;
-  // "Today's problems" — the same tiles as the desktop strip.
-  const problems = useProblemTiles(tabs.map((t) => t.key));
+
   const blocked = !tabs.some((t) => t.key === tab);
   const Tab = TAB_REGISTRY[tab];
   const chip = <PeriodChip period={period} months={months} latestDay={latestDay} onChange={setPeriod} allowDay={dayTab} />;
@@ -86,28 +84,8 @@ export function DashboardBody({ tab, openTab, stickyTop, showPeriod = false }: {
           })}
         </div>
       </div>
-      {/* Today's problems: a 2 × 2 grid (owner 2026-10-24: a sideways row cut the outer tiles off). */}
-      {problems.length > 0 && (
-        <div role="list" aria-label="Today's problems" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 12px 2px" }}>
-          {problems.map((p) => (
-            <button
-              key={p.key}
-              role="listitem"
-              type="button"
-              onClick={() => openTab(p.tab as MobileTabKey)}
-              style={{
-                minWidth: 0, textAlign: "left", padding: "9px 11px", borderRadius: 13,
-                border: `1px solid ${M.hairline}`, borderTop: `3px solid ${TONE[p.tone].bar}`, backgroundColor: M.card, cursor: "pointer",
-                WebkitTapHighlightColor: "transparent",
-              }}
-            >
-              <div style={{ fontSize: 19, fontWeight: 800, color: TONE[p.tone].value, fontVariantNumeric: "tabular-nums", lineHeight: 1.15 }}>{p.value}</div>
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: M.raisin, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}</div>
-              {p.hint && <div style={{ fontSize: 10.5, color: M.muted, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.hint}</div>}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Today's problems removed from the phone dashboard (owner 2026-11-11:
+          the tiles crowded every tab on a narrow screen; desktop keeps them). */}
       {blocked ? (
         <MState kind="empty" text="Under maintenance" />
       ) : (
