@@ -76,6 +76,7 @@ import {
 import { moneyFieldToSen } from "@/lib/money-field";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
 import { uploadConsentForm } from "@/lib/customer-consent";
+import { EMPTY_NEW_CUSTOMER, newCustomerCreateBody, newCustomerOnboardingBody, type NewCustomerForm } from "@/lib/customer-new-form";
 import { ConsentFormDownloads } from "@/components/customer/ConsentFormDownloads";
 import { FLOW_FILE_ACCEPT } from "@/lib/flow-files";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
@@ -3473,7 +3474,9 @@ export default function CustomersPage() {
   // add-form state
   // Finance › Debtor List (2026-10-17): ?new=1 opens the Add form.
   const [showAdd, setShowAdd] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
-  const [addForm, setAddForm] = useState({ code: "", name: "", contactName: "", phone: "", email: "", creditTerms: "NET30", creditLimitSen: 0 });
+  // SSM No. / address / salesperson and the TIN / SST / e-Invoice ids joined the
+  // card 2026-11-11 (WORK-TRACKER 138); what each saves to: src/lib/customer-new-form.ts.
+  const [addForm, setAddForm] = useState<NewCustomerForm>(EMPTY_NEW_CUSTOMER);
   const [addSaving, setAddSaving] = useState(false);
   // The customer's signed consent form, attached once the customer exists (WORK-TRACKER 134).
   const [addConsentFile, setAddConsentFile] = useState<File | null>(null);
@@ -3536,33 +3539,40 @@ export default function CustomersPage() {
       const res = await fetch("/api/customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...addForm,
-          customerStage: addingPotential ? "POTENTIAL" : "CONFIRMED",
-        }),
+        body: JSON.stringify(newCustomerCreateBody(addForm, addingPotential)),
       });
       const json = asCustomerMutationResponse(await res.json());
       if (json?.success) {
         setData((prev) => [...prev, json.data]);
         invalidateCachePrefix("/api/customers");
+        const newId = json.data?.id ? String(json.data.id) : "";
         // A signed consent form picked in the card goes up now that the customer
-        // has an id; it then ticks "Consent letter received" (Onboarding / KYC).
-        // A failed upload never undoes the customer — it says where to add it.
-        if (addConsentFile && json.data?.id) {
-          const up = await uploadConsentForm(json.data.id, addConsentFile);
-          if (up.ok) {
-            await fetch("/api/customer-crm/onboarding", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ customerId: json.data.id, consentReceived: true, consentDate: todayYmdMY() }),
-            }).catch(() => null);
-            toast.success("Customer created with the signed consent form.");
-          } else {
-            toast.error(`Customer created, but the consent form did not upload (${up.error}). Add it in the customer's Onboarding / KYC.`);
+        // has an id. A failed upload never undoes the customer — it says where to add it.
+        let consentUploaded = false;
+        if (addConsentFile && newId) {
+          const up = await uploadConsentForm(newId, addConsentFile);
+          if (up.ok) consentUploaded = true;
+          else toast.error(`Customer created, but the consent form did not upload (${up.error}). Add it in the customer's Onboarding / KYC.`);
+        }
+        // The TIN / SST / e-Invoice ids and the "Consent letter received" tick
+        // (today) go to Onboarding / KYC in ONE save — that PUT overwrites every
+        // column, so a second one would blank the first.
+        const kyc = newId ? newCustomerOnboardingBody(newId, addForm, consentUploaded, todayYmdMY()) : null;
+        let kycSaved = true;
+        if (kyc) {
+          const kr = await fetch("/api/customer-crm/onboarding", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(kyc),
+          }).catch(() => null);
+          kycSaved = !!kr?.ok;
+          if (!kycSaved) {
+            toast.error(`Customer created, but its TIN / SST / e-Invoice or consent details did not save${kr ? ` (HTTP ${kr.status})` : ""}. Add them in the customer's Onboarding / KYC.`);
           }
         }
+        if (consentUploaded && kycSaved) toast.success("Customer created with the signed consent form.");
         setAddConsentFile(null);
-        setAddForm({ code: "", name: "", contactName: "", phone: "", email: "", creditTerms: "NET30", creditLimitSen: 0 });
+        setAddForm(EMPTY_NEW_CUSTOMER);
         setShowAdd(false);
       } else {
         toast.error(json?.error || `Failed to add customer (HTTP ${res.status})`);
@@ -4088,6 +4098,28 @@ export default function CustomersPage() {
                 <Input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="Company name" />
               </div>
               <div>
+                <label className="text-xs font-medium text-[#374151] mb-1 block">SSM No.</label>
+                <Input value={addForm.ssmNo} onChange={(e) => setAddForm({ ...addForm, ssmNo: e.target.value })} placeholder="e.g. 201901012345" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-[#374151] mb-1 block">Salesperson</label>
+                <select
+                  value={addForm.salespersonUserId}
+                  onChange={(e) => setAddForm({ ...addForm, salespersonUserId: e.target.value })}
+                  className="flex h-10 w-full rounded-md border border-[#E2DDD8] bg-white px-3 py-2 text-sm text-[#1F1D1B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]"
+                  aria-label="Salesperson who owns this account"
+                >
+                  <option value="">Unassigned</option>
+                  {salespeople.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label className="text-xs font-medium text-[#374151] mb-1 block">Company Address</label>
+                <Input value={addForm.companyAddress} onChange={(e) => setAddForm({ ...addForm, companyAddress: e.target.value })} placeholder="Registered company address" />
+              </div>
+              <div>
                 <label className="text-xs font-medium text-[#374151] mb-1 block">PIC</label>
                 <Input value={addForm.contactName} onChange={(e) => setAddForm({ ...addForm, contactName: e.target.value })} placeholder="e.g. Purchasing" />
               </div>
@@ -4108,6 +4140,27 @@ export default function CustomersPage() {
               <div>
                 <label className="text-xs font-medium text-[#374151] mb-1 block">Credit Limit (RM)</label>
                 <Input type="number" onFocus={(e) => e.currentTarget.select()} value={addForm.creditLimitSen / 100} onChange={(e) => setAddForm({ ...addForm, creditLimitSen: Math.round(Number(e.target.value) * 100) })} placeholder="0.00" />
+              </div>
+            </div>
+            {/* Tax / e-Invoice ids — kept in the customer's Onboarding / KYC block,
+                saved there right after the customer is created (WORK-TRACKER 138). */}
+            <div className="mt-4">
+              <p className="text-xs font-medium text-[#374151] mb-2">
+                Tax / e-Invoice <span className="font-normal text-[#9CA3AF]">— saved to the customer&apos;s Onboarding / KYC</span>
+              </p>
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+                <div>
+                  <label className="text-xs font-medium text-[#374151] mb-1 block">TIN</label>
+                  <Input value={addForm.tinNumber} onChange={(e) => setAddForm({ ...addForm, tinNumber: e.target.value })} placeholder="e.g. C2584563200" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#374151] mb-1 block">SST Reg. No.</label>
+                  <Input value={addForm.sstRegNo} onChange={(e) => setAddForm({ ...addForm, sstRegNo: e.target.value })} placeholder="if registered" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#374151] mb-1 block">e-Invoice ID</label>
+                  <Input value={addForm.einvoiceId} onChange={(e) => setAddForm({ ...addForm, einvoiceId: e.target.value })} />
+                </div>
               </div>
             </div>
             {/* Consent form (owner 2026-11-11 「加新的customer 时可以下载consent form

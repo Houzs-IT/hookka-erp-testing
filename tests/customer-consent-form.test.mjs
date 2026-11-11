@@ -46,11 +46,12 @@ test("customers page: the new-customer card offers the blank form and uploads a 
   const page = read("src/pages/customers.tsx");
   assert.match(page, /<ConsentFormDownloads \/>/);
   assert.doesNotMatch(page, /href=\{CONSENT_FORM_(PDF|DOCX)\}/, "the downloads live in the shared component");
-  assert.match(page, /await uploadConsentForm\(json\.data\.id, addConsentFile\)/);
+  assert.match(page, /await uploadConsentForm\(newId, addConsentFile\)/);
   // An upload that fails never undoes the customer: it says so and points to the customer.
   assert.match(page, /Customer created, but the consent form did not upload/);
-  // A successful upload ticks "Consent letter received" with today's date.
-  assert.match(page, /consentReceived: true, consentDate: todayYmdMY\(\)/);
+  // A successful upload ticks "Consent letter received" with today's date — in the
+  // one Onboarding / KYC save (tests/customer-new-form.test.mjs pins its body).
+  assert.match(page, /if \(up\.ok\) consentUploaded = true;/);
   // The open customer's Onboarding / KYC panel offers the blank form and lists,
   // adds and removes the signed copies through the shared attachments card.
   assert.match(page, /<KycPanel customerId=\{cust\.id\} \/>/);

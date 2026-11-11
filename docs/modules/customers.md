@@ -25,7 +25,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 
 ## Entry points
 - Pages
-  - `/customers` → `src/pages/customers.tsx:3427` (`CustomersPage` — list/KPI/CRUD + nested pricing/maintenance/combo panels)
+  - `/customers` → `src/pages/customers.tsx:3428` (`CustomersPage` — list/KPI/CRUD + nested pricing/maintenance/combo panels)
   - Users/Org/Mailbox → `src/pages/settings/Users.tsx:226` (`UsersPage`; SUPER_ADMIN-gated account admin)
   - `src/pages/settings/index.tsx` (settings shell) · `src/pages/settings/organisations.tsx` (sister-company config)
   - Mail Center → `src/pages/mail-center/index.tsx` (Gmail-style shell) + `detail.tsx` / `compose.tsx`; client view prefs in `src/pages/mail-center/mail-prefs.ts`
@@ -50,7 +50,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 
 ## Core flows
 1. **Create / edit customer** — `app.post("/")` `customers.ts:350` and `app.put("/:id")` `:508`. Both self-apply the company/group/OEM columns, then run `validateDebtorCode` (`:76`) before write. Reads go through `rowToCustomer` (`:271`), which dual-keys camel/snake and buckets hubs.
-2. **Per-customer pricing (shadow master)** — `CustomerProductsPanel` (`customers.tsx:201`) mirrors the Products bulk-edit dirty-edits pattern; backend `customer-products.ts` assigns SKUs (`app.post("/bulk-assign")` `:743`), seeds from master (`app.post("/copy-from-master")` `:833`), and writes effective-dated price rows (`app.post("/:customerProductId/prices")` `:434`). Price resolution: `resolveCustomerPriceAsOf` (`:1004`).
+2. **Per-customer pricing (shadow master)** — `CustomerProductsPanel` (`customers.tsx:202`) mirrors the Products bulk-edit dirty-edits pattern; backend `customer-products.ts` assigns SKUs (`app.post("/bulk-assign")` `:743`), seeds from master (`app.post("/copy-from-master")` `:833`), and writes effective-dated price rows (`app.post("/:customerProductId/prices")` `:434`). Price resolution: `resolveCustomerPriceAsOf` (`:1004`).
 3. **Maintenance/combo config snapshot** — `app.post("/:customerId/copy-from-master")` `customer-maintenance.ts:30` (the file's ONLY endpoint). It (a) checks the customer exists, (b) reads `kv_config['variants-config']` and refuses if it is missing (404) or malformed JSON (500, guard `:66-73`), (c) upserts it to `kv_config['variants-config:<customerId>']` (`:81-89`), then (d) mirrors every `maintenance_config_history` row with `scope='master'` into `scope='customer:<customerId>'`, skipping `(effective_from, config)` pairs that already exist and batching 50 inserts at a time (`:91-171`). Returns `mirroredHistoryRows`.
 4. **Office login/session** — `app.post("/login")` `auth.ts:149` issues a `user_sessions` row; `/me` `:491`, `/me/permissions` `:521`; password reset and invite-accept handlers live further down the same file. OAuth (`auth-oauth.ts`) / TOTP (`auth-totp.ts`) are bolt-ons.
 5. **Account admin (SUPER_ADMIN-gated)** — every one of the EIGHT mutating handlers in `users.ts` calls `requireSuperAdmin(c)` (imported from `../lib/rbac`, `:20`). Gate → handler, verified pairwise: `:166`→`POST /backfill-org-from-aliases` (`:165`), `:259`→`POST /` create (`:253`), `:361`→`PUT /:id` (`:350`), `:556`→`DELETE /:id` (`:551`), `:633`→`POST /:id/reset-password` (`:627`), `:778`→`POST /invite` (`:772`), `:941`→`POST /invites/:token/resend` (`:938`), `:996`→`DELETE /invites/:token` (`:993`). The three GETs (`:224`, `:917`, `:1023`) are not gated by it.
@@ -59,12 +59,12 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `CustomersPage` | `src/pages/customers.tsx:3427` | List/KPI/columns/CRUD/context menu (default export) |
-| `CustomerProductsPanel` | `src/pages/customers.tsx:201` | Per-customer pricing (mirrors Products bulk-edit) |
-| `CustomerMaintenancePanel` | `src/pages/customers.tsx:1650` | Per-customer config snapshot tabs |
-| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2416` | Per-customer combo pricing (config editor) |
-| `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2706` | Price-history viewer |
-| `AssignSkuModal` | `src/pages/customers.tsx:3234` | SKU assignment modal |
+| `CustomersPage` | `src/pages/customers.tsx:3428` | List/KPI/columns/CRUD/context menu (default export) |
+| `CustomerProductsPanel` | `src/pages/customers.tsx:202` | Per-customer pricing (mirrors Products bulk-edit) |
+| `CustomerMaintenancePanel` | `src/pages/customers.tsx:1651` | Per-customer config snapshot tabs |
+| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2417` | Per-customer combo pricing (config editor) |
+| `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2707` | Price-history viewer |
+| `AssignSkuModal` | `src/pages/customers.tsx:3235` | SKU assignment modal |
 | `UsersPage` | `src/pages/settings/Users.tsx:234` | Users/Org/Mailbox tab shell |
 | `validateDebtorCode` | `src/api/routes/customers.ts:93` | Debtor-code validation on create/edit |
 | `rowToCustomer` | `src/api/routes/customers.ts:294` | Dual-key row → customer, buckets hubs |
@@ -95,7 +95,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 
 ## Common tasks (mini-playbook)
 - **Add a field to the customer** → runtime `ALTER … ADD COLUMN IF NOT EXISTS` helper next to `ensureCustomerCompanyColumn` (`customers.ts:39`); persist in POST (`:350`) and PUT (`:508`); surface in `rowToCustomer` (`:271`); render in `customers.tsx:3416`. snake_case (+ rename-map if camelCase).
-- **Adjust per-customer pricing** → backend in `customer-products.ts` (prices `:434`, bulk-assign `:743`, copy-from-master `:833`, resolve `:1004`); FE in `CustomerProductsPanel` (`customers.tsx:201`) — mirror the Products bulk-edit pattern. Test `tests/customer-quotation-batched.test.mjs` (it is the one that actually pins `customer-products.ts`'s batched resolver + `FROM customer_product_prices`). `tests/customer-notify.test.mjs` is about DO/invoice/CN dispatch EMAIL templates and does not touch pricing.
+- **Adjust per-customer pricing** → backend in `customer-products.ts` (prices `:434`, bulk-assign `:743`, copy-from-master `:833`, resolve `:1004`); FE in `CustomerProductsPanel` (`customers.tsx:202`) — mirror the Products bulk-edit pattern. Test `tests/customer-quotation-batched.test.mjs` (it is the one that actually pins `customer-products.ts`'s batched resolver + `FROM customer_product_prices`). `tests/customer-notify.test.mjs` is about DO/invoice/CN dispatch EMAIL templates and does not touch pricing.
 - **Change account/RBAC rules** → keep the `requireSuperAdmin(c)` gate on every `users.ts` mutation and the matching UI hide in `Users.tsx`; verify with `tests/worker-auth-default-protect.test.mjs`.
 - **Touch customer hubs** → `customer-hubs.ts` (75 lines — read it whole) + the master hub config; re-run `tests/hub-cascade-completeness.test.mjs` and `tests/service-hub-chain.test.mjs`.
 - **Touch worker auth** → `worker-auth.ts` (login `:124`, reset-pin `:241`); preserve the default-protect invariant (`tests/worker-auth-default-protect.test.mjs`).
