@@ -13,7 +13,7 @@ import { csvCell } from "./csv-cell";
 
 export type Aoa = (string | number)[][];
 
-function downloadBlob(blob: Blob, filename: string) {
+export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

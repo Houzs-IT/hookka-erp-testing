@@ -24,7 +24,8 @@ PR → CI green → squash-merge → delete branch → verify on prod.
 
 ## Open PRs / work in flight (at time of writing)
 
-- `feat/warehouse-stock-take-count-usage` — **Warehouse › Stock Take** (owner 2026-11-11 「先把我要做的 quantities usage 和 export for stock count 功能做好先」, WORK-TRACKER 133): count sheet per type grouped by item-code series (blank, no system quantity), import of the filled sheet (quantities only, kv `stock_count`), usage per item (last count + purchased − this count, unit factor per item), Download for Finance. After merge: verify on prod read only (page, count sheet, usage); the first real save is the warehouse's.
+- `feat/stock-take-styled-sheets` — Stock Take round 2: count sheet and usage export with lines (A4 portrait, one page wide, header repeated) and a UOM changed on the sheet caught on import (owner 2026-11-11 「做成好看一点的表格，有线条的」「然后 UOM 如果他导出来换呢」). New dependency `xlsx-js-style` (loaded only on export).
+- ~~`feat/warehouse-stock-take-count-usage`~~ merged as #1324, breadcrumb fix #1326, both verified on prod read only 2026-11-11 — **Warehouse › Stock Take** (owner 2026-11-11 「先把我要做的 quantities usage 和 export for stock count 功能做好先」, WORK-TRACKER 133): count sheet per type grouped by item-code series (blank, no system quantity), import of the filled sheet (quantities only, kv `stock_count`), usage per item (last count + purchased − this count, unit factor per item), Download for Finance. After merge: verify on prod read only (page, count sheet, usage); the first real save is the warehouse's.
 
 Before it: everything through 2026-11-11 was merged and deployed (prod at `231d0778d` when this was written).
 

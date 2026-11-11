@@ -24,14 +24,17 @@ import { usePermissions } from "@/lib/use-permission";
 import { todayYmdMY } from "@/lib/utils";
 import { COMPANY } from "@/lib/constants";
 import { exportWorkbookXlsx } from "@/lib/export-report";
+import { exportStyledWorkbookXlsx } from "@/lib/styled-xlsx";
 import {
+  COUNT_SHEET_COLS,
+  COUNT_SHEET_WRITE_COLS,
   buildCountSheets,
-  countSheetAoa,
+  countSheetLayout,
   financeCountAoa,
   parseCountWorkbook,
   parseUomFactor,
   prevYm,
-  usageExportAoa,
+  usageExportLayout,
   usageNote,
   ymLabel,
   OTHER_SERIES,
@@ -124,11 +127,13 @@ export default function StockTakePage() {
   // ── 1. Count sheet ──────────────────────────────────────────────────────
   const sheets = useMemo(() => buildCountSheets(items, types), [items, types]);
   const sheetItems = sheets.reduce((t, s) => t + s.itemCount, 0);
+  // With lines (owner 「做成好看一点的表格，有线条的」): borders on every cell,
+  // filled header, bold series rows, Counted Qty / Remark shaded to write in.
   const downloadSheet = async () => {
     if (!sheets.length) return;
-    await exportWorkbookXlsx(
+    await exportStyledWorkbookXlsx(
       `stock-count-sheet-${ym}.xlsx`,
-      sheets.map((s) => ({ name: s.group, aoa: countSheetAoa(s, { company: COMPANY_NAME, ymLabel: ymLabel(ym) }), cols: [16, 24, 36, 8, 13, 24] })),
+      sheets.map((s) => ({ name: s.group, ...countSheetLayout(s, { company: COMPANY_NAME, ymLabel: ymLabel(ym) }), cols: COUNT_SHEET_COLS, writeCols: COUNT_SHEET_WRITE_COLS })),
     );
   };
 
@@ -144,10 +149,12 @@ export default function StockTakePage() {
     }
     return m;
   }, [items]);
+  // Each item's unit, so a unit changed on the sheet is caught (owner 「然后 UOM 如果他导出来换呢」).
+  const masterUnits = useMemo(() => Object.fromEntries([...master].map(([k, it]) => [k, it.uom])), [master]);
   const onFile = async (f: File | undefined) => {
     if (!f) return;
     try {
-      const parsed = parseCountWorkbook(await readWorkbook(f));
+      const parsed = parseCountWorkbook(await readWorkbook(f), masterUnits);
       if (!parsed.sheetsRead) {
         toast.error(`No sheet in ${f.name} has an "Item Code" and a "Counted Qty" column.`);
         return;
@@ -234,16 +241,18 @@ export default function StockTakePage() {
     if (!usage) return;
     const want = new Set(types);
     const filtered: UsageResult = { ...usage, groups: usage.groups.filter((g) => want.has(g.group)) };
-    await exportWorkbookXlsx(`stock-usage-${ym}.xlsx`, [{
+    await exportStyledWorkbookXlsx(`stock-usage-${ym}.xlsx`, [{
       name: `Usage ${ym}`,
-      aoa: usageExportAoa(filtered, {
+      ...usageExportLayout(filtered, {
         company: COMPANY_NAME,
         ymLabel: ymLabel(ym),
         prevLabel: ymLabel(prevYm(ym)),
         openingSource: sourceText(usage.opening, prevYm(ym)),
         closingSource: sourceText(usage.closing, ym),
       }),
-      cols: [12, 14, 24, 32, 7, 14, 14, 10, 14, 14, 40],
+      cols: [12, 14, 24, 36, 7, 13, 13, 10, 13, 13, 44],
+      numCols: [5, 6, 7, 8, 9],
+      negRedCols: [9],
     }]);
   };
 
@@ -399,6 +408,14 @@ export default function StockTakePage() {
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[#6B7280]">
                 {previewByType.map(([g, n]) => <span key={g}>{g}: {n}</span>)}
               </div>
+              {preview.parsed.unitChanges.length > 0 && (
+                <div className="text-amber-800">
+                  <p>
+                    Counted in another unit than the item master ({preview.parsed.unitChanges.length}) — saved as written and marked in the usage; the item master is not changed:
+                  </p>
+                  <p>{preview.parsed.unitChanges.slice(0, 12).map((u) => `${u.code}: ${u.from} → ${u.to}`).join(" · ")}{preview.parsed.unitChanges.length > 12 ? " …" : ""}</p>
+                </div>
+              )}
               {unknownCodes.length > 0 && (
                 <p className="text-amber-800">Not in the item master ({unknownCodes.length}, saved as typed): {unknownCodes.slice(0, 12).join(", ")}{unknownCodes.length > 12 ? " …" : ""}</p>
               )}
@@ -616,7 +633,7 @@ function SeriesRows(props: {
             </td>
             <td className="py-1 px-2 text-right tabular-nums text-[#1F1D1B]">{fmtQty(r.closing)}</td>
             <td className={`py-1 px-2 text-right tabular-nums ${neg(r.usage)}`}>{fmtQty(r.usage)}</td>
-            <td className={`py-1 px-2 ${r.flags.includes("units") ? "text-amber-800" : "text-[#6B7280]"}`}>{usageNote(r.flags)}</td>
+            <td className={`py-1 px-2 ${r.flags.includes("units") || r.flags.includes("unitChanged") ? "text-amber-800" : "text-[#6B7280]"}`}>{usageNote(r)}</td>
           </tr>
         );
       })}
