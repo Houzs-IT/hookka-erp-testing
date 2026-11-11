@@ -966,7 +966,7 @@ async function checkLowEfficiencyWorkers(
     const yesterday = addDaysYmd(todayYmd, -1);
     const report = await collectEfficiencyData(db, yesterday);
     return report.workers.filter(
-      (w) => w.productionWorkingMinutes > 0 && w.efficiencyPct < LOW_EFFICIENCY_THRESHOLD,
+      (w) => !w.isHelper && w.productionWorkingMinutes > 0 && w.efficiencyPct < LOW_EFFICIENCY_THRESHOLD,
     );
   } catch (err) {
     console.error("[compliance] lowEfficiencyWorkers failed:", err);

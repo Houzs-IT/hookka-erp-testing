@@ -123,6 +123,8 @@ type WorkerPerfRow = {
   workingMinutes: number;
   productionMinutes: number;
   efficiencyPct: number;
+  /** Helper / 杂工 (owner 2026-11-11): no personal efficiency — "—". */
+  isHelper?: boolean;
   // Distinct job cards this worker was credited on across the range.
   jobCards: number;
 };
@@ -132,7 +134,10 @@ type DeptPerformanceSummary = {
   totals: {
     workingMinutes: number;
     productionMinutes: number;
+    /** Production efficiency — helpers left out (owner 2026-11-11). */
     efficiencyPct: number;
+    overallPct?: number;
+    helperWorkingMinutes?: number;
     workerCount: number;
     // Numerator provenance — see the block comment above. Optional: a payload
     // served from the snapshot cache written before this shipped has neither.
@@ -1855,11 +1860,11 @@ function EmployeeReportTab() {
   // plausible number: the row exists, the measurement does not.
   const deptByWorkerId = new Map(workers.map((w) => [w.id, w.departmentCode]));
   const effRows = perf.workers.map((w) => [
-    w.workerName || w.workerId,
+    w.isHelper ? `${w.workerName || w.workerId} (Helper)` : w.workerName || w.workerId,
     deptByWorkerId.get(w.workerId) ?? "—",
     w.workingMinutes > 0 ? (w.workingMinutes / 60).toFixed(1) : "—",
     w.jobCards,
-    w.workingMinutes > 0 ? `${w.efficiencyPct}%` : "—",
+    w.workingMinutes > 0 && !w.isHelper ? `${w.efficiencyPct}%` : "—",
   ]);
 
   return (
@@ -2022,7 +2027,10 @@ function EmployeeReportTab() {
             clocked. A worker who clocked nothing in this range reads “—”.
             Range total:{" "}
             {perf.totals.workingMinutes > 0
-              ? `${perf.totals.efficiencyPct}% across ${perf.totals.workerCount} workers`
+              ? `${perf.totals.efficiencyPct}% across ${perf.totals.workerCount} workers` +
+                ((perf.totals.helperWorkingMinutes ?? 0) > 0 && perf.totals.overallPct != null
+                  ? ` (helpers left out; Overall ${perf.totals.overallPct}% incl. helpers ${((perf.totals.helperWorkingMinutes ?? 0) / 60).toFixed(1)} h)`
+                  : "")
               : "no clocked time recorded"}
             .
           </p>

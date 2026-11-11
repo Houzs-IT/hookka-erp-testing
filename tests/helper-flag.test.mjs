@@ -22,7 +22,7 @@ function mockDb({ helpers = [], helperQueryFails = false }) {
             async all() {
               if (sql.includes("is_helper")) {
                 if (helperQueryFails) throw new Error('column "is_helper" does not exist');
-                return { results: helpers.map((id) => ({ id })) };
+                return { results: helpers.map((id) => ({ helperId: id })) };
               }
               if (sql.includes("FROM departments")) return { results: [{ code: "UPHOLSTERY", isProduction: 1 }] };
               if (sql.includes("contrib_min")) return { results: [{ workerId: "P1", productionMinutes: 450 }] };

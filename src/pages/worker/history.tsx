@@ -56,7 +56,7 @@ type AttRow = {
   overtimeMinutes: number;
   lateMinutes: number;
 };
-type MonthHistory = { daily: DailyRow[]; attendance: AttRow[] };
+type MonthHistory = { daily: DailyRow[]; attendance: AttRow[]; isHelper?: boolean };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object";
@@ -104,7 +104,7 @@ function asMonthHistory(v: unknown): MonthHistory | null {
         : null,
     )
     .filter((x): x is AttRow => !!x);
-  return { daily, attendance };
+  return { daily, attendance, isHelper: isRecord(d.totals) && d.totals.isHelper === true };
 }
 
 // ============================================================
@@ -116,6 +116,7 @@ export default function WorkerHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- loading/error flags reset synchronously when the month changes; setHist lands inside the async callback (same pattern as team.tsx) */
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -145,6 +146,7 @@ export default function WorkerHistoryPage() {
       cancelled = true;
     };
   }, [period]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
     <div className="space-y-4 pt-2">
@@ -204,8 +206,9 @@ function DailyAttendanceCard({ hist, t }: { hist: MonthHistory; t: Translate }) 
           // Same formula as the Home tiles: Standard Production Duration ÷
           // Production Hours (production departments only).
           const prodHrsMins = r.prodDeptMinutes ?? 0;
+          // Helper / 杂工 (owner 2026-11-11): no personal efficiency — "—".
           const eff =
-            prodHrsMins > 0
+            prodHrsMins > 0 && !hist.isHelper
               ? Math.round((r.productionMinutes / prodHrsMins) * 100)
               : null;
           const effTone =

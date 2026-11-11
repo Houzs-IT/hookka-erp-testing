@@ -40,6 +40,7 @@ import {
   writeEmployeeStateSnapshot,
   type EmployeeStateMetrics,
 } from "../lib/employee-state-snapshot";
+import { helperWorkerIds } from "../lib/efficiency-allowance";
 
 const app = new Hono<Env>();
 
@@ -115,7 +116,12 @@ type FullPerfPayload = {
   totals: {
     workingMinutes: number;
     productionMinutes: number;
+    /** Production efficiency — helpers / 杂工 left out (owner 2026-11-11). */
     efficiencyPct: number;
+    /** Everyone incl. helpers; equals efficiencyPct with no helpers. Optional: older snapshots. */
+    overallPct?: number;
+    /** Helpers' clocked minutes inside workingMinutes. */
+    helperWorkingMinutes?: number;
     workerCount: number;
     // Numerator provenance — completed cards in range, and how many of those
     // recorded a duration that differs from their own standard. Optional
@@ -128,11 +134,14 @@ type FullPerfPayload = {
     workingMinutes: number;
     productionMinutes: number;
     efficiencyPct: number;
+    overallPct?: number;
+    helperWorkingMinutes?: number;
     workers?: Array<{
       workerId: string;
       workerName: string;
       workingMinutes: number;
       productionMinutes: number;
+      isHelper?: boolean;
       jobs?: Array<{ jobCardId: string }>;
     }>;
     jobs?: unknown[];
@@ -147,6 +156,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
       workerName: string;
       workingMinutes: number;
       productionMinutes: number;
+      isHelper: boolean;
       jobCardIds: Set<string>;
     }
   >();
@@ -159,12 +169,14 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
           workerName: w.workerName,
           workingMinutes: 0,
           productionMinutes: 0,
+          isHelper: false,
           jobCardIds: new Set(),
         };
         byWorker.set(w.workerId, cell);
       }
       cell.workingMinutes += w.workingMinutes;
       cell.productionMinutes += w.productionMinutes;
+      if (w.isHelper) cell.isHelper = true;
       for (const j of w.jobs ?? []) cell.jobCardIds.add(j.jobCardId);
       if (!cell.workerName && w.workerName) cell.workerName = w.workerName;
     }
@@ -179,6 +191,8 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
       workingMinutes: d.workingMinutes,
       productionMinutes: d.productionMinutes,
       efficiencyPct: d.efficiencyPct,
+      overallPct: d.overallPct ?? d.efficiencyPct,
+      helperWorkingMinutes: d.helperWorkingMinutes ?? 0,
     })),
     workers: Array.from(byWorker.values())
       .map((w) => ({
@@ -189,10 +203,13 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
         // Identical to the per-day expression, applied to the range sums. A
         // worker who clocked nothing gets 0 here and the CALLER must render
         // that as "—" rather than as zero efficiency.
+        // A helper has no personal efficiency (owner 2026-11-11): 0 here, and
+        // isHelper tells the caller to render "—".
         efficiencyPct:
-          w.workingMinutes > 0
+          !w.isHelper && w.workingMinutes > 0
             ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
             : 0,
+        ...(w.isHelper ? { isHelper: true } : {}),
         jobCards: w.jobCardIds.size,
       }))
       .sort((a, b) => b.workingMinutes - a.workingMinutes),
@@ -692,6 +709,16 @@ app.get("/", async (c) => {
     }
   }
 
+  // Helpers / 杂工 (owner 2026-11-11): kept in the hours, left out of production
+  // efficiency, no personal efficiency. Before is_helper exists: nobody.
+  const helperIds = await helperWorkerIds(c.var.DB);
+  // Production efficiency (helpers out) and Overall (everyone), rounded %.
+  const effPair = (work: number, prod: number, hw: number, hp: number) => ({
+    efficiencyPct: work - hw > 0 ? Math.round(((prod - hp) / (work - hw)) * 100) : 0,
+    overallPct: work > 0 ? Math.round((prod / work) * 100) : 0,
+    helperWorkingMinutes: hw,
+  });
+
   // ---- Build daily array sorted ascending by date.
   const daily = Array.from(byDate.entries())
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -703,9 +730,10 @@ app.get("/", async (c) => {
           workingMinutes: w.workingMinutes,
           productionMinutes: w.productionMinutes,
           efficiencyPct:
-            w.workingMinutes > 0
+            !helperIds.has(w.workerId) && w.workingMinutes > 0
               ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
               : 0,
+          ...(helperIds.has(w.workerId) ? { isHelper: true } : {}),
           jobs: w.jobs
             .slice()
             .sort((a, b) => b.productionMinutes - a.productionMinutes),
@@ -729,14 +757,19 @@ app.get("/", async (c) => {
         }))
         .sort((a, b) => b.productionMinutes - a.productionMinutes);
 
+      let hw = 0;
+      let hp = 0;
+      for (const w of workers) {
+        if (!w.isHelper) continue;
+        hw += w.workingMinutes;
+        hp += w.productionMinutes;
+      }
       return {
         date,
         workingMinutes: cell.workingMinutes,
         productionMinutes: cell.productionMinutes,
-        efficiencyPct:
-          cell.workingMinutes > 0
-            ? Math.round((cell.productionMinutes / cell.workingMinutes) * 100)
-            : 0,
+        ...effPair(cell.workingMinutes, cell.productionMinutes, hw, hp),
+        helperProductionMinutes: hp,
         workers,
         jobs,
       };
@@ -744,6 +777,9 @@ app.get("/", async (c) => {
 
   const totalWorking = daily.reduce((s, r) => s + r.workingMinutes, 0);
   const totalProduction = daily.reduce((s, r) => s + r.productionMinutes, 0);
+  const totalHelperWorking = daily.reduce((s, r) => s + r.helperWorkingMinutes, 0);
+  const totalHelperProduction = daily.reduce((s, r) => s + r.helperProductionMinutes, 0);
+  const totalPair = effPair(totalWorking, totalProduction, totalHelperWorking, totalHelperProduction);
 
   const _snap_payload = {
     data: {
@@ -753,10 +789,7 @@ app.get("/", async (c) => {
       totals: {
         workingMinutes: totalWorking,
         productionMinutes: totalProduction,
-        efficiencyPct:
-          totalWorking > 0
-            ? Math.round((totalProduction / totalWorking) * 100)
-            : 0,
+        ...totalPair,
         workerCount: workerIds.size,
         // Provenance of the numerator (BUG-2026-08-13-103). `productionMinutes`
         // is EARNED STANDARD time for every card outside `measuredCards`, so
@@ -806,10 +839,7 @@ app.get("/", async (c) => {
         activeHeadcount: workerIds.size,
         totalWorkingMinutes: totalWorking,
         laborCostSen: 0,
-        avgEfficiencyPct:
-          totalWorking > 0
-            ? Math.round((totalProduction / totalWorking) * 100)
-            : 0,
+        avgEfficiencyPct: totalPair.efficiencyPct,
         range: { from: fromStr, to: toStr },
       };
       const write = writeEmployeeStateSnapshot(

@@ -25,7 +25,7 @@ import { resolveWorkerToken } from "./worker-auth";
 import { computeMonthlyLabor, computeAttendanceDayDetail, absenceCutoffDay, effectiveSalarySenForMonth, workerPayrollDayRateSen } from "../../lib/labor-engine";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
 import { deriveBarcodeToken, deptOfBarcodeToken, isBarcodeToken } from "../../lib/job-card-id";
-import { computeMonthlyEfficiencyByWorker, resolveEfficiencyAllowanceSen, monthBounds } from "../lib/efficiency-allowance";
+import { computeMonthlyEfficiencyByWorker, helperWorkerIds, resolveEfficiencyAllowanceSen, monthBounds } from "../lib/efficiency-allowance";
 import { resolveLeadershipAllowanceSen } from "../lib/leadership-allowance";
 import { ensureLeaveEntitlementColumns } from "../lib/ensure-leave-columns";
 import {
@@ -3690,9 +3690,13 @@ app.get("/team-stats", async (c) => {
     category: "SOFA" | "BEDFRAME";
     workingMinutes: number;
     productionMinutes: number;
+    /** Helpers / 杂工 (owner 2026-11-11): their part of the two figures above. */
+    helperWorkingMinutes: number;
+    helperProductionMinutes: number;
     workerIds: Set<string>;
   };
   const cells = new Map<CellKey, Cell>();
+  const teamHelpers = await helperWorkerIds(c.var.DB);
   for (const dc of leaderDepts) {
     for (const cat of CATEGORIES) {
       cells.set(cellKey(dc, cat), {
@@ -3700,6 +3704,8 @@ app.get("/team-stats", async (c) => {
         category: cat,
         workingMinutes: 0,
         productionMinutes: 0,
+        helperWorkingMinutes: 0,
+        helperProductionMinutes: 0,
         workerIds: new Set<string>(),
       });
     }
@@ -3730,7 +3736,9 @@ app.get("/team-stats", async (c) => {
       if (cat !== "SOFA" && cat !== "BEDFRAME") continue;
       const cell = cells.get(cellKey(r.departmentCode, cat));
       if (!cell) continue;
-      cell.workingMinutes += Math.round((Number(r.hours) || 0) * 60);
+      const m = Math.round((Number(r.hours) || 0) * 60);
+      cell.workingMinutes += m;
+      if (teamHelpers.has(r.workerId)) cell.helperWorkingMinutes += m;
       cell.workerIds.add(r.workerId);
     }
   }
@@ -3831,6 +3839,8 @@ app.get("/team-stats", async (c) => {
       // estMinutes is ALREADY the per-SET total — ×wipQty would 3× it).
       const mins = jcMinutesTotal(jc.actualMinutes ?? jc.estMinutes ?? 0, jc);
       cell.productionMinutes += mins;
+      // A card only helpers worked on is helper output, out of production efficiency.
+      if ([...onJc].every((id) => teamHelpers.has(id))) cell.helperProductionMinutes += mins;
       for (const id of onJc) cell.workerIds.add(id);
     }
   }
@@ -3840,10 +3850,16 @@ app.get("/team-stats", async (c) => {
     category: cell.category,
     workingMinutes: cell.workingMinutes,
     productionMinutes: cell.productionMinutes,
+    // Production efficiency — helpers left out; Overall = everyone (owner 2026-11-11).
     efficiencyPct:
+      cell.workingMinutes - cell.helperWorkingMinutes > 0
+        ? Math.round(((cell.productionMinutes - cell.helperProductionMinutes) / (cell.workingMinutes - cell.helperWorkingMinutes)) * 100)
+        : 0,
+    overallPct:
       cell.workingMinutes > 0
         ? Math.round((cell.productionMinutes / cell.workingMinutes) * 100)
         : 0,
+    helperWorkingMinutes: cell.helperWorkingMinutes,
     workerCount: cell.workerIds.size,
   }));
 
@@ -4309,6 +4325,9 @@ app.get("/department-performance", async (c) => {
     }
   }
 
+  // Helpers / 杂工 (owner 2026-11-11): kept in the hours, left out of production
+  // efficiency, no personal efficiency (0 + isHelper → the phone shows "—").
+  const leaderHelpers = await helperWorkerIds(c.var.DB);
   const daily = Array.from(byDate.entries())
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([date, cell]) => {
@@ -4319,9 +4338,10 @@ app.get("/department-performance", async (c) => {
           workingMinutes: w.workingMinutes,
           productionMinutes: w.productionMinutes,
           efficiencyPct:
-            w.workingMinutes > 0
+            !leaderHelpers.has(w.workerId) && w.workingMinutes > 0
               ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
               : 0,
+          ...(leaderHelpers.has(w.workerId) ? { isHelper: true } : {}),
           jobs: w.jobs
             .slice()
             .sort((a, b) => b.productionMinutes - a.productionMinutes),
@@ -4345,14 +4365,23 @@ app.get("/department-performance", async (c) => {
         }))
         .sort((a, b) => b.productionMinutes - a.productionMinutes);
 
+      let hw = 0;
+      let hp = 0;
+      for (const w of workers) if (w.isHelper) { hw += w.workingMinutes; hp += w.productionMinutes; }
       return {
         date,
         workingMinutes: cell.workingMinutes,
         productionMinutes: cell.productionMinutes,
         efficiencyPct:
+          cell.workingMinutes - hw > 0
+            ? Math.round(((cell.productionMinutes - hp) / (cell.workingMinutes - hw)) * 100)
+            : 0,
+        overallPct:
           cell.workingMinutes > 0
             ? Math.round((cell.productionMinutes / cell.workingMinutes) * 100)
             : 0,
+        helperWorkingMinutes: hw,
+        helperProductionMinutes: hp,
         workers,
         jobs,
       };
@@ -4360,6 +4389,8 @@ app.get("/department-performance", async (c) => {
 
   const totalWorking = daily.reduce((s, r) => s + r.workingMinutes, 0);
   const totalProduction = daily.reduce((s, r) => s + r.productionMinutes, 0);
+  const totalHw = daily.reduce((s, r) => s + r.helperWorkingMinutes, 0);
+  const totalHp = daily.reduce((s, r) => s + r.helperProductionMinutes, 0);
 
   return c.json({
     success: true,
@@ -4381,10 +4412,16 @@ app.get("/department-performance", async (c) => {
         // Hrs card sums both so the operator can reconcile the two.
         productionWorkingMinutes: totalProductionWorkingMinutes,
         nonProductionWorkingMinutes: totalNonProductionWorkingMinutes,
+        // Production efficiency — helpers left out; Overall = everyone.
         efficiencyPct:
+          totalWorking - totalHw > 0
+            ? Math.round(((totalProduction - totalHp) / (totalWorking - totalHw)) * 100)
+            : 0,
+        overallPct:
           totalWorking > 0
             ? Math.round((totalProduction / totalWorking) * 100)
             : 0,
+        helperWorkingMinutes: totalHw,
         workerCount: workerIds.size,
       },
       daily,

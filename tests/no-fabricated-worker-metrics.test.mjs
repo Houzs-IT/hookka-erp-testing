@@ -114,7 +114,8 @@ test("every Employee figure comes from a named real source", () => {
   // rather than to 0% when the worker clocked nothing.
   assert.match(
     body,
-    /w\.workingMinutes > 0 \? `\$\{w\.efficiencyPct\}%` : "—"/,
+    // A helper (杂工, owner 2026-11-11) has no personal efficiency: "—" too.
+    /w\.workingMinutes > 0 && !w\.isHelper \? `\$\{w\.efficiencyPct\}%` : "—"/,
     `${REPORTS} › EmployeeReportTab: a worker with no clocked time must read ` +
       '"—", not 0% — the row exists, the measurement does not',
   );
