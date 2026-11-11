@@ -52,6 +52,8 @@ import {
 // PERCENTAGE and deliberately keeps `parseFloat` - it is not money.
 import { parseMoneyInput } from "@/lib/parse-money";
 import { moneyFieldToSen, firstMoneyFieldError } from "@/lib/money-field";
+import { actualPurchasesByMonth, sumActualPurchases, type MonthActualPurchases } from "@/lib/forecast-actuals";
+import type { PnlWindowLike } from "@/lib/pnl-matrix";
 
 type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean };
 // Per line-month the owner keys ONE of the two (owner 2026-07-29): a % of
@@ -165,6 +167,24 @@ export default function ForecastPage() {
   const [suppliersFailed, setSuppliersFailed] = useState(false);
   // The material rows opened to show their suppliers (closed on every load).
   const [openTypes, setOpenTypes] = useState<Record<string, boolean>>({});
+  // Each month's actual purchases by material type, shown under each material
+  // as the figure to key from (owner 2026-11-11 「同时原有的forecast P&L 输入界面
+  // 也要做成一样」; src/lib/forecast-actuals.ts). Months with no actuals show "-".
+  const [actuals, setActuals] = useState<Record<string, MonthActualPurchases>>({});
+  const [actualsFailed, setActualsFailed] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    fetch(`/api/accounting/pl-monthly?line=all&anchor=${todayYmdMY().slice(0, 7)}&forecast=1&edit=1`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { edit?: { windows?: Record<string, PnlWindowLike> } } }>)
+      .then((j) => {
+        if (stale) return;
+        const w = j?.data?.edit?.windows;
+        if (j?.success && w) setActuals(actualPurchasesByMonth(w));
+        else setActualsFailed(true);
+      })
+      .catch(() => { if (!stale) setActualsFailed(true); });
+    return () => { stale = true; };
+  }, []);
 
   useEffect(() => {
     let stale = false;
@@ -227,7 +247,9 @@ export default function ForecastPage() {
   // (forecastCogsRows, owner 2026-08-31 「算法也要改」).
   const lines = useMemo(() => forecastLineGroups(accounts, override, deptInfo), [accounts, override, deptInfo]);
 
-  const yms = useMemo(() => Object.keys(months).sort(), [months]);
+  // Newest month on the left (owner 2026-11-11 「最新的month 在最左手边」), as
+  // on the Monthly P&L; the Accumulated column sits before them.
+  const yms = useMemo(() => Object.keys(months).sort().reverse(), [months]);
   // "2026-08" → "Aug 2026" (header reads at a glance).
   const monthLabel = (ym: string) =>
     new Date(`${ym}-01T00:00:00Z`).toLocaleString("en", { month: "short", year: "numeric", timeZone: "UTC" });
@@ -480,6 +502,34 @@ export default function ForecastPage() {
       </span>
     </span>
   );
+  // The Accumulated column (owner 2026-11-11 「然后我还要多一行accumulated」):
+  // every month on the sheet added up, its % against their sales added up.
+  const ACC_TD = "px-2 py-1 text-right whitespace-nowrap border-l border-[#E2DDD8] bg-[#FBF9F6]";
+  const sumYms = (f: (ym: string) => number) => yms.reduce((s, ym) => s + f(ym), 0);
+  const accSalesSen = sumYms((ym) => calc(ym).salesSen);
+  const accCell = (sen: number, extra = "") => <td className={`${ACC_TD} ${extra}`}>{amtWithPct(sen, accSalesSen, true)}</td>;
+  // Under each material: that month's actual purchases and their % of that
+  // month's actual sales — the figure to key the forecast from. Accumulated
+  // adds the months on the sheet that have actuals.
+  const actualRow = (type: string): ReactNode => {
+    if (Object.keys(actuals).length === 0) return null;
+    const acc = sumActualPurchases(actuals, yms, type);
+    const none = <span className="text-[#C7C1BA]">-</span>;
+    return (
+      <tr key={`act-${type}`} className="border-b border-[#F0ECE9] text-[12px] text-[#6B7280]" title="Actual purchases of this material that month, from the books">
+        <td className="px-3 py-0.5 sticky left-0 bg-white whitespace-nowrap pl-12 text-[11px] italic">Actual purchases</td>
+        <td className={`${ACC_TD} py-0.5`}>{acc.months > 0 ? amtWithPct(acc.sen, acc.salesSen, true) : none}</td>
+        {yms.map((ym) => {
+          const m = actuals[ym];
+          return (
+            <td key={ym} className="px-2 py-0.5 text-right whitespace-nowrap border-l border-[#F0ECE9]">
+              {m ? amtWithPct(m.byType[type] ?? 0, m.salesSen, true) : none}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
   // A material's supplier rows (owner 2026-11-10 「让他在每个categories 出现相关
   // 的supplier, 我从那边填」): opened with the ▸ on the material; a supplier
   // with a figure in any month shows while closed. Each one's % column is its
@@ -492,7 +542,7 @@ export default function ForecastPage() {
       <>
         {open && suppliersFailed && (
           <tr className="border-b border-[#F0ECE9]">
-            <td colSpan={yms.length + 1} className="px-3 py-1 pl-12 text-[11px] text-[#9A3412]">
+            <td colSpan={yms.length + 2} className="px-3 py-1 pl-12 text-[11px] text-[#9A3412]">
               Could not load the suppliers — reload the page to see them all.
             </td>
           </tr>
@@ -502,6 +552,7 @@ export default function ForecastPage() {
             <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-12">
               <span className="text-[12px] text-[#4B5563]">{r.name}</span>
             </td>
+            {accCell(sumYms((ym) => supplierSenOf.get(ym)?.get(type)?.get(r.id) ?? 0))}
             {yms.map((ym) => {
               // RM or % of sales, like a line's cell (owner 2026-11-10 「每个
               // supplier 填percentage 或amount」): the empty box shows the
@@ -567,12 +618,14 @@ export default function ForecastPage() {
               </button>
             )}
           </td>
+          {accCell(sumYms((ym) => { const c = calc(ym); return c.superseded(a.code) ? 0 : c.amt(a.code); }))}
           {yms.map((ym) => (
             <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
               {cellInputs(ym, a.code)}
             </td>
           ))}
         </tr>
+        {type !== undefined && actualRow(type)}
         {type !== undefined && supplierRowsFor(type)}
       </Fragment>
     );
@@ -605,6 +658,10 @@ export default function ForecastPage() {
               )}
             </button>
           </td>
+          {accCell(
+            sumYms((ym) => { const c = calc(ym); return rows.reduce((s, r) => (c.superseded(r.code) ? s : s + c.amt(r.code)), 0); }),
+            "py-1.5 font-semibold text-[#6B5C32]",
+          )}
           {yms.map((ym) => {
             const c = calc(ym);
             const tot = rows.reduce((s, r) => (c.superseded(r.code) ? s : s + c.amt(r.code)), 0);
@@ -642,6 +699,7 @@ export default function ForecastPage() {
               )}
             </button>
           </td>
+          {accCell(accSalesSen, "py-1.5 font-semibold")}
           {yms.map((ym) => (
             <td key={ym} className="px-2 py-1.5 text-right border-l border-[#F0ECE9]">
               {/* Sales carries its own 100% marker so the percent column
@@ -675,6 +733,7 @@ export default function ForecastPage() {
               <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7">
                 <span className="text-[#1F1D1B]">{r.name}</span>
               </td>
+              {accCell(sumYms((ym) => customerSen(months[ym])[r.id] ?? 0))}
               {yms.map((ym) => {
                 const sen = customerSen(months[ym])[r.id] ?? 0;
                 return (
@@ -708,6 +767,10 @@ export default function ForecastPage() {
       <td className="px-3 py-1.5 sticky left-0 whitespace-nowrap" style={{ background: strong ? "#EAF3DE" : "#F5F2EE" }}>
         {label}
       </td>
+      {(() => {
+        const acc = sumYms((ym) => val(calc(ym)));
+        return accCell(acc, `py-1.5 ${acc < 0 ? "text-[#9A3A2D]" : ""}`);
+      })()}
       {yms.map((ym) => {
         const c = calc(ym);
         const v = val(c);
@@ -749,6 +812,9 @@ export default function ForecastPage() {
           </Button>
         </div>
       </div>
+      {actualsFailed && (
+        <p className="text-[12px] text-[#9A3412]">The actual purchases under each material could not load — reload the page to try again.</p>
+      )}
 
       {dirty && (
         <div data-fin-banner="todo" className="flex min-h-10 flex-wrap items-center gap-2.5 rounded-[10px] border border-[#E9D9B4] bg-[#FBF6EC] px-3.5 py-2.5">
@@ -777,6 +843,16 @@ export default function ForecastPage() {
               <thead>
                 <tr className="border-b border-[#E2DDD8] text-[11px] text-[#6B7280]">
                   <th className="px-3 py-2 text-left sticky left-0 bg-white">LINE</th>
+                  <th className="px-2 py-2 text-right border-l border-[#E2DDD8] bg-[#EFE9E1]" title="Every month on the sheet added up; % against their sales added up">
+                    <div className="text-sm font-bold text-[#1F1D1B] tracking-wide">Accumulated</div>
+                    <div className="text-[10px] font-normal text-[#6B7280]">
+                      {monthLabel(yms[yms.length - 1])} – {monthLabel(yms[0])}
+                    </div>
+                    <div className="mt-0.5 inline-flex items-center justify-end gap-1">
+                      <span className={`${AMT_SLOT} px-1 text-right text-[10px] font-semibold text-[#6B5C32]`}>AMOUNT (RM)</span>
+                      <span className={`${PCT_SLOT} px-1 text-right text-[10px] font-semibold text-[#6B5C32]`}>% SALES</span>
+                    </div>
+                  </th>
                   {yms.map((ym) => (
                     <th key={ym} className="px-2 py-2 text-right border-l border-[#E2DDD8] bg-[#F0ECE9]/70">
                       <div className="flex items-center justify-end gap-2">
@@ -811,6 +887,14 @@ export default function ForecastPage() {
                       <td className="px-3 py-1.5 sticky left-0 bg-[#F7F4EF] whitespace-nowrap text-[13px] font-semibold text-[#6B5C32]">
                         DIRECT LABOUR — ACCOUNT-KEYED (legacy)
                       </td>
+                      {accCell(
+                        sumYms((ym) => {
+                          if (monthHasDeptForecast(months[ym]?.pct)) return 0;
+                          const c = calc(ym);
+                          return lines.labourAccounts.filter((a) => rowHasData(a.code)).reduce((s, r) => s + c.amt(r.code), 0);
+                        }),
+                        "py-1.5 font-semibold text-[#6B5C32]",
+                      )}
                       {yms.map((ym) => {
                         const c = calc(ym);
                         const superseded = monthHasDeptForecast(months[ym]?.pct);
@@ -832,6 +916,7 @@ export default function ForecastPage() {
                         <td className="px-3 py-1 sticky left-0 bg-white whitespace-nowrap pl-7" title={a.code}>
                           <span className="text-[#1F1D1B]">{a.name}</span>
                         </td>
+                        {accCell(sumYms((ym) => (monthHasDeptForecast(months[ym]?.pct) ? 0 : calc(ym).amt(a.code))))}
                         {yms.map((ym) => (
                           <td key={ym} className="px-2 py-1 text-right whitespace-nowrap border-l border-[#F0ECE9]">
                             {monthHasDeptForecast(months[ym]?.pct) ? (
