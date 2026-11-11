@@ -3029,7 +3029,8 @@ app.get("/:id", async (c) => {
     // (BF/ACC) or the parent companySOId without the -NN suffix (SOFA).
     c.var.DB.prepare(
       `SELECT id, poNo, productName, productCode, itemCategory, quantity,
-              status, progress, currentDepartment, completedDate
+              status, progress, currentDepartment, completedDate,
+              salesOrderId, companySOId, fabricCode, targetEndDate
          FROM production_orders
         WHERE salesOrderId = ?
         ORDER BY poNo`,
@@ -3046,6 +3047,10 @@ app.get("/:id", async (c) => {
         progress: number | null;
         currentDepartment: string | null;
         completedDate: string | null;
+        salesOrderId: string | null;
+        companySOId: string | null;
+        fabricCode: string | null;
+        targetEndDate: string | null;
       }>(),
     // completedBy: names of workers who scanned the PACKING job card
     // (the final dept, best proxy for "who finished the PO"). Derived from
@@ -3066,6 +3071,12 @@ app.get("/:id", async (c) => {
       .all<{ productionOrderId: string; names1: string | null; names2: string | null }>(),
     // Per-department job-card state for each linked PO, so the phone SO detail
     // can say which departments are still open and when each is due (HK-0125).
+    // The same rows also feed linkedPOs[].jobCards (raw per-card state for the
+    // phone Stage progress timeline), so `stages` and `jobCards` can never
+    // disagree. Scoped to THIS SO by `po.salesOrderId = ?`, so it stays under the
+    // existing SO customer scope. CANCELLED cards are excluded (main's rule): a
+    // department whose only cards are cancelled therefore has no stage and reads
+    // N/A, unlike Production Detail, which counts a cancelled card as pending.
     c.var.DB.prepare(
       `SELECT jc.productionOrderId, jc.departmentCode, jc.status, jc.dueDate, jc.completedDate
          FROM job_cards jc
@@ -3231,11 +3242,25 @@ app.get("/:id", async (c) => {
     if (parts.length) completedByMap.set(cb.productionOrderId, parts.join(", "));
   }
 
+  // poId → the raw job cards of that PO (HK-0125 timeline), same rows as `stages`.
+  const jobCardsByPo = new Map<
+    string,
+    Array<{ departmentCode: string; status: string; dueDate: string; completedDate: string | null }>
+  >();
   // poId → one entry per department. A department can carry several job cards
   // (one per WIP); it is done only when every one of them is.
   type Stage = { departmentCode: string; done: boolean; dueDate: string | null; completedDate: string | null };
   const stagesByPo = new Map<string, Map<string, Stage>>();
   for (const jc of stagesRes.results ?? []) {
+    // HK-0125: raw per-card state for the timeline, from the SAME rows as `stages`.
+    const cards = jobCardsByPo.get(jc.productionOrderId) ?? [];
+    cards.push({
+      departmentCode: jc.departmentCode ?? "",
+      status: jc.status ?? "",
+      dueDate: jc.dueDate ?? "",
+      completedDate: jc.completedDate ?? null,
+    });
+    jobCardsByPo.set(jc.productionOrderId, cards);
     const dept = jc.departmentCode ?? "";
     if (!dept) continue;
     const done = jc.status === "COMPLETED" || jc.status === "TRANSFERRED";
@@ -3258,6 +3283,14 @@ app.get("/:id", async (c) => {
     data: rowToSO(so, itemsRes.results ?? []),
     lockReason,
     linkedPOs: (posRes.results ?? []).map((p) => ({
+      // HK-0125 additions (read-only): grouping fields for `cellFor`'s SOFA
+      // Fabric Cut sibling lookup, the scheduled production target, and the
+      // job cards. Stored values are passed through unchanged.
+      salesOrderId: p.salesOrderId ?? "",
+      companySOId: p.companySOId ?? "",
+      fabricCode: p.fabricCode ?? "",
+      targetEndDate: p.targetEndDate ?? "",
+      jobCards: jobCardsByPo.get(p.id) ?? [],
       id: p.id,
       poNo: p.poNo,
       productName: p.productName ?? "",

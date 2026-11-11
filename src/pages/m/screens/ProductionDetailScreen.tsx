@@ -19,11 +19,12 @@
 // ===========================================================================
 import { useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Calendar, CalendarCheck, CalendarClock, Check, CirclePause, History, Info, Route, ShoppingCart, ChevronRight, TriangleAlert } from "lucide-react";
+import { Calendar, CalendarCheck, CalendarClock, CirclePause, History, Info, Route, ShoppingCart, ChevronRight } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { cellFor, stageKind, type StageKind } from "@/pages/production/utils";
+import { cellFor, stageKind } from "@/pages/production/utils";
 import type { ProductionOrder } from "@/pages/production/types";
 import { MobileHeader, Sheet } from "../components";
+import { StageTimeline, type StageRow } from "../components/StageTimeline";
 import { DashLabel } from "../components/ProductionBits";
 import { M, titleCaseStatus } from "../theme";
 import { resolveStatus, STATUS_MAPS, str, num, dateOnly } from "../config/helpers";
@@ -35,8 +36,6 @@ import {
   SHADOW_SECTION,
   shortDate,
   statusTint,
-  TINT_DANGER,
-  TINT_INFO,
   TINT_WARNING,
 } from "../lib/production-ui";
 
@@ -48,25 +47,8 @@ function arr(v: unknown): RawRow[] {
   return Array.isArray(v) ? (v as RawRow[]) : [];
 }
 
-// Stage pill look per desktop stageKind. "Done" is the teal --m-po-done.
-const DONE_TINT = {
-  fg: "var(--m-po-done)",
-  bg: "color-mix(in srgb, var(--m-po-done) 14%, transparent)",
-};
-const STAGE_LOOK: Record<StageKind, { label: string; bg: string; fg: string }> = {
-  done: { label: "Done", ...DONE_TINT },
-  inProgress: { label: "In progress", ...TINT_INFO },
-  pending: { label: "Pending", ...TINT_WARNING },
-  overdue: { label: "Overdue", ...TINT_DANGER },
-  skipped: { label: "N/A", bg: "transparent", fg: "var(--m-inv-ref-key)" },
-};
-const NODE_BG: Record<StageKind, string> = {
-  done: "var(--m-po-done)",
-  inProgress: "var(--m-text-status-info)",
-  pending: "var(--m-card)",
-  overdue: "var(--m-text-status-danger)",
-  skipped: "var(--m-card)",
-};
+// The stage pill look + the timeline itself live in components/StageTimeline.tsx
+// (shared with the Sales Order detail).
 
 export function ProductionDetailScreen() {
   const navigate = useNavigate();
@@ -265,12 +247,10 @@ export function ProductionDetailScreen() {
               {doneCount} of {applicable} departments done
             </span>
           </div>
-          <ol style={{ listStyle: "none", margin: "14px 0 0", padding: 0 }}>
-            {DEPTS.map((d, idx) => {
+          <StageTimeline
+            rows={DEPTS.map((d, idx): StageRow => {
               const cell = cells[idx];
               const kind = kinds[idx];
-              const look = STAGE_LOOK[kind];
-              const nextKind = kinds[idx + 1];
               const date =
                 kind === "skipped"
                   ? ""
@@ -289,104 +269,17 @@ export function ProductionDetailScreen() {
                     .filter(Boolean),
                 ),
               );
-              const meta = [date, pics.join(", ")].filter(Boolean).join(" · ");
-              return (
-                <li key={d.code} style={{ position: "relative", display: "flex", gap: 12, paddingBottom: 14 }}>
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: "absolute",
-                      left: 12,
-                      top: 28,
-                      bottom: 2,
-                      width: 2,
-                      borderRadius: 2,
-                      background:
-                        idx === DEPTS.length - 1
-                          ? "transparent"
-                          : kind === "done" && nextKind !== "skipped"
-                            ? "var(--m-po-done)"
-                            : "var(--m-segment-track)",
-                    }}
-                  />
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: "relative",
-                      flex: "none",
-                      width: 26,
-                      height: 26,
-                      boxSizing: "border-box",
-                      borderRadius: "50%",
-                      background: NODE_BG[kind],
-                      boxShadow:
-                        kind === "pending" || kind === "skipped"
-                          ? "inset 0 0 0 2px var(--m-inv-dot-ring)"
-                          : kind === "inProgress"
-                            ? "0 0 0 4px color-mix(in srgb, var(--m-text-status-info) 18%, transparent)"
-                            : "none",
-                      color: "#fff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {kind === "done" ? <Check size={14} strokeWidth={3} /> : null}
-                    {kind === "overdue" ? <TriangleAlert size={13} strokeWidth={2.6} /> : null}
-                    {kind === "inProgress" ? (
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff" }} />
-                    ) : null}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          fontSize: 13.5,
-                          fontWeight: d.code === str(doc, "currentDepartment") ? 800 : 600,
-                          color: kind === "skipped" ? "var(--m-inv-ref-key)" : M.raisin,
-                        }}
-                      >
-                        {d.name}
-                      </span>
-                      <span
-                        style={{
-                          flex: "none",
-                          height: 22,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          padding: "0 8px",
-                          borderRadius: 999,
-                          background: look.bg,
-                          color: look.fg,
-                          boxShadow: kind === "skipped" ? "inset 0 0 0 1.5px var(--m-inv-dot-ring)" : "none",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          whiteSpace: "nowrap",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {kind === "skipped" ? "N/A" : `${look.label} ${cell.doneCards}/${cell.totalCards}`}
-                      </span>
-                    </div>
-                    {meta ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: kind === "overdue" ? TINT_DANGER.fg : M.ink,
-                          marginTop: 3,
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {meta}
-                      </div>
-                    ) : null}
-                  </div>
-                </li>
-              );
+              return {
+                code: d.code,
+                name: d.name,
+                kind,
+                doneCards: cell.doneCards,
+                totalCards: cell.totalCards,
+                meta: [date, pics.join(", ")].filter(Boolean).join(" · "),
+                current: d.code === str(doc, "currentDepartment"),
+              };
             })}
-          </ol>
+          />
           {noFabCut && soId ? (
             <div
               style={{
