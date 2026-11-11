@@ -331,7 +331,17 @@ type CatalogCustomer = {
   ocrPromptRules: string | null;
   hubs: { id: string; shortName: string; state: string | null }[];
 };
-type CatalogProduct = { code: string; name: string; sizeLabel: string | null };
+type CatalogProduct = {
+  code: string;
+  name: string;
+  sizeLabel: string | null;
+  /**
+   * products.defaultVariants.legHeight in inches ("6\"" → 6), or null. A scanned
+   * line whose PO names no leg gets this (owner 2026-11-11) — the same default the
+   * typed Sales Order form pre-fills when the product is picked.
+   */
+  defaultLegInches?: number | null;
+};
 type CatalogFabric = {
   code: string;
   description: string | null;
@@ -351,6 +361,19 @@ type CatalogVariants = {
     specials: string[];
   };
 };
+/** "6\"" / "1 inch" / 6 → 6; "No Leg", blank or unparsable → null. */
+export function defaultLegInchesOf(raw: string | Record<string, unknown> | null | undefined): number | null {
+  let dv: Record<string, unknown> | null = null;
+  if (typeof raw === "string") {
+    try { dv = JSON.parse(raw) as Record<string, unknown>; } catch { dv = null; }
+  } else if (raw && typeof raw === "object") dv = raw;
+  const leg = dv?.legHeight;
+  if (typeof leg === "number") return leg > 0 ? leg : null;
+  const m = /(\d+(?:\.\d+)?)/.exec(String(leg ?? ""));
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 export type Catalog = {
   customers: CatalogCustomer[];
   bedframes: CatalogProduct[];
@@ -401,7 +424,7 @@ export async function loadCatalog(
       }>(),
     db
       .prepare(
-        "SELECT code, name, category, sizeLabel FROM products WHERE orgId = ? AND status = 'ACTIVE' ORDER BY category, code",
+        "SELECT code, name, category, sizeLabel, defaultVariants FROM products WHERE orgId = ? AND status = 'ACTIVE' ORDER BY category, code",
       )
       .bind(orgId)
       .all<{
@@ -409,6 +432,8 @@ export async function loadCatalog(
         name: string;
         category: string;
         sizeLabel: string | null;
+        defaultVariants?: string | Record<string, unknown> | null;
+        default_variants?: string | Record<string, unknown> | null;
       }>(),
     db
       .prepare(
@@ -458,6 +483,7 @@ export async function loadCatalog(
       code: p.code,
       name: p.name,
       sizeLabel: p.sizeLabel,
+      defaultLegInches: defaultLegInchesOf(p.defaultVariants ?? p.default_variants),
     };
     if (p.category === "SOFA") sofas.push(item);
     else if (p.category === "ACCESSORY") accessories.push(item);
