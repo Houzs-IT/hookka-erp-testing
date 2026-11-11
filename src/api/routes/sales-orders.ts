@@ -3006,7 +3006,7 @@ app.get("/:id", async (c) => {
       .first<{ id: string }>();
     if (byNo?.id) id = byNo.id;
   }
-  const [so, itemsRes, statusRes, overridesRes, posRes, completedByRes] = await Promise.all([
+  const [so, itemsRes, statusRes, overridesRes, posRes, completedByRes, jobCardsRes] = await Promise.all([
     c.var.DB.prepare("SELECT * FROM sales_orders WHERE id = ?")
       .bind(id)
       .first<SalesOrderRow>(),
@@ -3029,7 +3029,8 @@ app.get("/:id", async (c) => {
     // (BF/ACC) or the parent companySOId without the -NN suffix (SOFA).
     c.var.DB.prepare(
       `SELECT id, poNo, productName, productCode, itemCategory, quantity,
-              status, progress, currentDepartment, completedDate
+              status, progress, currentDepartment, completedDate,
+              salesOrderId, companySOId, fabricCode, targetEndDate
          FROM production_orders
         WHERE salesOrderId = ?
         ORDER BY poNo`,
@@ -3046,6 +3047,10 @@ app.get("/:id", async (c) => {
         progress: number | null;
         currentDepartment: string | null;
         completedDate: string | null;
+        salesOrderId: string | null;
+        companySOId: string | null;
+        fabricCode: string | null;
+        targetEndDate: string | null;
       }>(),
     // completedBy: names of workers who scanned the PACKING job card
     // (the final dept, best proxy for "who finished the PO"). Derived from
@@ -3064,6 +3069,30 @@ app.get("/:id", async (c) => {
     )
       .bind(id)
       .all<{ productionOrderId: string; names1: string | null; names2: string | null }>(),
+    // HK-0125: per-department job-card state for the inline production
+    // summary on the mobile SO detail. READ-ONLY and scoped to THIS SO by the
+    // same `po.salesOrderId = ?` predicate as the PO list above, so it adds
+    // nothing a caller of this route could not already reach: the global
+    // customerScopeMiddleware 404s the whole response for another
+    // salesperson's customer. Only the four fields `cellFor` reads. A merged
+    // SOFA FAB_CUT card lives on the group's anchor PO, which belongs to the
+    // same SO (aggregateFcSlots keys the group on companySOId), so the SO's
+    // own orders are sufficient for the sibling lookup.
+    c.var.DB.prepare(
+      `SELECT jc.productionOrderId, jc.departmentCode, jc.status,
+              jc.dueDate, jc.completedDate
+         FROM job_cards jc
+         JOIN production_orders po ON po.id = jc.productionOrderId
+        WHERE po.salesOrderId = ?`,
+    )
+      .bind(id)
+      .all<{
+        productionOrderId: string;
+        departmentCode: string | null;
+        status: string | null;
+        dueDate: string | null;
+        completedDate: string | null;
+      }>(),
   ]);
   if (!so) {
     return c.json({ success: false, error: "Order not found" }, 404);
@@ -3209,11 +3238,34 @@ app.get("/:id", async (c) => {
     if (parts.length) completedByMap.set(cb.productionOrderId, parts.join(", "));
   }
 
+  const jobCardsByPo = new Map<
+    string,
+    Array<{ departmentCode: string; status: string; dueDate: string; completedDate: string | null }>
+  >();
+  for (const jc of jobCardsRes.results ?? []) {
+    const list = jobCardsByPo.get(jc.productionOrderId) ?? [];
+    list.push({
+      departmentCode: jc.departmentCode ?? "",
+      status: jc.status ?? "",
+      dueDate: jc.dueDate ?? "",
+      completedDate: jc.completedDate ?? null,
+    });
+    jobCardsByPo.set(jc.productionOrderId, list);
+  }
+
   return c.json({
     success: true,
     data: rowToSO(so, itemsRes.results ?? []),
     lockReason,
     linkedPOs: (posRes.results ?? []).map((p) => ({
+      // HK-0125 additions (read-only): grouping fields for `cellFor`'s SOFA
+      // Fabric Cut sibling lookup, the scheduled production target, and the
+      // job cards. Stored values are passed through unchanged.
+      salesOrderId: p.salesOrderId ?? "",
+      companySOId: p.companySOId ?? "",
+      fabricCode: p.fabricCode ?? "",
+      targetEndDate: p.targetEndDate ?? "",
+      jobCards: jobCardsByPo.get(p.id) ?? [],
       id: p.id,
       poNo: p.poNo,
       productName: p.productName ?? "",

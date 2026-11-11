@@ -70,6 +70,7 @@ import { QuickReport } from "./cases/QuickReport";
 import { hasBalanceDue, soFinancials, type SoFinancials } from "../lib/so-financials";
 import { useConfirmSheet, useMobileToast } from "./delivery/ui-hooks";
 import { SalesOrderActionBar } from "./SalesOrderActionBar";
+import { StageTimeline } from "../components/StageTimeline";
 import { HoldSheet, InfoSheet, OverrideSheet } from "./so/so-action-sheets";
 import { SoEditSheet } from "./so/SoEditSheet";
 import { MobileHeader, MobileCard, Sheet } from "../components";
@@ -81,7 +82,6 @@ import { M, M_ACCENT, SEMANTIC, titleCaseStatus, type SemanticStyle } from "../t
 import { resolveStatus, STATUS_MAPS, str, num, money } from "../config/helpers";
 import {
   auditEvents,
-  displaySoId,
   doFacts,
   doLabel,
   fmtDate,
@@ -97,6 +97,7 @@ import {
   statusEvents,
   surcharges,
   titleCase,
+  poStages,
   type SpecChip,
 } from "../lib/so-detail";
 
@@ -225,6 +226,8 @@ export function SalesOrderDetail() {
 
   const [prodSel, setProdSel] = useState<string | null>(null);
   const [stagesOpen, setStagesOpen] = useState(false);
+  // HK-0125: per-PO "View stages" expansion, keyed by PO id.
+  const [poStagesOpen, setPoStagesOpen] = useState<Record<string, boolean>>({});
   const [poAll, setPoAll] = useState(false);
   const [allItems, setAllItems] = useState(false);
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({});
@@ -475,6 +478,51 @@ export function SalesOrderDetail() {
     .filter((t) => t.n > 0 || t.status === "COMPLETED" || t.status === "IN_PROGRESS" || t.status === "PENDING");
   const prodSelActive = prodSel && prodTiles.some((t) => t.status === prodSel && t.n > 0) ? prodSel : null;
   const prodList = prodSelActive ? pos.filter((p) => str(p, "status").toUpperCase() === prodSelActive) : [];
+  // HK-0125: Target completion + an inline "View stages" Stage progress timeline
+  // per linked PO. Used ONLY by the Production section's status-tile list; the
+  // "Show document details" list stays compact (reference, status, summary line).
+  // The SO's own POs are the sibling set for SOFA shared Fabric Cut.
+  const poStageBlock = (p: RawRow) => {
+    const id = str(p, "id");
+    const key = id;
+    const stg = poStages(p, pos, fmtDate);
+    const open = !!poStagesOpen[key] && stg.canExpand;
+    const panelId = `po-stages-${id}`;
+    const line: CSSProperties = { fontSize: 12, color: M.ink, marginTop: 2, lineHeight: 1.4 };
+    return (
+      <>
+        {/* Fallback wording only when the API actually sent the field: an older
+            API that omits it must not read as "not set" / "not scheduled yet". */}
+        {stg.open && (stg.target || stg.targetSent) ? <div style={line}>Target completion: {stg.target || "not set"}</div> : null}
+        {stg.open && stg.stagesSent && !stg.scheduled ? <div style={line}>Departments: not scheduled yet</div> : null}
+        {stg.canExpand ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={() => setPoStagesOpen((m) => ({ ...m, [key]: !m[key] }))}
+            style={{
+              minHeight: 44, margin: "2px 0 0 -2px", padding: "0 2px", border: "none", background: "none", fontFamily: "inherit",
+              fontSize: 13, fontWeight: 700, color: M.taupe, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6,
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            {open ? "Hide stages" : "View stages"}
+            <ChevronDown size={16} strokeWidth={2} aria-hidden style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .18s ease" }} />
+          </button>
+        ) : null}
+        {open ? (
+          <section id={panelId} aria-label={`Stage progress ${str(p, "poNo")}`} style={{ margin: "4px 0 10px", borderRadius: 14, background: M.card, boxShadow: SHADOW_SM, padding: "14px 14px 2px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: M.raisin }}>Stage progress</span>
+              <span style={{ fontSize: 12, color: M.ink, whiteSpace: "nowrap" }}>{stg.done} of {stg.applicable} departments done</span>
+            </div>
+            <StageTimeline rows={stg.rows} />
+          </section>
+        ) : null}
+      </>
+    );
+  };
 
   const progressBlock = (
     <>
@@ -650,16 +698,19 @@ export function SalesOrderDetail() {
                           ].filter(Boolean).join(" · ");
                           const pct = st === "IN_PROGRESS" && p.progress != null ? num(p, "progress") : null;
                           return (
-                            <div key={str(p, "id") || i} style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, padding: "6px 0", borderTop: i ? `1px solid ${M.divider}` : "none" }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums", wordBreak: "break-all" }}>
-                                  {displaySoId(str(p, "poNo"), str(p, "itemCategory")) || "—"}
+                            <div key={str(p, "id") || i} style={{ padding: "6px 0", borderTop: i ? `1px solid ${M.divider}` : "none" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44 }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums", wordBreak: "break-all" }}>
+                                    {str(p, "poNo") || "—"}
+                                  </div>
+                                  {sub ? <div style={{ fontSize: 12, color: M.ink, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div> : null}
                                 </div>
-                                {sub ? <div style={{ fontSize: 12, color: M.ink, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div> : null}
+                                {pct != null ? (
+                                  <span style={{ flex: "none", fontSize: 12, fontWeight: 700, color: "var(--m-inv-info)", fontVariantNumeric: "tabular-nums" }}>{pct}% overall</span>
+                                ) : null}
                               </div>
-                              {pct != null ? (
-                                <span style={{ flex: "none", fontSize: 12, fontWeight: 700, color: "var(--m-inv-info)", fontVariantNumeric: "tabular-nums" }}>{pct}% overall</span>
-                              ) : null}
+                              {poStageBlock(p)}
                             </div>
                           );
                         })}
@@ -950,7 +1001,7 @@ export function SalesOrderDetail() {
                         const ps = resolveStatus(str(p, "status"), STATUS_MAPS.production);
                         return docRow(
                           str(p, "id") || String(i),
-                          displaySoId(str(p, "poNo"), str(p, "itemCategory")) || "—",
+                          str(p, "poNo") || "—",
                           <StatusChip style={ps.style} label={ps.label} size="sm" />,
                           [str(p, "productName"), num(p, "quantity") ? `Qty ${num(p, "quantity")}` : "", productionLabel(p, fmtDate)].filter(Boolean).join(" · "),
                         );
