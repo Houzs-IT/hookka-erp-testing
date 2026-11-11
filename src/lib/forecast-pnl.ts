@@ -156,6 +156,44 @@ export function supplierMixFromLegs(
 
 /** The suppliers that sold us a material lately (the page lists them under
  *  that material's row). */
+/** Each month's actual purchases of each material type BY SUPPLIER: month →
+ *  type → supplier id → sen (owner 2026-11-11 「我看不到actual 的fabric
+ *  67559.67 是从谁买」). The supplier documents' ledger legs (purchase invoices,
+ *  purchase credit notes) on the material purchase accounts, debit minus
+ *  credit, in the month of the document's date — the way the P&L reads
+ *  purchases. Anything else on those accounts (a journal, an other-creditor
+ *  bill) has no supplier here; the Edit forecast shows it as the remainder.
+ *  A supplier netting to zero in a month drops out. */
+export type FcSupplierActuals = Record<string, Record<string, Record<string, number>>>;
+export function supplierActualsFromLegs(
+  legs: readonly { supplierId: string; accountCode: string; ym: string; debitSen: number; creditSen: number }[],
+  typeOf: (code: string) => string | undefined,
+): FcSupplierActuals {
+  const out: FcSupplierActuals = {};
+  for (const l of legs) {
+    const type = typeOf(l.accountCode);
+    if (!type || !l.supplierId || !/^\d{4}-\d{2}$/.test(l.ym)) continue;
+    const byType = (out[l.ym] ??= {});
+    const bySup = (byType[type] ??= {});
+    bySup[l.supplierId] = (bySup[l.supplierId] ?? 0) + Math.round(Number(l.debitSen) || 0) - Math.round(Number(l.creditSen) || 0);
+  }
+  for (const ym of Object.keys(out)) {
+    for (const type of Object.keys(out[ym])) {
+      for (const [sup, sen] of Object.entries(out[ym][type])) if (sen === 0) delete out[ym][type][sup];
+      if (Object.keys(out[ym][type]).length === 0) delete out[ym][type];
+    }
+    if (Object.keys(out[ym]).length === 0) delete out[ym];
+  }
+  return out;
+}
+
+/** The suppliers with an actual purchase of a material type in any month. */
+export function supplierActualIds(acts: FcSupplierActuals, type: string): string[] {
+  const ids = new Set<string>();
+  for (const byType of Object.values(acts)) for (const id of Object.keys(byType[type] ?? {})) ids.add(id);
+  return [...ids];
+}
+
 export function forecastTypeSuppliers(mix: FcSupplierMix, type: string): string[] {
   return Object.entries(mix.bySupplier)
     .filter(([, w]) => (w[type] ?? 0) > 0)
