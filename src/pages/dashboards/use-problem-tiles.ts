@@ -16,7 +16,7 @@ type Feed = {
   employee?: {
     workers?: { id: string; name: string | null; empNo?: string | null; countsToHeadcount: boolean }[];
     attendance?: { employeeId: string | null; date: string | null; clockIn: string | null; clockOut: string | null }[];
-    performance?: { byDay?: { date: string; workers?: { workerId: string; workingMinutes: number; productionMinutes: number }[] }[] };
+    performance?: { byDay?: { date: string; workers?: { workerId: string; workingMinutes: number; productionMinutes: number; isHelper?: boolean }[] }[] };
   } | null;
 };
 
@@ -96,7 +96,9 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
     if (byDay && byDay.length) {
       const latest = [...byDay].filter((d) => (d.workers ?? []).some((w) => w.workingMinutes > 0)).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
       if (latest) {
-        const ws = latest.workers ?? [];
+        // Helpers / 杂工 (owner 2026-11-11): left out of production efficiency
+        // and never counted as "under" — they have no personal efficiency.
+        const ws = (latest.workers ?? []).filter((w) => !w.isHelper);
         const work = ws.reduce((a, w) => a + w.workingMinutes, 0);
         const prodMin = ws.reduce((a, w) => a + w.productionMinutes, 0);
         const eff = work > 0 ? (prodMin / work) * 100 : null;

@@ -42,6 +42,8 @@ export type FloorLiveWorker = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
+  /** Helper / 杂工 (owner 2026-11-11): no personal efficiency (effPct null). */
+  isHelper?: boolean;
   /** Minutes spent in non-production departments, from the scan segments. */
   nonProdMinutes: number;
   /** In a non-production department for more than an hour (see rules). */
@@ -95,7 +97,7 @@ export function buildFloorLive(input: {
   workers: readonly { id: string; name: string | null; departmentCode: string | null }[];
   attendance: readonly { employeeId: string | null; clockIn: string | null; clockOut: string | null }[];
   scans: readonly { workerId: string; departmentCode: string; atMin: number }[];
-  perf: ReadonlyMap<string, { workingMinutes: number; productionMinutes: number }>;
+  perf: ReadonlyMap<string, { workingMinutes: number; productionMinutes: number; isHelper?: boolean }>;
   done: ReadonlyMap<string, number>;
 }): { departments: FloorLiveDept[]; workers: FloorLiveWorker[] } {
   const departments: FloorLiveDept[] = input.departments
@@ -163,7 +165,8 @@ export function buildFloorLive(input: {
       done: input.done.get(id) ?? 0,
       workingMinutes,
       earnedMinutes,
-      effPct: workingMinutes > 0 ? Math.round((earnedMinutes / workingMinutes) * 100) : null,
+      effPct: !p?.isHelper && workingMinutes > 0 ? Math.round((earnedMinutes / workingMinutes) * 100) : null,
+      ...(p?.isHelper ? { isHelper: true } : {}),
       nonProdMinutes,
       overHourNonProd,
     });
@@ -182,6 +185,8 @@ export type FloorLiveSummaryRow = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
+  /** A helper on the latest saved day (owner 2026-11-11): effPct null. */
+  isHelper?: boolean;
   nonProdMinutes: number;
   /** Days on which they stayed in a non-production department over an hour. */
   overHourDays: number;
@@ -205,6 +210,7 @@ export function summarizeFloorLive(
       r.nonProdMinutes += w.nonProdMinutes || 0;
       if (w.overHourNonProd) r.overHourDays += 1;
       r.name = w.name;
+      r.isHelper = !!w.isHelper;
       r.homeDept = w.homeDept || r.homeDept;
       r.lastDate = day.date;
       by.set(w.id, r);
@@ -213,7 +219,7 @@ export function summarizeFloorLive(
   return [...by.values()]
     .map(({ lastDate: _lastDate, ...r }) => ({
       ...r,
-      effPct: r.workingMinutes > 0 ? Math.round((r.earnedMinutes / r.workingMinutes) * 100) : null,
+      effPct: !r.isHelper && r.workingMinutes > 0 ? Math.round((r.earnedMinutes / r.workingMinutes) * 100) : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

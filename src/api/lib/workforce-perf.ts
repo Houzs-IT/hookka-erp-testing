@@ -47,7 +47,16 @@ export type PerfPicRow = { jobCardId: string; pic1Id: string | null; pic2Id: str
 export type PerfExtraTimeRow = { workerId: string | null; date: string | null; hours: number | string | null };
 
 type Minutes = { workingMinutes: number; productionMinutes: number; allDeptMinutes: number };
-export type PerfDay = { date: string } & Minutes & { workers: Array<{ workerId: string } & Minutes> };
+/**
+ * Helpers / 杂工 (owner 2026-11-11). `workingMinutes` / `productionMinutes`
+ * stay EVERYONE's (Production Hours include helpers). The helper part of each
+ * is carried separately so a screen can show both figures:
+ *   production efficiency = (production − helperProduction) ÷ (working − helperWorking)
+ *   overall efficiency    =  production ÷ working
+ */
+type HelperMinutes = { helperWorkingMinutes: number; helperProductionMinutes: number };
+export type PerfWorker = { workerId: string; isHelper?: boolean } & Minutes;
+export type PerfDay = { date: string } & Minutes & HelperMinutes & { workers: PerfWorker[] };
 
 export function buildPerfDays(input: {
   whe: readonly PerfWheRow[];
@@ -55,8 +64,11 @@ export function buildPerfDays(input: {
   pics: readonly PerfPicRow[];
   approvedExtraTime: readonly PerfExtraTimeRow[];
   productionDepts: Set<string>;
+  /** Workers flagged as helpers (workers.is_helper). Omitted = nobody. */
+  helperIds?: ReadonlySet<string>;
 }): { perfDays: PerfDay[]; perfCards: number; perfMeasuredCards: number } {
   const { productionDepts } = input;
+  const helperIds = input.helperIds ?? new Set<string>();
 
   // FAB_CUT stores the per-SET total on the card (wipQty = piece count), every
   // other department stores per-PIECE minutes. Multiplying FAB_CUT by wipQty
@@ -164,11 +176,18 @@ export function buildPerfDays(input: {
   }
 
   const perfDays = [...perfByDay.values()]
-    .map((e) => ({
-      ...e,
-      workers: [...(perfByDayWorker.get(e.date) ?? new Map<string, Minutes>()).entries()]
-        .map(([workerId, v]) => ({ workerId, ...v })),
-    }))
+    .map((e) => {
+      const workers: PerfWorker[] = [...(perfByDayWorker.get(e.date) ?? new Map<string, Minutes>()).entries()]
+        .map(([workerId, v]) => (helperIds.has(workerId) ? { workerId, isHelper: true, ...v } : { workerId, ...v }));
+      let helperWorkingMinutes = 0;
+      let helperProductionMinutes = 0;
+      for (const w of workers) {
+        if (!w.isHelper) continue;
+        helperWorkingMinutes += w.workingMinutes;
+        helperProductionMinutes += w.productionMinutes;
+      }
+      return { ...e, helperWorkingMinutes, helperProductionMinutes, workers };
+    })
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
   return { perfDays, perfCards, perfMeasuredCards };
@@ -185,26 +204,52 @@ export function poolEfficiencyPct(
   perfDays: readonly PerfDay[],
   workerIds: ReadonlySet<string> | null,
   inPeriod: (date: string) => boolean,
-): { pct: number | null; workingMinutes: number; productionMinutes: number; days: number } {
+): {
+  /** Production efficiency — helpers left out (owner 2026-11-11). */
+  pct: number | null;
+  /** Everyone, helpers included. Equals `pct` when there are no helpers. */
+  overallPct: number | null;
+  workingMinutes: number;
+  productionMinutes: number;
+  /** Helpers' production-dept clocked minutes inside `workingMinutes`. */
+  helperWorkingMinutes: number;
+  days: number;
+} {
   let w = 0;
   let prod = 0;
+  let hw = 0;
+  let hp = 0;
   let days = 0;
   for (const d of perfDays) {
     if (!inPeriod(d.date)) continue;
     let dw = d.workingMinutes;
     let dp = d.productionMinutes;
+    let dhw = d.helperWorkingMinutes ?? 0;
+    let dhp = d.helperProductionMinutes ?? 0;
     if (workerIds) {
       const ws = d.workers.filter((x) => workerIds.has(x.workerId));
       if (!ws.length) continue;
       dw = ws.reduce((a, x) => a + x.workingMinutes, 0);
       dp = ws.reduce((a, x) => a + x.productionMinutes, 0);
+      dhw = ws.reduce((a, x) => a + (x.isHelper ? x.workingMinutes : 0), 0);
+      dhp = ws.reduce((a, x) => a + (x.isHelper ? x.productionMinutes : 0), 0);
     }
     if (dw <= 0) continue;
     w += dw;
     prod += dp;
+    hw += dhw;
+    hp += dhp;
     days += 1;
   }
-  return { pct: w > 0 ? (prod / w) * 100 : null, workingMinutes: w, productionMinutes: prod, days };
+  const pw = w - hw;
+  return {
+    pct: pw > 0 ? ((prod - hp) / pw) * 100 : null,
+    overallPct: w > 0 ? (prod / w) * 100 : null,
+    workingMinutes: w,
+    productionMinutes: prod,
+    helperWorkingMinutes: hw,
+    days,
+  };
 }
 
 /**
@@ -243,6 +288,8 @@ export function workerEfficiencyPcts(
   for (const d of perfDays) {
     if (!inPeriod(d.date)) continue;
     for (const x of d.workers) {
+      // A helper has no personal efficiency (owner 2026-11-11).
+      if (x.isHelper) continue;
       const cur = m.get(x.workerId) ?? { w: 0, p: 0 };
       cur.w += x.workingMinutes;
       cur.p += x.productionMinutes;

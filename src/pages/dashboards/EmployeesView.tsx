@@ -8,7 +8,8 @@ import { DeptEfficiencyCard } from "./ProductionDailyPanels";
 import { DepartmentsView } from "./DepartmentsView";
 import { AttendanceLogCard } from "./AttendanceLogCard";
 import { filterSlice } from "./employee-filter";
-import { TAUPE, TEAL, BORDER, fmtN, inPeriod, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+import { HelperOverallLine } from "./HelperOverallLine";
+import { TAUPE, TEAL, BORDER, fmtN, inPeriod, inFocus, efficiencyPair, overallEfficiencyPct, periodLabel, dayLabel, type Period, type PeopleSub, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
 import { Kpi, LiveBadge, MissingNote } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
 
@@ -77,6 +78,12 @@ export function EmployeesView({
   // helper as the Operations overview card.
   const efficiencyPct = useMemo(
     () => overallEfficiencyPct(employee?.performance.byDay ?? [], period),
+    [employee?.performance.byDay, period],
+  );
+  // Helpers / 杂工 (owner 2026-11-11): the figure above leaves them out; the
+  // small "Overall" line under it includes them.
+  const effPair = useMemo(
+    () => efficiencyPair((employee?.performance.byDay ?? []).filter((d) => inFocus(period, d.date))),
     [employee?.performance.byDay, period],
   );
 
@@ -193,12 +200,13 @@ export function EmployeesView({
           hint="ACTIVE workers, excluding TEST accounts"
         />
         <Kpi
-          label="Overall Efficiency"
+          label="Production Efficiency"
           value={efficiencyPct == null ? "—" : `${efficiencyPct.toFixed(1)}%`}
           sub={[noHoursNote, target != null ? `Target: ${target}%` : null].filter(Boolean).join(" · ") || undefined}
-          hint="Production ÷ working hours, all production staff"
+          hint="Production ÷ working hours, production staff (helpers left out — see Overall)"
           valueColorClass="text-[#3E6570]"
         >
+          <HelperOverallLine overallPct={effPair.overallPct} helperMinutes={effPair.helperMinutes} className="mt-1" />
           {efficiencyPct != null && target != null && target > 0 && (
             <div className="mt-2 h-1.5 w-full rounded-full bg-[#E2DDD8] overflow-hidden">
               <div

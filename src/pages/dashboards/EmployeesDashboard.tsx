@@ -16,7 +16,8 @@ import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
   BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, MUTED, RED, TEAL,
-  fmtN, hasKeyedHours, inPeriod, isOutsourced, periodLabel, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  fmtN, hasKeyedHours, inPeriod, isOutsourced, periodLabel, prodEffOfDay, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+import { HelperOverallLine } from "./HelperOverallLine";
 
 // ---------------------------------------------------------------------------
 // Employees, merged dashboard (owner 2026-10-17). One page, no sub-tabs: "a
@@ -36,7 +37,7 @@ import {
 // average down.
 // ---------------------------------------------------------------------------
 
-type FeedWorker = { id: string; empNo: string | null; name: string | null; dept: string | null; role: string | null; countsToHeadcount: boolean };
+type FeedWorker = { id: string; empNo: string | null; name: string | null; dept: string | null; role: string | null; countsToHeadcount: boolean; isHelper?: boolean };
 type Feed = {
   success?: boolean;
   meta?: { config?: { efficiencyTargetPct?: number } };
@@ -49,6 +50,10 @@ const MIN_RANK_MIN = 60; // under an hour clocked in the window has no meaningfu
 const hrs = (min: number) => `${(min / 60).toLocaleString("en-MY", { maximumFractionDigits: 1 })} h`;
 const pct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const eff = (prod: number, work: number) => (work > 0 ? (prod / work) * 100 : null);
+// Helpers / 杂工 (owner 2026-11-11): production efficiency leaves their minutes
+// out; a helper's own row shows "—" (no personal efficiency).
+const peff = (prod: number, work: number, hp = 0, hw = 0) => eff(prod - hp, work - hw);
+const weff = (r: { prod: number; work: number; isHelper?: boolean }) => (r.isHelper ? null : eff(r.prod, r.work));
 const ratio = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
 const effColor = (v: number | null, target: number) => (v == null ? MUTED : v >= target ? GREEN : v >= target * 0.85 ? "#9C6F1E" : RED);
 // Non-production cost centres in the hour log, shown in words.
@@ -177,12 +182,14 @@ export function EmployeesDashboard({ period }: { period: Period }) {
 
   // ---- Headline numbers over the window -------------------------------------
   const sumWindow = (has: (d: string) => boolean, cost: Map<string, number>) => {
-    let work = 0, prod = 0, sen = 0, workerDays = 0, workingDays = 0, revenue = 0;
+    let work = 0, prod = 0, hw = 0, hp = 0, sen = 0, workerDays = 0, workingDays = 0, revenue = 0;
     for (const d of allDays) {
       if (!has(d.date)) continue;
       if (hasKeyedHours(d)) {
         work += d.workingMinutes;
         prod += d.productionMinutes;
+        hw += d.helperWorkingMinutes ?? 0;
+        hp += d.helperProductionMinutes ?? 0;
       }
       let any = false;
       for (const x of d.workers ?? []) {
@@ -193,7 +200,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     }
     for (const [d, v] of prodRev?.byDay ?? []) if (has(d)) revenue += v.total;
     const fte = workingDays ? workerDays / workingDays : 0;
-    return { work, prod, sen, workerDays, workingDays, fte, revenue };
+    return { work, prod, hw, hp, sen, workerDays, workingDays, fte, revenue };
   };
   const totals = useMemo(() => sumWindow((d) => winDates.has(d), costByWorkerDay), [allDays, winDates, costByWorkerDay, prodRev]); // eslint-disable-line react-hooks/exhaustive-deps
   const prev = useMemo(() => (prevYm ? sumWindow((d) => d.startsWith(prevYm), prevCost) : null), [allDays, prevYm, prevCost, prodRev]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -226,7 +233,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   }, [employee, anchor, roster]);
 
   // ---- Worker rows ------------------------------------------------------------
-  type Row = { id: string; name: string; dept: string; work: number; prod: number; cost: number; daysWorked: number; byDay: { date: string; work: number; prod: number; cost: number }[] };
+  type Row = { id: string; name: string; dept: string; isHelper?: boolean; work: number; prod: number; cost: number; daysWorked: number; byDay: { date: string; work: number; prod: number; cost: number }[] };
   const rows = useMemo<Row[]>(() => {
     const m = new Map<string, Row>();
     for (const d of days) {
@@ -237,7 +244,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         const wDept = w?.dept ?? "—";
         if (dept !== "ALL" && wDept !== dept) continue;
         const cost = costByWorkerDay.get(`${x.workerId}|${d.date}`) ?? 0;
-        const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
+        const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, isHelper: !!(x.isHelper || w?.isHelper), work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
         r.work += x.workingMinutes;
         r.prod += earnedMinutes;
         r.cost += cost;
@@ -246,11 +253,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         m.set(x.workerId, r);
       }
     }
-    return [...m.values()].filter((r) => r.work > 0).sort((a, b) => (eff(b.prod, b.work) ?? -1) - (eff(a.prod, a.work) ?? -1));
+    return [...m.values()].filter((r) => r.work > 0).sort((a, b) => (weff(b) ?? -1) - (weff(a) ?? -1));
   }, [days, winDates, workerById, dept, costByWorkerDay]);
   // One ranking, split in halves (owner 2026-10-17: top 10 / bottom 10 /
   // every worker were the same people three times — "从上面 list 下来分一半").
-  const ranked = rows.filter((r) => r.work >= MIN_RANK_MIN && !outsourced.has(r.id));
+  const ranked = rows.filter((r) => r.work >= MIN_RANK_MIN && !outsourced.has(r.id) && !r.isHelper);
   const outsourcedRows = rows.filter((r) => outsourced.has(r.id));
   const half = Math.ceil(ranked.length / 2);
   const upper = ranked.slice(0, half);
@@ -272,11 +279,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   // Without payroll access there are no entries to split by, so the home
   // department is used throughout.
   const floorSet = useMemo(() => new Set<string>(DEPT_FLOOR.map(([c]) => c as string)), []);
-  type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; cost: number; bf: number; sofa: number };
+  type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; hw: number; hp: number; cost: number; bf: number; sofa: number };
   const deptRows = useMemo(() => {
     const m = new Map<string, DeptRow>();
     const row = (k: string) => {
-      const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, cost: 0, bf: 0, sofa: 0 };
+      const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0 };
       m.set(k, r);
       return r;
     };
@@ -302,6 +309,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           if (x.workingMinutes > 0 && !outsourced.has(x.workerId)) r.people.add(x.workerId);
           r.work += x.workingMinutes * f;
           r.prod += earnedMinutes * f;
+          if (x.isHelper) { r.hw += x.workingMinutes * f; r.hp += earnedMinutes * f; }
         }
         if (costByDept.size === 0) row(parts[0][0]).cost += costByWorkerDay.get(k) ?? 0;
       }
@@ -329,11 +337,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       .filter((r) => r.work > 0 || r.prod > 0 || r.cost > 0 || r.bf + r.sofa > 0)
       // Production departments by efficiency first; non-production cost
       // centres (warehousing, R&D, repair …) after them.
-      .sort((a, b) => Number(!floorSet.has(a.dept)) - Number(!floorSet.has(b.dept)) || (eff(b.prod, b.work) ?? -1) - (eff(a.prod, a.work) ?? -1));
+      .sort((a, b) => Number(!floorSet.has(a.dept)) - Number(!floorSet.has(b.dept)) || (peff(b.prod, b.work, b.hp, b.hw) ?? -1) - (peff(a.prod, a.work, a.hp, a.hw) ?? -1));
   }, [days, winDates, workerById, costByWorkerDay, costByDept, hourEntries, progByDept, outsourced, floorSet]);
   const deptTotal = useMemo(() => deptRows.reduce(
-    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
-    { work: 0, prod: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
+    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
+    { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
   ), [deptRows]);
 
   const chart = useMemo(
@@ -342,7 +350,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         days.map((d) => {
           let cost = 0;
           for (const x of d.workers ?? []) cost += costByWorkerDay.get(`${x.workerId}|${d.date}`) ?? 0;
-          return { date: d.date, Working: Math.round((d.workingMinutes / 60) * 10) / 10, Production: Math.round((d.productionMinutes / 60) * 10) / 10, Efficiency: eff(d.productionMinutes, d.workingMinutes), cost };
+          return { date: d.date, Working: Math.round((d.workingMinutes / 60) * 10) / 10, Production: Math.round((d.productionMinutes / 60) * 10) / 10, Efficiency: prodEffOfDay(d), cost };
         }),
         (r) => r.date,
         (r) => [r.Working, r.Production],
@@ -369,7 +377,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
             </tr></thead>
             <tbody>
               {list.map((r, i) => {
-                const v = eff(r.prod, r.work);
+                const v = weff(r);
                 return (
                   <tr key={r.id} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => setOpen(r.id)} title="Open this worker's days">
                     <td className="px-3 py-1.5 tabular-nums text-[#6B7280]">{start + i + 1}</td>
@@ -422,7 +430,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           sub={`Upholstery output ÷ ${fteTxt} full-time people · ${revPerDay == null ? "…" : formatCurrency(Math.round(revPerDay))} per worker-day${prevRevPerDay ? ` (last month ${formatCurrency(Math.round(prevRevPerDay))})` : ""}`}
           color={GREEN}
         />
-        <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} earned / ${hrs(totals.work)} worked · click for each worker`} color={effColor(eff(totals.prod, totals.work), target)} onClick={() => setTileDrill("eff")} />
+        <Tile label="Production efficiency" value={pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} sub={`${hrs(totals.prod)} earned / ${hrs(totals.work)} worked${totals.hw > 0 ? ` Â· Overall ${pct(eff(totals.prod, totals.work))} (incl. helpers ${hrs(totals.hw)})` : ""} Â· click for each worker`} color={effColor(peff(totals.prod, totals.work, totals.hp, totals.hw), target)} onClick={() => setTileDrill("eff")} />
       </div>
       {canSalary && <LabourSplitCard months={labourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? periodTotals.revenue : null} fullTimePeople={periodTotals.fte} />}
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
@@ -514,7 +522,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
               </tr></thead>
               <tbody>
                 {deptRows.map((r) => {
-                  const v = eff(r.prod, r.work);
+                  const v = peff(r.prod, r.work, r.hp, r.hw);
                   const lp = ratio(r.cost, r.bf + r.sofa);
                   return (
                     <tr key={r.dept} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => setDeptDrill(r.dept)} title="Click for the workers">
@@ -522,7 +530,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                       <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(r.people.size)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
-                      <td className="px-3 py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}</td>
+                      <td className="px-3 py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}<HelperOverallLine overallPct={eff(r.prod, r.work)} helperMinutes={r.hw} className="font-normal" /></td>
                       <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(r.bf / 100) * 100) : "…"}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(r.sofa / 100) * 100) : "…"}</td>
                       {canSalary && <>
@@ -541,7 +549,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     <td className="px-3 py-1.5 text-right tabular-nums">{fmtN(deptTotal.people.size)}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums">{hrs(deptTotal.work)}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums">{hrs(deptTotal.prod)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: effColor(eff(deptTotal.prod, deptTotal.work), target) }}>{pct(eff(deptTotal.prod, deptTotal.work))}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: effColor(peff(deptTotal.prod, deptTotal.work, deptTotal.hp, deptTotal.hw), target) }}>{pct(peff(deptTotal.prod, deptTotal.work, deptTotal.hp, deptTotal.hw))}<HelperOverallLine overallPct={eff(deptTotal.prod, deptTotal.work)} helperMinutes={deptTotal.hw} className="font-normal" /></td>
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(deptTotal.bf / 100) * 100) : "…"}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(deptTotal.sofa / 100) * 100) : "…"}</td>
                     {canSalary && <>
@@ -592,7 +600,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                 </tr></thead>
                 <tbody>
                   {list.sort((a, b) => (hoursHere.get(b.id) ?? 0) - (hoursHere.get(a.id) ?? 0)).map((r) => {
-                    const v = eff(r.prod, r.work);
+                    const v = weff(r);
                     return (
                       <tr key={r.id} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => { setDeptDrill(null); setOpen(r.id); }}>
                         <td className="py-1.5">{r.name}</td>
@@ -617,7 +625,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         <DashModal
           wide
           title={tileDrill === "salary" ? `Labour by worker · ${winLabel}` : `Efficiency by worker · ${winLabel}`}
-          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · from payroll` : `Overall ${pct(eff(totals.prod, totals.work))} · earned time ÷ hours worked`}
+          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} Â· from payroll` : `Production ${pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} Â· earned time Ã· hours worked${totals.hw > 0 ? ` Â· Overall ${pct(eff(totals.prod, totals.work))} incl. helpers` : ""}`}
           onClose={() => setTileDrill(null)}
         >
           <div className="max-h-[60vh] overflow-y-auto">
@@ -626,8 +634,8 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                 <th className="py-1.5">Worker</th><th className="py-1.5">Dept</th><th className="py-1.5 text-right">Days</th><th className="py-1.5 text-right">Working</th><th className="py-1.5 text-right">Production</th><th className="py-1.5 text-right">Efficiency</th>{canSalary && <th className="py-1.5 text-right">Labour</th>}
               </tr></thead>
               <tbody>
-                {[...rows].sort((a, b) => (tileDrill === "salary" ? b.cost - a.cost : (eff(a.prod, a.work) ?? 0) - (eff(b.prod, b.work) ?? 0))).map((r) => {
-                  const v = eff(r.prod, r.work);
+                {[...rows].sort((a, b) => (tileDrill === "salary" ? b.cost - a.cost : (weff(a) ?? 0) - (weff(b) ?? 0))).map((r) => {
+                  const v = weff(r);
                   return (
                     <tr key={r.id} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => { setTileDrill(null); setOpen(r.id); }}>
                       <td className="py-1.5 text-[#1F1D1B]">{r.name}</td>
@@ -648,7 +656,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       )}
 
       {openWorker && (
-        <DashModal title={`${openWorker.name} · ${deptName(openWorker.dept)}`} subtitle={`${winLabel} · ${fmtN(openWorker.daysWorked)} days · efficiency ${pct(eff(openWorker.prod, openWorker.work))}`} onClose={() => setOpen(null)}>
+        <DashModal title={`${openWorker.name} · ${deptName(openWorker.dept)}`} subtitle={`${winLabel} · ${fmtN(openWorker.daysWorked)} days · efficiency ${pct(weff(openWorker))}`} onClose={() => setOpen(null)}>
           <div className="max-h-[60vh] overflow-y-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="sticky top-0 bg-white text-left text-[10.5px] uppercase tracking-wide text-[#9CA3AF] shadow-[inset_0_-1px_0_#E2DDD8]">
@@ -656,7 +664,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
               </tr></thead>
               <tbody>
                 {openWorker.byDay.filter((d) => d.work > 0).map((d) => {
-                  const dv = eff(d.prod, d.work);
+                  const dv = openWorker.isHelper ? null : eff(d.prod, d.work);
                   return (
                     <tr key={d.date} className="border-b border-[#F0ECE6]">
                       <td className="py-1.5 text-[#1F1D1B]">{d.date}</td>

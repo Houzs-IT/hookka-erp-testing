@@ -6,7 +6,7 @@ import { M } from "../../theme";
 import { AMBER, GREEN, RED, monthLabel, periodLabel } from "../../../dashboards/dashboard-shared-lib";
 import { Chv, ECard, EHead, LegendChip, TipCard } from "./emp-ui";
 import { SHADOW_CARD, TNUM } from "./home-style";
-import { axisLabelIdx, dShort, eff, effColor, hrs, mainAxis, pct } from "./emp-lib";
+import { axisLabelIdx, dShort, poolEff, effColor, hrs, mainAxis, pct } from "./emp-lib";
 import type { EmpModel } from "./emp-model";
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ function Box({ label, value, color, sub, badge, tone, span, onTap, aria }: {
 
 export function Headline({ m }: { m: EmpModel }) {
   const { pres, roster, totals, head, W, target } = m;
-  const e = eff(totals.prod, totals.work);
+  const e = poolEff(totals);
   const labourTone = head.labourPct != null && head.prevLabourPct != null ? (head.labourPct <= head.prevLabourPct ? "good" : "bad") : "neutral";
   const salaryOk = m.salaryStatus === "ready";
   const revBadge = m.revStatus === "ready" && head.revChange != null && W.effWin !== "day" ? `${head.revChange >= 0 ? "▲" : "▼"} ${Math.abs(head.revChange).toFixed(1)}%` : "";
