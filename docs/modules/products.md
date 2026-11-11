@@ -86,7 +86,7 @@ Money is integer sen; many product columns are legacy camelCase.
 1. **Create/edit product** — `app.post("/")` `products.ts:589`, `app.put("/:id")` `products.ts:943`. Both replace-in-full the nested `bomComponents` and `deptWorkingTimes` sets when provided; `rowToProduct` (`:166`) re-nests children + parses JSON columns on read. Column self-apply via `ensureProductCreatedAtColumn` (`:33`). Bulk import: `app.post("/bulk-import")` `:726` upserts by `code` in one D1 transaction (rows + audit row together); shaping/validation is `shapeProductBulkRow` in `src/api/lib/product-bulk-import.ts` — a blank sheet cell never overwrites an existing value.
 2. **Master price change** — `app.post("/:productId/prices")` `products.ts:1300` appends an effective-dated row; `resolveProductPriceAsOf` (`:1211`) picks the newest `<= asOf`; history read at `app.get("/:productId/price-history")` `:1274`. Surfaced in `MasterPriceHistoryDialog`.
 3. **Per-customer price (inherit-or-override)** — `customer-products.ts` `resolvePrices` (`:95`) returns master price when the override column is NULL, override value when non-null. List GET (`:113`) also surfaces a future master change to inherited customers as `masterPendingEffectiveFrom` (built into `masterPendingByProduct` at `:184-206`, emitted at `:262`). Append price via `app.post("/:customerProductId/prices")` `:434`.
-4. **BOM templates (bulk replace)** — `app.put("/templates")` `bom.ts:377` does DELETE-ALL + INSERT-ALL in one D1 batch; single-row upsert at `app.put("/templates/:id")` `:484`. Master presets: `bom-master-templates.ts` upsert `app.put("/:id")` `:127`, bulk replace `app.put("/")` `:217` (clears sibling `isDefault` per category).
+4. **BOM templates (bulk replace)** — `app.put("/templates")` `bom.ts:419` does DELETE-ALL + INSERT-ALL in one D1 batch; single-row upsert at `app.put("/templates/:id")` `:484`. Master presets: `bom-master-templates.ts` upsert `app.put("/:id")` `:127`, bulk replace `app.put("/")` `:217` (clears sibling `isDefault` per category).
 5. **Maintenance config (effective-dated)** — `app.post("/changes")` `maintenance-config.ts:174` appends a new full-config row; `resolveMaintenanceConfigAsOf` (`:66`) resolves newest `<= today` and reports the next pending effective date. `GET /resolved` `:120`, `GET /history` `:141`.
 6. **MDM detection + resolve** — `app.post("/detection/run")` `mdm.ts:232` (admin-gated) runs `runMdmDetectionPass` (`src/api/lib/mdm-detect.ts`) to insert flags; `resolveRow` (`:148`) marks MERGED/DISMISSED — **closes the flag only**, does not merge records.
 
@@ -105,8 +105,8 @@ Money is integer sen; many product columns are legacy camelCase.
 | `resolveProductPriceAsOf` | `src/api/routes/products.ts:1337` | Master price effective-dated resolver |
 | `app.post("/:productId/prices")` | `src/api/routes/products.ts:1426` | Append master price history row |
 | `resolvePrices` | `src/api/routes/customer-products.ts:95` | Inherit-or-override price resolution |
-| `app.put("/templates")` | `src/api/routes/bom.ts:377` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
-| `app.put("/templates/:id")` | `src/api/routes/bom.ts:484` | Single-template upsert |
+| `app.put("/templates")` | `src/api/routes/bom.ts:419` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
+| `app.put("/templates/:id")` | `src/api/routes/bom.ts:526` | Single-template upsert |
 | `app.put("/:id")` (master) | `src/api/routes/bom-master-templates.ts:127` | Master preset upsert; bulk replace is `app.put("/")` `:217` (clears sibling isDefault) |
 | `resolveMaintenanceConfigAsOf` | `src/api/routes/maintenance-config.ts:66` | Newest-as-of-today config resolver |
 | `app.post("/changes")` | `src/api/routes/maintenance-config.ts:174` | Append effective-dated config row |
