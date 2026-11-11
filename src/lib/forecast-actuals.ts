@@ -43,3 +43,15 @@ export function sumActualPurchases(by: Record<string, MonthActualPurchases>, yms
   }
   return { sen, salesSen, months };
 }
+
+/** The next month to ask the Monthly P&L for (one answer covers that month's
+ *  whole financial year): this month first, then the newest month on the
+ *  sheet, up to this month, that still has no actuals and was not asked for.
+ *  Null when nothing is left. A sheet month in an earlier financial year (prod
+ *  2026-11-11: FY 2026/27 starts in September, the sheet starts in August)
+ *  costs one more request; a month the books have nothing for is asked once. */
+export function nextActualsAnchor(sheetYms: readonly string[], curYm: string, got: Readonly<Record<string, unknown>>, tried: ReadonlySet<string>): string | null {
+  const want = [...new Set([curYm, ...sheetYms.filter((ym) => ym <= curYm)])];
+  const missing = want.filter((ym) => !got[ym] && !tried.has(ym)).sort().reverse();
+  return missing[0] ?? null;
+}
