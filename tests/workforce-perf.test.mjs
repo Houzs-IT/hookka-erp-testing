@@ -39,6 +39,7 @@ const { perfDays } = buildPerfDays({
     { id: "j3", departmentCode: "UPHOLSTERY", pic1Id: "w1", pic2Id: null, completedDate: "2026-09-02", estMinutes: 60, actualMinutes: 90, wipQty: 2 },
   ],
   pics: [],
+  approvedExtraTime: [],
 });
 const page = (dept) => {
   const slice = filterSlice({ workers, attendance: [], performance: { byDay: perfDays } }, dept, "");

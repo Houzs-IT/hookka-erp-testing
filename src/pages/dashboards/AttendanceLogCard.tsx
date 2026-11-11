@@ -12,10 +12,10 @@ import { deptName } from "./ops-floor-lib";
 // the office reads (the route's header says so, and it showed 0h for everyone),
 // so they come from the house metric, performance.byDay[].workers, for that
 // worker on that day:
-//   Production time = clocked minutes in production depts
-//   Prod hours      = earned standard minutes
+//   Hours worked    = clocked minutes in production depts
+//   Earned time     = earned standard minutes
 //   Non-prod hours  = all-dept clocked − production-dept clocked
-//   Efficiency      = Prod hours ÷ Production time
+//   Efficiency      = Earned time ÷ Hours worked
 const hrs = (min: number) => `${Math.round(min / 6) / 10}h`;
 const hhmm = (t: string | null) => t?.match(/\d{2}:\d{2}/)?.[0] ?? "—";
 // Minutes after the 08:00 shift start; 0 when on time or unparseable.
@@ -147,7 +147,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     return { rows, working, prod, nonProd: sum((r) => r.nonProd), days: sum((r) => r.days), eff: working > 0 ? (prod / working) * 100 : null, absent: rows.filter((r) => r.absent).length, late: rows.filter((r) => !r.absent && lateMin(r.last.clockIn) > 0).length };
   }, [employee, period, perDay, everClocked]);
 
-  const H = ["Employee", "Department", "Date", "Clock in", "Clock out", "Production time", "Prod hours", "Non-prod hours", "Efficiency", ...(perDay ? [] : ["Total days"]), "Status"];
+  const H = ["Employee", "Department", "Date", "Clock in", "Clock out", "Hours worked", "Earned time", "Non-prod hours", "Efficiency", ...(perDay ? [] : ["Total days"]), "Status"];
   const ncol = H.length;
   const who = log.rows[0]?.last.employeeName ?? "";
   const h = (v: number | null) => (v == null ? "—" : hrs(v));

@@ -66,6 +66,7 @@ import { loadPoValueMap, loadDoValueMap } from "../lib/do-value";
 import { buildDailySlice } from "../lib/dashboard-daily-slice";
 import { countsToHeadcount } from "../lib/headcount-rule";
 import { buildPerfDays, num, dayKey } from "../lib/workforce-perf";
+import { loadApprovedExtraTime } from "../lib/efficiency-allowance";
 import { withSnapshot } from "../lib/snapshot";
 import { ensureFeedSnapshotTable, FEED_SNAPSHOT_TABLE, pruneFeedSnapshots } from "../lib/dashboard-snapshot";
 
@@ -386,7 +387,8 @@ app.get("/", async (c) => {
   // body has no such key — exactly what crashed SitiOpsView.tsx on a stale
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
-  const protoV = "v8";
+  // v9 (2026-11-11): efficiency counts approved extra production time.
+  const protoV = "v9";
   const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
   const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------
@@ -699,6 +701,10 @@ app.get("/", async (c) => {
       .then((r) => r.results ?? []),
   );
 
+  const extraTimeSec = await section("approved extra time", () =>
+    loadApprovedExtraTime(c.var.DB, "0001-01-01", "9999-12-31"),
+  );
+
   // Per-day production vs working minutes, overall and per worker. Lives in
   // lib/workforce-perf.ts so the Department efficiency KPI runs the same code.
   // Today, live (owner 2026-10-19): working_hour_entries only land at
@@ -729,6 +735,7 @@ app.get("/", async (c) => {
     whe: [...wheSec.rows, ...liveWheSec.rows],
     jobCards: jcSec.rows,
     pics: picsSec.rows,
+    approvedExtraTime: extraTimeSec.rows,
     productionDepts,
   });
 
@@ -1689,9 +1696,9 @@ app.get("/", async (c) => {
       overdueSets: { live: !overdueSetsSec.error, reason: overdueSetsSec.error ?? undefined },
       service: { live: !serviceSec.error, reason: serviceSec.error ?? undefined },
       employee: {
-        live: !attSec.error && !workersSec.error && !wheSec.error && !jcSec.error,
+        live: !attSec.error && !workersSec.error && !wheSec.error && !jcSec.error && !extraTimeSec.error,
         reason: attSec.error ?? workersSec.error ?? wheSec.error ?? jcSec.error
-          ?? picsSec.error ?? deptSec.error ?? undefined,
+          ?? picsSec.error ?? deptSec.error ?? extraTimeSec.error ?? undefined,
         workers: workerRows.length,
         attendanceRows: attendance.length,
         // Named so the page can render a dash instead of a fabricated figure.

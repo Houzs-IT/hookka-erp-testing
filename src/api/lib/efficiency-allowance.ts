@@ -34,6 +34,8 @@
 // (a live estimate); at month-end it is the final figure.
 // ---------------------------------------------------------------------------
 
+import type { PerfExtraTimeRow } from "./workforce-perf";
+
 // D1-compat shape exposed by the SupabaseAdapter installed in worker.ts —
 // matches the DbLike used across src/api/lib.
 interface DbLike {
@@ -213,6 +215,24 @@ export async function computeApprovedAddProdMinutesByWorker(
     // Efficiency falls back to the exact pre-feature number.
   }
   return out;
+}
+
+export async function loadApprovedExtraTime(
+  db: DbLike,
+  periodStart: string,
+  periodEnd: string,
+): Promise<PerfExtraTimeRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT worker_id, date, COALESCE(approved_hours, hours) AS hours
+         FROM worker_nonprod_requests
+        WHERE kind = 'ADD_PROD'
+          AND status = 'APPROVED'
+          AND date >= ? AND date <= ?`,
+    )
+    .bind(periodStart, periodEnd)
+    .all<PerfExtraTimeRow>();
+  return results ?? [];
 }
 
 /**
