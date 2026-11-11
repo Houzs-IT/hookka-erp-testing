@@ -64,6 +64,21 @@ export function scaleLabourToPayroll(
   return { byWorkerDay: days, byWorkerDayDept: depts };
 }
 
+export function wholeMonthsAround(from: string, to: string): { from: string; to: string } {
+  const [year, month] = to.slice(0, 7).split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { from: `${from.slice(0, 7)}-01`, to: `${to.slice(0, 7)}-${String(lastDay).padStart(2, "0")}` };
+}
+
+export function keepDaysWithin(costByKey: ReadonlyMap<string, number>, from: string, to: string): Map<string, number> {
+  const kept = new Map<string, number>();
+  for (const [key, sen] of costByKey) {
+    const date = key.split("|")[1] ?? "";
+    if (date >= from && date <= to) kept.set(key, sen);
+  }
+  return kept;
+}
+
 /** Months added up: what a card shows for a quarter or a year. */
 export function sumLabourMonths(months: readonly LabourMonth[]) {
   const t = { totalSen: 0, directSen: 0, nonProductionSen: 0, outsourceSen: 0, warehousingSen: 0, shortfallSen: 0, overheadSen: 0, underRecordedSen: 0, draft: 0, approved: 0 };
