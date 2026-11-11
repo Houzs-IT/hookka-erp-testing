@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-11-11 on branch `feat/mobile-modules-to-main` (to `main`)**: the new "Mobile redesign" section at the end, read from the `src/pages/m` file tree and the imports in `Home.tsx`, `delivery/`, `invoice-pdf.ts`, `production-ui.ts`; nothing else on this page re-checked.
 > **Last verified: 2026-10-21 on branch `feat/bs-parent-accounts` (to `main`)**: the Balance Sheet's parent accounts — `src/lib/bs-groups.ts` (`groupBsEntries`), `BalanceSheetTab` (`renderBSSection`, levels, `buildExport`) in `src/pages/accounting/index.tsx`, `plBalanceSheetResponse` (parentCode / parentName) and `REPORT_SNAPSHOT_V` in `src/api/routes/accounting.ts`, the PDF row kind `group` in `src/lib/export-report.ts`. Nothing else re-checked.
 > **Last verified: 2026-10-21 on branch `feat/tf-draw-detail-look` (to `main`)**: Creditor Aging's opened drawdown — `TfDrawDetail` / `DueDateBox` / `TfRepaidRows` / `TfRepaidDraw` in `src/pages/accounting/tabs/TradeFinanceBlock.tsx`, `tfRepaid` in `APTab` (`src/pages/accounting/index.tsx`). Nothing else re-checked.
 > **Last verified: 2026-10-20 on branch `claude/t006-pi-caps-main-096a64` (to `main`)**: the convert-chain PO-ceiling line (T-006 R5 / R8 / R9: `po_item_id` buckets, `chk_grn_items_invoiced_qty`, the line-poId create guard) and the `checkPoRemaining` anchor. Nothing else re-checked.
@@ -3000,3 +3001,24 @@ tool gate.
 ---
 
 Before schema/money/ship work read docs/HOOKKA-GOTCHAS.md; for review depth see docs/DEV-OPERATING-FRAMEWORK.md.
+
+## Mobile redesign — phone / tablet screens (`src/pages/m`, 2026-11)
+
+The redesigned mobile modules, one row per module. Paths are under `src/pages/m/`. Data still comes from the same `/api/*` routes as the desktop; nothing in this section adds an API route.
+
+| Module | Screens | Notes |
+|---|---|---|
+| Home (Sales / Operations / Employees dashboards) | `screens/Home.tsx`, `screens/dashboard/HomeDashboard.tsx`, `HomeSales*.tsx`, `HomeOps*.tsx`, `HomeEmp*.tsx`, `EmpView.tsx`, `home-data.ts`, `home-lib.ts` | Replaces the shared-`DashboardBody` Home from #1106. Reads `/api/dashboard/overview`, `/api/delivery-orders/pending-value` + `/stats` (never the whole `/ready-planning` set). No Day view on Home; the full dashboard at `/m/dashboard` (`DashboardScreen.tsx`) keeps it. Capacity label is "7-day avg" to match main's desktop. `stateKpiTile` (in `src/pages/dashboards/dashboard-widgets-lib.ts`) needs the server field `overview.stateKpis`, which is not on main: a finished month reads "no record". |
+| Sales Orders | `screens/SalesScreen.tsx`, `SalesDetailScreen.tsx`, `SalesOrderDetail.tsx`, `SalesOrderActionBar.tsx`, `so/`, `lib/so-*.ts` | One adaptive detail for phone, foldable and tablet. Scan-to-create is Sales Order only (`dashboard/ScanSoSheet.tsx`, `lib/scan-so.ts`, `screens/scan/`). |
+| Delivery | `screens/delivery/` (`DeliveryScreen`, `DeliveryDetailPhone`, `DeliveryPodSheet`, `DeliverySheets`, `actions.ts`), `lib/do-mobile.ts` | Uses `src/lib/delivery-customer-notice.ts`. `delivery/credit-block.ts` is only the credit-block response shape plus its guard (the desktop override feature is not on main, so it stays dormant). `DeliveryPodSheet` sends `photoDataUrls` (the API still accepts them next to `photoIds`) so those photos carry no server date/time stamp; `components/PodSheet.tsx` is main's own server-stamped flow (#1269). |
+| Procurement | `screens/procurement/` (PO / GRN / PI lists, details, forms), `lib/procurement-mobile.ts` | Dates use Malaysia time (`todayIso`). Scan-to-create for PI / GRN and the draft line edit are NOT here (separate change, they need backend). |
+| Invoices | `screens/invoices/`, `lib/invoices-mobile.ts`, `lib/invoice-pdf.ts` | The PDF opens in the in-app preview (`viewUnifiedInvoicePdf(doc, extras)`), no pop-up window. |
+| Products | `screens/ProductsScreen.tsx`, `ProductDetailScreen.tsx`, `lib/products-hub.ts`, `lib/products-ui.ts` | SKU Master and Catalog hub. |
+| Customers | `screens/customers/` | List and detail. |
+| Warehouse | `screens/WarehouseScreen.tsx`, `screens/warehouse/` | Tabs: Racks, Stock In / Out, History (`screens/warehouse/`). |
+| Production Orders | `screens/ProductionScreen.tsx`, `ProductionDetailScreen.tsx`, `lib/production-ui.ts` | Departments come from the desktop `DEPARTMENTS` constant (`src/pages/production/utils.ts`), so FIBRE and the step count cannot drift. |
+| Service Cases | `screens/ServiceCasesScreen.tsx`, `screens/cases/` | List, detail, filters, edit and ops sheets. |
+| Updates | `screens/UpdatesScreen.tsx`, `lib/notification-*.ts` | "Mark all read" confirms through the in-app dialog. |
+| Shell | `MobileLayout.tsx`, `nav.ts`, `components/ModuleMenu.tsx`, `LeftRail.tsx`, `NavDrawer.tsx`, `ResponsiveGrid.tsx`, `lib/responsive-layout.tsx` | `ModuleMenu` carries the profile, theme, **Signed-in devices** card, module list and desktop link, shared by `screens/More.tsx` and the drawer. Menu naming follows main (`/m` is Home, "Dashboard" opens `/m/dashboard`). |
+
+Not in this section (they ship separately): scan-to-create for PI / GRN / Payment Voucher with their backend, Planning v2, tablet routing to `/m`.
