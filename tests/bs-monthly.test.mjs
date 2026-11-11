@@ -65,3 +65,11 @@ test("the Balance Sheet page has a Monthly view that reads each month's sheet fr
   assert.match(mb, /\/api\/accounting\/pl\?period=\$\{ym\}/);
   assert.match(mb, /buildBsMatrix\(/);
 });
+
+test("a month answered from the report's older copy is asked again, as the single sheet does (prod 2026-11-11: a column read from a copy being rebuilt did not match the sheet)", () => {
+  const mb = read("src/pages/accounting/monthly-balance-sheet.tsx");
+  assert.match(mb, /const next = planStaleRetry\(run, j\);/);
+  assert.match(mb, /Updating…/);
+  // The forecast's start is the month's own column when the year shows it.
+  assert.match(mb, /byMonth\[fc\.startYm\] \?\? fcOpening/);
+});
