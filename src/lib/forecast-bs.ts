@@ -219,26 +219,66 @@ export type BsForecastPayload = {
   salaryAccount: string;
   /** The trade debtor accounts: customers' invoices are collected up to their total at the start. */
   arAccounts: string[];
+  /** The bank accounts: the forecast cash moves their total, not one of them. */
+  bankAccounts: string[];
+  /** The accounts the sheet keeps stock on (the Balance Sheet's stock lines). */
+  stockAccounts: string[];
   /** openingReceiptsByYm. */
   openingReceipts: Record<string, number>;
 };
 
-/** Every forecast month's sheet (month → entries), rolled forward from the
- *  start's sheet: the month's movements, the salaries owed at the start paid
- *  in the first month, and the customers' invoices collected up to the trade
- *  debtors on the start's sheet (capOpeningReceipts). */
-export function forecastBsSheets(fc: BsForecastPayload, opening: readonly BsMonthEntry[]): Record<string, BsMonthEntry[]> {
+/** The sheet's own line for this year's earnings. */
+const NP_CURRENT = "NP-CURRENT";
+
+/** The forecast columns, ready for the sheet (owner 2026-11-11 「为什么都是一样
+ *  数额啊？不能根据forecast P&L 算？」 → proposal → 「做出来先吧」):
+ *  - `sheets`: every forecast month's entries, rolled forward from the start's
+ *    sheet — the month's movements, the salaries owed at the start paid in the
+ *    first month, the customers' invoices collected up to the trade debtors on
+ *    the start's sheet (capOpeningReceipts). Each movement sits on the line it
+ *    belongs to: the debtors on Trade Debtors, the profit on Current Year
+ *    Earnings; the cash inside the bank accounts' group (its total moves) and
+ *    the depreciation inside the fixed assets (their total moves);
+ *  - `dash`: the lines a forecast column shows as "—" — each bank account, each
+ *    stock line, each fixed asset: the forecast does not say which bank the
+ *    money goes through, the Forecast P&L has no stock (what it buys is used
+ *    in the month, so stock stays as at the start) nor depreciation per asset;
+ *  - `hidden`: the cash and depreciation movements, counted in their totals
+ *    without a line of their own.
+ *  Bank accounts that do not share one parent on the sheet have no total to
+ *  carry the cash: the cash then keeps its own line and the banks their
+ *  figures; stock lines likewise. A line missing from the start's sheet keeps
+ *  its forecast line (FORECAST_BS_LINES). */
+export type ForecastBsView = { sheets: Record<string, BsMonthEntry[]>; dash: Set<string>; hidden: Set<string> };
+
+export function forecastBsView(fc: BsForecastPayload, opening: readonly BsMonthEntry[]): ForecastBsView {
   const owed = opening.find((e) => e.accountCode === fc.salaryAccount && e.category === "CURRENT_LIABILITY")?.balance ?? 0;
   const arAccounts = new Set(fc.arAccounts);
-  const booksDebtors = opening
-    .filter((e) => arAccounts.has(e.accountCode) && e.category === "CURRENT_ASSET")
-    .reduce((t, e) => t + e.balance, 0);
+  const arLines = opening.filter((e) => arAccounts.has(e.accountCode) && e.category === "CURRENT_ASSET");
+  const booksDebtors = arLines.reduce((t, e) => t + e.balance, 0);
   const receipts = capOpeningReceipts(fc.openingReceipts, booksDebtors);
+  // The one parent a set of current-asset lines shares on the sheet, if any.
+  const sharedParent = (codes: readonly string[] | undefined) => {
+    const set = new Set(codes ?? []);
+    const lines = opening.filter((e) => set.has(e.accountCode) && e.category === "CURRENT_ASSET");
+    const parents = new Set(lines.map((e) => e.parentCode ?? ""));
+    return lines.length && parents.size === 1 && lines[0].parentCode ? { lines, code: lines[0].parentCode, name: lines[0].parentName ?? null } : null;
+  };
+  const cashGroup = sharedParent(fc.bankAccounts);
+  const stockGroup = sharedParent(fc.stockAccounts);
+  const fixed = opening.filter((e) => e.category === "FIXED_ASSET");
+  // Where a forecast line's movement lands.
+  const lineOf: Record<string, string> = {};
+  if (arLines.length) lineOf[FC_AR] = arLines[0].accountCode;
+  lineOf[FC_PROFIT] = NP_CURRENT;
+  const accounts = { ...fc.accounts, [NP_CURRENT]: { name: "Current Year Earnings (unclosed)", section: "EQUITY" } };
+
   const cum: Record<string, number> = {};
   const add = (code: string, sen: number) => {
-    if (sen) cum[code] = (cum[code] ?? 0) + sen;
+    const to = lineOf[code] ?? code;
+    if (sen) cum[to] = (cum[to] ?? 0) + sen;
   };
-  const out: Record<string, BsMonthEntry[]> = {};
+  const sheets: Record<string, BsMonthEntry[]> = {};
   fc.months.forEach((ym, i) => {
     for (const [code, sen] of Object.entries(fc.deltas[ym] ?? {})) add(code, sen);
     if (i === 0 && owed > 0) {
@@ -248,9 +288,20 @@ export function forecastBsSheets(fc: BsForecastPayload, opening: readonly BsMont
     const r = receipts[ym] ?? 0;
     add(FC_CASH, r);
     add(FC_AR, -r);
-    out[ym] = forecastBsEntries(opening, cum, fc.accounts);
+    const entries = forecastBsEntries(opening, cum, accounts);
+    if (cashGroup) {
+      for (const e of entries) if (e.accountCode === FC_CASH) Object.assign(e, { parentCode: cashGroup.code, parentName: cashGroup.name });
+    }
+    sheets[ym] = entries;
   });
-  return out;
+
+  const dash = new Set<string>([
+    ...(cashGroup ? cashGroup.lines.map((e) => e.accountCode) : []),
+    ...(stockGroup ? stockGroup.lines.map((e) => e.accountCode) : []),
+    ...fixed.map((e) => e.accountCode),
+  ]);
+  const hidden = new Set<string>([...(cashGroup ? [FC_CASH] : []), ...(fixed.length ? [FC_DEPN] : [])]);
+  return { sheets, dash, hidden };
 }
 
 /** The forecast months: the Forecast P&L columns from this month to the last

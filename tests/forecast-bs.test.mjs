@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 
 import {
   FC_AR, FC_CASH, FC_DEPN, FC_PROFIT,
-  capOpeningReceipts, forecastBsDeltas, forecastBsEntries, forecastBsMonths, forecastBsSheets, fyForecastMonths, openingReceiptsByYm,
+  capOpeningReceipts, forecastBsDeltas, forecastBsEntries, forecastBsMonths, forecastBsView, fyForecastMonths, openingReceiptsByYm,
 } from "../src/lib/forecast-bs.ts";
 import { forecastMonthHasFigures } from "../src/lib/forecast-pnl.ts";
 import { buildBsMatrix } from "../src/lib/bs-monthly.ts";
@@ -97,34 +97,74 @@ test("customers' invoices are collected up to the trade debtors in the books: th
   assert.deepEqual(capOpeningReceipts(by, -5_000), {}, "debtors in credit: nothing to collect");
 });
 
+// A start sheet: debtors, two bank accounts under CASH AT BANK, cash in hand,
+// two stock groups under STOCK, a fixed asset, salaries owed, this year's earnings.
+const withParent = (e, parentCode, parentName) => ({ ...e, parentCode, parentName });
+const OPENING = [
+  entry("200-0030", "FIXED_ASSET", 15_000),
+  entry("300-0000", "CURRENT_ASSET", 70_000),
+  withParent(entry("310-0010", "CURRENT_ASSET", 6_000), "310-0000", "CASH AT BANK"),
+  withParent(entry("310-0030", "CURRENT_ASSET", 4_000), "310-0000", "CASH AT BANK"),
+  entry("320-0000", "CURRENT_ASSET", 500),
+  withParent(entry("330-0001", "CURRENT_ASSET", 3_000), "330-0000", "STOCK"),
+  withParent(entry("330-9000", "CURRENT_ASSET", 2_000), "330-0000", "STOCK"),
+  entry("410-0010", "CURRENT_LIABILITY", 8_000),
+  entry("NP-CURRENT", "EQUITY", 92_500),
+];
+const FC = {
+  startYm: "2026-10",
+  months: ["2026-11", "2026-12"],
+  deltas: {
+    "2026-11": { [FC_CASH]: -1_000, "900-0001": 0, [FC_PROFIT]: 1_000 },
+    "2026-12": { [FC_PROFIT]: 300, [FC_DEPN]: -300 },
+  },
+  accounts: {},
+  salaryAccount: "410-0010",
+  arAccounts: ["300-0000"],
+  bankAccounts: ["310-0010", "310-0030"],
+  stockAccounts: ["330-0001", "330-9000"],
+  // 100,000 on the documents, 70,000 in the books: the oldest 30,000 is not money to come.
+  openingReceipts: { "2026-11": 50_000, "2026-12": 30_000, "2027-01": 20_000 },
+};
+
 test("a forecast month's sheet rolls forward from the start: the salaries owed then paid in the first month, customers' invoices collected only up to the trade debtors", () => {
-  const opening = [
-    entry("300-0000", "CURRENT_ASSET", 70_000),
-    entry("310-0010", "CURRENT_ASSET", 10_000),
-    entry("410-0010", "CURRENT_LIABILITY", 8_000),
-    entry("NP-CURRENT", "EQUITY", 72_000),
-  ];
-  const fc = {
-    startYm: "2026-10",
-    months: ["2026-11", "2026-12"],
-    deltas: { "2026-11": { [FC_CASH]: -1_000, "900-0001": 0, [FC_PROFIT]: 1_000 }, "2026-12": {} },
-    accounts: {},
-    salaryAccount: "410-0010",
-    arAccounts: ["300-0000"],
-    // 100,000 on the documents, 70,000 in the books: the oldest 30,000 is not money to come.
-    openingReceipts: { "2026-11": 50_000, "2026-12": 30_000, "2027-01": 20_000 },
-  };
-  const sheets = forecastBsSheets(fc, opening);
+  const { sheets } = forecastBsView(FC, OPENING);
   assert.deepEqual(Object.keys(sheets), ["2026-11", "2026-12"]);
   const bal = (ym) => Object.fromEntries(sheets[ym].map((x) => [x.accountCode, x.balance]));
-  assert.equal(bal("2026-11")[FC_AR], -20_000);
+  assert.equal(bal("2026-11")["300-0000"], 70_000 - 20_000, "the oldest 30,000 beyond the books is left out");
   assert.equal(bal("2026-11")[FC_CASH], 20_000 - 8_000 - 1_000);
   assert.equal(bal("2026-11")["410-0010"], 0, "the salaries owed at the start are paid");
-  assert.equal(bal("2026-11")[FC_PROFIT], -1_000);
-  assert.equal(bal("2026-12")[FC_AR], -50_000);
-  assert.equal(bal("2026-12")["300-0000"] + bal("2026-12")[FC_AR], 20_000, "what is left is January's, never below zero");
+  assert.equal(bal("2026-12")["300-0000"], 20_000, "what is left is January's, never below zero");
   const m = buildBsMatrix(["2026-11", "2026-12"], sheets);
   assert.deepEqual(m.diff, [0, 0], "every forecast month balances");
+});
+
+test("every forecast movement sits on the line it belongs to (owner 2026-11-11 「做出来先吧」): debtors on Trade Debtors, the profit on Current Year Earnings, no forecast lines of their own", () => {
+  const { sheets, hidden } = forecastBsView(FC, OPENING);
+  const dec = Object.fromEntries(sheets["2026-12"].map((x) => [x.accountCode, x]));
+  assert.equal(dec[FC_AR], undefined);
+  assert.equal(dec[FC_PROFIT], undefined);
+  assert.equal(dec["NP-CURRENT"].balance, 92_500 - 1_000 - 300, "this year's earnings plus the forecast profit (here two costs)");
+  assert.equal(dec["NP-CURRENT"].accountName, "NP-CURRENT name", "the line keeps its own name");
+  // The cash moves inside CASH AT BANK, the depreciation inside the fixed assets: counted, not shown on a line.
+  assert.equal(dec[FC_CASH].parentCode, "310-0000");
+  assert.equal(dec[FC_CASH].parentName, "CASH AT BANK");
+  assert.ok(hidden.has(FC_CASH) && hidden.has(FC_DEPN));
+  const m = buildBsMatrix(["2026-12"], sheets);
+  const banks = m.sections.CURRENT_ASSET.rows.filter((r) => r.parentCode === "310-0000").reduce((t, r) => t + r.values[0], 0);
+  assert.equal(banks, 6_000 + 4_000 + (50_000 - 8_000 - 1_000), "the CASH AT BANK total carries the forecast cash");
+  assert.equal(m.sections.FIXED_ASSET.totals[0], 15_000 - 300, "the fixed assets' total net of the forecast depreciation");
+});
+
+test("a line the forecast does not split shows — in the forecast columns: each bank account, each stock group, each fixed asset", () => {
+  const { dash } = forecastBsView(FC, OPENING);
+  assert.deepEqual([...dash].sort(), ["200-0030", "310-0010", "310-0030", "330-0001", "330-9000"]);
+  // Bank accounts not under one parent: there is no total to carry the cash, so it keeps a line and the banks their figures.
+  const loose = OPENING.map((e) => (e.accountCode === "310-0030" ? entry("310-0030", "CURRENT_ASSET", 4_000) : e));
+  const v = forecastBsView(FC, loose);
+  assert.ok(!v.hidden.has(FC_CASH));
+  assert.ok(!v.dash.has("310-0010") && !v.dash.has("310-0030"));
+  assert.equal(v.sheets["2026-11"].find((x) => x.accountCode === FC_CASH).parentCode, undefined);
 });
 
 test("the forecast runs from this month to the last month the Forecast P&L has figures for", () => {
@@ -202,9 +242,15 @@ test("the route and the Monthly Balance Sheet's Forecast switch", () => {
   // Customers' invoices go to the page, which collects them up to the books' debtors.
   assert.match(route, /openingReceipts: openingReceiptsByYm\(/);
   assert.match(route, /arAccounts/);
+  // The bank accounts and the stock accounts the sheet keeps stock on.
+  assert.match(route, /bankAccounts/);
+  assert.match(route, /stockAccounts: \[\.\.\.stockAccounts\(/);
   const mb = read("src/pages/accounting/monthly-balance-sheet.tsx");
   assert.match(mb, /\/api\/accounting\/bs-forecast/);
-  assert.match(mb, /forecastBsSheets\(/);
+  assert.match(mb, /forecastBsView\(/);
+  // "—" where the forecast does not split a line; the cash and depreciation count without a line.
+  assert.match(mb, /fcView\.dash\.has\(/);
+  assert.match(mb, /fcView\.hidden\.has\(/);
   // Columns by the year picked; this year and the years ahead can forecast.
   assert.match(mb, /fyForecastMonths\(/);
   assert.match(mb, /fy\.endYm >= curYm/);

@@ -12120,6 +12120,15 @@ app.get("/bs-forecast", async (c) => {
   // (GET /ar-control: every SDC account but Other Debtors).
   const otherDebtors = resolveAcct(OTHER_DEBTOR_CONTROL);
   const arAccounts = [...new Set([p.arAcct, ...[...coa.values()].filter((a) => a.sat === "SDC" && a.code !== otherDebtors).map((a) => a.code)])];
+  // The page shows the forecast cash on the bank accounts' total and "—" on
+  // each bank account and each stock line (owner 2026-11-11 「做出来先吧」):
+  // the bank accounts, and the accounts the sheet keeps stock on (as /pl does).
+  const stockMap = await getStockMap(db);
+  const isAssetLine = (code: string) => {
+    const a = coa.get(code);
+    const section = a ? bsSectionFor(code, a.type, bsOverride) : null;
+    return !!section && bsSectionClass(section) === "asset";
+  };
   const data: BsForecastPayload = {
     startYm: addMonthsYm(curYm, -1),
     months,
@@ -12127,6 +12136,8 @@ app.get("/bs-forecast", async (c) => {
     accounts: accountsOut,
     salaryAccount: accounts.salary,
     arAccounts,
+    bankAccounts: [...coa.values()].filter((a) => a.sat === "SBK").map((a) => a.code),
+    stockAccounts: [...stockAccounts(stockMap, resolveAcct)].filter(isAssetLine),
     openingReceipts: openingReceiptsByYm(openingDocs, months[0] ?? curYm),
   };
   return c.json({ success: true, data });
