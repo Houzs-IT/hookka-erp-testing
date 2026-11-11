@@ -26,6 +26,7 @@ import {
 } from "../src/lib/stock-count.ts";
 import { isRmCountShape, parseRmCountRows } from "../src/lib/stock-take-import.ts";
 import { safeSheetName } from "../src/lib/export-report.ts";
+import { titleForPath } from "../src/lib/route-titles.ts";
 
 // Line endings normalised, so the patterns hold on a Windows (CRLF) checkout too.
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
@@ -319,4 +320,10 @@ test("UI: Warehouse › Stock Take in the sidebar, gated like Inventory, lazy ro
   const routes = read("src/dashboard-routes.tsx");
   assert.match(routes, /path: '\/inventory\/stock-take'/);
   assert.match(routes, /import\('\.\/pages\/inventory\/stock-take'\)/);
+});
+
+test("breadcrumb and workspace tab name the page (was 'Inventory › Inventory' on prod)", () => {
+  assert.equal(titleForPath("/inventory/stock-take"), "Stock Take");
+  assert.equal(titleForPath("/inventory/adjustments"), "Stock Adjustments");
+  assert.equal(titleForPath("/inventory"), "Inventory");
 });

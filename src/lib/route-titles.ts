@@ -43,6 +43,8 @@ const PATH_TITLES: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/^\/procurement\/?$/, () => "Purchase Orders"],
   [/^\/inventory\/fabrics\/?$/, () => "Fabrics"],
   [/^\/inventory\/stock-value\/?$/, () => "Stock Value"],
+  [/^\/inventory\/adjustments\/?$/, () => "Stock Adjustments"],
+  [/^\/inventory\/stock-take\/?$/, () => "Stock Take"],
   [/^\/inventory\/?$/, () => "Inventory"],
   [/^\/bom\/?$/, () => "BOM"],
   [/^\/products\/([^/]+)\/bom\/?$/, (m) => `BOM · ${m[1]}`],
