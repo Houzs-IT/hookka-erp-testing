@@ -89,3 +89,9 @@ test("worker phone: a helper sees — instead of an efficiency %", () => {
   assert.match(read("src/pages/worker/index.tsx"), /hist\.totals\.isHelper \|\| \(hist\.totals\.prodDeptMinutes \?\? 0\) < 30 \? "—"/);
   assert.match(read("src/pages/worker/scan.tsx"), /today\.totals\.isHelper \? "—"/);
 });
+
+test("ticking / unticking Helper drops the saved dashboard feed (workers has no updated_at)", () => {
+  const w = read("src/api/routes/workers.ts");
+  assert.match(w, /if \(wasHelper !== isHelperNow\) \{/);
+  assert.match(w, /DELETE FROM dashboard_feed_snapshot WHERE org_id = \?/);
+});

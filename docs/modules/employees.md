@@ -95,7 +95,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `buildDeptDay` | `src/api/routes/worker.ts:262` | DEV-31 "Today's departments" payload (live or saved) |
 | `computeLiveDeptDay` | `src/api/lib/punch-autofill.ts:327` | Live split: punch-out maths with now as the end |
 | `splitDayHours` / `currentStation` | `src/lib/dept-scan-split.ts:148 / 171` | Shared split (autofill + live) and where the worker is now |
-| `GET /salary/effective` | `src/api/routes/workers.ts:1252` | Day-weighted salary per period |
+| `GET /salary/effective` | `src/api/routes/workers.ts:1267` | Day-weighted salary per period |
 | `POST /auto-from-punch` / `settle-period` | `src/api/routes/payroll-hour-deductions.ts:149 / 211` | Short-hour docks |
 
 ## Gotchas
