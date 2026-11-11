@@ -957,7 +957,7 @@ async function checkOverdueOrders(
 }
 
 // 8. Low-efficiency workers — reuse yesterday's efficiency report, keep only
-//    present workers (workingMinutes > 0) below the threshold.
+//    workers with production-department hours below the threshold.
 async function checkLowEfficiencyWorkers(
   db: DbLike,
   todayYmd: string,
@@ -966,7 +966,7 @@ async function checkLowEfficiencyWorkers(
     const yesterday = addDaysYmd(todayYmd, -1);
     const report = await collectEfficiencyData(db, yesterday);
     return report.workers.filter(
-      (w) => w.workingMinutes > 0 && w.efficiencyPct < LOW_EFFICIENCY_THRESHOLD,
+      (w) => w.productionWorkingMinutes > 0 && w.efficiencyPct < LOW_EFFICIENCY_THRESHOLD,
     );
   } catch (err) {
     console.error("[compliance] lowEfficiencyWorkers failed:", err);

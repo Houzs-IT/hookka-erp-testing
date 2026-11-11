@@ -16,7 +16,7 @@ import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
   BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, MUTED, RED, TEAL,
-  fmtN, inPeriod, isOutsourced, periodLabel, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  fmtN, hasKeyedHours, inPeriod, isOutsourced, periodLabel, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 
 // ---------------------------------------------------------------------------
 // Employees, merged dashboard (owner 2026-10-17). One page, no sub-tabs: "a
@@ -180,8 +180,10 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     let work = 0, prod = 0, sen = 0, workerDays = 0, workingDays = 0, revenue = 0;
     for (const d of allDays) {
       if (!has(d.date)) continue;
-      work += d.workingMinutes;
-      prod += d.productionMinutes;
+      if (hasKeyedHours(d)) {
+        work += d.workingMinutes;
+        prod += d.productionMinutes;
+      }
       let any = false;
       for (const x of d.workers ?? []) {
         sen += cost.get(`${x.workerId}|${d.date}`) ?? 0;
@@ -230,16 +232,17 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     for (const d of days) {
       if (!winDates.has(d.date)) continue;
       for (const x of d.workers ?? []) {
+        const earnedMinutes = hasKeyedHours(d) ? x.productionMinutes : 0;
         const w = workerById.get(x.workerId);
         const wDept = w?.dept ?? "—";
         if (dept !== "ALL" && wDept !== dept) continue;
         const cost = costByWorkerDay.get(`${x.workerId}|${d.date}`) ?? 0;
         const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
         r.work += x.workingMinutes;
-        r.prod += x.productionMinutes;
+        r.prod += earnedMinutes;
         r.cost += cost;
         if (x.workingMinutes > 0) r.daysWorked += 1;
-        r.byDay.push({ date: d.date, work: x.workingMinutes, prod: x.productionMinutes, cost });
+        r.byDay.push({ date: d.date, work: x.workingMinutes, prod: earnedMinutes, cost });
         m.set(x.workerId, r);
       }
     }
@@ -289,6 +292,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     for (const d of days) {
       if (!winDates.has(d.date)) continue;
       for (const x of d.workers ?? []) {
+        const earnedMinutes = hasKeyedHours(d) ? x.productionMinutes : 0;
         const k = `${x.workerId}|${d.date}`;
         const shares = split.get(k);
         const total = shares ? [...shares.values()].reduce((a, v) => a + v, 0) : 0;
@@ -297,7 +301,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           const r = row(dep);
           if (x.workingMinutes > 0 && !outsourced.has(x.workerId)) r.people.add(x.workerId);
           r.work += x.workingMinutes * f;
-          r.prod += x.productionMinutes * f;
+          r.prod += earnedMinutes * f;
         }
         if (costByDept.size === 0) row(parts[0][0]).cost += costByWorkerDay.get(k) ?? 0;
       }
@@ -307,7 +311,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     // row, so the column total equals the efficiency tile.
     let unlinked = 0;
     for (const d of days) {
-      if (!winDates.has(d.date)) continue;
+      if (!winDates.has(d.date) || !hasKeyedHours(d)) continue;
       unlinked += d.productionMinutes - (d.workers ?? []).reduce((a, x) => a + x.productionMinutes, 0);
     }
     if (unlinked > 0.5) row("UNLINKED").prod += unlinked;
@@ -418,7 +422,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           sub={`Upholstery output ÷ ${fteTxt} full-time people · ${revPerDay == null ? "…" : formatCurrency(Math.round(revPerDay))} per worker-day${prevRevPerDay ? ` (last month ${formatCurrency(Math.round(prevRevPerDay))})` : ""}`}
           color={GREEN}
         />
-        <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} prod / ${hrs(totals.work)} working · click for each worker`} color={effColor(eff(totals.prod, totals.work), target)} onClick={() => setTileDrill("eff")} />
+        <Tile label="Overall efficiency" value={pct(eff(totals.prod, totals.work))} sub={`${hrs(totals.prod)} earned / ${hrs(totals.work)} worked · click for each worker`} color={effColor(eff(totals.prod, totals.work), target)} onClick={() => setTileDrill("eff")} />
       </div>
       {canSalary && <LabourSplitCard months={labourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? periodTotals.revenue : null} fullTimePeople={periodTotals.fte} />}
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
@@ -613,7 +617,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         <DashModal
           wide
           title={tileDrill === "salary" ? `Labour by worker · ${winLabel}` : `Efficiency by worker · ${winLabel}`}
-          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · from payroll` : `Overall ${pct(eff(totals.prod, totals.work))} · production ÷ working hours`}
+          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · from payroll` : `Overall ${pct(eff(totals.prod, totals.work))} · earned time ÷ hours worked`}
           onClose={() => setTileDrill(null)}
         >
           <div className="max-h-[60vh] overflow-y-auto">

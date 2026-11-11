@@ -24,10 +24,10 @@ const schedule = {
 };
 const efficiency = {
   date: "2026-09-29", generatedAtIso: "2026-09-29T10:30:00.000Z",
-  totals: { presentCount: 1, workerCount: 1, workingMinutes: 480, productionMinutes: 360, efficiencyPct: 75, jobsCompleted: 3 },
-  departments: [{ code: "FOAM", name: "Foam", shortName: "Foam", workerCount: 1, workingMinutes: 480, productionMinutes: 360, efficiencyPct: 75, flagged: false }],
+  totals: { presentCount: 1, workerCount: 1, workingMinutes: 480, productionWorkingMinutes: 480, productionMinutes: 360, efficiencyPct: 75, jobsCompleted: 3 },
+  departments: [{ code: "FOAM", name: "Foam", shortName: "Foam", workerCount: 1, workingMinutes: 480, productionWorkingMinutes: 480, productionMinutes: 360, efficiencyPct: 75, flagged: false }],
   workers: [{ workerId: "w1", empNo: "HK100", name: "Ahmad Faiz", departmentCode: "FOAM", departmentName: "Foam",
-    clockIn: "08:00", clockOut: "17:30", status: "PRESENT", workingMinutes: 480, productionMinutes: 360,
+    clockIn: "08:00", clockOut: "17:30", status: "PRESENT", workingMinutes: 480, productionWorkingMinutes: 480, productionMinutes: 360,
     efficiencyPct: 75, jobsCompleted: 3, punchOutOfArea: false }],
 };
 const viewport = /<meta name="viewport" content="width=device-width/;

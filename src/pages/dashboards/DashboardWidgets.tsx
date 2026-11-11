@@ -602,7 +602,7 @@ export function PlantLoadCard({ period }: { period: Period }) {
           {capDays.length > 1 && (
             <div>
               <p className="mb-1 text-[11px] font-semibold text-[#5A5550]">
-                Production time per day <span className="font-normal" style={{ color: MUTED }}>· grey line = {fmtHM(prod.dailyCapacityMin)} {avgBasis}</span>
+                Earned time per day <span className="font-normal" style={{ color: MUTED }}>· grey line = {fmtHM(prod.dailyCapacityMin)} {avgBasis}</span>
               </p>
               <div style={{ width: "100%", height: 96 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -611,7 +611,7 @@ export function PlantLoadCard({ period }: { period: Period }) {
                     <YAxis hide domain={[0, "auto"]} />
                     <ReferenceLine y={prod.dailyCapacityMin} stroke={CHART_AXIS} strokeWidth={1} />
                     <Tooltip
-                      formatter={(v) => [fmtHM(Number(v)), "Production time"]}
+                      formatter={(v) => [fmtHM(Number(v)), "Earned time"]}
                       contentStyle={{ background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 12 }}
                     />
                     <Line type="monotone" dataKey="minutes" stroke={TEAL} strokeWidth={2} dot={{ r: 2.5, fill: TEAL, strokeWidth: 0 }} activeDot={{ r: 4 }} />
@@ -624,7 +624,7 @@ export function PlantLoadCard({ period }: { period: Period }) {
             <summary className="cursor-pointer select-none text-[11px] font-semibold text-[#5A5550] hover:text-[#1F1D1B]">Daily capacity per day — table</summary>
             <div className="mt-1">
               <MiniTable
-                cols={["Date", "Production time", "Workers", "Per worker", "vs Avg"]}
+                cols={["Date", "Earned time", "Workers", "Per worker", "vs Avg"]}
                 rows={capDays.map((d) => {
                   const diff = d.minutes - prod.dailyCapacityMin;
                   const w = d.workers ?? 0;

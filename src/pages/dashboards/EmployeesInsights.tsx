@@ -93,8 +93,8 @@ export function TimeAttendancePanels({ employee, period, target, onPeriodChange 
     { name: "Overtime", value: t.ot, color: AMBER },
   ];
   const tiles: [string, string][] = [
-    ["Production time", hrs(house.w)],
-    ["Prod hours", hrs(house.p)],
+    ["Hours worked", hrs(house.w)],
+    ["Earned time", hrs(house.p)],
     ["Non-prod hours", hrs(house.nonProd)],
     ["Total days worked", fmtN(t.days)],
   ];
@@ -544,7 +544,7 @@ export function DailyWarningAudit({ employee, period, target, onPickEmployee, se
             <table className="w-full text-[12.5px]">
               <thead>
                 <tr className="border-t border-b border-[#E2DDD8]">
-                  {["Employee", "Role / Dept", "Date", "Production time", "Prod hours", "Efficiency", "Status"].map((h, i) => (
+                  {["Employee", "Role / Dept", "Date", "Hours worked", "Earned time", "Efficiency", "Status"].map((h, i) => (
                     <th key={h} className={`px-4 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] ${i >= 3 && i <= 5 ? "text-right" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>

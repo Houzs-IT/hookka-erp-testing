@@ -1864,3 +1864,22 @@ Tests: `tests/bank-leg-carry.test.mjs` (the rule, a pin on every edit, an invent
 | 3 | other-party bills, other-party / customer / supplier payments | ⬜ not converted; none carries a renamed code on prod (measured 2026-10-17) — resolve the read if a rename ever touches them |
 
 Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tests/official-receipt-edit.test.mjs`.
+
+## C33 — one business figure computed in several copies that drift
+
+**Shape.** A figure with one name on screen (efficiency, production revenue, labour cost) is computed by hand in several files. Each copy starts from the same idea, then one copy gets a fix or a new input and the others do not. Every screen looks right on its own; two screens disagree for the same worker or month, and the code comments often claim they "cannot disagree".
+
+**The rule.** One shared function per figure, with every input it needs as a required argument, so a new input forces every caller to decide. A screen that must differ says so on screen. Found by the same-term cross-check of 2026-11-11 (code reading only; how far the numbers differ is UNMEASURED).
+
+**Instances**
+
+| # | where | state |
+|---|---|---|
+| 1 | Efficiency: approved extra time missing from the dashboard Employees tab, KPI, board report, Floor Live and daily email; the dashboard counted earned minutes on days with no keyed hours; the daily email divided by all-department hours; "Production time" / "Prod hours" swapped between pages | ✅ fixed 2026-11-11 (BUG-2026-11-11-501) |
+| 2 | Efficiency: the payslip splits a shared card by PIC 1 / PIC 2; Department Performance and the dashboard split by piece (`efficiency-allowance.ts` vs `workforce-perf.ts`) | ⬜ open, a pay change, needs the owner |
+| 3 | Efficiency: the AI assistant tools divide estimate by "actual" card minutes, not keyed hours (`assistant-tools.ts`) | ⬜ open |
+| 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ⬜ open |
+| 5 | Production revenue: the same recognition SQL in four places (`production-revenue.ts`, `dept-revenue.ts`, `dashboard-overview.ts`, `dashboard-prototype.ts`); the Daily panel on main joins the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ⬜ open |
+| 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ⬜ open, needs a browser check |
+
+Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`.

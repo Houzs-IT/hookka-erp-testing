@@ -5,7 +5,7 @@
 // lives inside a component body and cannot be imported. The desktop files are NOT edited; tests/m-home-employees
 // holds fixtures that pin this copy to the desktop's documented behaviour.
 import { dropIdleSundays } from "../../../../lib/idle-sundays";
-import { AMBER, GREEN, MUTED, RED, inFocus, inPeriod, isOutsourced, periodLabel, type Period } from "../../../dashboards/dashboard-shared-lib";
+import { AMBER, GREEN, MUTED, RED, hasKeyedHours, inFocus, inPeriod, isOutsourced, periodLabel, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
 
 // ---------------------------------------------------------------------------
@@ -119,8 +119,10 @@ export function sumWindow(allDays: EmpDay[], has: (d: string) => boolean, cost: 
   let work = 0, prod = 0, sen = 0, workerDays = 0, workingDays = 0, revenue = 0;
   for (const d of allDays) {
     if (!has(d.date)) continue;
-    work += d.workingMinutes;
-    prod += d.productionMinutes;
+    if (hasKeyedHours(d)) {
+      work += d.workingMinutes;
+      prod += d.productionMinutes;
+    }
     let any = false;
     for (const x of d.workers ?? []) {
       sen += cost.get(`${x.workerId}|${d.date}`) ?? 0;
@@ -155,16 +157,17 @@ export function workerRows(days: EmpDay[], winDates: Set<string>, workerById: Ma
   for (const d of days) {
     if (!winDates.has(d.date)) continue;
     for (const x of d.workers ?? []) {
+      const earnedMinutes = hasKeyedHours(d) ? x.productionMinutes : 0;
       const w = workerById.get(x.workerId);
       const wDept = w?.dept ?? "—";
       if (dept !== "ALL" && wDept !== dept) continue;
       const c = cost.get(`${x.workerId}|${d.date}`) ?? 0;
       const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
       r.work += x.workingMinutes;
-      r.prod += x.productionMinutes;
+      r.prod += earnedMinutes;
       r.cost += c;
       if (x.workingMinutes > 0) r.daysWorked += 1;
-      r.byDay.push({ date: d.date, work: x.workingMinutes, prod: x.productionMinutes, cost: c });
+      r.byDay.push({ date: d.date, work: x.workingMinutes, prod: earnedMinutes, cost: c });
       m.set(x.workerId, r);
     }
   }
@@ -220,6 +223,7 @@ export function deptRowsOf(a: {
   for (const d of days) {
     if (!winDates.has(d.date)) continue;
     for (const x of d.workers ?? []) {
+      const earnedMinutes = hasKeyedHours(d) ? x.productionMinutes : 0;
       const k = `${x.workerId}|${d.date}`;
       const shares = split.get(k);
       const total = shares ? [...shares.values()].reduce((s, v) => s + v, 0) : 0;
@@ -228,14 +232,14 @@ export function deptRowsOf(a: {
         const r = row(dep);
         if (x.workingMinutes > 0 && !outsourced.has(x.workerId)) r.people.add(x.workerId);
         r.work += x.workingMinutes * f;
-        r.prod += x.productionMinutes * f;
+        r.prod += earnedMinutes * f;
       }
       if (costByDept.size === 0) row(parts[0][0]).cost += costByWorkerDay.get(k) ?? 0;
     }
   }
   let unlinked = 0;
   for (const d of days) {
-    if (!winDates.has(d.date)) continue;
+    if (!winDates.has(d.date) || !hasKeyedHours(d)) continue;
     unlinked += d.productionMinutes - (d.workers ?? []).reduce((s, x) => s + x.productionMinutes, 0);
   }
   if (unlinked > 0.5) row("UNLINKED").prod += unlinked;
