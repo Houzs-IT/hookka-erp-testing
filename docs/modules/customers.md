@@ -63,8 +63,8 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 | `CustomerProductsPanel` | `src/pages/customers.tsx:193` | Per-customer pricing (mirrors Products bulk-edit) |
 | `CustomerMaintenancePanel` | `src/pages/customers.tsx:1647` | Per-customer config snapshot tabs |
 | `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2411` | Per-customer combo pricing (config editor) |
-| `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2692` | Price-history viewer |
-| `AssignSkuModal` | `src/pages/customers.tsx:3218` | SKU assignment modal |
+| `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2705` | Price-history viewer |
+| `AssignSkuModal` | `src/pages/customers.tsx:3233` | SKU assignment modal |
 | `UsersPage` | `src/pages/settings/Users.tsx:234` | Users/Org/Mailbox tab shell |
 | `validateDebtorCode` | `src/api/routes/customers.ts:93` | Debtor-code validation on create/edit |
 | `rowToCustomer` | `src/api/routes/customers.ts:294` | Dual-key row → customer, buckets hubs |

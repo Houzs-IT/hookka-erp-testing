@@ -68,6 +68,9 @@ const RESOURCE_BY_TYPE: Record<string, string> = {
   INVOICE_LINE: "invoices",
   DR: "delivery-returns",
   DR_LINE: "delivery-returns",
+  // A customer's signed CTOS / CCRIS consent form (owner 2026-11-11, WORK-TRACKER
+  // 134): it carries IC and phone numbers, so it is gated like the customer.
+  CUSTOMER_CONSENT: "customers",
 };
 
 export function flowFileResource(resourceType: unknown): string | null {

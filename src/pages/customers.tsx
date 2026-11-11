@@ -75,6 +75,8 @@ import {
 } from "./maintenance/SofaComboHistoryDialog";
 import { moneyFieldToSen } from "@/lib/money-field";
 import { PartyFinanceFields } from "@/components/party/party-finance-fields";
+import { CONSENT_FORM_DOCX, CONSENT_FORM_PDF, uploadConsentForm } from "@/lib/customer-consent";
+import { FLOW_FILE_ACCEPT } from "@/lib/flow-files";
 import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
 import { useDiscardGuard, useFormDiscardGuard } from "@/lib/use-discard-guard";
@@ -3472,6 +3474,8 @@ export default function CustomersPage() {
   const [showAdd, setShowAdd] = useState(() => new URLSearchParams(window.location.search).get("new") === "1");
   const [addForm, setAddForm] = useState({ code: "", name: "", contactName: "", phone: "", email: "", creditTerms: "NET30", creditLimitSen: 0 });
   const [addSaving, setAddSaving] = useState(false);
+  // The customer's signed consent form, attached once the customer exists (WORK-TRACKER 134).
+  const [addConsentFile, setAddConsentFile] = useState<File | null>(null);
 
   // edit customer dialog state
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
@@ -3540,6 +3544,23 @@ export default function CustomersPage() {
       if (json?.success) {
         setData((prev) => [...prev, json.data]);
         invalidateCachePrefix("/api/customers");
+        // A signed consent form picked in the card goes up now that the customer
+        // has an id; it then ticks "Consent letter received" (Onboarding / KYC).
+        // A failed upload never undoes the customer — it says where to add it.
+        if (addConsentFile && json.data?.id) {
+          const up = await uploadConsentForm(json.data.id, addConsentFile);
+          if (up.ok) {
+            await fetch("/api/customer-crm/onboarding", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ customerId: json.data.id, consentReceived: true, consentDate: todayYmdMY() }),
+            }).catch(() => null);
+            toast.success("Customer created with the signed consent form.");
+          } else {
+            toast.error(`Customer created, but the consent form did not upload (${up.error}). Add it in the customer's Onboarding / KYC.`);
+          }
+        }
+        setAddConsentFile(null);
         setAddForm({ code: "", name: "", contactName: "", phone: "", email: "", creditTerms: "NET30", creditLimitSen: 0 });
         setShowAdd(false);
       } else {
@@ -4087,6 +4108,28 @@ export default function CustomersPage() {
                 <label className="text-xs font-medium text-[#374151] mb-1 block">Credit Limit (RM)</label>
                 <Input type="number" onFocus={(e) => e.currentTarget.select()} value={addForm.creditLimitSen / 100} onChange={(e) => setAddForm({ ...addForm, creditLimitSen: Math.round(Number(e.target.value) * 100) })} placeholder="0.00" />
               </div>
+            </div>
+            {/* Consent form (owner 2026-11-11 「加新的customer 时可以下载consent form
+                给顾客填，填了后upload 会上去」, WORK-TRACKER 134). */}
+            <div className="mt-4 rounded-lg border border-[#E2DDD8] bg-[#FAF9F7] p-3 text-xs text-[#6B7280] space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-[#1F1D1B]">Consent form (CTOS credit check)</span>
+                <span>— give the customer the blank form to sign:</span>
+                <a href={CONSENT_FORM_PDF} download className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] bg-white px-2 py-1 text-[#6B5C32] hover:bg-[#F0ECE9]">
+                  <FileDown className="h-3.5 w-3.5" /> PDF
+                </a>
+                <a href={CONSENT_FORM_DOCX} download className="inline-flex items-center gap-1 rounded-md border border-[#E2DDD8] bg-white px-2 py-1 text-[#6B5C32] hover:bg-[#F0ECE9]">
+                  <FileDown className="h-3.5 w-3.5" /> Word
+                </a>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-2">
+                  <span>Signed copy (photo or PDF, optional):</span>
+                  <input type="file" accept={FLOW_FILE_ACCEPT} onChange={(e) => setAddConsentFile(e.target.files?.[0] ?? null)} className="text-xs" />
+                </label>
+                {addConsentFile && <span className="text-[#1F1D1B]">{addConsentFile.name} — attached when the customer is created</span>}
+              </div>
+              <div>Not signed yet? Attach it later in the customer's Onboarding / KYC.</div>
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
