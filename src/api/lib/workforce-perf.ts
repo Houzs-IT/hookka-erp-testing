@@ -44,6 +44,7 @@ export type PerfJcRow = {
   wipQty: number | string | null;
 };
 export type PerfPicRow = { jobCardId: string; pic1Id: string | null; pic2Id: string | null };
+export type PerfExtraTimeRow = { workerId: string | null; date: string | null; hours: number | string | null };
 
 type Minutes = { workingMinutes: number; productionMinutes: number; allDeptMinutes: number };
 export type PerfDay = { date: string } & Minutes & { workers: Array<{ workerId: string } & Minutes> };
@@ -52,6 +53,7 @@ export function buildPerfDays(input: {
   whe: readonly PerfWheRow[];
   jobCards: readonly PerfJcRow[];
   pics: readonly PerfPicRow[];
+  approvedExtraTime: readonly PerfExtraTimeRow[];
   productionDepts: Set<string>;
 }): { perfDays: PerfDay[]; perfCards: number; perfMeasuredCards: number } {
   const { productionDepts } = input;
@@ -149,6 +151,16 @@ export function buildPerfDays(input: {
     for (const [wid, raw] of perWorker) {
       perfWorker(d, wid).productionMinutes += Math.round(raw);
     }
+  }
+
+  // Approved extra production time counts as earned minutes, as on the payslip
+  // (efficiency-allowance.ts) and Department Performance.
+  for (const extra of input.approvedExtraTime) {
+    const d = dayKey(extra.date);
+    const minutes = Math.round(num(extra.hours) * 60);
+    if (!d || !extra.workerId || minutes <= 0) continue;
+    perfDay(d).productionMinutes += minutes;
+    perfWorker(d, extra.workerId).productionMinutes += minutes;
   }
 
   const perfDays = [...perfByDay.values()]

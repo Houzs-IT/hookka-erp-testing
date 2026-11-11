@@ -111,7 +111,7 @@ export function PlantLoadCard({ d, period, periodKey, curYm }: { d: OpsData; per
       </OCard>
 
       {sheet === "cap" && prod ? (
-        <SheetFrame open title="Daily Capacity" sub={`Production time · ${winText} · live`} onClose={() => setSheet(null)}>
+        <SheetFrame open title="Daily Capacity" sub={`Earned time · ${winText} · live`} onClose={() => setSheet(null)}>
           <div style={{ ...sheetCard, padding: "14px 16px" }}>
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 }}>
               <div style={{ minWidth: 0 }}>
@@ -122,7 +122,7 @@ export function PlantLoadCard({ d, period, periodKey, curYm }: { d: OpsData; per
                 {sel ? (<>{sel.workers > 0 ? `${sel.workers} workers · ${hm(sel.minutes / sel.workers)}/worker` : "no workers credited"}<br />{sel.minutes >= avg ? "+" : "−"}{hm(Math.abs(sel.minutes - avg))} vs avg</>) : (<>{winText}<br />{per == null ? "no per-worker figure" : `${hm(per)}/worker`}</>)}
               </div>
             </div>
-            <div role="img" aria-label={`Production time per day, ${winText}`} style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 4, height: 110, marginTop: 16 }}>
+            <div role="img" aria-label={`Earned time per day, ${winText}`} style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 4, height: 110, marginTop: 16 }}>
               <span aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, bottom: `${(avg / mx) * 100}%`, borderTop: "1.5px dashed #C9A961" }} />
               {days.map((x) => {
                 const on = x.date === day;

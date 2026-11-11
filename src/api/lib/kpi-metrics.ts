@@ -40,6 +40,7 @@ import {
 } from "./workforce-perf";
 import {
   computeMonthlyEfficiencyByWorker,
+  loadApprovedExtraTime,
   type EfficiencyScope,
 } from "./efficiency-allowance";
 import { todayYmdMY } from "../../lib/utils";
@@ -775,7 +776,7 @@ export async function productionEfficiency(
  * read by the Board Report's efficiency bands (board-report-sources.ts).
  */
 export async function loadMonthPerfDays(db: Context<Env>["var"]["DB"], orgId: string, period: string): Promise<PerfDay[]> {
-  const { start } = periodBounds(period);
+  const { start, end } = periodBounds(period);
   const [y, m] = period.split("-").map(Number);
   const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
 
@@ -809,11 +810,13 @@ export async function loadMonthPerfDays(db: Context<Env>["var"]["DB"], orgId: st
   )
     .bind(orgId, orgId, start, next)
     .all<PerfPicRow>();
+  const approvedExtraTime = await loadApprovedExtraTime(db, start, end);
 
   return buildPerfDays({
     whe: whe.results ?? [],
     jobCards: jobCards.results ?? [],
     pics: pics.results ?? [],
+    approvedExtraTime,
     productionDepts,
   }).perfDays;
 }

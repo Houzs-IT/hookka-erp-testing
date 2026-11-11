@@ -171,7 +171,7 @@ export function EmpSheets({ m }: { m: EmpModel }) {
     return frame(top.name, `${row?.dept ? deptName(row.dept) : "—"} · ${dLab(top.date)}`, (
       <KV rows={[
         ["Date", dLab(top.date)], ["Clock in", hhmm(row?.clockIn ?? null)], ["Clock out", hhmm(row?.clockOut ?? null)],
-        ["Production time", hLog(row?.working ?? null)], ["Prod hours", hLog(row?.prod ?? null)], ["Non-prod hours", hLog(row?.nonProd ?? null)],
+        ["Hours worked", hLog(row?.working ?? null)], ["Earned time", hLog(row?.prod ?? null)], ["Non-prod hours", hLog(row?.nonProd ?? null)],
         ["Efficiency", ev == null ? "—" : `${ev.toFixed(1)}%`, ev == null ? M.muted : ev >= 90 ? "#4F7C3A" : "#B5701A"],
         ["Total days", top.id ? String(daysInPeriod(m.employee, top.id, m.period)) : "—"], ["Status", sp.l, sp.fg],
       ]} />

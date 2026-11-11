@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 import { DEFAULT_FACTORY_GEOFENCE, evalPunchLocation } from "./geofence";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
+import { loadApprovedExtraTime } from "./efficiency-allowance";
 
 export interface EfficiencyEnv {
   RESEND_API_KEY?: string;
@@ -45,6 +46,7 @@ export interface WorkerSummary {
   clockOut: string | null;
   status: string;
   workingMinutes: number;
+  productionWorkingMinutes: number;
   productionMinutes: number;
   efficiencyPct: number;
   jobsCompleted: number;
@@ -58,6 +60,7 @@ export interface DepartmentSummary {
   shortName: string;
   workerCount: number;
   workingMinutes: number;
+  productionWorkingMinutes: number;
   productionMinutes: number;
   efficiencyPct: number;
   flagged: boolean; // efficiencyPct < LOW_EFFICIENCY_THRESHOLD
@@ -70,6 +73,7 @@ export interface EfficiencyData {
     presentCount: number;
     workerCount: number;
     workingMinutes: number;
+    productionWorkingMinutes: number;
     productionMinutes: number;
     efficiencyPct: number;
     jobsCompleted: number;
@@ -206,12 +210,31 @@ export async function collectEfficiencyData(
     )
     .bind(dateYmd)
     .all<WheRow>();
+  const productionDeptCodes = new Set(
+    departments.filter((d) => d.isProduction).map((d) => d.code),
+  );
   const workingMinsByWorker = new Map<string, number>();
+  const productionWorkingMinsByWorker = new Map<string, number>();
   for (const r of wheRes.results ?? []) {
     const mins = Math.round((Number(r.hours) || 0) * 60);
     workingMinsByWorker.set(
       r.workerId,
       (workingMinsByWorker.get(r.workerId) ?? 0) + mins,
+    );
+    if (!productionDeptCodes.has(r.departmentCode)) continue;
+    productionWorkingMinsByWorker.set(
+      r.workerId,
+      (productionWorkingMinsByWorker.get(r.workerId) ?? 0) + mins,
+    );
+  }
+
+  const extraTimeMinsByWorker = new Map<string, number>();
+  for (const extra of await loadApprovedExtraTime(db, dateYmd, dateYmd)) {
+    if (!extra.workerId) continue;
+    const mins = Math.round((Number(extra.hours) || 0) * 60);
+    extraTimeMinsByWorker.set(
+      extra.workerId,
+      (extraTimeMinsByWorker.get(extra.workerId) ?? 0) + mins,
     );
   }
 
@@ -286,12 +309,14 @@ export async function collectEfficiencyData(
     const deptCode = w.departmentCode ?? "";
     const dept = deptByCode.get(deptCode);
     const workingMinutes = workingMinsByWorker.get(w.id) ?? 0;
+    const productionWorkingMinutes = productionWorkingMinsByWorker.get(w.id) ?? 0;
     const productionMinutes = Math.round(
-      productionMinsByWorker.get(w.id) ?? 0,
+      (productionMinsByWorker.get(w.id) ?? 0) +
+        (extraTimeMinsByWorker.get(w.id) ?? 0),
     );
     const efficiencyPct =
-      workingMinutes > 0
-        ? Math.round((productionMinutes / workingMinutes) * 100)
+      productionWorkingMinutes > 0
+        ? Math.round((productionMinutes / productionWorkingMinutes) * 100)
         : 0;
     workerRows.push({
       workerId: w.id,
@@ -303,6 +328,7 @@ export async function collectEfficiencyData(
       clockOut: att?.clockOut ?? null,
       status: att?.status ?? (workingMinutes > 0 ? "PRESENT" : "ABSENT"),
       workingMinutes,
+      productionWorkingMinutes,
       productionMinutes,
       efficiencyPct,
       jobsCompleted: jcsCompletedByWorker.get(w.id) ?? 0,
@@ -330,17 +356,24 @@ export async function collectEfficiencyData(
   //    first; admin/non-prod (if any) follow at the bottom.
   const deptRollup = new Map<
     string,
-    { workerCount: number; workingMinutes: number; productionMinutes: number }
+    {
+      workerCount: number;
+      workingMinutes: number;
+      productionWorkingMinutes: number;
+      productionMinutes: number;
+    }
   >();
   for (const w of workerRows) {
     if (!w.departmentCode) continue;
     const cur = deptRollup.get(w.departmentCode) ?? {
       workerCount: 0,
       workingMinutes: 0,
+      productionWorkingMinutes: 0,
       productionMinutes: 0,
     };
     cur.workerCount += 1;
     cur.workingMinutes += w.workingMinutes;
+    cur.productionWorkingMinutes += w.productionWorkingMinutes;
     cur.productionMinutes += w.productionMinutes;
     deptRollup.set(w.departmentCode, cur);
   }
@@ -349,8 +382,8 @@ export async function collectEfficiencyData(
     const r = deptRollup.get(d.code);
     if (!r || r.workerCount === 0) continue; // skip empty depts
     const eff =
-      r.workingMinutes > 0
-        ? Math.round((r.productionMinutes / r.workingMinutes) * 100)
+      r.productionWorkingMinutes > 0
+        ? Math.round((r.productionMinutes / r.productionWorkingMinutes) * 100)
         : 0;
     departmentSummaries.push({
       code: d.code,
@@ -358,9 +391,10 @@ export async function collectEfficiencyData(
       shortName: d.shortName ?? d.code,
       workerCount: r.workerCount,
       workingMinutes: r.workingMinutes,
+      productionWorkingMinutes: r.productionWorkingMinutes,
       productionMinutes: r.productionMinutes,
       efficiencyPct: eff,
-      flagged: r.workingMinutes > 0 && eff < LOW_EFFICIENCY_THRESHOLD,
+      flagged: r.productionWorkingMinutes > 0 && eff < LOW_EFFICIENCY_THRESHOLD,
     });
   }
   // Production depts on top (highest worker count first), then non-prod.
@@ -372,6 +406,7 @@ export async function collectEfficiencyData(
   });
 
   const totalWork = workerRows.reduce((s, w) => s + w.workingMinutes, 0);
+  const totalProductionWork = workerRows.reduce((s, w) => s + w.productionWorkingMinutes, 0);
   const totalProd = workerRows.reduce((s, w) => s + w.productionMinutes, 0);
   const totalJobs = workerRows.reduce((s, w) => s + w.jobsCompleted, 0);
   const presentCount = workerRows.filter((w) => w.workingMinutes > 0).length;
@@ -383,9 +418,10 @@ export async function collectEfficiencyData(
       presentCount,
       workerCount: workerRows.length,
       workingMinutes: totalWork,
+      productionWorkingMinutes: totalProductionWork,
       productionMinutes: totalProd,
       efficiencyPct:
-        totalWork > 0 ? Math.round((totalProd / totalWork) * 100) : 0,
+        totalProductionWork > 0 ? Math.round((totalProd / totalProductionWork) * 100) : 0,
       jobsCompleted: totalJobs,
     },
     departments: departmentSummaries,
@@ -477,8 +513,9 @@ export function renderEfficiencyHtml(
       curDept = w.departmentName;
     }
     const present = w.workingMinutes > 0;
+    const hasProductionHours = w.productionWorkingMinutes > 0;
     const statusColor = present ? "#15803D" : "#9CA3AF";
-    const effC = present ? effColor(w.efficiencyPct) : "#9CA3AF";
+    const effC = hasProductionHours ? effColor(w.efficiencyPct) : "#9CA3AF";
     const clockStr =
       w.clockIn && w.clockOut
         ? `${w.clockIn} – ${w.clockOut}`
@@ -496,7 +533,7 @@ export function renderEfficiencyHtml(
       }</td>
       <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;"><span class="m-lbl">Work </span>${formatHours(w.workingMinutes)}</td>
       <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;"><span class="m-lbl">Prod </span>${formatHours(w.productionMinutes)}</td>
-      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;font-weight:700;color:${effC};"><span class="m-lbl">Efficiency </span>${present ? w.efficiencyPct + "%" : "—"}</td>
+      <td class="m-inline" style="padding:5px 8px;border-bottom:1px solid #F0ECE9;font-size:9.5pt;text-align:right;font-weight:700;color:${effC};"><span class="m-lbl">Efficiency </span>${hasProductionHours ? w.efficiencyPct + "%" : "—"}</td>
     </tr>`);
   }
   flushDept();

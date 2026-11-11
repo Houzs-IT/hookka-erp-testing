@@ -4090,7 +4090,7 @@ function EfficiencyOverviewTab({
       // HOURS DASHBOARD column between "Total" and "Efficient".
       {
         key: "productionMinutes",
-        label: "Production Time",
+        label: "Earned time",
         align: "right",
         sortable: true,
         sortAccessor: (row) => prodMinsByWorker.get(row.workerId) ?? 0,
@@ -4112,10 +4112,10 @@ function EfficiencyOverviewTab({
       // an efficiency ratio computed against 34h 30m — the 4h gap (Warehousing
       // / Repair / Maintenance / Production Shortfall) is invisible. Now the
       // math shows its work: Total = Prod Hrs + Non-Prod Hrs, and
-      // Efficiency % = Production Time ÷ (Prod Hrs × 60).
+      // Efficiency % = Earned time ÷ (Hours worked × 60).
       {
         key: "prodHours",
-        label: "Prod Hrs",
+        label: "Hours worked",
         align: "right",
         sortable: true,
         sortAccessor: (row) =>
@@ -4333,8 +4333,8 @@ function EfficiencyOverviewTab({
     const columns: PrintColumn[] = [
       { header: "Employee", value: (r) => { const row = r as EffRow; return `${row.empNo ? `${row.empNo} — ` : ""}${row.employeeName}`; } },
       { header: "Total", align: "right", value: (r) => { const row = r as EffRow; return row.totalHours > 0 ? `${row.totalHours.toFixed(1)}h (${row.daysWithEntries}d)` : "—"; } },
-      { header: "Production Time", align: "right", value: (r) => { const m = prodMinsByWorker.get((r as EffRow).workerId) ?? 0; return m > 0 ? formatHours(m) : "—"; } },
-      { header: "Prod Hrs", align: "right", value: (r) => { const h = prodHoursOf(r as EffRow); return h > 0 ? formatHours(Math.round(h * 60)) : "—"; } },
+      { header: "Earned time", align: "right", value: (r) => { const m = prodMinsByWorker.get((r as EffRow).workerId) ?? 0; return m > 0 ? formatHours(m) : "—"; } },
+      { header: "Hours worked", align: "right", value: (r) => { const h = prodHoursOf(r as EffRow); return h > 0 ? formatHours(Math.round(h * 60)) : "—"; } },
       { header: "Non-Prod Hrs", align: "right", value: (r) => { const h = nonProdHoursOf(r as EffRow); return h > 0 ? formatHours(Math.round(h * 60)) : "—"; } },
       {
         header: "Efficiency %",
@@ -5870,7 +5870,7 @@ function EmployeeDetailTab({
       ? `${selectedWorker.empNo} — ${selectedWorker.name}`
       : "Employee";
     const cards: PrintCard[] = [
-      { label: "Production Hrs", value: productionWorkMins > 0 ? formatHours(productionWorkMins) : "—" },
+      { label: "Hours worked", value: productionWorkMins > 0 ? formatHours(productionWorkMins) : "—" },
       { label: "Non-Production Hrs", value: nonProductionWorkMins > 0 ? formatHours(nonProductionWorkMins) : "—" },
       { label: "Extra Production Time", value: addProdMins > 0 ? formatHours(addProdMins) : "—" },
       { label: "Efficiency", value: avgEff !== null ? `${avgEff}%` : "—", color: avgEff !== null ? (Number(avgEff) >= 100 ? "#15803D" : Number(avgEff) >= 60 ? "#9C6F1E" : "#9A3A2D") : undefined },
@@ -6020,7 +6020,7 @@ function EmployeeDetailTab({
             <p className="text-2xl font-bold text-[#4F7C3A]">
               {productionWorkMins > 0 ? formatHours(productionWorkMins) : "-"}
             </p>
-            <p className="text-xs text-[#6B7280]">Production Hours</p>
+            <p className="text-xs text-[#6B7280]">Hours worked</p>
             <p className="mt-0.5 text-[10px] text-[#3E6570]">Efficiency denominator</p>
           </CardContent>
         </Card>
@@ -6246,11 +6246,11 @@ function DepartmentPerformanceTab({
     const cards: PrintCard[] = [
       { label: "Workers", value: String(totals?.workerCount ?? 0) },
       {
-        label: "Total Working Hrs",
+        label: "Hours worked",
         value: totals && totals.workingMinutes > 0 ? formatHours(totals.workingMinutes) : "—",
       },
       {
-        label: "Total Production Hrs",
+        label: "Earned time",
         value: totals && totals.productionMinutes > 0 ? formatHours(totals.productionMinutes) : "—",
       },
       {
@@ -6308,12 +6308,12 @@ function DepartmentPerformanceTab({
         },
       },
       {
-        header: "Working Hrs",
+        header: "Hours worked",
         align: "right",
         value: (r) => hrsCell((r as DeptPerfPrintRow).workingMinutes, !(r as DeptPerfPrintRow).isWorker),
       },
       {
-        header: "Production Hrs",
+        header: "Earned time",
         align: "right",
         value: (r) => hrsCell((r as DeptPerfPrintRow).productionMinutes, !(r as DeptPerfPrintRow).isWorker),
       },
@@ -6446,7 +6446,7 @@ function DepartmentPerformanceTab({
             <p className="text-2xl font-bold">
               {totals && totals.workingMinutes > 0 ? formatHours(totals.workingMinutes) : "-"}
             </p>
-            <p className="text-xs text-[#6B7280]">Total Working Hrs</p>
+            <p className="text-xs text-[#6B7280]">Hours worked</p>
           </CardContent>
         </Card>
         <Card>
@@ -6454,7 +6454,7 @@ function DepartmentPerformanceTab({
             <p className="text-2xl font-bold">
               {totals && totals.productionMinutes > 0 ? formatHours(totals.productionMinutes) : "-"}
             </p>
-            <p className="text-xs text-[#6B7280]">Total Production Hrs</p>
+            <p className="text-xs text-[#6B7280]">Earned time</p>
           </CardContent>
         </Card>
         <Card>
@@ -6533,8 +6533,8 @@ function DepartmentPerformanceTab({
                   <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]">
                     <th className="h-10 px-2 text-left font-medium text-[#374151] w-8"></th>
                     <th className="h-10 px-3 text-left font-medium text-[#374151]">Date</th>
-                    <th className="h-10 px-3 text-right font-medium text-[#374151]">Working hrs</th>
-                    <th className="h-10 px-3 text-right font-medium text-[#374151]">Production hrs</th>
+                    <th className="h-10 px-3 text-right font-medium text-[#374151]">Hours worked</th>
+                    <th className="h-10 px-3 text-right font-medium text-[#374151]">Earned time</th>
                     <th className="h-10 px-3 text-right font-medium text-[#374151]">Efficiency %</th>
                   </tr>
                 </thead>
@@ -6652,8 +6652,8 @@ function DailyDrillDown({
         <div className="flex items-center gap-3 px-3 py-2 bg-[#F0ECE9] border-b border-[#E2DDD8] text-[10px] font-medium text-[#374151] uppercase tracking-wide">
           <span className="w-4 flex-shrink-0" />
           <span className="flex-1 min-w-0">Worker</span>
-          <span className="w-24 text-right">Working hrs</span>
-          <span className="w-24 text-right">Production hrs</span>
+          <span className="w-24 text-right">Hours worked</span>
+          <span className="w-24 text-right">Earned time</span>
           <span className="w-14 text-right">Efficiency</span>
         </div>
         <div className="divide-y divide-[#F0ECE9]">
@@ -6695,7 +6695,7 @@ function DailyDrillDown({
                 </span>
                 <span
                   className="tabular-nums text-[#374151] whitespace-nowrap w-24 text-right"
-                  title="Production hours (pro-rated share of completed JCs)"
+                  title="Earned time (pro-rated share of completed job cards)"
                 >
                   {w.productionMinutes > 0 ? formatHours(w.productionMinutes) : "-"}
                 </span>

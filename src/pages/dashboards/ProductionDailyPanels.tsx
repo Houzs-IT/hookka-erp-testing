@@ -107,7 +107,7 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="border-t border-b border-[#E2DDD8]">
-                {th("Department", false)}{th("People", true)}{th("Production time", true)}{th("Prod hours", true)}{th("Efficiency", true)}
+                {th("Department", false)}{th("People", true)}{th("Hours worked", true)}{th("Earned time", true)}{th("Efficiency", true)}
               </tr>
             </thead>
             <tbody>

@@ -450,6 +450,10 @@ export function inFocus(p: Period, date: string | null | undefined): boolean {
  * them by. Counting them pushed the month's figure up (MEASURED 2026-09-25:
  * 95.0% with today's 105.8h of earned time vs 92.9% without).
  */
+export function hasKeyedHours(day: { workingMinutes: number }): boolean {
+  return day.workingMinutes > 0;
+}
+
 export function overallEfficiencyPct(
   byDay: readonly { date: string; workingMinutes: number; productionMinutes: number }[],
   p: Period,
@@ -457,7 +461,7 @@ export function overallEfficiencyPct(
   let w = 0;
   let prod = 0;
   for (const d of byDay) {
-    if (!inFocus(p, d.date) || d.workingMinutes <= 0) continue;
+    if (!inFocus(p, d.date) || !hasKeyedHours(d)) continue;
     w += d.workingMinutes;
     prod += d.productionMinutes;
   }
