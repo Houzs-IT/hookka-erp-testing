@@ -94,18 +94,16 @@ test("snapshot: a supplier cell reads by the side that is keyed; clearing it is 
   assert.equal(at({ a: " " }), forecastSnapshot(base));
 });
 
-const page = read("src/pages/forecast.tsx");
+// The Forecast P&L page is the Monthly P&L's Edit forecast since 2026-11-11 (one editor).
+const page = read("src/pages/accounting/monthly-pl-forecast-editor.tsx");
 const api = read("src/api/routes/accounting.ts");
 
 test("the page: each supplier row has the material row's RM and % boxes, either side clears the other", () => {
-  const rows = page.slice(page.indexOf("const supplierRowsFor = "), page.indexOf("\n  };\n", page.indexOf("const supplierRowsFor = ")));
-  assert.match(rows, /setSupplierAmt\(ym, type, r\.id, /, "RM box");
-  assert.match(rows, /setSupplierPct\(ym, type, r\.id, /, "% box");
-  assert.match(page, /const setSupplierAmt = \(ym: string, type: string, id: string, v: string\) =>\s*setSupplierCell\(ym, type, id, v === "" \? \{\} : \{ a: v \}\);/);
-  assert.match(page, /const setSupplierPct = \(ym: string, type: string, id: string, v: string\) =>\s*setSupplierCell\(ym, type, id, v === "" \? \{\} : \{ p: v \}\);/);
+  assert.match(page, /\(v\) => setSupplier\(ym, type, sr\.id, side\(v, "a"\)\), \(v\) => setSupplier\(ym, type, sr\.id, side\(v, "p"\)\)/, "the RM box and the % box");
+  assert.match(page, /const side = \(v: string, s: "a" \| "p"\): CellEntry => \(v === "" \? \{\} : s === "a" \? \{ a: v \} : \{ p: v \}\);/, "either side clears the other");
   // The sheet's month shape lives in forecast-snapshot.ts (SheetMonth = ForecastMonth since 2026-11-10).
   assert.match(read("src/lib/forecast-snapshot.ts"), /suppliers\?: Record<string, Record<string, ForecastCell>>;/, "a supplier cell is the same { a, p } as a line's");
-  assert.match(page, /type MonthState = SheetMonth;/);
+  assert.match(page, /useState<Record<string, SheetMonth>>/);
 });
 
 test("one conversion of supplier cells for the screen and for Save; saved % cells load back as %", () => {
@@ -114,7 +112,7 @@ test("one conversion of supplier cells for the screen and for Save; saved % cell
   assert.match(sheet, /export function supplierCells\(/);
   assert.equal((sheet.match(/supplierCells\(cells\)/g) ?? []).length, 2, "toFcMonth and sheetPayload both use it");
   assert.match(sheet, /\{ p: bpToStr\(/, "a stored { bp } supplier cell loads into the % box");
-  assert.match(page, /sheetPayload\(months\)/);
+  assert.match(page, /sheetPayload\(sheet\)/);
 });
 
 test("the dashboard overlay counts a material as supplier-keyed by its keyed cells, as the page does", () => {

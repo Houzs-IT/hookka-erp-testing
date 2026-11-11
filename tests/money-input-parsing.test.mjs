@@ -313,7 +313,6 @@ test("a form with an unreadable amount does not STATE a total", () => {
 test("every `?? 0` on a money parse is a listed display fallback, not a payload", () => {
   const ALLOWED = new Map([
     ["src/pages/accounting/index.tsx", 8],   // 5 form `toSen` helpers + bank-CSV parseAmt + opening-balance toSen + AP-payment `apSen` (handleSaveAp refuses on apMoneyError first)
-    ["src/pages/forecast.tsx", 1],           // the derived-% hint (display only)
     // The sheet model shared with the Monthly P&L's Edit forecast (2026-11-10): toFcMonth's sales + line amount
     // (the screen's calc) and partySen (the customer cells' on-screen total). Save refuses on sheetMoneyFields
     // first, and sheetPayload never uses `?? 0`.
