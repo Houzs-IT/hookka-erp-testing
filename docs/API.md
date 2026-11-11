@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 152 mounts, 150 route files in
-`src/api/routes/`, 1106 top-level handler registrations discovered.
+**Counts at generation time:** 153 mounts, 151 route files in
+`src/api/routes/`, 1111 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -159,6 +159,7 @@ offsets pointing past the end of their own file.
 | `/api/cn-packing-lists` | `src/api/routes/cn-packing-lists.ts` | `GET /` <sub>:382</sub><br>`GET /:id` <sub>:426</sub><br>`POST /` <sub>:663</sub><br>`DELETE /:id` <sub>:696</sub> | gated |
 | `/api/consignment-orders` | `src/api/routes/consignment-orders.ts` | `GET /` <sub>:555</sub><br>`POST /` <sub>:666</sub><br>`GET /stats` <sub>:1061</sub><br>`GET /status-changes` <sub>:1151</sub><br>`GET /:id/edit-eligibility` <sub>:1225</sub><br>`POST /:id/override-edit-lock` <sub>:1321</sub><br>`GET /:id` <sub>:1492</sub><br>`POST /:id/confirm` <sub>:1690</sub><br>`PUT /:id` <sub>:1807</sub><br>`POST /:id/cancel` <sub>:2424</sub><br>`PATCH /:id/hub` <sub>:2567</sub><br>`DELETE /:id` <sub>:2902</sub> | gated |
 | `/api/stock-adjustments` | `src/api/routes/stock-adjustments.ts` | `GET /` <sub>:153</sub><br>`POST /` <sub>:210</sub> | gated |
+| `/api/stock-count` | `src/api/routes/stock-count.ts` | `GET /items` <sub>:201</sub><br>`GET /count` <sub>:211</sub><br>`PUT /count` <sub>:231</sub><br>`GET /usage` <sub>:264</sub><br>`PUT /uom-factor` <sub>:291</sub> | gated |
 | `/api/drivers` | `src/api/routes/drivers.ts` | `GET /` <sub>:72</sub><br>`POST /` <sub>:143</sub><br>`GET /:id` <sub>:199</sub><br>`PUT /:id` <sub>:211</sub><br>`DELETE /:id` <sub>:300</sub> | gated |
 | `/api/three-pl-vehicles` | `src/api/routes/three-pl-vehicles.ts` | `GET /collisions` <sub>:165</sub><br>`GET /` <sub>:195</sub><br>`POST /` <sub>:211</sub><br>`GET /:id` <sub>:305</sub><br>`PUT /:id` <sub>:320</sub><br>`DELETE /:id` <sub>:428</sub> | gated |
 | `/api/three-pl-drivers` | `src/api/routes/three-pl-drivers.ts` | `GET /` <sub>:57</sub><br>`POST /` <sub>:72</sub><br>`GET /:id` <sub>:128</sub><br>`PUT /:id` <sub>:142</sub><br>`DELETE /:id` <sub>:199</sub> | gated |
