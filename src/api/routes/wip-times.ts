@@ -35,6 +35,11 @@ import {
   aggregateWipTimes,
   countProductsWithoutActiveBom,
 } from "../lib/wip-times-core";
+import {
+  previewJobCardMinutesForBomChanges,
+  syncJobCardMinutesToBomChanges,
+  type SavedBomChange,
+} from "../lib/bom-edit-card-sync";
 
 const app = new Hono<Env>();
 
@@ -52,6 +57,16 @@ type BomRow = {
   sizeCode: string | null;
   sizeLabel: string | null;
 };
+
+type SavableBomRow = BomRow & { id: string; l1Processes: string | null };
+
+function savedBomChange(row: SavableBomRow, newWipComponents: string): SavedBomChange {
+  return {
+    productCode: row.productCode,
+    before: row,
+    after: { ...row, wipComponents: newWipComponents },
+  };
+}
 
 type BomProcess = {
   deptCode?: string;
@@ -297,6 +312,7 @@ app.put("/", async (c) => {
        bt.baseModel        AS "baseModel",
        bt.category         AS "category",
        bt.wipComponents    AS "wipComponents",
+       bt.l1Processes      AS "l1Processes",
        p.defaultVariants   AS "defaultVariants",
        p.sizeCode          AS "sizeCode",
        p.sizeLabel         AS "sizeLabel"
@@ -305,10 +321,11 @@ app.put("/", async (c) => {
      WHERE bt.orgId = ? AND UPPER(bt.versionStatus) = 'ACTIVE'`,
   )
     .bind(orgId)
-    .all<BomRow & { id: string }>();
+    .all<SavableBomRow>();
 
   let updatedBomCount = 0;
   let updatedNodeCount = 0;
+  const savedChanges: SavedBomChange[] = [];
 
   for (const row of result.results ?? []) {
     if (!row.wipComponents) continue;
@@ -352,9 +369,11 @@ app.put("/", async (c) => {
         .run();
       updatedBomCount++;
       updatedNodeCount += nodesUpdated;
+      savedChanges.push(savedBomChange(row, newJson));
     }
   }
 
+  const jobCardMinutes = await syncJobCardMinutesToBomChanges(c, savedChanges);
   return c.json({
     success: true,
     updatedBomCount,
@@ -362,6 +381,7 @@ app.put("/", async (c) => {
     wipLabel,
     deptCode,
     minutes,
+    jobCardMinutes,
   });
 });
 
@@ -496,6 +516,7 @@ app.post("/bulk-import", async (c) => {
        bt.baseModel        AS "baseModel",
        bt.category         AS "category",
        bt.wipComponents    AS "wipComponents",
+       bt.l1Processes      AS "l1Processes",
        p.defaultVariants   AS "defaultVariants",
        p.sizeCode          AS "sizeCode",
        p.sizeLabel         AS "sizeLabel"
@@ -504,13 +525,14 @@ app.post("/bulk-import", async (c) => {
      WHERE bt.orgId = ? AND UPPER(bt.versionStatus) = 'ACTIVE'`,
   )
     .bind(orgId)
-    .all<BomRow & { id: string }>();
+    .all<SavableBomRow>();
   const bomRows = result.results ?? [];
 
   // Parse each BOM tree once and cache the variant context. Each item's
   // pass then walks the cached parsed structures in memory.
   type BomCache = {
     id: string;
+    row: SavableBomRow;
     tree: BomWipNode[];
     ctx: BomVariantContext;
     dirty: boolean;
@@ -540,7 +562,7 @@ app.post("/bulk-import", async (c) => {
       row.sizeLabel,
       defaults,
     );
-    bomCache.push({ id: row.id, tree: tree as BomWipNode[], ctx, dirty: false });
+    bomCache.push({ id: row.id, row, tree: tree as BomWipNode[], ctx, dirty: false });
   }
 
   // Per-item update pass over the cache. We DON'T write until after the
@@ -582,17 +604,20 @@ app.post("/bulk-import", async (c) => {
   // Write the dirty BOMs back, one row per UPDATE. Sequential to keep
   // error reporting per-row simple and to avoid pile-up under load.
   let appliedBomCount = 0;
+  const savedChanges: SavedBomChange[] = [];
   if (!dryRun) {
     for (const bom of bomCache) {
       if (!bom.dirty) continue;
       try {
+        const newWipComponents = JSON.stringify(bom.tree);
         await c.var.DB
           .prepare(
             `UPDATE bom_templates SET wipComponents = ? WHERE id = ? AND orgId = ?`,
           )
-          .bind(JSON.stringify(bom.tree), bom.id, orgId)
+          .bind(newWipComponents, bom.id, orgId)
           .run();
         appliedBomCount++;
+        savedChanges.push(savedBomChange(bom.row, newWipComponents));
       } catch (e) {
         // Don't abort the rest — record the write failure but keep going
         // so an isolated row corruption doesn't lose every other update.
@@ -607,6 +632,15 @@ app.post("/bulk-import", async (c) => {
   const totalItems = rawItems.length;
   const applied = perItem.filter((p) => p.updatedNodeCount > 0).length;
   const skipped = perItem.length - applied;
+  const jobCardMinutes = await syncJobCardMinutesToBomChanges(c, savedChanges);
+  const jobCardPreview = dryRun
+    ? await previewJobCardMinutesForBomChanges(
+        c.var.DB,
+        bomCache
+          .filter((bom) => bom.dirty)
+          .map((bom) => savedBomChange(bom.row, JSON.stringify(bom.tree))),
+      )
+    : null;
 
   return c.json({
     success: true,
@@ -616,6 +650,8 @@ app.post("/bulk-import", async (c) => {
     applied,
     skipped,
     appliedBomCount,
+    jobCardMinutes,
+    jobCardPreview,
     itemErrors,
     perItem,
   });
