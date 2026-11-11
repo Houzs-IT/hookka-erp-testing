@@ -66,6 +66,7 @@ import { loadPoValueMap, loadDoValueMap } from "../lib/do-value";
 import { buildDailySlice } from "../lib/dashboard-daily-slice";
 import { countsToHeadcount } from "../lib/headcount-rule";
 import { buildPerfDays, num, dayKey } from "../lib/workforce-perf";
+import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
 import { withSnapshot } from "../lib/snapshot";
 import { ensureFeedSnapshotTable, FEED_SNAPSHOT_TABLE, pruneFeedSnapshots } from "../lib/dashboard-snapshot";
 
@@ -1364,8 +1365,9 @@ app.get("/", async (c) => {
   // → product master × qty, SOFA/BEDFRAME/ACCESSORY only. It used to use PO
   // status COMPLETED + PO completed_date, which lands days later (after
   // packing) and drifted ~RM 6k/day from the main dashboard.
-  const prodRevSec = await section("production revenue", () =>
-    c.var.DB.prepare(
+  const prodRevSec = await section("production revenue", async () => {
+    await ensureProductionOrderSourceLine(c.var.DB);
+    return c.var.DB.prepare(
       `WITH per_po AS (
          SELECT production_order_id,
                 MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
@@ -1393,9 +1395,9 @@ app.get("/", async (c) => {
            FROM per_po
            JOIN production_orders po ON po.id = per_po.production_order_id
            LEFT JOIN sales_order_items soi
-                  ON soi.sales_order_id = po.sales_order_id AND soi.line_no = po.line_no
+                  ON soi.sales_order_id = po.sales_order_id AND soi.line_no = ${PRODUCTION_ORDER_LINE_SQL}
            LEFT JOIN consignment_order_items coi
-                  ON coi.consignment_order_id = po.consignment_order_id AND coi.line_no = po.line_no
+                  ON coi.consignment_order_id = po.consignment_order_id AND coi.line_no = ${PRODUCTION_ORDER_LINE_SQL}
           WHERE po.org_id = ?
             AND po.item_category IN ('SOFA','BEDFRAME','ACCESSORY')
             AND per_po.unit_completed_at IS NOT NULL
@@ -1409,8 +1411,8 @@ app.get("/", async (c) => {
     )
       .bind(orgId)
       .all<{ date: string; orders: number | string; unpricedOrders: number | string; revenueSen: number | string }>()
-      .then((r) => r.results ?? []),
-  );
+      .then((r) => r.results ?? []);
+  });
 
   // Bucketed by day so the frontend can slice "Aug 2026 only" the SAME way
   // it already does for every Sales metric (sum matching day rows; sum ALL
