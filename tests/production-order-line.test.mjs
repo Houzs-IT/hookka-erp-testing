@@ -73,15 +73,16 @@ const PRICE_LOOKUP_FILES = [
   "src/api/lib/dept-revenue.ts",
   "src/api/routes/dashboard-overview.ts",
   "src/api/routes/working-hour-entries.ts",
+  "src/api/routes/dashboard-prototype.ts",
 ];
 
 test("everyPriceLookupMatchesTheRealLineNotThePieceNumber", () => {
   assert.equal(PRODUCTION_ORDER_LINE_SQL, "COALESCE(po.source_line_no, po.lineNo)");
   for (const file of PRICE_LOOKUP_FILES) {
     const source = read(file);
-    assert.doesNotMatch(source, /lineNo = po\.lineNo/, `${file} still joins on the piece number`);
-    assert.match(source, /soi\.lineNo = \$\{PRODUCTION_ORDER_LINE_SQL\}/, file);
-    assert.match(source, /coi\.lineNo = \$\{PRODUCTION_ORDER_LINE_SQL\}/, file);
+    assert.doesNotMatch(source, /line(No|_no) = po\.line(No|_no)/, `${file} still joins on the piece number`);
+    assert.match(source, /soi\.line(No|_no) = \$\{PRODUCTION_ORDER_LINE_SQL\}/, file);
+    assert.match(source, /coi\.line(No|_no) = \$\{PRODUCTION_ORDER_LINE_SQL\}/, file);
     assert.match(source, /await ensureProductionOrderSourceLine\(/, `${file} must make sure the column exists`);
   }
 });
