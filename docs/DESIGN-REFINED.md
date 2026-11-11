@@ -22,6 +22,11 @@ https://claude.ai/artifact/Roh88iBS5bxpxjVQEkpYvq — owner chose palette **B-li
 - Rules: refined-only (`:root.refined:not(.dark)`), screen-only (print/PDF unchanged), paper wrappers
   with `data-theme="light"` (Board Report) opt out — the phone shell's `<body data-theme="light">` does not.
 
+## Polish log
+- 2026-11-12 (owner screenshots): `.font-mono` keeps the UI font in refined (dates like 2026-05-01 went
+  wide in JetBrains Mono); production grid cells (`CellBox`, `data-cell`) are soft fills with a thin edge
+  instead of solid red/olive/teal blocks (eye comfort).
+
 ## Known gaps (phase 2)
 - Colours typed into inline `style={{…}}`, chart configs and PDF generators are not caught by CSS —
   move them to tokens (`src/lib/design-tokens.ts`) module by module.
