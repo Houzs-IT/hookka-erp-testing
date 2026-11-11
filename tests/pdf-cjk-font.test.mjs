@@ -22,6 +22,7 @@ import {
 import { buildUnifiedDocPdf } from "../src/api/lib/unified-do-invoice-pdf.ts";
 import { workerCjkFontLoader } from "../src/api/lib/worker-cjk-font.ts";
 
+// Line endings normalised, so the patterns hold on a Windows (CRLF) checkout too.
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const FONT_FILE = "public" + CJK_FONT_PATH;
 const fontBytes = () => new Uint8Array(readFileSync(FONT_FILE));
