@@ -158,6 +158,8 @@ type HistoryData = {
     // period, in minutes. 0 when the worker has no approved extra-time claims.
     addProdMinutes?: number;
     efficiencyPct: number;
+    /** Helper / 杂工 (owner 2026-11-11): no personal efficiency, shown as "—". */
+    isHelper?: boolean;
     // Efficiency % = effProductionMinutes ÷ prodDeptMinutes (hours logged in
     // production departments). Optional: an older cached response lacks them.
     prodDeptMinutes?: number;
@@ -1318,9 +1320,11 @@ export default function WorkerHomePage() {
             // Under 30 logged minutes the ratio is meaningless noise (a 1-min
             // test punch against real production minutes printed 16000%) —
             // show a dash until there's a real base.
-            value={(hist.totals.prodDeptMinutes ?? 0) < 30 ? "—" : `${hist.totals.efficiencyPct}%`}
+            value={hist.totals.isHelper || (hist.totals.prodDeptMinutes ?? 0) < 30 ? "—" : `${hist.totals.efficiencyPct}%`}
             tone={
-              (hist.totals.prodDeptMinutes ?? 0) < 30
+              hist.totals.isHelper
+                ? undefined
+                : (hist.totals.prodDeptMinutes ?? 0) < 30
                 ? "warn"
                 : hist.totals.efficiencyPct >= 80
                   ? "good"
@@ -1333,7 +1337,7 @@ export default function WorkerHomePage() {
       )}
 
       {/* How Efficiency % is worked out, with the tiles' own hour figures. */}
-      {hist && (hist.totals.prodDeptMinutes ?? 0) >= 30 && (
+      {hist && !hist.totals.isHelper && (hist.totals.prodDeptMinutes ?? 0) >= 30 && (
         <div className="-mt-1 text-xs text-[#5A5550] text-center break-words">
           <p>
             {t("home.efficiencyPct")} = {t("home.stdProductionDuration")} ÷ {t("home.productionHours")} × 100

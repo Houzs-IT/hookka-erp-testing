@@ -56,7 +56,28 @@ export type WorkerMonthlyEfficiency = {
    * (no production-dept hours / no entries at all). null ⇒ no allowance.
    */
   pct: number | null;
+  /**
+   * Helper / 杂工 (owner 2026-11-11): assists others and scans no completions
+   * of their own. Their minutes and hours are still reported above, but `pct`
+   * is null — no personal efficiency, so no efficiency allowance — and pooled
+   * figures (KPI production efficiency) leave them out.
+   */
+  isHelper?: boolean;
 };
+
+/**
+ * Workers flagged as helpers. Read defensively: before the first worker save
+ * self-applies `is_helper` (ensurePaymentColumns) the column does not exist, and
+ * then nobody is a helper — the figures stay exactly as they were.
+ */
+export async function helperWorkerIds(db: DbLike): Promise<Set<string>> {
+  try {
+    const r = await db.prepare("SELECT id FROM workers WHERE is_helper = TRUE").bind().all<{ id: string }>();
+    return new Set((r.results ?? []).map((x) => String(x.id)));
+  } catch {
+    return new Set();
+  }
+}
 
 // Per-worker production minutes for the window — mirrors GET /api/job-cards/
 // summary byte-for-byte (PIC halving when both slots filled, × wipQty, only
@@ -285,6 +306,7 @@ export async function computeMonthlyEfficiencyByWorker(
   }
 
   // 4. Assemble per-worker efficiency over the UNION of both sources.
+  const helpers = await helperWorkerIds(db);
   const out = new Map<string, WorkerMonthlyEfficiency>();
   const allWorkerIds = new Set<string>([
     ...prodMinByWorker.keys(),
@@ -297,11 +319,13 @@ export async function computeMonthlyEfficiencyByWorker(
     // Same "—" rule as the Efficiency Overview: a zero denominator (no
     // production-dept hours) OR no working-hour rows at all ⇒ efficiency is
     // not defined for this worker this month.
+    // A helper has no personal efficiency ("—"), hence no allowance.
+    const isHelper = helpers.has(wid);
     const pct =
-      prodHours > 0 && daysWithEntries > 0
+      !isHelper && prodHours > 0 && daysWithEntries > 0
         ? (prodMinutes / (prodHours * 60)) * 100
         : null;
-    out.set(wid, { prodMinutes, prodHours, daysWithEntries, pct });
+    out.set(wid, { prodMinutes, prodHours, daysWithEntries, pct, isHelper });
   }
   return out;
 }

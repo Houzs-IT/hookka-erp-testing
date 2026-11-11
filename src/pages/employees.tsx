@@ -39,6 +39,7 @@ import { formatCurrency, formatDate, formatDateDMY, formatHours, formatRM, round
 import { printReport, type PrintColumn, type PrintCard, type PrintSection } from "@/lib/print-report";
 import { normalizePaymentMethod, paymentDestinationLabel } from "@/lib/payment-method";
 import { EmployeeDrawer, type EmployeeDraft } from "@/components/employee-drawer";
+import { HelperTag } from "@/components/helper-tag";
 import { WorkerPenaltyTab } from "@/components/worker-penalty-tab";
 import { OutsourcePieceTab } from "@/components/outsource-piece-tab";
 import { DepartmentMultiSelect } from "@/components/department-multi-select";
@@ -163,6 +164,8 @@ type Worker = {
   bankAccount?: string | null;
   /** Outsourced (numbered OSC-###). Paid per day worked, not a monthly salary. */
   isOutsource?: boolean;
+  /** Helper / 杂工 (owner 2026-11-11): no personal efficiency, no efficiency allowance. */
+  isHelper?: boolean;
   /** "MONTHLY" (default) or "DAILY". */
   payMode?: string | null;
   /** Rate per day worked, in sen. Only read when payMode is DAILY. */
@@ -2693,6 +2696,11 @@ function EmployeeMasterTab({
           (w as { is_outsource?: unknown }).is_outsource ??
           false,
       ),
+      isHelper: Boolean(
+        (w as { isHelper?: unknown; is_helper?: unknown }).isHelper ??
+          (w as { is_helper?: unknown }).is_helper ??
+          false,
+      ),
       payMode:
         String(
           (w as { payMode?: unknown; pay_mode?: unknown }).payMode ??
@@ -2911,7 +2919,10 @@ function EmployeeMasterTab({
         label: "Name",
         sortable: true,
         render: (_value, row) =>
-          <span className="font-medium text-[#1F1D1B]">{row.name}</span>,
+          <span className="font-medium text-[#1F1D1B]">
+            {row.name}
+            {row.isHelper && <HelperTag />}
+          </span>,
       },
       {
         key: "departmentCode",

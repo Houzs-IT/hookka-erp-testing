@@ -2029,6 +2029,8 @@ app.get("/history", async (c) => {
     // Extra production time credited to the numerator this period (display).
     addProdMinutes: addProdTotalMin,
     efficiencyPct,
+    // Helper / 杂工 (owner 2026-11-11): no personal efficiency — the phone shows "—".
+    isHelper: myEff?.isHelper ?? false,
     // The two halves of efficiencyPct itself, so the phone can show
     // Production Hours (prod-dept hours) and Standard Production Duration (credited minutes)
     // that divide to exactly the Efficiency % beside them.

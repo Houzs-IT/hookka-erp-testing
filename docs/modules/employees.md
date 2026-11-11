@@ -52,6 +52,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 - `employee_advances` (mig 0211, runtime self-applied by `ensureAdvanceTables`) — one row per cash advance: `worker_id`, `advance_date` (the day the cash was handed over — THIS is what puts it in a pay period), `amount_sen`, `note`, `entered_by`, `status` UNSETTLED|SETTLED. `payslips.advance_deduction_sen` snapshots what each generated payslip recovered.
 - `worker_penalties` (DEV-22, runtime self-applied by `ensureWorkerPenaltyTables`, no migration file) — header: `penalty_no` (`WP-YYMM-NNN`, unique), `penalty_date`, the production-order snapshot (`production_order_id`, `po_no`, `sales_order_no`, `customer_name`, `product_code`, `product_name`, `quantity` — copied server-side from `production_orders`), `reason`, `remarks`, `status` DRAFT | PENDING_APPROVAL | APPROVED | POSTED, `created_by[_name]`, `submitted_at`, `approved_by[_name]`, `approved_at`, `rejected_reason`. `worker_penalty_lines` — one row per responsible worker: `worker_id`, `emp_no` / `worker_name` / `department_code` snapshot, `amount_sen`, `payroll_period` (set at approval), `payslip_id`, `posted_at`. `payslips.penalty_deduction_sen` snapshots what each generated payslip took. Photos live in `file_assets` with `resourceType = 'worker-penalty'`.
 - `outsource_piece_rates` / `outsource_piece_records` (HK-0130, runtime self-applied by `ensureOutsourcePieceTables`) — rate per `(worker_id, item_code)`, where `item_code` drops the LHF / RHF side; a record copies `quantity`, `rate_sen`, `amount_sen` and `payroll_period`, and is unique on `production_order_id`. `payslips.piece_wages_sen` says how much of `allowances_sen` is piece wages.
+- `workers.is_helper` (BOOLEAN, default false; self-applied by `ensurePaymentColumns`) — **Helper / 杂工** (owner 2026-11-11): clocked hours still count as Production Hours, but `computeMonthlyEfficiencyByWorker` returns `pct: null` + `isHelper: true` for them → no personal efficiency ("—"), no efficiency allowance, left out of KPI production efficiency. Tick box in `src/components/employee-drawer.tsx`; `HelperTag` (`src/components/helper-tag.tsx`) beside the name.
 - `departments` — department master (`isProduction` flag gates the efficiency denominator); `leaves`, `worker_issues`, `public_holidays` (via `kv_config['public_holidays']`).
 
 ## Core flows
@@ -68,15 +69,15 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11935` | 9-tab admin host (default export, at file tail) |
-| `WorkingHoursTab` | `src/pages/employees.tsx:1013` | Tab 1 — flat working-hours grid |
-| `EmployeeMasterTab` | `src/pages/employees.tsx:2408` | Tab 2 — worker master + salary |
-| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3900` | Tab 3 — efficiency overview |
-| `DepartmentLaborTab` | `src/pages/employees.tsx:4465` | Dept labor cost breakdown |
-| `EmployeeDetailTab` | `src/pages/employees.tsx:5444` | Tab 4 — guard-unmounted detail |
-| `PayrollTab` | `src/pages/employees.tsx:6822` | Tab 5 — payroll drafts |
-| `LaborCostTab` | `src/pages/employees.tsx:8815` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10558 / 11673` | Leave + attendance tabs |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11946` | 9-tab admin host (default export, at file tail) |
+| `WorkingHoursTab` | `src/pages/employees.tsx:1021` | Tab 1 — flat working-hours grid |
+| `EmployeeMasterTab` | `src/pages/employees.tsx:2416` | Tab 2 — worker master + salary |
+| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3911` | Tab 3 — efficiency overview |
+| `DepartmentLaborTab` | `src/pages/employees.tsx:4476` | Dept labor cost breakdown |
+| `EmployeeDetailTab` | `src/pages/employees.tsx:5455` | Tab 4 — guard-unmounted detail |
+| `PayrollTab` | `src/pages/employees.tsx:6833` | Tab 5 — payroll drafts |
+| `LaborCostTab` | `src/pages/employees.tsx:8826` | Tab 5b — labor cost + DepartmentsManager |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10569 / 11673` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |
@@ -94,7 +95,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `buildDeptDay` | `src/api/routes/worker.ts:262` | DEV-31 "Today's departments" payload (live or saved) |
 | `computeLiveDeptDay` | `src/api/lib/punch-autofill.ts:327` | Live split: punch-out maths with now as the end |
 | `splitDayHours` / `currentStation` | `src/lib/dept-scan-split.ts:148 / 171` | Shared split (autofill + live) and where the worker is now |
-| `GET /salary/effective` | `src/api/routes/workers.ts:1242` | Day-weighted salary per period |
+| `GET /salary/effective` | `src/api/routes/workers.ts:1252` | Day-weighted salary per period |
 | `POST /auto-from-punch` / `settle-period` | `src/api/routes/payroll-hour-deductions.ts:149 / 211` | Short-hour docks |
 
 ## Gotchas

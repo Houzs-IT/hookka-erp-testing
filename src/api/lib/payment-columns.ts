@@ -43,6 +43,11 @@ export async function ensurePaymentColumns(db: EnsureDbLike): Promise<void> {
     "ALTER TABLE workers ADD COLUMN IF NOT EXISTS is_outsource BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE workers ADD COLUMN IF NOT EXISTS pay_mode TEXT NOT NULL DEFAULT 'MONTHLY'",
     "ALTER TABLE workers ADD COLUMN IF NOT EXISTS daily_rate_sen BIGINT NOT NULL DEFAULT 0",
+    // Helpers / 杂工 (owner 2026-11-11). They assist and scan no completions of
+    // their own: their clocked hours still count as Production Hours, but they
+    // get no personal efficiency and no efficiency allowance, and production
+    // efficiency leaves them out. Defaults false, so nobody changes until ticked.
+    "ALTER TABLE workers ADD COLUMN IF NOT EXISTS is_helper BOOLEAN NOT NULL DEFAULT FALSE",
   ]) {
     await db.prepare(sql).run();
   }

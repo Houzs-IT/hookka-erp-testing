@@ -277,6 +277,8 @@ type TodaySnapshot = {
     workedMinutes: number;
     productionMinutes: number;
     efficiencyPct: number;
+    /** Helper / 杂工 (owner 2026-11-11): no personal efficiency, shown as "—". */
+    isHelper?: boolean;
   };
 };
 
@@ -3097,9 +3099,11 @@ export default function WorkerScanPage() {
             />
             <Kpi
               label={t("team.colEfficiency")}
-              value={`${today.totals.efficiencyPct}%`}
+              value={today.totals.isHelper ? "—" : `${today.totals.efficiencyPct}%`}
               tone={
-                today.totals.efficiencyPct >= 80
+                today.totals.isHelper
+                  ? undefined
+                  : today.totals.efficiencyPct >= 80
                   ? "good"
                   : today.totals.efficiencyPct >= 60
                     ? "warn"
