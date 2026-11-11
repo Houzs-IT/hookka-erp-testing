@@ -17,12 +17,44 @@ import { todayYmdMY } from "@/lib/utils";
 import { groupBsEntries } from "@/lib/bs-groups";
 import { buildBsMatrix, fyMonthsShown, type BsMatrixRow, type BsMonthEntry } from "@/lib/bs-monthly";
 import type { BsSection } from "@/lib/bs-section";
-import { FC_CASH, forecastBsEntries } from "@/lib/forecast-bs";
+import { forecastBsSheets, fyForecastMonths, type BsForecastPayload } from "@/lib/forecast-bs";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { useFiscalYears } from "./use-fiscal-years";
 import { orgIdParam } from "./shared";
 
 const labelOfYm = (ym: string) => new Date(`${ym}-01T00:00:00Z`).toLocaleString("en", { month: "short", year: "numeric", timeZone: "UTC" });
+
+const wait = (msDelay: number) =>
+  new Promise<void>((done) => {
+    // eslint-disable-next-line no-restricted-syntax -- the wait for a report copy to rebuild (planStaleRetry); the caller's `live()` drops a late answer
+    setTimeout(done, msDelay);
+  });
+
+/** One month-end's sheet. A month answered from the report's older copy while
+ *  it rebuilds (`stale`) is handed over as such and asked again, as the single
+ *  sheet does (src/lib/stale-refresh.ts) — prod 2026-11-11: a column read
+ *  mid-rebuild did not match the sheet until asked again. False when the
+ *  month cannot be read. */
+async function loadSheet(
+  ym: string,
+  company: string,
+  live: () => boolean,
+  onCopy: (entries: BsMonthEntry[], stale: boolean) => void,
+): Promise<boolean> {
+  let run = NO_STALE_RUN;
+  for (;;) {
+    const r = await fetch(`/api/accounting/pl?period=${ym}${orgIdParam(company)}`);
+    const j = (await r.json()) as { success?: boolean; stale?: unknown; data?: { balanceSheet?: BsMonthEntry[] } };
+    if (!live()) return true;
+    if (!j?.success || !Array.isArray(j.data?.balanceSheet)) return false;
+    const next = planStaleRetry(run, j);
+    run = next.run;
+    onCopy(j.data.balanceSheet, next.retryInMs !== null);
+    if (next.retryInMs === null) return true;
+    await wait(next.retryInMs);
+    if (!live()) return true;
+  }
+}
 
 export function MonthlyBalanceSheet({ company, toolbar }: { company: string; toolbar?: ReactNode }) {
   const fiscal = useFiscalYears();
@@ -34,58 +66,34 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
   const months = useMemo(() => (fy ? fyMonthsShown(fy, curYm) : []), [fy, curYm]);
   const monthsKey = months.join(",");
 
-  // Each month's sheet, three at a time; a month that fails is named. A month
-  // answered from the report's older copy while it rebuilds (`stale`) shows
-  // that copy with "Updating…" and is asked again, as the single sheet does
-  // (src/lib/stale-refresh.ts) — prod 2026-11-11: a column read mid-rebuild
-  // did not match the sheet until asked again.
+  // Each month's sheet, three at a time; a month that fails is named; a month
+  // being refreshed shows "Updating…" (loadSheet).
   const [byMonth, setByMonth] = useState<Record<string, BsMonthEntry[]>>({});
   const [failed, setFailed] = useState<string[]>([]);
   const [updating, setUpdating] = useState(false);
   useEffect(() => {
-    if (!monthsKey) return;
     let live = true;
-    const queue = monthsKey.split(",");
+    const queue = monthsKey ? monthsKey.split(",") : [];
     const stale = new Set<string>();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a new year / company starts empty
     setByMonth({});
     setFailed([]);
     setUpdating(false);
-    const wait = (msDelay: number) =>
-      new Promise<void>((done) => {
-        // eslint-disable-next-line no-restricted-syntax -- the wait for a report copy to rebuild (planStaleRetry); `live` drops a late answer
-        setTimeout(done, msDelay);
-      });
-    const loadMonth = async (ym: string) => {
-      let run = NO_STALE_RUN;
-      for (;;) {
-        const r = await fetch(`/api/accounting/pl?period=${ym}${orgIdParam(company)}`);
-        const j = (await r.json()) as { success?: boolean; stale?: unknown; data?: { balanceSheet?: BsMonthEntry[] } };
-        if (!live) return;
-        if (!j?.success || !Array.isArray(j.data?.balanceSheet)) {
-          setFailed((p) => [...p, ym]);
-          return;
-        }
-        const entries = j.data.balanceSheet;
-        setByMonth((p) => ({ ...p, [ym]: entries }));
-        const next = planStaleRetry(run, j);
-        run = next.run;
-        if (next.retryInMs === null) stale.delete(ym);
-        else stale.add(ym);
-        setUpdating(stale.size > 0);
-        if (next.retryInMs === null) return;
-        await wait(next.retryInMs);
-        if (!live) return;
-      }
-    };
     const worker = async () => {
       while (queue.length && live) {
         const ym = queue.shift()!;
+        let ok = false;
         try {
-          await loadMonth(ym);
+          ok = await loadSheet(ym, company, () => live, (entries, isStale) => {
+            setByMonth((p) => ({ ...p, [ym]: entries }));
+            if (isStale) stale.add(ym);
+            else stale.delete(ym);
+            setUpdating(stale.size > 0);
+          });
         } catch {
-          if (live) setFailed((p) => [...p, ym]);
+          ok = false;
         }
+        if (!ok && live) setFailed((p) => [...p, ym]);
       }
     };
     void Promise.all([worker(), worker(), worker()]);
@@ -94,60 +102,63 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
 
   // Forecast (owner 2026-11-11 「…是不是可以做forecast balance sheet?」, start
   // point 「可以」 = last month-end's actual sheet): the months ahead, rolled
-  // forward from last month-end's sheet by GET /bs-forecast (src/lib/forecast-bs.ts),
-  // newest first on the left as on the Monthly P&L. The current year only.
-  // The forecast is the whole business's, so it shows on the all-companies sheet.
-  const isCurrentFy = !!fy && fy.startYm <= curYm && curYm <= fy.endYm && company === "";
+  // forward from last month-end's sheet by GET /bs-forecast (src/lib/forecast-bs.ts)
+  // to the last month the Forecast P&L has figures for, newest first on the left
+  // as on the Monthly P&L. The columns follow the year picked, to its year end
+  // (owner 2026-11-11 「根据fye 显示forecast 的数据可以吗？」): this year and the
+  // years ahead. The forecast is the whole business's, so it shows on the
+  // all-companies sheet.
+  const canForecast = !!fy && fy.endYm >= curYm && company === "";
   const [forecastOn, setForecastOn] = useState(false);
-  type BsForecastResp = { startYm: string; months: string[]; deltas: Record<string, Record<string, number>>; accounts: Record<string, { name: string; section: string }>; salaryAccount: string };
-  const [fc, setFc] = useState<BsForecastResp | null>(null);
-  const [fcOpening, setFcOpening] = useState<BsMonthEntry[] | null>(null);
+  const [fc, setFc] = useState<BsForecastPayload | null>(null);
   const [fcError, setFcError] = useState<string | null>(null);
-  const showForecast = forecastOn && isCurrentFy;
+  const showForecast = forecastOn && canForecast;
   useEffect(() => {
     if (!showForecast || fc) return;
     let live = true;
     fetch("/api/accounting/bs-forecast", { cache: "no-store" })
-      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: BsForecastResp }>)
-      .then(async (j) => {
+      .then((r) => r.json() as Promise<{ success?: boolean; error?: string; data?: BsForecastPayload }>)
+      .then((j) => {
         if (!live) return;
         if (!j?.success || !j.data) { setFcError(j?.error || "The forecast could not be loaded"); return; }
-        const data = j.data;
-        // Last month-end's actual sheet is the forecast's start: its own
-        // column when the year shows it (kept current above), else read here.
-        if (!monthsKey.split(",").includes(data.startYm)) {
-          const r = await fetch(`/api/accounting/pl?period=${data.startYm}${orgIdParam(company)}`);
-          const pj = (await r.json()) as { success?: boolean; data?: { balanceSheet?: BsMonthEntry[] } };
-          if (!live) return;
-          if (!pj?.success || !Array.isArray(pj.data?.balanceSheet)) { setFcError("Last month-end's Balance Sheet could not be loaded"); return; }
-          setFcOpening(pj.data.balanceSheet);
-        }
-        setFc(data);
+        setFcError(null);
+        setFc(j.data);
       })
       .catch(() => { if (live) setFcError("The forecast could not be loaded"); });
     return () => { live = false; };
-  }, [showForecast, fc, company, monthsKey]);
-  // A forecast column's key ("f:YYYY-MM") and its sheet: the start's sheet
-  // with the movements so far; the salaries owed at the start are paid in the
-  // first month.
-  const fcKeys = useMemo(() => (showForecast && fc ? [...fc.months].reverse().map((ym) => `f:${ym}`) : []), [showForecast, fc]);
-  const opening = fc ? byMonth[fc.startYm] ?? fcOpening : null;
+  }, [showForecast, fc]);
+
+  // Last month-end's actual sheet is the forecast's start: its own column when
+  // the year shows it (kept current above), else read here the same way.
+  const fcStartYm = fc?.startYm ?? "";
+  const startInYear = !!fcStartYm && months.includes(fcStartYm);
+  const [fcOpening, setFcOpening] = useState<BsMonthEntry[] | null>(null);
+  const [openingUpdating, setOpeningUpdating] = useState(false);
+  const [openingFailed, setOpeningFailed] = useState(false);
+  useEffect(() => {
+    if (!showForecast || !fcStartYm || startInYear) return;
+    let live = true;
+    loadSheet(fcStartYm, company, () => live, (entries, isStale) => {
+      setFcOpening(entries);
+      setOpeningUpdating(isStale);
+    })
+      .then((ok) => { if (!ok && live) setOpeningFailed(true); })
+      .catch(() => { if (live) setOpeningFailed(true); });
+    return () => { live = false; };
+  }, [showForecast, fcStartYm, startInYear, company]);
+  const opening = fc ? (startInYear ? byMonth[fc.startYm] : fcOpening) ?? null : null;
+
+  // Every forecast month's sheet (the salaries owed at the start paid in the
+  // first month; customers' invoices collected up to the trade debtors on the
+  // start's sheet), and the ones inside the year picked as columns "f:YYYY-MM".
+  const fcSheets = useMemo(() => (showForecast && fc && opening ? forecastBsSheets(fc, opening) : {}), [showForecast, fc, opening]);
+  const fcYms = useMemo(() => (showForecast && fc && fy ? fyForecastMonths(fy, fc.months) : []), [showForecast, fc, fy]);
+  const fcKeys = useMemo(() => fcYms.map((ym) => `f:${ym}`), [fcYms]);
   const fcByKey = useMemo(() => {
     const out: Record<string, BsMonthEntry[]> = {};
-    if (!showForecast || !fc || !opening) return out;
-    const owed = opening.find((e) => e.accountCode === fc.salaryAccount && e.category === "CURRENT_LIABILITY")?.balance ?? 0;
-    const cum: Record<string, number> = {};
-    fc.months.forEach((ym, i) => {
-      const step = { ...(fc.deltas[ym] ?? {}) };
-      if (i === 0 && owed > 0) {
-        step[fc.salaryAccount] = (step[fc.salaryAccount] ?? 0) + owed;
-        step[FC_CASH] = (step[FC_CASH] ?? 0) - owed;
-      }
-      for (const [code, sen] of Object.entries(step)) cum[code] = (cum[code] ?? 0) + sen;
-      out[`f:${ym}`] = forecastBsEntries(opening, cum, fc.accounts);
-    });
+    for (const ym of fcYms) if (fcSheets[ym]) out[`f:${ym}`] = fcSheets[ym];
     return out;
-  }, [showForecast, fc, opening]);
+  }, [fcYms, fcSheets]);
   const cols = useMemo(() => [...fcKeys, ...months], [fcKeys, months]);
   const all = useMemo(() => ({ ...byMonth, ...fcByKey }), [byMonth, fcByKey]);
   const matrix = useMemo(() => buildBsMatrix(cols, all), [cols, all]);
@@ -201,6 +212,7 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
     );
   };
   const outOfBalance = matrix.diff.some((d, i) => loaded(i) && d !== 0);
+  const lastFcYm = fc?.months[fc.months.length - 1];
 
   return (
     <div className="space-y-4">
@@ -217,29 +229,38 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
               <option key={y.startYm} value={y.startYm}>{y.name}</option>
             ))}
           </select>
-          {isCurrentFy && (
-            <label className="inline-flex items-center gap-1.5 text-xs text-[#4B5563]" title="The months ahead, rolled forward from last month-end's sheet by the Forecast P&L and the documents' payment terms">
+          {canForecast && (
+            <label className="inline-flex items-center gap-1.5 text-xs text-[#4B5563]" title="The months ahead in this financial year, rolled forward from last month-end's sheet by the Forecast P&L and the documents' payment terms, to the last month the Forecast P&L has figures for">
               <input type="checkbox" checked={forecastOn} onChange={(e) => setForecastOn(e.target.checked)} className="accent-[#6B5C32]" />
               Forecast
             </label>
           )}
         </ReportToolbar>
       </FinanceTitleActions>
-      {updating && <p className="text-xs text-[#6B7280]">Updating… a month's figures are being refreshed.</p>}
+      {(updating || (showForecast && openingUpdating)) && <p className="text-xs text-[#6B7280]">Updating… a month's figures are being refreshed.</p>}
       {showForecast && fcError && <p className="text-xs text-[#9A3412]">{fcError} — reload the page to try again.</p>}
+      {showForecast && openingFailed && <p className="text-xs text-[#9A3412]">Last month-end's Balance Sheet could not be loaded — reload the page to try again.</p>}
       {showForecast && !fc && !fcError && <p className="text-xs text-[#6B7280]">Working out the forecast…</p>}
+      {showForecast && fc && !lastFcYm && (
+        <p className="text-xs text-[#6B7280]">The Forecast P&amp;L has no figures from {labelOfYm(curYm)} on, so there is nothing to forecast yet.</p>
+      )}
+      {showForecast && fc && lastFcYm && fcYms.length === 0 && fy && (
+        <p className="text-xs text-[#6B7280]">No forecast months in {fy.name} — the Forecast P&amp;L has figures up to {labelOfYm(lastFcYm)}.</p>
+      )}
       {failed.length > 0 && (
         <p className="text-xs text-[#9A3412]">Could not load {failed.map(labelOfYm).join(", ")} — reload the page to try again.</p>
       )}
       {!fy ? (
         <p className="py-12 text-center text-sm text-[#6B7280]">Loading the financial years…</p>
-      ) : months.length === 0 ? (
-        <p className="py-12 text-center text-sm text-[#6B7280]">{fy.name} has not started yet.</p>
+      ) : cols.length === 0 ? (
+        <p className="py-12 text-center text-sm text-[#6B7280]">
+          {fy.name} has not started yet.{canForecast && !forecastOn ? " Tick Forecast to see its months ahead." : ""}
+        </p>
       ) : (
         <ReportFrame
           company={COMPANY.HOOKKA.name}
           title={`Monthly Balance Sheet — ${fy.name}`}
-          note={`All figures RM · each column is that month-end's Balance Sheet (this month: so far) · brackets = negative · stock = the P&L's closing stock${showForecast && fc ? ` · forecast columns: ${labelOfYm(fc.startYm)}'s month-end sheet moved by the Forecast P&L and the documents' payment terms; stock and other balances stay as they were` : ""}`}
+          note={`All figures RM · each column is that month-end's Balance Sheet (this month: so far) · brackets = negative · stock = the P&L's closing stock${fc && fcKeys.length ? ` · forecast columns: ${labelOfYm(fc.startYm)}'s month-end sheet moved by the Forecast P&L and the documents' payment terms, to the last month the Forecast P&L has figures for; customers' invoices are collected up to the trade debtors on that sheet; stock and other balances stay as they were` : ""}`}
         >
           <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>

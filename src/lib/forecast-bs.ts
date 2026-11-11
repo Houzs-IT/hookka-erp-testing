@@ -20,6 +20,18 @@
 // The profit, the cash and the depreciation land on three lines of their own
 // (FC_PROFIT in Equity, FC_CASH in Current Assets, FC_DEPN in Fixed Assets);
 // stock and every other balance stay as at the start.
+//
+// After seeing it (owner 2026-11-11):
+//   - 「可以」: the months stop at the last month the Forecast P&L has figures
+//     for — after it a column would only collect and pay (forecastBsMonths);
+//   - 「就是这个…我不想要显示」 (the debtors left below zero): customers' open invoices are collected only up
+//     to the trade debtors on the start's sheet — the books owed less than the
+//     documents (receipts not knocked off yet), so the earliest money beyond the
+//     books is not counted as money to come, as a receipt not knocked off
+//     settles a customer's oldest lines (scheduleOpenDocs). The debtors never
+//     go below zero (capOpeningReceipts, on the page, which holds the sheet);
+//   - 「根据fye 显示forecast 的数据可以吗？」: the forecast columns follow the
+//     financial year picked, to its year end (fyForecastMonths).
 // ---------------------------------------------------------------------------
 import type { ForecastLeg } from "./cashflow-engine";
 import type { ScheduledDoc } from "./cashflow-forecast";
@@ -44,7 +56,9 @@ export type ForecastBsAccrual = { salesSen: number; materialsSen: number; salari
 export type ForecastBsInput = {
   /** The forecast months, oldest first; the first is the current month. */
   months: readonly string[];
-  /** The documents open at the 1st of the first month, scheduled by terms. */
+  /** The documents open at the 1st of the first month, scheduled by terms.
+   *  Customers' invoices are left to openingReceiptsByYm (collected on the
+   *  page up to the books' debtors). */
   openingDocs: readonly ScheduledDoc[];
   /** The P&L forecast's legs (column "fp:YYYY-MM"), from Forecast P&L months
    *  in `months` only; sen + money in, − money out. */
@@ -81,12 +95,12 @@ export function forecastBsDeltas(input: ForecastBsInput): ForecastBsDeltas {
   };
   const first = months[0];
 
-  // The documents open at the start, when their money moves.
+  // The documents open at the start, when their money moves — customers'
+  // invoices apart (openingReceiptsByYm: collected up to the books' debtors).
   for (const d of input.openingDocs) {
-    if (!d.dueSen || !d.expectedYm) continue;
+    if (!d.dueSen || !d.expectedYm || d.kind === "invoice") continue;
     const ym = d.expectedYm < first ? first : d.expectedYm;
-    if (d.kind === "invoice") post(ym, FC_CASH, accounts.ar, d.dueSen); // money in from a customer
-    else if (d.kind === "odb") post(ym, FC_CASH, d.accountCode, d.dueSen); // money in from an other debtor
+    if (d.kind === "odb") post(ym, FC_CASH, d.accountCode, d.dueSen); // money in from an other debtor
     else post(ym, d.accountCode, FC_CASH, d.dueSen); // a bill or a draw paid
   }
 
@@ -161,4 +175,93 @@ export function forecastBsEntries(
     e.balance += isAsset(e.category) ? debit : -debit;
   }
   return out;
+}
+
+/** Customers' invoices open at the start: the month their money is expected
+ *  (one past its term in `firstYm`) → sen, every month, also those beyond the
+ *  months shown — the cap is on all of them. */
+export function openingReceiptsByYm(openingDocs: readonly ScheduledDoc[], firstYm: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of openingDocs) {
+    if (d.kind !== "invoice" || d.dueSen <= 0 || !d.expectedYm) continue;
+    const ym = d.expectedYm < firstYm ? firstYm : d.expectedYm;
+    out[ym] = (out[ym] ?? 0) + d.dueSen;
+  }
+  return out;
+}
+
+/** The customers' money the forecast collects: no more than the trade debtors
+ *  in the books (`capSen`). What the documents hold beyond them is left out
+ *  from the earliest month on, as a receipt not knocked off settles the
+ *  oldest lines first. A month left with nothing drops out. */
+export function capOpeningReceipts(byYm: Readonly<Record<string, number>>, capSen: number): Record<string, number> {
+  const yms = Object.keys(byYm).filter((ym) => byYm[ym] > 0).sort();
+  let over = yms.reduce((t, ym) => t + byYm[ym], 0) - Math.max(0, capSen);
+  const out: Record<string, number> = {};
+  for (const ym of yms) {
+    const leftOut = Math.min(Math.max(0, over), byYm[ym]);
+    over -= leftOut;
+    if (byYm[ym] - leftOut > 0) out[ym] = byYm[ym] - leftOut;
+  }
+  return out;
+}
+
+/** What GET /bs-forecast answers. */
+export type BsForecastPayload = {
+  /** Last month-end: the actual sheet the forecast starts from. */
+  startYm: string;
+  /** The forecast months, oldest first (forecastBsMonths). */
+  months: string[];
+  deltas: ForecastBsDeltas;
+  /** Name and section of an account the movements bring to the sheet. */
+  accounts: Record<string, { name: string; section: string }>;
+  /** The salary accrual: what it owes at the start is paid in the first month. */
+  salaryAccount: string;
+  /** The trade debtor accounts: customers' invoices are collected up to their total at the start. */
+  arAccounts: string[];
+  /** openingReceiptsByYm. */
+  openingReceipts: Record<string, number>;
+};
+
+/** Every forecast month's sheet (month → entries), rolled forward from the
+ *  start's sheet: the month's movements, the salaries owed at the start paid
+ *  in the first month, and the customers' invoices collected up to the trade
+ *  debtors on the start's sheet (capOpeningReceipts). */
+export function forecastBsSheets(fc: BsForecastPayload, opening: readonly BsMonthEntry[]): Record<string, BsMonthEntry[]> {
+  const owed = opening.find((e) => e.accountCode === fc.salaryAccount && e.category === "CURRENT_LIABILITY")?.balance ?? 0;
+  const arAccounts = new Set(fc.arAccounts);
+  const booksDebtors = opening
+    .filter((e) => arAccounts.has(e.accountCode) && e.category === "CURRENT_ASSET")
+    .reduce((t, e) => t + e.balance, 0);
+  const receipts = capOpeningReceipts(fc.openingReceipts, booksDebtors);
+  const cum: Record<string, number> = {};
+  const add = (code: string, sen: number) => {
+    if (sen) cum[code] = (cum[code] ?? 0) + sen;
+  };
+  const out: Record<string, BsMonthEntry[]> = {};
+  fc.months.forEach((ym, i) => {
+    for (const [code, sen] of Object.entries(fc.deltas[ym] ?? {})) add(code, sen);
+    if (i === 0 && owed > 0) {
+      add(fc.salaryAccount, owed);
+      add(FC_CASH, -owed);
+    }
+    const r = receipts[ym] ?? 0;
+    add(FC_CASH, r);
+    add(FC_AR, -r);
+    out[ym] = forecastBsEntries(opening, cum, fc.accounts);
+  });
+  return out;
+}
+
+/** The forecast months: the Forecast P&L columns from this month to the last
+ *  month it has figures for (`lastFigureYm`), oldest first; none without
+ *  figures from this month on. */
+export function forecastBsMonths(columnYms: readonly string[], curYm: string, lastFigureYm: string | null): string[] {
+  if (!lastFigureYm || lastFigureYm < curYm) return [];
+  return [...new Set(columnYms.filter((ym) => ym >= curYm && ym <= lastFigureYm))].sort();
+}
+
+/** The forecast months inside the financial year picked, to its year end, newest first. */
+export function fyForecastMonths(fy: { startYm: string; endYm: string }, months: readonly string[]): string[] {
+  return months.filter((ym) => ym >= fy.startYm && ym <= fy.endYm).sort().reverse();
 }

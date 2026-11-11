@@ -70,6 +70,8 @@ test("a month answered from the report's older copy is asked again, as the singl
   const mb = read("src/pages/accounting/monthly-balance-sheet.tsx");
   assert.match(mb, /const next = planStaleRetry\(run, j\);/);
   assert.match(mb, /Updating…/);
-  // The forecast's start is the month's own column when the year shows it.
-  assert.match(mb, /byMonth\[fc\.startYm\] \?\? fcOpening/);
+  // The forecast's start is the month's own column when the year shows it,
+  // else read the same way (a year ahead shows none of its own).
+  assert.match(mb, /startInYear \? byMonth\[fc\.startYm\] : fcOpening/);
+  assert.match(mb, /loadSheet\(fcStartYm, company,/);
 });

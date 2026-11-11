@@ -111,7 +111,7 @@ test("the months on the sheet from an earlier financial year get their actuals t
   assert.match(pg, /nextActualsAnchor\(/);
 });
 
-test("who the actual purchases were from (owner 「我看不到actual 的fabric 67559.67 是从谁买」): supplier documents' legs by month, type and supplier", async () => {
+test("who the actual purchases were from (owner 「我看不到actual 的fabric … 是从谁买」): supplier documents' legs by month, type and supplier", async () => {
   const { supplierActualsFromLegs, supplierActualIds } = await import("../src/lib/forecast-pnl.ts");
   const typeOf = (code) => ({ "700-1000": "FABRIC", "700-1001": "FABRIC", "700-2000": "PLYWOOD" })[code];
   const acts = supplierActualsFromLegs(

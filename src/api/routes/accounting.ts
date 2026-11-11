@@ -70,8 +70,8 @@ import {
   type TfPlanStore,
   type PnlForecastInput,
 } from "../../lib/cashflow-forecast";
-import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastMonthFigures, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, supplierActualsFromLegs, type FcLineGroups, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
-import { FC_AR, FORECAST_BS_LINES, forecastBsDeltas, type ForecastBsAccrual } from "../../lib/forecast-bs";
+import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastMonthFigures, forecastMonthHasFigures, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, supplierActualsFromLegs, type FcLineGroups, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
+import { FC_AR, FORECAST_BS_LINES, forecastBsDeltas, forecastBsMonths, openingReceiptsByYm, type BsForecastPayload, type ForecastBsAccrual } from "../../lib/forecast-bs";
 import { loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
@@ -12035,11 +12035,14 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
 // (owner 2026-11-11 「既然我有forecast Cash Flow 和 Forecast P&L？是不是可以做
 // forecast balance sheet?」; start point 「可以」 = last month-end's actual
 // sheet; src/lib/forecast-bs.ts): month → account → debit-positive sen, from
-// this month to the P&L forecast's last month, on the Cash Flow forecast's own
-// timing — the documents open at the 1st of this month by their terms, the
-// Forecast P&L from this month on by the P&L forecast's legs. The page adds
-// them to last month-end's Balance Sheet and pays the salaries owed then in
-// the first month (`salaryAccount`). Read only.
+// this month to the last month the Forecast P&L has figures for (owner
+// 2026-11-11 「可以」), on the Cash Flow forecast's own timing — the documents
+// open at the 1st of this month by their terms, the Forecast P&L from this
+// month on by the P&L forecast's legs. The page adds them to last month-end's
+// Balance Sheet, pays the salaries owed then in the first month
+// (`salaryAccount`) and collects the customers' open invoices
+// (`openingReceipts`) up to the trade debtors on that sheet (`arAccounts`;
+// owner 2026-11-11 「就是这个…我不想要显示」 of the debtors left below zero). Read only.
 app.get("/bs-forecast", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -12071,8 +12074,10 @@ app.get("/bs-forecast", async (c) => {
   // The Forecast P&L from this month on: the actual documents stand for the months before.
   const fcMonths = Object.fromEntries(Object.entries(p.fcMonths).filter(([ym]) => ym >= curYm));
   const pnl = buildPnlForecastLegs({ ...p, fcMonths, tfPlans: [] });
-  const months = [...new Set(pnl.columns.filter((col) => !col.blank && col.ym >= curYm).map((col) => col.ym))].sort();
   const mapped = capture.mapped ?? new Set<string>();
+  // To the last month the Forecast P&L has figures for: after it a column would only collect and pay.
+  const lastFigureYm = Object.keys(fcMonths).filter((ym) => forecastMonthHasFigures(forecastMonthFigures(fcMonths[ym], groups, mapped))).sort().pop() ?? null;
+  const months = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
   const salaryLegAccounts = new Set<string>();
   const accruals: Record<string, ForecastBsAccrual> = {};
   for (const ym of months) {
@@ -12090,9 +12095,10 @@ app.get("/bs-forecast", async (c) => {
     };
   }
   const accounts = { ar: FC_AR, receipt: p.arAcct, ap: capture.apAcct ?? resolveAcct("400-0000"), salary: resolveAcct(LABOUR_ACCRUAL_ACCT) };
+  const openingDocs = capture.baselines?.get(curYm) ?? [];
   const deltas = forecastBsDeltas({
     months,
-    openingDocs: capture.baselines?.get(curYm) ?? [],
+    openingDocs,
     pnlLegs: pnl.legs,
     accruals,
     accounts,
@@ -12110,7 +12116,20 @@ app.get("/bs-forecast", async (c) => {
       if (a && section) accountsOut[code] = { name: a.name, section };
     }
   }
-  return c.json({ success: true, data: { startYm: addMonthsYm(curYm, -1), months, deltas, accounts: accountsOut, salaryAccount: accounts.salary } });
+  // The trade debtor accounts, as the debtor control's own check counts them
+  // (GET /ar-control: every SDC account but Other Debtors).
+  const otherDebtors = resolveAcct(OTHER_DEBTOR_CONTROL);
+  const arAccounts = [...new Set([p.arAcct, ...[...coa.values()].filter((a) => a.sat === "SDC" && a.code !== otherDebtors).map((a) => a.code)])];
+  const data: BsForecastPayload = {
+    startYm: addMonthsYm(curYm, -1),
+    months,
+    deltas,
+    accounts: accountsOut,
+    salaryAccount: accounts.salary,
+    arAccounts,
+    openingReceipts: openingReceiptsByYm(openingDocs, months[0] ?? curYm),
+  };
+  return c.json({ success: true, data });
 });
 
 app.get("/cashflow-forecast-inputs", async (c) => {
@@ -17586,7 +17605,7 @@ app.get("/forecast/suppliers", async (c) => {
 
 // GET /api/accounting/forecast/supplier-actuals?from=YYYY-MM&to=YYYY-MM — each
 // month's actual purchases of each material type BY SUPPLIER (owner 2026-11-11
-// 「我看不到actual 的fabric 67559.67 是从谁买」): the Edit forecast lists them on
+// 「我看不到actual 的fabric … 是从谁买」): the Edit forecast lists them on
 // the supplier rows under a material. The legs of purchase invoices and
 // purchase credit notes on the material purchase accounts, debit minus credit,
 // in the month of the document's date — as the P&L reads purchases; legs
