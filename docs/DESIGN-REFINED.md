@@ -26,9 +26,13 @@ https://claude.ai/artifact/Roh88iBS5bxpxjVQEkpYvq — owner chose palette **B-li
 - 2026-11-12 (owner screenshots): `.font-mono` keeps the UI font in refined (dates like 2026-05-01 went
   wide in JetBrains Mono); production grid cells (`CellBox`, `data-cell`) are soft fills with a thin edge
   instead of solid red/olive/teal blocks (eye comfort).
+- 2026-11-12: chart colours — recharts writes JS colour constants as SVG `fill` / `stroke` / `stop-color`
+  attributes; the generator now turns every hex string literal into an svg-scoped attribute rule snapped
+  onto the chart set (hue-weighted, a coloured series never turns grey). Fixes the bright teal/navy
+  Accounting overview and every other chart without touching chart code.
 
 ## Known gaps (phase 2)
-- Colours typed into inline `style={{…}}`, chart configs and PDF generators are not caught by CSS —
+- Colours typed into inline `style={{…}}` on HTML elements and PDF generators are not caught by CSS —
   move them to tokens (`src/lib/design-tokens.ts`) module by module.
 - Dark mode keeps its own palette in refined mode for now (refined rules skip `.dark`).
 - Phase 3: make Refined the default after the owner signs off; then a lint rule banning new
