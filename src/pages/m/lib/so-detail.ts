@@ -11,6 +11,12 @@
 // read here on purpose.
 // ===========================================================================
 
+// Relative (not "@/"): the node test runner resolves this file without the app
+// tsconfig's path alias.
+import { cellFor, stageKind, DEPARTMENTS } from "../../production/utils";
+import type { ProductionOrder } from "../../production/types";
+import type { StageRow } from "../components/StageTimeline";
+
 type Row = Record<string, unknown>;
 
 function val(row: Row, ...keys: string[]): unknown {
@@ -57,6 +63,104 @@ export function productionLabel(po: Row, fmtDate: (d: string) => string): string
   if (st === "CANCELLED") return "Cancelled";
   const dept = s(po, "currentDepartment").replace(/_/g, " ");
   return dept ? `In production — ${titleCase(dept)}` : "In production";
+}
+
+/** HK-0125 inline production stages for one linked PO on the SO detail.
+ *
+ *  Reuses the desktop `cellFor` / `stageKind` (the same functions the phone
+ *  Production Detail timeline runs) and the shared StageTimeline rows, so a
+ *  department can never read differently here than on that screen. The SO's own
+ *  linked POs are passed as the sibling set: SOFA Fabric Cut is merged per
+ *  (companySOId, baseModel, fabricCode), so the group's anchor PO always belongs
+ *  to the same SO. A sibling with no cards of its own therefore still shows the
+ *  shared Fab Cut state and dates.
+ *
+ *  PIC names are deliberately NOT shown on the SO (the SO response does not
+ *  carry them). `target` is the stored production `targetEndDate` — a schedule,
+ *  not a forecast — formatted, or "" when the order has none; it is never filled
+ *  from a delivery date. Cancelled orders have no stages. */
+export type PoStages = {
+  /** At least one job card exists, so a timeline can be derived. */
+  scheduled: boolean;
+  /** Show the "View stages" control: scheduled and not cancelled. */
+  canExpand: boolean;
+  rows: StageRow[];
+  /** Departments that apply to this order (not N/A) and how many are done. */
+  applicable: number;
+  done: number;
+  target: string;
+  /** The API sent a `targetEndDate` field at all (even empty). When it did not
+   *  (older API), the UI must not claim "not set". */
+  targetSent: boolean;
+  /** The API sent job-card data (`jobCards` array) for this PO. When it did not,
+   *  the UI must not claim "not scheduled yet". */
+  stagesSent: boolean;
+  /** The order is still open (not COMPLETED / CANCELLED) — target is relevant. */
+  open: boolean;
+};
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function shortDay(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+  return m ? `${Number(m[3])} ${SHORT_MONTHS[Number(m[2]) - 1]}` : "";
+}
+
+function toOrderShape(p: Row): ProductionOrder {
+  return {
+    id: s(p, "id"),
+    salesOrderId: s(p, "salesOrderId"),
+    companySOId: s(p, "companySOId"),
+    companyCOId: "",
+    consignmentOrderId: "",
+    itemCategory: s(p, "itemCategory"),
+    productCode: s(p, "productCode"),
+    fabricCode: s(p, "fabricCode"),
+    jobCards: rows(p.jobCards),
+  } as unknown as ProductionOrder;
+}
+
+export function poStages(po: Row, all: Row[], fmt: (d: string) => string): PoStages {
+  const st = s(po, "status").toUpperCase();
+  const open = st !== "COMPLETED" && st !== "CANCELLED";
+  const order = toOrderShape(po);
+  // Only SOFA orders share a Fabric Cut across POs (aggregateFcSlots merges SOFA
+  // per (SO, baseModel, fabric); BF / ACC are always per-PO). The desktop
+  // `cellFor` walk is looser for non-SOFA orders — it would hand ANY sibling's
+  // Fab Cut to a bedframe with no cards — so the sibling set is SOFA-only, and
+  // only for a SOFA order. `cellFor` itself is unchanged.
+  const isSofa = (p: Row) => s(p, "itemCategory").toUpperCase() === "SOFA";
+  const siblings = isSofa(po) ? all.filter(isSofa).map(toOrderShape) : undefined;
+  const current = s(po, "currentDepartment");
+  const stageRows: StageRow[] = DEPARTMENTS.map((d) => {
+    const cell = cellFor(order, d.code, siblings);
+    const kind = stageKind(cell);
+    const date =
+      kind === "skipped"
+        ? ""
+        : kind === "done"
+          ? cell.latestCompleted
+            ? `Completed ${shortDay(cell.latestCompleted)}`
+            : ""
+          : cell.earliestDue
+            ? `Due ${shortDay(cell.earliestDue)}`
+            : "";
+    return { code: d.code, name: d.name, kind, doneCards: cell.doneCards, totalCards: cell.totalCards, meta: date, current: d.code === current };
+  });
+  const applicable = stageRows.filter((r) => r.kind !== "skipped").length;
+  const done = stageRows.filter((r) => r.kind === "done").length;
+  // Scheduled = some department has cards (own, or the sibling-shared Fab Cut).
+  const scheduled = applicable > 0;
+  return {
+    scheduled,
+    canExpand: scheduled && st !== "CANCELLED",
+    rows: stageRows,
+    applicable,
+    done,
+    target: open ? fmt(s(po, "targetEndDate")) : "",
+    targetSent: po.targetEndDate !== undefined,
+    stagesSent: Array.isArray(po.jobCards),
+    open,
+  };
 }
 
 /** Bar / legend order: done first, then active, then waiting, then stopped. */
