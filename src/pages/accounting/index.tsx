@@ -36,6 +36,7 @@ import { moneyFieldToSen, firstMoneyFieldError, isUnreadableMoney } from "@/lib/
 import { exportReportXlsx, exportReportPdf, type Aoa, type PdfExportOpts, type PdfRowKind } from "@/lib/export-report";
 import { buildGroupedAgingExportAoa, agingRowKind } from "@/lib/aging-export";
 import { isCleanImportShape, detectRawShape, parseRawStockTakeRows, impliedYmFromFilename, type ParsedRawItem, isRmCountShape, parseRmCountRows, itemCodeKey, priceCheckReasons, unitPriceToSen, lastDayOfYm, type RmCountRow } from "@/lib/stock-take-import";
+import { fifoSourceText, fifoValue, type PiLayer } from "@/lib/stock-take-fifo";
 import { printVoucher, printVouchers, type VoucherSpec, type VoucherLine, type VoucherFact } from "@/lib/print-voucher";
 import { apBillsBlock, type ApPrintDetail } from "@/lib/ap-payment-print";
 import { fetchApPrintDetail } from "@/lib/ap-payment-print-fetch";
@@ -1587,15 +1588,20 @@ const WIP_FG_LABELS: Record<string, string> = { WIP: "Work-in-Progress (WIP)", F
 // stock_take_item_alias) needs a sentinel string in the "needs mapping" picker.
 const STOCK_TAKE_IGNORE_VALUE = "__IGNORE__";
 
-// Quantity-only count (owner 2026-10-09 「用最近一次进货价」): each counted item
-// priced at its latest purchase on or before month-end, reviewed before it fills
-// the month's group totals. Shapes of GET /stock-take/purchase-prices and of
-// one reviewed row.
+// Quantity-only count (owner 2026-10-09 「用最近一次进货价」, FIFO since
+// 2026-11-11 「要用fifo 定价」): each counted item priced FIFO from its purchase
+// lines on or before month-end (newest first — src/lib/stock-take-fifo.ts),
+// reviewed before it fills the month's group totals. Shapes of
+// GET /stock-take/purchase-prices and of one reviewed row.
 type PurchasePrices = {
   asOf: string;
   prices: Record<string, { unitSen: number; piNo: string; date: string; supplier: string; qty: number; minUnitSen: number; maxUnitSen: number; lines: number }>;
   priceList: Record<string, { unitSen: number; supplier: string }>;
   batchCost: Record<string, { unitSen: number; date: string }>;
+  /** Every purchase line per item, newest first (FIFO layers). */
+  layers?: Record<string, PiLayer[]>;
+  /** Warehouse › Stock Take unit factors: 1 purchase unit = N count units. */
+  factors?: Record<string, number>;
 };
 type PricedCountItem = RmCountRow & {
   unitStr: string; // RM per counted unit, editable ("" = none yet)
@@ -1609,12 +1615,40 @@ type PricedCountItem = RmCountRow & {
   range: [number, number] | null; // every price the code was bought at (sen)
   hint: string; // no purchase: the last batch cost, as text only
   counted: boolean;
+  // FIFO value of the count (sen) while the price is untouched; null = not FIFO.
+  fifoValueSen: number | null;
+  fifoBeyond: number; // counted beyond every purchase on file (priced at the oldest)
+  fifoSkipped: number; // purchase lines left out (priced over 2× from the newest)
 };
 type PricedCount = { file: string; asOf: string; items: PricedCountItem[]; groupsOn: Record<string, boolean>; applied: boolean };
 // 1400 sen → "14.00"; 1.98 sen → "0.0198".
 const unitSenToRm = (sen: number) => (sen / 100).toFixed(4).replace(/0{1,2}$/, "");
 function pricedCountItem(r: RmCountRow, pp: PurchasePrices): PricedCountItem {
-  const p = pp.prices[itemCodeKey(r.code)];
+  const key = itemCodeKey(r.code);
+  const p = pp.prices[key];
+  const layers = pp.layers?.[key] ?? [];
+  const fifo = layers.length ? fifoValue(r.qty, layers, { factor: pp.factors?.[key] }) : null;
+  const none = { fifoValueSen: null, fifoBeyond: 0, fifoSkipped: 0 };
+  if (p && fifo) {
+    // FIFO (owner 2026-11-11 「要用fifo 定价」): the shown price is the count's
+    // value ÷ its quantity; the value itself stays exact (pricedValueSen).
+    const unitStr = unitSenToRm(fifo.unitSen);
+    return {
+      ...r,
+      unitStr,
+      piUnitStr: unitStr,
+      source: fifoSourceText(fifo),
+      reasons: priceCheckReasons({ countQty: r.qty, lastQty: p.qty, minUnitSen: p.minUnitSen, maxUnitSen: p.maxUnitSen }),
+      range: p.lines > 1 ? [p.minUnitSen, p.maxUnitSen] : null,
+      listUnitStr: "",
+      listSupplier: "",
+      hint: "",
+      counted: true,
+      fifoValueSen: fifo.valueSen,
+      fifoBeyond: fifo.beyondQty,
+      fifoSkipped: fifo.skipped,
+    };
+  }
   if (p) {
     return {
       ...r,
@@ -1627,15 +1661,18 @@ function pricedCountItem(r: RmCountRow, pp: PurchasePrices): PricedCountItem {
       listSupplier: "",
       hint: "",
       counted: true,
+      ...none,
     };
   }
-  const pl = pp.priceList[itemCodeKey(r.code)];
+  const pl = pp.priceList[key];
   const bc = r.id ? pp.batchCost[r.id] : undefined;
   const listUnitStr = pl ? unitSenToRm(pl.unitSen) : "";
   const hint = bc ? `last cost RM ${unitSenToRm(bc.unitSen)} (${formatDateDMY(bc.date)})` : "";
-  return { ...r, unitStr: listUnitStr, piUnitStr: "", source: "", listUnitStr, listSupplier: pl?.supplier ?? "", reasons: [], range: null, hint, counted: true };
+  return { ...r, unitStr: listUnitStr, piUnitStr: "", source: "", listUnitStr, listSupplier: pl?.supplier ?? "", reasons: [], range: null, hint, counted: true, ...none };
 }
 const pricedValueSen = (i: PricedCountItem): number | null => {
+  // An untouched FIFO price keeps the exact FIFO value (the shown price is rounded).
+  if (i.fifoValueSen != null && i.unitStr.trim() === i.piUnitStr) return i.fifoValueSen;
   const u = unitPriceToSen(i.unitStr);
   return u == null ? null : Math.round(i.qty * u);
 };
@@ -1654,6 +1691,8 @@ const pricedNote = (i: PricedCountItem): string => {
   const notes: string[] = [];
   if (i.reasons.includes("units") && i.range) notes.push(`bought at RM ${unitSenToRm(i.range[0])}–${unitSenToRm(i.range[1])}: units differ (roll / metre?)`);
   if (i.reasons.includes("pack")) notes.push("last bought only 1–2 — a pack price?");
+  if (i.fifoBeyond > 0) notes.push(`${i.fifoBeyond} counted beyond the purchases on file — priced at the oldest`);
+  if (i.fifoSkipped > 0) notes.push(`${i.fifoSkipped} purchase line${i.fifoSkipped === 1 ? "" : "s"} left out: priced over 2× from the newest`);
   return notes.join(" · ");
 };
 const downloadPricedSheet = async (fileName: string, rows: { code: string; description: string; group: string; qty: number; uom: string; unitSen: number | null; valueSen: number; source: string; counted: boolean }[]) => {
@@ -1991,7 +2030,7 @@ function StockTakeTab() {
         const fromPi = items.filter((i) => i.source).length;
         const toCheck = items.filter((i) => i.reasons.length > 0).length;
         const fromList = items.filter((i) => !i.source && i.listUnitStr).length;
-        toast.success(`${items.length} counted items in ${file.name}: ${fromPi} priced from purchases (${toCheck} to check), ${fromList} from the price list, ${items.length - fromPi - fromList} without a price — review below.`);
+        toast.success(`${items.length} counted items in ${file.name}: ${fromPi} priced FIFO from purchases (${toCheck} to check), ${fromList} from the price list, ${items.length - fromPi - fromList} without a price — review below.`);
         return;
       }
 

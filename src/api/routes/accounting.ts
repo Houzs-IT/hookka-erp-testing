@@ -109,6 +109,8 @@ import { costAsOfByPo } from "../../lib/cost-attribution";
 import { STOCK_TAKE_ITEM_ALIAS_SEED_2026_05 } from "../lib/stock-take-item-alias-seed-2026-05";
 import { DOC_DATE_FAMILIES, stripLegSuffix, stripSourceIdSuffix, parseSourceIdDate } from "../../lib/doc-date";
 import { itemCodeKey } from "../../lib/stock-take-import";
+import { sortLayersNewestFirst, type PiLayer } from "../../lib/stock-take-fifo";
+import { parseUomFactor } from "../../lib/stock-count";
 import { compareStockTake, type StockTakeLinesRecord } from "../../lib/stock-take-check";
 import {
   prefixForPartyType,
@@ -21200,6 +21202,9 @@ app.get("/stock-take/purchase-prices", async (c) => {
   ).bind(orgId).all<{ invoiceDate: string | null; piNo: string | null; supplierName: string | null; materialCode: string | null; qty: number | null; lineTotalSen: number | null }>()).results ?? [];
   type LastPrice = { unitSen: number; piNo: string; date: string; supplier: string; qty: number; minUnitSen: number; maxUnitSen: number; lines: number };
   const prices: Record<string, LastPrice> = {};
+  // Every line per item, newest first — the FIFO layers a count is valued from
+  // (owner 2026-11-11 「要用fifo 定价」; src/lib/stock-take-fifo.ts).
+  const layers: Record<string, PiLayer[]> = {};
   for (const l of lines) {
     const date = String(l.invoiceDate ?? "").slice(0, 10);
     const qty = Number(l.qty) || 0;
@@ -21209,6 +21214,7 @@ app.get("/stock-take/purchase-prices", async (c) => {
     const unitSen = Math.round((total / qty) * 10000) / 10000;
     const piNo = String(l.piNo ?? "");
     const supplier = String(l.supplierName ?? "");
+    (layers[key] ??= []).push({ date, piNo, supplier, qty, unitSen });
     const cur = prices[key];
     if (!cur) { prices[key] = { unitSen, piNo, date, supplier, qty, minUnitSen: unitSen, maxUnitSen: unitSen, lines: 1 }; continue; }
     cur.lines++;
@@ -21245,7 +21251,23 @@ app.get("/stock-take/purchase-prices", async (c) => {
       if (!batchCost[id] || date > batchCost[id].date) batchCost[id] = { unitSen, date };
     }
   } catch { /* no batches → no hint */ }
-  return c.json({ success: true, data: { asOf, prices, priceList, batchCost } });
+  for (const k of Object.keys(layers)) layers[k] = sortLayersNewestFirst(layers[k]);
+  // Warehouse › Stock Take's unit factors ("1 purchase unit = N count units"),
+  // so a roll bought and metres counted are priced per metre.
+  const factors: Record<string, number> = {};
+  try {
+    const row = await c.var.DB.prepare("SELECT value FROM kv_config WHERE key = ?")
+      .bind(`stock_count_uom_factors:${orgId}`)
+      .first<{ value: string | null }>();
+    const raw: unknown = row?.value ? JSON.parse(row.value) : null;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        const f = parseUomFactor(v);
+        if (typeof f === "number") factors[itemCodeKey(k)] = f;
+      }
+    }
+  } catch { /* no factors → purchase units as they are */ }
+  return c.json({ success: true, data: { asOf, prices, priceList, batchCost, layers, factors } });
 });
 
 // The priced count behind a month (owner 2026-10-09): every counted item with
