@@ -17,7 +17,7 @@ import { todayYmdMY } from "@/lib/utils";
 import { groupBsEntries } from "@/lib/bs-groups";
 import { buildBsMatrix, fyMonthsShown, type BsMatrixRow, type BsMonthEntry } from "@/lib/bs-monthly";
 import type { BsSection } from "@/lib/bs-section";
-import { forecastBsSheets, fyForecastMonths, type BsForecastPayload } from "@/lib/forecast-bs";
+import { forecastBsView, fyForecastMonths, type BsForecastPayload } from "@/lib/forecast-bs";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { useFiscalYears } from "./use-fiscal-years";
 import { orgIdParam } from "./shared";
@@ -150,24 +150,34 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
 
   // Every forecast month's sheet (the salaries owed at the start paid in the
   // first month; customers' invoices collected up to the trade debtors on the
-  // start's sheet), and the ones inside the year picked as columns "f:YYYY-MM".
-  const fcSheets = useMemo(() => (showForecast && fc && opening ? forecastBsSheets(fc, opening) : {}), [showForecast, fc, opening]);
+  // start's sheet; each movement on the line it belongs to — forecastBsView),
+  // and the ones inside the year picked as columns "f:YYYY-MM".
+  const fcView = useMemo(() => (showForecast && fc && opening ? forecastBsView(fc, opening) : null), [showForecast, fc, opening]);
   const fcYms = useMemo(() => (showForecast && fc && fy ? fyForecastMonths(fy, fc.months) : []), [showForecast, fc, fy]);
   const fcKeys = useMemo(() => fcYms.map((ym) => `f:${ym}`), [fcYms]);
   const fcByKey = useMemo(() => {
     const out: Record<string, BsMonthEntry[]> = {};
-    for (const ym of fcYms) if (fcSheets[ym]) out[`f:${ym}`] = fcSheets[ym];
+    for (const ym of fcYms) if (fcView?.sheets[ym]) out[`f:${ym}`] = fcView.sheets[ym];
     return out;
-  }, [fcYms, fcSheets]);
+  }, [fcYms, fcView]);
+  // A line the forecast does not split (each bank account, stock line, fixed
+  // asset) shows "—" in a forecast column; the cash and the depreciation count
+  // in their totals without a line of their own (owner 2026-11-11 「做出来先吧」).
+  const isDash = (code: string) => !!fcView && fcView.dash.has(code);
+  const isHidden = (code: string) => !!fcView && fcView.hidden.has(code);
   const cols = useMemo(() => [...fcKeys, ...months], [fcKeys, months]);
   const all = useMemo(() => ({ ...byMonth, ...fcByKey }), [byMonth, fcByKey]);
   const matrix = useMemo(() => buildBsMatrix(cols, all), [cols, all]);
   const loaded = (i: number) => !!all[cols[i]];
   const amt = (v: number, i: number) => (loaded(i) ? fmtAmt(v) : "…");
-  const nums = (vals: number[]) =>
-    vals.map((v, i) => (
-      <td key={cols[i]} data-cell={`num split${cols[i].startsWith("f:") ? " fc fp" : ""}`} data-neg={loaded(i) && v < 0 ? "" : undefined}>{amt(v, i)}</td>
-    ));
+  const nums = (vals: number[], dashForecast = false) =>
+    vals.map((v, i) => {
+      const fcCol = cols[i].startsWith("f:");
+      if (dashForecast && fcCol) {
+        return <td key={cols[i]} data-cell="num split fc fp" title="The forecast does not split this line — its total carries the forecast">—</td>;
+      }
+      return <td key={cols[i]} data-cell={`num split${fcCol ? " fc fp" : ""}`} data-neg={loaded(i) && v < 0 ? "" : undefined}>{amt(v, i)}</td>;
+    });
   const span = cols.length + 1;
 
   // A section: heading, its accounts (parents with their subtotal), total.
@@ -181,14 +191,15 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
           <span className="mr-2 text-[11px] text-[#9CA3AF] tabular-nums">{r.accountCode === "NP-CURRENT" ? "" : r.accountCode}</span>
           {r.accountName}
         </td>
-        {nums(r.values)}
+        {nums(r.values, isDash(r.accountCode))}
       </tr>
     );
     return (
       <>
         <tr data-row="grp"><td colSpan={span}>{title}</td></tr>
         {items.map((it) => {
-          if (it.kind === "line") return line(rowOf.get(it.entry.accountCode)!, false);
+          if (it.kind === "line") return isHidden(it.entry.accountCode) ? null : line(rowOf.get(it.entry.accountCode)!, false);
+          // The subtotal counts every member, a hidden forecast movement too.
           const members = it.members.map((m) => rowOf.get(m.accountCode)!);
           const sub = cols.map((_, i) => members.reduce((t, m) => t + m.values[i], 0));
           return (
@@ -198,9 +209,10 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
                   <span className="mr-2 text-[11px] text-[#9CA3AF] tabular-nums">{it.code}</span>
                   {it.name}
                 </td>
-                {nums(sub)}
+                {/* The fixed assets' forecast depreciation is on their total, not on a group. */}
+                {nums(sub, key === "FIXED_ASSET" && !!fcView)}
               </tr>
-              {members.map((m) => line(m, true))}
+              {members.filter((m) => !isHidden(m.accountCode)).map((m) => line(m, true))}
             </Fragment>
           );
         })}
@@ -260,7 +272,7 @@ export function MonthlyBalanceSheet({ company, toolbar }: { company: string; too
         <ReportFrame
           company={COMPANY.HOOKKA.name}
           title={`Monthly Balance Sheet — ${fy.name}`}
-          note={`All figures RM · each column is that month-end's Balance Sheet (this month: so far) · brackets = negative · stock = the P&L's closing stock${fc && fcKeys.length ? ` · forecast columns: ${labelOfYm(fc.startYm)}'s month-end sheet moved by the Forecast P&L and the documents' payment terms, to the last month the Forecast P&L has figures for; customers' invoices are collected up to the trade debtors on that sheet; stock and other balances stay as they were` : ""}`}
+          note={`All figures RM · each column is that month-end's Balance Sheet (this month: so far) · brackets = negative · stock = the P&L's closing stock${fc && fcKeys.length ? ` · forecast columns: ${labelOfYm(fc.startYm)}'s month-end sheet moved by the Forecast P&L and the documents' payment terms, to the last month the Forecast P&L has figures for; customers' invoices are collected up to the trade debtors on that sheet; "—" = a line the forecast does not split (each bank account, stock line, fixed asset), its total carries the forecast; stock stays as it was (the Forecast P&L counts what it buys as used in the month), and so do the balances the forecast does not move` : ""}`}
         >
           <table data-col-resize="first" data-fin-report data-fin-fit>
             <thead>
