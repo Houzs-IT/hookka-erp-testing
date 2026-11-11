@@ -1319,6 +1319,7 @@ import payRules from "./routes/pay-rules";
 import payslips from "./routes/payslips";
 import productionLeadtimes from "./routes/production-leadtimes";
 import jobcardSync from "./routes/jobcard-sync";
+import productionOrderLines from "./routes/production-order-lines";
 import promiseDate from "./routes/promise-date";
 // Customer Service Agent (orchestrator): /api/cs-agent/promise = reasoned
 // promise date, materials → production → delivery (chain engine +
@@ -1589,6 +1590,7 @@ app.route("/api/production/leadtimes", productionLeadtimes);
 // Fixes the "BOM edited after POs existed" class of bug — see
 // migrations/0027, 0029 (sofa UPH/PKG backfill).
 app.route("/api/production/sync-jobcards-from-bom", jobcardSync);
+app.route("/api/production/order-lines", productionOrderLines);
 app.route("/api/promise-date", promiseDate);
 // CS Agent orchestrator — GET /promise (SO or product what-if) + GET
 // /procurement/readiness (Procurement Agent's data-prerequisite gate).

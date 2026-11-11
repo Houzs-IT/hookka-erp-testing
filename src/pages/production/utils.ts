@@ -316,3 +316,15 @@ export function earliestOverdueDateOnPO(
   }
   return earliest;
 }
+
+// HK-0144: open the Overview filtered to one sales order. Production order
+// numbers are `<SO no>-NN`, and the SO ID column filter is a substring match,
+// so the trailing dash keeps SO-2609-100 from also matching SO-2609-1000-01.
+export function productionOverviewHref(soNo: string): string {
+  return `/production?soId=${encodeURIComponent(`${soNo}-`)}`;
+}
+
+// The `?soId=` value the Overview seeds its SO ID filter with ("" = none).
+export function overviewSoFilterFromSearch(search: string): string {
+  return (new URLSearchParams(search).get("soId") ?? "").trim();
+}

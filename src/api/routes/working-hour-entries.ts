@@ -24,6 +24,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureNonprodRequests } from "./worker";
 import { loadProductionRevenue } from "../lib/production-revenue";
+import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
 
 const app = new Hono<Env>();
 
@@ -298,6 +299,7 @@ app.get("/production-revenue", async (c) => {
   // we can carry itemCategory + price-coalesce candidates in a single
   // round-trip and reuse the same products fallback as the Total Revenue
   // query above (productCode-based to handle sofa variant ids).
+  await ensureProductionOrderSourceLine(c.var.DB);
   const jcRes = await c.var.DB
     .prepare(
       // Double-quoted aliases so Postgres preserves camelCase. Unquoted
@@ -324,10 +326,10 @@ app.get("/production-revenue", async (c) => {
          JOIN production_orders po ON po.id = jc.productionOrderId
          LEFT JOIN sales_order_items soi
                 ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = po.lineNo
+               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = po.lineNo
+               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
         WHERE jc.status IN ('COMPLETED','TRANSFERRED')
           AND jc.completedDate IS NOT NULL
           AND jc.completedDate >= ?
@@ -724,6 +726,7 @@ app.get("/daily-breakdown", async (c) => {
   //    With ?category set, narrow to products of that category.
   //    Bug fix 2026-04-28: requires ALL upholstery JCs done (not just one)
   //    - same fix as /production-revenue. See that endpoint for rationale.
+  await ensureProductionOrderSourceLine(c.var.DB);
   const prodValueRes = await c.var.DB
     .prepare(
       `WITH per_po AS (
@@ -752,10 +755,10 @@ app.get("/daily-breakdown", async (c) => {
          JOIN production_orders po ON po.id = per_po.productionOrderId
          LEFT JOIN sales_order_items soi
                 ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = po.lineNo
+               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = po.lineNo
+               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
          LEFT JOIN products p ON p.id = po.productId
         WHERE p.category IN ('SOFA','BEDFRAME','ACCESSORY')
           ${category ? "AND p.category = ?" : ""}

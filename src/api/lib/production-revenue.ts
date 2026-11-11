@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
 import { timedFn } from "./step-timing";
+import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "./production-order-line";
 
 export type ProductionCategory = "SOFA" | "BEDFRAME" | "ACCESSORY";
 
@@ -57,6 +58,7 @@ async function loadProductionRevenueUntimed(
   // every upholstery JC must be COMPLETED or TRANSFERRED with a non-null
   // completedDate. Recognition date is the MAX completedDate of the
   // done JCs (which equals MAX overall once they are all done).
+  await ensureProductionOrderSourceLine(db);
   const rowsRes = await db
     .prepare(
       `WITH per_po AS (
@@ -107,10 +109,10 @@ async function loadProductionRevenueUntimed(
          JOIN production_orders po ON po.id = per_po.productionOrderId
          LEFT JOIN sales_order_items soi
                 ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = po.lineNo
+               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = po.lineNo
+               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
         WHERE po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
         ORDER BY per_po.unit_completed_at DESC`,
     )
