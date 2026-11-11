@@ -36,7 +36,8 @@ import {
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
 import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
-import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
+import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
+import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import {
   allocateDocsByCategory,
   DEPT_REVENUE_ORDER,
@@ -562,44 +563,12 @@ app.get("/", async (c) => {
       // screens reconcile.
       db
         .prepare(
-          `WITH per_po AS (
-             SELECT productionOrderId,
-                    COUNT(*) AS total_uph,
-                    SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN 1 ELSE 0 END) AS done_uph,
-                    MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN completedDate END) AS unit_completed_at
-               FROM job_cards
-              WHERE departmentCode = 'UPHOLSTERY'
-              GROUP BY productionOrderId
-             HAVING COUNT(*) > 0
-                AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN 1 ELSE 0 END) = COUNT(*)
-           )
+          `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
            SELECT substr(per_po.unit_completed_at::text, 1, 7) AS "ym",
-                  COALESCE(SUM(
-                    COALESCE(
-                      soi.unitPriceSen,
-                      coi.unitPriceSen,
-                      (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                         FROM products p
-                        WHERE p.code = po.productCode
-                        ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                        LIMIT 1),
-                      0
-                    ) * po.quantity
-                  ),0) AS "revenueSen"
+                  COALESCE(SUM(${PRODUCTION_ORDER_UNIT_PRICE_SQL} * po.quantity),0) AS "revenueSen"
              FROM per_po
              JOIN production_orders po ON po.id = per_po.productionOrderId
-             LEFT JOIN sales_order_items soi
-                    ON soi.salesOrderId = po.salesOrderId
-                   AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
-             LEFT JOIN consignment_order_items coi
-                    ON coi.consignmentOrderId = po.consignmentOrderId
-                   AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+             ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
             WHERE po.orgId = ?
               AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
               AND per_po.unit_completed_at IS NOT NULL
@@ -647,19 +616,7 @@ app.get("/", async (c) => {
       // click-through.
       db
         .prepare(
-          `WITH per_po AS (
-             SELECT productionOrderId,
-                    MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN completedDate END) AS unit_completed_at
-               FROM job_cards
-              WHERE departmentCode = 'UPHOLSTERY'
-              GROUP BY productionOrderId
-             HAVING COUNT(*) > 0
-                AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN 1 ELSE 0 END) = COUNT(*)
-           )
+          `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
            SELECT po.itemCategory AS "cat",
                   po.customerName AS "customerName",
                   COALESCE(SUM(po.quantity),0) AS "units",
@@ -682,19 +639,7 @@ app.get("/", async (c) => {
       // Same per_po gate.
       db
         .prepare(
-          `WITH per_po AS (
-             SELECT productionOrderId,
-                    MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN completedDate END) AS unit_completed_at
-               FROM job_cards
-              WHERE departmentCode = 'UPHOLSTERY'
-              GROUP BY productionOrderId
-             HAVING COUNT(*) > 0
-                AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN 1 ELSE 0 END) = COUNT(*)
-           )
+          `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
            SELECT substr(per_po.unit_completed_at::text, 1, 10) AS "d",
                   COALESCE(SUM(CASE WHEN po.itemCategory = 'BEDFRAME'
                                     THEN po.quantity ELSE 0 END),0) AS "bfUnits",
@@ -717,19 +662,7 @@ app.get("/", async (c) => {
       // until a month where it did not.
       db
         .prepare(
-          `WITH per_po AS (
-             SELECT productionOrderId,
-                    MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN completedDate END) AS unit_completed_at
-               FROM job_cards
-              WHERE departmentCode = 'UPHOLSTERY'
-              GROUP BY productionOrderId
-             HAVING COUNT(*) > 0
-                AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN 1 ELSE 0 END) = COUNT(*)
-           )
+          `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
            SELECT
                   COALESCE(SUM(CASE WHEN po.itemCategory = 'BEDFRAME'
                                     THEN po.quantity ELSE 0 END),0) AS "bfUnits",
@@ -1458,38 +1391,14 @@ app.get("/", async (c) => {
         .all<{ yw: string | null; revenueSen: number }>(),
       db
         .prepare(
-          `WITH per_po AS (
-             SELECT productionOrderId,
-                    MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN completedDate END) AS unit_completed_at
-               FROM job_cards
-              WHERE departmentCode = 'UPHOLSTERY'
-              GROUP BY productionOrderId
-             HAVING COUNT(*) > 0
-                AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                                  AND completedDate IS NOT NULL
-                             THEN 1 ELSE 0 END) = COUNT(*)
-           )
+          `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
            SELECT ${bucketExpr("per_po.unit_completed_at")} AS "yw",
                   COALESCE(SUM(
-                    COALESCE(
-                      soi.unitPriceSen,
-                      coi.unitPriceSen,
-                      (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                         FROM products p
-                        WHERE p.code = po.productCode
-                        ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                        LIMIT 1),
-                      0
-                    ) * po.quantity
+                    ${PRODUCTION_ORDER_UNIT_PRICE_SQL} * po.quantity
                   ),0) AS "revenueSen"
              FROM per_po
              JOIN production_orders po ON po.id = per_po.productionOrderId
-             LEFT JOIN sales_order_items soi
-                    ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
-             LEFT JOIN consignment_order_items coi
-                    ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+             ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
             WHERE po.orgId = ?
               AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
               AND per_po.unit_completed_at IS NOT NULL

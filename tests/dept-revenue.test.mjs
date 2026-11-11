@@ -113,7 +113,7 @@ test("the department SQL keeps the Production Revenue gate (all cards done, full
   const src = readFileSync(resolve(process.cwd(), "src/api/lib/dept-revenue.ts"), "utf8");
   assert.match(src, /GROUP BY productionOrderId, departmentCode/);
   assert.match(src, /THEN 1 ELSE 0 END\) = COUNT\(\*\)/);
-  assert.match(src, /soi\.unitPriceSen,\s*coi\.unitPriceSen,/);
+  assert.match(src, /\$\{PRODUCTION_ORDER_UNIT_PRICE_SQL\}/);
   assert.match(src, /\* po\.quantity AS "totalSen"/);
   assert.match(src, /WHERE po\.orgId = \?/);
 });

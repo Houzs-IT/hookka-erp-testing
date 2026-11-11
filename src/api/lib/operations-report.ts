@@ -30,6 +30,7 @@ import {
   type OnTimeDelivery,
 } from "./on-time-delivery";
 import { todayYmdMY } from "../../lib/utils";
+import { FINISHED_PRODUCTION_ORDERS_CTE } from "./production-revenue";
 
 // Fabric / foam item-group keys (mirror dashboard-overview.ts:43 + the foam
 // split the material section uses). Kept local so this file is self-contained.
@@ -313,19 +314,7 @@ async function collectProduction(
   // the latest completion (finish-month basis). (dashboard-overview.ts:686)
   const unitsRow = await db
     .prepare(
-      `WITH per_po AS (
-         SELECT productionOrderId,
-                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) AS unit_completed_at
-           FROM job_cards
-          WHERE departmentCode = 'UPHOLSTERY'
-          GROUP BY productionOrderId
-         HAVING COUNT(*) > 0
-            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN 1 ELSE 0 END) = COUNT(*)
-       )
+      `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
        SELECT COALESCE(SUM(CASE WHEN po.itemCategory = 'BEDFRAME'
                                 THEN po.quantity ELSE 0 END),0) AS "bfUnits",
               COUNT(DISTINCT CASE WHEN po.itemCategory = 'SOFA'

@@ -50,7 +50,7 @@ test("a period sums its months; a month with nothing booked is zero, a period wh
 });
 
 test("the Labor Cost vs Revenue endpoint reads the shared loader, not its own copy", () => {
-  assert.match(WHE, /import \{ loadProductionRevenue \} from "\.\.\/lib\/production-revenue";/);
+  assert.match(WHE, /import \{ loadProductionRevenue\b[^}]*\} from "\.\.\/lib\/production-revenue";/);
   assert.match(WHE, /await loadProductionRevenue\(c\.var\.DB, from, to\)/);
   // (GET /daily-breakdown keeps its own per-day production value — a different
   // query with its own category and price rules, not this card's concern.)
