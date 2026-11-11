@@ -38,7 +38,7 @@ import {
 } from "@/lib/forecast-pnl";
 import { forecastLinesWindow, forecastPnlWindow, plForecastMatrix, type PlForecastColumn } from "@/lib/pnl-forecast";
 import type { PnlMatrixRow, PnlWindowLike } from "@/lib/pnl-matrix";
-import { deptsPostingTo, plEditKey, plPastForecastCol, plRowUnused } from "@/lib/pl-forecast-edit";
+import { deptsPostingTo, foldMaterialDetail, plEditKey, plPastForecastCol, plRowUnused } from "@/lib/pl-forecast-edit";
 import { addMonthsYm } from "@/lib/cashflow-forecast";
 
 type CoaAcct = { code: string; name: string; type: string; isPostable?: boolean };
@@ -111,6 +111,11 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   // Hide unused takes away every row with no figure in any month.
   const [hidePast, setHidePast] = useState(hidePastInitial);
   const [hideUnused, setHideUnused] = useState(false);
+  // Owner 2026-11-11 「我要看到actual 的categories 的actual 那个月的purchase
+  // total罢了」: a material type's row shows the month's actual purchases, and
+  // the stock detail under it (opening / purchase / closing per stock group)
+  // stays folded until Show detail.
+  const [showDetail, setShowDetail] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -275,6 +280,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   const tagOf = (c: PlForecastColumn) => `${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`;
   const keyMonth = (c: PlForecastColumn) => (c.forecast && !c.accum && c.ym ? c.ym : null);
   const shown = foldStatementRows(matrix.rows, new Set());
+  const rowsShown = showDetail ? shown : foldMaterialDetail(shown);
   const lastGrand = matrix.rows.filter((r) => r.kind === "grandtotal").pop();
 
   // A figure cell pair, as the read-only view draws it.
@@ -306,6 +312,10 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   const editCells = (r: PnlMatrixRow, k: string, show: boolean) =>
     vis.map(([c, j]) => {
       const ym = keyMonth(c);
+      // A material type's Actual (and Accumulated) cells: that column's
+      // purchases of the type and their % of sales — what the forecast is
+      // keyed from — rather than the cost after stock.
+      if (!ym && r.purchaseValues) return figure(c, r.purchaseValues[j] ?? 0, r.purchasePctValues?.[j] ?? 0, true);
       if (!ym) return figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, show);
       const m = sheet[ym];
       if (!m) return noMonth(c);
@@ -408,6 +418,10 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
           title="Open or close every ▸ at once: customers, suppliers and departments">
           {allOpen ? "Close all" : "Open all"}
         </Button>
+        <Button size="sm" variant={showDetail ? "default" : "outline"} aria-pressed={showDetail} onClick={() => setShowDetail((v) => !v)}
+          title="A material's row shows the month's actual purchases; Show detail adds its stock groups (opening, purchase, closing) under it">
+          {showDetail ? "Hide detail" : "Show detail"}
+        </Button>
         <Button size="sm" variant={hideUnused ? "default" : "outline"} aria-pressed={hideUnused} onClick={() => setHideUnused((v) => !v)}
           title="Hide every row with no figure in any month, the opened customers, suppliers and departments included; press again to show them all">
           Hide unused
@@ -429,7 +443,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title="Monthly Profit-and-Loss (Overall) — Edit forecast"
-        note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · ▸ opens customers, suppliers or departments · all amounts RM${hidePast ? " · past months' forecasts hidden" : ""}${hideUnused ? " · rows with no figure hidden" : ""}`}
+        note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · a material's Actual is that month's purchases · ▸ opens customers, suppliers or departments · all amounts RM${hidePast ? " · past months' forecasts hidden" : ""}${hideUnused ? " · rows with no figure hidden" : ""}`}
         maxHeight="calc(100vh - 340px)"
       >
         <table data-col-resize="first" data-fin-report data-fin-fit>
@@ -450,7 +464,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
             </tr>
           </thead>
           <tbody>
-            {shown.map(({ row: r, close: isClose }, i) => {
+            {rowsShown.map(({ row: r, close: isClose }, i) => {
               // Hide unused: a line or group (and its total line) with no
               // figure in any column; Sales and the totals always stay.
               if (hideUnused && (r.kind === "line" || r.kind === "group") && r.fcKey !== "sales" && plRowUnused(r)) return null;

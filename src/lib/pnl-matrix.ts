@@ -60,6 +60,12 @@ export interface PnlMatrixRow {
   // material type "cat:<TYPE>", carriage / SST, or the line's account code.
   // Stock and revenue lines carry none.
   fcKey?: string;
+  // A material TYPE row only (`rmTypeOf`): that column's purchases of the type
+  // and their % of sales — not the cost after stock, which `values` holds.
+  // The Edit forecast shows them in the Actual columns, the figure the forecast
+  // is keyed from (owner 2026-11-11 「…actual 那个月的purchase total罢了」).
+  purchaseValues?: number[];
+  purchasePctValues?: number[];
 }
 export interface PnlMatrix { columns: { key: string; label: string; accum: boolean }[]; rows: PnlMatrixRow[] }
 
@@ -138,6 +144,9 @@ export function buildPnlMatrix(cols: PnlMatrixCol[], opts: { spine?: PnlWindowLi
     for (const rg of spine.rmGroups) { const t = typeOf(rg); if (!types.includes(t)) types.push(t); }
     for (const t of types) {
       group(t, 2, (w) => w.rmGroups.filter((q) => typeOf(q) === t).reduce((s, q) => s + consumed(q), 0), `TOTAL ${t}`, `cat:${t}`);
+      const typeRow = rows[rows.length - 1];
+      typeRow.purchaseValues = windows.map((w) => w.rmGroups.filter((q) => typeOf(q) === t).reduce((s, q) => s + q.purchasesSen, 0));
+      typeRow.purchasePctValues = pctOf(typeRow.purchaseValues);
       for (const rg of spine.rmGroups) if (typeOf(rg) === t && !rg.group.startsWith(FORECAST_TYPE_GROUP_PREFIX)) rmGroupRows(rg, 3);
     }
   } else for (const rg of spine.rmGroups) rmGroupRows(rg, 2);

@@ -47,3 +47,23 @@ export function plPastForecastCol(c: { forecast?: boolean; accum: boolean; ym?: 
 export function plRowUnused(row: { values: readonly number[] }): boolean {
   return row.values.every((v) => !v);
 }
+
+/** Edit forecast with the stock detail folded (owner 2026-11-11 「我要看到actual
+ *  的categories 的actual 那个月的purchase total罢了」): everything under a
+ *  material TYPE row — its stock groups with their opening / purchase / closing
+ *  lines — and the type's own total line goes; the type row shows the month's
+ *  purchases instead (PnlMatrixRow.purchaseValues). Everything else stays, in
+ *  order. `items` is foldStatementRows' output. */
+export function foldMaterialDetail<T extends { row: { kind: string; fcKey?: string }; close?: boolean }>(items: readonly T[]): T[] {
+  const out: T[] = [];
+  let inside: T["row"] | null = null;
+  for (const it of items) {
+    if (inside) {
+      if (it.close && it.row === inside) inside = null;
+      continue;
+    }
+    out.push(it);
+    if (!it.close && it.row.kind === "group" && it.row.fcKey?.startsWith("cat:")) inside = it.row;
+  }
+  return out;
+}
