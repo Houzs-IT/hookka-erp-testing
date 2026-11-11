@@ -26,6 +26,10 @@ export type StyledSheet = {
   numCols?: number[];
   /** Columns whose negative numbers print red (red means negative only). */
   negRedCols?: number[];
+  /** Black & white (owner 2026-11-11 「stock take 这个直接black & white」): no
+   *  fills, black text and lines; the header keeps bold and a heavier rule under
+   *  it, series rows stay bold. Used by the count sheet, which is printed. */
+  mono?: boolean;
 };
 
 type Cell = { t?: string; v?: unknown; s?: unknown };
@@ -47,46 +51,45 @@ export type XlsxLike = {
   };
 };
 
-const INK = "1F1D1B";
-const MUTED = "6B7280";
-const LINE = "8C8279";
-const HEADER_FILL = "6B5C32";
-const SERIES_FILL = "EFE9E1";
-const WRITE_FILL = "FFF8DC";
-const NEGATIVE = "B91C1C";
-const thin = { style: "thin", color: { rgb: LINE } };
-const box = { top: thin, bottom: thin, left: thin, right: thin };
+type Palette = { ink: string; muted: string; line: string; headerInk: string; headerFill: string | null; seriesFill: string | null; writeFill: string | null; negative: string };
+const COLOUR: Palette = { ink: "1F1D1B", muted: "6B7280", line: "8C8279", headerInk: "FFFFFF", headerFill: "6B5C32", seriesFill: "EFE9E1", writeFill: "FFF8DC", negative: "B91C1C" };
+const MONO: Palette = { ink: "000000", muted: "000000", line: "000000", headerInk: "000000", headerFill: null, seriesFill: null, writeFill: null, negative: "000000" };
 const TABLE: ReadonlySet<RowKind> = new Set(["header", "series", "item"]);
+const fillOf = (rgb: string | null) => (rgb ? { fill: { fgColor: { rgb } } } : {});
 
 /** The style of one cell, by its row's kind and its column; null = no style. */
-export function cellStyle(kind: RowKind, col: number, value: unknown, sheet: Pick<StyledSheet, "writeCols" | "numCols" | "negRedCols">): Record<string, unknown> | null {
+export function cellStyle(kind: RowKind, col: number, value: unknown, sheet: Pick<StyledSheet, "writeCols" | "numCols" | "negRedCols" | "mono">): Record<string, unknown> | null {
+  const p = sheet.mono ? MONO : COLOUR;
+  const thin = { style: "thin", color: { rgb: p.line } };
+  const box = { top: thin, bottom: thin, left: thin, right: thin };
   const num = (sheet.numCols ?? []).includes(col);
-  const label = { font: { bold: true, color: { rgb: MUTED } } };
+  const label = { font: { bold: true, color: { rgb: p.muted } } };
   switch (kind) {
     case "title":
-      return { font: { bold: true, sz: 14, color: { rgb: INK } }, alignment: { vertical: "center" } };
+      return { font: { bold: true, sz: 14, color: { rgb: p.ink } }, alignment: { vertical: "center" } };
     case "meta":
-      return col === 0 || col === 3 ? label : { font: { bold: true, sz: 12, color: { rgb: INK } } };
+      return col === 0 || col === 3 ? label : { font: { bold: true, sz: 12, color: { rgb: p.ink } } };
     case "metaLong":
-      return col === 0 ? label : { font: { color: { rgb: INK } } };
+      return col === 0 ? label : { font: { color: { rgb: p.ink } } };
     case "sign":
       if (col === 0 || col === 3) return label;
       return col === 1 || col === 4 ? { border: { bottom: thin } } : null;
     case "note":
-      return { font: { italic: true, color: { rgb: MUTED } }, alignment: { wrapText: true, vertical: "top" } };
+      return { font: { italic: true, color: { rgb: p.muted } }, alignment: { wrapText: true, vertical: "top" } };
     case "header":
       return {
-        font: { bold: true, color: { rgb: "FFFFFF" } },
-        fill: { fgColor: { rgb: HEADER_FILL } },
-        border: box,
+        font: { bold: true, color: { rgb: p.headerInk } },
+        ...fillOf(p.headerFill),
+        // Without a fill the header is told apart by a heavier rule under it.
+        border: sheet.mono ? { ...box, bottom: { style: "medium", color: { rgb: p.line } } } : box,
         alignment: { horizontal: num ? "right" : "left", vertical: "center", wrapText: true },
       };
     case "series":
-      return { font: { bold: true, color: { rgb: INK } }, fill: { fgColor: { rgb: SERIES_FILL } }, border: box, alignment: { vertical: "center" } };
+      return { font: { bold: true, color: { rgb: p.ink } }, ...fillOf(p.seriesFill), border: box, alignment: { vertical: "center" } };
     case "item": {
       const s: Record<string, unknown> = { border: box, alignment: { horizontal: num ? "right" : "left", vertical: "center" } };
-      if ((sheet.writeCols ?? []).includes(col)) s.fill = { fgColor: { rgb: WRITE_FILL } };
-      if ((sheet.negRedCols ?? []).includes(col) && typeof value === "number" && value < 0) s.font = { bold: true, color: { rgb: NEGATIVE } };
+      if ((sheet.writeCols ?? []).includes(col) && p.writeFill) s.fill = { fgColor: { rgb: p.writeFill } };
+      if ((sheet.negRedCols ?? []).includes(col) && typeof value === "number" && value < 0) s.font = { bold: true, color: { rgb: p.negative } };
       return s;
     }
     default:

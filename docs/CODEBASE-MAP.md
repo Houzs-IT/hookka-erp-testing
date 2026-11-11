@@ -898,7 +898,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/lib/stock-breakdown.ts` — the pure rules (running balance, reconcilability, doc links) | | |
 | `src/pages/inventory/stock-take.tsx` — Warehouse › Stock Take: count sheet, import, usage (WORK-TRACKER 133) | `src/api/routes/stock-count.ts` — `/api/stock-count/items` · `count` (GET/PUT) · `usage` · `uom-factor` (PUT) | kv `stock_count:<org>:<ym>` / `stock_count_uom_factors:<org>` (reads kv `stock_take_lines`, table `stock_take`) | `tests/stock-count.test.mjs` |
 | | `src/lib/stock-count.ts` — pure rules: `seriesOf`, count sheet, `parseCountWorkbook`, `buildUsage`, Finance export | | |
-| | `src/lib/styled-xlsx.ts` — Excel with lines (xlsx-js-style, lazy): `buildStyledSheet`, `printTitleNames`, `fitToPageXml` / `withFitToPage` | | `tests/stock-count-styled.test.mjs` |
+| | `src/lib/styled-xlsx.ts` — Excel with lines (xlsx-js-style, lazy): `buildStyledSheet` (`mono: true` = black & white — the count sheet, owner 「stock take 这个直接black & white」), `printTitleNames`, `fitToPageXml` / `withFitToPage` | | `tests/stock-count-styled.test.mjs` |
 
 **Big-file section index**
 - `src/pages/inventory/index.tsx`
