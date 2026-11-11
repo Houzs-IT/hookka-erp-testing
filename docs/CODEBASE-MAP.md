@@ -1,5 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
-> **Last verified: 2026-11-11 on branch `fix/production-revenue-line-replay` (to `staging`)**: the Production Revenue note only (piece-to-line pricing in `po-source-line.ts`), read from `production-builder.ts` and the eight revenue queries. Nothing else re-checked.
+> **Last verified: 2026-11-11 on branch `fix/revert-1337-revenue-line-replay` (to `staging`)**: the Production Revenue note only; `po-source-line.ts` removed with the revert of #1337, so the note is back to its pre-#1337 text. Nothing else re-checked.
 > **Last verified: 2026-11-06 on branch `feat/payroll-withdraw-approval` (to `staging`)**: the Employees & Payroll "TAB 5: Payroll" line only (Withdraw Approval button), read from `src/pages/employees.tsx` and the `PUT /` handler in `src/api/routes/payslips.ts`. Nothing else re-checked.
 > **Last verified: 2026-11-05 on branch `feat/bom-copy-from-search` (to `staging`)**: the `src/pages/bom.tsx` row (line count) and the EditBOMDialog onward ranges of its line-range index, re-measured from the file. Nothing else re-checked.
 > **Last verified: 2026-11-05 on branch `feat/overdue-sets-order-progress` (to `staging`)**: the `CustomerOverdueSetsCard.tsx` row only (per-order progress), read from `OverdueOrderProgress.tsx` and the `GET /api/sales-orders/:id` response in `sales-orders.ts`. Nothing else re-checked.
@@ -2262,9 +2262,6 @@ Cash Flow with Summary/Detail (`:1133`) → Balance Sheet (`:1200`) → Financia
   production` (`PctPair`; only the first is coloured against the plan); Cost Structure ends in a TOTAL row over every
   material in the table, not just the drawn ones. Sofa view = SOFA + ACCESSORY, like the sales split. Payload `v15`; the
   snapshot also watches `job_cards`, `sales_order_items`, `consignment_order_items`, `products`.
-  Each piece is priced from its own order line via `src/api/lib/po-source-line.ts` (`PO_SOURCE_LINE_JOINS` /
-  `PO_SOURCE_LINE_PRICES`, used by all eight production-revenue queries): `production_orders.lineNo` is a running
-  piece number, not a line number (BUG-2026-11-11-426, `tests/production-revenue-source-line.test.mjs`).
 - **Running month's labour = labour TO DATE (2026-10-12, owner「任何的 payroll 还没 confirm 都拿这个新卡显示的数据」)**:
   `labourInjectionLines` (accounting.ts — the P&L's report-layer labour) and the dashboard's salary stacks read
   `loadLabourToDate` (`src/api/lib/labour-to-date.ts` → pure `computeLabourToDate` in `src/lib/labour-to-date.ts`) for

@@ -62,7 +62,6 @@ import {
   revenueBuckets,
   summarizeDeptRevenue,
 } from "../lib/dept-revenue";
-import { PO_SOURCE_LINE_JOINS, PO_SOURCE_LINE_PRICES } from "../lib/po-source-line";
 
 // DO statuses that mean goods have shipped — same set the all-time
 // "Delivered" figure uses (loadDeliveredItemsValueSen) so This-Month
@@ -228,13 +227,12 @@ app.get("/", async (c) => {
     }
   }
 
-  // v29 (2026-11-11, BUG-2026-11-11-426): production revenue priced from each piece's own order line.
   // v28 (2026-10-19): staging<-main merge, staging's `stateKpis` and main's v27 payload together.
   // v24 (2026-10-17): customer Total / concentration = whole SO value (accessories included).
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const overviewV = "v29";
+  const overviewV = "v28";
   const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}${windowOverride ? `:cmp${windowOverride}` : ""}`;
   const computeOverview = async () => {
     const db = c.var.DB;
@@ -732,7 +730,6 @@ app.get("/", async (c) => {
            SELECT substr(per_po.unit_completed_at::text, 1, 7) AS "ym",
                   COALESCE(SUM(
                     COALESCE(
-                      ${PO_SOURCE_LINE_PRICES},
                       soi.unitPriceSen,
                       coi.unitPriceSen,
                       (SELECT COALESCE(p.basePriceSen, p.price1Sen)
@@ -751,7 +748,6 @@ app.get("/", async (c) => {
              LEFT JOIN consignment_order_items coi
                     ON coi.consignmentOrderId = po.consignmentOrderId
                    AND coi.lineNo = po.lineNo
-             ${PO_SOURCE_LINE_JOINS}
             WHERE po.orgId = ?
               AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
               AND per_po.unit_completed_at IS NOT NULL
@@ -1665,7 +1661,6 @@ app.get("/", async (c) => {
            SELECT ${bucketExpr("per_po.unit_completed_at")} AS "yw",
                   COALESCE(SUM(
                     COALESCE(
-                      ${PO_SOURCE_LINE_PRICES},
                       soi.unitPriceSen,
                       coi.unitPriceSen,
                       (SELECT COALESCE(p.basePriceSen, p.price1Sen)
@@ -1682,7 +1677,6 @@ app.get("/", async (c) => {
                     ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = po.lineNo
              LEFT JOIN consignment_order_items coi
                     ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = po.lineNo
-             ${PO_SOURCE_LINE_JOINS}
             WHERE po.orgId = ?
               AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
               AND per_po.unit_completed_at IS NOT NULL

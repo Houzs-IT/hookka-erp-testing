@@ -29,7 +29,6 @@
 //   `unclassified`: it counts in All only, never guessed into Bedframe.
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
-import { PO_SOURCE_LINE_JOINS, PO_SOURCE_LINE_PRICES } from "./po-source-line";
 
 type Db = Env["Variables"]["DB"];
 
@@ -112,7 +111,6 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
               substr(d.done_at::text, 1, 10) AS "day",
               po.itemCategory AS "category",
               COALESCE(
-                ${PO_SOURCE_LINE_PRICES},
                 soi.unitPriceSen,
                 coi.unitPriceSen,
                 (SELECT COALESCE(p.basePriceSen, p.price1Sen)
@@ -128,7 +126,6 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
                 ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = po.lineNo
          LEFT JOIN consignment_order_items coi
                 ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = po.lineNo
-         ${PO_SOURCE_LINE_JOINS}
         WHERE po.orgId = ?
           AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
           AND d.done_at IS NOT NULL
