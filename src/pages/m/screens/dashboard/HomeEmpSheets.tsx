@@ -9,7 +9,7 @@ import { SheetFrame } from "./home-ui";
 import { TNUM } from "./home-style";
 import { Empty, LegendChip, RowList, Segment, type RowSpec } from "./emp-ui";
 import { sheetCard as sheetPanel } from "./ops-style";
-import { avatarOf, costCentreName, daysInPeriod, dayLog, dLab, eff, effColor, hLog, hhmm, hrs, lateMin, pct, pctOf, type Row } from "./emp-lib";
+import { avatarOf, costCentreName, daysInPeriod, dayLog, dLab, eff, effColor, overallText, poolEff, rowEff, hLog, hhmm, hrs, lateMin, pct, pctOf, type Row } from "./emp-lib";
 import { NP_LEGEND, deptRow, npDeptRow, npPersonRow, workerRow } from "./emp-rows";
 import { NpChart } from "./HomeEmpB";
 import type { EmpModel, LogPick } from "./emp-model";
@@ -43,20 +43,20 @@ export function EmpSheets({ m }: { m: EmpModel }) {
 
   if (top.type === "tile") {
     const sal = top.kind === "salary";
-    const list = [...m.rows].sort((a, b) => (sal ? b.cost - a.cost : (eff(a.prod, a.work) ?? 0) - (eff(b.prod, b.work) ?? 0)));
+    const list = [...m.rows].sort((a, b) => (sal ? b.cost - a.cost : (rowEff(a) ?? 0) - (rowEff(b) ?? 0)));
     const rows = list.map((r, i) => {
       const x = workerRow(m, r, i, null);
-      if (sal) { x.right = m.salaryText(r.cost); x.rc = M.raisin; x.lines = [`${deptName(r.dept)} · ${r.daysWorked} days · working ${hrs(r.work)} · production ${hrs(r.prod)} · ${pct(eff(r.prod, r.work))}`]; }
+      if (sal) { x.right = m.salaryText(r.cost); x.rc = M.raisin; x.lines = [`${deptName(r.dept)} · ${r.daysWorked} days · working ${hrs(r.work)} · production ${hrs(r.prod)} · ${pct(rowEff(r))}`]; }
       return x;
     });
     return frame(sal ? `Salary by worker · ${W.label}` : `Efficiency by worker · ${W.label}`,
-      sal ? `Total ${m.salaryText(m.head.winSalary)} · Labor Cost rate` : `Overall ${pct(eff(m.totals.prod, m.totals.work))} · production ÷ working hours`,
+      sal ? `Total ${m.salaryText(m.head.winSalary)} · Labor Cost rate` : `Production ${pct(poolEff(m.totals))} · production ÷ working hours${overallText(m.totals) ? ` · ${overallText(m.totals)}` : ""}`,
       <><Panel rows={rows} empty="No one clocked an hour in this window." /><Note>Tap a worker for each day. {sal ? "Highest salary first." : "Lowest efficiency first."}</Note></>);
   }
 
   if (top.type === "depts") {
     const t = m.deptTotal;
-    const tv = eff(t.prod, t.work);
+    const tv = poolEff(t);
     const total: RowSpec = { key: "total", title: "Total", bar: { w: `${(Math.min(tv ?? 0, 130) / 130) * 100}%`, t: `${(Math.min(m.target, 130) / 130) * 100}%`, c: effColor(tv, m.target) }, bg: M.paper, rad: 10, right: pct(tv), rc: effColor(tv, m.target),
       lines: [`${t.people.size} people · ${hrs(t.prod)} / ${hrs(t.work)} · output ${m.outText(t.bf + t.sofa)}`] };
     const rows = [total, ...m.deptRows.map((r) => deptRow(m, r, false))];
@@ -71,7 +71,7 @@ export function EmpSheets({ m }: { m: EmpModel }) {
     for (const e of hh) if (W.winDates.has(e.date) && e.departmentCode === top.dept) hours.set(e.workerId, (hours.get(e.workerId) ?? 0) + (Number(e.hours) || 0));
     const list = m.rows.filter((r) => r.dept === top.dept || logged.has(r.id)).sort((a, b) => (hours.get(b.id) ?? 0) - (hours.get(a.id) ?? 0));
     const rows: RowSpec[] = list.map((r) => {
-      const v = eff(r.prod, r.work);
+      const v = rowEff(r);
       const w = workerRow(m, r, 0, null);
       return { ...w, bar: w.bar, lines: [`Home dept ${deptName(r.dept)} · hours logged here ${hours.has(r.id) ? `${(hours.get(r.id) ?? 0).toFixed(1)} h` : "—"}`, `Working ${hrs(r.work)} · production ${hrs(r.prod)}${m.canSalary ? ` · salary ${m.salaryText(r.cost)}` : ""}`], right: pct(v), rc: effColor(v, m.target), rank: undefined };
     });
@@ -82,10 +82,10 @@ export function EmpSheets({ m }: { m: EmpModel }) {
     const w = m.workerById.get(top.id);
     const r: Row = m.rows.find((x) => x.id === top.id) ?? { id: top.id, name: w?.name ?? top.id, dept: w?.dept ?? "—", work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
     const rows: RowSpec[] = r.byDay.filter((d) => d.work > 0).map((d) => {
-      const v = eff(d.prod, d.work);
+      const v = r.isHelper ? null : eff(d.prod, d.work);
       return { key: d.date, title: dLab(d.date), lines: [`Working ${hrs(d.work)} · production ${hrs(d.prod)}${m.canSalary ? ` · salary ${m.salaryText(d.cost)}` : ""}`], right: pct(v), rc: effColor(v, m.target) };
     });
-    return frame(`${r.name} · ${deptName(r.dept)}`, `${W.label} · ${r.daysWorked} days · efficiency ${pct(eff(r.prod, r.work))}`, <Panel rows={rows} empty="No days in this window." />);
+    return frame(`${r.name} · ${deptName(r.dept)}`, `${W.label} · ${r.daysWorked} days · efficiency ${pct(rowEff(r))}`, <Panel rows={rows} empty="No days in this window." />);
   }
 
   if (top.type === "rank") {

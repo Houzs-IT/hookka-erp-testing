@@ -9,7 +9,7 @@
 //                   (.github/workflows/floor-live-snapshot.yml).
 // ---------------------------------------------------------------------------
 import { buildPerfDays, dayKey } from "./workforce-perf";
-import { loadApprovedExtraTime } from "./efficiency-allowance";
+import { helperWorkerIds, loadApprovedExtraTime } from "./efficiency-allowance";
 import { ensureDeptScanEvents, liveOpenPunchRows } from "./punch-autofill";
 import { buildFloorLive, piecesDoneByWorker, type FloorLiveDept, type FloorLiveWorker } from "./floor-live";
 
@@ -92,7 +92,8 @@ export async function computeFloorLive(db: D1Database, orgId: string, date: stri
 
   const productionDepts = new Set(departments.filter((d) => d.isProduction).map((d) => d.code));
   const approvedExtraTime = await loadApprovedExtraTime(db, date, date);
-  const { perfDays } = buildPerfDays({ whe: [...whe, ...liveRows], jobCards, pics, approvedExtraTime, productionDepts });
+  const helperIds = await helperWorkerIds(db);
+  const { perfDays } = buildPerfDays({ whe: [...whe, ...liveRows], jobCards, pics, approvedExtraTime, productionDepts, helperIds });
   const dayPerf = perfDays.find((d) => d.date === date);
   const perf = new Map((dayPerf?.workers ?? []).map((w) => [w.workerId, w]));
 

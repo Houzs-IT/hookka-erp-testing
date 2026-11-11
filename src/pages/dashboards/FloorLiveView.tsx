@@ -9,6 +9,8 @@
 // ---------------------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { useInterval } from "@/lib/scheduler";
+import { HelperTag } from "@/components/helper-tag";
+import { HelperOverallLine } from "./HelperOverallLine";
 import { useCachedJson } from "@/lib/cached-fetch";
 import {
   floorLiveLayout, periodRange, summaryLayout,
@@ -43,6 +45,7 @@ function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
       <span className="flex min-w-0 items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${p.clockOut ? "bg-[#9CA3AF]" : "bg-[#3E7A4F]"}`} aria-hidden="true" />
         <span className="truncate" title={p.name}>{p.name}</span>
+        {p.isHelper && <HelperTag className="ml-0 shrink-0" />}
       </span>
       {/* Production: last check-in to the department. Non-production: the
           scan-in time, red after an hour (the day's pieces and efficiency
@@ -59,7 +62,7 @@ function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
   );
 }
 
-function DeptCard({ name, rows, production, effPct }: { name: string; rows: FloorLiveRow[]; production: boolean; effPct: number | null }) {
+function DeptCard({ name, rows, production, effPct, overallPct = null, helperMinutes = 0 }: { name: string; rows: FloorLiveRow[]; production: boolean; effPct: number | null; overallPct?: number | null; helperMinutes?: number }) {
   const [open, setOpen] = useState(false);
   const shown = open ? rows : rows.slice(0, ROW_LIMIT);
   return (
@@ -68,7 +71,12 @@ function DeptCard({ name, rows, production, effPct }: { name: string; rows: Floo
         <span className="text-[13px] font-bold">
           {name} <span className="font-medium text-[#6B7280]">· {rows.length}</span>
         </span>
-        {production && <span className={`text-xs font-bold ${effClass(effPct)}`}>{effPct == null ? "—" : `${effPct}%`}</span>}
+        {production && (
+          <span className="text-right">
+            <span className={`text-xs font-bold ${effClass(effPct)}`}>{effPct == null ? "—" : `${effPct}%`}</span>
+            <HelperOverallLine overallPct={overallPct} helperMinutes={helperMinutes} />
+          </span>
+        )}
       </div>
       {rows.length === 0 ? (
         <div className="px-3 py-2.5 text-xs text-[#9CA3AF]">Nobody here today</div>
@@ -170,6 +178,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
           <div key={label} className="rounded-[10px] border border-[#E5E0D8] bg-white px-3 py-2">
             <div className="text-[11px] text-[#6B7280]">{label}</div>
             <div className={`text-lg font-bold tabular-nums ${i === 4 && layout.totals.overHour > 0 ? "text-[#9A3A2D]" : ""}`}>{value}</div>
+            {i === 3 && <HelperOverallLine overallPct={layout.totals.overallPct} helperMinutes={layout.totals.helperMinutes} />}
           </div>
         ))}
       </div>
@@ -179,7 +188,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
         <span className="text-xs text-[#6B7280]">pieces done today · efficiency so far</span>
       </div>
       <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-        {layout.production.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production effPct={d.effPct} />)}
+        {layout.production.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production effPct={d.effPct} overallPct={d.overallPct} helperMinutes={d.helperMinutes} />)}
       </div>
 
       <div className="flex items-baseline gap-2">
@@ -203,7 +212,7 @@ const hrs = (m: number) => (m / 60).toFixed(1);
 function SummaryRow({ r }: { r: FloorSummaryRow }) {
   return (
     <div className={`${SUM_COLS} border-t border-[#F3F0EC] px-3 py-1.5 text-xs tabular-nums ${r.overHourDays > 0 ? "bg-[#FBF3F1]" : "bg-white"}`}>
-      <span className="truncate" title={r.name}>{r.name}</span>
+      <span className="flex min-w-0 items-center gap-1"><span className="truncate" title={r.name}>{r.name}</span>{r.isHelper && <HelperTag className="ml-0 shrink-0" />}</span>
       <span className="text-right text-[#6B7280]">{r.days}</span>
       <span className="text-right font-semibold">{r.done}</span>
       <span className={`text-right font-semibold ${effClass(r.effPct)}`}>{r.effPct == null ? "—" : `${r.effPct}%`}</span>

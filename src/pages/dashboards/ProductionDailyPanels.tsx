@@ -7,9 +7,10 @@ import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import {
-  TAUPE, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN, fmtRMAxis, inPeriod, inFocus,
+  TAUPE, MUTED, BORDER, GREEN, AMBER, RED, CHART_GOLD, fmtN, fmtRMAxis, inPeriod, inFocus, efficiencyPair,
   dayLabel, periodLabel, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { Kpi } from "./dashboard-shared";
+import { HelperOverallLine } from "./HelperOverallLine";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
 // The day-by-day production panels, mounted by the tab that owns each one:
@@ -70,16 +71,18 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
     const latest = days.filter((d) => inPeriod(period, d.date)).reduce((m, d) => (d.date > m ? d.date : m), "");
     const day = period.day ?? latest;
     const deptOf = new Map(employee.workers.map((w) => [w.id, w.dept]));
-    const m = new Map<string, { dept: string; people: Set<string>; working: number; prod: number }>();
+    const m = new Map<string, { dept: string; people: Set<string>; working: number; prod: number; hw: number; hp: number }>();
     for (const d of employee.performance.byDay) {
       if (d.date !== day) continue;
       for (const x of d.workers ?? []) {
         const k = deptOf.get(x.workerId) || "(no dept)";
         let e = m.get(k);
-        if (!e) m.set(k, (e = { dept: k, people: new Set(), working: 0, prod: 0 }));
+        if (!e) m.set(k, (e = { dept: k, people: new Set(), working: 0, prod: 0, hw: 0, hp: 0 }));
         e.people.add(x.workerId);
         e.working += x.workingMinutes;
         e.prod += x.productionMinutes;
+        // Helpers / 杂工: in the hours, out of production efficiency.
+        if (x.isHelper) { e.hw += x.workingMinutes; e.hp += x.productionMinutes; }
       }
     }
     return {
@@ -87,11 +90,19 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
       rows: [...m.values()].sort((a, b) => a.dept.localeCompare(b.dept)),
     };
   }, [employee, period]);
-  const total = rows.reduce((a, r) => ({ w: a.w + r.working, p: a.p + r.prod, n: a.n + r.people.size }), { w: 0, p: 0, n: 0 });
-  const eff = (w: number, p: number) => (w > 0 ? (p / w) * 100 : null);
-  const cell = (v: number | null) => (
-    <span className="font-semibold" style={{ color: v == null ? MUTED : v >= target ? GREEN : AMBER }}>{v == null ? "—" : `${v.toFixed(1)}%`}</span>
-  );
+  const total = rows.reduce((a, r) => ({ w: a.w + r.working, p: a.p + r.prod, hw: a.hw + r.hw, hp: a.hp + r.hp, n: a.n + r.people.size }), { w: 0, p: 0, hw: 0, hp: 0, n: 0 });
+  // Production efficiency (helpers left out) + the Overall line where helpers
+  // clocked time (owner 2026-11-11).
+  const cell = (w: number, p: number, hw: number, hp: number) => {
+    const pair = efficiencyPair([{ workingMinutes: w, productionMinutes: p, helperWorkingMinutes: hw, helperProductionMinutes: hp }]);
+    const v = pair.pct;
+    return (
+      <>
+        <span className="font-semibold" style={{ color: v == null ? MUTED : v >= target ? GREEN : AMBER }}>{v == null ? "—" : `${v.toFixed(1)}%`}</span>
+        <HelperOverallLine overallPct={pair.overallPct} helperMinutes={pair.helperMinutes} className="font-sans" />
+      </>
+    );
+  };
 
   return (
     <Card>
@@ -117,7 +128,7 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.people.size)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(r.working)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(r.prod)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono">{cell(eff(r.working, r.prod))}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{cell(r.working, r.prod, r.hw, r.hp)}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -131,7 +142,7 @@ export function DeptEfficiencyCard({ employee, period, target }: { employee: Emp
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(total.n)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(total.w)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{hrs(total.p)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono">{cell(eff(total.w, total.p))}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{cell(total.w, total.p, total.hw, total.hp)}</td>
                 </tr>
               </tfoot>
             )}

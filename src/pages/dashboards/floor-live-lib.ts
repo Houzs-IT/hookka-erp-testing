@@ -20,6 +20,8 @@ export type FloorLiveRow = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
+  /** Helper / 杂工 (owner 2026-11-11): "—", Helper tag, never an issue. */
+  isHelper?: boolean;
   overHourNonProd: boolean;
 };
 
@@ -41,19 +43,41 @@ export const PRODUCTION_ORDER = [
   "PACKING", "WEBBING",
 ] as const;
 
-export type FloorLiveCard = { code: string; name: string; rows: FloorLiveRow[]; effPct: number | null };
+export type FloorLiveCard = {
+  code: string;
+  name: string;
+  rows: FloorLiveRow[];
+  /** Production efficiency — helpers left out (owner 2026-11-11). */
+  effPct: number | null;
+  /** Everyone incl. helpers, and the helpers' minutes — the small "Overall" line. */
+  overallPct: number | null;
+  helperMinutes: number;
+};
+
+/** Production efficiency (helpers out), Overall (helpers in), helper minutes. */
+function poolOf(rows: readonly FloorLiveRow[]) {
+  let e = 0, w = 0, he = 0, hw = 0;
+  for (const r of rows) {
+    e += r.earnedMinutes;
+    w += r.workingMinutes;
+    if (r.isHelper) { he += r.earnedMinutes; hw += r.workingMinutes; }
+  }
+  return { effPct: pct(e - he, w - hw), overallPct: pct(e, w), helperMinutes: hw };
+}
 
 const pct = (earned: number, worked: number) => (worked > 0 ? Math.round((earned / worked) * 100) : null);
 
 /** Problem rows first: red, then lowest efficiency, then by name. */
 function rank(r: FloorLiveRow): number {
   if (r.overHourNonProd) return -1;
+  if (r.isHelper) return 10000; // after everyone measured
   return r.effPct == null ? 9999 : r.effPct;
 }
 
 export function isIssue(r: FloorLiveRow): boolean {
   // Owner 2026-11-10: only the non-production hour and low efficiency are issues.
-  return r.overHourNonProd || r.effPct == null || r.effPct < 80;
+  // A helper has no personal efficiency, so a "—" is not a problem for them.
+  return r.overHourNonProd || (!r.isHelper && (r.effPct == null || r.effPct < 80));
 }
 
 export function floorLiveLayout(
@@ -62,7 +86,7 @@ export function floorLiveLayout(
 ): {
   production: FloorLiveCard[];
   nonProduction: FloorLiveCard[];
-  totals: { punched: number; stillIn: number; done: number; effPct: number | null; overHour: number };
+  totals: { punched: number; stillIn: number; done: number; effPct: number | null; overallPct: number | null; helperMinutes: number; overHour: number };
 } {
   const words = (opts.q ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const keep = (r: FloorLiveRow) =>
@@ -75,7 +99,7 @@ export function floorLiveLayout(
       code,
       name,
       rows,
-      effPct: pct(all.reduce((s, r) => s + r.earnedMinutes, 0), all.reduce((s, r) => s + r.workingMinutes, 0)),
+      ...poolOf(all),
     };
   };
 
@@ -99,7 +123,7 @@ export function floorLiveLayout(
       punched: w.length,
       stillIn: w.filter((r) => !r.clockOut).length,
       done: w.reduce((s, r) => s + r.done, 0),
-      effPct: pct(w.reduce((s, r) => s + r.earnedMinutes, 0), w.reduce((s, r) => s + r.workingMinutes, 0)),
+      ...poolOf(w),
       overHour: w.filter((r) => r.overHourNonProd).length,
     },
   };
@@ -115,6 +139,7 @@ export type FloorSummaryRow = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
+  isHelper?: boolean;
   nonProdMinutes: number;
   overHourDays: number;
 };

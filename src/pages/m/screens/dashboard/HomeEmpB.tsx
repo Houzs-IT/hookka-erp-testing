@@ -8,7 +8,7 @@ import { AMBER, GREEN, RED } from "../../../dashboards/dashboard-shared-lib";
 import { deptName } from "../../../dashboards/ops-floor-lib";
 import { SHADOW_SMALL, TNUM } from "./home-style";
 import { Empty, ECard, EHead, LegendText, MoreBtn, Pills, RowList, Segment, TipCard } from "./emp-ui";
-import { dLab, dShort, effColor, eff, hrs, npAxis, pct, pctOf, type NpPoint } from "./emp-lib";
+import { dLab, dShort, effColor, poolEff, hrs, npAxis, pct, pctOf, type NpPoint } from "./emp-lib";
 import { NP_LEGEND, deptRow, deptSub, npDeptRow, npPersonRow, workerRow } from "./emp-rows";
 import type { EmpModel } from "./emp-model";
 
@@ -48,7 +48,7 @@ export function WorkersControls({ m }: { m: EmpModel }) {
 // ---------------------------------------------------------------------------
 export function DeptCard({ m }: { m: EmpModel }) {
   const t = m.deptTotal;
-  const v = eff(t.prod, t.work);
+  const v = poolEff(t);
   const rows = m.deptRows;
   return (
     <ECard label="Department efficiency">
