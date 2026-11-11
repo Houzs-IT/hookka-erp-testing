@@ -42,13 +42,12 @@ test("plRowUnused: a row with no figure in any column", () => {
   assert.equal(ed.plRowUnused({ values: [] }), true);
 });
 
-const forecastPage = read("src/pages/forecast.tsx");
 const editor = read("src/pages/accounting/monthly-pl-forecast-editor.tsx");
 const page = read("src/pages/accounting/index.tsx");
 const tab = page.slice(page.indexOf("function MonthlyPlTab("), page.indexOf("\nfunction ", page.indexOf("function MonthlyPlTab(") + 10));
 
-test("both pages lock Sales to the customers' total only when a customer figure exists", () => {
-  assert.match(forecastPage, /const customerKeyed = \(ym: string\) => customersKeyed\(months\[ym\]\);/);
+test("both pages lock Sales to the customers' total only when a customer figure exists (one editor since 2026-11-11)", () => {
+  assert.match(read("src/pages/forecast.tsx"), /<MonthlyPlForecastEditor\s/);
   assert.match(editor, /if \(customersKeyed\(m\)\) return figure\(/);
 });
 

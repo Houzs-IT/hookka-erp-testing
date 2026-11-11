@@ -138,8 +138,8 @@ test("forecastCustomerRows: active customers and any keyed one, by name; Other l
   assert.deepEqual(fp.forecastCustomerRows([], []), [{ id: "other", name: "Other (new customers)" }]);
 });
 
-test("source guard: the Forecast page computes through forecast-pnl", () => {
-  const src = readFileSync(resolve(process.cwd(), "src/pages/forecast.tsx"), "utf8");
+test("source guard: the Forecast page computes through forecast-pnl (the shared Edit forecast since 2026-11-11)", () => {
+  const src = readFileSync(resolve(process.cwd(), "src/pages/accounting/monthly-pl-forecast-editor.tsx"), "utf8");
   assert.match(src, /import \{[^}]*forecastLineGroups[^}]*\} from "@\/lib\/forecast-pnl"/);
   assert.match(src, /forecastMonthFigures\(/);
   assert.doesNotMatch(src, /const catOf = /);

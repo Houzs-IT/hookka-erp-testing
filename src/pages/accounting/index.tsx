@@ -6427,6 +6427,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       <MonthlyPlForecastEditor
         anchor={anchor}
         hidePast={hidePast}
+        period={{ options: anchorOptions, onChange: setAnchor }}
         onClose={(saved) => {
           setEditing(false);
           if (saved) setReload((n) => n + 1);

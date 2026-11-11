@@ -6,8 +6,10 @@
 //   - Monthly P&L › Edit forecast: a material type's row shows that month's
 //     actual PURCHASES (not the cost after stock) in the Actual columns; the
 //     stock detail under it folds away until "Show detail".
-//   - Forecast P&L page: newest month on the left, an Accumulated column, and
-//     an "Actual purchases" line under each material.
+//   - The Forecast P&L page's own newest-first sheet with an "Actual purchases"
+//     line under each material is gone since 2026-11-11: the page is the Edit
+//     forecast itself (owner 「这个actual purchase 会confuse」…「两边都应该是一样
+//     的view」; tests/forecast-page-same-view.test.mjs).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -16,7 +18,6 @@ import { buildPnlMatrix } from "../src/lib/pnl-matrix.ts";
 import { rmTypeOf, sumPnlWindowLikes } from "../src/lib/pnl-forecast.ts";
 import { foldMaterialDetail } from "../src/lib/pl-forecast-edit.ts";
 import { foldStatementRows } from "../src/lib/finance-reports.ts";
-import { actualPurchasesByMonth, sumActualPurchases } from "../src/lib/forecast-actuals.ts";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const rg = (group, description, openingSen, purchasesSen, closingSen) => ({ group, description, openingSen, purchasesSen, closingSen });
@@ -69,46 +70,12 @@ test("Edit forecast folds the stock detail under each material type, and only th
   }
 });
 
-test("Forecast P&L page: each month's actual purchases by material type, and their sum over the months shown", () => {
-  const by = actualPurchasesByMonth({ "2026-10": OCT, "2026-11": NOV, acc: win(0, []) });
-  assert.deepEqual(by["2026-10"], { salesSen: 1_000_000, byType: { FABRIC: 150_000, PLYWOOD: 70_000 } });
-  assert.deepEqual(by["2026-11"], { salesSen: 500_000, byType: { FABRIC: 60_000, PLYWOOD: 45_000 } });
-  assert.equal(by.acc, undefined, "only month windows");
-  // Accumulated over the months on the sheet that have actuals.
-  assert.deepEqual(sumActualPurchases(by, ["2026-12", "2026-11", "2026-10"], "FABRIC"), { sen: 210_000, salesSen: 1_500_000, months: 2 });
-  assert.deepEqual(sumActualPurchases(by, ["2027-01"], "FABRIC"), { sen: 0, salesSen: 0, months: 0 });
-});
-
 test("Edit forecast: Actual columns of a type row show its purchases; the detail comes back with Show detail", () => {
   const ed = read("src/pages/accounting/monthly-pl-forecast-editor.tsx");
   assert.match(ed, /const \[showDetail, setShowDetail\] = useState\(false\)/);
   assert.match(ed, /showDetail \? shown : foldMaterialDetail\(shown\)/);
   assert.match(ed, /r\.purchaseValues/);
   assert.match(ed, /\{showDetail \? "Hide detail" : "Show detail"\}/);
-});
-
-test("Forecast P&L page: newest month on the left, an Accumulated column, actual purchases under each material", () => {
-  const pg = read("src/pages/forecast.tsx");
-  assert.match(pg, /Object\.keys\(months\)\.sort\(\)\.reverse\(\)/);
-  assert.match(pg, />Accumulated</);
-  assert.match(pg, /Actual purchases/);
-  assert.match(pg, /actualPurchasesByMonth\(/);
-  assert.match(pg, /\/api\/accounting\/pl-monthly\?line=all&anchor=\$\{/);
-});
-
-test("the months on the sheet from an earlier financial year get their actuals too: one more request per year", async () => {
-  const { nextActualsAnchor } = await import("../src/lib/forecast-actuals.ts");
-  const sheet = ["2027-06", "2027-01", "2026-11", "2026-10", "2026-09", "2026-08"];
-  // First this month (its year); future months never ask.
-  assert.equal(nextActualsAnchor(sheet, "2026-11", {}, new Set()), "2026-11");
-  // This year's answer covers Sep–Nov; Aug 2026 is the year before (prod 2026-11-11: FY 2026/27 starts in September).
-  const got = { "2026-11": 1, "2026-10": 1, "2026-09": 1 };
-  assert.equal(nextActualsAnchor(sheet, "2026-11", got, new Set(["2026-11"])), "2026-08");
-  assert.equal(nextActualsAnchor(sheet, "2026-11", { ...got, "2026-08": 1 }, new Set(["2026-11", "2026-08"])), null);
-  // A month asked for and still without actuals (before the books) is not asked again.
-  assert.equal(nextActualsAnchor(sheet, "2026-11", got, new Set(["2026-11", "2026-08"])), null);
-  const pg = readFileSync("src/pages/forecast.tsx", "utf8");
-  assert.match(pg, /nextActualsAnchor\(/);
 });
 
 test("who the actual purchases were from (owner 「我看不到actual 的fabric … 是从谁买」): supplier documents' legs by month, type and supplier", async () => {
