@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildFloorLive, piecesDoneByWorker, summarizeFloorLive } from "../src/api/lib/floor-live.ts";
-import { floorLiveLayout, PRODUCTION_ORDER, periodRange, summaryLayout } from "../src/pages/dashboards/floor-live-lib.ts";
+import { completedByDept, floorLiveLayout, PRODUCTION_ORDER, periodRange, summaryLayout } from "../src/pages/dashboards/floor-live-lib.ts";
 
 const DEPTS = [
   { code: "FAB_CUT", name: "Fabric Cutting", isProduction: 1, sequence: 1 },
@@ -180,4 +180,33 @@ test("snapshots: saved once, never overwritten; nightly job and summary route wi
 test("owner 2026-11-10: today's problems strip hidden on a phone under Floor Live", () => {
   const d = readFileSync("src/pages/dashboards/dashboard-prototype.tsx", "utf8");
   assert.match(d, /tab === "operations" && sub === "floor" \? "max-md:hidden" : undefined/);
+});
+
+// ---- HK-0148 (Lim 2026-11-12): the "Completed" pop-up's count, for every department.
+const sc = (bedframe, hbOnly, divanOnly, unknown, sofa) => ({ bedframe, sofa, total: bedframe + sofa, hbOnly, divanOnly, unknown });
+const split = {
+  revenue: [{ bucket: "2026-11-11" }, { bucket: "2026-11-12" }],
+  departments: [
+    { code: "UPHOLSTERY", sets: sc(10, 2, 1, 0, 4), setsByBucket: [sc(6, 0, 1, 0, 3), sc(4, 2, 0, 0, 2)] },
+    { code: "FAB_CUT", sets: sc(0, 0, 0, 0, 0), setsByBucket: [sc(0, 0, 0, 0, 0), sc(0, 0, 0, 0, 0)] },
+  ],
+};
+
+test("completed per department: bedframe = every unit (paired or not), sofa = orders", () => {
+  assert.deepEqual(completedByDept(split).get("UPHOLSTERY"), { bedframeUnits: 13, sofaSets: 4 });
+  assert.deepEqual(completedByDept(split, "2026-11-12").get("UPHOLSTERY"), { bedframeUnits: 6, sofaSets: 2 });
+  assert.deepEqual(completedByDept(split, "2026-11-12").get("FAB_CUT"), { bedframeUnits: 0, sofaSets: 0 });
+});
+
+test("completed per department: a day the split does not cover, or no split, is unknown — not 0", () => {
+  assert.equal(completedByDept(split, "2026-11-13"), null);
+  assert.equal(completedByDept(null), null);
+  assert.equal(completedByDept(split).get("PACKING"), undefined);
+});
+
+test("Floor Live day + summary cards show the completed line from revenue-split", () => {
+  const src = readFileSync(new URL("../src/pages/dashboards/FloorLiveView.tsx", import.meta.url), "utf8");
+  assert.match(src, /revenue-split\?period=\$\{day\.slice\(0, 7\)\}/);
+  assert.match(src, /completed=\{completed\?\.get\(d\.code\)\}/);
+  assert.match(src, /completed=\{completed\?\.get\(c\.code\)\}/);
 });

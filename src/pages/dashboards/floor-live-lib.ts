@@ -6,6 +6,7 @@
 // Any other production department the server sends follows, by its sequence.
 // Non-production departments come in the server's order (Production
 // Shortfall is already dropped server-side).
+import type { SetCount } from "../dashboard-b/revenue-split";
 
 export type FloorLiveRow = {
   id: string;
@@ -152,6 +153,35 @@ export type FloorSummaryResponse = {
   departments: { code: string; name: string; isProduction: boolean; sequence: number }[];
   rows: FloorSummaryRow[];
 };
+
+/** A department's finished production (HK-0148, Lim 2026-11-12): the Operations
+ *  "Completed" pop-up (last UPHOLSTERY card) counted for every department instead —
+ *  an order counts on the day its LAST card in that department completes.
+ *  Bedframe units = Σ quantity; sofa sets = distinct orders. */
+export type DeptCompleted = { bedframeUnits: number; sofaSets: number };
+type CompletedSplit = {
+  revenue?: { bucket: string }[];
+  departments?: { code: string; sets?: SetCount; setsByBucket?: SetCount[] }[];
+};
+
+/**
+ * Per department code, from GET /api/dashboard/overview/revenue-split (the same
+ * per-department rows as Department Revenue). `day` picks that day's bucket; a day
+ * with no bucket (not in the split yet) → null, never a guessed 0.
+ */
+export function completedByDept(split: CompletedSplit | null | undefined, day?: string): Map<string, DeptCompleted> | null {
+  if (!split?.departments) return null;
+  const i = day ? (split.revenue ?? []).findIndex((r) => r.bucket === day) : -1;
+  if (day && i < 0) return null;
+  const out = new Map<string, DeptCompleted>();
+  for (const d of split.departments) {
+    const s = day ? d.setsByBucket?.[i] : d.sets;
+    if (!s) continue;
+    // Every bedframe unit, paired or not — the pop-up counts units, not HB + divan sets.
+    out.set(d.code, { bedframeUnits: s.bedframe + s.hbOnly + s.divanOnly + s.unknown, sofaSets: s.sofa });
+  }
+  return out;
+}
 
 /** The date window a dashboard period covers, capped at today. */
 export function periodRange(

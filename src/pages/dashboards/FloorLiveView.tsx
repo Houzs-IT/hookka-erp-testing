@@ -13,10 +13,11 @@ import { HelperTag } from "@/components/helper-tag";
 import { HelperOverallLine } from "./HelperOverallLine";
 import { useCachedJson } from "@/lib/cached-fetch";
 import {
-  floorLiveLayout, periodRange, summaryLayout,
-  type FloorLiveResponse, type FloorLiveRow, type FloorSummaryResponse, type FloorSummaryRow,
+  completedByDept, floorLiveLayout, periodRange, summaryLayout,
+  type DeptCompleted, type FloorLiveResponse, type FloorLiveRow, type FloorSummaryResponse, type FloorSummaryRow,
 } from "./floor-live-lib";
-import type { Period } from "./dashboard-shared-lib";
+import { widgetPeriod, type Period } from "./dashboard-shared-lib";
+import type { RevenueSplitResp } from "@/pages/dashboard-b/revenue-split";
 
 const ROW_LIMIT = 6;
 const REFRESH_MS = 5 * 60 * 1000;
@@ -62,14 +63,27 @@ function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
   );
 }
 
-function DeptCard({ name, rows, production, effPct, overallPct = null, helperMinutes = 0 }: { name: string; rows: FloorLiveRow[]; production: boolean; effPct: number | null; overallPct?: number | null; helperMinutes?: number }) {
+/** "Completed 16 bedframe units · 9 sofa sets" under a department card's title (HK-0148). */
+function CompletedLine({ c }: { c: DeptCompleted | undefined }) {
+  if (!c) return null;
+  return (
+    <div className="mt-0.5 text-[11px] font-medium text-[#6B7280] tabular-nums" title="Orders whose last job card in this department completed — bedframe = units, sofa = 1 order = 1 set">
+      Completed <span className="font-semibold text-[#1F1D1B]">{c.bedframeUnits}</span> bedframe units · <span className="font-semibold text-[#1F1D1B]">{c.sofaSets}</span> sofa sets
+    </div>
+  );
+}
+
+function DeptCard({ name, rows, production, effPct, overallPct = null, helperMinutes = 0, completed }: { name: string; rows: FloorLiveRow[]; production: boolean; effPct: number | null; overallPct?: number | null; helperMinutes?: number; completed?: DeptCompleted }) {
   const [open, setOpen] = useState(false);
   const shown = open ? rows : rows.slice(0, ROW_LIMIT);
   return (
     <div className="self-start overflow-hidden rounded-[10px] border border-[#E5E0D8] bg-white">
       <div className="flex items-center justify-between border-b border-[#EEE9E4] bg-[#F7F5F3] px-3 py-2">
-        <span className="text-[13px] font-bold">
-          {name} <span className="font-medium text-[#6B7280]">· {rows.length}</span>
+        <span>
+          <span className="text-[13px] font-bold">
+            {name} <span className="font-medium text-[#6B7280]">· {rows.length}</span>
+          </span>
+          <CompletedLine c={completed} />
         </span>
         {production && (
           <span className="text-right">
@@ -120,6 +134,8 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
   );
   const [q, setQ] = useState("");
   const [issuesOnly, setIssuesOnly] = useState(false);
+  const { data: split } = useCachedJson<RevenueSplitResp>(`/api/dashboard/overview/revenue-split?period=${day.slice(0, 7)}`);
+  const completed = useMemo(() => completedByDept(split, day), [split, day]);
 
   // Every 5 minutes, paused while the tab is hidden.
   useInterval(() => refresh(), pastDay ? null : REFRESH_MS);
@@ -188,7 +204,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
         <span className="text-xs text-[#6B7280]">pieces done today · efficiency so far</span>
       </div>
       <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-        {layout.production.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production effPct={d.effPct} overallPct={d.overallPct} helperMinutes={d.helperMinutes} />)}
+        {layout.production.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production effPct={d.effPct} overallPct={d.overallPct} helperMinutes={d.helperMinutes} completed={completed?.get(d.code)} />)}
       </div>
 
       <div className="flex items-baseline gap-2">
@@ -222,13 +238,14 @@ function SummaryRow({ r }: { r: FloorSummaryRow }) {
   );
 }
 
-function SummaryCard({ name, rows }: { name: string; rows: FloorSummaryRow[] }) {
+function SummaryCard({ name, rows, completed }: { name: string; rows: FloorSummaryRow[]; completed?: DeptCompleted }) {
   const [open, setOpen] = useState(false);
   const shown = open ? rows : rows.slice(0, ROW_LIMIT);
   return (
     <div className="self-start overflow-hidden rounded-[10px] border border-[#E5E0D8] bg-white">
       <div className="border-b border-[#EEE9E4] bg-[#F7F5F3] px-3 py-2 text-[13px] font-bold">
         {name} <span className="font-medium text-[#6B7280]">· {rows.length}</span>
+        <CompletedLine c={completed} />
       </div>
       <div className={`${SUM_COLS} px-3 py-1 text-[11px] text-[#9CA3AF]`}>
         <span>Worker</span>
@@ -257,6 +274,12 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
   const { data, loading, error, refresh } = useCachedJson<FloorSummaryResponse>(`/api/dashboard/floor-live/summary?from=${from}&to=${to}`, 0);
   const [q, setQ] = useState("");
   const cards = useMemo(() => (data?.success ? summaryLayout(data, q) : []), [data, q]);
+  // The split covers a month, quarter or year; a custom range that is none of those gets no count.
+  const splitKey = widgetPeriod(period);
+  const { data: split } = useCachedJson<RevenueSplitResp>(
+    period.mode !== "range" || /Q/.test(splitKey) ? `/api/dashboard/overview/revenue-split?period=${splitKey}` : null,
+  );
+  const completed = useMemo(() => completedByDept(split), [split]);
 
   if (loading && !data) return <div className="py-10 text-sm text-[#6B7280]">Loading the summary…</div>;
   if (error || (data && data.success === false)) {
@@ -296,7 +319,7 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
         </div>
       ) : (
         <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-          {cards.map((c) => <SummaryCard key={c.code} name={c.name} rows={c.rows} />)}
+          {cards.map((c) => <SummaryCard key={c.code} name={c.name} rows={c.rows} completed={completed?.get(c.code)} />)}
         </div>
       )}
       <p className="text-[11px] text-[#6B7280]">
