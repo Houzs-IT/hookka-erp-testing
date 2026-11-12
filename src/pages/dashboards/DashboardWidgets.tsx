@@ -561,7 +561,7 @@ export function PlantLoadCard({ period }: { period: Period }) {
   const prod = ov?.production;
   const pl = plantLoad(prod, true);
   const perWorker = prod ? capacityPerWorkerMin(prod.capacityDays ?? [], prod.dailyCapacityMin) : null;
-  const avgBasis = widgetPeriod(period) === "all" ? "7-day avg" : "month avg";
+  const avgBasis = widgetPeriod(period) === "all" ? "12-day avg" : "month avg";
   const capDays = [...(prod?.capacityDays ?? [])].sort((a, b) => a.date.localeCompare(b.date));
   const tone = TONE[pl.tone];
   return (

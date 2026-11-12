@@ -2,7 +2,7 @@
 // Visual + interaction source: the approved Home Operations HTML. Data and rules: desktop dashboard-b/index.tsx
 // (plantLoad, deptBacklog). Both read GET /api/dashboard/overview?period=<month|quarter|year>: they FOLLOW the period,
 // a past period shows a saved snapshot / a month-end reconstruction / today's live figure (labelled), and a picked day
-// does not change them (the department capacity is always the rolling 7 working days).
+// does not change them (the department capacity is always the rolling 12 working days).
 import { useMemo, useState } from "react";
 import { CircleCheck, Clock, Factory, Package, TriangleAlert, type LucideIcon } from "lucide-react";
 import { M } from "../../theme";
@@ -45,13 +45,13 @@ export function PlantLoadCard({ d, period, periodKey, curYm }: { d: OpsData; per
   const head = prod ? completedHead(prod) : null;
   const per = prod ? perWorkerMin(prod.capacityDays, prod.dailyCapacityMin) : null;
   const win = capacityWindowLabel(periodKey, curYm);
-  const winText = win === "7-day avg" ? "last 7 working days" : win;
+  const winText = win === "12-day avg" ? "last 12 working days" : win;
   const days = prod ? [...prod.capacityDays].sort((a, b) => a.date.localeCompare(b.date)) : [];
   const avg = prod?.dailyCapacityMin ?? 0;
   const mx = Math.max(1, ...days.map((x) => x.minutes)) * 1.08;
   const sel = days.find((x) => x.date === day) ?? null;
   const rows: Row[] = prod && head ? [
-    { icon: Factory, bg: "#F4EFE6", fg: M.taupe, label: "Daily Capacity", hint: win === "7-day avg" ? "avg of last 7 working days" : win, value: hrs(avg), unit: "per day", sheet: "cap" },
+    { icon: Factory, bg: "#F4EFE6", fg: M.taupe, label: "Daily Capacity", hint: win === "12-day avg" ? "avg of last 12 working days" : win, value: hrs(avg), unit: "per day", sheet: "cap" },
     { icon: Clock, bg: C.dangerBg, fg: C.danger, label: "Total Backlog", hint: "by department", value: `${prod.backlogDays.toFixed(1)} days`, unit: `${hrs(prod.backlogMin)} queued`, sheet: "backlog" },
     { icon: Package, bg: C.tealBg, fg: C.teal, label: "Active Jobs", hint: "pending, by customer", value: `${n0(prod.activeJobs.bedframeUnits)} / ${n0(prod.activeJobs.sofaSets)}`, unit: "bedframe / sofa", sheet: "jobs" },
     { icon: CircleCheck, bg: C.okBg, fg: C.ok, label: "Completed", hint: "all job cards done", value: `${n0(head.bedframe)} / ${n0(head.sofa)}`, unit: "bedframe / sofa", sheet: "done" },

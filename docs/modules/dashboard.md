@@ -1,5 +1,6 @@
 # Dashboard & Command Center — Module Guide
 
+> **Last verified: 2026-11-12** (branch `feat/capacity-12-working-days`, to `main`): only the `/revenue-split` anchor, shifted by the per-category backlog code. Nothing else re-checked.
 > **Last verified: 2026-10-19** (branch `fix/dashboard-dept-revenue-to-main` (to `main`, cherry-picked from staging #1003)): the Department Revenue JSX and `DeptRevenueChart` rows (anchors :1688 / :250 and the Day view). Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
@@ -56,7 +57,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1688` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table (Today / Avg / day / Total / Sets) + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:258` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2225` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2280` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:68 / 149` | Lazy recharts wrappers (~357 KB chunk) |
 | `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:82` | Single ~2000-line aggregate handler; gated on `dashboard:read` or a dashboard tab (HK-0132) |
