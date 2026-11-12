@@ -11,7 +11,10 @@
 //   - outsourced work is not counted, neither in the day nor in the best day
 //     (a (PO, department) with any card done by an is_outsource worker drops);
 //   - a cancelled order's finished work stays counted ("做了的就不能取消了");
-//   - the comparison is the department's best day on record, not an average.
+//   - the comparison is the department's best day, not an average — over the
+//     last 30 days, leaving out a day above 3x that department's usual (the
+//     median of its working days) so a bulk back-entry day (Packing 256 on
+//     2026-05-05) can't set an unreachable mark (owner 「A」 + 「近一个月就可以了」).
 // Read-only.
 // ---------------------------------------------------------------------------
 
@@ -77,6 +80,11 @@ export async function loadDeptCompletedByDay(db: Db, orgId: string | null): Prom
   return out;
 }
 
+/** One day straight from the per-day rows (same numbers as the range query for a single day). */
+export function dayCounts(days: DeptDayCount[], date: string): Map<string, { bedframeUnits: number; sofaSets: number }> {
+  return new Map(days.filter((d) => d.date === date).map((d) => [d.dept, { bedframeUnits: d.bedframeUnits, sofaSets: d.sofaSets }]));
+}
+
 /** Per department over [from, to] — a sofa order finishing across two days counts once. */
 export async function loadDeptCompletedRange(db: Db, orgId: string, from: string, to: string): Promise<Map<string, { bedframeUnits: number; sofaSets: number }>> {
   const res = await db
@@ -100,15 +108,38 @@ export async function loadDeptCompletedRange(db: Db, orgId: string, from: string
   return out;
 }
 
-/** Best day per department (ties keep the earliest day). */
-export function bestDays(days: DeptDayCount[]): Map<string, { bed: DeptBest; sofa: DeptBest }> {
+export const BEST_WINDOW_DAYS = 30;
+export const OUTLIER_X = 3;
+
+const median = (xs: number[]) => {
+  if (!xs.length) return 0;
+  const a = [...xs].sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+/** Best day per department within the last BEST_WINDOW_DAYS up to `today`,
+ *  a day above OUTLIER_X x the median of the department's non-zero days left
+ *  out. Ties keep the earliest day. */
+export function bestDays(days: DeptDayCount[], today: string): Map<string, { bed: DeptBest; sofa: DeptBest }> {
+  const from = new Date(`${today}T00:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - (BEST_WINDOW_DAYS - 1));
+  const fromYmd = from.toISOString().slice(0, 10);
+  const inWin = days.filter((d) => d.date >= fromYmd && d.date <= today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const byDept = new Map<string, DeptDayCount[]>();
+  for (const d of inWin) byDept.set(d.dept, [...(byDept.get(d.dept) ?? []), d]);
   const out = new Map<string, { bed: DeptBest; sofa: DeptBest }>();
-  const sorted = [...days].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  for (const d of sorted) {
-    const b = out.get(d.dept) ?? { bed: { n: 0, date: null }, sofa: { n: 0, date: null } };
-    if (d.bedframeUnits > b.bed.n) b.bed = { n: d.bedframeUnits, date: d.date };
-    if (d.sofaSets > b.sofa.n) b.sofa = { n: d.sofaSets, date: d.date };
-    out.set(d.dept, b);
+  for (const [dept, list] of byDept) {
+    const pick = (f: (d: DeptDayCount) => number): DeptBest => {
+      const cap = OUTLIER_X * median(list.map(f).filter((n) => n > 0));
+      let best: DeptBest = { n: 0, date: null };
+      for (const d of list) {
+        const n = f(d);
+        if (n > best.n && n <= cap) best = { n, date: d.date };
+      }
+      return best;
+    };
+    out.set(dept, { bed: pick((d) => d.bedframeUnits), sofa: pick((d) => d.sofaSets) });
   }
   return out;
 }
@@ -117,8 +148,9 @@ export function bestDays(days: DeptDayCount[]): Map<string, { bed: DeptBest; sof
 export function shapeDeptCompleted(
   range: Map<string, { bedframeUnits: number; sofaSets: number }>,
   days: DeptDayCount[],
+  today: string,
 ): DeptCompleted[] {
-  const best = bestDays(days);
+  const best = bestDays(days, today);
   const depts = new Set<string>([...range.keys(), ...best.keys()]);
   return [...depts].map((dept) => {
     const r = range.get(dept) ?? { bedframeUnits: 0, sofaSets: 0 };

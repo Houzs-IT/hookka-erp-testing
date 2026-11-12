@@ -14,7 +14,7 @@ test("best day per department: the highest day, earliest on a tie", () => {
     { dept: "UPHOLSTERY", date: "2026-11-04", bedframeUnits: 16, sofaSets: 9 },
     { dept: "UPHOLSTERY", date: "2026-11-12", bedframeUnits: 28, sofaSets: 4 },
     { dept: "FIBRE", date: "2026-11-03", bedframeUnits: 0, sofaSets: 41 },
-  ]);
+  ], "2026-11-12");
   assert.deepEqual(best.get("UPHOLSTERY"), { bed: { n: 28, date: "2026-11-12" }, sofa: { n: 9, date: "2026-11-04" } });
   assert.deepEqual(best.get("FIBRE").bed, { n: 0, date: null });
 });
@@ -24,11 +24,23 @@ test("the period count sits next to the best day; a department with only history
   const rows = shapeDeptCompleted(range, [
     { dept: "UPHOLSTERY", date: "2026-11-10", bedframeUnits: 23, sofaSets: 9 },
     { dept: "FOAM_CUTTING", date: "2026-11-03", bedframeUnits: 0, sofaSets: 23 },
-  ]);
+  ], "2026-11-12");
   const by = Object.fromEntries(rows.map((r) => [r.dept, r]));
   assert.equal(by.UPHOLSTERY.bedframeUnits, 28);
   assert.equal(by.UPHOLSTERY.bestBedframe.n, 23);
   assert.deepEqual([by.FOAM_CUTTING.sofaSets, by.FOAM_CUTTING.bestSofa.n], [0, 23]);
+});
+
+test("best day: last 30 days only, a day above 3x the usual (median) left out", () => {
+  const d = (date, bed) => ({ dept: "PACKING", date, bedframeUnits: bed, sofaSets: 0 });
+  const best = bestDays([
+    d("2026-05-05", 256), // bulk back-entry, long ago
+    d("2026-10-13", 40), // 31 days before 11-12: outside the window
+    d("2026-11-02", 16), d("2026-11-03", 22), d("2026-11-04", 20), d("2026-11-05", 15),
+    d("2026-11-06", 14), d("2026-11-07", 90), // 90 > 3 x median 18 → left out
+    d("2026-11-11", 30),
+  ], "2026-11-12");
+  assert.deepEqual(best.get("PACKING").bed, { n: 30, date: "2026-11-11" });
 });
 
 test("SQL: per-department last card, outsourced work dropped, cancelled orders kept, units vs sets", () => {

@@ -97,7 +97,7 @@ test("wired: route mounted, Operations sub-tab, 5-minute refresh, cards keep the
   assert.match(readFileSync("src/api/worker.ts", "utf8"), /app\.route\("\/api\/dashboard\/floor-live", floorLive\)/);
   assert.match(readFileSync("src/pages/dashboards/dashboard-shared-lib.ts", "utf8"), /\{ key: "floor", label: "Floor Live" \}/);
   const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
-  assert.match(view, /REFRESH_MS = 5 \* 60 \* 1000/);
+  assert.match(view, /REFRESH_MS = 3 \* 60 \* 1000/);
   assert.match(view, /items-start/);
   assert.match(view, /ROW_LIMIT = 6/);
 });
