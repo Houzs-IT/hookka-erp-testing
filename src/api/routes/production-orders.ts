@@ -58,7 +58,7 @@ import {
   poListCacheVersion,
   bumpPoListCacheVersion,
 } from "../lib/po-list-cache";
-import { DEPT_ORDER } from "../lib/lead-times";
+import { DEPT_ORDER, loadLeadTimeSettings } from "../lib/lead-times";
 import {
   validateFabricCodes,
   unknownFabricCodeError,
@@ -280,6 +280,7 @@ export async function computeOverdueCounts(
                 WHERE jc.productionOrderId = po.id
                   AND jc.departmentCode = ?
                   AND jc.dueDate IS NOT NULL
+                  AND jc.dueDate <> ''
                   AND jc.dueDate < ?
                   AND jc.status NOT IN ('COMPLETED','TRANSFERRED')) AS earliest_overdue
          FROM production_orders po
@@ -1221,6 +1222,7 @@ app.post("/stock", async (c) => {
   const denied = await requirePermission(c, "production-orders", "create");
   if (denied) return denied;
   const db = c.var.DB;
+  const blankDueDates = !(await loadLeadTimeSettings(db)).autoScheduleEnabled;
   // is_stock and the cust-factory-stock row reach prod ONLY through this —
   // migration 0236 is inert on deploy. Awaited before the first write below,
   // which binds both.
@@ -1535,7 +1537,8 @@ app.post("/stock", async (c) => {
           jc.departmentName,
           jc.sequence,
           "WAITING",
-          targetEndDate,
+          // Auto-schedule OFF => blank, same rule as the SO-confirm builder (HK-0147).
+          blankDueDates ? "" : targetEndDate,
           jc.wipKey,
           jc.wipCode,
           jc.wipType,
