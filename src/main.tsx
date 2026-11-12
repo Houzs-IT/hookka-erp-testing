@@ -12,9 +12,6 @@ import './styles/finance-v2.css'
 // html.dark and only on screen, so light mode and print are unchanged.
 import './styles/dark-base.css'
 import './styles/dark-theme.generated.css'
-// Refined look (preview, opt-in via Topbar › Look): tokens + per-class remap.
-import './styles/refined-tokens.css'
-import './styles/refined-theme.generated.css'
 import { watchSystemTheme } from './lib/theme'
 // Side-effect import: installs the global fetch interceptor that injects the
 // Authorization header and handles 401 redirects. Must run before any

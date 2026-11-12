@@ -47,8 +47,7 @@ test("the generator covers the app's colour classes, dark-only and screen-only",
 
 test("wiring: build regenerates, first paint applies the choice, menu offers it, paper stays light", () => {
   const pkg = JSON.parse(read("package.json"));
-  // The refined-look generator (owner 2026-11-12) runs next to it before vite.
-  assert.match(pkg.scripts.build, /^node scripts\/gen-dark-theme\.mjs && .*vite build/);
+  assert.match(pkg.scripts.build, /^node scripts\/gen-dark-theme\.mjs && vite build/);
   const html = read("index.html");
   assert.match(html, /localStorage\.getItem\("hookka-theme"\)/);
   assert.match(html, /classList\.add\("dark"\)/);

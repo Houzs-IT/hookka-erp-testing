@@ -12,8 +12,6 @@ import { fmtShortDate } from "../utils";
 // i.e. an operator manually moved the date off-plan, or the config
 // itself changed. Done cells keep their white ✓ regardless (the work
 // already shipped, leadtime drift is moot).
-// data-cell / data-offplan: hooks for the refined look (src/styles/refined-tokens.css),
-// which turns these solid blocks into soft fills (eye comfort, owner 2026-11-12).
 export function CellBox({ cell }: { cell: Cell }) {
   const base =
     "h-full w-full flex flex-col items-center justify-center text-[10px] leading-tight relative";
@@ -24,7 +22,7 @@ export function CellBox({ cell }: { cell: Cell }) {
   if (cell.state === "done") {
     // Done suppresses the off-leadtime override per spec — keep white.
     return (
-      <div data-cell="done" className={`${base} bg-[#3E6570] text-white`}>
+      <div className={`${base} bg-[#3E6570] text-white`}>
         <Check className="h-3.5 w-3.5" strokeWidth={3} />
         <span className="text-[9px] mt-0.5 font-semibold">
           {fmtShortDate(cell.latestCompleted || cell.earliestDue)}
@@ -35,7 +33,7 @@ export function CellBox({ cell }: { cell: Cell }) {
   const textColour = cell.isOffLeadtime ? "text-[#22D3EE]" : "text-white";
   if (cell.state === "overdue") {
     return (
-      <div data-cell="overdue" data-offplan={cell.isOffLeadtime || undefined} className={`${base} bg-[#9A3A2D] ${textColour} cursor-pointer hover:bg-[#B04536]`}>
+      <div className={`${base} bg-[#9A3A2D] ${textColour} cursor-pointer hover:bg-[#B04536]`}>
         <span className="font-bold">{cell.doneCards}/{cell.totalCards}</span>
         <span className="text-[9px] font-semibold">{fmtShortDate(cell.earliestDue)}</span>
       </div>
@@ -43,7 +41,7 @@ export function CellBox({ cell }: { cell: Cell }) {
   }
   // pending
   return (
-    <div data-cell="pending" data-offplan={cell.isOffLeadtime || undefined} className={`${base} bg-[#9C6F1E] ${textColour} cursor-pointer hover:bg-[#B38023]`}>
+    <div className={`${base} bg-[#9C6F1E] ${textColour} cursor-pointer hover:bg-[#B38023]`}>
       <span className="font-bold">{cell.doneCards}/{cell.totalCards}</span>
       <span className="text-[9px] font-semibold">{fmtShortDate(cell.earliestDue)}</span>
     </div>
