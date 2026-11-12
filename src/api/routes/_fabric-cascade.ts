@@ -76,7 +76,8 @@ export type CascadeInput = {
   itemCode: string;
   description: string;
   itemGroup: string;
-  balanceQty: number;
+  /** Omitted: an existing mirror row keeps its stock, a new one starts at 0. */
+  balanceQty?: number;
   /** If omitted uses defaults (priceSen=0 / price=0). Never overwrites on update. */
   priceSen?: number;
 };
@@ -96,6 +97,8 @@ export async function buildFabricUpsertStatements(
   if (!fabCategory || !trackCategory) return [];
 
   const stmts: D1PreparedStatement[] = [];
+  const keepSoh = input.balanceQty === undefined;
+  const soh = input.balanceQty ?? 0;
 
   // --- fabrics upsert (keyed on code) ---
   const existingFab = await db
@@ -103,13 +106,17 @@ export async function buildFabricUpsertStatements(
     .bind(input.itemCode)
     .first<{ id: string }>();
   if (existingFab) {
-    // Update identity columns + soh, PRESERVE priceSen.
+    // Update identity columns (+ soh when given), PRESERVE priceSen.
     stmts.push(
-      db
-        .prepare(
-          `UPDATE fabrics SET name = ?, category = ?, sohMeters = ? WHERE id = ?`,
-        )
-        .bind(input.description, fabCategory, input.balanceQty, existingFab.id),
+      keepSoh
+        ? db
+            .prepare(`UPDATE fabrics SET name = ?, category = ? WHERE id = ?`)
+            .bind(input.description, fabCategory, existingFab.id)
+        : db
+            .prepare(
+              `UPDATE fabrics SET name = ?, category = ?, sohMeters = ? WHERE id = ?`,
+            )
+            .bind(input.description, fabCategory, soh, existingFab.id),
     );
   } else {
     stmts.push(
@@ -124,7 +131,7 @@ export async function buildFabricUpsertStatements(
           input.description,
           fabCategory,
           Number.isFinite(input.priceSen) ? Number(input.priceSen) : 0,
-          input.balanceQty,
+          soh,
           0,
         ),
     );
@@ -136,18 +143,19 @@ export async function buildFabricUpsertStatements(
     .bind(input.itemCode)
     .first<{ id: string }>();
   if (existingTrack) {
-    // Preserve priceTier / price / usage / shortage / reorderPoint.
+    // Preserve priceTier / price / usage / shortage / reorderPoint (+ soh when not given).
     stmts.push(
-      db
-        .prepare(
-          `UPDATE fabric_trackings SET fabricDescription = ?, fabricCategory = ?, soh = ? WHERE id = ?`,
-        )
-        .bind(
-          input.description,
-          trackCategory,
-          input.balanceQty,
-          existingTrack.id,
-        ),
+      keepSoh
+        ? db
+            .prepare(
+              `UPDATE fabric_trackings SET fabricDescription = ?, fabricCategory = ? WHERE id = ?`,
+            )
+            .bind(input.description, trackCategory, existingTrack.id)
+        : db
+            .prepare(
+              `UPDATE fabric_trackings SET fabricDescription = ?, fabricCategory = ?, soh = ? WHERE id = ?`,
+            )
+            .bind(input.description, trackCategory, soh, existingTrack.id),
     );
   } else {
     stmts.push(
@@ -166,7 +174,7 @@ export async function buildFabricUpsertStatements(
           trackCategory,
           "PRICE_2", // default tier (seed data uses PRICE_2)
           0, // price
-          input.balanceQty, // soh
+          soh,
           0,
           0,
           0,
