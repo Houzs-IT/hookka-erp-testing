@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // Floor Live › each department card's "Completed" strip (owner 2026-11-12,
 // design https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE approved).
-// Bedframe = units, sofa = sets; "/ 38" = the department's best day on
-// record (green when today reaches it; red when behind the 9-hour pace
-// toward it, today only). Click = every day of the month.
+// Bedframe = units, sofa = sets; "/ 26" = the department's average over the
+// last 12 working days (green when today reaches it; red when behind the
+// 9-hour pace toward it, today only). Click = every day of the month.
 // Data: GET /api/dashboard/floor-live/completed (src/api/lib/dept-completed.ts).
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from "react";
@@ -12,13 +12,13 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import type { DeptCompletedResponse } from "./floor-live-lib";
 import { behindPace, deptCompletedFor, deptCompletedDays, myNowMin } from "./floor-live-lib";
 
-export function DeptCompletedStrip({ code, name, data, label, showBest, live, today }: {
+export function DeptCompletedStrip({ code, name, data, label, showUsual, live, today }: {
   code: string;
   name: string;
   data: DeptCompletedResponse | null | undefined;
   /** Small heading; the dashboard passes none (owner 2026-11-12: no "Completed today" words). */
   label?: string;
-  showBest: boolean;
+  showUsual: boolean;
   /** Today, live: a number behind the time-based pace turns red. */
   live: boolean;
   today: string;
@@ -26,13 +26,13 @@ export function DeptCompletedStrip({ code, name, data, label, showBest, live, to
   const [open, setOpen] = useState(false);
   const c = deptCompletedFor(data, code);
   if (!c) return null;
-  const hasBed = c.bedframeUnits > 0 || c.bestBedframe.n > 0;
-  const hasSofa = c.sofaSets > 0 || c.bestSofa.n > 0;
+  const hasBed = c.bedframeUnits > 0 || c.usualBedframe > 0;
+  const hasSofa = c.sofaSets > 0 || c.usualSofa > 0;
   if (!hasBed && !hasSofa) return null;
-  const record = (v: number, best: number) => showBest && best > 0 && v >= best;
+  const reached = (v: number, usual: number) => showUsual && usual > 0 && v >= usual;
   const nowMin = myNowMin();
-  const tone = (v: number, best: number) =>
-    record(v, best) ? "text-[#2F6B3F]" : live && behindPace(v, best, nowMin) ? "text-[#DC2626]" : "text-[#1F1D1B]";
+  const tone = (v: number, usual: number) =>
+    reached(v, usual) ? "text-[#2F6B3F]" : live && behindPace(v, usual, nowMin) ? "text-[#DC2626]" : "text-[#1F1D1B]";
   return (
     <>
       <button
@@ -46,14 +46,14 @@ export function DeptCompletedStrip({ code, name, data, label, showBest, live, to
           <span className="flex flex-wrap items-baseline gap-x-3 text-xs text-[#4B5563]">
             {hasBed && (
               <span>
-                Bedframe <b className={`text-sm tabular-nums ${tone(c.bedframeUnits, c.bestBedframe.n)}`}>{c.bedframeUnits}</b>
-                {showBest && <span className="text-[10px] text-[#6B7280]"> / {c.bestBedframe.n}</span>}
+                Bedframe <b className={`text-sm tabular-nums ${tone(c.bedframeUnits, c.usualBedframe)}`}>{c.bedframeUnits}</b>
+                {showUsual && <span className="text-[10px] text-[#6B7280]"> / {Math.round(c.usualBedframe)}</span>}
               </span>
             )}
             {hasSofa && (
               <span>
-                Sofa <b className={`text-sm tabular-nums ${tone(c.sofaSets, c.bestSofa.n)}`}>{c.sofaSets}</b>
-                {showBest && <span className="text-[10px] text-[#6B7280]"> / {c.bestSofa.n}</span>}
+                Sofa <b className={`text-sm tabular-nums ${tone(c.sofaSets, c.usualSofa)}`}>{c.sofaSets}</b>
+                {showUsual && <span className="text-[10px] text-[#6B7280]"> / {Math.round(c.usualSofa)}</span>}
               </span>
             )}
           </span>
@@ -118,8 +118,8 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
             {[
               [`Bedframe units · ${month}`, bedTotal.toLocaleString(), null],
               [`Sofa sets · ${month}`, sofaTotal.toLocaleString(), null],
-              ["Best day · bedframe (30 d)", `${c?.bestBedframe.n ?? 0}`, `${c?.bestBedframe.date ?? "—"} · avg ${bedAvg.toFixed(1)}`],
-              ["Best day · sofa (30 d)", `${c?.bestSofa.n ?? 0}`, `${c?.bestSofa.date ?? "—"} · avg ${sofaAvg.toFixed(1)}`],
+              ["12-day avg · bedframe", `${c?.usualBedframe ?? 0}`, `per working day · this month ${bedAvg.toFixed(1)}`],
+              ["12-day avg · sofa", `${c?.usualSofa ?? 0}`, `per working day · this month ${sofaAvg.toFixed(1)}`],
             ].map(([k, v, sub]) => (
               <div key={k} className="rounded-lg bg-[#F7F4EF] px-3 py-2">
                 <div className="text-[10px] font-semibold uppercase text-[#6B7280]">{k}</div>
@@ -159,7 +159,7 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
               </table>
             </div>
           )}
-          <p className="text-[11px] text-[#6B7280]">Average over this month&apos;s finished days with completions (today left out). Bedframe counts every piece (headboard, divan); sofa counts 1 order as 1 set — same as Active Jobs and Completed.</p>
+          <p className="text-[11px] text-[#6B7280]">Average = the last 12 working days (same window as capacity). Bedframe counts every piece (headboard, divan); sofa counts 1 order as 1 set — same as Active Jobs and Completed.</p>
         </div>
       </div>
     </div>

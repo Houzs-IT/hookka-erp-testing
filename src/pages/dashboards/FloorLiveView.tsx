@@ -123,7 +123,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
   const [q, setQ] = useState("");
   const [issuesOnly, setIssuesOnly] = useState(false);
 
-  // What each department completed that day + its best day (owner 2026-11-12).
+  // What each department completed that day + its 12-working-day average (owner 2026-11-12).
   const completed = useCachedJson<DeptCompletedResponse>(`/api/dashboard/floor-live/completed?from=${day}&to=${day}`, 0);
 
   // Every 5 minutes, paused while the tab is hidden.
@@ -202,7 +202,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
             effPct={d.effPct}
             overallPct={d.overallPct}
             helperMinutes={d.helperMinutes}
-            completed={<DeptCompletedStrip code={d.code} name={d.name} data={completed.data} showBest live={!pastDay} today={today} />}
+            completed={<DeptCompletedStrip code={d.code} name={d.name} data={completed.data} showUsual live={!pastDay} today={today} />}
           />
         ))}
       </div>
@@ -319,7 +319,7 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
               key={c.code}
               name={c.name}
               rows={c.rows}
-              completed={<DeptCompletedStrip code={c.code} name={c.name} data={completed.data} showBest={false} live={false} today={today} />}
+              completed={<DeptCompletedStrip code={c.code} name={c.name} data={completed.data} showUsual={false} live={false} today={today} />}
             />
           ))}
         </div>
