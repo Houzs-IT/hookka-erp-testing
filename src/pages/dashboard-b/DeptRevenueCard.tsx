@@ -10,7 +10,7 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
-import { dayBucketIndex, pickCat, type CatSplit, type RevCat, type RevenueSplitResp } from "./revenue-split";
+import { dayBucketIndex, looseSetPieces, pickCat, pickSets, type CatSplit, type RevCat, type RevenueSplitResp } from "./revenue-split";
 import { dayLabel } from "@/pages/dashboards/dashboard-shared-lib";
 import { dropIdleSundays } from "@/lib/idle-sundays";
 
@@ -161,7 +161,8 @@ export function DeptRevenueCard({
                     <th className="text-left font-medium py-1.5 pr-2">Department</th>
                     <th className="text-right font-medium py-1.5 px-2">{di >= 0 && day ? dayLabel(day) : "Today"}</th>
                     <th className="text-right font-medium py-1.5 px-2" title={`Total ÷ ${workDays} working day${workDays === 1 ? "" : "s"}`}>Avg / day</th>
-                    <th className="text-right font-medium py-1.5 pl-2">Total</th>
+                    <th className="text-right font-medium py-1.5 px-2">Total</th>
+                    <th className="text-right font-medium py-1.5 pl-2" title="Sets in the period: bedframe 1 set = 1 headboard + 1 divan · sofa 1 set = 1 order">Sets</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -194,8 +195,11 @@ export function DeptRevenueCard({
                         <td className="text-right tabular-nums py-1.5 px-2 text-[#5A5550]">
                           {workDays > 0 ? rm(Math.round(pickCat(d.period, cat) / workDays)) : "—"}
                         </td>
-                        <td className="text-right tabular-nums py-1.5 pl-2 font-semibold text-[#1F1D1B]">
+                        <td className="text-right tabular-nums py-1.5 px-2 font-semibold text-[#1F1D1B]">
                           {rm(pickCat(d.period, cat))}
+                        </td>
+                        <td className="text-right tabular-nums py-1.5 pl-2 text-[#1F1D1B]" title={cat === "sofa" ? undefined : looseSetPieces(d.sets)}>
+                          {pickSets(d.sets, cat) ?? "—"}
                         </td>
                       </tr>
                     );

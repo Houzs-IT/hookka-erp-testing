@@ -83,7 +83,51 @@ export function weekMonday(day: string): string {
 // Department revenue
 // ---------------------------------------------------------------------------
 
-export type DeptRevenueRow = { deptCode: string; date: string; category: RevCategory; totalSen: number };
+/**
+ * What a BEDFRAME production order makes, read from ALL its job cards'
+ * wipType (HK-0148): both HEADBOARD and DIVAN = full sets; one of them only
+ * = loose pieces (a "Headboard Only" line drops its DIVAN cards in
+ * production-builder.ts; a DIVAN-* SKU has no HEADBOARD); neither = UNKNOWN.
+ */
+export type BedPiece = "SET" | "HB" | "DIVAN" | "UNKNOWN";
+
+export type DeptRevenueRow = {
+  deptCode: string;
+  date: string;
+  category: RevCategory;
+  totalSen: number;
+  /** production_orders.quantity. */
+  qty?: number;
+  /** The sales / consignment order the PO belongs to (sofa: 1 order = 1 set). */
+  orderKey?: string;
+  bedPiece?: BedPiece;
+};
+
+/**
+ * Sets (HK-0148, Violet 2026-11-12): bedframe 1 set = 1 headboard + 1 divan,
+ * sofa 1 set = 1 order. Only what that rule answers is counted: a full
+ * bedframe PO is `qty` sets; headboard-only / divan-only / unknown pieces are
+ * NOT counted as sets, they are reported beside the count. A sofa order counts
+ * once however many lines or pieces it has. Accessory makes no sets.
+ */
+export type SetCount = { bedframe: number; sofa: number; total: number; hbOnly: number; divanOnly: number; unknown: number };
+
+export function countSets(rows: DeptRevenueRow[]): SetCount {
+  const out: SetCount = { bedframe: 0, sofa: 0, total: 0, hbOnly: 0, divanOnly: 0, unknown: 0 };
+  const sofaOrders = new Set<string>();
+  for (const r of rows) {
+    const qty = r.qty ?? 0;
+    if (r.category === "BEDFRAME") {
+      if (r.bedPiece === "SET") out.bedframe += qty;
+      else if (r.bedPiece === "HB") out.hbOnly += qty;
+      else if (r.bedPiece === "DIVAN") out.divanOnly += qty;
+      else out.unknown += qty;
+    } else if (r.category === "SOFA" && r.orderKey) sofaOrders.add(r.orderKey);
+  }
+  out.sofa = sofaOrders.size;
+  out.total = out.bedframe + out.sofa;
+  return out;
+}
 
 /**
  * One row per (production order, department) whose department cards ALL
@@ -108,6 +152,13 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
             AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
                               AND completedDate IS NOT NULL
                          THEN 1 ELSE 0 END) = COUNT(*)
+       ),
+       po_wip AS (
+         SELECT productionOrderId,
+                MAX(CASE WHEN UPPER(wipType) = 'HEADBOARD' THEN 1 ELSE 0 END) AS has_hb,
+                MAX(CASE WHEN UPPER(wipType) = 'DIVAN' THEN 1 ELSE 0 END) AS has_divan
+           FROM job_cards
+          GROUP BY productionOrderId
        )
        SELECT d.departmentCode AS "deptCode",
               substr(d.done_at::text, 1, 10) AS "day",
@@ -121,9 +172,16 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
                   ORDER BY p.basePriceSen DESC NULLS LAST, p.id
                   LIMIT 1),
                 0
-              ) * po.quantity AS "totalSen"
+              ) * po.quantity AS "totalSen",
+              po.quantity AS "qty",
+              COALESCE(po.salesOrderId, po.consignmentOrderId, po.id) AS "orderKey",
+              CASE WHEN w.has_hb = 1 AND w.has_divan = 1 THEN 'SET'
+                   WHEN w.has_hb = 1 THEN 'HB'
+                   WHEN w.has_divan = 1 THEN 'DIVAN'
+                   ELSE 'UNKNOWN' END AS "bedPiece"
          FROM per_po_dept d
          JOIN production_orders po ON po.id = d.productionOrderId
+         LEFT JOIN po_wip w ON w.productionOrderId = po.id
          LEFT JOIN sales_order_items soi
                 ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
          LEFT JOIN consignment_order_items coi
@@ -135,13 +193,29 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
           AND substr(d.done_at::text, 1, 10) <= ?`,
     )
     .bind(orgId, from, to)
-    .all<{ deptCode: string | null; day: string | null; category: string | null; totalSen: number | string | null }>();
+    .all<{
+      deptCode: string | null;
+      day: string | null;
+      category: string | null;
+      totalSen: number | string | null;
+      qty: number | string | null;
+      orderKey: string | null;
+      bedPiece: BedPiece | null;
+    }>();
   const out: DeptRevenueRow[] = [];
   for (const r of res.results ?? []) {
     const date = isoDay(r.day);
     if (!date || !r.deptCode) continue;
     if (r.category !== "SOFA" && r.category !== "BEDFRAME" && r.category !== "ACCESSORY") continue;
-    out.push({ deptCode: r.deptCode, date, category: r.category, totalSen: Math.round(num(r.totalSen)) });
+    out.push({
+      deptCode: r.deptCode,
+      date,
+      category: r.category,
+      totalSen: Math.round(num(r.totalSen)),
+      qty: num(r.qty),
+      orderKey: r.orderKey ?? undefined,
+      bedPiece: r.bedPiece ?? "UNKNOWN",
+    });
   }
   return out;
 }
@@ -152,6 +226,9 @@ export type DeptRevenueSummary = {
   period: CatSplit;
   /** Same order as `buckets`. */
   byBucket: CatSplit[];
+  /** Sets over the same rows as `period` / `byBucket` (HK-0148). */
+  sets: SetCount;
+  setsByBucket: SetCount[];
 };
 
 /**
@@ -168,20 +245,32 @@ export function summarizeDeptRevenue(
 ): DeptRevenueSummary[] {
   const idx = new Map(buckets.map((b, i) => [b, i]));
   const byDept = new Map<string, DeptRevenueSummary>();
+  const rowsOf = new Map<string, { all: DeptRevenueRow[]; byBucket: DeptRevenueRow[][] }>();
   const ensure = (code: string, label: string) => {
     let s = byDept.get(code);
     if (!s) {
-      s = { code, label, period: emptyCatSplit(), byBucket: buckets.map(() => emptyCatSplit()) };
+      s = { code, label, period: emptyCatSplit(), byBucket: buckets.map(() => emptyCatSplit()), sets: countSets([]), setsByBucket: [] };
       byDept.set(code, s);
+      rowsOf.set(code, { all: [], byBucket: buckets.map(() => []) });
     }
     return s;
   };
   for (const d of DEPT_REVENUE_ORDER) ensure(d.code, d.label);
   for (const r of rows) {
     const s = ensure(r.deptCode, r.deptCode);
+    const rs = rowsOf.get(r.deptCode)!;
     addTo(s.period, r.category, r.totalSen);
+    rs.all.push(r);
     const i = idx.get(bucketOf(r.date));
-    if (i !== undefined) addTo(s.byBucket[i], r.category, r.totalSen);
+    if (i !== undefined) {
+      addTo(s.byBucket[i], r.category, r.totalSen);
+      rs.byBucket[i].push(r);
+    }
+  }
+  for (const s of byDept.values()) {
+    const rs = rowsOf.get(s.code)!;
+    s.sets = countSets(rs.all);
+    s.setsByBucket = rs.byBucket.map(countSets);
   }
   return [...byDept.values()];
 }
