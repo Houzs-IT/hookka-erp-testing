@@ -2231,7 +2231,7 @@ app.get("/revenue-split", async (c) => {
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const period = parseDashPeriod(c.req.query("period") ?? "all").key;
-  const data = await cached(c, `dashboard:revenue-split:${orgId}:v2:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:revenue-split:${orgId}:v3:${period}`, 60, async () => {
     const db = c.var.DB;
     // Same "today" as the main overview (server clock, UTC on Workers).
     const todayISO = fmtISO(new Date());
