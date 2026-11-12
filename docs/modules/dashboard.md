@@ -1,6 +1,5 @@
 # Dashboard & Command Center — Module Guide
 
-> **Last verified: 2026-11-12** (branch `feat/capacity-12-working-days`, to `main`): only the `/revenue-split` anchor, shifted by the per-category backlog code. Nothing else re-checked.
 > **Last verified: 2026-10-19** (branch `fix/dashboard-dept-revenue-to-main` (to `main`, cherry-picked from staging #1003)): the Department Revenue JSX and `DeptRevenueChart` rows (anchors :1688 / :250 and the Day view). Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/po-list-cache-main`, to `main`): only the `src/api/worker.ts` / `production-orders.ts` line refs, shifted by the list ETag change and re-read at their new lines. Nothing else re-checked.
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
