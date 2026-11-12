@@ -20,7 +20,8 @@ import { requireReadOrDashboardTab } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { summarizeFloorLive } from "../lib/floor-live";
 import { computeFloorLive, readFloorLiveSnapshot, readFloorLiveSnapshots } from "../lib/floor-live-data";
-import { dayCounts, loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted } from "../lib/dept-completed";
+import { dayCounts, loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted, valueByDay, valueByDept } from "../lib/dept-completed";
+import { loadDeptRevenue } from "../lib/dept-revenue";
 import { cached } from "../lib/kv-cache";
 
 const app = new Hono<Env>();
@@ -113,14 +114,24 @@ app.get("/completed", async (c) => {
     // One day = straight from the per-day rows; a longer period needs the
     // range query (a sofa order finishing on two days counts once).
     const range = from === to ? dayCounts(days, from) : await loadDeptCompletedRange(db, orgId, from, to);
+    // Production value (Department Revenue's rows) over the period and the
+    // drill's month in one read, shared for 2 minutes.
+    const monthStart = `${month}-01`;
+    const lo = from < monthStart ? from : monthStart;
+    const hi = to > `${month}-31` ? to : (`${month}-31` > today ? today : `${month}-31`);
+    const revRows = await cached(c, `dept-completed:value:${orgId}:${lo}:${hi}`, 120, () => loadDeptRevenue(db, orgId, lo, hi));
+    const value = valueByDept(revRows, from, to);
+    const dayValue = valueByDay(revRows);
     c.header("Cache-Control", "no-store");
     return c.json({
       success: true,
       from,
       to,
       month,
-      departments: shapeDeptCompleted(range, days, today),
-      days: days.filter((d) => d.date.startsWith(month) && d.date <= today),
+      departments: shapeDeptCompleted(range, days, today).map((d) => ({ ...d, ...(value.get(d.dept) ?? { bedframeSen: 0, sofaSen: 0 }) })),
+      days: days
+        .filter((d) => d.date.startsWith(month) && d.date <= today)
+        .map((d) => ({ ...d, ...(dayValue.get(`${d.dept}|${d.date}`) ?? { bedframeSen: 0, sofaSen: 0 }) })),
     });
   } catch (e) {
     console.error("[floor-live completed]", e);

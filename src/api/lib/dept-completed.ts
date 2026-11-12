@@ -8,14 +8,17 @@
 // order closes (the per-(PO, department) gate of dept-revenue.ts).
 //
 // Owner rulings (2026-11-12):
-//   - outsourced work is not counted, neither in the day nor in the average
-//     (a (PO, department) with any card done by an is_outsource worker drops);
+//   - outsourced work IS counted, in the counts and in the value (owner first
+//     said 「不算」, then 「outsource 也要算department revenue的」 / 「sofa set
+//     也要include outsource」 and picked "Bedframe 和 Sofa 都算外包");
 //   - a cancelled order's finished work stays counted ("做了的就不能取消了");
 //   - the comparison is the department's average over the last 12 working
 //     days (owner: 「我觉得你还是用12天工作天平均把 … 那个数据看起来太夸张了」 —
 //     the best-day mark was too high; same 12-day window as capacity).
 // Read-only.
 // ---------------------------------------------------------------------------
+
+import type { DeptRevenueRow } from "./dept-revenue";
 
 type Db = {
   prepare(sql: string): { bind(...args: unknown[]): { all<T = unknown>(): Promise<{ results?: T[] }> } };
@@ -38,12 +41,10 @@ const PER_PO_DEPT = `
            jc.departmentCode,
            MAX(CASE WHEN ${DONE} THEN jc.completedDate END) AS done_at
       FROM job_cards jc
-      LEFT JOIN workers w ON w.id = jc.pic1Id
      WHERE jc.departmentCode IS NOT NULL
      GROUP BY jc.productionOrderId, jc.departmentCode
     HAVING COUNT(*) > 0
        AND SUM(CASE WHEN ${DONE} THEN 1 ELSE 0 END) = COUNT(*)
-       AND SUM(CASE WHEN COALESCE(w.isOutsource, FALSE) = TRUE THEN 1 ELSE 0 END) = 0
   )`;
 const ORDER_KEY = `COALESCE(po.salesOrderId, po.consignmentOrderId, po.id)`;
 
@@ -144,4 +145,35 @@ export function shapeDeptCompleted(
     const u = usual.get(dept) ?? { bed: 0, sofa: 0 };
     return { dept, bedframeUnits: r.bedframeUnits, sofaSets: r.sofaSets, usualBedframe: u.bed, usualSofa: u.sofa };
   });
+}
+
+// ---- Production value beside the counts (owner 2026-11-12) -----------------
+// Department Revenue's own rows and rule (dept-revenue.ts loadDeptRevenue):
+// an order's full value when this department's last card for it closes.
+// Outsourced work counted, like the piece counts above.
+export type CatSen = { bedframeSen: number; sofaSen: number };
+
+export function valueByDept(rows: DeptRevenueRow[], from: string, to: string): Map<string, CatSen> {
+  const out = new Map<string, CatSen>();
+  for (const r of rows) {
+    if (r.date < from || r.date > to) continue;
+    const v = out.get(r.deptCode) ?? { bedframeSen: 0, sofaSen: 0 };
+    if (r.category === "BEDFRAME") v.bedframeSen += r.totalSen;
+    else if (r.category === "SOFA") v.sofaSen += r.totalSen;
+    out.set(r.deptCode, v);
+  }
+  return out;
+}
+
+/** Key `${dept}|${date}`. */
+export function valueByDay(rows: DeptRevenueRow[]): Map<string, CatSen> {
+  const out = new Map<string, CatSen>();
+  for (const r of rows) {
+    const k = `${r.deptCode}|${r.date}`;
+    const v = out.get(k) ?? { bedframeSen: 0, sofaSen: 0 };
+    if (r.category === "BEDFRAME") v.bedframeSen += r.totalSen;
+    else if (r.category === "SOFA") v.sofaSen += r.totalSen;
+    out.set(k, v);
+  }
+  return out;
 }
