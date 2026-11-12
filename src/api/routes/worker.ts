@@ -81,6 +81,8 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
+import { bestDays, loadDeptCompletedByDay } from "../lib/dept-completed";
+import { loadHolidaySet } from "../lib/agent-learning";
 
 const app = new Hono<Env>();
 
@@ -328,6 +330,74 @@ async function buildDeptDay(
     hoursSoFar: live.hoursSoFar,
   };
 }
+
+// ============================================================
+// GET /api/worker/dept-completed?month=YYYY-MM — "Department completed today"
+// on the Scan screen + its history (owner 2026-11-12, design
+// https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE). The DEPARTMENT's count,
+// not the worker's: bedframe units + sofa sets, each department's best day on
+// record beside it (rules: src/api/lib/dept-completed.ts — outsourced work
+// excluded). Departments shown: the one scanned into now first, then the
+// worker's own set; an Operator Leader sees every department. On a Sunday or
+// public holiday it shows the last working day (owner: 0 would alarm).
+// ============================================================
+app.get("/dept-completed", async (c) => {
+  const auth = await getWorker(c);
+  if (!auth.ok) return auth.response;
+  const db = c.var.DB;
+  const today = malaysiaNow().toISOString().slice(0, 10);
+  const askedMonth = (c.req.query("month") || "").trim();
+  const month = /^\d{4}-\d{2}$/.test(askedMonth) && askedMonth <= today.slice(0, 7) ? askedMonth : today.slice(0, 7);
+  try {
+    const [days, names, holidays, deptDay] = await Promise.all([
+      loadDeptCompletedByDay(db, null),
+      loadDeptNames(db),
+      loadHolidaySet(db),
+      buildDeptDaySafe(db, auth.worker),
+    ]);
+    const off = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0 || holidays.has(d);
+    const isWorkDay = !off(today);
+    let shownDate = today;
+    if (!isWorkDay) {
+      const t = new Date(`${today}T00:00:00Z`);
+      for (let i = 0; i < 14; i++) {
+        t.setUTCDate(t.getUTCDate() - 1);
+        const d = t.toISOString().slice(0, 10);
+        if (!off(d)) { shownDate = d; break; }
+      }
+    }
+    const own = parseWorkerDepartmentCodes(auth.worker.departmentCodes, auth.worker.departmentCode)
+      .map((d) => d.trim().toUpperCase()).filter(Boolean);
+    const now = (deptDay?.current?.departmentCode ?? "").toUpperCase() || null;
+    const isLeader = (auth.worker.position ?? "") === "Operator Leader";
+    const order: string[] = [];
+    const add = (d: string | null) => { if (d && !order.includes(d)) order.push(d); };
+    add(now);
+    own.forEach(add);
+    if (isLeader) [...new Set(days.map((d) => d.dept.toUpperCase()))].sort().forEach(add);
+    const best = bestDays(days);
+    const onDay = new Map(days.filter((d) => d.date === shownDate).map((d) => [d.dept.toUpperCase(), d]));
+    const depts = order.map((code) => {
+      const d = onDay.get(code);
+      const b = best.get(code) ?? { bed: { n: 0, date: null }, sofa: { n: 0, date: null } };
+      return {
+        code,
+        name: names.get(code) ?? code,
+        bedframeUnits: d?.bedframeUnits ?? 0,
+        sofaSets: d?.sofaSets ?? 0,
+        bestBedframe: b.bed,
+        bestSofa: b.sofa,
+      };
+    });
+    const inMonth = days
+      .filter((d) => d.date.startsWith(month) && d.date <= today && order.includes(d.dept.toUpperCase()))
+      .map((d) => ({ ...d, dept: d.dept.toUpperCase() }));
+    return c.json({ success: true, data: { today, shownDate, isWorkDay, now, isLeader, depts, month, days: inMonth } });
+  } catch (err) {
+    console.error("[worker] dept-completed failed:", err);
+    return c.json({ success: false, error: "Could not load the department count" }, 500);
+  }
+});
 
 // The card is extra: a failure here must never take down /today or a scan.
 async function buildDeptDaySafe(
