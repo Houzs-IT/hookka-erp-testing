@@ -22,16 +22,6 @@ https://claude.ai/artifact/Roh88iBS5bxpxjVQEkpYvq — owner chose palette **B-li
 - Rules: refined-only (`:root.refined:not(.dark)`), screen-only (print/PDF unchanged), paper wrappers
   with `data-theme="light"` (Board Report) opt out — the phone shell's `<body data-theme="light">` does not.
 
-## Direction C · Modern bright (owner 2026-11-12)
-After using the B-lite preview the owner said "大部分都不是很好看" and picked direction **C** from three
-offered (A warm premium / B Houzs-like / C modern bright): whiter, cleaner, a little more vivid, still
-eye-comfortable. Tokens now: bg #F5F6F8, surface #FFFFFF, ink #1A1D23, ink-muted #667085, brighter brass
-primary #9C7A2E (soft #FBF4E2), vivid status (success #15803D, warning #B45309, danger #B42318, info
-#175CD3) with very light fills, module tints green/blue/coral, charts #2E6BE6 #12B886 #F59F00 #7950F2
-#E8590C #868E96, rounder radii (8/10/14/18), lighter shadows. Sidebar is LIGHT in refined (`data-sidebar`
-hook; it carries data-theme="light" so the remap skips it and refined-tokens.css restyles it; the black
-logo shows without the invert filter). Chart series now match by hue (angle) then lightness.
-
 ## Polish log
 - 2026-11-12 (owner screenshots): `.font-mono` keeps the UI font in refined (dates like 2026-05-01 went
   wide in JetBrains Mono); production grid cells (`CellBox`, `data-cell`) are soft fills with a thin edge

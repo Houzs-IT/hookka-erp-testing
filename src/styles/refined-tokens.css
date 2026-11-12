@@ -1,8 +1,6 @@
 /* ---------------------------------------------------------------------------
-   refined-tokens.css — the refined Hookka look. Owner 2026-11-12 first chose
-   palette "B-lite" (design canvas https://claude.ai/artifact/Roh88iBS5bxpxjVQEkpYvq),
-   then, after using it ("大部分都不是很好看"), direction **C · Modern bright**:
-   whiter, cleaner, a little more vivid, still eye-comfortable; light sidebar.
+   refined-tokens.css — the refined Hookka look (owner 2026-11-12, palette
+   "B-lite", design canvas https://claude.ai/artifact/Roh88iBS5bxpxjVQEkpYvq).
 
    Opt-in while in preview: everything here sits under `html.refined`
    (Topbar › Look › Refined; src/lib/theme.ts). Classic stays exactly as it was.
@@ -15,32 +13,32 @@
    --------------------------------------------------------------------------- */
 :root.refined {
   /* neutrals */
-  --hk-bg: #F5F6F8;          --hk-surface: #FFFFFF;
-  --hk-surface-2: #F9FAFB;   --hk-surface-dim: #EEF0F3;
-  --hk-border: #E6E8EC;      --hk-border-subtle: #EEF0F3;
-  --hk-border-strong: #D5D9E0;
-  --hk-ink: #1A1D23;         --hk-ink-2: #3F4652;
-  --hk-ink-muted: #667085;   --hk-ink-faint: #98A2B3;
+  --hk-bg: #F3EFE8;          --hk-surface: #FDFBF7;
+  --hk-surface-2: #F8F5EF;   --hk-surface-dim: #ECE6DC;
+  --hk-border: #E4DDD1;      --hk-border-subtle: #EDE8DF;
+  --hk-border-strong: #D3CABB;
+  --hk-ink: #24201B;         --hk-ink-2: #4F483F;
+  --hk-ink-muted: #6B6358;   --hk-ink-faint: #938A7D;
   /* brass primary */
-  --hk-primary: #9C7A2E;     --hk-primary-hover: #7E6224;
-  --hk-primary-soft: #FBF4E2; --hk-primary-ink: #5C4716;
-  --hk-gold: #C9A24B;        --hk-focus: #C9A24B;
+  --hk-primary: #6B5C32;     --hk-primary-hover: #54482A;
+  --hk-primary-soft: #F2EAD3; --hk-primary-ink: #3E3520;
+  --hk-gold: #C0A35A;        --hk-focus: #A88B43;
   /* status — meaning only */
-  --hk-success: #15803D; --hk-success-fill: #ECFDF3; --hk-success-line: #4CAF6B;
-  --hk-warning: #B45309; --hk-warning-fill: #FFF7E6; --hk-warning-line: #F2A93B;
-  --hk-danger:  #B42318; --hk-danger-fill:  #FEF3F2; --hk-danger-line:  #F04438;
-  --hk-info:    #175CD3; --hk-info-fill:    #EFF8FF; --hk-info-line:    #53B1FD;
+  --hk-success: #3D6030; --hk-success-fill: #E9F0DF; --hk-success-line: #6A9A4E;
+  --hk-warning: #7A5718; --hk-warning-fill: #FAF0D2; --hk-warning-line: #C18F2C;
+  --hk-danger:  #9A3A2D; --hk-danger-fill:  #FBEDE8; --hk-danger-line:  #C0533F;
+  --hk-info:    #31505A; --hk-info-fill:    #E3EEF0; --hk-info-line:    #4D828E;
   /* B-lite supporting tints — module identity, never status */
-  --hk-sage-100: #E7F7EE;  --hk-sage-600: #1F8A4C;
-  --hk-slate-100: #EAF2FF; --hk-slate-600: #2E6BE6;
-  --hk-clay-100: #FFEEE8;  --hk-clay-600: #D9542B;
+  --hk-sage-100: #E4EBE0;  --hk-sage-600: #5A7353;
+  --hk-slate-100: #E1E8EF; --hk-slate-600: #51677D;
+  --hk-clay-100: #F5E3DA;  --hk-clay-600: #985A40;
   /* charts only */
-  --hk-chart-1: #2E6BE6; --hk-chart-2: #12B886; --hk-chart-3: #F59F00;
-  --hk-chart-4: #7950F2; --hk-chart-5: #E8590C; --hk-chart-6: #868E96;
+  --hk-chart-1: #8A7238; --hk-chart-2: #4D828E; --hk-chart-3: #8C6A8E;
+  --hk-chart-4: #6F8F4E; --hk-chart-5: #C2A36B; --hk-chart-6: #8F877B;
   /* shape */
-  --hk-radius-sm: 8px; --hk-radius: 10px; --hk-radius-card: 14px; --hk-radius-sheet: 18px;
-  --hk-shadow-1: 0 1px 2px rgb(16 24 40 / .05), 0 1px 3px rgb(16 24 40 / .06);
-  --hk-shadow-2: 0 12px 24px -6px rgb(16 24 40 / .12), 0 2px 4px rgb(16 24 40 / .04);
+  --hk-radius-sm: 6px; --hk-radius: 8px; --hk-radius-card: 12px; --hk-radius-sheet: 16px;
+  --hk-shadow-1: 0 1px 0 rgb(36 32 27 / .04), 0 4px 18px -8px rgb(36 32 27 / .12);
+  --hk-shadow-2: 0 1px 0 rgb(36 32 27 / .06), 0 12px 32px -16px rgb(36 32 27 / .28);
   /* type */
   --hk-font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --hk-font-docno: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -49,14 +47,14 @@
 @media screen {
   /* The few places that read the classic theme variables directly. */
   :root.refined:not(.dark) {
-    --color-raisin: #1A1D23;
-    --color-stone-white: #F5F6F8;
-    --color-border: #E6E8EC;
-    --color-border-light: #EEF0F3;
-    --color-text-secondary: #3F4652;
-    --color-text-tertiary: #667085;
-    --color-taupe-light: #B8963F;
-    --color-taupe-dark: #7E6224;
+    --color-raisin: #24201B;
+    --color-stone-white: #F3EFE8;
+    --color-border: #E4DDD1;
+    --color-border-light: #EDE8DF;
+    --color-text-secondary: #4F483F;
+    --color-text-tertiary: #6B6358;
+    --color-taupe-light: #8B7A4E;
+    --color-taupe-dark: #54482A;
   }
   :root.refined:not(.dark) body {
     background: var(--hk-bg);
@@ -114,42 +112,21 @@
     box-shadow: inset 3px 0 0 var(--hk-primary), var(--hk-shadow-1);
   }
 
-  /* Sidebar: light in direction C (white surface, ink text, brass active
-     pill). It carries data-theme="light" for dark mode, so the remap skips it;
-     these rules restyle it directly. */
-  :root.refined:not(.dark) [data-sidebar] {
-    background-color: var(--hk-surface) !important; color: var(--hk-ink-2) !important;
-    box-shadow: 1px 0 0 var(--hk-border);
-  }
-  :root.refined:not(.dark) [data-sidebar] img[alt^="Hookka"] { filter: none !important; }
-  :root.refined:not(.dark) [data-sidebar] .text-white { color: var(--hk-ink-2) !important; }
-  :root.refined:not(.dark) [data-sidebar] .hover\:text-white:hover { color: var(--hk-ink) !important; }
-  :root.refined:not(.dark) [data-sidebar] .border-white\/10 { border-color: var(--hk-border) !important; }
-  :root.refined:not(.dark) [data-sidebar] .bg-white\/10,
-  :root.refined:not(.dark) [data-sidebar] .bg-\[\#2A2826\] { background-color: var(--hk-surface-dim) !important; }
-  :root.refined:not(.dark) [data-sidebar] .hover\:bg-white\/5:hover,
-  :root.refined:not(.dark) [data-sidebar] .hover\:bg-white\/10:hover { background-color: var(--hk-surface-2) !important; }
-  :root.refined:not(.dark) [data-sidebar] .bg-\[\#6B5C32\]\/20,
-  :root.refined:not(.dark) [data-sidebar] .bg-\[\#6B5C32\]\/40 { background-color: var(--hk-primary-soft) !important; color: var(--hk-primary-ink) !important; }
-  :root.refined:not(.dark) [data-sidebar] .bg-\[\#6B5C32\] { background-color: var(--hk-primary) !important; }
-  :root.refined:not(.dark) [data-sidebar] .text-\[\#6B5C32\] { color: var(--hk-primary) !important; }
-  :root.refined:not(.dark) [data-sidebar] .border-\[\#6B5C32\] { border-color: var(--hk-primary) !important; }
-
   /* Phone app (/m): its colours already run through --m-* variables. */
   /* Light phone theme only — the phone's own dark theme is left alone. */
   :root.refined:not(.dark) body[data-theme="light"] {
-    --m-raisin: #1A1D23;
-    --m-taupe: #9C7A2E;
-    --m-taupe-dark: #7E6224;
-    --m-paper: #F5F6F8;
-    --m-card: #FFFFFF;
-    --m-border: #E6E8EC;
-    --m-hairline: #E6E8EC;
-    --m-divider: #EEF0F3;
-    --m-gold: #C9A24B;
-    --m-ink: #3F4652;
-    --m-body: #667085;
-    --m-muted: #98A2B3;
-    --m-faint: #98A2B3;
+    --m-raisin: #24201B;
+    --m-taupe: #6B5C32;
+    --m-taupe-dark: #54482A;
+    --m-paper: #F3EFE8;
+    --m-card: #FDFBF7;
+    --m-border: #E4DDD1;
+    --m-hairline: #E4DDD1;
+    --m-divider: #EDE8DF;
+    --m-gold: #C0A35A;
+    --m-ink: #3E3520;
+    --m-body: #6B6358;
+    --m-muted: #938A7D;
+    --m-faint: #938A7D;
   }
 }
