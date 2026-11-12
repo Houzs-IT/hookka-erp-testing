@@ -211,11 +211,12 @@ export function DeptRevenueCard({ d, period, onPeriod }: { d: OpsData; period: P
                 const c = deptColor(r.code);
                 const dep = (data?.departments ?? []).find((x) => x.code === r.code);
                 return (
-                  <button key={r.code} type="button" aria-label={`${r.label}, ${rmFull(r.value)}. Open daily trend`} onClick={() => setOpen(r.code)}
+                  <button key={r.code} type="button" aria-label={`${r.label}, ${rmFull(r.value)}, ${r.sets} ${r.sets === 1 ? "set" : "sets"}. Open daily trend`} onClick={() => setOpen(r.code)}
                     style={{ width: "100%", display: "block", padding: "11px 0", border: "none", borderTop: `1px solid ${M.divider}`, background: "none", fontFamily: "inherit", textAlign: "left", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
                     <span style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
                       <span aria-hidden="true" style={{ width: 9, height: 9, flex: "none", borderRadius: "50%", backgroundColor: c, alignSelf: "center" }} />
                       <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: M.raisin, ...NOWRAP_ELLIPSIS }}>{r.label}</span>
+                      <span style={{ flex: "none", fontSize: 11.5, color: M.ink, whiteSpace: "nowrap", ...TNUM }}>{r.sets} {r.sets === 1 ? "set" : "sets"}</span>
                       <span style={{ flex: "none", fontSize: 14, fontWeight: 700, color: M.raisin, whiteSpace: "nowrap", ...TNUM }}>{rmFull(r.value)}</span>
                       <span style={{ display: "flex", alignSelf: "center" }}><Chev /></span>
                     </span>

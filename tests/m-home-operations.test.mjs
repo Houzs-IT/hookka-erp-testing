@@ -164,6 +164,16 @@ test("Department Revenue keeps the API's department order and offers All / Bedfr
   assert.doesNotMatch(src, /Avg RM|\/day`/, "no invented average per day");
 });
 
+test("HK-0148: each department row carries its sets, for the picked day or the period, by category", () => {
+  const set = (bedframe, sofa) => ({ bedframe, sofa, total: bedframe + sofa, hbOnly: 0, divanOnly: 0, unknown: 0 });
+  const d = { ...monthSplit, departments: monthSplit.departments.map((x) => ({ ...x, sets: set(4, 3), setsByBucket: [set(1, 2), set(3, 1)] })) };
+  assert.equal(deptRevenueRows(d, "all", undefined)[0].sets, 7);
+  assert.equal(deptRevenueRows(d, "bedframe", undefined)[0].sets, 4);
+  assert.equal(deptRevenueRows(d, "sofa", "2026-10-02")[0].sets, 1, "picked day = that day's bucket");
+  assert.equal(deptRevenueRows(monthSplit, "all", undefined)[0].sets, 0, "a payload without sets reads 0");
+  assert.match(read("HomeOpsA.tsx"), /\{r\.sets\} \{r\.sets === 1 \? "set" : "sets"\}/);
+});
+
 test("a picked day reads that day's bucket only in a daily (month) split", () => {
   assert.equal(splitDayIndex(monthSplit, "2026-10-02"), 1);
   assert.equal(deptRevenueRows(monthSplit, "all", "2026-10-02")[1].value, 740);
