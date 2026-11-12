@@ -40,10 +40,15 @@ test("SQL: per-department last card, outsourced work counted, cancelled orders k
   const s = read("src/api/lib/dept-completed.ts");
   assert.match(s, /GROUP BY jc\.productionOrderId, jc\.departmentCode/);
   assert.doesNotMatch(s, /isOutsource/, "outsourced work counts (owner 2026-11-12: 都算外包)");
-  assert.doesNotMatch(s, /po\.status/, "a cancelled order's finished work stays counted");
+  // A cancelled order's finished work stays counted: po.status appears only in
+  // the sofa-set rule, where an unfinished cancelled module must not hold a set open.
+  assert.equal((s.match(/po\.status/g) ?? []).length, 1, "a cancelled order's finished work stays counted");
   assert.match(s, /SUM\(CASE WHEN po\.itemCategory = 'BEDFRAME' THEN po\.quantity ELSE 0 END\)/);
   assert.match(s, /const ORDER_KEY = `COALESCE\(po\.salesOrderId, po\.consignmentOrderId, po\.id\)`/);
-  assert.match(s, /COUNT\(DISTINCT CASE WHEN po\.itemCategory = 'SOFA' THEN \$\{ORDER_KEY\} END\)/);
+  // A sofa set counts on the day its LAST module finishes in that department (like Completed).
+  assert.match(s, /GROUP BY s\.departmentCode, \$\{ORDER_KEY\}\n\s+HAVING SUM\(CASE WHEN s\.all_done = 1 OR po\.status = 'CANCELLED' THEN 0 ELSE 1 END\) = 0/);
+  assert.match(s, /MAX\(CASE WHEN s\.all_done = 1 THEN s\.done_at END\) AS set_at/);
+  assert.doesNotMatch(s, /COUNT\(DISTINCT CASE WHEN po\.itemCategory = 'SOFA'/, "no more counting an order on every module's day");
   assert.doesNotMatch(s, /\b(INSERT|UPDATE|DELETE|ALTER)\b/);
   const r = read("src/api/routes/floor-live.ts");
   assert.match(r, /app\.get\("\/completed"/);
