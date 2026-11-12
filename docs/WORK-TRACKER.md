@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-12**: Floor Live completed entry — worker portal half (branch `feat/worker-dept-completed`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: Floor Live completed entry updated (branch `feat/floor-live-dept-completed`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: capacity entry (phone half) + Floor Live completed-sets entry added (branch `feat/m-backlog-per-category`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: overdue-sets stage entry added (branch `feat/overdue-sets-stage`, to `main`); nothing else re-checked.
@@ -311,7 +312,7 @@ Owner asks (2026-11-12, with screenshots of the Completed drill and Department R
 
 Owner rulings on the design (2026-11-12): bedframe = units, sofa = sets (「跟着active job和completed 的算法」); compare with the department's **best day on record** (「我要用最高记录」); outsourced work not counted, in the day or the best (「不算」); a cancelled order's finished work stays counted (「做了的就不能取消了」); no "Completed today" words on the dashboard; red = behind the time-based pace toward the best day (best × hours since 08:00 / 9 — 「5小时过了 还没有10套就显示红色」).
 Desktop: **approved** (「电脑版本 ok 很好」) → branch `feat/floor-live-dept-completed` (`GET /api/dashboard/floor-live/completed`, `src/api/lib/dept-completed.ts`, `DeptCompletedStrip.tsx`).
-Worker portal: still in design — owner: show on the Scan screen (everyone, helpers too), smaller, no hint text; no Sofa/Bedframe split by the worker's category, by department only; tap = history; multi-department = chips. Manager phone (/m): to design next.
+Worker portal: owner approved (「是的 没问题了」, 「可以开始merge desktop 和worer portal了」) → branch `feat/worker-dept-completed` (`GET /api/worker/dept-completed`, `src/pages/worker/dept-completed-card.tsx` on the Scan screen). Design notes kept below — — owner: show on the Scan screen (everyone, helpers too), smaller, no hint text; no Sofa/Bedframe split by the worker's category, by department only; tap = history; multi-department = chips. Manager phone (/m): to design next.
 
 ## 🔵 Customer overdue sets: current stage on every order (feat/overdue-sets-stage, 2026-11-12)
 

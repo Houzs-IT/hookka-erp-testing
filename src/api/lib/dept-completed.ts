@@ -50,8 +50,9 @@ const num = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Per department per day, every day on record (for the best day and the drill). */
-export async function loadDeptCompletedByDay(db: Db, orgId: string): Promise<DeptDayCount[]> {
+/** Per department per day, every day on record (for the best day and the drill).
+ *  orgId null = every org (the worker portal is single-org, like the rest of worker.ts). */
+export async function loadDeptCompletedByDay(db: Db, orgId: string | null): Promise<DeptDayCount[]> {
   const res = await db
     .prepare(
       `WITH ${PER_PO_DEPT}
@@ -61,11 +62,11 @@ export async function loadDeptCompletedByDay(db: Db, orgId: string): Promise<Dep
               COUNT(DISTINCT CASE WHEN po.itemCategory = 'SOFA' THEN ${ORDER_KEY} END) AS "sofa"
          FROM per_po_dept d
          JOIN production_orders po ON po.id = d.productionOrderId
-        WHERE po.orgId = ?
+        WHERE ${orgId === null ? "TRUE" : "po.orgId = ?"}
           AND d.done_at IS NOT NULL
         GROUP BY d.departmentCode, substr(d.done_at::text, 1, 10)`,
     )
-    .bind(orgId)
+    .bind(...(orgId === null ? [] : [orgId]))
     .all<{ dept: string | null; day: string | null; bed: unknown; sofa: unknown }>();
   const out: DeptDayCount[] = [];
   for (const r of res.results ?? []) {
