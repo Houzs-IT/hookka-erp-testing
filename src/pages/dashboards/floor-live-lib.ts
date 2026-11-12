@@ -202,3 +202,56 @@ export function summaryLayout(
     }))
     .filter((d) => d.rows.length > 0);
 }
+
+// ---- Department completed (owner 2026-11-12) --------------------------------
+// GET /api/dashboard/floor-live/completed — src/api/lib/dept-completed.ts.
+export type DeptCompletedRow = {
+  dept: string;
+  bedframeUnits: number;
+  sofaSets: number;
+  bestBedframe: { n: number; date: string | null };
+  bestSofa: { n: number; date: string | null };
+};
+export type DeptCompletedResponse = {
+  success: boolean;
+  error?: string;
+  from: string;
+  to: string;
+  departments: DeptCompletedRow[];
+  days: { dept: string; date: string; bedframeUnits: number; sofaSets: number }[];
+};
+
+export function deptCompletedFor(data: DeptCompletedResponse | null | undefined, code: string): DeptCompletedRow | null {
+  if (!data?.success) return null;
+  return data.departments.find((d) => d.dept === code) ?? null;
+}
+
+/** The department's days this month, newest first, with totals and the average
+ *  over finished days that had any completion (today left out). */
+export function deptCompletedDays(data: DeptCompletedResponse | null | undefined, code: string, today: string) {
+  const days = (data?.success ? data.days : []).filter((d) => d.dept === code).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const bedTotal = days.reduce((s, d) => s + d.bedframeUnits, 0);
+  const sofaTotal = days.reduce((s, d) => s + d.sofaSets, 0);
+  const full = days.filter((d) => d.date !== today && d.bedframeUnits + d.sofaSets > 0);
+  const avg = (f: (d: (typeof days)[number]) => number) => (full.length ? full.reduce((s, d) => s + f(d), 0) / full.length : 0);
+  return { days, bedTotal, sofaTotal, bedAvg: avg((d) => d.bedframeUnits), sofaAvg: avg((d) => d.sofaSets) };
+}
+
+/** Owner 2026-11-12: "跟着时间推演红色" — the best day spread evenly over the
+ *  9-hour day (08:00–17:00 MYT). Behind pace = done so far is below
+ *  best × hours gone / 9 → red. Before 08:00 nothing is due; after 17:00 the
+ *  whole best day is. */
+export const PACE_START_MIN = 8 * 60;
+export const PACE_SPAN_MIN = 9 * 60;
+export function paceDue(best: number, nowMin: number): number {
+  const f = Math.min(1, Math.max(0, (nowMin - PACE_START_MIN) / PACE_SPAN_MIN));
+  return best * f;
+}
+export function behindPace(done: number, best: number, nowMin: number): boolean {
+  return best > 0 && done < paceDue(best, nowMin);
+}
+/** Minutes since midnight, Malaysia time. */
+export function myNowMin(now: Date = new Date()): number {
+  const my = new Date(now.getTime() + 8 * 3600_000);
+  return my.getUTCHours() * 60 + my.getUTCMinutes();
+}

@@ -7,14 +7,15 @@
 // Cards keep their own height (3 people next to 8 leaves no gap) and show at
 // most 6 rows until "+N more"; on a phone they stack one per row.
 // ---------------------------------------------------------------------------
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useInterval } from "@/lib/scheduler";
 import { HelperTag } from "@/components/helper-tag";
 import { HelperOverallLine } from "./HelperOverallLine";
+import { DeptCompletedStrip } from "./DeptCompletedStrip";
 import { useCachedJson } from "@/lib/cached-fetch";
 import {
   floorLiveLayout, periodRange, summaryLayout,
-  type FloorLiveResponse, type FloorLiveRow, type FloorSummaryResponse, type FloorSummaryRow,
+  type DeptCompletedResponse, type FloorLiveResponse, type FloorLiveRow, type FloorSummaryResponse, type FloorSummaryRow,
 } from "./floor-live-lib";
 import type { Period } from "./dashboard-shared-lib";
 
@@ -62,7 +63,7 @@ function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
   );
 }
 
-function DeptCard({ name, rows, production, effPct, overallPct = null, helperMinutes = 0 }: { name: string; rows: FloorLiveRow[]; production: boolean; effPct: number | null; overallPct?: number | null; helperMinutes?: number }) {
+function DeptCard({ name, rows, production, effPct, overallPct = null, helperMinutes = 0, completed = null }: { name: string; rows: FloorLiveRow[]; production: boolean; effPct: number | null; overallPct?: number | null; helperMinutes?: number; completed?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const shown = open ? rows : rows.slice(0, ROW_LIMIT);
   return (
@@ -78,6 +79,7 @@ function DeptCard({ name, rows, production, effPct, overallPct = null, helperMin
           </span>
         )}
       </div>
+      {completed}
       {rows.length === 0 ? (
         <div className="px-3 py-2.5 text-xs text-[#9CA3AF]">Nobody here today</div>
       ) : (
@@ -121,8 +123,11 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
   const [q, setQ] = useState("");
   const [issuesOnly, setIssuesOnly] = useState(false);
 
+  // What each department completed that day + its best day (owner 2026-11-12).
+  const completed = useCachedJson<DeptCompletedResponse>(`/api/dashboard/floor-live/completed?from=${day}&to=${day}`, 0);
+
   // Every 5 minutes, paused while the tab is hidden.
-  useInterval(() => refresh(), pastDay ? null : REFRESH_MS);
+  useInterval(() => { refresh(); completed.refresh(); }, pastDay ? null : REFRESH_MS);
 
   const layout = useMemo(() => (data?.success ? floorLiveLayout(data, { q, issuesOnly }) : null), [data, q, issuesOnly]);
 
@@ -188,7 +193,18 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
         <span className="text-xs text-[#6B7280]">pieces done today · efficiency so far</span>
       </div>
       <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-        {layout.production.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production effPct={d.effPct} overallPct={d.overallPct} helperMinutes={d.helperMinutes} />)}
+        {layout.production.map((d) => (
+          <DeptCard
+            key={d.code}
+            name={d.name}
+            rows={d.rows}
+            production
+            effPct={d.effPct}
+            overallPct={d.overallPct}
+            helperMinutes={d.helperMinutes}
+            completed={<DeptCompletedStrip code={d.code} name={d.name} data={completed.data} showBest live={!pastDay} today={today} />}
+          />
+        ))}
       </div>
 
       <div className="flex items-baseline gap-2">
@@ -222,7 +238,7 @@ function SummaryRow({ r }: { r: FloorSummaryRow }) {
   );
 }
 
-function SummaryCard({ name, rows }: { name: string; rows: FloorSummaryRow[] }) {
+function SummaryCard({ name, rows, completed = null }: { name: string; rows: FloorSummaryRow[]; completed?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const shown = open ? rows : rows.slice(0, ROW_LIMIT);
   return (
@@ -230,6 +246,7 @@ function SummaryCard({ name, rows }: { name: string; rows: FloorSummaryRow[] }) 
       <div className="border-b border-[#EEE9E4] bg-[#F7F5F3] px-3 py-2 text-[13px] font-bold">
         {name} <span className="font-medium text-[#6B7280]">· {rows.length}</span>
       </div>
+      {completed}
       <div className={`${SUM_COLS} px-3 py-1 text-[11px] text-[#9CA3AF]`}>
         <span>Worker</span>
         <span className="text-right">Days</span>
@@ -255,6 +272,7 @@ function SummaryCard({ name, rows }: { name: string; rows: FloorSummaryRow[] }) 
 function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today: string; onLiveNow: () => void }) {
   const { from, to } = periodRange(period, today);
   const { data, loading, error, refresh } = useCachedJson<FloorSummaryResponse>(`/api/dashboard/floor-live/summary?from=${from}&to=${to}`, 0);
+  const completed = useCachedJson<DeptCompletedResponse>(`/api/dashboard/floor-live/completed?from=${from}&to=${to}`, 0);
   const [q, setQ] = useState("");
   const cards = useMemo(() => (data?.success ? summaryLayout(data, q) : []), [data, q]);
 
@@ -296,7 +314,14 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
         </div>
       ) : (
         <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-          {cards.map((c) => <SummaryCard key={c.code} name={c.name} rows={c.rows} />)}
+          {cards.map((c) => (
+            <SummaryCard
+              key={c.code}
+              name={c.name}
+              rows={c.rows}
+              completed={<DeptCompletedStrip code={c.code} name={c.name} data={completed.data} showBest={false} live={false} today={today} />}
+            />
+          ))}
         </div>
       )}
       <p className="text-[11px] text-[#6B7280]">
