@@ -108,6 +108,11 @@ From HK-0125 (Lim Wei Siang, "Mobile UI polishing"). Frontend only: the existing
 5. OPEN: staging with real POs: compare the four tiles with the desktop PO widget for the same supplier (Overdue should match); a `/stats` outage; the overdue tile in dark mode (fixed tints, no generated dark rule until the next build regenerates `dark-theme.generated.css`); load time of the full list + `/stats` on a phone.
 6. OPEN, waiting on Mr Lim: "when to issue", a To Issue tab and issued dates (no issued date is stored; Draft to SUBMITTED stamps none).
 
+**GR / PI "to check when receive" (branch `mobile/hk0125-pi-grn-receive-date`, 2026-11-12).** Read-only audit of the active Receipts and Purchase Invoices screens on main and staging, then one frontend fix.
+7. DONE (audit): a GRN shows its actual receive date on the Receipts list card (RECEIVED) and in GRN detail ("Receive date", plus "Actual arrival" for import receipts); that is `receiveDate`, filled with today's Malaysia date when the GRN is created (the mobile Receive form has no date field). Covered, left as is.
+8. DONE: PI detail, Document lineage: the linked Goods Receipt row now reads "Posted · 9 Nov 2026" (status, then `receiveDate`; the status alone when there is no date), the same text PO detail shows, and stays tappable (`grnLineageSub` in `procurement-mobile.ts`). The date was already in `GET /api/purchase-invoices/:id` `linkedGRNs[].receiveDate`; no API change.
+9. OPEN, separate review, needs backend: (a) one PI with several receipts: the PI stores one `grn_id`, so `linkedGRNs` holds at most one GRN; showing every receipt means resolving the GRNs behind each line's `grn_item_id` in the API (the PI's Purchase Order row already lists every GRN with its date); (b) the date the office received the supplier invoice is not stored (`purchase_invoices` has `invoiceDate`, `dueDate` and the system `created_at` only), so it needs a new column and a decision from Mr Lim.
+
 > **Last verified: 2026-10-26**: HK-0113 PO email via Mail Center entry added (branch `feat/hk0113-po-mail-center`, to `staging`); nothing else re-checked.
 
 ## CONNECT-0003: Hookka accounts sign in to Houzs Connect (feat/connect-login, 2026-11-03)

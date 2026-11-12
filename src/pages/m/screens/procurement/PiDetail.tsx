@@ -21,7 +21,7 @@ import { money } from "../../config/helpers";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { fmtDate } from "../../lib/do-mobile";
 import {
-  PI_ACTION_PERMS, PI_FLOW, PI_STATUS_TARGET, canVoidRole, dateOnly, flowSteps, isForeign, markPaidBody, n, normalizePiStatus, piActions,
+  PI_ACTION_PERMS, PI_FLOW, PI_STATUS_TARGET, canVoidRole, dateOnly, flowSteps, grnLineageSub, isForeign, markPaidBody, n, normalizePiStatus, piActions,
   piFlowStatus, piPastDue, rows, s, statusOf, todayIso,
   type PiActionKey, type RawRow,
 } from "../../lib/procurement-mobile";
@@ -262,7 +262,7 @@ export function PiDetail({ id }: { id: string }) {
                     ? { label: "Purchase Order", doc: s(p, "poRef") || "Purchase Order", sub: "Source order", state: "linked", onClick: poId ? () => open(poId) : undefined }
                     : { label: "Purchase Order", doc: "None", sub: "Not linked", state: "pending" },
                   grn
-                    ? { label: "Goods Receipt", doc: s(grn, "grnNumber"), sub: statusOf("grn", s(grn, "status")).label, state: "linked", onClick: () => open(s(grn, "id")) }
+                    ? { label: "Goods Receipt", doc: s(grn, "grnNumber"), sub: grnLineageSub(grn), state: "linked", onClick: () => open(s(grn, "id")) }
                     : { label: "Goods Receipt", doc: "None", sub: "Not linked", state: "pending" },
                   { label: "Purchase Invoice", doc: s(p, "piNo"), sub: "This invoice", state: "current" },
                 ];
