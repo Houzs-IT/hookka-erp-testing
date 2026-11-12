@@ -19,6 +19,7 @@
 import { DEFAULT_FACTORY_GEOFENCE, evalPunchLocation } from "./geofence";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
 import { helperWorkerIds, loadApprovedExtraTime } from "./efficiency-allowance";
+import { loadClosedDayPerf } from "./floor-live-data";
 
 export interface EfficiencyEnv {
   RESEND_API_KEY?: string;
@@ -310,17 +311,32 @@ export async function collectEfficiencyData(
 
   // 8. Build per-worker rows. Include every active worker.
   const helpers = await helperWorkerIds(db);
+  // Owner 2026-11-13 (「1要一样」): efficiency = the shared rule Floor Live and
+  // the Employees dashboard use, so the three never disagree. Measured before:
+  // 20 of 35 workers on 12 Nov differed (KHIN MAUNG LIN 81% here vs 74% on
+  // Floor Live). The report's own sums stay only as a fallback.
+  let shared: Awaited<ReturnType<typeof loadClosedDayPerf>> | null = null;
+  try {
+    shared = await loadClosedDayPerf(db as unknown as D1Database, null, dateYmd);
+  } catch (err) {
+    console.error("[efficiency-report] shared perf failed, using the report's own sums:", err);
+  }
   const workerRows: WorkerSummary[] = [];
   for (const w of allWorkers) {
     const att = attByWorker.get(w.id);
     const deptCode = w.departmentCode ?? "";
     const dept = deptByCode.get(deptCode);
     const workingMinutes = workingMinsByWorker.get(w.id) ?? 0;
-    const productionWorkingMinutes = productionWorkingMinsByWorker.get(w.id) ?? 0;
-    const productionMinutes = Math.round(
-      (productionMinsByWorker.get(w.id) ?? 0) +
-        (extraTimeMinsByWorker.get(w.id) ?? 0),
-    );
+    const sp = shared?.get(w.id);
+    const productionWorkingMinutes = shared
+      ? Math.round(sp?.workingMinutes ?? 0)
+      : productionWorkingMinsByWorker.get(w.id) ?? 0;
+    const productionMinutes = shared
+      ? Math.round(sp?.productionMinutes ?? 0)
+      : Math.round(
+          (productionMinsByWorker.get(w.id) ?? 0) +
+            (extraTimeMinsByWorker.get(w.id) ?? 0),
+        );
     const isHelper = helpers.has(w.id);
     const efficiencyPct =
       !isHelper && productionWorkingMinutes > 0

@@ -71,13 +71,24 @@ test("punched out is never red; Production Shortfall is hidden and falls back to
   assert.ok(!out.departments.some((d) => d.code === "PRODUCTION_SHORTFALL"));
 });
 
-test("pieces: one per piece-PIC row, else the card's qty to each PIC", () => {
+test("pieces: one per piece-PIC row, else the card's qty; a shared piece is half to each (owner 2026-11-13)", () => {
   const done = piecesDoneByWorker(
-    [{ id: "j1", pic1Id: "a", pic2Id: null, wipQty: 4 }, { id: "j2", pic1Id: "a", pic2Id: "b", wipQty: 2 }],
+    [{ id: "j1", pic1Id: "a", pic2Id: null, wipQty: 4 }, { id: "j2", pic1Id: "a", pic2Id: "b", wipQty: 2 }, { id: "j3", pic1Id: "c", pic2Id: "d", wipQty: 3 }],
     [{ jobCardId: "j2", pic1Id: "b", pic2Id: null }, { jobCardId: "j2", pic1Id: "a", pic2Id: "b" }],
   );
-  assert.equal(done.get("a"), 5);
-  assert.equal(done.get("b"), 2);
+  assert.equal(done.get("a"), 4.5);
+  assert.equal(done.get("b"), 1.5);
+  assert.deepEqual([done.get("c"), done.get("d")], [1.5, 1.5], "a shared card's qty is split too");
+  // The total is the real number of pieces: 4 + 2 + 3.
+  assert.equal([...done.values()].reduce((s, n) => s + n, 0), 9);
+});
+
+test("the daily efficiency report uses the shared efficiency rule (owner 2026-11-13: 1要一样)", () => {
+  const r = readFileSync("src/api/lib/efficiency-report.ts", "utf8");
+  assert.match(r, /shared = await loadClosedDayPerf\(db as unknown as D1Database, null, dateYmd\)/);
+  assert.match(r, /\? Math\.round\(sp\?\.workingMinutes \?\? 0\)/);
+  assert.match(r, /\? Math\.round\(sp\?\.productionMinutes \?\? 0\)/);
+  assert.match(readFileSync("src/api/lib/floor-live-data.ts", "utf8"), /export async function loadClosedDayPerf\(/);
 });
 
 test("layout: owner's production order, every department shown, problems first, filters hide empty cards", () => {
