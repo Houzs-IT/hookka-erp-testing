@@ -7,15 +7,15 @@
 // only the Procurement-specific compositions live here. Typography: the /m
 // Sales / Delivery screens (owner rule: design owns visuals, repo owns type).
 // ===========================================================================
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { formatUnitPriceInput, roundUnitPriceSen } from "@/lib/unit-price";
 import { createPortal } from "react-dom";
-import { Check, ChevronRight, CloudOff, Ellipsis, Plus, Search, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronRight, FileText, Package, ArrowDownUp, Truck, TriangleAlert, CloudOff, Ellipsis, Plus, Search, X, type LucideIcon } from "lucide-react";
 import { M } from "../../theme";
-import { ResponsiveGrid } from "../../components";
+import { ResponsiveGrid, Sheet } from "../../components";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { segmentButton, segmentTrack, SEGMENT_ICON, CHIP_COUNT, CHIP_ROW, CHIP_ROW_CLASS, chip as chipStyle, chipDot } from "../../lib/control-styles";
-import type { FlowStep, Tone } from "../../lib/procurement-mobile";
+import { DATE_FIELDS, DATE_RANGES, type DateField, type DateRangeKey, type FlowStep, type PoSummary, type SupplierOption, type Tone } from "../../lib/procurement-mobile";
 import { CheckBox, FlagPill, Metric, Rail, TilePill } from "../delivery/ui";
 import { DL, INPUT, SHADOW_BAR_TOP, SHADOW_BLOCK, SHADOW_CARD, SHADOW_CONTROL, SHADOW_MENU, SHADOW_PRIMARY, SHADOW_ROUND, SHADOW_SELECTED, T, pill, sem } from "../delivery/ui-tokens";
 
@@ -84,13 +84,283 @@ export function SearchRow({ q, setQ, placeholder }: { q: string; setQ: (v: strin
   );
 }
 
+// ---------------------------------------------------------------------------
+// HK-0125 PO summary + filter sheet (design handoff).
+// ---------------------------------------------------------------------------
+const TILE_TONE = {
+  red: { bg: "#FEF2F2", fg: "#B91C1C", tile: "#FEE2E2" },
+  orange: { bg: "#FFF7ED", fg: "#C2410C", tile: "#FFEDD5" },
+  yellow: { bg: "#FFFBEB", fg: "#B45309", tile: "#FEF3C7" },
+} as const;
+
+/** 2×2 on a phone, one row of four on a tablet. Overdue is a button (filter on / off). */
+export function SummaryGrid({ summary, columns, overdueOn, onOverdue }: { summary: PoSummary; columns: 2 | 4; overdueOn: boolean; onOverdue: () => void }) {
+  const tile = (key: string, label: string, value: string, Icon: LucideIcon, iconBg: string, iconFg: string, fg: string) => (
+    <div key={key} style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", background: M.card, borderRadius: 14, boxShadow: SHADOW_CONTROL }}>
+      <span aria-hidden style={{ width: 34, height: 34, flex: "none", borderRadius: 10, background: iconBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon size={17} strokeWidth={1.9} color={iconFg} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 19, lineHeight: 1.15, fontWeight: 700, color: fg, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+        <div style={{ fontSize: 11.5, color: M.ink, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+      </div>
+    </div>
+  );
+  const od = summary.overdue;
+  const has = od != null && od > 0;
+  const tone = summary.bands.red ? TILE_TONE.red : summary.bands.orange ? TILE_TONE.orange : summary.bands.yellow ? TILE_TONE.yellow : null;
+  const aria =
+    od == null
+      ? "Overdue POs unavailable right now"
+      : `Overdue POs ${od}: ${summary.bands.yellow} 1–7 days, ${summary.bands.orange} 8–30 days, ${summary.bands.red} 31+ days. ${overdueOn ? "Filter on — tap to clear" : has ? "Tap to show overdue only" : ""}`.trim();
+  return (
+    <section aria-label="PO summary" style={{ padding: "12px 18px 0", display: "grid", gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 8 }}>
+      {tile("total", "Total POs", String(summary.total), FileText, "#F0ECE9", M.taupe, M.raisin)}
+      {tile("pending", "Pending Delivery", String(summary.pending), Truck, "#E0EDF0", "#3E6570", "#3E6570")}
+      <button
+        type="button"
+        onClick={has ? onOverdue : undefined}
+        disabled={!has}
+        aria-pressed={overdueOn}
+        aria-label={aria}
+        title={od == null ? "Overdue POs unavailable right now" : undefined}
+        style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", border: "none", borderRadius: 14, background: has && tone ? tone.bg : M.card, boxShadow: overdueOn ? `inset 0 0 0 2px ${M.taupe}, 0 8px 20px -12px rgba(31,29,27,.25)` : SHADOW_CONTROL, fontFamily: "inherit", textAlign: "left", cursor: has ? "pointer" : "default", opacity: od == null ? 0.7 : 1 }}
+      >
+        <span aria-hidden style={{ width: 34, height: 34, flex: "none", borderRadius: 10, background: has && tone ? tone.tile : "#F0ECE9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <TriangleAlert size={17} strokeWidth={1.9} color={has && tone ? tone.fg : M.faint} />
+        </span>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 19, lineHeight: 1.15, fontWeight: 700, color: has && tone ? tone.fg : M.raisin, fontVariantNumeric: "tabular-nums" }}>{od == null ? "—" : od}</span>
+          <span style={{ display: "block", fontSize: 11.5, color: M.ink, marginTop: 2, whiteSpace: "nowrap" }}>{od == null ? "Overdue unavailable" : "Overdue POs"}</span>
+        </span>
+      </button>
+      {tile("lines", "Outstanding lines", String(summary.outstandingLines), Package, "#FAEFCB", "#9C6F1E", summary.outstandingLines ? "#9C6F1E" : M.raisin)}
+    </section>
+  );
+}
+
+/** Round white Filter button at the right end of the count row (design handoff). Brown with a red
+ *  count badge while any filter is active. */
+export function FilterButton({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-haspopup="dialog"
+      aria-label={count ? `Filter, ${count} active` : "Filter"}
+      title="Filter"
+      style={{ position: "relative", width: 38, height: 38, flex: "none", borderRadius: "50%", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: count ? M.taupe : M.card, color: count ? "var(--m-text-on-accent)" : M.taupe, boxShadow: count ? "0 6px 14px -6px rgba(107,92,50,.6)" : SHADOW_ROUND }}
+    >
+      <ArrowDownUp size={16} strokeWidth={1.9} aria-hidden />
+      {count ? (
+        <span aria-hidden style={{ position: "absolute", top: -3, right: -3, minWidth: 17, height: 17, padding: "0 4px", boxSizing: "border-box", borderRadius: 999, background: "#9A3A2D", color: "#fff", fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 0 2px ${M.paper}`, fontVariantNumeric: "tabular-nums" }}>
+          {count}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+/** Active-filter pills (removable) + Clear all. */
+export function FilterPills({ pills, onClearAll }: { pills: { key: string; label: string; aria: string; clear: () => void }[]; onClearAll: () => void }) {
+  if (!pills.length) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "0 18px 8px" }}>
+      {pills.map((p) => (
+        <span key={p.key} style={{ flex: "none", height: 28, display: "inline-flex", alignItems: "center", gap: 4, padding: "0 4px 0 11px", borderRadius: 999, background: "#F4EFE6", boxShadow: "inset 0 0 0 1px #E2D6BC", color: M.ink, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", maxWidth: "100%" }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}</span>
+          <button type="button" onClick={p.clear} aria-label={p.aria} style={{ width: 24, height: 24, border: "none", background: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: M.taupe }}>
+            <X size={13} strokeWidth={2.4} aria-hidden />
+          </button>
+        </span>
+      ))}
+      <button type="button" onClick={onClearAll} style={{ height: 28, border: "none", background: "none", padding: "0 6px", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: M.taupe, cursor: "pointer" }}>
+        Clear all
+      </button>
+    </div>
+  );
+}
+
+export type FilterDraft = { supplier: string; chip: string; field: DateField; range: DateRangeKey; from: string; to: string; overdue: boolean };
+const FILTER_DEFAULT: FilterDraft = { supplier: "", chip: "", field: "exp", range: "any", from: "", to: "", overdue: false };
+
+const SEC_LABEL = { margin: "0 2px 8px", fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe } as const;
+
+function ChoicePill({ on, label, dot, onClick }: { on: boolean; label: string; dot?: string; onClick: () => void }) {
+  return (
+    <button type="button" role="radio" aria-checked={on} onClick={onClick} style={chipStyle(on)}>
+      {dot ? <span aria-hidden style={chipDot(dot)} /> : null}
+      {label}
+    </button>
+  );
+}
+
+/** Drag handle + title + 44px close, as in the design's bottom sheets. */
+function SheetHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "center", paddingTop: 8 }}>
+        <div style={{ width: 40, height: 4, borderRadius: 999, background: "#E2DDD8" }} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px 4px 18px" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: M.raisin }}>{title}</div>
+        <button type="button" onClick={onClose} aria-label="Close" style={{ width: 44, height: 44, border: "none", background: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: M.faint }}>
+          <X size={20} strokeWidth={1.9} aria-hidden />
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** Supplier, Status and Date in one bottom sheet, with Reset and "Show N POs". Changes are a draft:
+ *  they apply only on "Show N POs" and are discarded when the sheet is closed. The supplier picker is
+ *  a second sheet stacked above this one. */
+export function FilterSheet({
+  open, onClose, applied, supplierOptions, statusChips, countFor, onApply,
+}: {
+  open: boolean;
+  onClose: () => void;
+  applied: FilterDraft;
+  supplierOptions: SupplierOption[];
+  statusChips: { key: string; label: string; tone?: Tone }[];
+  countFor: (d: FilterDraft) => number;
+  onApply: (d: FilterDraft) => void;
+}) {
+  const [draft, setDraft] = useState<FilterDraft>(applied);
+  const [picker, setPicker] = useState(false);
+  const [q, setQ] = useState("");
+  const [lastOpen, setLastOpen] = useState(open);
+  if (open !== lastOpen) {
+    setLastOpen(open);
+    if (open) {
+      setDraft(applied);
+      setPicker(false);
+      setQ("");
+    }
+  }
+  // While the supplier picker is up, Esc / backdrop belong to it, not to this sheet.
+  const guardedClose = useCallback(() => {
+    if (!picker) onClose();
+  }, [picker, onClose]);
+  const set = (o: Partial<FilterDraft>) => setDraft((d) => ({ ...d, ...o }));
+  const picked = supplierOptions.find((o) => o.key === draft.supplier);
+  const count = countFor(draft);
+  const t = q.trim().toLowerCase();
+  const total = supplierOptions.reduce((a, o) => a + o.count, 0);
+  const list: { key: string; label: string; count: number }[] = [
+    ...(t ? [] : [{ key: "", label: "All suppliers", count: total }]),
+    ...supplierOptions.filter((o) => !t || o.label.toLowerCase().includes(t)),
+  ];
+
+  const dateInput = (label: string, value: string, onChange: (v: string) => void) => (
+    <label style={{ minWidth: 0 }}>
+      <span style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: M.ink, margin: "0 2px 5px" }}>{label}</span>
+      <input type="date" value={value} aria-label={label} onChange={(e) => onChange(e.target.value)} className="dl-input" style={{ width: "100%", boxSizing: "border-box", height: 44, padding: "0 10px", border: "none", borderRadius: 12, background: M.card, boxShadow: SHADOW_CONTROL, fontFamily: "inherit", fontSize: 15, color: M.raisin, outline: "none" }} />
+    </label>
+  );
+
+  return (
+    <>
+      <Sheet open={open} onClose={guardedClose} title="Filter" bare>
+        <SheetHeader title="Filter" onClose={onClose} />
+        <div style={{ padding: "6px 16px 8px", display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 20, alignContent: "start" }}>
+          <section aria-label="Supplier">
+            <div style={SEC_LABEL}>SUPPLIER</div>
+            <button type="button" onClick={() => { setQ(""); setPicker(true); }} aria-haspopup="dialog" style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, minHeight: 52, padding: "8px 14px", border: "none", borderRadius: 14, background: M.card, boxShadow: SHADOW_CONTROL, fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{picked ? picked.label : "All suppliers"}</span>
+              <ChevronRight size={18} strokeWidth={2} color="#8B7A4E" aria-hidden />
+            </button>
+          </section>
+          <section aria-label="Status">
+            <div style={SEC_LABEL}>STATUS</div>
+            <div role="radiogroup" aria-label="Status" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {statusChips.map((c) => (
+                <ChoicePill key={c.key || "all"} on={draft.chip === c.key} label={c.label} dot={c.tone ? sem(c.tone) : undefined} onClick={() => set({ chip: c.key })} />
+              ))}
+            </div>
+          </section>
+          <section aria-label="Date">
+            <div style={SEC_LABEL}>DATE</div>
+            <div role="group" aria-label="Date field" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4, height: 44, boxSizing: "border-box", padding: 4, borderRadius: 12, background: "#F0ECE9" }}>
+              {DATE_FIELDS.map((f) => {
+                const on = draft.field === f.key;
+                return (
+                  <button key={f.key} type="button" aria-pressed={on} onClick={() => set({ field: f.key, range: "any", from: "", to: "" })} style={{ border: "none", borderRadius: 9, background: on ? M.card : "transparent", boxShadow: on ? "0 1px 2px rgba(31,29,27,.08), 0 4px 10px -4px rgba(31,29,27,.18)" : "none", color: on ? M.raisin : M.ink, fontFamily: "inherit", fontSize: 13, fontWeight: on ? 700 : 600, cursor: "pointer" }}>
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div role="radiogroup" aria-label="Date range" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+              {DATE_RANGES[draft.field].map((r) => (
+                <ChoicePill key={r.key} on={draft.range === r.key} label={r.label} onClick={() => set({ range: r.key })} />
+              ))}
+            </div>
+            {draft.range === "custom" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: 10 }}>
+                {dateInput("From", draft.from, (v) => set({ from: v }))}
+                {dateInput("To", draft.to, (v) => set({ to: v }))}
+              </div>
+            ) : null}
+          </section>
+        </div>
+        <div style={{ position: "sticky", bottom: 0, display: "flex", gap: 10, padding: "12px 16px 14px", background: M.paper, borderTop: "1px solid #E6E0D9" }}>
+          <button type="button" onClick={() => setDraft(FILTER_DEFAULT)} style={{ flex: "none", height: 48, padding: "0 18px", border: "none", borderRadius: 12, background: M.card, boxShadow: SHADOW_CONTROL, color: M.raisin, fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+            Reset
+          </button>
+          <button type="button" onClick={() => onApply(draft)} style={{ flex: 1, minWidth: 0, height: 48, border: "none", borderRadius: 12, background: M.taupe, color: "var(--m-text-on-accent)", fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, cursor: "pointer", boxShadow: "0 8px 18px -10px rgba(107,92,50,.7)" }}>
+            {`Show ${count} PO${count === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet open={open && picker} onClose={() => setPicker(false)} title="Supplier" bare>
+        <SheetHeader title="Supplier" onClose={() => setPicker(false)} />
+        <div style={{ padding: "4px 16px 10px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 9, height: 44, padding: "0 13px", boxSizing: "border-box", background: M.card, borderRadius: 12, boxShadow: SHADOW_CONTROL }}>
+            <Search size={16} strokeWidth={1.9} color={M.faint} aria-hidden />
+            <input className="dl-input" type="text" value={q} placeholder="Search supplier" aria-label="Search suppliers" onChange={(e) => setQ(e.target.value)} style={{ flex: 1, minWidth: 0, padding: 0, border: "none", outline: "none", background: "transparent", fontFamily: "inherit", fontSize: 16, color: M.raisin }} />
+          </label>
+        </div>
+        <div style={{ padding: "0 16px 30px" }}>
+          <div role="listbox" aria-label="Suppliers" style={{ background: M.card, borderRadius: 16, overflow: "hidden", boxShadow: SHADOW_CONTROL }}>
+            {list.map((o, i) => {
+              const sel = o.key === draft.supplier;
+              return (
+                <button
+                  key={o.key || "all"}
+                  type="button"
+                  role="option"
+                  aria-selected={sel}
+                  onClick={() => {
+                    set({ supplier: o.key });
+                    setPicker(false);
+                  }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, minHeight: 50, padding: "8px 14px", border: "none", borderTop: i ? `1px solid ${DL.track}` : "none", background: sel ? M.paper : M.card, fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: sel ? 700 : 500, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.label}</span>
+                  <span style={{ flex: "none", fontSize: 12, color: M.faint, fontVariantNumeric: "tabular-nums" }}>{o.count}</span>
+                  <span style={{ flex: "none", width: 18, display: "flex" }}>{sel ? <Check size={17} strokeWidth={2.4} color={M.taupe} aria-hidden /> : null}</span>
+                </button>
+              );
+            })}
+            {!list.length ? <div style={{ padding: "16px 14px", fontSize: 13, color: M.ink }}>No suppliers match.</div> : null}
+          </div>
+        </div>
+      </Sheet>
+    </>
+  );
+}
+
 export function Chips({
   label,
   chips,
   value,
   counts,
   onPick,
+  leading,
 }: {
+  leading?: ReactNode;
   label: string;
   chips: { key: string; label: string; tone?: Tone }[];
   value: string;
@@ -99,6 +369,7 @@ export function Chips({
 }) {
   return (
     <div role="group" aria-label={label} className={CHIP_ROW_CLASS} style={CHIP_ROW}>
+      {leading}
       {chips.map((c) => {
         const on = c.key === value;
         return (

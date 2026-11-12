@@ -83,8 +83,8 @@ test("PI statuses: legacy PENDING_APPROVAL / APPROVED read as Confirmed; Partial
   assert.match(PI_API, /CONFIRMED: \["PAID"\]/);
 });
 
-test("chips: desktop status filters, PO adds Closed (owner 2026-10-21)", () => {
-  assert.deepEqual(CHIPS.po.map((c) => c.key), ["", "DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED"]);
+test("chips: desktop status filters, PO adds Closed (owner 2026-10-21) and the combined Outstanding (HK-0125)", () => {
+  assert.deepEqual(CHIPS.po.map((c) => c.key), ["", "OUTSTANDING", "DRAFT", "SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED"]);
   assert.deepEqual(CHIPS.grn.map((c) => c.label), ["All", "Draft", "QC Pending", "Approved", "Posted"]);
   assert.deepEqual(CHIPS.pi.map((c) => c.label), ["All", "Draft", "Confirmed", "Paid", "Cancelled"]);
   assert.equal(chipMatches("po", "CLOSED", { status: "CLOSED" }), true);
