@@ -807,7 +807,6 @@ ${tilesHtml}
                   return (
                     <div
                       key={slot.id}
-                      data-rack={slot.status}
                       className={`rounded-md p-3 cursor-pointer hover:opacity-80 transition-opacity min-h-[72px] ${bgColor}`}
                       onClick={() => {
                         if (slot.status === "OCCUPIED") {

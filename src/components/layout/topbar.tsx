@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { ChevronDown, LogOut, User, Building2, MonitorSmartphone, Sun, Moon, Laptop } from "lucide-react";
-import { readLookPref, readThemePref, setLookPref, setThemePref, type LookPref, type ThemePref } from "@/lib/theme";
+import { readThemePref, setThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { GlobalSearch } from "./global-search";
 import { NotificationBell } from "./notification-bell";
@@ -43,9 +43,6 @@ export function Topbar({ user }: TopbarProps) {
   const closeDevices = useCallback(() => setDevicesOpen(false), []);
   const [themePref, setThemePrefState] = useState<ThemePref>(() => readThemePref());
   const pickTheme = (p: ThemePref) => { setThemePref(p); setThemePrefState(p); };
-  // Look (owner 2026-11-12): Classic / Refined — Refined is the new design, in preview.
-  const [lookPref, setLookPrefState] = useState<LookPref>(() => readLookPref());
-  const pickLook = (p: LookPref) => { setLookPref(p); setLookPrefState(p); };
   const currentOrg = user?.organisationCode || "HOOKKA";
 
   // Prefer the real signed-in user for the avatar label + dropdown.
@@ -162,31 +159,6 @@ export function Topbar({ user }: TopbarProps) {
                     )}
                   >
                     <Icon className="h-3.5 w-3.5" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {/* Look (src/lib/theme.ts). Refined = the new design, per browser, in preview. */}
-            <div className="px-4 pt-1 pb-2" role="group" aria-label="Look">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-[#9CA3AF] mb-1.5">Look</p>
-              <div className="grid grid-cols-2 gap-1">
-                {([
-                  ["classic", "Classic"],
-                  ["refined", "Refined (new)"],
-                ] as const).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={lookPref === value}
-                    onClick={() => pickLook(value)}
-                    className={cn(
-                      "rounded-md border px-1 py-1.5 text-[11px]",
-                      lookPref === value
-                        ? "border-[#6B5C32] bg-[#F5F2ED] text-[#6B5C32] font-medium"
-                        : "border-[#E2DDD8] text-[#4B5563] hover:bg-[#F0ECE9]",
-                    )}
-                  >
                     {label}
                   </button>
                 ))}
