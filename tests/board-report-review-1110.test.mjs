@@ -39,11 +39,23 @@ test("second pass: income page chart fills the gap; labour lists non-production;
   const f = readFileSync("src/pages/board-report/pages-finance.tsx", "utf8");
   assert.match(f, /Revenue, gross profit and net profit by month/);
   assert.match(f, /const incomeTrend = r\.trend\.ok \?/);
-  assert.match(f, /<tr className="brp-subhead"><td colSpan=\{8\}>Non-production<\/td><\/tr>/);
-  assert.match(f, /<td>All labour<\/td><td><Money v=\{d\.total \+ \(d\.nonProdTotal \?\? 0\)\} \/>/);
+  assert.match(f, /<tr className="brp-subhead"><td colSpan=\{8\}>Non-production · time production staff spent there \(already inside the figures above\)<\/td><\/tr>/);
+  // Non-production rows are production staff's time already inside the payslips:
+  // not added again (owner 2026-11-13: October labour is 70k+, not 80k).
+  assert.match(f, /<td>All labour \(payroll\)<\/td><td><Money v=\{d\.total\} \/>/);
+  assert.doesNotMatch(f, /d\.total \+ \(d\.nonProdTotal/);
   assert.match(f, /\(d\.nonProd \?\? \[\]\)\.map\(/, "a report kept before this change has no nonProd");
   assert.match(f, /label="Forecast \(production\)"/);
   assert.match(f, /\{\/\* Total row \(owner review 2026-11-10\)\. \*\/\}/);
   const lib = readFileSync("src/lib/board-report.ts", "utf8");
   assert.match(lib, /x\.nonProd && x\.dept\.toUpperCase\(\) !== "PRODUCTION_SHORTFALL"/);
+});
+
+test("customers split the order value into bedframe and sofa (owner 2026-11-13)", async () => {
+  const src = readFileSync("src/lib/board-report.ts", "utf8");
+  assert.match(src, /bedframeTotal: r\.bedframeUnits > 0 \? Math\.round\(r\.bedframeAvgSen \* r\.bedframeUnits\) : null/);
+  assert.match(src, /sofaTotal: r\.sofaSets > 0 \? Math\.round\(r\.sofaAvgSen \* r\.sofaSets\) : null/);
+  const page = readFileSync("src/pages/board-report/pages-business.tsx", "utf8");
+  assert.match(page, /<th>Bedframe, RM<\/th>/);
+  assert.match(page, /<th>Sofa, RM<\/th>/);
 });

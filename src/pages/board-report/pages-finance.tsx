@@ -171,8 +171,11 @@ export function LabourPage({ r }: P) {
                 </tr>
               ))}
               <tr className="strong"><td>Production total</td><td><Money v={d.total} /></td><td>100.0%</td><td>{pctText(pct(d.total, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={d.forecastTotal} /></td><td><Delta p={changePct(d.total, d.forecastTotal)} invert /></td></tr>
-              {/* Non-production departments (owner review 2026-11-10). */}
-              <tr className="brp-subhead"><td colSpan={8}>Non-production</td></tr>
+              {/* Non-production departments (owner review 2026-11-10). These are
+                  production staff's clocked time in those departments — already
+                  inside the payslips above — so they are NOT added to the total
+                  (owner 2026-11-13: 「10月的人工total 70k+ 没有接近80k」). */}
+              <tr className="brp-subhead"><td colSpan={8}>Non-production · time production staff spent there (already inside the figures above)</td></tr>
               {(d.nonProd ?? []).length === 0 ? (
                 <tr><td colSpan={8} className="brp-muted">No non-production salary recorded this month.</td></tr>
               ) : (
@@ -187,7 +190,7 @@ export function LabourPage({ r }: P) {
                   </tr>
                 ))
               )}
-              <tr className="strong"><td>All labour</td><td><Money v={d.total + (d.nonProdTotal ?? 0)} /></td><td /><td /><td /><td /><td /><td /></tr>
+              <tr className="strong"><td>All labour (payroll)</td><td><Money v={d.total} /></td><td /><td /><td /><td /><td /><td /></tr>
             </tbody>
           </table>
           <h3>Production salary by month</h3>
