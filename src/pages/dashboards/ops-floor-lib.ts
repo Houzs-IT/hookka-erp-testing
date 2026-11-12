@@ -60,3 +60,23 @@ export function deptStatusRows<B extends { d: { dept: string } }>(
   const idx = (n: string) => FLOOR_IDX.get(n) ?? DEPT_FLOOR.length;
   return [...rows.values()].sort((a, b) => idx(a.name) - idx(b.name));
 }
+
+/**
+ * An overdue order's current stages (Customer overdue sets, owner 2026-11-12)
+ * in floor order — Not started first, then the departments as on DEPT_FLOOR,
+ * Production done last — each with its display label. An unknown department
+ * code sorts after the listed ones, as-is.
+ */
+export function orderStages(
+  stages: { stage: string; sets: number }[] | undefined,
+): { stage: string; sets: number; label: string }[] {
+  const codeIdx = new Map<string, number>(DEPT_FLOOR.map(([code], i) => [code, i]));
+  const rank = (stage: string) =>
+    stage === "NOT_STARTED" ? -1 : stage === "DONE" ? 1000 : (codeIdx.get(stage) ?? 500);
+  const label = (stage: string) =>
+    stage === "NOT_STARTED" ? "Not started" : stage === "DONE" ? "Production done" : deptName(stage).replace(/_/g, " ");
+  return (stages ?? [])
+    .filter((s) => s.sets > 0)
+    .map((s) => ({ ...s, label: label(s.stage) }))
+    .sort((a, b) => rank(a.stage) - rank(b.stage));
+}

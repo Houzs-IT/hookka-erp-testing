@@ -133,3 +133,25 @@ test("filtering by production state recounts each customer and drops empty ones"
   assert.deepEqual(complete.map((customer) => [customer.customerName, customer.orders.map((order) => order.soId)]), [["Customer A", ["a-done"]]]);
   assert.equal(customers[0].overdueSets, 7);
 });
+
+// Owner 2026-11-12: "每个order 都show current stage".
+test("each overdue order carries its current stages, in floor order on the row", async () => {
+  const { orderStages } = await import("../src/pages/dashboards/ops-floor-lib.ts");
+  const stages = [
+    { stage: "DONE", sets: 1 },
+    { stage: "PACKING", sets: 2 },
+    { stage: "NOT_STARTED", sets: 1 },
+    { stage: "FAB_CUT", sets: 3 },
+    { stage: "UPHOLSTERY", sets: 0 },
+  ];
+  const summary = summarizeOverdueSets([row({ stages })], today);
+  assert.deepEqual(summary.customers[0].orders[0].stages, stages);
+  assert.deepEqual(summarizeOverdueSets([row({})], today).customers[0].orders[0].stages, []);
+  assert.deepEqual(
+    orderStages(stages).map((s) => `${s.label} ${s.sets}`),
+    ["Not started 1", "Fabric Cutting 3", "Packing 2", "Production done 1"],
+  );
+  const src = readFileSync("src/api/lib/customer-overdue-sets.ts", "utf8");
+  assert.match(src, /NOT EXISTS \(/, "only sets not on a dispatched DO");
+  assert.match(readFileSync("src/pages/dashboards/CustomerOverdueSetsCard.tsx", "utf8"), /<StageSummary stages=\{order\.stages\} \/>/);
+});
