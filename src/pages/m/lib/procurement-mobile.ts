@@ -20,7 +20,7 @@
 import { allocateDiscountSen, roundUnitPriceSen } from "../../../lib/unit-price";
 import { isPiEditable } from "../../../lib/purchase-edit-rules";
 import { poItemsSearchText } from "../../../lib/po-items-search";
-import { n, rows, s, type RawRow } from "./do-mobile";
+import { fmtDate, n, rows, s, type RawRow } from "./do-mobile";
 
 export { n, rows, s, type RawRow };
 
@@ -362,6 +362,11 @@ export function poMatchesFilters(po: RawRow, f: PoFilters, q: string, today: str
   return chipMatches("po", f.chip, po);
 }
 
+/** Subtitle of a linked Goods Receipt in a document-lineage chain: its status, then its receive date
+ *  ("Posted · 9 Nov 2026"), the same text PO detail shows. No receive date: the status alone. */
+export function grnLineageSub(g: RawRow): string {
+  return [statusOf("grn", s(g, "status")).label, fmtDate(dateOnly(s(g, "receiveDate")))].filter(Boolean).join(" · ");
+}
 /** A receipt is "full" when every line received at least what was ordered. */
 export function grnIsFull(g: RawRow): boolean {
   const it = rows(g.items);
