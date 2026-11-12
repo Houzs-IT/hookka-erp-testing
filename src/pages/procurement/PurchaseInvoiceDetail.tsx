@@ -38,6 +38,7 @@ import type { RawMaterial } from "@/types";
 // One money parser. NOTE: `l.qty` on this page is a QUANTITY and deliberately
 // keeps `parseFloat` - it is not money and is not in this fix's scope.
 import { moneyFieldToRinggit } from "@/lib/money-field";
+import { PiLineUomCell } from "@/components/pi-line-uom-cell";
 import { BLOCKED_TAB_MESSAGE, openUrlInNewTab } from "@/lib/pdf-preview";
 import {
   roundUnitPriceSen,
@@ -76,6 +77,9 @@ type DraftLine = {
   // ...and the PO LINE (T-006 R8): dropping it on save would let an edit
   // re-line a blank-code PO line past the PO ceiling.
   poItemId?: string | null;
+  /** HK-0149: the unit billed in, and the PO line's own. */
+  uom?: string | null;
+  poUnit?: string | null;
 };
 
 // Status lifecycle (post-simplification, owner 2026-06-29):
@@ -121,6 +125,9 @@ type PurchaseInvoiceItem = {
   poItemId?: string | null;
   /** Ordered unit price on the PO line (detail view only). */
   poUnitPriceSen?: number | null;
+  /** HK-0149: billed unit when it differs from the PO line's; the PO line's unit. */
+  uom?: string | null;
+  poUnit?: string | null;
 };
 
 // Linked documents, returned by GET /api/purchase-invoices/:id alongside the
@@ -448,6 +455,8 @@ export default function PurchaseInvoiceDetailPage() {
         grnItemId: it.grnItemId == null ? null : String(it.grnItemId),
         poId: it.poId ?? null,
         poItemId: it.poItemId ?? null,
+        uom: it.uom ?? it.poUnit ?? null,
+        poUnit: it.poUnit ?? null,
       })),
     );
     setDirty(false);
@@ -561,6 +570,8 @@ export default function PurchaseInvoiceDetailPage() {
         grnItemId: l.grnItemId,
         poId: l.poId ?? null,
         poItemId: l.poItemId ?? null,
+        // HK-0149: the server keeps it only when it differs from the PO line's.
+        uom: l.uom ?? null,
       }));
       const res = await fetch(`/api/purchase-invoices/${pi.id}`, {
         method: "PUT",
@@ -871,6 +882,7 @@ export default function PurchaseInvoiceDetailPage() {
                       <th className="h-10 px-3 text-left font-medium text-[#374151]">Internal Code</th>
                       <th className="h-10 px-3 text-left font-medium text-[#374151]">Supplier SKU</th>
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">Qty</th>
+                      <th className="h-10 px-3 text-left font-medium text-[#374151]">Unit</th>
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">Unit Price</th>
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">SST</th>
                       <th className="h-10 px-3 text-right font-medium text-[#374151]">Line Total</th>
@@ -907,6 +919,14 @@ export default function PurchaseInvoiceDetailPage() {
                           </td>
                           <td className="h-12 px-3 text-[#4B5563]">{it.supplierSku || "-"}</td>
                           <td className="h-12 px-3 text-right text-[#4B5563]">{it.qty}</td>
+                          <td className="h-12 px-3 text-[#4B5563]">
+                            {it.uom || it.poUnit || "-"}
+                            {it.uom && it.poUnit && (
+                              <div className="text-[11px] leading-tight text-[#B8860B]" title="Billed in another unit than the PO line: not counted against the PO quantity or received into stock">
+                                PO in {it.poUnit}
+                              </div>
+                            )}
+                          </td>
                           <td className="h-12 px-3 text-right text-[#4B5563]">
                             {formatCurrency(it.unitPriceSen)}
                             {/* Ordered price from the PO line, shown only when it differs. */}
@@ -954,30 +974,31 @@ export default function PurchaseInvoiceDetailPage() {
                       <td className="h-9 px-3 text-right text-sm text-[#6B7280]">{totalQty}</td>
                       <td className="h-9 px-3"></td>
                       <td className="h-9 px-3"></td>
+                      <td className="h-9 px-3"></td>
                       <td className="h-9 px-3 text-right text-sm text-[#1F1D1B]">{formatCurrency(grossDisplay)}</td>
                       <td className="h-9 px-3"></td>
                     </tr>
                     {docDiscountSen > 0 && (
                       <>
                         <tr className="bg-[#FAF9F7]">
-                          <td colSpan={7} className="h-9 px-3 text-right text-xs font-medium text-[#6B7280]">Less: Discount</td>
+                          <td colSpan={8} className="h-9 px-3 text-right text-xs font-medium text-[#6B7280]">Less: Discount</td>
                           <td className="h-9 px-3 text-right text-sm text-[#1F1D1B]">({formatCurrency(docDiscountSen)})</td>
                           <td className="h-9 px-3"></td>
                         </tr>
                         <tr className="bg-[#FAF9F7]">
-                          <td colSpan={7} className="h-9 px-3 text-right text-xs font-medium text-[#6B7280]">Subtotal</td>
+                          <td colSpan={8} className="h-9 px-3 text-right text-xs font-medium text-[#6B7280]">Subtotal</td>
                           <td className="h-9 px-3 text-right text-sm text-[#1F1D1B]">{formatCurrency(subtotalDisplay)}</td>
                           <td className="h-9 px-3"></td>
                         </tr>
                       </>
                     )}
                     <tr className="bg-[#FAF9F7]">
-                      <td colSpan={7} className="h-9 px-3 text-right text-xs font-medium text-[#6B7280]">SST</td>
+                      <td colSpan={8} className="h-9 px-3 text-right text-xs font-medium text-[#6B7280]">SST</td>
                       <td className="h-9 px-3 text-right text-sm text-[#1F1D1B]">{formatCurrency(taxDisplay)}</td>
                       <td className="h-9 px-3"></td>
                     </tr>
                     <tr className="bg-[#F0ECE9] border-t border-[#E2DDD8]">
-                      <td colSpan={7} className="h-10 px-3 text-right font-semibold text-[#374151]">Total</td>
+                      <td colSpan={8} className="h-10 px-3 text-right font-semibold text-[#374151]">Total</td>
                       <td className="h-10 px-3 text-right font-bold text-[#6B5C32]">{formatCurrency(totalAmount)}</td>
                       <td className="h-10 px-3"></td>
                     </tr>
@@ -1060,6 +1081,7 @@ export default function PurchaseInvoiceDetailPage() {
                     <th className="h-10 px-2 text-left font-medium text-[#374151]">Internal Code</th>
                     <th className="h-10 px-2 text-left font-medium text-[#374151]">Supplier SKU</th>
                     <th className="h-10 px-2 text-right font-medium text-[#374151] w-20">Qty</th>
+                    <th className="h-10 px-2 text-left font-medium text-[#374151] w-24">Unit</th>
                     <th className="h-10 px-2 text-right font-medium text-[#374151] w-28">Unit Price (RM)</th>                    <th className="h-10 px-2 text-right font-medium text-[#374151] w-24" title="Per-line SST in RM">SST (RM)</th>
                     <th className="h-10 px-2 text-left font-medium text-[#374151] w-32">Type</th>
                     <th className="h-10 px-2 text-center font-medium text-[#374151] w-12"></th>
@@ -1068,7 +1090,7 @@ export default function PurchaseInvoiceDetailPage() {
                 <tbody>
                   {dLines.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="h-16 px-3 text-center text-sm text-[#9CA3AF]">
+                      <td colSpan={10} className="h-16 px-3 text-center text-sm text-[#9CA3AF]">
                         No lines. Use “Add Line” to start.
                       </td>
                     </tr>
@@ -1116,6 +1138,15 @@ export default function PurchaseInvoiceDetailPage() {
                             className="text-right"
                             value={l.qty}
                             onChange={(e) => patchLine(i, { qty: e.target.value })}
+                          />
+                        </td>
+                        {/* Unit (HK-0149) — saved on this invoice line only */}
+                        <td className="px-2 py-1.5">
+                          <PiLineUomCell
+                            uom={l.uom}
+                            poUnit={l.poUnit}
+                            editable={!!l.poItemId && !l.grnItemId}
+                            onChange={(u) => patchLine(i, { uom: u })}
                           />
                         </td>
                         <td className="px-2 py-1.5">
@@ -1181,7 +1212,7 @@ export default function PurchaseInvoiceDetailPage() {
                   {/* SST breakdown (owner 2026-06-30) — Subtotal / SST / Total
                       live-updates as the operator edits per-line tax. */}
                   <tr className="bg-[#FAF9F7]">
-                    <td colSpan={6} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
+                    <td colSpan={7} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
                       Gross
                     </td>
                     <td colSpan={3} className="h-8 px-2 text-right text-sm text-[#1F1D1B]">
@@ -1191,7 +1222,7 @@ export default function PurchaseInvoiceDetailPage() {
                   {/* Invoice-level discount (DEV-14) — the supplier's footer
                       "Less: Discount"; RM, or "10%" of the gross. */}
                   <tr className="bg-[#FAF9F7]">
-                    <td colSpan={6} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
+                    <td colSpan={7} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
                       Less: Discount
                     </td>
                     <td colSpan={3} className="h-8 px-2">
@@ -1204,7 +1235,7 @@ export default function PurchaseInvoiceDetailPage() {
                     </td>
                   </tr>
                   <tr className="bg-[#FAF9F7]">
-                    <td colSpan={6} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
+                    <td colSpan={7} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
                       Subtotal
                     </td>
                     <td colSpan={3} className="h-8 px-2 text-right text-sm text-[#1F1D1B]">
@@ -1212,7 +1243,7 @@ export default function PurchaseInvoiceDetailPage() {
                     </td>
                   </tr>
                   <tr className="bg-[#FAF9F7]">
-                    <td colSpan={6} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
+                    <td colSpan={7} className="h-8 px-2 text-right text-xs font-medium text-[#6B7280]">
                       SST
                     </td>
                     <td colSpan={3} className="h-8 px-2 text-right text-sm text-[#1F1D1B]">
@@ -1220,7 +1251,7 @@ export default function PurchaseInvoiceDetailPage() {
                     </td>
                   </tr>
                   <tr className="bg-[#F0ECE9] border-t border-[#E2DDD8]">
-                    <td colSpan={5} className="h-10 px-2">
+                    <td colSpan={6} className="h-10 px-2">
                       <Button type="button" variant="outline" size="sm" onClick={addLine}>
                         <Plus className="h-3.5 w-3.5" /> Add Line
                       </Button>

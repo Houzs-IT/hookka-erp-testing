@@ -37,6 +37,8 @@ export interface AutoGrnPiLine {
   unitPriceSen: number;
   lineType: string | null;
   grnItemId: string | null;
+  /** HK-0149: set only when billed in another unit than the PO line. */
+  uom?: string | null;
 }
 
 export interface AutoGrnPoLine {
@@ -63,7 +65,7 @@ export interface AutoGrnSkippedLine {
   piLineId: string;
   materialCode: string | null;
   qty: number;
-  reason: "NOT_STOCKED" | "FROM_GRN" | "NO_PO" | "PO_NOT_OPEN" | "NO_CODE" | "CODE_NOT_ON_PO" | "ALREADY_RECEIVED" | "NOT_RAW_MATERIAL";
+  reason: "NOT_STOCKED" | "FROM_GRN" | "NO_PO" | "PO_NOT_OPEN" | "NO_CODE" | "CODE_NOT_ON_PO" | "ALREADY_RECEIVED" | "NOT_RAW_MATERIAL" | "UOM_DIFFERS";
 }
 
 const norm = (s: string | null | undefined) => String(s ?? "").trim().toUpperCase();
@@ -92,6 +94,9 @@ export function planPiAutoGrn(
     if (qty <= 0) continue;
     if ((pl.lineType ?? "STOCKED") !== "STOCKED") { skip("NOT_STOCKED"); continue; }
     if (pl.grnItemId) { skip("FROM_GRN"); continue; }
+    // HK-0149: billed in another unit than the PO line (e.g. MTR on a ROLL
+    // line) — no factor exists, so receiving it would post metres as rolls.
+    if (pl.uom) { skip("UOM_DIFFERS"); continue; }
     if (!pl.poId) { skip("NO_PO"); continue; }
     const ofPo = poLines.filter((po) => po.poId === pl.poId);
     if (ofPo.length > 0 && !OPEN_PO.has(String(ofPo[0].poStatus).toUpperCase())) { skip("PO_NOT_OPEN"); continue; }
@@ -146,12 +151,12 @@ const PI_HEADER_SQL = `SELECT pi.id, pi.piNo AS "piNo", pi.status AS "status", p
   FROM purchase_invoices pi`;
 const PI_LINE_SQL = `SELECT pii.id, pii.pi_id AS "piId", COALESCE(pii.po_id, pi.purchaseOrderId) AS "poId",
        pii.po_item_id AS "poItemId", pii.material_code AS "mc", pii.qty AS "qty",
-       pii.unit_price_sen AS "price", pii.line_type AS "lt", pii.grn_item_id AS "grnItem"
+       pii.unit_price_sen AS "price", pii.line_type AS "lt", pii.grn_item_id AS "grnItem", pii.uom AS "uom"
   FROM purchase_invoice_items pii JOIN purchase_invoices pi ON pi.id = pii.pi_id`;
 
 type PiLineRow = {
   id: string | number; piId: string; poId: string | null; poItemId: string | number | null; mc: string | null;
-  qty: number; price: number; lt: string | null; grnItem: string | number | null;
+  qty: number; price: number; lt: string | null; grnItem: string | number | null; uom?: string | null;
 };
 
 function toPiLine(r: PiLineRow): AutoGrnPiLine {
@@ -164,6 +169,7 @@ function toPiLine(r: PiLineRow): AutoGrnPiLine {
     unitPriceSen: Number(r.price) || 0,
     lineType: r.lt ?? "STOCKED",
     grnItemId: r.grnItem == null || r.grnItem === "" ? null : String(r.grnItem),
+    uom: r.uom ?? null,
   };
 }
 

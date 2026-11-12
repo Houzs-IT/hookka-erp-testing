@@ -1,0 +1,12 @@
+-- HK-0149 — the unit a purchase-invoice line was billed in, when it differs
+-- from the PO line it bills (fabric ordered in ROLL, received in MTR).
+--
+-- NULL = the PO line's own unit (every existing row). Set only by
+-- resolvePiLineUoms (src/api/lib/pi-line-uom.ts). No ROLL→MTR factor exists,
+-- so a line with a unit of its own is left out of the PO invoicing ceiling,
+-- PI auto stock-in and overdue / outstanding coverage. The PO line is never
+-- written.
+--
+-- RECORD ONLY. Migrations do not auto-apply on deploy. The live change is the
+-- runtime self-apply in ensurePiMigrations() (src/api/routes/purchase-invoices.ts).
+ALTER TABLE purchase_invoice_items ADD COLUMN IF NOT EXISTS uom TEXT;

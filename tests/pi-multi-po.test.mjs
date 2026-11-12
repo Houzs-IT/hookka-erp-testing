@@ -89,7 +89,7 @@ test("the guard still rejects, rather than silently trimming", () => {
 });
 
 test("create and update both persist the line's PO", () => {
-  const inserts = SRC.match(/grn_item_id, po_id, po_item_id, created_at, updated_at/g) ?? [];
+  const inserts = SRC.match(/grn_item_id, po_id, po_item_id, uom, created_at, updated_at/g) ?? [];
   assert.equal(inserts.length, 2, "both the create and update inserts must store po_id");
   // Create takes the header from the body; update takes it from the stored
   // invoice, because a PUT does not re-declare it. A GRN-sourced line falls

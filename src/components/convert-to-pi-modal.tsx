@@ -91,6 +91,8 @@ export type PickedPILine = {
   grnItemId: string | null;
   /** PO-source lines only: the PO LINE billed (T-006 R8). A GRN line's is resolved server-side. */
   poItemId: string | null;
+  /** PO-source lines only: the PO line's unit (HK-0149). */
+  unit?: string | null;
 };
 
 export type ConvertToPIResult = {
@@ -367,6 +369,7 @@ export function ConvertToPIModal({ open, onClose, onConfirm }: Props) {
           unitPriceRM: (Number(l.unitPriceSen) || 0) / 100,
           grnItemId: null,
           poItemId: l.id,
+          unit: l.unit ?? null,
         });
       }
       if (lines.length === 0) return;

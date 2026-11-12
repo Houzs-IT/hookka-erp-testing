@@ -42,6 +42,7 @@ import {
 } from "@/components/convert-to-pi-modal";
 import { useFormDirty, useNavGuard } from "@/lib/use-nav-guard";
 import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
+import { PiLineUomCell } from "@/components/pi-line-uom-cell";
 
 // ── Source-doc shapes (minimal fields we need for pre-fill) ────────────────
 type POItemShape = {
@@ -51,6 +52,7 @@ type POItemShape = {
   supplierSKU?: string | null;
   quantity: number;
   unitPriceSen: number;
+  unit?: string | null;
 };
 type POShape = {
   id: string;
@@ -107,6 +109,9 @@ type PILineDraft = {
    * backend cap a line whose material code is blank.
    */
   poItemId?: string | null;
+  /** HK-0149: the unit billed in, and the PO line's own (PO-picked lines only). */
+  uom?: string | null;
+  poUnit?: string | null;
 };
 
 function emptyPILine(): PILineDraft {
@@ -287,6 +292,8 @@ function CreatePurchaseInvoicePage() {
             grnItemId: null,
             poId: po.id,
             poItemId: it.id,
+            uom: it.unit ?? null,
+            poUnit: it.unit ?? null,
           }));
           setLines(prefilled.length > 0 ? prefilled : [emptyPILine()]);
         })
@@ -468,6 +475,8 @@ function CreatePurchaseInvoicePage() {
       grnItemId: l.grnItemId,
       poId: res.purchaseOrderId,
       poItemId: l.poItemId,
+      uom: l.unit ?? null,
+      poUnit: l.unit ?? null,
     }));
     setLines((prev) => {
       if (!append) return incoming.length > 0 ? incoming : [emptyPILine()];
@@ -603,6 +612,8 @@ function CreatePurchaseInvoicePage() {
               // with no material code (T-006 R8).
               poId: l.poId ?? null,
               poItemId: l.poItemId ?? null,
+              // HK-0149: the server keeps it only when it differs from the PO line's.
+              uom: l.uom ?? null,
             };
           });
         })(),
@@ -955,6 +966,9 @@ function CreatePurchaseInvoicePage() {
                   >
                     Qty
                   </th>
+                  <th className="text-left px-3 py-2 font-medium" style={{ minWidth: 90 }}>
+                    Unit
+                  </th>
                   <th
                     className="text-right px-3 py-2 font-medium"
                     style={{ minWidth: 130 }}
@@ -1070,6 +1084,15 @@ function CreatePurchaseInvoicePage() {
                           }
                         />
                       </td>
+                      {/* Unit (HK-0149) — saved on this invoice line only */}
+                      <td className="px-2 py-1.5">
+                        <PiLineUomCell
+                          uom={line.uom}
+                          poUnit={line.poUnit}
+                          editable={!!line.poItemId && !line.grnItemId}
+                          onChange={(u) => updateLine(idx, "uom", u)}
+                        />
+                      </td>
                       {/* Unit Price (RM) */}
                       <td className="px-2 py-1.5">
                         <MoneyInput
@@ -1117,7 +1140,7 @@ function CreatePurchaseInvoicePage() {
               <tfoot className="bg-[#FAF9F7] border-t border-[#E2DDD8]">
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-3 py-1.5 text-right text-xs font-medium text-[#6B7280]"
                   >
                     Gross
@@ -1134,7 +1157,7 @@ function CreatePurchaseInvoicePage() {
                     "Less: Discount". RM, or "10%" of the gross. */}
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-3 py-1.5 text-right text-xs font-medium text-[#6B7280]"
                   >
                     Less: Discount
@@ -1151,7 +1174,7 @@ function CreatePurchaseInvoicePage() {
                 </tr>
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-3 py-1.5 text-right text-xs font-medium text-[#6B7280]"
                   >
                     SST
@@ -1166,7 +1189,7 @@ function CreatePurchaseInvoicePage() {
                 </tr>
                 <tr className="border-t border-[#E2DDD8]">
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-3 py-2 text-right text-sm font-medium text-[#6B7280]"
                   >
                     TOTAL
