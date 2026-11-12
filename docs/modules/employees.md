@@ -91,7 +91,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `payrollPeriodForApproval` / `findPenaltyDrift` / `postPenaltiesForPeriod` | `src/api/lib/worker-penalties.ts:303 / 449 / 502` | Penalty payroll month, approval drift guard, posting on payroll approval |
 | `POST /login` / `resolveWorkerToken` | `src/api/routes/worker-auth.ts:124 / 337` | PIN login + token resolution |
 | `getWorker` (token gate) | `src/api/routes/worker.ts:163` | X-Worker-Token → ACTIVE worker or 401/403 |
-| `POST /clock` / `POST /dept-scan` | `src/api/routes/worker.ts:1254 / 1511` | Clock in/out + department scan |
+| `POST /clock` / `POST /dept-scan` | `src/api/routes/worker.ts:1262 / 1519` | Clock in/out + department scan |
 | `buildDeptDay` | `src/api/routes/worker.ts:262` | DEV-31 "Today's departments" payload (live or saved) |
 | `computeLiveDeptDay` | `src/api/lib/punch-autofill.ts:327` | Live split: punch-out maths with now as the end |
 | `splitDayHours` / `currentStation` | `src/lib/dept-scan-split.ts:148 / 171` | Shared split (autofill + live) and where the worker is now |

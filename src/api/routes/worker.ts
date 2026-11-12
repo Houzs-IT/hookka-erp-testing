@@ -350,12 +350,19 @@ app.get("/dept-completed", async (c) => {
   const askedMonth = (c.req.query("month") || "").trim();
   const month = /^\d{4}-\d{2}$/.test(askedMonth) && askedMonth <= today.slice(0, 7) ? askedMonth : today.slice(0, 7);
   try {
-    const [days, names, holidays, deptDay] = await Promise.all([
+    const [days, names, holidays, deptDay, deptRows] = await Promise.all([
       cached(c, "dept-completed:byday:all", 120, () => loadDeptCompletedByDay(db, null)),
       loadDeptNames(db),
       loadHolidaySet(db),
       buildDeptDaySafe(db, auth.worker),
+      db.prepare("SELECT code, is_production FROM departments").all<Record<string, unknown>>(),
     ]);
+    // Production departments only (owner 2026-11-12: 「nonprod 部门不需要show」).
+    const production = new Set(
+      (deptRows.results ?? [])
+        .filter((d) => d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1)
+        .map((d) => String(d.code ?? "").trim().toUpperCase()),
+    );
     const off = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0 || holidays.has(d);
     const isWorkDay = !off(today);
     let shownDate = today;
@@ -372,7 +379,7 @@ app.get("/dept-completed", async (c) => {
     const now = (deptDay?.current?.departmentCode ?? "").toUpperCase() || null;
     const isLeader = (auth.worker.position ?? "") === "Operator Leader";
     const order: string[] = [];
-    const add = (d: string | null) => { if (d && !order.includes(d)) order.push(d); };
+    const add = (d: string | null) => { if (d && (production.size === 0 || production.has(d)) && !order.includes(d)) order.push(d); };
     add(now);
     own.forEach(add);
     if (isLeader) [...new Set(days.map((d) => d.dept.toUpperCase()))].sort().forEach(add);

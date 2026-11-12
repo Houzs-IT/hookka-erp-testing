@@ -103,3 +103,14 @@ test("production value per department and per day, by category", async () => {
   assert.match(strip, /\{rm\(c\.sofaSen\)\}/);
   assert.match(strip, />Total RM</);
 });
+
+test("12-day average never counts a Sunday, even with a card closed on it (owner: 礼拜天剔除)", async () => {
+  const { usualDays } = await import("../src/api/lib/dept-completed.ts");
+  const days = [
+    { dept: "FAB_CUT", date: "2026-11-01", bedframeUnits: 1, sofaSets: 0 }, // Sunday
+    { dept: "FAB_CUT", date: "2026-11-02", bedframeUnits: 20, sofaSets: 0 },
+    { dept: "FAB_CUT", date: "2026-11-03", bedframeUnits: 22, sofaSets: 0 },
+  ];
+  // window = Mon 2 + Tue 3 only → (20 + 22) / 2
+  assert.deepEqual(usualDays(days, "2026-11-04").get("FAB_CUT"), { bed: 21, sofa: 0 });
+});

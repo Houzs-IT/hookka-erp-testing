@@ -111,11 +111,13 @@ export async function loadDeptCompletedRange(db: Db, orgId: string, from: string
 export const USUAL_WORKING_DAYS = 12;
 
 /** Each department's average per working day over the last USUAL_WORKING_DAYS
- *  before `today`. A working day = a date on which the plant completed
- *  anything (Sundays and holidays have none), so a department's quiet day
- *  counts as 0 — the average is what the department does on a plant day. */
+ *  before `today`. A working day = a Monday–Saturday on which the plant
+ *  completed anything; a Sunday never counts, even when someone closed a card
+ *  on it (owner 2026-11-12: 「礼拜天剔除」). A department's quiet day counts
+ *  as 0 — the average is what the department does on a plant day. */
 export function usualDays(days: DeptDayCount[], today: string): Map<string, { bed: number; sofa: number }> {
-  const dates = [...new Set(days.filter((d) => d.date < today && d.bedframeUnits + d.sofaSets > 0).map((d) => d.date))]
+  const isSunday = (ymd: string) => new Date(`${ymd}T00:00:00Z`).getUTCDay() === 0;
+  const dates = [...new Set(days.filter((d) => d.date < today && !isSunday(d.date) && d.bedframeUnits + d.sofaSets > 0).map((d) => d.date))]
     .sort()
     .slice(-USUAL_WORKING_DAYS);
   const win = new Set(dates);
