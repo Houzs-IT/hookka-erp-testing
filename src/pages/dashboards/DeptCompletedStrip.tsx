@@ -7,7 +7,8 @@
 // Data: GET /api/dashboard/floor-live/completed (src/api/lib/dept-completed.ts).
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from "react";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { useCachedJson } from "@/lib/cached-fetch";
 import type { DeptCompletedResponse } from "./floor-live-lib";
 import { behindPace, deptCompletedFor, deptCompletedDays, myNowMin } from "./floor-live-lib";
 
@@ -76,10 +77,21 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  // ‹ › pages the days month by month (owner 2026-11-12: last month too).
+  const baseMonth = (data?.to ?? today).slice(0, 7);
+  const [month, setMonth] = useState(baseMonth);
+  const other = useCachedJson<DeptCompletedResponse>(
+    month !== baseMonth && data ? `/api/dashboard/floor-live/completed?from=${data.from}&to=${data.to}&month=${month}` : null,
+    0,
+  );
+  const shown = month === baseMonth ? data : other.data;
   const c = deptCompletedFor(data, code);
-  const { days, bedTotal, sofaTotal, bedAvg, sofaAvg } = deptCompletedDays(data, code, today);
+  const { days, bedTotal, sofaTotal, bedAvg, sofaAvg } = deptCompletedDays(shown, code, today);
   const max = Math.max(1, ...days.map((d) => d.bedframeUnits + d.sofaSets));
-  const month = (data?.to ?? today).slice(0, 7);
+  const step = (by: number) => {
+    const [y, m] = month.split("-").map(Number);
+    setMonth(new Date(Date.UTC(y, m - 1 + by, 1)).toISOString().slice(0, 7));
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={`${name} — completed · ${month}`} className="my-8 w-full max-w-3xl rounded-xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -93,12 +105,21 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
           </button>
         </div>
         <div className="space-y-3 px-6 py-4">
+          <div className="flex items-center justify-between rounded-lg border border-[#E2DDD8] p-1">
+            <button type="button" onClick={() => step(-1)} aria-label="Previous month" className="flex h-8 w-8 items-center justify-center rounded text-[#5A5550] hover:bg-[#F5F2ED]">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="text-sm font-semibold">{month}{month !== baseMonth && other.loading ? " · loading…" : ""}</span>
+            <button type="button" onClick={() => step(1)} disabled={month >= today.slice(0, 7)} aria-label="Next month" className="flex h-8 w-8 items-center justify-center rounded text-[#5A5550] hover:bg-[#F5F2ED] disabled:opacity-30">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
-              ["Bedframe units", bedTotal.toLocaleString(), null],
-              ["Sofa sets", sofaTotal.toLocaleString(), null],
-              ["Best day · bedframe", `${c?.bestBedframe.n ?? 0}`, `${c?.bestBedframe.date ?? "—"} · avg ${bedAvg.toFixed(1)}`],
-              ["Best day · sofa", `${c?.bestSofa.n ?? 0}`, `${c?.bestSofa.date ?? "—"} · avg ${sofaAvg.toFixed(1)}`],
+              [`Bedframe units · ${month}`, bedTotal.toLocaleString(), null],
+              [`Sofa sets · ${month}`, sofaTotal.toLocaleString(), null],
+              ["Best day · bedframe (30 d)", `${c?.bestBedframe.n ?? 0}`, `${c?.bestBedframe.date ?? "—"} · avg ${bedAvg.toFixed(1)}`],
+              ["Best day · sofa (30 d)", `${c?.bestSofa.n ?? 0}`, `${c?.bestSofa.date ?? "—"} · avg ${sofaAvg.toFixed(1)}`],
             ].map(([k, v, sub]) => (
               <div key={k} className="rounded-lg bg-[#F7F4EF] px-3 py-2">
                 <div className="text-[10px] font-semibold uppercase text-[#6B7280]">{k}</div>

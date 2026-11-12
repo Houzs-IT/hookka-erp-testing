@@ -20,7 +20,8 @@ import { requireReadOrDashboardTab } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { summarizeFloorLive } from "../lib/floor-live";
 import { computeFloorLive, readFloorLiveSnapshot, readFloorLiveSnapshots } from "../lib/floor-live-data";
-import { loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted } from "../lib/dept-completed";
+import { dayCounts, loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted } from "../lib/dept-completed";
+import { cached } from "../lib/kv-cache";
 
 const app = new Hono<Env>();
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -98,24 +99,28 @@ app.get("/completed", async (c) => {
   if (denied) return denied;
   const from = c.req.query("from") ?? "";
   const to = c.req.query("to") ?? "";
-  if (!YMD.test(from) || !YMD.test(to) || from > to) {
-    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from <= to" }, 400);
+  const month = c.req.query("month") ?? to.slice(0, 7);
+  if (!YMD.test(from) || !YMD.test(to) || from > to || !/^\d{4}-\d{2}$/.test(month)) {
+    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from <= to; month YYYY-MM" }, 400);
   }
   try {
     const db = c.var.DB;
     const orgId = getOrgId(c);
-    const [range, days] = await Promise.all([
-      loadDeptCompletedRange(db, orgId, from, to),
-      loadDeptCompletedByDay(db, orgId),
-    ]);
-    const monthStart = `${to.slice(0, 7)}-01`;
+    const { today } = myClock();
+    // The per-day history is one heavy pass over every job card (~7 s cold):
+    // shared for 2 minutes (stale-while-revalidate), under the 3-minute refresh.
+    const days = await cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId));
+    // One day = straight from the per-day rows; a longer period needs the
+    // range query (a sofa order finishing on two days counts once).
+    const range = from === to ? dayCounts(days, from) : await loadDeptCompletedRange(db, orgId, from, to);
     c.header("Cache-Control", "no-store");
     return c.json({
       success: true,
       from,
       to,
-      departments: shapeDeptCompleted(range, days),
-      days: days.filter((d) => d.date >= monthStart && d.date <= to),
+      month,
+      departments: shapeDeptCompleted(range, days, today),
+      days: days.filter((d) => d.date.startsWith(month) && d.date <= today),
     });
   } catch (e) {
     console.error("[floor-live completed]", e);

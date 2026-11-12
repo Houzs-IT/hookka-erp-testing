@@ -217,6 +217,7 @@ export type DeptCompletedResponse = {
   error?: string;
   from: string;
   to: string;
+  month?: string;
   departments: DeptCompletedRow[];
   days: { dept: string; date: string; bedframeUnits: number; sofaSets: number }[];
 };

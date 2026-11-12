@@ -82,6 +82,7 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 import { completeInspection } from "./qc-pending";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
 import { bestDays, loadDeptCompletedByDay } from "../lib/dept-completed";
+import { cached } from "../lib/kv-cache";
 import { loadHolidaySet } from "../lib/agent-learning";
 
 const app = new Hono<Env>();
@@ -350,7 +351,7 @@ app.get("/dept-completed", async (c) => {
   const month = /^\d{4}-\d{2}$/.test(askedMonth) && askedMonth <= today.slice(0, 7) ? askedMonth : today.slice(0, 7);
   try {
     const [days, names, holidays, deptDay] = await Promise.all([
-      loadDeptCompletedByDay(db, null),
+      cached(c, "dept-completed:byday:all", 120, () => loadDeptCompletedByDay(db, null)),
       loadDeptNames(db),
       loadHolidaySet(db),
       buildDeptDaySafe(db, auth.worker),
@@ -375,7 +376,7 @@ app.get("/dept-completed", async (c) => {
     add(now);
     own.forEach(add);
     if (isLeader) [...new Set(days.map((d) => d.dept.toUpperCase()))].sort().forEach(add);
-    const best = bestDays(days);
+    const best = bestDays(days, today);
     const onDay = new Map(days.filter((d) => d.date === shownDate).map((d) => [d.dept.toUpperCase(), d]));
     const depts = order.map((code) => {
       const d = onDay.get(code);

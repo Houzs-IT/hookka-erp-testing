@@ -3,7 +3,7 @@
 // Who is in which department right now, from department QR scans
 // (GET /api/dashboard/floor-live; rules in src/api/lib/floor-live.ts).
 // Production cards: pieces done today + live efficiency. Non-production
-// cards: when the worker scanned in, red after an hour. Refreshes every 5 min.
+// cards: when the worker scanned in, red after an hour. Refreshes every 3 min (owner 2026-11-12: 「那就3分钟」).
 // Cards keep their own height (3 people next to 8 leaves no gap) and show at
 // most 6 rows until "+N more"; on a phone they stack one per row.
 // ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ import {
 import type { Period } from "./dashboard-shared-lib";
 
 const ROW_LIMIT = 6;
-const REFRESH_MS = 5 * 60 * 1000;
+const REFRESH_MS = 3 * 60 * 1000;
 
 // Owner 2026-11-10: efficiency turns red only below 80% (the number, not the
 // row). A whole red row is reserved for the non-production 1-hour rule.
@@ -150,7 +150,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
           <span className="h-1.5 w-1.5 rounded-full bg-[#3E7A4F]" aria-hidden="true" />
           {pastDay
             ? `END OF DAY · ${data?.date ?? day}${data?.frozen ? " · saved copy" : " · recomputed (no saved copy for this day)"}`
-            : `LIVE · as of ${data?.asOf} · refreshes every 5 min`}
+            : `LIVE · as of ${data?.asOf} · refreshes every 3 min`}
         </span>
         <span className="flex-1" />
         <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#E5E0D8] bg-white px-2.5 text-xs text-[#6B7280] max-md:w-full">
