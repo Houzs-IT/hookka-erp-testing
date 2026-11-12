@@ -472,3 +472,23 @@ test("number formats follow the approved design: '55 h', '7h 05m', 'N days'", ()
   assert.equal(hmFmt(425), "7h 05m");
   assert.equal(hmFmt(0), "0h 00m");
 });
+
+// Owner 2026-11-12: one category shown = that category over its own capacity;
+// both shown = total / total (desktop approved first, then the phone).
+test("backlog rows: one category on its own capacity, sorted by its days; both = total / total", () => {
+  const rows = [
+    { dept: "Upholstery", sofaMin: 38340, bedframeMin: 19620, totalMin: 57960, dailyCapMin: 2400, backlogDays: 24.4, sofaCapMin: 1200, bedframeCapMin: 1140, sofaDays: 31.4, bedframeDays: 17.2 },
+    { dept: "Foam Cutting", sofaMin: 20640, bedframeMin: 0, totalMin: 20640, dailyCapMin: 660, backlogDays: 31.1, sofaCapMin: 660, bedframeCapMin: 0, sofaDays: 31.4, bedframeDays: 0 },
+    { dept: "Fabric Sewing", sofaMin: 66300, bedframeMin: 14460, totalMin: 80760, dailyCapMin: 4080, backlogDays: 19.8, sofaCapMin: 2340, bedframeCapMin: 1560, sofaDays: 28.2, bedframeDays: 9.1 },
+  ];
+  const both = backlogRows(rows, true, true);
+  assert.deepEqual(both.map((r) => [r.dept, r.shown, r.single]), [["Upholstery", 24.4, null], ["Foam Cutting", 31.1, null], ["Fabric Sewing", 19.8, null]]);
+  const bed = backlogRows(rows, false, true);
+  assert.deepEqual(bed.map((r) => [r.dept, r.shown]), [["Upholstery", 17.2], ["Fabric Sewing", 9.1], ["Foam Cutting", 0]]);
+  assert.deepEqual(bed[0].single, { label: "Bedframe", queuedMin: 19620, capMin: 1140 });
+  assert.equal(bed[0].bedDays, 17.2);
+  assert.equal(bed[0].sofaDays, 0);
+  const sofa = backlogRows(rows, true, false);
+  assert.deepEqual(sofa.map((r) => r.shown), [31.4, 31.4, 28.2]);
+  assert.equal(backlogRows([{ ...rows[0], bedframeDays: null }], false, true)[0].shown, null, "no bedframe output = stalled");
+});
