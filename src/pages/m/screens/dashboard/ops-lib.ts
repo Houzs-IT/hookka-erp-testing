@@ -14,7 +14,7 @@ import { formatCurrency } from "../../../../lib/utils";
 import { parseDashPeriod } from "../../../../api/lib/dash-period";
 import { inFocus, inPeriod, monthLabel, shiftMonth, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
-import { pickCat, type RevCat } from "../../../dashboard-b/revenue-split";
+import { pickCat, pickSets, type RevCat, type SetCount } from "../../../dashboard-b/revenue-split";
 
 // ---------------------------------------------------------------------------
 // Request lifecycle → one status per section
@@ -223,7 +223,7 @@ export type SplitResp = {
   period?: string;
   granularity?: "day" | "week" | "month";
   revenue?: { bucket: string; production: CatSplit }[];
-  departments?: { code: string; label: string; period: CatSplit; byBucket: CatSplit[] }[];
+  departments?: { code: string; label: string; period: CatSplit; byBucket: CatSplit[]; sets?: SetCount; setsByBucket?: SetCount[] }[];
 };
 export type OpsRevCat = Extract<RevCat, "all" | "bedframe" | "sofa">;
 
@@ -231,17 +231,19 @@ export type OpsRevCat = Extract<RevCat, "all" | "bedframe" | "sofa">;
 export const splitDayIndex = (d: SplitResp | null | undefined, day: string | undefined): number =>
   !day || d?.granularity !== "day" ? -1 : (d.revenue ?? []).findIndex((r) => r.bucket === day);
 
-export type DeptRevRow = { code: string; label: string; value: number; frac: number };
+export type DeptRevRow = { code: string; label: string; value: number; frac: number; sets: number };
 /**
  * One row per department in the order the API returns (the desktop's fixed floor order,
  * which the desktop card does not re-sort). The value is the picked day's when the split is
  * daily and the day is in it, else the whole period's. Departments are never summed.
+ * Sets (HK-0148) follow the same day-or-period rule as the value.
  */
 export function deptRevenueRows(d: SplitResp | null | undefined, cat: OpsRevCat, day: string | undefined): DeptRevRow[] {
   const di = splitDayIndex(d, day);
   const rows = (d?.departments ?? []).map((x) => ({
     code: x.code, label: x.label,
     value: pickCat(di >= 0 ? x.byBucket[di] ?? undefined : x.period, cat),
+    sets: pickSets(di >= 0 ? x.setsByBucket?.[di] : x.sets, cat) ?? 0,
   }));
   const max = Math.max(0, ...rows.map((r) => r.value));
   return rows.map((r) => ({ ...r, frac: max > 0 ? r.value / max : 0 }));
