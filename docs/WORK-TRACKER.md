@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-13**: Board report — Refresh showed the old copy (branch `fix/board-report-refresh-shows-new`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-13**: Floor Live completed entry — a sofa set counts when the order's last module finishes in that department (branch `fix/dept-sofa-set-whole-order`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: Floor Live completed entry — Sundays out of the 12-day average; worker card hides non-production departments (branch `fix/usual-skip-sunday`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: Floor Live completed entry — production value beside the counts, outsourced work counted (branch `feat/floor-live-dept-value`, to `main`); nothing else re-checked.
@@ -307,6 +308,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Board report: Refresh kept showing the old figures (fix/board-report-refresh-shows-new, 2026-11-13)
+
+Owner: 「为什么我的board report的数据跟实际数据不一样？我按了refresh 都没用」 / 「你自己去对比啊 … fix掉 PNL 的profit就是个问题」.
+Compared live (read-only) for October 2026: the board's cached copy (built 2026-11-12 15:49 UTC) said Gross RM 157,891 / Net **RM 136,673** (29.5%); live Monthly P&L / accounting dashboard say Gross RM 158,148 / Net **RM 93,618** (expenses RM 64,530 — the copy predated part of the month's expense posting). Ledger P&L (`/pl`) says Net RM 78,322 — a different build (the board already flags that difference for Finance).
+Cause of "Refresh does nothing": Refresh starts a rebuild in the background; the page then polls without `rebuild`, and the server answered the first poll with the PREVIOUS cached copy, so the page showed stale figures. A manual rebuild (2026-11-13 00:16 MYT) produced Net RM 93,618 — matching live.
+Fix: polls send `&poll=1`; while a build's lock is fresh the server answers "building" instead of the old copy.
 
 ## 🟡 Floor Live: live completed sets per department + worker portal (design only, 2026-11-12)
 

@@ -57,7 +57,7 @@ Two unrelated report worlds share the name **Reports**:
 | `TABS` | `reports.tsx:406` | Tab definitions |
 | `DailyReportPage` | `src/pages/daily-report.tsx:1009` | Compliance exceptions page |
 | `ForecastPage` | `src/pages/analytics/forecast.tsx:50` | Forecast vs historical-sales view |
-| `GET /compliance.json` | `src/api/routes/reports.ts:716` | Daily Report JSON (cached) |
+| `GET /compliance.json` | `src/api/routes/reports.ts:729` | Daily Report JSON (cached) |
 | `buildComplianceCached` | `reports.ts:672` | SWR snapshot wrapper (serve-stale) |
 | `collectComplianceData` | `src/api/lib/compliance-report.ts:1412` | Daily Report exception engine |
 | `dispatchReport` | `reports.ts:783` | Shared send path (cron + Agent Console + manual) |
