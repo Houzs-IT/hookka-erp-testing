@@ -209,8 +209,9 @@ export type DeptCompletedRow = {
   dept: string;
   bedframeUnits: number;
   sofaSets: number;
-  bestBedframe: { n: number; date: string | null };
-  bestSofa: { n: number; date: string | null };
+  /** 12-working-day average per day. */
+  usualBedframe: number;
+  usualSofa: number;
 };
 export type DeptCompletedResponse = {
   success: boolean;
@@ -238,10 +239,10 @@ export function deptCompletedDays(data: DeptCompletedResponse | null | undefined
   return { days, bedTotal, sofaTotal, bedAvg: avg((d) => d.bedframeUnits), sofaAvg: avg((d) => d.sofaSets) };
 }
 
-/** Owner 2026-11-12: "跟着时间推演红色" — the best day spread evenly over the
+/** Owner 2026-11-12: "跟着时间推演红色" — the 12-day average spread evenly over the
  *  9-hour day (08:00–17:00 MYT). Behind pace = done so far is below
- *  best × hours gone / 9 → red. Before 08:00 nothing is due; after 17:00 the
- *  whole best day is. */
+ *  average × hours gone / 9 → red. Before 08:00 nothing is due; after 17:00
+ *  the whole average day is. */
 export const PACE_START_MIN = 8 * 60;
 export const PACE_SPAN_MIN = 9 * 60;
 export function paceDue(best: number, nowMin: number): number {

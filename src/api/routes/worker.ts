@@ -81,7 +81,7 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
-import { bestDays, loadDeptCompletedByDay } from "../lib/dept-completed";
+import { loadDeptCompletedByDay, usualDays } from "../lib/dept-completed";
 import { cached } from "../lib/kv-cache";
 import { loadHolidaySet } from "../lib/agent-learning";
 
@@ -376,18 +376,18 @@ app.get("/dept-completed", async (c) => {
     add(now);
     own.forEach(add);
     if (isLeader) [...new Set(days.map((d) => d.dept.toUpperCase()))].sort().forEach(add);
-    const best = bestDays(days, today);
+    const usual = usualDays(days, today);
     const onDay = new Map(days.filter((d) => d.date === shownDate).map((d) => [d.dept.toUpperCase(), d]));
     const depts = order.map((code) => {
       const d = onDay.get(code);
-      const b = best.get(code) ?? { bed: { n: 0, date: null }, sofa: { n: 0, date: null } };
+      const u = usual.get(code) ?? { bed: 0, sofa: 0 };
       return {
         code,
         name: names.get(code) ?? code,
         bedframeUnits: d?.bedframeUnits ?? 0,
         sofaSets: d?.sofaSets ?? 0,
-        bestBedframe: b.bed,
-        bestSofa: b.sofa,
+        usualBedframe: u.bed,
+        usualSofa: u.sofa,
       };
     });
     const inMonth = days

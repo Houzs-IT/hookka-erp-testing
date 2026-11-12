@@ -479,11 +479,11 @@ const dict: Dict = {
     zh: '沙发 · 本月',
     my: 'ဆိုဖာ · လ',
   },
-  'deptDone.bestDay': {
-    en: 'best day',
-    ms: 'hari terbaik',
-    zh: '最高纪录',
-    my: 'အကောင်းဆုံးရက်',
+  'deptDone.usual': {
+    en: '12-day average',
+    ms: 'purata 12 hari',
+    zh: '12天平均',
+    my: '၁၂ ရက် ပျမ်းမျှ',
   },
   'deptDone.day': {
     en: 'Day',
@@ -516,10 +516,10 @@ const dict: Dict = {
     my: 'ဤလတွင် ပြီးစီးမှု မရှိပါ။',
   },
   'deptDone.note': {
-    en: 'The department’s count, not yours alone. Green = the department’s best day.',
-    ms: 'Kiraan jabatan, bukan anda seorang. Hijau = hari terbaik jabatan.',
-    zh: '这是部门的数量，不是你个人的。绿色 = 部门最高纪录。',
-    my: 'ဤသည်မှာ ဌာန၏ အရေအတွက်ဖြစ်ပြီး သင်တစ်ဦးတည်း၏ မဟုတ်ပါ။ အစိမ်း = ဌာန၏ အကောင်းဆုံးရက်။',
+    en: 'The department’s count, not yours alone. “/ 26” = its average over the last 12 working days.',
+    ms: 'Kiraan jabatan, bukan anda seorang. “/ 26” = purata 12 hari bekerja terakhir.',
+    zh: '这是部门的数量，不是你个人的。“/ 26” = 最近12个工作天的平均。',
+    my: 'ဤသည်မှာ ဌာန၏ အရေအတွက်ဖြစ်ပြီး သင်တစ်ဦးတည်း၏ မဟုတ်ပါ။ “/ 26” = နောက်ဆုံး အလုပ်ရက် ၁၂ ရက် ပျမ်းမျှ။',
   },
   'dept.savedTitle': {
     en: 'Hours by department (saved)',

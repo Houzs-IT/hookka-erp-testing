@@ -1,15 +1,14 @@
 // "Department completed today" — top of the worker Scan screen (owner
 // 2026-11-12, design https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE).
-// The department's count (bedframe units / sofa sets) beside its best day on
-// record; several departments = one row each, the one scanned into now first.
+// The department's count (bedframe units / sofa sets) beside its average over
+// the last 12 working days; several departments = one row each, the one scanned into now first.
 // Tap = Department history (any month). Data: GET /api/worker/dept-completed.
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { workerFetch } from "@/layouts/WorkerLayout";
 import { useT } from "@/lib/worker-i18n";
 
-type Best = { n: number; date: string | null };
-type Dept = { code: string; name: string; bedframeUnits: number; sofaSets: number; bestBedframe: Best; bestSofa: Best };
+type Dept = { code: string; name: string; bedframeUnits: number; sofaSets: number; usualBedframe: number; usualSofa: number };
 type Day = { dept: string; date: string; bedframeUnits: number; sofaSets: number };
 export type DeptCompletedData = {
   today: string;
@@ -42,13 +41,13 @@ async function load(month?: string): Promise<DeptCompletedData | null> {
   }
 }
 
-function Figure({ label, n, best }: { label: string; n: number; best: number }) {
+function Figure({ label, n, usual }: { label: string; n: number; usual: number }) {
   return (
     <span className="flex items-baseline justify-between gap-1.5 rounded-[10px] bg-[#F3EFE9] px-2.5 py-1.5">
       <span className="text-[10px] font-bold text-[#6B5C32]">{label}</span>
       <span className="flex items-baseline gap-1">
         <span className="text-xl font-extrabold tabular-nums">{n}</span>
-        <span className="text-[11px] text-[#8A8680]">/ {best}</span>
+        <span className="text-[11px] text-[#8A8680]">/ {Math.round(usual)}</span>
       </span>
     </span>
   );
@@ -67,8 +66,8 @@ export function DeptCompletedCard() {
   if (!data || data.depts.length === 0) return null;
   const single = data.depts.length === 1;
   const d0 = data.depts[0];
-  const hasBed = (d: Dept) => d.bedframeUnits > 0 || d.bestBedframe.n > 0;
-  const hasSofa = (d: Dept) => d.sofaSets > 0 || d.bestSofa.n > 0;
+  const hasBed = (d: Dept) => d.bedframeUnits > 0 || d.usualBedframe > 0;
+  const hasSofa = (d: Dept) => d.sofaSets > 0 || d.usualSofa > 0;
   return (
     <>
       <button
@@ -87,8 +86,8 @@ export function DeptCompletedCard() {
           <>
             <span className="text-sm font-extrabold leading-tight text-[#6B5C32]">{d0.name}</span>
             <span className={`grid w-full gap-2 ${hasBed(d0) && hasSofa(d0) ? "grid-cols-2" : "grid-cols-1"}`}>
-              {hasBed(d0) && <Figure label={t("deptDone.bedframe")} n={d0.bedframeUnits} best={d0.bestBedframe.n} />}
-              {hasSofa(d0) && <Figure label={t("deptDone.sofa")} n={d0.sofaSets} best={d0.bestSofa.n} />}
+              {hasBed(d0) && <Figure label={t("deptDone.bedframe")} n={d0.bedframeUnits} usual={d0.usualBedframe} />}
+              {hasSofa(d0) && <Figure label={t("deptDone.sofa")} n={d0.sofaSets} usual={d0.usualSofa} />}
             </span>
           </>
         ) : (
@@ -102,8 +101,8 @@ export function DeptCompletedCard() {
                     {d.code === data.now && <span className="rounded-full bg-[#2F6B3F] px-1.5 text-[9px] font-bold text-white">{t("deptDone.now")}</span>}
                   </span>
                   <span className="flex gap-3 whitespace-nowrap tabular-nums">
-                    {hasBed(d) && <span className="text-xs text-[#5A5550]">{t("deptDone.bedShort")} <b className="text-[15px] text-[#1F1D1B]">{d.bedframeUnits}</b><span className="text-[10px] text-[#8A8680]"> /{d.bestBedframe.n}</span></span>}
-                    {hasSofa(d) && <span className="text-xs text-[#5A5550]">{t("deptDone.sofaShort")} <b className="text-[15px] text-[#1F1D1B]">{d.sofaSets}</b><span className="text-[10px] text-[#8A8680]"> /{d.bestSofa.n}</span></span>}
+                    {hasBed(d) && <span className="text-xs text-[#5A5550]">{t("deptDone.bedShort")} <b className="text-[15px] text-[#1F1D1B]">{d.bedframeUnits}</b><span className="text-[10px] text-[#8A8680]"> /{Math.round(d.usualBedframe)}</span></span>}
+                    {hasSofa(d) && <span className="text-xs text-[#5A5550]">{t("deptDone.sofaShort")} <b className="text-[15px] text-[#1F1D1B]">{d.sofaSets}</b><span className="text-[10px] text-[#8A8680]"> /{Math.round(d.usualSofa)}</span></span>}
                   </span>
                 </span>
               );
@@ -137,8 +136,6 @@ function DeptHistory({ first, onClose }: { first: DeptCompletedData; onClose: ()
   const rows = data.days.filter((x) => x.dept === d.code).sort((a, b) => (a.date < b.date ? 1 : -1));
   const bedTotal = rows.reduce((s, r) => s + r.bedframeUnits, 0);
   const sofaTotal = rows.reduce((s, r) => s + r.sofaSets, 0);
-  const isBest = (r: Day, k: "bed" | "sofa") =>
-    k === "bed" ? d.bestBedframe.n > 0 && r.date === d.bestBedframe.date : d.bestSofa.n > 0 && r.date === d.bestSofa.date;
   const canNext = month < data.today.slice(0, 7);
   return (
     <div role="dialog" aria-modal="true" aria-label={t("deptDone.historyTitle")} className="fixed inset-0 z-50 flex flex-col bg-[#F0ECE9]">
@@ -176,14 +173,14 @@ function DeptHistory({ first, onClose }: { first: DeptCompletedData; onClose: ()
           <div className="text-base font-extrabold text-[#6B5C32]">{d.name}</div>
           <div className="grid grid-cols-2 gap-2">
             {[
-              [t("deptDone.bedMonth"), bedTotal, d.bestBedframe],
-              [t("deptDone.sofaMonth"), sofaTotal, d.bestSofa],
-            ].map(([label, total, best]) => (
+              [t("deptDone.bedMonth"), bedTotal, d.usualBedframe],
+              [t("deptDone.sofaMonth"), sofaTotal, d.usualSofa],
+            ].map(([label, total, usual]) => (
               <div key={label as string} className="rounded-[10px] bg-[#F3EFE9] px-2.5 py-2">
                 <div className="text-[10px] font-bold text-[#6B5C32]">{label as string}</div>
                 <div className="text-xl font-extrabold tabular-nums">{total as number}</div>
                 <div className="text-[11px] text-[#8A8680]">
-                  {t("deptDone.bestDay")} {(best as Best).n}{(best as Best).date ? ` · ${dayLabel((best as Best).date as string)}` : ""}
+                  {t("deptDone.usual")} {usual as number}
                 </div>
               </div>
             ))}
@@ -199,8 +196,8 @@ function DeptHistory({ first, onClose }: { first: DeptCompletedData; onClose: ()
             rows.map((r) => (
               <div key={r.date} className="grid grid-cols-[minmax(0,1fr)_76px_64px] items-center border-t border-[#F0ECE9] px-3.5 py-2.5 text-sm">
                 <span className="text-[#3D3A36]">{dayLabel(r.date)}{r.date === data.today ? ` · ${t("deptDone.today")}` : ""}</span>
-                <span className={`text-right tabular-nums ${isBest(r, "bed") ? "font-extrabold text-[#2F6B3F]" : "font-semibold"}`}>{r.bedframeUnits || "—"}</span>
-                <span className={`text-right tabular-nums ${isBest(r, "sofa") ? "font-extrabold text-[#2F6B3F]" : "font-semibold"}`}>{r.sofaSets || "—"}</span>
+                <span className={`text-right tabular-nums ${"font-semibold"}`}>{r.bedframeUnits || "—"}</span>
+                <span className={`text-right tabular-nums ${"font-semibold"}`}>{r.sofaSets || "—"}</span>
               </div>
             ))
           )}

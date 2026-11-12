@@ -8,13 +8,12 @@
 // order closes (the per-(PO, department) gate of dept-revenue.ts).
 //
 // Owner rulings (2026-11-12):
-//   - outsourced work is not counted, neither in the day nor in the best day
+//   - outsourced work is not counted, neither in the day nor in the average
 //     (a (PO, department) with any card done by an is_outsource worker drops);
 //   - a cancelled order's finished work stays counted ("做了的就不能取消了");
-//   - the comparison is the department's best day, not an average — over the
-//     last 30 days, leaving out a day above 3x that department's usual (the
-//     median of its working days) so a bulk back-entry day (Packing 256 on
-//     2026-05-05) can't set an unreachable mark (owner 「A」 + 「近一个月就可以了」).
+//   - the comparison is the department's average over the last 12 working
+//     days (owner: 「我觉得你还是用12天工作天平均把 … 那个数据看起来太夸张了」 —
+//     the best-day mark was too high; same 12-day window as capacity).
 // Read-only.
 // ---------------------------------------------------------------------------
 
@@ -23,13 +22,13 @@ type Db = {
 };
 
 export type DeptDayCount = { dept: string; date: string; bedframeUnits: number; sofaSets: number };
-export type DeptBest = { n: number; date: string | null };
 export type DeptCompleted = {
   dept: string;
   bedframeUnits: number;
   sofaSets: number;
-  bestBedframe: DeptBest;
-  bestSofa: DeptBest;
+  /** Average per working day over the last USUAL_WORKING_DAYS (1 decimal). */
+  usualBedframe: number;
+  usualSofa: number;
 };
 
 const DONE = `jc.status IN ('COMPLETED','TRANSFERRED') AND jc.completedDate IS NOT NULL`;
@@ -108,53 +107,41 @@ export async function loadDeptCompletedRange(db: Db, orgId: string, from: string
   return out;
 }
 
-export const BEST_WINDOW_DAYS = 30;
-export const OUTLIER_X = 3;
+export const USUAL_WORKING_DAYS = 12;
 
-const median = (xs: number[]) => {
-  if (!xs.length) return 0;
-  const a = [...xs].sort((x, y) => x - y);
-  const m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
-};
-
-/** Best day per department within the last BEST_WINDOW_DAYS up to `today`,
- *  a day above OUTLIER_X x the median of the department's non-zero days left
- *  out. Ties keep the earliest day. */
-export function bestDays(days: DeptDayCount[], today: string): Map<string, { bed: DeptBest; sofa: DeptBest }> {
-  const from = new Date(`${today}T00:00:00Z`);
-  from.setUTCDate(from.getUTCDate() - (BEST_WINDOW_DAYS - 1));
-  const fromYmd = from.toISOString().slice(0, 10);
-  const inWin = days.filter((d) => d.date >= fromYmd && d.date <= today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const byDept = new Map<string, DeptDayCount[]>();
-  for (const d of inWin) byDept.set(d.dept, [...(byDept.get(d.dept) ?? []), d]);
-  const out = new Map<string, { bed: DeptBest; sofa: DeptBest }>();
-  for (const [dept, list] of byDept) {
-    const pick = (f: (d: DeptDayCount) => number): DeptBest => {
-      const cap = OUTLIER_X * median(list.map(f).filter((n) => n > 0));
-      let best: DeptBest = { n: 0, date: null };
-      for (const d of list) {
-        const n = f(d);
-        if (n > best.n && n <= cap) best = { n, date: d.date };
-      }
-      return best;
-    };
-    out.set(dept, { bed: pick((d) => d.bedframeUnits), sofa: pick((d) => d.sofaSets) });
+/** Each department's average per working day over the last USUAL_WORKING_DAYS
+ *  before `today`. A working day = a date on which the plant completed
+ *  anything (Sundays and holidays have none), so a department's quiet day
+ *  counts as 0 — the average is what the department does on a plant day. */
+export function usualDays(days: DeptDayCount[], today: string): Map<string, { bed: number; sofa: number }> {
+  const dates = [...new Set(days.filter((d) => d.date < today && d.bedframeUnits + d.sofaSets > 0).map((d) => d.date))]
+    .sort()
+    .slice(-USUAL_WORKING_DAYS);
+  const win = new Set(dates);
+  const n = dates.length || 1;
+  const sums = new Map<string, { bed: number; sofa: number }>();
+  for (const d of days) {
+    if (!win.has(d.date)) continue;
+    const s = sums.get(d.dept) ?? { bed: 0, sofa: 0 };
+    s.bed += d.bedframeUnits;
+    s.sofa += d.sofaSets;
+    sums.set(d.dept, s);
   }
-  return out;
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return new Map([...sums].map(([k, v]) => [k, { bed: r1(v.bed / n), sofa: r1(v.sofa / n) }]));
 }
 
-/** The period's count plus each department's best day, one row per department that has any. */
+/** The period's count plus each department's 12-working-day average, one row per department that has any. */
 export function shapeDeptCompleted(
   range: Map<string, { bedframeUnits: number; sofaSets: number }>,
   days: DeptDayCount[],
   today: string,
 ): DeptCompleted[] {
-  const best = bestDays(days, today);
-  const depts = new Set<string>([...range.keys(), ...best.keys()]);
+  const usual = usualDays(days, today);
+  const depts = new Set<string>([...range.keys(), ...usual.keys()]);
   return [...depts].map((dept) => {
     const r = range.get(dept) ?? { bedframeUnits: 0, sofaSets: 0 };
-    const b = best.get(dept) ?? { bed: { n: 0, date: null }, sofa: { n: 0, date: null } };
-    return { dept, bedframeUnits: r.bedframeUnits, sofaSets: r.sofaSets, bestBedframe: b.bed, bestSofa: b.sofa };
+    const u = usual.get(dept) ?? { bed: 0, sofa: 0 };
+    return { dept, bedframeUnits: r.bedframeUnits, sofaSets: r.sofaSets, usualBedframe: u.bed, usualSofa: u.sofa };
   });
 }
