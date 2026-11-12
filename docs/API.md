@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 153 mounts, 151 route files in
-`src/api/routes/`, 1113 top-level handler registrations discovered.
+`src/api/routes/`, 1114 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -138,7 +138,7 @@ offsets pointing past the end of their own file.
 | `/api/audit-events` | `src/api/routes/audit-events.ts` | `GET /` <sub>:49</sub> | gated |
 | `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:85</sub><br>`GET /revenue-split` <sub>:2273</sub> | gated |
 | `/api/dashboard/prototype` | `src/api/routes/dashboard-prototype.ts` | `GET /labour` <sub>:325</sub><br>`GET /service-sla` <sub>:337</sub><br>`GET /` <sub>:344</sub> | gated |
-| `/api/dashboard/floor-live` | `src/api/routes/floor-live.ts` | `GET /` <sub>:29</sub><br>`GET /summary` <sub>:64</sub> | gated |
+| `/api/dashboard/floor-live` | `src/api/routes/floor-live.ts` | `GET /` <sub>:33</sub><br>`GET /summary` <sub>:68</sub><br>`GET /completed` <sub>:96</sub> | gated |
 | `/api/dashboard/finance` | `src/api/routes/dashboard-finance.ts` | `GET /` <sub>:42</sub><br>`PUT /valuation` <sub>:110</sub> | gated |
 | `/api/kpi` | `src/api/routes/kpi.ts` | `GET /me` <sub>:331</sub><br>`GET /users/:id` <sub>:340</sub><br>`GET /payout/:id` <sub>:355</sub><br>`PUT /payout/:id` <sub>:362</sub><br>`PUT /checklist/:kpiKey` <sub>:433</sub><br>`GET /checklist/:kpiKey` <sub>:494</sub><br>`POST /survey/:kpiKey` <sub>:516</sub><br>`POST /survey/:kpiKey/link` <sub>:573</sub><br>`PUT /rating/:kpiKey` <sub>:640</sub><br>`GET /survey/:kpiKey` <sub>:693</sub><br>`GET /library` <sub>:714</sub><br>`PUT /rules/:kpiKey` <sub>:772</sub><br>`GET /people` <sub>:815</sub><br>`GET /catalog` <sub>:864</sub><br>`GET /assignments/:id` <sub>:878</sub><br>`PUT /assignments/:id` <sub>:891</sub><br>`PUT /kpi/:kpiKey/assignees` <sub>:954</sub> | gated |
 | `/api/it-support` | `src/api/routes/it-support.ts` | `GET /tickets` <sub>:130</sub><br>`GET /unread-count` <sub>:139</sub><br>`GET /tickets/:code` <sub>:146</sub><br>`POST /tickets` <sub>:155</sub><br>`POST /tickets/:code/replies` <sub>:176</sub><br>`POST /tickets/:code/confirm` <sub>:195</sub><br>`GET /attachments/:id` <sub>:204</sub> | gated |
