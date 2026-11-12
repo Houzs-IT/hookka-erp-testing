@@ -196,3 +196,54 @@ export async function saveFloorLiveSnapshots(
   }
   return { written, existing, orgs: orgSet.size };
 }
+
+/**
+ * A closed day's per-worker efficiency inputs — the SAME rule as Floor Live and
+ * the Employees dashboard (workforce-perf buildPerfDays): production working
+ * minutes and earned job-card minutes, shared cards split between the PICs,
+ * approved extra time and helpers handled there. Owner 2026-11-13: the daily
+ * efficiency report must show the same figure (「1要一样」). orgId null = every
+ * org (that report is org-agnostic).
+ */
+export async function loadClosedDayPerf(
+  db: D1Database,
+  orgId: string | null,
+  date: string,
+): Promise<Map<string, { workingMinutes: number; productionMinutes: number; isHelper?: boolean }>> {
+  const org = (col: string) => (orgId === null ? "TRUE" : `${col} = ?`);
+  const orgArgs = orgId === null ? [] : [orgId];
+  const [deptRes, wheRes, jcRes] = await Promise.all([
+    db.prepare(`SELECT code, is_production FROM departments`).all<{ code: string; isProduction: boolean | number | null }>(),
+    db.prepare(
+      `SELECT worker_id, date, department_code, hours, notes
+         FROM working_hour_entries
+        WHERE ${org("org_id")} AND ${DAY("date")} = ?`,
+    ).bind(...orgArgs, date).all<{ workerId: string | null; date: string | null; departmentCode: string | null; hours: number | string | null; notes: string | null }>(),
+    db.prepare(
+      `SELECT id, department_code, pic1_id, pic2_id, completed_date, est_minutes, actual_minutes, wip_qty
+         FROM job_cards
+        WHERE ${org("org_id")} AND status IN ('COMPLETED','TRANSFERRED') AND ${DAY("completed_date")} = ?`,
+    ).bind(...orgArgs, date).all<{
+      id: string; departmentCode: string | null; pic1Id: string | null; pic2Id: string | null;
+      completedDate: string | null; estMinutes: number | string | null; actualMinutes: number | string | null; wipQty: number | string | null;
+    }>(),
+  ]);
+  const jobCards = jcRes.results ?? [];
+  const ids = jobCards.map((j) => j.id);
+  const chunks = Array.from({ length: Math.ceil(ids.length / 200) }, (_, i) => ids.slice(i * 200, i * 200 + 200));
+  const picRes = await Promise.all(
+    chunks.map((chunk) =>
+      db
+        .prepare(`SELECT job_card_id, pic1_id, pic2_id FROM piece_pics WHERE ${org("org_id")} AND job_card_id IN (${chunk.map(() => "?").join(",")})`)
+        .bind(...orgArgs, ...chunk)
+        .all<{ jobCardId: string; pic1Id: string | null; pic2Id: string | null }>(),
+    ),
+  );
+  const pics = picRes.flatMap((r) => r.results ?? []);
+  const productionDepts = new Set((deptRes.results ?? []).filter((d) => d.isProduction).map((d) => d.code));
+  const approvedExtraTime = await loadApprovedExtraTime(db, date, date);
+  const helperIds = await helperWorkerIds(db);
+  const { perfDays } = buildPerfDays({ whe: wheRes.results ?? [], jobCards, pics, approvedExtraTime, productionDepts, helperIds });
+  const day = perfDays.find((d) => d.date === date);
+  return new Map((day?.workers ?? []).map((w) => [w.workerId, w]));
+}

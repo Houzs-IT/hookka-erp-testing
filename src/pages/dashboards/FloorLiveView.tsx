@@ -30,6 +30,9 @@ function effClass(e: number | null): string {
   return "text-[#1F1D1B]";
 }
 
+/** Pieces: a shared piece counts half to each person, so .5 can appear. */
+const fmtPcs = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
 /** Last department check-in (scan) today, else the punch-in time. */
 const lastIn = (p: FloorLiveRow) => p.scannedAt ?? p.clockIn ?? "—";
 
@@ -57,7 +60,7 @@ function Row({ p, production }: { p: FloorLiveRow; production: boolean }) {
       >
         {lastIn(p)}
       </span>
-      <span className="text-right font-semibold">{p.done}</span>
+      <span className="text-right font-semibold">{fmtPcs(p.done)}</span>
       <span className={`text-right font-semibold ${effClass(p.effPct)}`}>{p.effPct == null ? "—" : `${p.effPct}%`}</span>
     </div>
   );
@@ -176,7 +179,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
         {[
           ["Punched in", `${layout.totals.punched}`],
           ["Still in", `${layout.totals.stillIn}`],
-          ["Pcs done today", `${layout.totals.done}`],
+          ["Pcs done today", fmtPcs(layout.totals.done)],
           ["Floor efficiency", layout.totals.effPct == null ? "—" : `${layout.totals.effPct}%`],
           ["Non-prod 1h+", `${layout.totals.overHour}`],
         ].map(([label, value], i) => (
