@@ -39,12 +39,15 @@ test("second pass: income page chart fills the gap; labour lists non-production;
   const f = readFileSync("src/pages/board-report/pages-finance.tsx", "utf8");
   assert.match(f, /Revenue, gross profit and net profit by month/);
   assert.match(f, /const incomeTrend = r\.trend\.ok \?/);
-  assert.match(f, /<tr className="brp-subhead"><td colSpan=\{8\}>Non-production · time production staff spent there \(already inside the figures above\)<\/td><\/tr>/);
-  // Non-production rows are production staff's time already inside the payslips:
-  // not added again (owner 2026-11-13: October labour is 70k+, not 80k).
-  assert.match(f, /<td>All labour \(payroll\)<\/td><td><Money v=\{d\.total\} \/>/);
+  // Owner 2026-11-13: payroll by home department, the non-production time split
+  // OUT of direct labour on its own rows, every column filled; All labour = payroll.
+  assert.match(f, /const direct = payroll - npTotal;/);
+  assert.match(f, /<td>Less: time in non-production departments<\/td><td><Money v=\{-npTotal\} \/>/);
+  assert.match(f, /<td>Direct labour \(production\)<\/td><td><Money v=\{direct\} \/>/);
+  assert.match(f, /<td>All labour \(payroll\)<\/td><td><Money v=\{payroll\} \/>/);
+  assert.match(f, /<Tile label="Direct labour" value=\{<>RM \{rm\(direct\)\}<\/>\}/);
   assert.doesNotMatch(f, /d\.total \+ \(d\.nonProdTotal/);
-  assert.match(f, /\(d\.nonProd \?\? \[\]\)\.map\(/, "a report kept before this change has no nonProd");
+  assert.match(f, /const np = d\.nonProd \?\? \[\];/, "a report kept before this change has no nonProd");
   assert.match(f, /label="Forecast \(production\)"/);
   assert.match(f, /\{\/\* Total row \(owner review 2026-11-10\)\. \*\/\}/);
   const lib = readFileSync("src/lib/board-report.ts", "utf8");

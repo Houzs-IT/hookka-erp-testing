@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-13**: Board report labour — non-production split out of direct labour (branch `fix/board-labour-split-nonprod`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-13**: Board report — Refresh showed the old copy (branch `fix/board-report-refresh-shows-new`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-13**: Floor Live completed entry — a sofa set counts when the order's last module finishes in that department (branch `fix/dept-sofa-set-whole-order`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: Floor Live completed entry — Sundays out of the 12-day average; worker card hides non-production departments (branch `fix/usual-skip-sunday`, to `main`); nothing else re-checked.
