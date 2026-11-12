@@ -57,16 +57,16 @@ export type DeptBacklog = {
   backlogDays: number | null;
 };
 
-/** Days for the visible categories: each on its own capacity, the dept clears
- *  when the slower one does (max). Bar segments split that total by share. */
+/** Days when ONE category is shown: that category's queue over that
+ *  department's own capacity for it (owner 2026-11-12). Both shown → null, so
+ *  the caller keeps total / total (「两个都显示时候就拿total 除total」); also null
+ *  for an older feed without the per-category fields. */
 export function categoryDays(d: DeptBacklog, sofaOn: boolean, bedOn: boolean): { showDays: number | null; sofaDays: number; bedDays: number } | null {
+  if (sofaOn === bedOn) return null;
   if (d.sofaDays === undefined && d.bedframeDays === undefined) return null;
-  const s = sofaOn ? (d.sofaDays ?? null) : 0;
-  const b = bedOn ? (d.bedframeDays ?? null) : 0;
-  if (s === null || b === null) return { showDays: null, sofaDays: 0, bedDays: 0 };
-  const showDays = Math.max(s, b);
-  const sum = s + b;
-  return { showDays, sofaDays: sum > 0 ? (showDays * s) / sum : 0, bedDays: sum > 0 ? (showDays * b) / sum : 0 };
+  const days = sofaOn ? (d.sofaDays ?? null) : (d.bedframeDays ?? null);
+  if (days === null) return { showDays: null, sofaDays: 0, bedDays: 0 };
+  return { showDays: days, sofaDays: sofaOn ? days : 0, bedDays: bedOn ? days : 0 };
 }
 export type StateSnapshot = {
   source: "live" | "snapshot" | "reconstructed";

@@ -970,14 +970,11 @@ app.get("/", async (c) => {
       // thousands of "days" and topping the bottleneck sort. backlogDays = null
       // now means "stalled — no recent throughput to measure against"; the FE
       // renders it as such instead of a fake number.
-      // Both categories are made side by side, so the dept is clear when the
-      // SLOWER one is: the larger of the two. Stalled if either is stalled.
+      // Both categories together = total queued / total capacity (owner
+      // 2026-11-12: 「两个都显示时候就拿total 除total」). sofaDays /
+      // bedframeDays are for when only one category is shown.
       const backlogDays =
-        sofaDays === null || bedframeDays === null
-          ? null
-          : totalMin > 0 || dailyCapMin > 0
-            ? Math.max(sofaDays, bedframeDays)
-            : null;
+        dailyCapMin > 0 ? Math.round((totalMin / dailyCapMin) * 10) / 10 : null;
       return {
         dept: name,
         sofaMin,
@@ -2049,8 +2046,8 @@ app.get("/", async (c) => {
             const totalMin = sofaMin + bedframeMin;
             // Same div-zero guard as the live path: null = stalled, never a
             // 1-minute fallback (owner audit 2026-07-11).
-            // Each category against its own capacity (owner 2026-11-12), the
-            // slower one sets the department's days — same as the live path.
+            // Each category against its own capacity when shown alone (owner
+            // 2026-11-12); both together stay total / total — same as live.
             const sofaCapMin = Math.round(monthSofaMin / reconMonthWorkingDays);
             const bedframeCapMin = Math.round(monthBedMin / reconMonthWorkingDays);
             const catDays = (queued: number, cap: number): number | null =>
@@ -2058,11 +2055,7 @@ app.get("/", async (c) => {
             const sofaDays = catDays(sofaMin, sofaCapMin);
             const bedframeDays = catDays(bedframeMin, bedframeCapMin);
             const backlogDays =
-              sofaDays === null || bedframeDays === null
-                ? null
-                : totalMin > 0 || dailyCapMin > 0
-                  ? Math.max(sofaDays, bedframeDays)
-                  : null;
+              dailyCapMin > 0 ? Math.round((totalMin / dailyCapMin) * 10) / 10 : null;
             return {
               dept: name,
               sofaMin,

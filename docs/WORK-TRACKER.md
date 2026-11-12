@@ -305,6 +305,7 @@ Owner asks (2026-11-12, verbatim):
 - 「为什么是除部门的全部产能呢？… 应该除以部门sofa 的产能而已不是吗？」 — Department Backlog: Sofa queued ÷ that dept's Sofa capacity, Bedframe ÷ Bedframe capacity; both shown → the slower (max) one.
 - 「Plant Load … 现在的ok」 — Plant Load unchanged (total ÷ total).
 - 「平均天数可以拉14天了 … 全部拉14天」 → 「或者工作天的12天就是两个星期」 — every capacity average = last 12 working days (dashboard 7→12, planning adaptive capacity 15→12, agent learning rolling window 7→12).
+- 「两个都显示时候就拿total 除total」 / 「total的话就跟之前没有问题 是如果选bedframe or 选sofa 而已的话」 — both shown = total ÷ total as before; per-category capacity only when ONE category is picked (replaces the first "max" version).
 - 「不需要dashboard B 直接更改而已」 / 「改了我去看 ok了再去电话改」 — change the live /dashboard (file `src/pages/dashboard-b`) only; phone keeps its old backlog logic until the owner approves the desktop. Phone only gets the label "12-day avg" (the numbers behind it are 12-day now).
 
 Status: built; PR / prod check pending.

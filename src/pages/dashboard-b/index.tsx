@@ -2704,8 +2704,8 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
               // segments now sum to `showDays` and each row's total bar
               // width is proportional to the biggest dept's wait days.
               const rows = (prod?.backlogByDept ?? []).map((d) => {
-                // Owner 2026-11-12: each category on its own capacity; the
-                // slower one is the dept's days (dashboard-widgets-lib categoryDays).
+                // Owner 2026-11-12: one category shown → its own capacity;
+                // both shown → total / total (dashboard-widgets-lib categoryDays).
                 const cat = categoryDays(d, sofaOn, bedOn);
                 if (cat) return { d, ...cat };
                 // dailyCapMin === 0 → "stalled" (no completions in the rolling

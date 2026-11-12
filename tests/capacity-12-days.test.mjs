@@ -16,20 +16,22 @@ test("every capacity window is 12 working days", () => {
   assert.match(read("src/api/lib/planning-adaptive-capacity.ts"), /export const CAPACITY_WINDOW_DAYS = 12;/);
 });
 
-test("server: per-category capacity and days; dept days = the slower category", () => {
+test("server: per-category capacity and days; both together stay total / total", () => {
   const s = read("src/api/routes/dashboard-overview.ts");
   assert.match(s, /const sofaCapMin = Math\.round\(windowSofa \/ CAPACITY_WORKING_DAYS\);/);
   assert.match(s, /const sofaDays = catDays\(sofaMin, sofaCapMin\);/);
-  assert.match(s, /Math\.max\(sofaDays, bedframeDays\)/);
+  assert.doesNotMatch(s, /Math\.max\(sofaDays, bedframeDays\)/);
+  assert.match(s, /dailyCapMin > 0 \? Math\.round\(\(totalMin \/ dailyCapMin\) \* 10\) \/ 10 : null;/);
 });
 
-test("categoryDays: one category on its own capacity; both = max; stalled = null", () => {
-  const d = { dept: "Upholstery", sofaMin: 600, bedframeMin: 300, totalMin: 900, dailyCapMin: 100, sofaCapMin: 60, bedframeCapMin: 40, sofaDays: 10, bedframeDays: 7.5, backlogDays: 10 };
-  assert.equal(lib.categoryDays(d, true, false).showDays, 10);
-  assert.equal(lib.categoryDays(d, false, true).showDays, 7.5);
-  const both = lib.categoryDays(d, true, true);
-  assert.equal(both.showDays, 10);
-  assert.equal(Math.round((both.sofaDays + both.bedDays) * 10) / 10, 10, "bar segments add up to the shown days");
-  assert.equal(lib.categoryDays({ ...d, bedframeDays: null }, true, true).showDays, null);
-  assert.equal(lib.categoryDays({ dept: "x", sofaMin: 1, bedframeMin: 0, totalMin: 1, dailyCapMin: 1, backlogDays: 1 }, true, true), null, "older feed falls back");
+test("categoryDays: one category on its own capacity; both shown = fall back to total / total", () => {
+  const d = { dept: "Upholstery", sofaMin: 600, bedframeMin: 300, totalMin: 900, dailyCapMin: 100, sofaCapMin: 60, bedframeCapMin: 40, sofaDays: 10, bedframeDays: 7.5, backlogDays: 9 };
+  assert.deepEqual(lib.categoryDays(d, true, false), { showDays: 10, sofaDays: 10, bedDays: 0 });
+  assert.deepEqual(lib.categoryDays(d, false, true), { showDays: 7.5, sofaDays: 0, bedDays: 7.5 });
+  assert.equal(lib.categoryDays(d, true, true), null);
+  assert.equal(lib.categoryDays({ ...d, sofaDays: null }, true, false).showDays, null, "stalled sofa");
+  assert.equal(lib.categoryDays({ dept: "x", sofaMin: 1, bedframeMin: 0, totalMin: 1, dailyCapMin: 1, backlogDays: 1 }, true, false), null, "older feed falls back");
+  // Both shown: the existing row logic uses backlogDays (900 / 100 = 9).
+  const [row] = lib.deptBacklogRows([d], true, true).rows ?? lib.deptBacklogRows([d], true, true);
+  assert.equal(row.showDays, 9);
 });
