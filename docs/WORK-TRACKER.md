@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-12**: capacity entry added (branch `feat/capacity-12-working-days`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-11**: item 139 added (branch `fix/efficiency-one-rule`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-11**: item 131 added (branch `fix/bom-minutes-fill-zero-cards`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-11**: mobile Service Orders entry added to the same PR (branch `feat/mobile-modules-to-main`, to `main`); nothing else re-checked.
@@ -297,6 +298,17 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Capacity: 12 working days + per-category backlog (feat/capacity-12-working-days, 2026-11-12)
+
+Owner asks (2026-11-12, verbatim):
+- 「为什么是除部门的全部产能呢？… 应该除以部门sofa 的产能而已不是吗？」 — Department Backlog: Sofa queued ÷ that dept's Sofa capacity, Bedframe ÷ Bedframe capacity; both shown → the slower (max) one.
+- 「Plant Load … 现在的ok」 — Plant Load unchanged (total ÷ total).
+- 「平均天数可以拉14天了 … 全部拉14天」 → 「或者工作天的12天就是两个星期」 — every capacity average = last 12 working days (dashboard 7→12, planning adaptive capacity 15→12, agent learning rolling window 7→12).
+- 「两个都显示时候就拿total 除total」 / 「total的话就跟之前没有问题 是如果选bedframe or 选sofa 而已的话」 — both shown = total ÷ total as before; per-category capacity only when ONE category is picked (replaces the first "max" version).
+- 「不需要dashboard B 直接更改而已」 / 「改了我去看 ok了再去电话改」 — change the live /dashboard (file `src/pages/dashboard-b`) only; phone keeps its old backlog logic until the owner approves the desktop. Phone only gets the label "12-day avg" (the numbers behind it are 12-day now).
+
+Status: built; PR / prod check pending.
 
 ## ✅ Debtor Aging: opening-period receipts out of the columns (#1317, 2026-11-11)
 Ask (owner, with a screenshot of Debtor Aging's 3+ months column, one customer's figure negative): 「可以帮我把houzs 和 conts 的还之前的的invoice的数额不要显示吗？」. Proposal, then 「可以」, plus 「顺便帮我检查 RM49487 和 RM7045 是什么？我叫他们去核对」.

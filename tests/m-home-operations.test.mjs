@@ -123,7 +123,7 @@ test("the gauge uses the desktop's cut-offs: gold over 7 days, red over 12, bar 
   assert.equal(plantGauge(7.1).color, "#C9A24B");
   assert.equal(plantGauge(12.1).color, "#DC2626");
   assert.deepEqual([plantGauge(7).pct, plantGauge(30).pct, plantGauge(30).util], [50, 100, 1]);
-  assert.equal(capacityWindowLabel("2026-11", "2026-11"), "7-day avg");
+  assert.equal(capacityWindowLabel("2026-11", "2026-11"), "12-day avg");
   assert.equal(capacityWindowLabel("2026-Q3", "2026-11"), "2026-Q3 avg");
 });
 

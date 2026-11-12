@@ -54,8 +54,9 @@ interface DbLike {
 const OT_MAX_HOURS_PER_DAY = 2;
 /** Forward window (working days) the OT learner looks ahead. */
 const OT_WINDOW_WORKING_DAYS = 21;
-/** Rolling actual-throughput window (working days). */
-export const ROLLING_WORKING_DAYS = 7;
+/** Rolling actual-throughput window (working days). Owner 2026-11-12: 12 working
+ *  days (two weeks, Mon–Sat) for every capacity figure — steadier than 7. */
+export const ROLLING_WORKING_DAYS = 12;
 /** Handoff drift (working days) that triggers a config proposal. */
 const HANDOFF_DRIFT_THRESHOLD = 1;
 /** Minimum (PO) samples before a handoff drift counts as "sustained". */

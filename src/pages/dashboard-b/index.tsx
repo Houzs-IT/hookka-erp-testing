@@ -9,6 +9,7 @@
 // the /dashboard-b route line, and the sidebar line to remove it.
 // ===========================================================================
 import { lazy, Suspense, useMemo, useState } from "react";
+import { categoryDays } from "@/pages/dashboards/dashboard-widgets-lib";
 import { CompletedDrill } from "./CompletedDrill";
 import { InvoiceListDrill, OutstandingDrill, PendingDeliveryDrill, SoListDrill } from "./KpiDrills";
 import { parseDashPeriod } from "../../api/lib/dash-period";
@@ -110,6 +111,10 @@ type Overview = {
       bedframeMin: number;
       totalMin: number;
       dailyCapMin: number;
+      sofaCapMin?: number;
+      bedframeCapMin?: number;
+      sofaDays?: number | null;
+      bedframeDays?: number | null;
       backlogDays: number | null;
     }[];
     backlogGrandMin: number;
@@ -1119,7 +1124,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
   // Completed, Worker Efficiency). All-time keeps each widget's original
   // rolling phrase; a selected month shows the month string.
   const revTitle = isAllTime ? "Revenue — last 12 weeks" : `Revenue — ${period}`;
-  const capacityWindowLabel = isAllTime ? "7-day avg" : `${period} avg`;
+  const capacityWindowLabel = isAllTime ? "12-day avg" : `${period} avg`;
   const capacityDrillTitle = isAllTime
     ? "Daily Capacity — Past 7 Working Days"
     : `Daily Capacity — ${period}`;
@@ -2699,6 +2704,10 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
               // segments now sum to `showDays` and each row's total bar
               // width is proportional to the biggest dept's wait days.
               const rows = (prod?.backlogByDept ?? []).map((d) => {
+                // Owner 2026-11-12: one category shown → its own capacity;
+                // both shown → total / total (dashboard-widgets-lib categoryDays).
+                const cat = categoryDays(d, sofaOn, bedOn);
+                if (cat) return { d, ...cat };
                 // dailyCapMin === 0 → "stalled" (no completions in the rolling
                 // window). Never divide by a 1-minute fallback — that painted
                 // thousands of fake days (owner audit 2026-07-11).
@@ -2754,9 +2763,13 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     )}
                   </div>
                   <span className="hidden w-32 shrink-0 text-right text-[11px] text-[#9CA3AF] tabular-nums sm:block">
-                    {hrs(d.totalMin)} · {hrs(d.dailyCapMin)}/d
+                    {/* Queued · capacity of the categories shown (owner 2026-11-12:
+                        the hours must follow the Sofa / Bedframe toggle). */}
+                    {d.sofaCapMin !== undefined && sofaOn !== bedOn
+                      ? `${hrs(sofaOn ? d.sofaMin : d.bedframeMin)} · ${hrs((sofaOn ? d.sofaCapMin : d.bedframeCapMin) ?? 0)}/d`
+                      : `${hrs(d.totalMin)} · ${hrs(d.dailyCapMin)}/d`}
                   </span>
-                  <span className="w-12 shrink-0 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 7 working days — queue can't be sized in days" : undefined}>
+                  <span className="w-12 shrink-0 text-right text-xs font-semibold text-[#DC2626] tabular-nums" title={showDays == null ? "No completions in the last 12 working days — queue can't be sized in days" : undefined}>
                     {showDays == null ? "stalled" : `${showDays.toFixed(1)}d`}
                   </span>
                 </div>

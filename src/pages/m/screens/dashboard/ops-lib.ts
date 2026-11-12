@@ -281,9 +281,9 @@ export function stateTag(snap: OpsOverview["stateSnapshot"]): StateTag {
   return snap.isHistorical ? { kind: "live-no-history", text: "live (no history before today)" } : null;
 }
 
-/** "7-day avg" for the current month, else "<period> avg" (the desktop's wording). */
+/** "12-day avg" for the current month, else "<period> avg" (the desktop's wording). */
 export function capacityWindowLabel(periodKey: string, curYm: string): string {
-  return periodKey === curYm ? "7-day avg" : `${periodKey} avg`;
+  return periodKey === curYm ? "12-day avg" : `${periodKey} avg`;
 }
 
 /** Average capacity per worker: avg/day ÷ avg workers over days that credit a worker (desktop). */
