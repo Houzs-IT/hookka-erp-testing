@@ -14,7 +14,8 @@ test("route: worker-authenticated, the scanned-into department first, leaders se
   assert.match(body, /add\(now\);\n\s+own\.forEach\(add\);/, "current department first, then the worker's own set");
   assert.match(body, /\(auth\.worker\.position \?\? ""\) === "Operator Leader"/);
   assert.match(body, /getUTCDay\(\) === 0 \|\| holidays\.has\(d\)/, "Sunday or public holiday = not a working day");
-  assert.match(body, /loadDeptCompletedByDay\(db, null\)/, "same counting as Floor Live (outsourced excluded)");
+  assert.match(body, /loadDeptCompletedByDay\(db, null\)/, "same counting as Floor Live");
+  assert.match(body, /production\.size === 0 \|\| production\.has\(d\)/, "non-production departments never listed (owner: nonprod 不需要show)");
   assert.doesNotMatch(body, /\b(INSERT|UPDATE|DELETE)\b/);
 });
 
