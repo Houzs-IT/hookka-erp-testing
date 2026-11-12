@@ -48,6 +48,34 @@ const PER_PO_DEPT = `
   )`;
 const ORDER_KEY = `COALESCE(po.salesOrderId, po.consignmentOrderId, po.id)`;
 
+// A sofa SET (1 order) is done in a department on the day that department
+// finishes the order's LAST sofa production order — the way Completed and
+// Active Jobs count a set (owner 2026-11-12: 「肯定是这样啊」). Before, an
+// order counted on every day one of its modules finished. A cancelled
+// production order that never finished doesn't hold the set open.
+const sofaSets = (orgFilter: string) => `
+  po_dept_state AS (
+    SELECT jc.productionOrderId,
+           jc.departmentCode,
+           MAX(CASE WHEN ${DONE} THEN jc.completedDate END) AS done_at,
+           CASE WHEN SUM(CASE WHEN ${DONE} THEN 1 ELSE 0 END) = COUNT(*) THEN 1 ELSE 0 END AS all_done
+      FROM job_cards jc
+     WHERE jc.departmentCode IS NOT NULL
+     GROUP BY jc.productionOrderId, jc.departmentCode
+  ),
+  sofa_sets AS (
+    SELECT s.departmentCode,
+           ${ORDER_KEY} AS order_key,
+           MAX(CASE WHEN s.all_done = 1 THEN s.done_at END) AS set_at
+      FROM po_dept_state s
+      JOIN production_orders po ON po.id = s.productionOrderId
+     WHERE po.itemCategory = 'SOFA'
+       AND ${orgFilter}
+     GROUP BY s.departmentCode, ${ORDER_KEY}
+    HAVING SUM(CASE WHEN s.all_done = 1 OR po.status = 'CANCELLED' THEN 0 ELSE 1 END) = 0
+       AND SUM(s.all_done) > 0
+  )`;
+
 const num = (v: unknown) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -56,20 +84,33 @@ const num = (v: unknown) => {
 /** Per department per day, every day on record (for the best day and the drill).
  *  orgId null = every org (the worker portal is single-org, like the rest of worker.ts). */
 export async function loadDeptCompletedByDay(db: Db, orgId: string | null): Promise<DeptDayCount[]> {
+  const orgFilter = orgId === null ? "TRUE" : "po.orgId = ?";
   const res = await db
     .prepare(
-      `WITH ${PER_PO_DEPT}
-       SELECT d.departmentCode AS "dept",
-              substr(d.done_at::text, 1, 10) AS "day",
-              SUM(CASE WHEN po.itemCategory = 'BEDFRAME' THEN po.quantity ELSE 0 END) AS "bed",
-              COUNT(DISTINCT CASE WHEN po.itemCategory = 'SOFA' THEN ${ORDER_KEY} END) AS "sofa"
-         FROM per_po_dept d
-         JOIN production_orders po ON po.id = d.productionOrderId
-        WHERE ${orgId === null ? "TRUE" : "po.orgId = ?"}
-          AND d.done_at IS NOT NULL
-        GROUP BY d.departmentCode, substr(d.done_at::text, 1, 10)`,
+      `WITH ${PER_PO_DEPT}, ${sofaSets(orgFilter)}
+       SELECT x.dept AS "dept", x.day AS "day", SUM(x.bed) AS "bed", SUM(x.sofa) AS "sofa"
+         FROM (
+           SELECT d.departmentCode AS dept,
+                  substr(d.done_at::text, 1, 10) AS day,
+                  SUM(CASE WHEN po.itemCategory = 'BEDFRAME' THEN po.quantity ELSE 0 END) AS bed,
+                  0 AS sofa
+             FROM per_po_dept d
+             JOIN production_orders po ON po.id = d.productionOrderId
+            WHERE ${orgFilter}
+              AND d.done_at IS NOT NULL
+            GROUP BY d.departmentCode, substr(d.done_at::text, 1, 10)
+           UNION ALL
+           SELECT ss.departmentCode AS dept,
+                  substr(ss.set_at::text, 1, 10) AS day,
+                  0 AS bed,
+                  COUNT(*) AS sofa
+             FROM sofa_sets ss
+            WHERE ss.set_at IS NOT NULL
+            GROUP BY ss.departmentCode, substr(ss.set_at::text, 1, 10)
+         ) x
+        GROUP BY x.dept, x.day`,
     )
-    .bind(...(orgId === null ? [] : [orgId]))
+    .bind(...(orgId === null ? [] : [orgId, orgId]))
     .all<{ dept: string | null; day: string | null; bed: unknown; sofa: unknown }>();
   const out: DeptDayCount[] = [];
   for (const r of res.results ?? []) {
@@ -85,23 +126,35 @@ export function dayCounts(days: DeptDayCount[], date: string): Map<string, { bed
   return new Map(days.filter((d) => d.date === date).map((d) => [d.dept, { bedframeUnits: d.bedframeUnits, sofaSets: d.sofaSets }]));
 }
 
-/** Per department over [from, to] — a sofa order finishing across two days counts once. */
+/** Per department over [from, to] — a sofa set counts once, on the day its
+ *  last module finished in that department. */
 export async function loadDeptCompletedRange(db: Db, orgId: string, from: string, to: string): Promise<Map<string, { bedframeUnits: number; sofaSets: number }>> {
   const res = await db
     .prepare(
-      `WITH ${PER_PO_DEPT}
-       SELECT d.departmentCode AS "dept",
-              SUM(CASE WHEN po.itemCategory = 'BEDFRAME' THEN po.quantity ELSE 0 END) AS "bed",
-              COUNT(DISTINCT CASE WHEN po.itemCategory = 'SOFA' THEN ${ORDER_KEY} END) AS "sofa"
-         FROM per_po_dept d
-         JOIN production_orders po ON po.id = d.productionOrderId
-        WHERE po.orgId = ?
-          AND d.done_at IS NOT NULL
-          AND substr(d.done_at::text, 1, 10) >= ?
-          AND substr(d.done_at::text, 1, 10) <= ?
-        GROUP BY d.departmentCode`,
+      `WITH ${PER_PO_DEPT}, ${sofaSets("po.orgId = ?")}
+       SELECT x.dept AS "dept", SUM(x.bed) AS "bed", SUM(x.sofa) AS "sofa"
+         FROM (
+           SELECT d.departmentCode AS dept,
+                  SUM(CASE WHEN po.itemCategory = 'BEDFRAME' THEN po.quantity ELSE 0 END) AS bed,
+                  0 AS sofa
+             FROM per_po_dept d
+             JOIN production_orders po ON po.id = d.productionOrderId
+            WHERE po.orgId = ?
+              AND d.done_at IS NOT NULL
+              AND substr(d.done_at::text, 1, 10) >= ?
+              AND substr(d.done_at::text, 1, 10) <= ?
+            GROUP BY d.departmentCode
+           UNION ALL
+           SELECT ss.departmentCode AS dept, 0 AS bed, COUNT(*) AS sofa
+             FROM sofa_sets ss
+            WHERE ss.set_at IS NOT NULL
+              AND substr(ss.set_at::text, 1, 10) >= ?
+              AND substr(ss.set_at::text, 1, 10) <= ?
+            GROUP BY ss.departmentCode
+         ) x
+        GROUP BY x.dept`,
     )
-    .bind(orgId, from, to)
+    .bind(orgId, orgId, from, to, from, to)
     .all<{ dept: string | null; bed: unknown; sofa: unknown }>();
   const out = new Map<string, { bedframeUnits: number; sofaSets: number }>();
   for (const r of res.results ?? []) if (r.dept) out.set(r.dept, { bedframeUnits: num(r.bed), sofaSets: num(r.sofa) });
