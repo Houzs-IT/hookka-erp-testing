@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-11-11** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-12** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -105,7 +105,7 @@ offsets pointing past the end of their own file.
 | `/api/production-folders` | `src/api/routes/production-folders.ts` | `GET /` <sub>:100</sub><br>`POST /` <sub>:125</sub><br>`GET /:id` <sub>:182</sub><br>`GET /:id/rows` <sub>:229</sub><br>`PATCH /:id` <sub>:301</sub><br>`DELETE /:id` <sub>:352</sub><br>`POST /:id/add-jcs` <sub>:372</sub><br>`POST /:id/remove-jcs` <sub>:420</sub> | gated |
 | `/api/inventory/wip` | `src/api/routes/inventory-wip.ts` | `GET /` <sub>:159</sub><br>`GET /reconcile` <sub>:686</sub> | gated |
 | `/api/inventory` | `src/api/routes/inventory.ts` | `GET /` <sub>:193</sub><br>`GET /shortage-forecast` <sub>:297</sub><br>`POST /raw-materials` <sub>:467</sub><br>`GET /rm-source/:rmId` <sub>:536</sub><br>`GET /fg-stock` <sub>:613</sub> | gated |
-| `/api/raw-materials` | `src/api/routes/raw-materials.ts` | `GET /` <sub>:235</sub><br>`GET /:id` <sub>:250</sub><br>`GET /:id/used-in` <sub>:268</sub><br>`POST /` <sub>:305</sub><br>`PUT /:id` <sub>:417</sub><br>`DELETE /:id` <sub>:667</sub><br>`POST /bulk-import` <sub>:726</sub><br>`POST /_unlock-duplicate-codes` <sub>:1001</sub><br>`POST /_relock-duplicate-codes` <sub>:1032</sub> | gated |
+| `/api/raw-materials` | `src/api/routes/raw-materials.ts` | `GET /` <sub>:235</sub><br>`GET /:id` <sub>:250</sub><br>`GET /:id/used-in` <sub>:268</sub><br>`POST /` <sub>:305</sub><br>`PUT /:id` <sub>:417</sub><br>`DELETE /:id` <sub>:667</sub><br>`POST /bulk-import` <sub>:726</sub><br>`POST /_unlock-duplicate-codes` <sub>:1002</sub><br>`POST /_relock-duplicate-codes` <sub>:1033</sub> | gated |
 | `/api/rm-batches` | `src/api/routes/rm-batches.ts` | `GET /` <sub>:60</sub><br>`GET /:id` <sub>:79</sub> | gated |
 | `/api/grn` | `src/api/routes/grn.ts` | `GET /` <sub>:1331</sub><br>`GET /stats` <sub>:1422</sub><br>`POST /` <sub>:1463</sub><br>`GET /:id` <sub>:1953</sub><br>`PUT /:id` <sub>:1970</sub><br>`PUT /:id/arrival` <sub>:2487</sub><br>`POST /:id/cancel` <sub>:2638</sub><br>`DELETE /:id` <sub>:2833</sub> | gated |
 | `/api/cost-ledger` | `src/api/routes/cost-ledger.ts` | `GET /` <sub>:120</sub><br>`GET /rm-batches` <sub>:163</sub><br>`GET /fg-batches` <sub>:188</sub><br>`GET /summary` <sub>:224</sub> | gated |
