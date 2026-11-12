@@ -36,10 +36,10 @@ test("the period count sits next to the 12-day average; a department with only h
   assert.deepEqual([by.FOAM_CUTTING.sofaSets, by.FOAM_CUTTING.usualSofa], [0, 11.5]);
 });
 
-test("SQL: per-department last card, outsourced work dropped, cancelled orders kept, units vs sets", () => {
+test("SQL: per-department last card, outsourced work counted, cancelled orders kept, units vs sets", () => {
   const s = read("src/api/lib/dept-completed.ts");
   assert.match(s, /GROUP BY jc\.productionOrderId, jc\.departmentCode/);
-  assert.match(s, /COALESCE\(w\.isOutsource, FALSE\) = TRUE THEN 1 ELSE 0 END\) = 0/, "outsourced (PO, dept) drops");
+  assert.doesNotMatch(s, /isOutsource/, "outsourced work counts (owner 2026-11-12: 都算外包)");
   assert.doesNotMatch(s, /po\.status/, "a cancelled order's finished work stays counted");
   assert.match(s, /SUM\(CASE WHEN po\.itemCategory = 'BEDFRAME' THEN po\.quantity ELSE 0 END\)/);
   assert.match(s, /const ORDER_KEY = `COALESCE\(po\.salesOrderId, po\.consignmentOrderId, po\.id\)`/);
@@ -82,4 +82,24 @@ test("wiring: each production card carries the strip; no heading on the dashboar
   assert.match(v, /<DeptCompletedStrip code=\{d\.code\} name=\{d\.name\} data=\{completed\.data\} showUsual live=\{!pastDay\}/);
   assert.match(v, /floor-live\/completed\?from=\$\{day\}&to=\$\{day\}/);
   assert.doesNotMatch(v, /"Completed today"/);
+});
+
+// Owner 2026-11-12: 「在旁边显示production revenue」 — value under each count,
+// Department Revenue's rule (outsourced work counted).
+test("production value per department and per day, by category", async () => {
+  const { valueByDept, valueByDay } = await import("../src/api/lib/dept-completed.ts");
+  const rows = [
+    { deptCode: "FAB_SEW", date: "2026-11-12", category: "BEDFRAME", totalSen: 1_916_500 },
+    { deptCode: "FAB_SEW", date: "2026-11-12", category: "SOFA", totalSen: 2_382_700 },
+    { deptCode: "FAB_SEW", date: "2026-11-11", category: "SOFA", totalSen: 740_500 },
+    { deptCode: "FAB_SEW", date: "2026-11-12", category: "ACCESSORY", totalSen: 999 },
+  ];
+  assert.deepEqual(valueByDept(rows, "2026-11-12", "2026-11-12").get("FAB_SEW"), { bedframeSen: 1_916_500, sofaSen: 2_382_700 });
+  assert.deepEqual(valueByDay(rows).get("FAB_SEW|2026-11-11"), { bedframeSen: 0, sofaSen: 740_500 });
+  const r = read("src/api/routes/floor-live.ts");
+  assert.match(r, /loadDeptRevenue\(db, orgId, lo, hi\)/, "Department Revenue's own rows");
+  const strip = read("src/pages/dashboards/DeptCompletedStrip.tsx");
+  assert.match(strip, /\{rm\(c\.bedframeSen\)\}/);
+  assert.match(strip, /\{rm\(c\.sofaSen\)\}/);
+  assert.match(strip, />Total RM</);
 });

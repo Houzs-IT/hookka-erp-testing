@@ -212,6 +212,9 @@ export type DeptCompletedRow = {
   /** 12-working-day average per day. */
   usualBedframe: number;
   usualSofa: number;
+  /** Production value (Department Revenue's rule), sen. */
+  bedframeSen?: number;
+  sofaSen?: number;
 };
 export type DeptCompletedResponse = {
   success: boolean;
@@ -220,7 +223,7 @@ export type DeptCompletedResponse = {
   to: string;
   month?: string;
   departments: DeptCompletedRow[];
-  days: { dept: string; date: string; bedframeUnits: number; sofaSets: number }[];
+  days: { dept: string; date: string; bedframeUnits: number; sofaSets: number; bedframeSen?: number; sofaSen?: number }[];
 };
 
 export function deptCompletedFor(data: DeptCompletedResponse | null | undefined, code: string): DeptCompletedRow | null {

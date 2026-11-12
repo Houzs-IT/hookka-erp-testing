@@ -336,9 +336,9 @@ async function buildDeptDay(
 // GET /api/worker/dept-completed?month=YYYY-MM — "Department completed today"
 // on the Scan screen + its history (owner 2026-11-12, design
 // https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE). The DEPARTMENT's count,
-// not the worker's: bedframe units + sofa sets, each department's best day on
-// record beside it (rules: src/api/lib/dept-completed.ts — outsourced work
-// excluded). Departments shown: the one scanned into now first, then the
+// not the worker's: bedframe units + sofa sets, each department's 12-working-day
+// average beside it (rules: src/api/lib/dept-completed.ts — outsourced work
+// counted). Departments shown: the one scanned into now first, then the
 // worker's own set; an Operator Leader sees every department. On a Sunday or
 // public holiday it shows the last working day (owner: 0 would alarm).
 // ============================================================
