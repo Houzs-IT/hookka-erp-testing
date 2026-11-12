@@ -21,6 +21,16 @@ test("the poll isn't restarted by an inline callback", () => {
   assert.match(hook, /onNewVersionRef\.current\(\)/);
 });
 
+// HK-0146 — the dashboard's "Reload for new version?" dialog popped up on
+// every deploy and blocked work. A toast is enough: the reload happens on the
+// next page change anyway.
+test("a new deploy shows a toast, not a blocking reload dialog", () => {
+  const layout = readFileSync("src/layouts/DashboardLayout.tsx", "utf8");
+  assert.match(layout, /toast\.info\("A new version is available/);
+  assert.doesNotMatch(layout, /Reload for new version\?/);
+  assert.doesNotMatch(layout, /useConfirm/);
+});
+
 test("every app shell picks up a new deploy", () => {
   for (const f of ["src/layouts/DashboardLayout.tsx", "src/pages/m/MobileLayout.tsx"]) {
     assert.match(readFileSync(f, "utf8"), /useAutoUpdateOnNavigate\(/, f);
