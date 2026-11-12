@@ -38,20 +38,20 @@ const EXCLUDE = [
 
 // ── refined palette by role (values mirror src/styles/refined-tokens.css) ──
 const T = {
-  bg: "#F3EFE8", surface: "#FDFBF7", "surface-2": "#F8F5EF", "surface-dim": "#ECE6DC",
-  border: "#E4DDD1", "border-subtle": "#EDE8DF", "border-strong": "#D3CABB",
-  ink: "#24201B", "ink-2": "#4F483F", "ink-muted": "#6B6358", "ink-faint": "#938A7D",
-  primary: "#6B5C32", "primary-hover": "#54482A", "primary-soft": "#F2EAD3", "primary-ink": "#3E3520",
-  gold: "#C0A35A", focus: "#A88B43",
-  success: "#3D6030", "success-fill": "#E9F0DF", "success-line": "#6A9A4E",
-  warning: "#7A5718", "warning-fill": "#FAF0D2", "warning-line": "#C18F2C",
-  danger: "#9A3A2D", "danger-fill": "#FBEDE8", "danger-line": "#C0533F",
-  info: "#31505A", "info-fill": "#E3EEF0", "info-line": "#4D828E",
-  "sage-100": "#E4EBE0", "sage-600": "#5A7353",
-  "slate-100": "#E1E8EF", "slate-600": "#51677D",
-  "clay-100": "#F5E3DA", "clay-600": "#985A40",
-  "chart-1": "#8A7238", "chart-2": "#4D828E", "chart-3": "#8C6A8E",
-  "chart-4": "#6F8F4E", "chart-5": "#C2A36B", "chart-6": "#8F877B",
+  bg: "#F5F6F8", surface: "#FFFFFF", "surface-2": "#F9FAFB", "surface-dim": "#EEF0F3",
+  border: "#E6E8EC", "border-subtle": "#EEF0F3", "border-strong": "#D5D9E0",
+  ink: "#1A1D23", "ink-2": "#3F4652", "ink-muted": "#667085", "ink-faint": "#98A2B3",
+  primary: "#9C7A2E", "primary-hover": "#7E6224", "primary-soft": "#FBF4E2", "primary-ink": "#5C4716",
+  gold: "#C9A24B", focus: "#C9A24B",
+  success: "#15803D", "success-fill": "#ECFDF3", "success-line": "#4CAF6B",
+  warning: "#B45309", "warning-fill": "#FFF7E6", "warning-line": "#F2A93B",
+  danger: "#B42318", "danger-fill": "#FEF3F2", "danger-line": "#F04438",
+  info: "#175CD3", "info-fill": "#EFF8FF", "info-line": "#53B1FD",
+  "sage-100": "#E7F7EE", "sage-600": "#1F8A4C",
+  "slate-100": "#EAF2FF", "slate-600": "#2E6BE6",
+  "clay-100": "#FFEEE8", "clay-600": "#D9542B",
+  "chart-1": "#2E6BE6", "chart-2": "#12B886", "chart-3": "#F59F00",
+  "chart-4": "#7950F2", "chart-5": "#E8590C", "chart-6": "#868E96",
 };
 const ROLE = {
   // backgrounds: surfaces, soft fills, solid fills (buttons, dark bars)
@@ -106,9 +106,18 @@ export function snap(kind, hex) {
     const C2 = Math.hypot(A2, B2);
     // Chart marks: a coloured series stays a coloured series (never a grey),
     // and hue outweighs lightness — a navy line wants slate, a teal bar teal.
-    if (kind === "c" && C > 0.04 && C2 < 0.03) continue;
-    const wL = kind === "c" ? 0.35 : 1;
-    const d = wL * (L - L2) ** 2 + (A - A2) ** 2 + (B - B2) ** 2 + 2 * (C - C2) ** 2;
+    if (kind === "c" && C > 0.04 && C2 < 0.05) continue; // cool greys (#667085) count as grey
+    let d;
+    if (kind === "c" && C > 0.04) {
+      // Coloured chart series: nearest HUE first (angle distance), then
+      // lightness — vivid palettes differ a lot in chroma, so chroma is ignored.
+      const h1 = Math.atan2(B, A);
+      const h2 = Math.atan2(B2, A2);
+      const dh = Math.abs(Math.atan2(Math.sin(h1 - h2), Math.cos(h1 - h2)));
+      d = dh ** 2 + 0.5 * (L - L2) ** 2;
+    } else {
+      d = (L - L2) ** 2 + (A - A2) ** 2 + (B - B2) ** 2 + 2 * (C - C2) ** 2;
+    }
     if (d < bestD) { bestD = d; best = name; }
   }
   return best;
@@ -245,16 +254,16 @@ for (const hex of [...chartHex].sort()) {
 
 // Tailwind's grey families → the warm neutral ramp under .refined.
 const NEUTRAL = {
-  50: "#FDFBF7", 100: "#F8F5EF", 200: "#EDE8DF", 300: "#E4DDD1", 400: "#D3CABB", 500: "#938A7D",
-  600: "#6B6358", 700: "#4F483F", 800: "#3A342D", 900: "#24201B", 950: "#1A1815",
+  50: "#FFFFFF", 100: "#F9FAFB", 200: "#EEF0F3", 300: "#E6E8EC", 400: "#D5D9E0", 500: "#98A2B3",
+  600: "#667085", 700: "#3F4652", 800: "#2A2F38", 900: "#1A1D23", 950: "#12151A",
 };
 // Tailwind's status families (bg-red-600 buttons, text-green-700, bg-amber-50 …)
 // → the refined status ramps, so a "Cancel" button is the soft danger red, not
 // Tailwind's bright #DC2626 (owner review 2026-11-12, DO drawer).
-const DANGER = { 50: "#FBEDE8", 100: "#F6DED6", 200: "#EDC1B5", 300: "#DE9C8B", 400: "#C9705E", 500: "#C0533F", 600: "#9A3A2D", 700: "#82301F", 800: "#6A281B", 900: "#521F16", 950: "#3A160F" };
-const SUCCESS = { 50: "#F1F6EA", 100: "#E9F0DF", 200: "#D2E2C0", 300: "#B2CC97", 400: "#8BB06D", 500: "#6A9A4E", 600: "#4F7A3B", 700: "#3D6030", 800: "#304C26", 900: "#24391D", 950: "#182614" };
-const WARNING = { 50: "#FDF8EA", 100: "#FAF0D2", 200: "#F3DFA6", 300: "#E6C574", 400: "#D4A94A", 500: "#C18F2C", 600: "#9C731F", 700: "#7A5718", 800: "#5E4313", 900: "#45310E", 950: "#2E2009" };
-const INFO = { 50: "#EEF5F6", 100: "#E3EEF0", 200: "#C6DBDF", 300: "#A0C1C8", 400: "#75A1AB", 500: "#4D828E", 600: "#3E6A74", 700: "#31505A", 800: "#263F47", 900: "#1C2F35", 950: "#132024" };
+const DANGER = { 50: "#FEF3F2", 100: "#FEE4E2", 200: "#FECDCA", 300: "#FDA29B", 400: "#F97066", 500: "#F04438", 600: "#D92D20", 700: "#B42318", 800: "#912018", 900: "#7A271A", 950: "#55160C" };
+const SUCCESS = { 50: "#ECFDF3", 100: "#DCFAE6", 200: "#ABEFC6", 300: "#75E0A7", 400: "#47CD89", 500: "#4CAF6B", 600: "#16803D", 700: "#15803D", 800: "#085D3A", 900: "#074D31", 950: "#053321" };
+const WARNING = { 50: "#FFF7E6", 100: "#FEF0C7", 200: "#FEDF89", 300: "#FEC84B", 400: "#F2A93B", 500: "#F79009", 600: "#DC6803", 700: "#B45309", 800: "#93370D", 900: "#7A2E0E", 950: "#4E1D09" };
+const INFO = { 50: "#EFF8FF", 100: "#D1E9FF", 200: "#B2DDFF", 300: "#84CAFF", 400: "#53B1FD", 500: "#2E90FA", 600: "#1570EF", 700: "#175CD3", 800: "#1849A9", 900: "#194185", 950: "#102A56" };
 const paletteLines = [];
 const ramps = [
   [["gray", "slate", "zinc", "neutral", "stone"], NEUTRAL],

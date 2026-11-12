@@ -26,7 +26,7 @@ test("tokens are scoped to html.refined; classic variables untouched", () => {
   const t = read("src/styles/refined-tokens.css");
   assert.match(t, /^:root\.refined \{/m);
   assert.ok(!/^:root \{/m.test(t), "no unscoped :root block");
-  assert.match(t, /--hk-bg: #F3EFE8;/);
+  assert.match(t, /--hk-bg: #F5F6F8;/);
   assert.match(t, /--hk-font-sans: "Inter", "Noto Sans SC"/);
   assert.match(t, /:root\.refined:not\(\.dark\) body\[data-theme="light"\] \{/, "phone light theme follows; phone dark left alone");
 });
@@ -58,17 +58,25 @@ test("polish 2: chart marks (SVG fill/stroke/stop-color from JS constants) snap 
   assert.ok(svg.length > 300, "covers the app's chart colours");
   assert.ok(svg.every((l) => l.includes(":root.refined:not(.dark)")));
   const map = (hex) => (svg.find((l) => l.includes(`[fill="${hex}" i]`)) ?? "").match(/var\(--hk-([a-z0-9-]+)\)/)?.[1];
-  assert.equal(map("#1F3B63"), "slate-600", "a navy series stays a coloured series");
+  assert.ok(["chart-1", "slate-600"].includes(map("#1F3B63")), "a navy series stays a blue series");
   assert.equal(map("#D9534F"), "danger-line");
 });
 
 test("polish 3: Tailwind status palettes follow the refined ramps; warehouse racks are soft", () => {
   execFileSync(process.execPath, ["scripts/gen-refined-theme.mjs"]);
   const css = read("src/styles/refined-theme.generated.css");
-  assert.match(css, /--color-red-600: #9A3A2D;/);
-  assert.match(css, /--color-green-700: #3D6030;/);
-  assert.match(css, /--color-amber-50: #FDF8EA;/);
-  assert.match(css, /--color-blue-600: #3E6A74;/);
+  assert.match(css, /--color-red-600: #D92D20;/);
+  assert.match(css, /--color-green-700: #15803D;/);
+  assert.match(css, /--color-amber-50: #FFF7E6;/);
+  assert.match(css, /--color-blue-600: #1570EF;/);
   assert.match(read("src/styles/refined-tokens.css"), /\[data-rack="OCCUPIED"\] \{/);
   assert.match(read("src/pages/warehouse.tsx"), /data-rack=\{slot\.status\}/);
+});
+
+test("direction C (owner 2026-11-12): light sidebar via data-sidebar, black logo, modern bright tokens", () => {
+  const t = read("src/styles/refined-tokens.css");
+  assert.ok(t.includes("[data-sidebar] {\n    background-color: var(--hk-surface) !important;"));
+  assert.ok(t.includes('[data-sidebar] img[alt^="Hookka"] { filter: none !important; }'));
+  assert.match(t, /--hk-primary: #9C7A2E;/);
+  assert.match(read("src/components/layout/sidebar.tsx"), /\n\s+data-sidebar\n/);
 });
