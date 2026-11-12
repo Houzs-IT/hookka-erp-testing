@@ -1208,6 +1208,8 @@ type PoGuardRow = {
    */
   linked?: boolean;
   name?: string | null;
+  /** HK-0149: billed in another unit — takes what the PO line has open and closes it. */
+  closesLine?: boolean;
 };
 
 /** A normalized invoice line, as the PO ceiling sees it. */
@@ -1231,16 +1233,15 @@ function poGuardRow(
 ): PoGuardRow {
   return {
     materialCode: r.materialCode,
-    // HK-0149: billed in another unit than the PO line — not comparable, so it
-    // draws nothing from the ceiling (counted for money only).
-    qty: r.uom ? 0 : r.qty,
+    qty: r.qty,
+    closesLine: !!r.uom,
     poItemId: r.poItemId ?? grnPoItemId ?? null,
     linked: r.lineType === "STOCKED" && ownPoIdCounts && !!r.poId,
     name: r.materialName,
   };
 }
 
-async function checkPoRemaining(
+export async function checkPoRemaining(
   db: D1Database,
   poId: string,
   rows: PoGuardRow[],
@@ -1273,12 +1274,14 @@ async function checkPoRemaining(
   const bucketForItemId = new Map<string, string>();
   const bucketForCode = new Map<string, string>();
   const ordered = new Map<string, { code: string; name: string; qty: number }>();
+  const lineCeiling = new Map<string, number>();
   for (const po of poItemsRes.results ?? []) {
     const itemId = String(po.id);
     const code = String(po.material_code ?? po.materialCode ?? "");
     const key = code ? `code:${code}` : `item:${itemId}`;
     bucketForItemId.set(itemId, key);
     if (code) bucketForCode.set(code, key);
+    lineCeiling.set(itemId, poInvoiceCeiling(Number(po.quantity) || 0, Number(po.receivedQty ?? po.received_qty ?? 0) || 0));
     const prev = ordered.get(key);
     ordered.set(key, {
       code,
@@ -1308,11 +1311,12 @@ async function checkPoRemaining(
   const invRes = await db
     .prepare(
       `SELECT COALESCE(pii.po_item_id, gi.po_item_id) AS "poItemId", pii.material_code AS mc,
-              COALESCE(SUM(pii.qty), 0) AS qty
+              COALESCE(SUM(CASE WHEN pii.uom IS NULL THEN pii.qty ELSE 0 END), 0) AS qty,
+              MAX(CASE WHEN pii.uom IS NULL THEN 0 ELSE 1 END) AS "closes"
          FROM purchase_invoice_items pii
          JOIN purchase_invoices pi ON pi.id = pii.pi_id
          LEFT JOIN grn_items gi ON gi.id::text = pii.grn_item_id
-        WHERE COALESCE(pii.po_id, pi.purchaseOrderId) = ? AND pi.status != 'CANCELLED' AND pii.uom IS NULL${
+        WHERE COALESCE(pii.po_id, pi.purchaseOrderId) = ? AND pi.status != 'CANCELLED'${
           excludePiId ? " AND pii.pi_id != ?" : ""
         }
         GROUP BY COALESCE(pii.po_item_id, gi.po_item_id), pii.material_code`,
@@ -1324,15 +1328,20 @@ async function checkPoRemaining(
       mc?: string | null;
       material_code?: string | null;
       qty: number;
+      closes?: number | null;
     }>();
   const invoiced = new Map<string, number>();
   for (const row of invRes.results ?? []) {
-    const key = bucketFor(row.poItemId ?? row.po_item_id, row.mc ?? row.material_code);
-    if (key) invoiced.set(key, (invoiced.get(key) ?? 0) + (Number(row.qty) || 0));
+    const itemId = row.poItemId ?? row.po_item_id;
+    const key = bucketFor(itemId, row.mc ?? row.material_code);
+    // A line billed in another unit closed its PO line: count the whole line.
+    const closed = Number(row.closes) ? lineCeiling.get(String(itemId)) ?? 0 : 0;
+    if (key) invoiced.set(key, (invoiced.get(key) ?? 0) + (Number(row.qty) || 0) + closed);
   }
 
   // Aggregate the REQUESTED quantity per bucket before measuring.
   const requested = new Map<string, number>();
+  const closing = new Map<string, string>(); // PO line id -> bucket
   for (const r of rows) {
     const qty = Number(r.qty) || 0;
     if (qty <= 0) continue;
@@ -1354,7 +1363,19 @@ async function checkPoRemaining(
       }
       continue; // fee / tax / unmatched lines don't draw a PO line down
     }
+    if (r.closesLine && r.poItemId) {
+      closing.set(String(r.poItemId), key); // several MTR lines on one PO line count once
+      continue;
+    }
     requested.set(key, (requested.get(key) ?? 0) + qty);
+  }
+  // HK-0149: a line billed in another unit asks for what its PO line still has
+  // open. Nothing open (already closed or fully billed) → it asks for the whole
+  // line, so a second bill on a closed line is refused.
+  for (const [itemId, key] of closing) {
+    const whole = lineCeiling.get(itemId) ?? 0;
+    const rest = Math.min(whole, (ordered.get(key)?.qty ?? 0) - (invoiced.get(key) ?? 0) - (requested.get(key) ?? 0));
+    requested.set(key, (requested.get(key) ?? 0) + (rest > 0 ? rest : whole));
   }
   const lines: ConvertLineRequest[] = [];
   for (const [key, requestedQty] of requested) {
