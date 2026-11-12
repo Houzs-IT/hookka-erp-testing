@@ -119,7 +119,8 @@ test("owner 2026-11-10: headings share the rows' grid; a picked past day shows t
   const view = readFileSync("src/pages/dashboards/FloorLiveView.tsx", "utf8");
   assert.match(view, /const COLS = "grid grid-cols-\[minmax\(0,1fr\)_3rem_2\.25rem_2\.75rem\]/);
   assert.equal((view.match(/\$\{COLS\}/g) ?? []).length, 2, "header and rows use the same grid");
-  assert.match(view, /useInterval\(\(\) => refresh\(\), pastDay \? null : REFRESH_MS\)/);
+  // The completed strip (owner 2026-11-12) refreshes on the same 5-minute tick.
+  assert.match(view, /useInterval\(\(\) => \{ refresh\(\); completed\.refresh\(\); \}, pastDay \? null : REFRESH_MS\)/);
   assert.match(readFileSync("src/pages/dashboards/OperationsView.tsx", "utf8"), /<FloorLiveView period=\{period\} today=\{todayYmdMY\(\)\} onPeriodChange=\{onPeriodChange\} \/>/);
   const route = readFileSync("src/api/routes/floor-live.ts", "utf8");
   assert.match(route, /const asked = c\.req\.query\("date"\)/);

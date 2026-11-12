@@ -8,6 +8,9 @@
 //   GET /summary?from&to Month / Quarter / Year — per worker over the saved
 //                        days (days, pieces, efficiency, non-production
 //                        hours, days over an hour in non-production)
+//   GET /completed?from&to  what each department completed in the period,
+//                        its best day on record, and every day of `to`'s
+//                        month (owner 2026-11-12; rules in dept-completed.ts)
 //
 // Shaping: src/api/lib/floor-live.ts. Data + snapshots: floor-live-data.ts.
 // ---------------------------------------------------------------------------
@@ -17,6 +20,7 @@ import { requireReadOrDashboardTab } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { summarizeFloorLive } from "../lib/floor-live";
 import { computeFloorLive, readFloorLiveSnapshot, readFloorLiveSnapshots } from "../lib/floor-live-data";
+import { loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted } from "../lib/dept-completed";
 
 const app = new Hono<Env>();
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -86,6 +90,36 @@ app.get("/summary", async (c) => {
   } catch (e) {
     console.error("[floor-live summary]", e);
     return c.json({ success: false, error: e instanceof Error ? e.message : "Could not load the summary" }, 500);
+  }
+});
+
+app.get("/completed", async (c) => {
+  const denied = await requireReadOrDashboardTab(c, "production-orders", "operations");
+  if (denied) return denied;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  if (!YMD.test(from) || !YMD.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from <= to" }, 400);
+  }
+  try {
+    const db = c.var.DB;
+    const orgId = getOrgId(c);
+    const [range, days] = await Promise.all([
+      loadDeptCompletedRange(db, orgId, from, to),
+      loadDeptCompletedByDay(db, orgId),
+    ]);
+    const monthStart = `${to.slice(0, 7)}-01`;
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      success: true,
+      from,
+      to,
+      departments: shapeDeptCompleted(range, days),
+      days: days.filter((d) => d.date >= monthStart && d.date <= to),
+    });
+  } catch (e) {
+    console.error("[floor-live completed]", e);
+    return c.json({ success: false, error: e instanceof Error ? e.message : "Could not load completed" }, 500);
   }
 });
 
