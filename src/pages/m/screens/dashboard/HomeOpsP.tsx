@@ -265,7 +265,8 @@ export function DeptBacklogCard({ d }: { d: OpsData }) {
   const tag = stateTag(data?.stateSnapshot);
   const rows = useMemo(() => (prod ? backlogRows(prod.backlogByDept, showSofa, showBed) : []), [prod, showSofa, showBed]);
   const maxDays = Math.max(1, ...rows.map((r) => r.shown ?? 0));
-  const top = rows[0];
+  // Bottleneck = the most days among what is shown (stalled counts as most).
+  const top = rows.reduce<(typeof rows)[number] | undefined>((m, r) => (!m || (r.shown ?? Infinity) > (m.shown ?? Infinity) ? r : m), undefined);
   const daysText = (v: number | null) => (v == null ? "Stalled" : `${v.toFixed(1)} days`);
 
   return (
@@ -304,7 +305,11 @@ export function DeptBacklogCard({ d }: { d: OpsData }) {
                   </span>
                 </div>
                 <div style={{ fontSize: 11.5, color: M.ink, marginTop: 5, overflowWrap: "anywhere", ...TNUM }}>
-                  {r.dailyCapMin > 0 ? `Sofa ${hrs(r.sofaMin)} · Bedframe ${hrs(r.bedframeMin)} · capacity ${hrs(r.dailyCapMin)}/day` : `Sofa ${hrs(r.sofaMin)} · Bedframe ${hrs(r.bedframeMin)} · no completions in 14 working days`}
+                  {r.single
+                    ? r.single.capMin > 0
+                      ? `${r.single.label} ${hrs(r.single.queuedMin)} · ${r.single.label.toLowerCase()} capacity ${hrs(r.single.capMin)}/day`
+                      : `${r.single.label} ${hrs(r.single.queuedMin)} · no ${r.single.label.toLowerCase()} completions in 12 working days`
+                    : r.dailyCapMin > 0 ? `Sofa ${hrs(r.sofaMin)} · Bedframe ${hrs(r.bedframeMin)} · capacity ${hrs(r.dailyCapMin)}/day` : `Sofa ${hrs(r.sofaMin)} · Bedframe ${hrs(r.bedframeMin)} · no completions in 12 working days`}
                 </div>
               </div>
             ))}

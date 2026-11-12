@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-12**: capacity entry (phone half) + Floor Live completed-sets entry added (branch `feat/m-backlog-per-category`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: overdue-sets stage entry added (branch `feat/overdue-sets-stage`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-12**: capacity entry added (branch `feat/capacity-12-working-days`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-11**: item 139 added (branch `fix/efficiency-one-rule`, to `main`); nothing else re-checked.
@@ -300,6 +301,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🟡 Floor Live: live completed sets per department + worker portal (design only, 2026-11-12)
+
+Owner asks (2026-11-12, with screenshots of the Completed drill and Department Revenue):
+- 「这个completed的是根据upholstery 的对吧？… 当初也是拿production revenue 直接split去给全部部门」 — answer: the Completed card counts an order on the day its last job card closes (its numbers equal Upholstery's own, e.g. 27 bedframe / 4 sofa on 12 Nov); Department Revenue already books each department when ITS last card for an order closes, with sets (HK-0148 rule).
+- 「全部部门都能看到live complete 多少sets sofa和bedframe 然后放在floor live 那边」 + 「你设计FE 给我电脑版本的线」 — design: https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE (real Nov data from `/api/dashboard/overview/revenue-split`).
+- 「worker portal 也要有 就根据他们的部门看到目前部门complete了多少sets」 / 「multi department的时候worker 手机会看到什么」 — proposed: chips per department (workers.department_codes), opening on the department last scanned into, plus an all-my-departments list.
+
+Status: waiting for the owner's OK on the design — nothing built (owner rule: no FE before approval).
+
 ## 🔵 Customer overdue sets: current stage on every order (feat/overdue-sets-stage, 2026-11-12)
 
 Owner (2026-11-12, screenshot of the card): 「这个地方每个order 都show current stage 再哪里」.
@@ -316,7 +326,7 @@ Owner asks (2026-11-12, verbatim):
 - 「两个都显示时候就拿total 除total」 / 「total的话就跟之前没有问题 是如果选bedframe or 选sofa 而已的话」 — both shown = total ÷ total as before; per-category capacity only when ONE category is picked (replaces the first "max" version).
 - 「不需要dashboard B 直接更改而已」 / 「改了我去看 ok了再去电话改」 — change the live /dashboard (file `src/pages/dashboard-b`) only; phone keeps its old backlog logic until the owner approves the desktop. Phone only gets the label "12-day avg" (the numbers behind it are 12-day now).
 
-Status: merged (#1380, both-shown = total ÷ total); prod check pending.
+Status: desktop ✅ (#1380, prod-checked 2026-11-12: Bedframe-only Upholstery 327h · 19h/d = 17.2d). Phone: owner OK'd the desktop 「ok 可以proceed mobile version了」 → branch `feat/m-backlog-per-category`.
 
 ## ✅ Debtor Aging: opening-period receipts out of the columns (#1317, 2026-11-11)
 Ask (owner, with a screenshot of Debtor Aging's 3+ months column, one customer's figure negative): 「可以帮我把houzs 和 conts 的还之前的的invoice的数额不要显示吗？」. Proposal, then 「可以」, plus 「顺便帮我检查 RM49487 和 RM7045 是什么？我叫他们去核对」.
