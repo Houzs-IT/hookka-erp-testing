@@ -2,7 +2,7 @@
 
 Pulls mail from the company **Hostinger** mailboxes into the ERP Mail Center.
 
-The @hookka.com mailboxes (support@, finance@, hr@, lim@, violet@) are hosted on
+The @hookka.com mailboxes (by default support@, finance@, hr@, siti@) are hosted on
 Hostinger. This job connects to each over **IMAP, read-only** (it never marks
 your mail as read), and POSTs every message to the ERP's
 `POST /api/mail-center/inbound`. The ERP **dedups by Message-ID**, so re-running —
@@ -44,8 +44,8 @@ password, or a Hostinger app-specific password):
 | `HOSTINGER_PW_SITI` | siti@hookka.com |
 
 A mailbox in `MAILBOXES` with no secret fails the run (red in GitHub Actions);
-the other boxes are still synced. List only the boxes that have a secret in the
-`MAIL_MAILBOXES` repo variable, and add a `HOSTINGER_PW_<NAME>` line to
+the other boxes are still synced. To read a different set, list only boxes that
+have a secret in the `MAIL_MAILBOXES` repo variable, and add a `HOSTINGER_PW_<NAME>` line to
 `.github/workflows/mail-sync.yml` for every new box.
 
 ### 3. (Optional) point at production
@@ -56,7 +56,7 @@ The script defaults to the **staging** ERP URL. For production, add a repo
 
 Defaults you usually don't need to touch (override via repo **Variables**):
 `MAIL_IMAP_HOST` = `imap.hostinger.com`, `MAIL_IMAP_PORT` = `993`,
-`MAIL_MAILBOXES` = the 5 boxes above.
+`MAIL_MAILBOXES` = support@, finance@, hr@, siti@ (lim@ and violet@ only if set here).
 
 ## First run (import history)
 

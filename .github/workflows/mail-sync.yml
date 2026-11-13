@@ -46,7 +46,7 @@ jobs:
           ERP_INBOUND_URL: ${{ vars.MAIL_ERP_INBOUND_URL }}
           # Must equal the ERP's MAIL_INBOUND_SECRET (Cloudflare Pages env).
           MAIL_INBOUND_SECRET: ${{ secrets.MAIL_INBOUND_SECRET }}
-          # Optional overrides (script defaults: imap.hostinger.com:993, the 5 boxes).
+          # Optional overrides (script defaults: imap.hostinger.com:993, support, finance, hr, siti).
           MAILBOXES: ${{ vars.MAIL_MAILBOXES }}
           IMAP_HOST: ${{ vars.MAIL_IMAP_HOST }}
           IMAP_PORT: ${{ vars.MAIL_IMAP_PORT }}

@@ -17,7 +17,7 @@
 //   HOSTINGER_PW_<LOCALPART>   IMAP password per mailbox, e.g. HOSTINGER_PW_SUPPORT
 // Optional env (sensible defaults):
 //   ERP_INBOUND_URL   default https://staging.hookka-erp-testing.pages.dev/api/mail-center/inbound
-//   MAILBOXES         comma-separated addresses (default: the 5 known boxes)
+//   MAILBOXES         comma-separated addresses (default: support, finance, hr, siti)
 //   IMAP_HOST/IMAP_PORT  default imap.hostinger.com / 993
 //   BACKFILL          "true"/"1" => fetch ALL history once; else incremental
 //   SINCE_DAYS        incremental look-back window in days (default 3)
@@ -36,7 +36,7 @@ const BACKFILL = /^(1|true|yes)$/i.test(process.env.BACKFILL || "");
 const SINCE_DAYS = Number(process.env.SINCE_DAYS || 3) || 3;
 const MAILBOXES = (
   process.env.MAILBOXES ||
-  "support@hookka.com,finance@hookka.com,hr@hookka.com,lim@hookka.com,violet@hookka.com"
+  "support@hookka.com,finance@hookka.com,hr@hookka.com,siti@hookka.com"
 )
   .split(",")
   .map((s) => s.trim())
