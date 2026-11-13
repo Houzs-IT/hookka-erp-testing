@@ -25,7 +25,7 @@ import { resolveWorkerToken } from "./worker-auth";
 import { computeMonthlyLabor, computeAttendanceDayDetail, absenceCutoffDay, effectiveSalarySenForMonth, workerPayrollDayRateSen } from "../../lib/labor-engine";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
 import { deriveBarcodeToken, deptOfBarcodeToken, isBarcodeToken } from "../../lib/job-card-id";
-import { computeMonthlyEfficiencyByWorker, resolveEfficiencyAllowanceSen, monthBounds } from "../lib/efficiency-allowance";
+import { computeMonthlyEfficiencyByWorker, helperWorkerIds, resolveEfficiencyAllowanceSen, monthBounds } from "../lib/efficiency-allowance";
 import { resolveLeadershipAllowanceSen } from "../lib/leadership-allowance";
 import { ensureLeaveEntitlementColumns } from "../lib/ensure-leave-columns";
 import {
@@ -81,6 +81,9 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
+import { loadDeptCompletedByDay, usualDays } from "../lib/dept-completed";
+import { cached } from "../lib/kv-cache";
+import { loadHolidaySet } from "../lib/agent-learning";
 
 const app = new Hono<Env>();
 
@@ -328,6 +331,81 @@ async function buildDeptDay(
     hoursSoFar: live.hoursSoFar,
   };
 }
+
+// ============================================================
+// GET /api/worker/dept-completed?month=YYYY-MM — "Department completed today"
+// on the Scan screen + its history (owner 2026-11-12, design
+// https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE). The DEPARTMENT's count,
+// not the worker's: bedframe units + sofa sets, each department's 12-working-day
+// average beside it (rules: src/api/lib/dept-completed.ts — outsourced work
+// counted). Departments shown: the one scanned into now first, then the
+// worker's own set; an Operator Leader sees every department. On a Sunday or
+// public holiday it shows the last working day (owner: 0 would alarm).
+// ============================================================
+app.get("/dept-completed", async (c) => {
+  const auth = await getWorker(c);
+  if (!auth.ok) return auth.response;
+  const db = c.var.DB;
+  const today = malaysiaNow().toISOString().slice(0, 10);
+  const askedMonth = (c.req.query("month") || "").trim();
+  const month = /^\d{4}-\d{2}$/.test(askedMonth) && askedMonth <= today.slice(0, 7) ? askedMonth : today.slice(0, 7);
+  try {
+    const [days, names, holidays, deptDay, deptRows] = await Promise.all([
+      cached(c, "dept-completed:byday:all", 120, () => loadDeptCompletedByDay(db, null)),
+      loadDeptNames(db),
+      loadHolidaySet(db),
+      buildDeptDaySafe(db, auth.worker),
+      db.prepare("SELECT code, is_production FROM departments").all<Record<string, unknown>>(),
+    ]);
+    // Production departments only (owner 2026-11-12: 「nonprod 部门不需要show」).
+    const production = new Set(
+      (deptRows.results ?? [])
+        .filter((d) => d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1)
+        .map((d) => String(d.code ?? "").trim().toUpperCase()),
+    );
+    const off = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0 || holidays.has(d);
+    const isWorkDay = !off(today);
+    let shownDate = today;
+    if (!isWorkDay) {
+      const t = new Date(`${today}T00:00:00Z`);
+      for (let i = 0; i < 14; i++) {
+        t.setUTCDate(t.getUTCDate() - 1);
+        const d = t.toISOString().slice(0, 10);
+        if (!off(d)) { shownDate = d; break; }
+      }
+    }
+    const own = parseWorkerDepartmentCodes(auth.worker.departmentCodes, auth.worker.departmentCode)
+      .map((d) => d.trim().toUpperCase()).filter(Boolean);
+    const now = (deptDay?.current?.departmentCode ?? "").toUpperCase() || null;
+    const isLeader = (auth.worker.position ?? "") === "Operator Leader";
+    const order: string[] = [];
+    const add = (d: string | null) => { if (d && (production.size === 0 || production.has(d)) && !order.includes(d)) order.push(d); };
+    add(now);
+    own.forEach(add);
+    if (isLeader) [...new Set(days.map((d) => d.dept.toUpperCase()))].sort().forEach(add);
+    const usual = usualDays(days, today);
+    const onDay = new Map(days.filter((d) => d.date === shownDate).map((d) => [d.dept.toUpperCase(), d]));
+    const depts = order.map((code) => {
+      const d = onDay.get(code);
+      const u = usual.get(code) ?? { bed: 0, sofa: 0 };
+      return {
+        code,
+        name: names.get(code) ?? code,
+        bedframeUnits: d?.bedframeUnits ?? 0,
+        sofaSets: d?.sofaSets ?? 0,
+        usualBedframe: u.bed,
+        usualSofa: u.sofa,
+      };
+    });
+    const inMonth = days
+      .filter((d) => d.date.startsWith(month) && d.date <= today && order.includes(d.dept.toUpperCase()))
+      .map((d) => ({ ...d, dept: d.dept.toUpperCase() }));
+    return c.json({ success: true, data: { today, shownDate, isWorkDay, now, isLeader, depts, month, days: inMonth } });
+  } catch (err) {
+    console.error("[worker] dept-completed failed:", err);
+    return c.json({ success: false, error: "Could not load the department count" }, 500);
+  }
+});
 
 // The card is extra: a failure here must never take down /today or a scan.
 async function buildDeptDaySafe(
@@ -3690,9 +3768,13 @@ app.get("/team-stats", async (c) => {
     category: "SOFA" | "BEDFRAME";
     workingMinutes: number;
     productionMinutes: number;
+    /** Helpers / 杂工 (owner 2026-11-11): their part of the two figures above. */
+    helperWorkingMinutes: number;
+    helperProductionMinutes: number;
     workerIds: Set<string>;
   };
   const cells = new Map<CellKey, Cell>();
+  const teamHelpers = await helperWorkerIds(c.var.DB);
   for (const dc of leaderDepts) {
     for (const cat of CATEGORIES) {
       cells.set(cellKey(dc, cat), {
@@ -3700,6 +3782,8 @@ app.get("/team-stats", async (c) => {
         category: cat,
         workingMinutes: 0,
         productionMinutes: 0,
+        helperWorkingMinutes: 0,
+        helperProductionMinutes: 0,
         workerIds: new Set<string>(),
       });
     }
@@ -3730,7 +3814,9 @@ app.get("/team-stats", async (c) => {
       if (cat !== "SOFA" && cat !== "BEDFRAME") continue;
       const cell = cells.get(cellKey(r.departmentCode, cat));
       if (!cell) continue;
-      cell.workingMinutes += Math.round((Number(r.hours) || 0) * 60);
+      const m = Math.round((Number(r.hours) || 0) * 60);
+      cell.workingMinutes += m;
+      if (teamHelpers.has(r.workerId)) cell.helperWorkingMinutes += m;
       cell.workerIds.add(r.workerId);
     }
   }
@@ -3831,6 +3917,8 @@ app.get("/team-stats", async (c) => {
       // estMinutes is ALREADY the per-SET total — ×wipQty would 3× it).
       const mins = jcMinutesTotal(jc.actualMinutes ?? jc.estMinutes ?? 0, jc);
       cell.productionMinutes += mins;
+      // A card only helpers worked on is helper output, out of production efficiency.
+      if ([...onJc].every((id) => teamHelpers.has(id))) cell.helperProductionMinutes += mins;
       for (const id of onJc) cell.workerIds.add(id);
     }
   }
@@ -3840,10 +3928,16 @@ app.get("/team-stats", async (c) => {
     category: cell.category,
     workingMinutes: cell.workingMinutes,
     productionMinutes: cell.productionMinutes,
+    // Production efficiency — helpers left out; Overall = everyone (owner 2026-11-11).
     efficiencyPct:
+      cell.workingMinutes - cell.helperWorkingMinutes > 0
+        ? Math.round(((cell.productionMinutes - cell.helperProductionMinutes) / (cell.workingMinutes - cell.helperWorkingMinutes)) * 100)
+        : 0,
+    overallPct:
       cell.workingMinutes > 0
         ? Math.round((cell.productionMinutes / cell.workingMinutes) * 100)
         : 0,
+    helperWorkingMinutes: cell.helperWorkingMinutes,
     workerCount: cell.workerIds.size,
   }));
 
@@ -4309,6 +4403,9 @@ app.get("/department-performance", async (c) => {
     }
   }
 
+  // Helpers / 杂工 (owner 2026-11-11): kept in the hours, left out of production
+  // efficiency, no personal efficiency (0 + isHelper → the phone shows "—").
+  const leaderHelpers = await helperWorkerIds(c.var.DB);
   const daily = Array.from(byDate.entries())
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([date, cell]) => {
@@ -4319,9 +4416,10 @@ app.get("/department-performance", async (c) => {
           workingMinutes: w.workingMinutes,
           productionMinutes: w.productionMinutes,
           efficiencyPct:
-            w.workingMinutes > 0
+            !leaderHelpers.has(w.workerId) && w.workingMinutes > 0
               ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
               : 0,
+          ...(leaderHelpers.has(w.workerId) ? { isHelper: true } : {}),
           jobs: w.jobs
             .slice()
             .sort((a, b) => b.productionMinutes - a.productionMinutes),
@@ -4345,14 +4443,23 @@ app.get("/department-performance", async (c) => {
         }))
         .sort((a, b) => b.productionMinutes - a.productionMinutes);
 
+      let hw = 0;
+      let hp = 0;
+      for (const w of workers) if (w.isHelper) { hw += w.workingMinutes; hp += w.productionMinutes; }
       return {
         date,
         workingMinutes: cell.workingMinutes,
         productionMinutes: cell.productionMinutes,
         efficiencyPct:
+          cell.workingMinutes - hw > 0
+            ? Math.round(((cell.productionMinutes - hp) / (cell.workingMinutes - hw)) * 100)
+            : 0,
+        overallPct:
           cell.workingMinutes > 0
             ? Math.round((cell.productionMinutes / cell.workingMinutes) * 100)
             : 0,
+        helperWorkingMinutes: hw,
+        helperProductionMinutes: hp,
         workers,
         jobs,
       };
@@ -4360,6 +4467,8 @@ app.get("/department-performance", async (c) => {
 
   const totalWorking = daily.reduce((s, r) => s + r.workingMinutes, 0);
   const totalProduction = daily.reduce((s, r) => s + r.productionMinutes, 0);
+  const totalHw = daily.reduce((s, r) => s + r.helperWorkingMinutes, 0);
+  const totalHp = daily.reduce((s, r) => s + r.helperProductionMinutes, 0);
 
   return c.json({
     success: true,
@@ -4381,10 +4490,16 @@ app.get("/department-performance", async (c) => {
         // Hrs card sums both so the operator can reconcile the two.
         productionWorkingMinutes: totalProductionWorkingMinutes,
         nonProductionWorkingMinutes: totalNonProductionWorkingMinutes,
+        // Production efficiency — helpers left out; Overall = everyone.
         efficiencyPct:
+          totalWorking - totalHw > 0
+            ? Math.round(((totalProduction - totalHp) / (totalWorking - totalHw)) * 100)
+            : 0,
+        overallPct:
           totalWorking > 0
             ? Math.round((totalProduction / totalWorking) * 100)
             : 0,
+        helperWorkingMinutes: totalHw,
         workerCount: workerIds.size,
       },
       daily,

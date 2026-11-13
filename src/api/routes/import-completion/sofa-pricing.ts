@@ -2199,4 +2199,140 @@ app.post("/backfill-sofa-leg-heights", async (c) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// POST /api/import/backfill-default-leg-heights   (owner 2026-11-11)
+//
+// Scanned customer POs that named no leg were stored with legHeightInches
+// NULL, so the FG sticker read "Leg —". The owner set each series' Default Leg
+// Height on Products (5530/5531/5539/5540/… 6", 5535/5536/5545/… 1", 8210/8211
+// 2") and asked for the open orders to be filled from it.
+//
+// Scope, deliberately narrow:
+//   • sales orders NOT yet shipped (DRAFT / CONFIRMED / IN_PRODUCTION /
+//     READY_TO_SHIP / ON_HOLD) — delivered / invoiced history is left alone;
+//   • lines whose legHeightInches is NULL or 0 and whose product has a
+//     Default Leg Height;
+//   • NOT lines whose special order / notes say "no leg" — NULL also means
+//     "No Leg" in this system, and a deliberate No Leg must not become 6".
+//   • the matching production orders of those SO lines (same SO + productCode,
+//     leg NULL / 0), so the job cards and stickers follow.
+// Price: every leg height in scope is RM 0 in variants-config, and stored
+// legPriceSen is not touched.
+//
+// Body: { dryRun?: boolean } — defaults TRUE (lists, writes nothing).
+// ---------------------------------------------------------------------------
+app.post("/backfill-default-leg-heights", async (c) => {
+  const denied = await requirePermission(c, "sales-orders", "update");
+  if (denied) return denied;
+  let body: { dryRun?: unknown } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    // empty body OK
+  }
+  const dryRun = body.dryRun !== false;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+
+  const legOf = (raw: unknown): number | null => {
+    let dv: Record<string, unknown> | null = null;
+    if (typeof raw === "string") {
+      try { dv = JSON.parse(raw) as Record<string, unknown>; } catch { dv = null; }
+    } else if (raw && typeof raw === "object") dv = raw as Record<string, unknown>;
+    const m = /(\d+(?:\.\d+)?)/.exec(String(dv?.legHeight ?? ""));
+    const n = m ? Number(m[1]) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const NO_LEG = /\bno\s*legs?\b|\bnolegs?\b/i;
+
+  const prodRes = await db
+    .prepare("SELECT code, defaultVariants FROM products WHERE orgId = ?")
+    .bind(orgId)
+    .all<{ code: string; defaultVariants?: unknown; default_variants?: unknown }>();
+  const legByCode = new Map<string, number>();
+  for (const p of prodRes.results ?? []) {
+    const n = legOf(p.defaultVariants ?? p.default_variants);
+    if (n) legByCode.set(p.code, n);
+  }
+
+  const soiRes = await db
+    .prepare(
+      `SELECT soi.id, soi.salesOrderId, so.companySOId AS "companySOId", so.status AS "soStatus",
+              soi.lineNo, soi.productCode, soi.legHeightInches, soi.specialOrder, soi.notes
+         FROM sales_order_items AS soi
+         JOIN sales_orders AS so ON so.id = soi.salesOrderId
+        WHERE so.status IN ('DRAFT','CONFIRMED','IN_PRODUCTION','READY_TO_SHIP','ON_HOLD')
+          AND (soi.legHeightInches IS NULL OR soi.legHeightInches = 0)`,
+    )
+    .all<{
+      id: string; salesOrderId: string; companySOId: string | null; soStatus: string;
+      lineNo: number | null; productCode: string | null; legHeightInches: number | null;
+      specialOrder: string | null; notes: string | null;
+    }>();
+
+  type Update = { table: "sales_order_items" | "production_orders"; rowId: string; soNo: string | null; lineNo: number | null; productCode: string; to: number };
+  const updates: Update[] = [];
+  const skippedNoLeg: Array<{ soNo: string | null; lineNo: number | null; productCode: string | null }> = [];
+  const inScope = new Map<string, Set<string>>(); // salesOrderId -> productCodes updated
+  for (const r of soiRes.results ?? []) {
+    const to = r.productCode ? legByCode.get(r.productCode) : undefined;
+    if (!to || !r.productCode) continue;
+    if (NO_LEG.test(`${r.specialOrder ?? ""} ${r.notes ?? ""}`)) {
+      skippedNoLeg.push({ soNo: r.companySOId, lineNo: r.lineNo, productCode: r.productCode });
+      continue;
+    }
+    updates.push({ table: "sales_order_items", rowId: r.id, soNo: r.companySOId, lineNo: r.lineNo, productCode: r.productCode, to });
+    const set = inScope.get(r.salesOrderId) ?? new Set<string>();
+    set.add(r.productCode);
+    inScope.set(r.salesOrderId, set);
+  }
+
+  const soIds = [...inScope.keys()];
+  if (soIds.length > 0) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < soIds.length; i += 200) chunks.push(soIds.slice(i, i + 200));
+    const poResults = await Promise.all(
+      chunks.map((ids) =>
+        db
+          .prepare(
+            `SELECT id, salesOrderId, companySOId AS "companySOId", lineNo, productCode
+               FROM production_orders
+              WHERE salesOrderId IN (${ids.map(() => "?").join(",")})
+                AND (legHeightInches IS NULL OR legHeightInches = 0)`,
+          )
+          .bind(...ids)
+          .all<{ id: string; salesOrderId: string; companySOId: string | null; lineNo: number | null; productCode: string | null }>(),
+      ),
+    );
+    for (const res of poResults) {
+      for (const r of res.results ?? []) {
+        if (!r.productCode || !inScope.get(r.salesOrderId)?.has(r.productCode)) continue;
+        const to = legByCode.get(r.productCode);
+        if (to) updates.push({ table: "production_orders", rowId: r.id, soNo: r.companySOId, lineNo: r.lineNo, productCode: r.productCode, to });
+      }
+    }
+  }
+
+  const dist: Record<string, number> = {};
+  for (const u of updates) dist[`${u.table}|${u.to}"`] = (dist[`${u.table}|${u.to}"`] || 0) + 1;
+  const soList = [...new Set(updates.filter((u) => u.table === "sales_order_items").map((u) => u.soNo ?? ""))].sort();
+
+  if (!dryRun && updates.length > 0) {
+    const stmts = updates.map((u) => db.prepare(`UPDATE ${u.table} SET legHeightInches = ? WHERE id = ?`).bind(u.to, u.rowId));
+    for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
+  }
+
+  return c.json({
+    success: true,
+    dryRun,
+    salesOrders: soList.length,
+    soLines: updates.filter((u) => u.table === "sales_order_items").length,
+    productionOrders: updates.filter((u) => u.table === "production_orders").length,
+    distribution: dist,
+    skippedNoLeg,
+    soList,
+    sample: updates.slice(0, 40),
+  });
+});
+
 export default app;

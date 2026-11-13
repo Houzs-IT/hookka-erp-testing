@@ -59,6 +59,9 @@ const SHIPPED_DO_STATUSES = new Set([
   "INVOICED",
 ]);
 
+
+/** Capacity = average output over this many working days (owner 2026-11-12: two weeks). */
+const CAPACITY_WORKING_DAYS = 12;
 const app = new Hono<Env>();
 
 // Every table the overview compute reads, here and in the helpers it calls.
@@ -732,7 +735,10 @@ app.get("/", async (c) => {
     // window the Planning page uses. This ALWAYS drives the Backlog "days of
     // queue" figure (`backlogDays`), a point-in-time state metric, so it is
     // NOT re-scoped by the selected month.
-    const rolling7Days = workingDaysBack(yesterdayISOForWindows, 7, holidaySet, workedDays);
+    // Owner 2026-11-12: capacity averages over the last 12 working days (two
+    // weeks, Mon–Sat) instead of 7 — steadier; a busy or quiet day moves it less.
+    // (The variable keeps its old name; the window is CAPACITY_WORKING_DAYS.)
+    const rolling7Days = workingDaysBack(yesterdayISOForWindows, CAPACITY_WORKING_DAYS, holidaySet, workedDays);
     const rolling7Set = new Set(rolling7Days);
     // Daily-Capacity widget window. The widget's average divisor is
     // `windowDays.length`.
@@ -822,6 +828,10 @@ app.get("/", async (c) => {
     const backlogRows = backlogJcRes.results ?? [];
     const backlogByDept = DEPARTMENTS.map(({ code, name }) => {
       let windowTotal = 0;
+      // Per-category throughput (owner 2026-11-12: "应该除以部门 sofa 的产能"):
+      // Sofa queue ÷ the dept's recent SOFA output, Bedframe ÷ its BEDFRAME output.
+      let windowSofa = 0;
+      let windowBed = 0;
       let sofaMin = 0;
       let bedframeMin = 0;
       for (const r of backlogRows) {
@@ -835,7 +845,11 @@ app.get("/", async (c) => {
           r.completedDate &&
           rolling7Set.has(r.completedDate)
         ) {
-          windowTotal += jcMinutesTotal(r.actualMinutes ?? r.estMinutes ?? 0, jc);
+          const done = jcMinutesTotal(r.actualMinutes ?? r.estMinutes ?? 0, jc);
+          windowTotal += done;
+          const doneCat = (r.cat ?? "").toUpperCase();
+          if (doneCat === "SOFA") windowSofa += done;
+          else if (doneCat === "BEDFRAME") windowBed += done;
         }
         // Same exclusion as Active Jobs above: a job card left open on a
         // production order whose sales order already shipped is paperwork, not
@@ -874,13 +888,24 @@ app.get("/", async (c) => {
       // it now does. Flagged rather than unified: making both use the month
       // would divide a bottleneck dept by three days of its own output and
       // swing the bottleneck ranking on the 1st of every month.
-      const dailyCapMin = Math.round(windowTotal / 7);
+      const dailyCapMin = Math.round(windowTotal / CAPACITY_WORKING_DAYS);
+      const sofaCapMin = Math.round(windowSofa / CAPACITY_WORKING_DAYS);
+      const bedframeCapMin = Math.round(windowBed / CAPACITY_WORKING_DAYS);
       const totalMin = sofaMin + bedframeMin;
+      // Each category on its own capacity; null = that category has queued work
+      // but no recent output to measure against ("stalled"), 0 = nothing queued.
+      const catDays = (queued: number, cap: number): number | null =>
+        queued <= 0 ? 0 : cap > 0 ? Math.round((queued / cap) * 10) / 10 : null;
+      const sofaDays = catDays(sofaMin, sofaCapMin);
+      const bedframeDays = catDays(bedframeMin, bedframeCapMin);
       // Div-zero guard (owner audit 2026-07-11): a dept with backlog but ZERO
       // completions in the rolling window used to divide by 1 MINUTE, showing
       // thousands of "days" and topping the bottleneck sort. backlogDays = null
       // now means "stalled — no recent throughput to measure against"; the FE
       // renders it as such instead of a fake number.
+      // Both categories together = total queued / total capacity (owner
+      // 2026-11-12: 「两个都显示时候就拿total 除total」). sofaDays /
+      // bedframeDays are for when only one category is shown.
       const backlogDays =
         dailyCapMin > 0 ? Math.round((totalMin / dailyCapMin) * 10) / 10 : null;
       return {
@@ -889,6 +914,10 @@ app.get("/", async (c) => {
         bedframeMin,
         totalMin,
         dailyCapMin,
+        sofaCapMin,
+        bedframeCapMin,
+        sofaDays,
+        bedframeDays,
         backlogDays,
       };
     })
@@ -913,7 +942,7 @@ app.get("/", async (c) => {
     // month one working day old), so an early-month view still shows a number
     // instead of dividing by zero.
     const backlogDailyCapacityMin =
-      dailyCapacityMin > 0 ? dailyCapacityMin : Math.round(capacityMin7 / 7);
+      dailyCapacityMin > 0 ? dailyCapacityMin : Math.round(capacityMin7 / CAPACITY_WORKING_DAYS);
     const backlogDays =
       backlogDailyCapacityMin > 0
         ? Math.round((backlogGrandMin / backlogDailyCapacityMin) * 10) / 10
@@ -1883,6 +1912,8 @@ app.get("/", async (c) => {
             let sofaMin = 0;
             let bedframeMin = 0;
             let monthCompletedMin = 0;
+            let monthSofaMin = 0;
+            let monthBedMin = 0;
             for (const r of reconRows) {
               if (r.dept !== code) continue;
               // r.dept is the JC's departmentCode; jcMinutesTotal skips the
@@ -1895,7 +1926,11 @@ app.get("/", async (c) => {
                 r.completedDate &&
                 windowSet.has(r.completedDate)
               ) {
-                monthCompletedMin += jcMinutesTotal(r.actualMinutes ?? r.estMinutes ?? 0, jc);
+                const done = jcMinutesTotal(r.actualMinutes ?? r.estMinutes ?? 0, jc);
+                monthCompletedMin += done;
+                const c = (r.cat ?? "").toUpperCase();
+                if (c === "SOFA") monthSofaMin += done;
+                else if (c === "BEDFRAME") monthBedMin += done;
               }
               // Pending as of M: existed by M (PO born on/before M, or unknown
               // birth), not completed by M, neither card nor PO cancelled.
@@ -1920,16 +1955,26 @@ app.get("/", async (c) => {
             const totalMin = sofaMin + bedframeMin;
             // Same div-zero guard as the live path: null = stalled, never a
             // 1-minute fallback (owner audit 2026-07-11).
+            // Each category against its own capacity when shown alone (owner
+            // 2026-11-12); both together stay total / total — same as live.
+            const sofaCapMin = Math.round(monthSofaMin / reconMonthWorkingDays);
+            const bedframeCapMin = Math.round(monthBedMin / reconMonthWorkingDays);
+            const catDays = (queued: number, cap: number): number | null =>
+              queued <= 0 ? 0 : cap > 0 ? Math.round((queued / cap) * 10) / 10 : null;
+            const sofaDays = catDays(sofaMin, sofaCapMin);
+            const bedframeDays = catDays(bedframeMin, bedframeCapMin);
             const backlogDays =
-              dailyCapMin > 0
-                ? Math.round((totalMin / dailyCapMin) * 10) / 10
-                : null;
+              dailyCapMin > 0 ? Math.round((totalMin / dailyCapMin) * 10) / 10 : null;
             return {
               dept: name,
               sofaMin,
               bedframeMin,
               totalMin,
               dailyCapMin,
+              sofaCapMin,
+              bedframeCapMin,
+              sofaDays,
+              bedframeDays,
               backlogDays,
             };
           })
@@ -2140,7 +2185,7 @@ app.get("/revenue-split", async (c) => {
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const period = parseDashPeriod(c.req.query("period") ?? "all").key;
-  const data = await cached(c, `dashboard:revenue-split:${orgId}:v2:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:revenue-split:${orgId}:v3:${period}`, 60, async () => {
     const db = c.var.DB;
     // Same "today" as the main overview (server clock, UTC on Workers).
     const todayISO = fmtISO(new Date());

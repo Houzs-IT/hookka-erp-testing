@@ -416,7 +416,7 @@ export async function collectBriefData(
       }),
     ]);
   const lowWorkers = efficiency.workers
-    .filter((w) => w.productionWorkingMinutes > 0 && w.efficiencyPct < 60)
+    .filter((w) => !w.isHelper && w.productionWorkingMinutes > 0 && w.efficiencyPct < 60)
     .sort((a, b) => a.efficiencyPct - b.efficiencyPct)
     .slice(0, 10)
     .map((w) => ({

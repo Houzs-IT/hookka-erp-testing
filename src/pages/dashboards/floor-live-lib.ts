@@ -20,6 +20,8 @@ export type FloorLiveRow = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
+  /** Helper / 杂工 (owner 2026-11-11): "—", Helper tag, never an issue. */
+  isHelper?: boolean;
   overHourNonProd: boolean;
 };
 
@@ -41,19 +43,41 @@ export const PRODUCTION_ORDER = [
   "PACKING", "WEBBING",
 ] as const;
 
-export type FloorLiveCard = { code: string; name: string; rows: FloorLiveRow[]; effPct: number | null };
+export type FloorLiveCard = {
+  code: string;
+  name: string;
+  rows: FloorLiveRow[];
+  /** Production efficiency — helpers left out (owner 2026-11-11). */
+  effPct: number | null;
+  /** Everyone incl. helpers, and the helpers' minutes — the small "Overall" line. */
+  overallPct: number | null;
+  helperMinutes: number;
+};
+
+/** Production efficiency (helpers out), Overall (helpers in), helper minutes. */
+function poolOf(rows: readonly FloorLiveRow[]) {
+  let e = 0, w = 0, he = 0, hw = 0;
+  for (const r of rows) {
+    e += r.earnedMinutes;
+    w += r.workingMinutes;
+    if (r.isHelper) { he += r.earnedMinutes; hw += r.workingMinutes; }
+  }
+  return { effPct: pct(e - he, w - hw), overallPct: pct(e, w), helperMinutes: hw };
+}
 
 const pct = (earned: number, worked: number) => (worked > 0 ? Math.round((earned / worked) * 100) : null);
 
 /** Problem rows first: red, then lowest efficiency, then by name. */
 function rank(r: FloorLiveRow): number {
   if (r.overHourNonProd) return -1;
+  if (r.isHelper) return 10000; // after everyone measured
   return r.effPct == null ? 9999 : r.effPct;
 }
 
 export function isIssue(r: FloorLiveRow): boolean {
   // Owner 2026-11-10: only the non-production hour and low efficiency are issues.
-  return r.overHourNonProd || r.effPct == null || r.effPct < 80;
+  // A helper has no personal efficiency, so a "—" is not a problem for them.
+  return r.overHourNonProd || (!r.isHelper && (r.effPct == null || r.effPct < 80));
 }
 
 export function floorLiveLayout(
@@ -62,7 +86,7 @@ export function floorLiveLayout(
 ): {
   production: FloorLiveCard[];
   nonProduction: FloorLiveCard[];
-  totals: { punched: number; stillIn: number; done: number; effPct: number | null; overHour: number };
+  totals: { punched: number; stillIn: number; done: number; effPct: number | null; overallPct: number | null; helperMinutes: number; overHour: number };
 } {
   const words = (opts.q ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const keep = (r: FloorLiveRow) =>
@@ -75,7 +99,7 @@ export function floorLiveLayout(
       code,
       name,
       rows,
-      effPct: pct(all.reduce((s, r) => s + r.earnedMinutes, 0), all.reduce((s, r) => s + r.workingMinutes, 0)),
+      ...poolOf(all),
     };
   };
 
@@ -99,7 +123,7 @@ export function floorLiveLayout(
       punched: w.length,
       stillIn: w.filter((r) => !r.clockOut).length,
       done: w.reduce((s, r) => s + r.done, 0),
-      effPct: pct(w.reduce((s, r) => s + r.earnedMinutes, 0), w.reduce((s, r) => s + r.workingMinutes, 0)),
+      ...poolOf(w),
       overHour: w.filter((r) => r.overHourNonProd).length,
     },
   };
@@ -115,6 +139,7 @@ export type FloorSummaryRow = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
+  isHelper?: boolean;
   nonProdMinutes: number;
   overHourDays: number;
 };
@@ -176,4 +201,62 @@ export function summaryLayout(
         .sort((a, b) => b.overHourDays - a.overHourDays || (a.effPct ?? 9999) - (b.effPct ?? 9999) || a.name.localeCompare(b.name)),
     }))
     .filter((d) => d.rows.length > 0);
+}
+
+// ---- Department completed (owner 2026-11-12) --------------------------------
+// GET /api/dashboard/floor-live/completed — src/api/lib/dept-completed.ts.
+export type DeptCompletedRow = {
+  dept: string;
+  bedframeUnits: number;
+  sofaSets: number;
+  /** 12-working-day average per day. */
+  usualBedframe: number;
+  usualSofa: number;
+  /** Production value (Department Revenue's rule), sen. */
+  bedframeSen?: number;
+  sofaSen?: number;
+};
+export type DeptCompletedResponse = {
+  success: boolean;
+  error?: string;
+  from: string;
+  to: string;
+  month?: string;
+  departments: DeptCompletedRow[];
+  days: { dept: string; date: string; bedframeUnits: number; sofaSets: number; bedframeSen?: number; sofaSen?: number }[];
+};
+
+export function deptCompletedFor(data: DeptCompletedResponse | null | undefined, code: string): DeptCompletedRow | null {
+  if (!data?.success) return null;
+  return data.departments.find((d) => d.dept === code) ?? null;
+}
+
+/** The department's days this month, newest first, with totals and the average
+ *  over finished days that had any completion (today left out). */
+export function deptCompletedDays(data: DeptCompletedResponse | null | undefined, code: string, today: string) {
+  const days = (data?.success ? data.days : []).filter((d) => d.dept === code).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const bedTotal = days.reduce((s, d) => s + d.bedframeUnits, 0);
+  const sofaTotal = days.reduce((s, d) => s + d.sofaSets, 0);
+  const full = days.filter((d) => d.date !== today && d.bedframeUnits + d.sofaSets > 0);
+  const avg = (f: (d: (typeof days)[number]) => number) => (full.length ? full.reduce((s, d) => s + f(d), 0) / full.length : 0);
+  return { days, bedTotal, sofaTotal, bedAvg: avg((d) => d.bedframeUnits), sofaAvg: avg((d) => d.sofaSets) };
+}
+
+/** Owner 2026-11-12: "跟着时间推演红色" — the 12-day average spread evenly over the
+ *  9-hour day (08:00–17:00 MYT). Behind pace = done so far is below
+ *  average × hours gone / 9 → red. Before 08:00 nothing is due; after 17:00
+ *  the whole average day is. */
+export const PACE_START_MIN = 8 * 60;
+export const PACE_SPAN_MIN = 9 * 60;
+export function paceDue(best: number, nowMin: number): number {
+  const f = Math.min(1, Math.max(0, (nowMin - PACE_START_MIN) / PACE_SPAN_MIN));
+  return best * f;
+}
+export function behindPace(done: number, best: number, nowMin: number): boolean {
+  return best > 0 && done < paceDue(best, nowMin);
+}
+/** Minutes since midnight, Malaysia time. */
+export function myNowMin(now: Date = new Date()): number {
+  const my = new Date(now.getTime() + 8 * 3600_000);
+  return my.getUTCHours() * 60 + my.getUTCMinutes();
 }

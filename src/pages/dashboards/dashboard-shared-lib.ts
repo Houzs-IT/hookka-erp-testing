@@ -455,17 +455,65 @@ export function hasKeyedHours(day: { workingMinutes: number }): boolean {
 }
 
 export function overallEfficiencyPct(
-  byDay: readonly { date: string; workingMinutes: number; productionMinutes: number }[],
+  byDay: readonly HelperAwareDay[],
   p: Period,
 ): number | null {
-  let w = 0;
-  let prod = 0;
-  for (const d of byDay) {
-    if (!inFocus(p, d.date) || !hasKeyedHours(d)) continue;
+  return efficiencyPair(byDay.filter((d) => inFocus(p, d.date))).pct;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers / 杂工 (owner 2026-11-11). Production Hours keep helpers; production
+// efficiency leaves them out; "Overall" is everyone. The feed carries the
+// helper part of each day (helperWorkingMinutes / helperProductionMinutes) and
+// flags helper rows (isHelper) — see src/api/lib/workforce-perf.ts.
+// ---------------------------------------------------------------------------
+export type HelperAwareDay = {
+  date: string;
+  workingMinutes: number;
+  productionMinutes: number;
+  helperWorkingMinutes?: number;
+  helperProductionMinutes?: number;
+};
+
+/** Production efficiency of one day (helpers left out); null with no producer time. */
+export function prodEffOfDay(d: Omit<HelperAwareDay, "date">): number | null {
+  const w = d.workingMinutes - (d.helperWorkingMinutes ?? 0);
+  return w > 0 ? ((d.productionMinutes - (d.helperProductionMinutes ?? 0)) / w) * 100 : null;
+}
+
+/**
+ * Production efficiency + Overall over some days. Days with no clocked time
+ * are skipped (hours land after the day; see overallEfficiencyPct).
+ */
+export function efficiencyPair(days: readonly Omit<HelperAwareDay, "date">[]): {
+  pct: number | null;
+  overallPct: number | null;
+  helperMinutes: number;
+} {
+  let w = 0, p = 0, hw = 0, hp = 0;
+  for (const d of days) {
+    if (!hasKeyedHours(d)) continue;
     w += d.workingMinutes;
-    prod += d.productionMinutes;
+    p += d.productionMinutes;
+    hw += d.helperWorkingMinutes ?? 0;
+    hp += d.helperProductionMinutes ?? 0;
   }
-  return w > 0 ? (prod / w) * 100 : null;
+  return {
+    pct: w - hw > 0 ? ((p - hp) / (w - hw)) * 100 : null,
+    overallPct: w > 0 ? (p / w) * 100 : null,
+    helperMinutes: hw,
+  };
+}
+
+/** Per-worker rows of a day → the same pair, with each row's isHelper flag. */
+export function workerRowsPair(rows: readonly { workingMinutes: number; productionMinutes: number; isHelper?: boolean }[]) {
+  let w = 0, p = 0, hw = 0, hp = 0;
+  for (const x of rows) {
+    w += x.workingMinutes;
+    p += x.productionMinutes;
+    if (x.isHelper) { hw += x.workingMinutes; hp += x.productionMinutes; }
+  }
+  return efficiencyPair([{ workingMinutes: w, productionMinutes: p, helperWorkingMinutes: hw, helperProductionMinutes: hp }]);
 }
 
 /**

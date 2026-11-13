@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { fmtN, inFocus, periodLabel, type Period } from "./dashboard-shared-lib";
+import { efficiencyPair, fmtN, inFocus, periodLabel, type Period } from "./dashboard-shared-lib";
+import { HelperOverallLine } from "./HelperOverallLine";
 import type { EmployeeSlice } from "./EmployeesInsights";
 
 // Department ledger card — rendered inside Employees > Efficiency (it used to
@@ -16,11 +17,11 @@ const h = (min: number) => `${(min / 60).toLocaleString("en-MY", { maximumFracti
 
 export function DepartmentsView({ employee, period }: { employee: EmployeeSlice; period: Period }) {
   const { rows, total } = useMemo(() => {
-    const m = new Map<string, { dept: string; headcount: number; working: number; prod: number; days: number }>();
+    const m = new Map<string, { dept: string; headcount: number; working: number; prod: number; hw: number; hp: number; days: number }>();
     const get = (d: string | null) => {
       const k = d || "(no dept)";
       let e = m.get(k);
-      if (!e) m.set(k, (e = { dept: k, headcount: 0, working: 0, prod: 0, days: 0 }));
+      if (!e) m.set(k, (e = { dept: k, headcount: 0, working: 0, prod: 0, hw: 0, hp: 0, days: 0 }));
       return e;
     };
     for (const w of employee?.workers ?? []) if (w.countsToHeadcount) get(w.dept).headcount++;
@@ -34,6 +35,8 @@ export function DepartmentsView({ employee, period }: { employee: EmployeeSlice;
         const e = get(deptOf.get(x.workerId) ?? null);
         e.working += x.workingMinutes;
         e.prod += x.productionMinutes;
+        // Helpers / 杂工: kept in the hours, left out of production efficiency.
+        if (x.isHelper) { e.hw += x.workingMinutes; e.hp += x.productionMinutes; }
       }
     }
     for (const r of employee?.attendance ?? []) {
@@ -41,13 +44,23 @@ export function DepartmentsView({ employee, period }: { employee: EmployeeSlice;
     }
     const rows = [...m.values()].sort((a, b) => b.headcount - a.headcount || a.dept.localeCompare(b.dept));
     const total = rows.reduce(
-      (a, r) => ({ headcount: a.headcount + r.headcount, working: a.working + r.working, prod: a.prod + r.prod, days: a.days + r.days }),
-      { headcount: 0, working: 0, prod: 0, days: 0 },
+      (a, r) => ({ headcount: a.headcount + r.headcount, working: a.working + r.working, prod: a.prod + r.prod, hw: a.hw + r.hw, hp: a.hp + r.hp, days: a.days + r.days }),
+      { headcount: 0, working: 0, prod: 0, hw: 0, hp: 0, days: 0 },
     );
     return { rows, total };
   }, [employee, period]);
 
-  const eff = (w: number, p: number) => (w > 0 ? `${((p / w) * 100).toFixed(1)}%` : "—");
+  // Production efficiency (helpers left out) with the Overall line under it
+  // where the department has helpers (owner 2026-11-11).
+  const effCell = (r: { working: number; prod: number; hw: number; hp: number }) => {
+    const pair = efficiencyPair([{ workingMinutes: r.working, productionMinutes: r.prod, helperWorkingMinutes: r.hw, helperProductionMinutes: r.hp }]);
+    return (
+      <>
+        {pair.pct == null ? "—" : `${pair.pct.toFixed(1)}%`}
+        <HelperOverallLine overallPct={pair.overallPct} helperMinutes={pair.helperMinutes} className="font-sans" />
+      </>
+    );
+  };
   const th = (label: string, right: boolean) => (
     <th key={label} className={`px-4 py-2 font-semibold uppercase text-[10.5px] tracking-wide text-[#6B7280] whitespace-nowrap ${right ? "text-right" : "text-left"}`}>{label}</th>
   );
@@ -76,7 +89,7 @@ export function DepartmentsView({ employee, period }: { employee: EmployeeSlice;
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.headcount)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{h(r.working)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{h(r.prod)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono">{eff(r.working, r.prod)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{effCell(r)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(r.days)}</td>
                 </tr>
               ))}
@@ -91,7 +104,7 @@ export function DepartmentsView({ employee, period }: { employee: EmployeeSlice;
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(total.headcount)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{h(total.working)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{h(total.prod)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono">{eff(total.working, total.prod)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{effCell(total)}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{fmtN(total.days)}</td>
                 </tr>
               </tfoot>

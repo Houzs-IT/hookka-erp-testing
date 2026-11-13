@@ -68,8 +68,10 @@ import {
   type TermMix,
   type TfPlanFacility,
   type TfPlanStore,
+  type PnlForecastInput,
 } from "../../lib/cashflow-forecast";
-import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
+import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastMonthFigures, forecastMonthHasFigures, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, supplierActualsFromLegs, type FcLineGroups, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
+import { FC_AR, FORECAST_BS_LINES, forecastBsDeltas, forecastBsMonths, openingReceiptsByYm, type BsForecastPayload, type ForecastBsAccrual } from "../../lib/forecast-bs";
 import { loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
 import { DOC_TYPES, findPrefixClash, normalisePrefix, prefixProblem, type DocTypePrefixMap } from "../../lib/doc-number";
@@ -10953,6 +10955,20 @@ type CashflowForecastMeta = {
   openingCredits: { uptoYm: string; count: number; sen: number } | null;
 };
 
+/** What the Forecast Balance Sheet reads from a Cash Flow forecast load (GET
+ *  /bs-forecast, src/lib/forecast-bs.ts): the documents open at the 1st of
+ *  each month scheduled by terms, and the P&L forecast's own inputs, so its
+ *  timing is the Cash Flow forecast's to the day. Filled at the end of the load. */
+type CfForecastCapture = {
+  baselines?: Map<string, ScheduledDoc[]>;
+  pnlInput?: PnlForecastInput;
+  forecastCash?: (m: FcMonth | undefined) => ReturnType<typeof forecastCashLines>;
+  groups?: FcLineGroups;
+  mapped?: Set<string>;
+  inputs?: Record<string, Record<string, number>>;
+  apAcct?: string;
+};
+
 // The Cash Flow forecast's inputs (spec docs/superpowers/specs/2026-11-08-
 // cash-flow-forecast-design.md), all read only: the aging as at the 1st of
 // every shown month after the opening month (plus the month before the
@@ -10970,6 +10986,7 @@ async function loadCashflowForecast(
     coa: Map<string, CoaLite>;
     resolveAcct: (code: string) => string;
     sgOverride: Record<string, string>;
+    capture?: CfForecastCapture;
   },
 ): Promise<{ forecast: { columns: ForecastColumn[]; legs: ForecastLeg[]; rmSplit: RmSplit }; meta: CashflowForecastMeta }> {
   const { today, period, months, openingYm, coa, resolveAcct, sgOverride } = o;
@@ -11241,7 +11258,7 @@ async function loadCashflowForecast(
   const catMix = new Map<string, TermMix>([...byCategory].map(([cat, rows]) => [cat, termMixOf(rows)] as const));
   const futureDocs = built.columns.filter((c) => c.future).map((c) => c.ym).sort();
   const supName = new Map((supRes.results ?? []).map((r) => [String(r.id), String(r.name ?? r.id)] as const));
-  const pnlBuilt = buildPnlForecastLegs({
+  const pnlInput: PnlForecastInput = {
     today, period, months, openingYm, fcMonths, groups, override, mappedAccounts: mapped,
     salaryAccount: LABOUR_ACCRUAL_ACCT, arAcct, nonCash, resolveAcct,
     customerTerm: custMonths,
@@ -11252,7 +11269,17 @@ async function loadCashflowForecast(
     supplierName: (id) => supName.get(id) ?? id,
     minHorizon: futureDocs[futureDocs.length - 1],
     tfPlans, tfDrawnThisMonth, tfInterestAccount,
-  });
+  };
+  const pnlBuilt = buildPnlForecastLegs(pnlInput);
+  if (o.capture) {
+    o.capture.baselines = baselines;
+    o.capture.pnlInput = pnlInput;
+    o.capture.forecastCash = (m) => forecastCashLines(m, groups, override, mapped, { salaryAccount: LABOUR_ACCRUAL_ACCT, nonCash });
+    o.capture.groups = groups;
+    o.capture.mapped = mapped;
+    o.capture.inputs = inputs;
+    o.capture.apAcct = apAcct;
+  }
   const shown = new Set(built.columns.filter((c) => !c.blank).map((c) => c.ym));
   return {
     forecast: {
@@ -12003,6 +12030,118 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
   const forecastSuppliers = Object.entries(dueBySupplier).map(([id, dueBy]) => ({ id, name: nameOf.get(id) || id, term: supTerm.get(id), dueBy }));
   return { facilities, forecastSuppliers };
 }
+
+// GET /api/accounting/bs-forecast — the Forecast Balance Sheet's movements
+// (owner 2026-11-11 「既然我有forecast Cash Flow 和 Forecast P&L？是不是可以做
+// forecast balance sheet?」; start point 「可以」 = last month-end's actual
+// sheet; src/lib/forecast-bs.ts): month → account → debit-positive sen, from
+// this month to the last month the Forecast P&L has figures for (owner
+// 2026-11-11 「可以」), on the Cash Flow forecast's own timing — the documents
+// open at the 1st of this month by their terms, the Forecast P&L from this
+// month on by the P&L forecast's legs. The page adds them to last month-end's
+// Balance Sheet, pays the salaries owed then in the first month
+// (`salaryAccount`) and collects the customers' open invoices
+// (`openingReceipts`) up to the trade debtors on that sheet (`arAccounts`;
+// owner 2026-11-11 「就是这个…我不想要显示」 of the debtors left below zero). Read only.
+app.get("/bs-forecast", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const today = todayMyt();
+  const curYm = today.slice(0, 7);
+  const [resolveAcct, dc, sgOverride, bsOverride, coaRes] = await Promise.all([
+    loadAccountResolver(db),
+    loadDocDateResolver(db),
+    getCashflowStockGroupMap(db),
+    getBsSectionMap(db),
+    db.prepare("SELECT code, name, type, specialAccountType, parentCode FROM chart_of_accounts")
+      .all<{ code: string; name: string; type: CoaLite["type"]; specialAccountType: string | null; parentCode: string | null }>(),
+  ]);
+  const coa = new Map<string, CoaLite>();
+  for (const a of coaRes.results ?? []) {
+    const code = resolveAcct(a.code);
+    coa.set(code, { code, name: a.name, type: a.type, sat: a.specialAccountType ?? null, parentCode: a.parentCode ? resolveAcct(a.parentCode) : null });
+  }
+  const capture: CfForecastCapture = {};
+  await loadCashflowForecast(db, orgId, {
+    today, period: curYm, months: [curYm], openingYm: dc.openingDate ? dc.openingDate.slice(0, 7) : null,
+    coa, resolveAcct, sgOverride, capture,
+  });
+  const p = capture.pnlInput;
+  const groups: FcLineGroups | undefined = capture.groups;
+  if (!p || !groups || !capture.forecastCash) return c.json({ success: false, error: "The forecast could not be loaded" }, 500);
+  // The Forecast P&L from this month on: the actual documents stand for the months before.
+  const fcMonths = Object.fromEntries(Object.entries(p.fcMonths).filter(([ym]) => ym >= curYm));
+  const pnl = buildPnlForecastLegs({ ...p, fcMonths, tfPlans: [] });
+  const mapped = capture.mapped ?? new Set<string>();
+  // To the last month the Forecast P&L has figures for: after it a column would only collect and pay.
+  const lastFigureYm = Object.keys(fcMonths).filter((ym) => forecastMonthHasFigures(forecastMonthFigures(fcMonths[ym], groups, mapped))).sort().pop() ?? null;
+  const months = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
+  const salaryLegAccounts = new Set<string>();
+  const accruals: Record<string, ForecastBsAccrual> = {};
+  for (const ym of months) {
+    const m = fcMonths[ym];
+    if (!m) continue;
+    const f = forecastMonthFigures(m, groups, mapped);
+    const cash = capture.forecastCash(m);
+    const salaries = cash.lines.filter((l) => l.timing === "salary");
+    for (const l of salaries) salaryLegAccounts.add(resolveAcct(l.accountCode));
+    accruals[ym] = {
+      salesSen: f.salesSen,
+      materialsSen: groups.materials.reduce((t, a) => t + f.amt(a.code), 0),
+      salariesSen: salaries.reduce((t, l) => t + l.amtSen, 0),
+      nonCashSen: cash.excluded.reduce((t, e) => t + e.amtSen, 0),
+    };
+  }
+  const accounts = { ar: FC_AR, receipt: p.arAcct, ap: capture.apAcct ?? resolveAcct("400-0000"), salary: resolveAcct(LABOUR_ACCRUAL_ACCT) };
+  const openingDocs = capture.baselines?.get(curYm) ?? [];
+  const deltas = forecastBsDeltas({
+    months,
+    openingDocs,
+    pnlLegs: pnl.legs,
+    accruals,
+    accounts,
+    openingSalaryPayableSen: 0,
+    inputs: Object.fromEntries(months.map((ym) => [ym, capture.inputs?.[ym] ?? {}])),
+    salaryLegAccounts: [...salaryLegAccounts],
+  });
+  // The name and section of every account a month moves, by the sheet's own rule.
+  const accountsOut: Record<string, { name: string; section: string }> = {};
+  for (const m of Object.values(deltas)) {
+    for (const code of Object.keys(m)) {
+      if (accountsOut[code] || FORECAST_BS_LINES[code]) continue;
+      const a = coa.get(code);
+      const section = a ? bsSectionFor(code, a.type, bsOverride) : null;
+      if (a && section) accountsOut[code] = { name: a.name, section };
+    }
+  }
+  // The trade debtor accounts, as the debtor control's own check counts them
+  // (GET /ar-control: every SDC account but Other Debtors).
+  const otherDebtors = resolveAcct(OTHER_DEBTOR_CONTROL);
+  const arAccounts = [...new Set([p.arAcct, ...[...coa.values()].filter((a) => a.sat === "SDC" && a.code !== otherDebtors).map((a) => a.code)])];
+  // The page shows the forecast cash on the bank accounts' total and "—" on
+  // each bank account and each stock line (owner 2026-11-11 「做出来先吧」):
+  // the bank accounts, and the accounts the sheet keeps stock on (as /pl does).
+  const stockMap = await getStockMap(db);
+  const isAssetLine = (code: string) => {
+    const a = coa.get(code);
+    const section = a ? bsSectionFor(code, a.type, bsOverride) : null;
+    return !!section && bsSectionClass(section) === "asset";
+  };
+  const data: BsForecastPayload = {
+    startYm: addMonthsYm(curYm, -1),
+    months,
+    deltas,
+    accounts: accountsOut,
+    salaryAccount: accounts.salary,
+    arAccounts,
+    bankAccounts: [...coa.values()].filter((a) => a.sat === "SBK").map((a) => a.code),
+    stockAccounts: [...stockAccounts(stockMap, resolveAcct)].filter(isAssetLine),
+    openingReceipts: openingReceiptsByYm(openingDocs, months[0] ?? curYm),
+  };
+  return c.json({ success: true, data });
+});
 
 app.get("/cashflow-forecast-inputs", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
@@ -17473,6 +17612,60 @@ app.get("/forecast/suppliers", async (c) => {
     }))
     .filter((s) => s.id !== "");
   return c.json({ success: true, data: { suppliers, mix, from: supplierMixFrom(today), to: today } });
+});
+
+// GET /api/accounting/forecast/supplier-actuals?from=YYYY-MM&to=YYYY-MM — each
+// month's actual purchases of each material type BY SUPPLIER (owner 2026-11-11
+// 「我看不到actual 的fabric … 是从谁买」): the Edit forecast lists them on
+// the supplier rows under a material. The legs of purchase invoices and
+// purchase credit notes on the material purchase accounts, debit minus credit,
+// in the month of the document's date — as the P&L reads purchases; legs
+// before the opening are left out, as the P&L leaves them. Read only.
+app.get("/forecast/supplier-actuals", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const from = String(c.req.query("from") ?? "");
+  const to = String(c.req.query("to") ?? "");
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to are months (YYYY-MM), from not after to" }, 400);
+  }
+  const db = c.var.DB;
+  const [coaList, override, resolveAcct, dc, piRes, cnRes, legRes] = await Promise.all([
+    loadCoaList(db, false),
+    getPnlSectionMap(db),
+    loadAccountResolver(db),
+    loadDocDateResolver(db),
+    db.prepare("SELECT id, pi_no, supplierId FROM purchase_invoices").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, noteNumber, supplierId FROM purchase_credit_notes").all<Record<string, unknown>>().catch(() => ({ results: [] as Record<string, unknown>[] })),
+    db.prepare("SELECT accountCode, sourceId, sourceType, debitSen, creditSen, postedAt FROM ledger_journal_entries WHERE hidden = 0 AND (sourceType LIKE 'purchase_invoice%' OR sourceType LIKE 'purchase_credit_note%')").all<Record<string, unknown>>(),
+  ]);
+  const types = forecastMaterialAccountTypes(coaList.map((a) => ({ code: a.code, name: a.name, type: a.type, isPostable: a.isPostable })), override);
+  // A document by its id or its number (posters set sourceId either way).
+  const supplierOf = new Map<string, string>();
+  for (const r of [...(piRes.results ?? []), ...(cnRes.results ?? [])]) {
+    const sup = String(r.supplierId ?? r.supplier_id ?? "");
+    if (!sup) continue;
+    for (const key of [r.id, r.piNo ?? r.pi_no, r.noteNumber ?? r.note_number]) if (key) supplierOf.set(String(key), sup);
+  }
+  const legs: { supplierId: string; accountCode: string; ym: string; debitSen: number; creditSen: number }[] = [];
+  for (const l of legRes.results ?? []) {
+    const sourceType = String(l.sourceType ?? l.source_type ?? "");
+    const sourceId = String(l.sourceId ?? l.source_id ?? "");
+    const dd = dc.docDate(sourceType, sourceId, String(l.postedAt ?? l.posted_at ?? ""));
+    if (legBeforeOpening(sourceType, dd, dc.openingDate)) continue;
+    const ym = dd.slice(0, 7);
+    if (ym < from || ym > to) continue;
+    const sup = supplierOf.get(sourceId) ?? supplierOf.get(stripSourceIdSuffix(sourceId));
+    if (!sup) continue;
+    legs.push({
+      supplierId: sup,
+      accountCode: resolveAcct(String(l.accountCode ?? l.account_code ?? "")),
+      ym,
+      debitSen: Number(l.debitSen ?? l.debit_sen) || 0,
+      creditSen: Number(l.creditSen ?? l.credit_sen) || 0,
+    });
+  }
+  return c.json({ success: true, data: { months: supplierActualsFromLegs(legs, (code) => types.get(code)) } });
 });
 
 app.put("/forecast", async (c) => {

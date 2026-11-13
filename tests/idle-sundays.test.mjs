@@ -67,7 +67,7 @@ test("averages: the rolling 7 counts back over working days and includes a worke
 
 test("the dashboard builds both windows from the job cards' worked days", () => {
   const src = readFileSync(resolve(process.cwd(), "src/api/routes/dashboard-overview.ts"), "utf8");
-  assert.match(src, /workingDaysBack\(yesterdayISOForWindows, 7, holidaySet, workedDays\)/);
+  assert.match(src, /workingDaysBack\(yesterdayISOForWindows, CAPACITY_WORKING_DAYS, holidaySet, workedDays\)/);
   assert.match(src, /workingDaysInRange\(monthScope\.start, capEnd, holidaySet, workedDays\)/);
   assert.doesNotMatch(src, /cur\.getDay\(\) !== 0 && !holidaySet\.has\(iso\)/);
 });

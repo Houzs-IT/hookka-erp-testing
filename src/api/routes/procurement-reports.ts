@@ -108,7 +108,7 @@ async function loadInvoiced(db: D1Database, orgId: string): Promise<PoInvoicedIn
            FROM purchase_invoice_items pii
            JOIN purchase_invoices pi ON pi.id = pii.pi_id
            LEFT JOIN grn_items gi ON gi.id::text = pii.grn_item_id
-          WHERE pi.org_id = ? AND pi.status NOT IN ('CANCELLED','DRAFT')
+          WHERE pi.org_id = ? AND pi.status NOT IN ('CANCELLED','DRAFT') AND pii.uom IS NULL
           GROUP BY COALESCE(pii.po_id, pi.purchase_order_id), COALESCE(pii.po_item_id, gi.po_item_id),
                    pii.material_code, pii.material_name`,
       )

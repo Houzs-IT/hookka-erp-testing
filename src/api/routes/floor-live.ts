@@ -8,6 +8,9 @@
 //   GET /summary?from&to Month / Quarter / Year — per worker over the saved
 //                        days (days, pieces, efficiency, non-production
 //                        hours, days over an hour in non-production)
+//   GET /completed?from&to  what each department completed in the period,
+//                        its best day on record, and every day of `to`'s
+//                        month (owner 2026-11-12; rules in dept-completed.ts)
 //
 // Shaping: src/api/lib/floor-live.ts. Data + snapshots: floor-live-data.ts.
 // ---------------------------------------------------------------------------
@@ -17,6 +20,9 @@ import { requireReadOrDashboardTab } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { summarizeFloorLive } from "../lib/floor-live";
 import { computeFloorLive, readFloorLiveSnapshot, readFloorLiveSnapshots } from "../lib/floor-live-data";
+import { dayCounts, loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted, valueByDay, valueByDept } from "../lib/dept-completed";
+import { loadDeptRevenue } from "../lib/dept-revenue";
+import { cached } from "../lib/kv-cache";
 
 const app = new Hono<Env>();
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -86,6 +92,50 @@ app.get("/summary", async (c) => {
   } catch (e) {
     console.error("[floor-live summary]", e);
     return c.json({ success: false, error: e instanceof Error ? e.message : "Could not load the summary" }, 500);
+  }
+});
+
+app.get("/completed", async (c) => {
+  const denied = await requireReadOrDashboardTab(c, "production-orders", "operations");
+  if (denied) return denied;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  const month = c.req.query("month") ?? to.slice(0, 7);
+  if (!YMD.test(from) || !YMD.test(to) || from > to || !/^\d{4}-\d{2}$/.test(month)) {
+    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from <= to; month YYYY-MM" }, 400);
+  }
+  try {
+    const db = c.var.DB;
+    const orgId = getOrgId(c);
+    const { today } = myClock();
+    // The per-day history is one heavy pass over every job card (~7 s cold):
+    // shared for 2 minutes (stale-while-revalidate), under the 3-minute refresh.
+    const days = await cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId));
+    // One day = straight from the per-day rows; a longer period needs the
+    // range query (a sofa order finishing on two days counts once).
+    const range = from === to ? dayCounts(days, from) : await loadDeptCompletedRange(db, orgId, from, to);
+    // Production value (Department Revenue's rows) over the period and the
+    // drill's month in one read, shared for 2 minutes.
+    const monthStart = `${month}-01`;
+    const lo = from < monthStart ? from : monthStart;
+    const hi = to > `${month}-31` ? to : (`${month}-31` > today ? today : `${month}-31`);
+    const revRows = await cached(c, `dept-completed:value:${orgId}:${lo}:${hi}`, 120, () => loadDeptRevenue(db, orgId, lo, hi));
+    const value = valueByDept(revRows, from, to);
+    const dayValue = valueByDay(revRows);
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      success: true,
+      from,
+      to,
+      month,
+      departments: shapeDeptCompleted(range, days, today).map((d) => ({ ...d, ...(value.get(d.dept) ?? { bedframeSen: 0, sofaSen: 0 }) })),
+      days: days
+        .filter((d) => d.date.startsWith(month) && d.date <= today)
+        .map((d) => ({ ...d, ...(dayValue.get(`${d.dept}|${d.date}`) ?? { bedframeSen: 0, sofaSen: 0 }) })),
+    });
+  } catch (e) {
+    console.error("[floor-live completed]", e);
+    return c.json({ success: false, error: e instanceof Error ? e.message : "Could not load completed" }, 500);
   }
 });
 

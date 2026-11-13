@@ -18,7 +18,8 @@
 // ---------------------------------------------------------------------------
 import { DEFAULT_FACTORY_GEOFENCE, evalPunchLocation } from "./geofence";
 import { jcMinutesTotal } from "../../lib/job-card-minutes";
-import { loadApprovedExtraTime } from "./efficiency-allowance";
+import { helperWorkerIds, loadApprovedExtraTime } from "./efficiency-allowance";
+import { loadClosedDayPerf } from "./floor-live-data";
 
 export interface EfficiencyEnv {
   RESEND_API_KEY?: string;
@@ -49,6 +50,12 @@ export interface WorkerSummary {
   productionWorkingMinutes: number;
   productionMinutes: number;
   efficiencyPct: number;
+  /**
+   * Helper / 杂工 (owner 2026-11-11): assists others — efficiencyPct is 0 and
+   * means nothing; never listed as low efficiency; left out of the department
+   * and total efficiency (hours still printed).
+   */
+  isHelper?: boolean;
   jobsCompleted: number;
   // Soft geofence: a clock in or out was recorded OUTSIDE the factory radius.
   punchOutOfArea: boolean;
@@ -303,19 +310,36 @@ export async function collectEfficiencyData(
   }
 
   // 8. Build per-worker rows. Include every active worker.
+  const helpers = await helperWorkerIds(db);
+  // Owner 2026-11-13 (「1要一样」): efficiency = the shared rule Floor Live and
+  // the Employees dashboard use, so the three never disagree. Measured before:
+  // 20 of 35 workers on 12 Nov differed (KHIN MAUNG LIN 81% here vs 74% on
+  // Floor Live). The report's own sums stay only as a fallback.
+  let shared: Awaited<ReturnType<typeof loadClosedDayPerf>> | null = null;
+  try {
+    shared = await loadClosedDayPerf(db as unknown as D1Database, null, dateYmd);
+  } catch (err) {
+    console.error("[efficiency-report] shared perf failed, using the report's own sums:", err);
+  }
   const workerRows: WorkerSummary[] = [];
   for (const w of allWorkers) {
     const att = attByWorker.get(w.id);
     const deptCode = w.departmentCode ?? "";
     const dept = deptByCode.get(deptCode);
     const workingMinutes = workingMinsByWorker.get(w.id) ?? 0;
-    const productionWorkingMinutes = productionWorkingMinsByWorker.get(w.id) ?? 0;
-    const productionMinutes = Math.round(
-      (productionMinsByWorker.get(w.id) ?? 0) +
-        (extraTimeMinsByWorker.get(w.id) ?? 0),
-    );
+    const sp = shared?.get(w.id);
+    const productionWorkingMinutes = shared
+      ? Math.round(sp?.workingMinutes ?? 0)
+      : productionWorkingMinsByWorker.get(w.id) ?? 0;
+    const productionMinutes = shared
+      ? Math.round(sp?.productionMinutes ?? 0)
+      : Math.round(
+          (productionMinsByWorker.get(w.id) ?? 0) +
+            (extraTimeMinsByWorker.get(w.id) ?? 0),
+        );
+    const isHelper = helpers.has(w.id);
     const efficiencyPct =
-      productionWorkingMinutes > 0
+      !isHelper && productionWorkingMinutes > 0
         ? Math.round((productionMinutes / productionWorkingMinutes) * 100)
         : 0;
     workerRows.push({
@@ -331,6 +355,7 @@ export async function collectEfficiencyData(
       productionWorkingMinutes,
       productionMinutes,
       efficiencyPct,
+      ...(isHelper ? { isHelper: true } : {}),
       jobsCompleted: jcsCompletedByWorker.get(w.id) ?? 0,
       punchOutOfArea:
         evalPunchLocation(
@@ -361,6 +386,8 @@ export async function collectEfficiencyData(
       workingMinutes: number;
       productionWorkingMinutes: number;
       productionMinutes: number;
+      helperProductionWorkingMinutes: number;
+      helperProductionMinutes: number;
     }
   >();
   for (const w of workerRows) {
@@ -370,8 +397,14 @@ export async function collectEfficiencyData(
       workingMinutes: 0,
       productionWorkingMinutes: 0,
       productionMinutes: 0,
+      helperProductionWorkingMinutes: 0,
+      helperProductionMinutes: 0,
     };
     cur.workerCount += 1;
+    if (w.isHelper) {
+      cur.helperProductionWorkingMinutes += w.productionWorkingMinutes;
+      cur.helperProductionMinutes += w.productionMinutes;
+    }
     cur.workingMinutes += w.workingMinutes;
     cur.productionWorkingMinutes += w.productionWorkingMinutes;
     cur.productionMinutes += w.productionMinutes;
@@ -381,10 +414,9 @@ export async function collectEfficiencyData(
   for (const d of departments) {
     const r = deptRollup.get(d.code);
     if (!r || r.workerCount === 0) continue; // skip empty depts
-    const eff =
-      r.productionWorkingMinutes > 0
-        ? Math.round((r.productionMinutes / r.productionWorkingMinutes) * 100)
-        : 0;
+    // Production efficiency — helpers left out (owner 2026-11-11).
+    const pw = r.productionWorkingMinutes - r.helperProductionWorkingMinutes;
+    const eff = pw > 0 ? Math.round(((r.productionMinutes - r.helperProductionMinutes) / pw) * 100) : 0;
     departmentSummaries.push({
       code: d.code,
       name: d.name,
@@ -394,7 +426,7 @@ export async function collectEfficiencyData(
       productionWorkingMinutes: r.productionWorkingMinutes,
       productionMinutes: r.productionMinutes,
       efficiencyPct: eff,
-      flagged: r.productionWorkingMinutes > 0 && eff < LOW_EFFICIENCY_THRESHOLD,
+      flagged: pw > 0 && eff < LOW_EFFICIENCY_THRESHOLD,
     });
   }
   // Production depts on top (highest worker count first), then non-prod.
@@ -409,6 +441,9 @@ export async function collectEfficiencyData(
   const totalProductionWork = workerRows.reduce((s, w) => s + w.productionWorkingMinutes, 0);
   const totalProd = workerRows.reduce((s, w) => s + w.productionMinutes, 0);
   const totalJobs = workerRows.reduce((s, w) => s + w.jobsCompleted, 0);
+  const producers = workerRows.filter((w) => !w.isHelper);
+  const producerWork = producers.reduce((s, w) => s + w.productionWorkingMinutes, 0);
+  const producerProd = producers.reduce((s, w) => s + w.productionMinutes, 0);
   const presentCount = workerRows.filter((w) => w.workingMinutes > 0).length;
 
   return {
@@ -420,8 +455,9 @@ export async function collectEfficiencyData(
       workingMinutes: totalWork,
       productionWorkingMinutes: totalProductionWork,
       productionMinutes: totalProd,
+      // Production efficiency — helpers left out (owner 2026-11-11).
       efficiencyPct:
-        totalProductionWork > 0 ? Math.round((totalProd / totalProductionWork) * 100) : 0,
+        producerWork > 0 ? Math.round((producerProd / producerWork) * 100) : 0,
       jobsCompleted: totalJobs,
     },
     departments: departmentSummaries,
@@ -513,7 +549,8 @@ export function renderEfficiencyHtml(
       curDept = w.departmentName;
     }
     const present = w.workingMinutes > 0;
-    const hasProductionHours = w.productionWorkingMinutes > 0;
+    // A helper has no personal efficiency: "—", never coloured.
+    const hasProductionHours = w.productionWorkingMinutes > 0 && !w.isHelper;
     const statusColor = present ? "#15803D" : "#9CA3AF";
     const effC = hasProductionHours ? effColor(w.efficiencyPct) : "#9CA3AF";
     const clockStr =

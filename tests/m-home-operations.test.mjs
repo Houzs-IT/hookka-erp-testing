@@ -123,7 +123,7 @@ test("the gauge uses the desktop's cut-offs: gold over 7 days, red over 12, bar 
   assert.equal(plantGauge(7.1).color, "#C9A24B");
   assert.equal(plantGauge(12.1).color, "#DC2626");
   assert.deepEqual([plantGauge(7).pct, plantGauge(30).pct, plantGauge(30).util], [50, 100, 1]);
-  assert.equal(capacityWindowLabel("2026-11", "2026-11"), "7-day avg");
+  assert.equal(capacityWindowLabel("2026-11", "2026-11"), "12-day avg");
   assert.equal(capacityWindowLabel("2026-Q3", "2026-11"), "2026-Q3 avg");
 });
 
@@ -162,6 +162,16 @@ test("Department Revenue keeps the API's department order and offers All / Bedfr
   assert.match(src, /\["all", "All"\], \["bedframe", "Bedframe"\], \["sofa", "Sofa"\]/);
   assert.doesNotMatch(src, /"accessory", "Accessory"/);
   assert.doesNotMatch(src, /Avg RM|\/day`/, "no invented average per day");
+});
+
+test("HK-0148: each department row carries its sets, for the picked day or the period, by category", () => {
+  const set = (bedframe, sofa) => ({ bedframe, sofa, total: bedframe + sofa, hbOnly: 0, divanOnly: 0, unknown: 0 });
+  const d = { ...monthSplit, departments: monthSplit.departments.map((x) => ({ ...x, sets: set(4, 3), setsByBucket: [set(1, 2), set(3, 1)] })) };
+  assert.equal(deptRevenueRows(d, "all", undefined)[0].sets, 7);
+  assert.equal(deptRevenueRows(d, "bedframe", undefined)[0].sets, 4);
+  assert.equal(deptRevenueRows(d, "sofa", "2026-10-02")[0].sets, 1, "picked day = that day's bucket");
+  assert.equal(deptRevenueRows(monthSplit, "all", undefined)[0].sets, 0, "a payload without sets reads 0");
+  assert.match(read("HomeOpsA.tsx"), /\{r\.sets\} \{r\.sets === 1 \? "set" : "sets"\}/);
 });
 
 test("a picked day reads that day's bucket only in a daily (month) split", () => {
@@ -461,4 +471,24 @@ test("number formats follow the approved design: '55 h', '7h 05m', 'N days'", ()
   assert.equal(hrsFmt(3300), "55 h");
   assert.equal(hmFmt(425), "7h 05m");
   assert.equal(hmFmt(0), "0h 00m");
+});
+
+// Owner 2026-11-12: one category shown = that category over its own capacity;
+// both shown = total / total (desktop approved first, then the phone).
+test("backlog rows: one category on its own capacity, sorted by its days; both = total / total", () => {
+  const rows = [
+    { dept: "Upholstery", sofaMin: 38340, bedframeMin: 19620, totalMin: 57960, dailyCapMin: 2400, backlogDays: 24.4, sofaCapMin: 1200, bedframeCapMin: 1140, sofaDays: 31.4, bedframeDays: 17.2 },
+    { dept: "Foam Cutting", sofaMin: 20640, bedframeMin: 0, totalMin: 20640, dailyCapMin: 660, backlogDays: 31.1, sofaCapMin: 660, bedframeCapMin: 0, sofaDays: 31.4, bedframeDays: 0 },
+    { dept: "Fabric Sewing", sofaMin: 66300, bedframeMin: 14460, totalMin: 80760, dailyCapMin: 4080, backlogDays: 19.8, sofaCapMin: 2340, bedframeCapMin: 1560, sofaDays: 28.2, bedframeDays: 9.1 },
+  ];
+  const both = backlogRows(rows, true, true);
+  assert.deepEqual(both.map((r) => [r.dept, r.shown, r.single]), [["Upholstery", 24.4, null], ["Foam Cutting", 31.1, null], ["Fabric Sewing", 19.8, null]]);
+  const bed = backlogRows(rows, false, true);
+  assert.deepEqual(bed.map((r) => [r.dept, r.shown]), [["Upholstery", 17.2], ["Fabric Sewing", 9.1], ["Foam Cutting", 0]]);
+  assert.deepEqual(bed[0].single, { label: "Bedframe", queuedMin: 19620, capMin: 1140 });
+  assert.equal(bed[0].bedDays, 17.2);
+  assert.equal(bed[0].sofaDays, 0);
+  const sofa = backlogRows(rows, true, false);
+  assert.deepEqual(sofa.map((r) => r.shown), [31.4, 31.4, 28.2]);
+  assert.equal(backlogRows([{ ...rows[0], bedframeDays: null }], false, true)[0].shown, null, "no bedframe output = stalled");
 });

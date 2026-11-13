@@ -2,14 +2,14 @@
 // summary cards and the sheets so a row reads the same everywhere.
 import { deptName } from "../../../dashboards/ops-floor-lib";
 import { RED } from "../../../dashboards/dashboard-shared-lib";
-import { avatarOf, costCentreName, eff, effBar, effColor, floorSet, hrs, loggedUnder, NP_SHADE_SHARE, pct, pctOf, ratio, type DeptRow, type Row } from "./emp-lib";
+import { avatarOf, costCentreName, effBar, overallText, poolEff, rowEff, effColor, floorSet, hrs, loggedUnder, NP_SHADE_SHARE, pct, pctOf, ratio, type DeptRow, type Row } from "./emp-lib";
 import type { RowSpec } from "./emp-ui";
 import type { EmpModel } from "./emp-model";
 
 const bar = (m: EmpModel, v: number | null) => { const b = effBar(v, m.target); return b ? { ...b, c: effColor(v, m.target) } : null; };
 
 export function workerRow(m: EmpModel, r: Row, i: number, start: number | null): RowSpec {
-  const v = eff(r.prod, r.work);
+  const v = rowEff(r);
   return {
     key: r.id, av: avatarOf(r.name), bar: bar(m, v), rank: start != null ? String(start + i + 1) : undefined, title: r.name,
     lines: [`${deptName(r.dept)} · ${r.daysWorked} days · ${hrs(r.prod)} / ${hrs(r.work)}${m.canSalary ? ` · ${m.salaryText(r.cost)}` : ""}`],
@@ -18,15 +18,15 @@ export function workerRow(m: EmpModel, r: Row, i: number, start: number | null):
 }
 
 export function deptRow(m: EmpModel, r: DeptRow, summary: boolean): RowSpec {
-  const v = eff(r.prod, r.work);
+  const v = poolEff(r);
   const floor = floorSet().has(r.dept);
   const lp = ratio(r.cost, r.bf + r.sofa);
   const lpText = labourPctText(m, lp);
   return {
     key: r.dept, bar: bar(m, v), title: costCentreName(r.dept), tc: floor ? undefined : "#9A9082",
     lines: summary
-      ? [`${r.people.size} people · ${hrs(r.prod)} / ${hrs(r.work)}`]
-      : [`${r.people.size} people · working ${hrs(r.work)} · production ${hrs(r.prod)}`, `Output · Bedframe ${m.outText(r.bf)} · Sofa ${m.outText(r.sofa)}`, ...(m.canSalary ? [`Salary ${m.salaryText(r.cost)} · Labour % ${lpText}`] : [])],
+      ? [`${r.people.size} people · ${hrs(r.prod)} / ${hrs(r.work)}`, ...(overallText(r) ? [overallText(r)] : [])]
+      : [`${r.people.size} people · working ${hrs(r.work)} · production ${hrs(r.prod)}`, ...(overallText(r) ? [overallText(r)] : []), `Output · Bedframe ${m.outText(r.bf)} · Sofa ${m.outText(r.sofa)}`, ...(m.canSalary ? [`Salary ${m.salaryText(r.cost)} · Labour % ${lpText}`] : [])],
     right: pct(v), rc: effColor(v, m.target), onTap: () => m.push({ type: "dept", dept: r.dept }),
   };
 }

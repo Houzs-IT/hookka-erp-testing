@@ -41,6 +41,7 @@ import {
 import {
   computeMonthlyEfficiencyByWorker,
   loadApprovedExtraTime,
+  helperWorkerIds,
   type EfficiencyScope,
 } from "./efficiency-allowance";
 import { todayYmdMY } from "../../lib/utils";
@@ -818,6 +819,7 @@ export async function loadMonthPerfDays(db: Context<Env>["var"]["DB"], orgId: st
     pics: pics.results ?? [],
     approvedExtraTime,
     productionDepts,
+    helperIds: await helperWorkerIds(db),
   }).perfDays;
 }
 
@@ -861,7 +863,13 @@ export async function departmentEfficiency(
     actual: Math.round(r.pct * 10) / 10,
     sampleSize: r.days,
     daily,
-    detail: `${h(r.productionMinutes)} production hours on ${h(r.workingMinutes)} clocked hours over ${r.days} days${where}`,
+    // Production efficiency (helpers left out); the overall figure is named
+    // beside it when the department has helpers (owner 2026-11-11).
+    detail:
+      `${h(r.productionMinutes)} production hours on ${h(r.workingMinutes)} clocked hours over ${r.days} days${where}` +
+      (r.helperWorkingMinutes > 0 && r.overallPct !== null
+        ? ` · Overall ${Math.round(r.overallPct * 10) / 10}% (incl. helpers ${h(r.helperWorkingMinutes)} h)`
+        : ""),
   };
 }
 

@@ -40,6 +40,7 @@ import { printReport, type PrintColumn, type PrintCard, type PrintSection } from
 import { normalizePaymentMethod, paymentDestinationLabel } from "@/lib/payment-method";
 import { EmployeeDrawer, type EmployeeDraft } from "@/components/employee-drawer";
 import { HelperTag } from "@/components/helper-tag";
+import { HelperOverallLine } from "@/pages/dashboards/HelperOverallLine";
 import { WorkerPenaltyTab } from "@/components/worker-penalty-tab";
 import { OutsourcePieceTab } from "@/components/outsource-piece-tab";
 import { DepartmentMultiSelect } from "@/components/department-multi-select";
@@ -4056,6 +4057,7 @@ function EfficiencyOverviewTab({
           <span className="font-medium text-[#1F1D1B]">
             {row.empNo ? `${row.empNo} — ` : ""}
             {row.employeeName}
+            {workerById.get(row.workerId)?.isHelper && <HelperTag />}
           </span>
         ),
       },
@@ -4192,6 +4194,8 @@ function EfficiencyOverviewTab({
             0,
           );
           if (prodHours <= 0 || row.daysWithEntries === 0) return -1;
+          // Helper / 杂工 (owner 2026-11-11): no personal efficiency.
+          if (workerById.get(row.workerId)?.isHelper) return -1;
           const prodMins = prodMinsByWorker.get(row.workerId) ?? 0;
           return (prodMins / (prodHours * 60)) * 100;
         },
@@ -4216,6 +4220,14 @@ function EfficiencyOverviewTab({
             0,
           );
           const totalMins = prodHours * 60;
+          // Helper / 杂工 (owner 2026-11-11): assists others — no personal efficiency.
+          if (workerById.get(row.workerId)?.isHelper) {
+            return (
+              <span className="text-[#9CA3AF] tabular-nums" title="Helper — assists others; no personal efficiency, no efficiency allowance">
+                —
+              </span>
+            );
+          }
           // Show em-dash when the denominator is zero - either because the
           // worker has no working_hour_entries at all in the range, or
           // because all their hours were in non-production depts.
@@ -4363,6 +4375,7 @@ function EfficiencyOverviewTab({
       .map((r) => {
         const ph = prodHoursOf(r);
         if (ph <= 0 || r.daysWithEntries === 0) return null;
+        if (workerById.get(r.workerId)?.isHelper) return null; // no personal efficiency
         const pm = prodMinsByWorker.get(r.workerId) ?? 0;
         return (pm / (ph * 60)) * 100;
       })
@@ -4381,7 +4394,7 @@ function EfficiencyOverviewTab({
       cards,
       sections: [{ columns, rows: printableRows }],
     });
-  }, [rows, printRows, prodMinsByWorker, productionDeptCodes, dateFrom, dateTo]);
+  }, [rows, printRows, prodMinsByWorker, productionDeptCodes, dateFrom, dateTo, workerById]);
 
   return (
     <Card>
@@ -5634,8 +5647,9 @@ function EmployeeDetailTab({
   // in any production dept, ratio stays null so the KPI shows em-dash.
   // efficiency% = numerator minutes / (prod-dept hours × 60) × 100, and since
   // productionWorkMins is already (prod-dept hours × 60) the ratio is direct.
+  // Helper / 杂工 (owner 2026-11-11): no personal efficiency → "—".
   const avgEff =
-    productionWorkMins > 0
+    productionWorkMins > 0 && !selectedWorker?.isHelper
       ? ((numeratorProdMins / productionWorkMins) * 100).toFixed(1)
       : null;
   // Non-production hours = total working hours - production-dept hours.
@@ -6051,7 +6065,7 @@ function EmployeeDetailTab({
                 {avgEff}%
               </p>
             ) : (
-              <p className="text-2xl font-bold text-[#9CA3AF]" title="No production-dept working hours recorded in range — efficiency requires hours to compare against.">
+              <p className="text-2xl font-bold text-[#9CA3AF]" title={selectedWorker?.isHelper ? "Helper — assists others; no personal efficiency, no efficiency allowance" : "No production-dept working hours recorded in range — efficiency requires hours to compare against."}>
                 —
               </p>
             )}
@@ -6117,6 +6131,8 @@ type DrillDownWorker = {
   workingMinutes: number;
   productionMinutes: number;
   efficiencyPct: number;
+  /** Helper / 杂工 (owner 2026-11-11): no personal efficiency — render "—". */
+  isHelper?: boolean;
   jobs: Array<{
     jobCardId: string;
     productCode: string;
@@ -6131,7 +6147,10 @@ type DeptPerfDailyRow = {
   date: string;
   workingMinutes: number;
   productionMinutes: number;
+  /** Production efficiency (helpers left out). */
   efficiencyPct: number;
+  overallPct?: number;
+  helperWorkingMinutes?: number;
   // Drill-down array — backend extension. Optional on the type so the
   // renderer doesn't crash if an older response shape is served (e.g.
   // a stale browser tab hitting a freshly deployed backend before its own
@@ -6148,7 +6167,11 @@ type DeptPerfResponse = {
     totals: {
       workingMinutes: number;
       productionMinutes: number;
+      /** Production efficiency — helpers / 杂工 left out (owner 2026-11-11). */
       efficiencyPct: number;
+      /** Everyone incl. helpers; only shown when helperWorkingMinutes > 0. */
+      overallPct?: number;
+      helperWorkingMinutes?: number;
       workerCount: number;
       // Numerator provenance (BUG-2026-08-13-103): completed job cards in the
       // range, and how many recorded a duration that differs from their own
@@ -6275,6 +6298,7 @@ function DepartmentPerformanceTab({
       workingMinutes: number;
       productionMinutes: number;
       efficiencyPct: number;
+      isHelper?: boolean;
     };
     const printRows: DeptPerfPrintRow[] = [];
     for (const d of daily) {
@@ -6288,10 +6312,11 @@ function DepartmentPerformanceTab({
       for (const w of d.workers ?? []) {
         printRows.push({
           isWorker: true,
-          label: w.workerName,
+          label: w.isHelper ? `${w.workerName} (Helper)` : w.workerName,
           workingMinutes: w.workingMinutes,
           productionMinutes: w.productionMinutes,
           efficiencyPct: w.efficiencyPct,
+          isHelper: w.isHelper,
         });
       }
     }
@@ -6323,7 +6348,7 @@ function DepartmentPerformanceTab({
         value: (r) => {
           const row = r as DeptPerfPrintRow;
           const bold = !row.isWorker;
-          if (row.workingMinutes <= 0) return { text: "—", bold };
+          if (row.workingMinutes <= 0 || row.isHelper) return { text: "—", bold };
           const pct = row.efficiencyPct;
           const color = pct >= 80 ? "#4F7C3A" : pct >= 60 ? "#9C6F1E" : "#9A3A2D";
           return { text: `${pct.toFixed(1)}%`, color, align: "right", bold };
@@ -6471,6 +6496,11 @@ function DepartmentPerformanceTab({
               </p>
             )}
             <p className="text-xs text-[#6B7280]">Avg Efficiency</p>
+            <HelperOverallLine
+              overallPct={totals?.overallPct ?? null}
+              helperMinutes={totals?.helperWorkingMinutes ?? 0}
+              className="mt-0.5"
+            />
           </CardContent>
         </Card>
       </div>
@@ -6574,6 +6604,11 @@ function DepartmentPerformanceTab({
                           </td>
                           <td className={`h-10 px-3 text-right tabular-nums font-semibold ${effColor}`}>
                             {row.workingMinutes <= 0 ? "—" : `${pct.toFixed(1)}%`}
+                            <HelperOverallLine
+                              overallPct={row.overallPct ?? null}
+                              helperMinutes={row.helperWorkingMinutes ?? 0}
+                              className="font-normal"
+                            />
                           </td>
                         </tr>
                         {isOpen && (
@@ -6662,7 +6697,7 @@ function DailyDrillDown({
           const isOpen = expandedKeys.has(key);
           const pct = w.efficiencyPct;
           const effColor =
-            w.workingMinutes <= 0
+            w.workingMinutes <= 0 || w.isHelper
               ? "text-[#9CA3AF]"
               : pct >= 80
                 ? "text-[#4F7C3A]"
@@ -6689,6 +6724,7 @@ function DailyDrillDown({
                 </span>
                 <span className="font-medium text-[#1F1D1B] flex-1 min-w-0 truncate">
                   {w.workerName}
+                  {w.isHelper && <HelperTag />}
                 </span>
                 <span className="tabular-nums text-[#374151] whitespace-nowrap w-24 text-right">
                   {w.workingMinutes > 0 ? formatHours(w.workingMinutes) : "-"}
@@ -6702,7 +6738,7 @@ function DailyDrillDown({
                 <span
                   className={`tabular-nums font-semibold whitespace-nowrap w-14 text-right ${effColor}`}
                 >
-                  {w.workingMinutes <= 0 ? "—" : `${pct.toFixed(0)}%`}
+                  {w.workingMinutes <= 0 || w.isHelper ? "—" : `${pct.toFixed(0)}%`}
                 </span>
               </button>
               {isOpen && (
@@ -11815,6 +11851,10 @@ function AttendanceTab({
         <CardContent className="p-3" title="Production minutes ÷ production-dept clocked hours, averaged across workers — this calendar month to date.">
           <p className="text-xs text-[#6B7280]">Avg Efficiency <span className="text-[#9CA3AF]">(this month)</span></p>
           <p className={`text-lg font-bold ${monthKpis.avgEff >= 100 ? "text-[#15803D]" : monthKpis.avgEff >= 60 ? "text-[#9C6F1E]" : "text-[#9A3A2D]"}`}>{monthKpis.avgEff.toFixed(1)}%</p>
+          <HelperOverallLine
+            overallPct={monthPerfResp?.data?.totals?.overallPct ?? null}
+            helperMinutes={monthPerfResp?.data?.totals?.helperWorkingMinutes ?? 0}
+          />
         </CardContent>
       </Card>
       <Card>
@@ -12162,6 +12202,10 @@ export default function EmployeesPage() {
                   {avgEfficiency}%
                 </p>
                 <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-[#8A8680]">Avg Efficiency</p>
+                <HelperOverallLine
+                  overallPct={summaryTotals?.overallPct ?? null}
+                  helperMinutes={summaryTotals?.helperWorkingMinutes ?? 0}
+                />
               </div>
             </CardContent>
           </Card>

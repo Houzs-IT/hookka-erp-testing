@@ -68,7 +68,7 @@ import { countsToHeadcount } from "../lib/headcount-rule";
 import { buildPerfDays, num, dayKey } from "../lib/workforce-perf";
 import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
 import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
-import { loadApprovedExtraTime } from "../lib/efficiency-allowance";
+import { helperWorkerIds, loadApprovedExtraTime } from "../lib/efficiency-allowance";
 import { withSnapshot } from "../lib/snapshot";
 import { ensureFeedSnapshotTable, FEED_SNAPSHOT_TABLE, pruneFeedSnapshots } from "../lib/dashboard-snapshot";
 
@@ -733,12 +733,16 @@ app.get("/", async (c) => {
       .map((r) => ({ workerId: r.employeeId!, clockIn: r.clockIn!, homeDeptCode: homeDept.get(r.employeeId!) ?? r.departmentCode }));
     return liveOpenPunchRows(c.var.DB, { date: todayMY, nowMin: nowSlotMin, punches, nonProdHoursByWorker: nonProdByWorker });
   });
+  // Helpers / 杂工 (owner 2026-11-11): no personal efficiency; production
+  // efficiency leaves them out, Production Hours keep them.
+  const helperIds = await helperWorkerIds(c.var.DB);
   const { perfDays, perfCards, perfMeasuredCards } = buildPerfDays({
     whe: [...wheSec.rows, ...liveWheSec.rows],
     jobCards: jcSec.rows,
     pics: picsSec.rows,
     approvedExtraTime: extraTimeSec.rows,
     productionDepts,
+    helperIds,
   });
 
   // ---- Delivery ---------------------------------------------------------
@@ -1888,6 +1892,7 @@ app.get("/", async (c) => {
         // and TEST* accounts excluded (owner 2026-07-11, same rule Payroll
         // uses so headcount tallies system-wide).
         countsToHeadcount: countsToHeadcount(w.status, w.empNo),
+        isHelper: helperIds.has(w.id),
       })),
       attendance,
       // The house workforce metric. `attendance` above is kept for clock-in /

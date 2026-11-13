@@ -46,6 +46,7 @@ import { buildPiApprovalLegs } from "../../lib/pi-posting";
 import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules";
 import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
 import { autoReceivePiStock, backfillAutoGrnLinks, previewPiAutoGrn } from "../lib/pi-auto-grn";
+import { resolvePiLineUoms } from "../lib/pi-line-uom";
 import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -130,6 +131,9 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
       // grn_items.po_item_id too, but only once a GRN route has run.
       "ALTER TABLE purchase_invoice_items ADD COLUMN IF NOT EXISTS po_item_id TEXT",
       "ALTER TABLE grn_items ADD COLUMN IF NOT EXISTS po_item_id TEXT",
+      // HK-0149 (migration 0254): the unit a line was billed in, stored only
+      // when it differs from its PO line's unit (src/api/lib/pi-line-uom.ts).
+      "ALTER TABLE purchase_invoice_items ADD COLUMN IF NOT EXISTS uom TEXT",
     ];
     await runSelfApply(db, "purchase-invoices", stmts);
     // T-006 R5 (migration 0246): the DB backstop under the app-level
@@ -320,6 +324,10 @@ export type PurchaseInvoiceItem = {
   poId: string | null;
   /** The PO LINE this line bills (T-006 R8); null for fee / manual lines. */
   poItemId: string | null;
+  /** HK-0149: billed unit when it differs from the PO line's; null = the PO line's unit. */
+  uom: string | null;
+  /** The PO line's unit, read live with poUnitPriceSen (display only). */
+  poUnit?: string | null;
   /** The PO line's unit price, read live on the detail view only (Houzs
    *  review 2026-11-08) so the operator sees billed vs ordered price. */
   poUnitPriceSen?: number | null;
@@ -355,6 +363,7 @@ type PurchaseInvoiceItemRow = {
   poId?: string | null;
   po_item_id?: string | null;
   poItemId?: string | null;
+  uom?: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -467,6 +476,7 @@ function rowToItem(r: PurchaseInvoiceItemRow): PurchaseInvoiceItem {
     grnItemId: r.grnItemId ?? r.grn_item_id ?? null,
     poId: r.poId ?? r.po_id ?? null,
     poItemId: r.poItemId ?? r.po_item_id ?? null,
+    uom: r.uom ?? null,
     created_at: r.created_at ?? null,
     updated_at: r.updated_at ?? null,
   };
@@ -495,6 +505,8 @@ type PurchaseInvoiceItemInput = {
   /** The PO this line bills, and the PO LINE it bills (T-006 R8). */
   poId?: string | null;
   poItemId?: string | null;
+  /** HK-0149: the unit billed in; resolved by resolvePiLineUoms. */
+  uom?: string | null;
 };
 
 // Validate + normalize an items[] payload. Returns either an array of
@@ -517,6 +529,8 @@ function normalizeItems(
     /** The PO this LINE bills — one invoice may cover several. */
     poId: string | null;
     poItemId: string | null;
+    /** undefined = not sent (PUT keeps the old line's). */
+    uom?: string | null;
   }> } | { ok: false; error: string } {
   if (!Array.isArray(items)) {
     return { ok: false, error: "items must be an array" };
@@ -536,6 +550,7 @@ function normalizeItems(
     grnItemId: string | null;
     poId: string | null;
     poItemId: string | null;
+    uom?: string | null;
   }> = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i] as PurchaseInvoiceItemInput;
@@ -594,6 +609,7 @@ function normalizeItems(
       grnItemId,
       poId: it.poId == null ? null : String(it.poId).trim() || null,
       poItemId: it.poItemId == null ? null : String(it.poItemId).trim() || null,
+      uom: it.uom === undefined ? undefined : it.uom == null ? null : String(it.uom),
     });
   }
   return { ok: true, rows };
@@ -668,20 +684,21 @@ export async function attachPoPrices(db: D1Database, items: PurchaseInvoiceItem[
     const ph = poIds.map(() => "?").join(",");
     const res = await db
       .prepare(
-        `SELECT poi.id, poi.purchaseOrderId AS "poId", poi.material_code AS "mc", poi.unitPriceSen AS "price"
+        `SELECT poi.id, poi.purchaseOrderId AS "poId", poi.material_code AS "mc", poi.unitPriceSen AS "price", poi.unit AS "unit"
            FROM purchase_order_items poi WHERE poi.purchaseOrderId IN (${ph})`,
       )
       .bind(...poIds)
-      .all<{ id: string | number; poId: string; mc: string | null; price: number | null }>();
+      .all<{ id: string | number; poId: string; mc: string | null; price: number | null; unit: string | null }>();
     const rows = res.results ?? [];
-    const byId = new Map(rows.map((r) => [String(r.id), Number(r.price) || 0]));
+    const byId = new Map(rows.map((r) => [String(r.id), r]));
     const norm = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
     return items.map((it) => {
       if (!it.poId) return it;
-      if (it.poItemId && byId.has(String(it.poItemId))) return { ...it, poUnitPriceSen: byId.get(String(it.poItemId)) };
+      const own = it.poItemId ? byId.get(String(it.poItemId)) : undefined;
+      if (own) return { ...it, poUnitPriceSen: Number(own.price) || 0, poUnit: own.unit ?? null };
       const code = norm(it.materialCode);
       const same = code ? rows.filter((r) => r.poId === it.poId && norm(r.mc) === code) : [];
-      return same.length === 1 ? { ...it, poUnitPriceSen: Number(same[0].price) || 0 } : it;
+      return same.length === 1 ? { ...it, poUnitPriceSen: Number(same[0].price) || 0, poUnit: same[0].unit ?? null } : it;
     });
   } catch (e) {
     console.warn("[purchase-invoices] PO price lookup failed:", e instanceof Error ? e.message : e);
@@ -1203,6 +1220,7 @@ function poGuardRow(
     poId: string | null;
     poItemId: string | null;
     grnItemId: string | null;
+    uom?: string | null;
   },
   /** The PO line the row's GRN line was received on. */
   grnPoItemId?: string | null,
@@ -1213,7 +1231,9 @@ function poGuardRow(
 ): PoGuardRow {
   return {
     materialCode: r.materialCode,
-    qty: r.qty,
+    // HK-0149: billed in another unit than the PO line — not comparable, so it
+    // draws nothing from the ceiling (counted for money only).
+    qty: r.uom ? 0 : r.qty,
     poItemId: r.poItemId ?? grnPoItemId ?? null,
     linked: r.lineType === "STOCKED" && ownPoIdCounts && !!r.poId,
     name: r.materialName,
@@ -1292,7 +1312,7 @@ async function checkPoRemaining(
          FROM purchase_invoice_items pii
          JOIN purchase_invoices pi ON pi.id = pii.pi_id
          LEFT JOIN grn_items gi ON gi.id::text = pii.grn_item_id
-        WHERE COALESCE(pii.po_id, pi.purchaseOrderId) = ? AND pi.status != 'CANCELLED'${
+        WHERE COALESCE(pii.po_id, pi.purchaseOrderId) = ? AND pi.status != 'CANCELLED' AND pii.uom IS NULL${
           excludePiId ? " AND pii.pi_id != ?" : ""
         }
         GROUP BY COALESCE(pii.po_item_id, gi.po_item_id), pii.material_code`,
@@ -1497,6 +1517,8 @@ app.post("/", idempotent(), async (c) => {
     if (!normalizedItems.ok) {
       return c.json({ success: false, error: normalizedItems.error }, 400);
     }
+    const uomCheck = await resolvePiLineUoms(db, normalizedItems.rows);
+    if (!uomCheck.ok) return c.json({ success: false, error: uomCheck.error }, 400);
   }
 
   // Resolve poRef + the source PO's purchase company override if given.
@@ -1834,8 +1856,8 @@ app.post("/", idempotent(), async (c) => {
             `INSERT INTO purchase_invoice_items (
                id, pi_id, material_code, material_name, supplier_sku,
                qty, unit_price_sen, line_total_sen, discount_sen, tax_sen, line_type, notes,
-               grn_item_id, po_id, po_item_id, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               grn_item_id, po_id, po_item_id, uom, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             r.id,
@@ -1866,6 +1888,7 @@ app.post("/", idempotent(), async (c) => {
             r.poItemId ??
               (r.grnItemId ? grnLinePoItemId.get(String(r.grnItemId)) : undefined) ??
               null,
+            r.uom ?? null,
             now,
             null,
           ),
@@ -2367,6 +2390,18 @@ app.put("/:id", async (c) => {
       if (!r.poId) r.poId = old ? (old.poId ?? old.po_id ?? null) : null;
       if (!r.poItemId) r.poItemId = old ? (old.poItemId ?? old.po_item_id ?? null) : null;
     });
+    // HK-0149: a client that does not send `uom` keeps the old line's unit.
+    normalizedItems.rows.forEach((r, i) => {
+      if (r.uom !== undefined) return;
+      const bodyId = (body.items?.[i] as { id?: unknown } | undefined)?.id;
+      const old =
+        (bodyId != null && oldPiLines.find((l) => String(l.id) === String(bodyId))) ||
+        (r.poItemId && oldPiLines.find((l) => String(l.poItemId ?? l.po_item_id ?? "") === r.poItemId)) ||
+        null;
+      r.uom = old?.uom ?? null;
+    });
+    const uomCheck = await resolvePiLineUoms(db, normalizedItems.rows);
+    if (!uomCheck.ok) return c.json({ success: false, error: uomCheck.error }, 400);
     // A GRN-sourced line with no stored PO line yet (saved before R8): take
     // the PO line its GRN line was received on.
     const grnIdsNeedingPoLine = normalizedItems.rows
@@ -2558,8 +2593,8 @@ app.put("/:id", async (c) => {
             `INSERT INTO purchase_invoice_items (
                id, pi_id, material_code, material_name, supplier_sku,
                qty, unit_price_sen, line_total_sen, discount_sen, tax_sen, line_type, notes,
-               grn_item_id, po_id, po_item_id, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               grn_item_id, po_id, po_item_id, uom, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             r.id,
@@ -2581,6 +2616,7 @@ app.put("/:id", async (c) => {
               (existing as unknown as { purchaseOrderId?: string | null }).purchaseOrderId ??
               null,
             r.poItemId,
+            r.uom ?? null,
             now,
             null,
           ),

@@ -11,13 +11,13 @@ import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
 // ---------------------------------------------------------------------------
 // Feed shapes (GET /api/dashboard/prototype → employee)
 // ---------------------------------------------------------------------------
-export type EmpWorker = { id: string; empNo?: string | null; name: string | null; dept: string | null; role?: string | null; countsToHeadcount: boolean };
+export type EmpWorker = { id: string; empNo?: string | null; name: string | null; dept: string | null; role?: string | null; countsToHeadcount: boolean; isHelper?: boolean };
 export type EmpAtt = {
   employeeId: string | null; employeeName: string | null; dept: string | null; date: string | null; clockIn: string | null; clockOut: string | null;
   workingMinutes: number; productionMinutes: number; overtimeMinutes: number; efficiencyPct: number | null;
 };
-export type EmpDayWorker = { workerId: string; workingMinutes: number; productionMinutes: number; allDeptMinutes?: number };
-export type EmpDay = { date: string; workingMinutes: number; productionMinutes: number; allDeptMinutes?: number; workers?: EmpDayWorker[] };
+export type EmpDayWorker = { workerId: string; workingMinutes: number; productionMinutes: number; allDeptMinutes?: number; isHelper?: boolean };
+export type EmpDay = { date: string; workingMinutes: number; productionMinutes: number; allDeptMinutes?: number; helperWorkingMinutes?: number; helperProductionMinutes?: number; workers?: EmpDayWorker[] };
 export type EmpSlice = { workers: EmpWorker[]; attendance: EmpAtt[]; performance: { byDay: EmpDay[] } };
 export type HourEntry = { workerId: string; date: string; hours: number | string; departmentCode?: string | null };
 
@@ -30,6 +30,13 @@ export type Win = "day" | "7d" | "period";
 export const hrs = (min: number) => `${(min / 60).toLocaleString("en-MY", { maximumFractionDigits: 1 })} h`;
 export const pct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 export const eff = (prod: number, work: number) => (work > 0 ? (prod / work) * 100 : null);
+// Helpers / 杂工 (owner 2026-11-11) — same rule as the desktop dashboard:
+// production efficiency leaves helper minutes out; a helper row shows "—".
+export const poolEff = (t: { prod: number; work: number; hp?: number; hw?: number }) => eff(t.prod - (t.hp ?? 0), t.work - (t.hw ?? 0));
+export const rowEff = (r: { prod: number; work: number; isHelper?: boolean }) => (r.isHelper ? null : eff(r.prod, r.work));
+/** "Overall xx% (incl. helpers X h)" text, or "" when no helper clocked time. */
+export const overallText = (t: { prod: number; work: number; hw?: number }) =>
+  (t.hw ?? 0) > 0 ? `Overall ${pct(eff(t.prod, t.work))} (incl. helpers ${hrs(t.hw ?? 0)})` : "";
 export const ratio = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
 /** Desktop effColor: green at target, amber from 85% of the configured target, red below. */
 export const effColor = (v: number | null, target: number) => (v == null ? MUTED : v >= target ? GREEN : v >= target * 0.85 ? AMBER : RED);
@@ -114,14 +121,16 @@ export function presenceOn(slice: EmpSlice, roster: EmpWorker[], anchor: string)
 // ---------------------------------------------------------------------------
 // Headline numbers (desktop: sumWindow + the tile maths)
 // ---------------------------------------------------------------------------
-export type WindowSum = { work: number; prod: number; sen: number; workerDays: number; workingDays: number; fte: number; revenue: number };
+export type WindowSum = { work: number; prod: number; hw: number; hp: number; sen: number; workerDays: number; workingDays: number; fte: number; revenue: number };
 export function sumWindow(allDays: EmpDay[], has: (d: string) => boolean, cost: Map<string, number>, outsourced: Set<string>, revenueByDay: Map<string, { total: number }> | null): WindowSum {
-  let work = 0, prod = 0, sen = 0, workerDays = 0, workingDays = 0, revenue = 0;
+  let work = 0, prod = 0, hw = 0, hp = 0, sen = 0, workerDays = 0, workingDays = 0, revenue = 0;
   for (const d of allDays) {
     if (!has(d.date)) continue;
     if (hasKeyedHours(d)) {
       work += d.workingMinutes;
       prod += d.productionMinutes;
+      hw += d.helperWorkingMinutes ?? 0;
+      hp += d.helperProductionMinutes ?? 0;
     }
     let any = false;
     for (const x of d.workers ?? []) {
@@ -132,7 +141,7 @@ export function sumWindow(allDays: EmpDay[], has: (d: string) => boolean, cost: 
   }
   for (const [d, v] of revenueByDay ?? []) if (has(d)) revenue += v.total;
   const fte = workingDays ? workerDays / workingDays : 0;
-  return { work, prod, sen, workerDays, workingDays, fte, revenue };
+  return { work, prod, hw, hp, sen, workerDays, workingDays, fte, revenue };
 }
 
 export function headlineOf(a: { totals: WindowSum; prev: WindowSum | null; costByDept: Map<string, number>; winDates: Set<string>; revenueKnown: boolean }) {
@@ -151,7 +160,7 @@ export function headlineOf(a: { totals: WindowSum; prev: WindowSum | null; costB
 // ---------------------------------------------------------------------------
 // Worker rows, ranking (desktop: rows / ranked / upper / lower)
 // ---------------------------------------------------------------------------
-export type Row = { id: string; name: string; dept: string; work: number; prod: number; cost: number; daysWorked: number; byDay: { date: string; work: number; prod: number; cost: number }[] };
+export type Row = { id: string; name: string; dept: string; isHelper?: boolean; work: number; prod: number; cost: number; daysWorked: number; byDay: { date: string; work: number; prod: number; cost: number }[] };
 export function workerRows(days: EmpDay[], winDates: Set<string>, workerById: Map<string, EmpWorker>, dept: string, cost: Map<string, number>): Row[] {
   const m = new Map<string, Row>();
   for (const d of days) {
@@ -162,7 +171,7 @@ export function workerRows(days: EmpDay[], winDates: Set<string>, workerById: Ma
       const wDept = w?.dept ?? "—";
       if (dept !== "ALL" && wDept !== dept) continue;
       const c = cost.get(`${x.workerId}|${d.date}`) ?? 0;
-      const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
+      const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, isHelper: !!(x.isHelper || w?.isHelper), work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
       r.work += x.workingMinutes;
       r.prod += earnedMinutes;
       r.cost += c;
@@ -171,10 +180,10 @@ export function workerRows(days: EmpDay[], winDates: Set<string>, workerById: Ma
       m.set(x.workerId, r);
     }
   }
-  return [...m.values()].filter((r) => r.work > 0).sort((a, b) => (eff(b.prod, b.work) ?? -1) - (eff(a.prod, a.work) ?? -1));
+  return [...m.values()].filter((r) => r.work > 0).sort((a, b) => (rowEff(b) ?? -1) - (rowEff(a) ?? -1));
 }
 export function rankSplit(rows: Row[], outsourced: Set<string>) {
-  const ranked = rows.filter((r) => r.work >= MIN_RANK_MIN && !outsourced.has(r.id));
+  const ranked = rows.filter((r) => r.work >= MIN_RANK_MIN && !outsourced.has(r.id) && !r.isHelper);
   const half = Math.ceil(ranked.length / 2);
   return {
     ranked, half, upper: ranked.slice(0, half), lower: ranked.slice(half),
@@ -187,7 +196,7 @@ export const departmentsOf = (workers: EmpWorker[]) => [...new Set(workers.map((
 // ---------------------------------------------------------------------------
 // Department efficiency (desktop: deptRows / deptTotal / progByDept)
 // ---------------------------------------------------------------------------
-export type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; cost: number; bf: number; sofa: number };
+export type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; hw: number; hp: number; cost: number; bf: number; sofa: number };
 export function foldProgressive(byDeptCategory: Record<string, number> | undefined) {
   const m = new Map<string, { bf: number; sofa: number; other: number }>();
   for (const [k, v] of Object.entries(byDeptCategory ?? {})) {
@@ -208,7 +217,7 @@ export function deptRowsOf(a: {
   const floor = floorSet();
   const m = new Map<string, DeptRow>();
   const row = (k: string) => {
-    const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, cost: 0, bf: 0, sofa: 0 };
+    const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0 };
     m.set(k, r);
     return r;
   };
@@ -233,6 +242,7 @@ export function deptRowsOf(a: {
         if (x.workingMinutes > 0 && !outsourced.has(x.workerId)) r.people.add(x.workerId);
         r.work += x.workingMinutes * f;
         r.prod += earnedMinutes * f;
+        if (x.isHelper) { r.hw += x.workingMinutes * f; r.hp += earnedMinutes * f; }
       }
       if (costByDept.size === 0) row(parts[0][0]).cost += costByWorkerDay.get(k) ?? 0;
     }
@@ -255,12 +265,12 @@ export function deptRowsOf(a: {
   }
   return [...m.values()]
     .filter((r) => r.work > 0 || r.prod > 0 || r.cost > 0 || r.bf + r.sofa > 0)
-    .sort((x, y) => Number(!floor.has(x.dept)) - Number(!floor.has(y.dept)) || (eff(y.prod, y.work) ?? -1) - (eff(x.prod, x.work) ?? -1));
+    .sort((x, y) => Number(!floor.has(x.dept)) - Number(!floor.has(y.dept)) || (poolEff(y) ?? -1) - (poolEff(x) ?? -1));
 }
 export function deptTotalOf(rows: DeptRow[]) {
   return rows.reduce(
-    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
-    { work: 0, prod: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
+    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
+    { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
   );
 }
 /** Workers whose home department this is, or who logged hours there in the window (desktop deptDrill). */
@@ -281,7 +291,7 @@ export function mainChartPoints(days: EmpDay[], cost: Map<string, number>): Char
     days.map((d) => {
       let c = 0;
       for (const x of d.workers ?? []) c += cost.get(`${x.workerId}|${d.date}`) ?? 0;
-      return { date: d.date, workingMin: d.workingMinutes, productionMin: d.productionMinutes, eff: eff(d.productionMinutes, d.workingMinutes), cost: c };
+      return { date: d.date, workingMin: d.workingMinutes, productionMin: d.productionMinutes, eff: poolEff({ prod: d.productionMinutes, work: d.workingMinutes, hp: d.helperProductionMinutes, hw: d.helperWorkingMinutes }), cost: c };
     }),
     (r) => r.date,
     (r) => [Math.round((r.workingMin / 60) * 10) / 10, Math.round((r.productionMin / 60) * 10) / 10],

@@ -19,6 +19,7 @@ import { KEYED_MONTHS, addMonthsYm, clearKeyedCode, keyedInputGroups, planTfFill
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { plPastForecastCol } from "@/lib/pl-forecast-edit";
 import { MonthlyPlForecastEditor } from "./monthly-pl-forecast-editor";
+import { MonthlyBalanceSheet } from "./monthly-balance-sheet";
 import type { OpeningCredits } from "@/lib/aging-opening-credits";
 import { useVirtualRows } from "@/components/ui/virtual-rows";
 import { DeferredBlock } from "@/components/ui/deferred-block";
@@ -765,7 +766,7 @@ export default function AccountingPage() {
           {tab === "audit" && <AuditLogTab />}
           {tab === "trend" && <MonthlyTrendTab />}
           {tab === "ceclass" && <CostExpenseClassesTab />}
-          {tab === "bs" && <BalanceSheetTab />}
+          {tab === "bs" && <BsHubTab />}
           {tab === "cashflow" && <CashFlowTab />}
           {tab === "coa" && <COATab accounts={accounts} onRefresh={fetchAll} />}
           {tab === "fx" && <FxTab accounts={accounts} />}
@@ -6426,6 +6427,7 @@ function MonthlyPlTab({ line }: { line: PlLine }) {
       <MonthlyPlForecastEditor
         anchor={anchor}
         hidePast={hidePast}
+        period={{ options: anchorOptions, onChange: setAnchor }}
         onClose={(saved) => {
           setEditing(false);
           if (saved) setReload((n) => n + 1);
@@ -18606,6 +18608,32 @@ function BsDrillPanel({ period, account, company }: { period: string; account: s
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Balance Sheet — two views (owner 2026-11-11 「balance sheet 我也想要看monthly
+// 的可以吗？」): one month-end's full sheet, or the financial year's month-ends
+// side by side (src/pages/accounting/monthly-balance-sheet.tsx).
+function BsHubTab() {
+  const [view, setView] = useState<"asat" | "monthly">("asat");
+  const [company, setCompany] = useState("");
+  const companyOptions = useCompanyOptions();
+  const views: { key: "asat" | "monthly"; label: string; hint: string }[] = [
+    { key: "asat", label: "Balance Sheet", hint: "One month-end, the full sheet" },
+    { key: "monthly", label: "Monthly Balance Sheet", hint: "Month-end by month-end, side by side" },
+  ];
+  return (
+    <div className="space-y-3">
+      <FinanceTitleActions>
+        <ReportToolbar>
+          <SegmentedSwitch label="Balance Sheet view" options={views} value={view} onChange={setView} />
+        </ReportToolbar>
+      </FinanceTitleActions>
+      {view === "asat" && <BalanceSheetTab />}
+      {view === "monthly" && (
+        <MonthlyBalanceSheet company={company} toolbar={<CompanySelect value={company} onChange={setCompany} options={companyOptions} />} />
       )}
     </div>
   );

@@ -4041,12 +4041,16 @@ const getEmployeeEfficiency: ToolDefinition = {
         byPerson.set(p.id, o);
       }
     }
+    // Helpers / 杂工 (owner 2026-11-11): no personal efficiency — null + isHelper,
+    // so the assistant never calls a helper "low efficiency".
+    const helpers = await helperWorkerIds(c.var.DB);
     const list = Array.from(byPerson.values()).map((b) => ({
       employeeId: b.id, employeeName: b.name, department: b.department,
       jobsCompleted: b.jobs,
       plannedMinutes: Math.round(b.plannedMin),
       actualMinutes: Math.round(b.actualMin),
-      efficiencyPct: b.actualMin > 0 ? Math.round((b.plannedMin / b.actualMin) * 1000) / 10 : null,
+      efficiencyPct: !helpers.has(b.id) && b.actualMin > 0 ? Math.round((b.plannedMin / b.actualMin) * 1000) / 10 : null,
+      ...(helpers.has(b.id) ? { isHelper: true, note: "Helper — assists others; no personal efficiency" } : {}),
     })).sort((a, b) => b.jobsCompleted - a.jobsCompleted);
     await emitAudit(c, { resource: "assistant-tool", resourceId: "get_employee_efficiency", action: "get_employee_efficiency", after: filterArgsForAudit(args), source: "ui" });
     return { periodFrom: from, periodTo: to, count: list.length, results: list.slice(0, 100) };
@@ -5400,6 +5404,7 @@ import {
 } from "./assistant-skills";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
 import { mytYymm } from "../../lib/doc-number";
+import { helperWorkerIds } from "./efficiency-allowance";
 
 function asRowArray(v: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(v)) return [];

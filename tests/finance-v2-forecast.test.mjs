@@ -4,7 +4,10 @@
 // removed month still goes only on Save; keying one side still clears the
 // other. New: picking a month adds it, the ✕ asks first, arrow keys / Enter
 // move between the keyed boxes, an unsaved-changes banner and leave guard,
-// warm keyed boxes, names without account codes, larger section labels.
+// warm keyed boxes.
+// Since 2026-11-11 the Forecast P&L page is the Monthly P&L's Edit forecast
+// (owner 「两边都应该是一样的view」, tests/forecast-page-same-view.test.mjs):
+// all of this lives in the one editor both pages show.
 // Made-up figures only.
 // ---------------------------------------------------------------------------
 import { readFileSync } from "node:fs";
@@ -13,7 +16,7 @@ import assert from "node:assert/strict";
 import { nextCell, caretEdges } from "../src/lib/grid-keys.ts";
 import { forecastSnapshot } from "../src/lib/forecast-snapshot.ts";
 
-const src = readFileSync("src/pages/forecast.tsx", "utf8").replace(/\r\n/g, "\n");
+const src = readFileSync("src/pages/accounting/monthly-pl-forecast-editor.tsx", "utf8").replace(/\r\n/g, "\n");
 
 test("keys: Up / Down / Enter move a row; Left / Right only from the edge of the text", () => {
   const at = { row: 1, col: 1 };
@@ -52,21 +55,22 @@ test("snapshot: clearing a figure again, or adding then removing a month, is not
   assert.notEqual(forecastSnapshot({ "2026-05": { salesStr: "50000", pct: { "600-0001": { a: "5000" } } } }), snap);
 });
 
-test("the month control: picking a month adds it; the ✕ asks first and still waits for Save", () => {
-  assert.match(src, /<select\n\s*aria-label="Add month"\n\s*value=""\n\s*onChange=\{\(e\) => \{ if \(e\.target\.value\) addMonth\(e\.target\.value\); \}\}/);
-  assert.match(src, /const addMonth = \(ym: string\) => \{/);
-  // Since 2026-11-10 the rule lives in src/lib/forecast-sheet.ts (newSheetMonth), shared with the Monthly P&L.
-  assert.match(readFileSync("src/lib/forecast-sheet.ts", "utf8").replace(/\r\n/g, "\n"), /const prevYm = \[\.\.\.yms\]\.filter\(\(k\) => k < ym\)\.pop\(\) \?\? \[\.\.\.yms\]\.pop\(\);/, "a new month still starts from the previous month's percentages");
-  assert.match(src, /setMonths\(\(prev\) => \(\{ \.\.\.prev, \[ym\]: newSheetMonth\(prev, ym\) \}\)\);/);
+test("the month control: picking a month adds it; the × asks first and still waits for Save", () => {
+  assert.match(src, /aria-label="Add month"/);
+  assert.match(src, /onChange=\{\(e\) => \{ const ym = e\.target\.value; if \(ym\) setSheet\(\(prev\) => \(prev\[ym\] \? prev : \{ \.\.\.prev, \[ym\]: newSheetMonth\(prev, ym\) \}\)\); \}\}/);
+  // Since 2026-11-10 the rule lives in src/lib/forecast-sheet.ts (newSheetMonth), shared by both pages.
+  assert.match(readFileSync("src/lib/forecast-sheet.ts", "utf8").replace(/\r\n/g, "\n"), /const prevYm = \[\.\.\.yms\]\.filter\(\(k\) => k < ym\)\.pop\(\) \?\? \[\.\.\.yms\]\.pop\(\);/, "a new month starts from the month before it");
   assert.doesNotMatch(src, /type="month"/);
-  assert.match(src, /if \(!\(await confirm\(\{ title: "Remove month\?", message: `Remove \$\{monthLabel\(ym\)\} from the forecast\? It goes when you Save\.`, danger: true \}\)\)\) return;/);
+  assert.match(src, /if \(!\(await confirm\(\{ title: "Remove month\?", message: `Remove \$\{labelOfYm\(ym\)\}'s forecast\? It goes when you Save\.`, danger: true \}\)\)\) return;/);
   assert.match(src, /onClick=\{\(\) => void removeMonth\(ym\)\}/);
 });
 
 test("unsaved changes: a banner and a leave guard against the last loaded or saved sheet", () => {
-  assert.match(src, /setMonths\(next\);\n\s*setSavedSnap\(forecastSnapshot\(next\)\);/, "the loaded sheet is the baseline");
-  assert.match(src, /if \(res\.ok && j\?\.success\) \{ toast\.success\("Forecast saved"\); setSavedSnap\(snap\); invalidateCachePrefix\("\/api\/accounting\/cashflow-forecast"\); \}/, "a save is the new baseline (and drops the Cash Flow forecast copy, 2026-11-09)");
-  assert.match(src, /const dirty = loaded && savedSnap !== null && snap !== savedSnap;/);
+  assert.match(src, /setSheet\(next\);\n\s*setSavedSnap\(forecastSnapshot\(next\)\);/, "the loaded sheet is the baseline");
+  const ok = src.slice(src.indexOf("if (res.ok && j?.success) {"), src.indexOf("} else toast.error", src.indexOf("if (res.ok && j?.success) {")));
+  assert.match(ok, /toast\.success\("Forecast saved"\);\n\s*setSavedSnap\(snap\);/, "a save is the new baseline");
+  assert.match(ok, /invalidateCachePrefix\("\/api\/accounting\/cashflow-forecast"\)/);
+  assert.match(src, /const dirty = savedSnap !== null && snap !== savedSnap;/);
   assert.match(src, /useNavGuard\(dirty, "You have unsaved forecast changes\. Leave without saving\?"\);/);
   assert.match(src, /\{dirty && \(\n\s*<div data-fin-banner="todo"/);
   // The save payload itself is unchanged.
@@ -75,16 +79,13 @@ test("unsaved changes: a banner and a leave guard against the last loaded or sav
 
 test("keyed boxes carry their column and the key handler; Up / Down never nudge a number", () => {
   assert.match(src, /if \(e\.key === "ArrowUp" \|\| e\.key === "ArrowDown"\) e\.preventDefault\(\);/);
-  assert.equal((src.match(/onKeyDown=\{onCellKey\}/g) ?? []).length, 6, "amount, %, the sales box, a customer's sales box (2026-11-09), a supplier's RM and % boxes (2026-11-10)");
-  assert.match(src, /col=\{ci \* 2\}/);
-  assert.match(src, /data-fc-col=\{ci \* 2 \+ 1\}/);
-  assert.match(src, /col=\{yms\.indexOf\(ym\) \* 2\}/);
-  assert.match(src, /data-fc-col=\{col\}/, "the amount box forwards its column");
+  assert.equal((src.match(/onKeyDown=\{onCellKey\}/g) ?? []).length, 4, "a line's RM and % boxes (a supplier's too), the sales box, a customer's sales box");
+  assert.match(src, /col=\{colOf\(c\)\}/);
+  assert.match(src, /col=\{colOf\(c\) \+ 1\}/);
+  assert.equal((src.match(/data-fc-col=\{col\}/g) ?? []).length, 2, "the RM box and the % box forward their column");
 });
 
-test("calm cells: warm keyed boxes, names without account codes, larger section labels", () => {
-  assert.equal((src.match(/bg-\[#FFFBF2\]/g) ?? []).length, 6, "amount, %, the sales box, a customer's box (2026-11-09), a supplier's RM and % boxes (2026-11-10)");
-  assert.doesNotMatch(src, /<span className="tabular-nums text-\[11px\] text-\[#9CA3AF\] mr-1\.5">\{a\.code\}<\/span>/);
-  assert.match(src, /title=\{a\.code\.startsWith\("cat:"\) \? undefined : a\.code\}/, "the code stays on hover");
-  assert.match(src, /className="text-\[13px\] font-semibold text-\[#6B5C32\] cursor-pointer inline-flex items-center gap-1"/);
+test("calm cells: the keyed boxes are warm", () => {
+  assert.match(src, /const BOX = "inline-flex items-center rounded border border-\[#E2DDD8\] bg-\[#FFFBF2\] px-1";/);
+  assert.equal((src.match(/className=\{`\$\{BOX\} w-/g) ?? []).length, 2, "the RM box and the % box");
 });

@@ -178,7 +178,8 @@ test("snapshot: a supplier figure under a material is a change; keying and clear
   assert.equal(forecastSnapshot({ "2026-12": { salesStr: "", pct: {}, suppliers: { FABRIC: { s1: { a: " " } } } } }), snap);
 });
 
-const page = read("src/pages/forecast.tsx");
+// The Forecast P&L page is the Monthly P&L's Edit forecast since 2026-11-11 (one editor).
+const page = read("src/pages/accounting/monthly-pl-forecast-editor.tsx");
 const api = read("src/api/routes/accounting.ts");
 const put = api.slice(api.indexOf('app.put("/forecast"'), api.indexOf("\n});\n", api.indexOf('app.put("/forecast"')));
 

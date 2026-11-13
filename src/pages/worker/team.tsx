@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, BarChart3 } from "lucide-react";
 import { useT } from "@/lib/worker-i18n";
+import { HelperTag } from "@/components/helper-tag";
 import { humanizeError } from "@/lib/humanize-error";
 import { workerFetch } from "@/layouts/WorkerLayout";
 
@@ -36,6 +37,8 @@ type DrillWorker = {
   workingMinutes: number;
   productionMinutes: number;
   efficiencyPct: number;
+  /** Helper / 杂工 (owner 2026-11-11): no personal efficiency — "—". */
+  isHelper?: boolean;
   jobs: DrillJob[];
 };
 type DailyRow = {
@@ -61,7 +64,10 @@ type DeptPerfData = {
     // the operator can reconcile the headline Working Hrs with the ratio.
     productionWorkingMinutes: number;
     nonProductionWorkingMinutes: number;
+    /** Production efficiency — helpers left out (owner 2026-11-11). */
     efficiencyPct: number;
+    overallPct?: number;
+    helperWorkingMinutes?: number;
     workerCount: number;
   };
   daily: DailyRow[];
@@ -190,7 +196,11 @@ export default function WorkerTeamPage() {
       : null;
   const avgEffSubtitle =
     avgEff !== null
-      ? `${fmtHoursOrZero(totalProdMins)} ÷ ${fmtHoursOrZero(prodMins)}`
+      ? `${fmtHoursOrZero(totalProdMins)} ÷ ${fmtHoursOrZero(prodMins)}` +
+        // Helpers left out of the figure; name the Overall (owner 2026-11-11).
+        ((totals?.helperWorkingMinutes ?? 0) > 0 && totals?.overallPct != null
+          ? ` · Overall ${totals.overallPct}% (incl. helpers ${fmtHoursOrZero(totals.helperWorkingMinutes ?? 0)})`
+          : "")
       : null;
 
   // Defense-in-depth: backend can flip isLeader:false even if the tab leaks.
@@ -484,7 +494,8 @@ function DailyDrillDown({
         {sorted.map((w) => {
           const key = `${date}::${w.workerId}`;
           const isOpen = openKeys.has(key);
-          const hasHours = w.workingMinutes > 0;
+          // A helper has no personal efficiency: shown like "no hours" ("—").
+          const hasHours = w.workingMinutes > 0 && !w.isHelper;
           const tone = effTone(w.efficiencyPct, hasHours);
           return (
             <li
@@ -505,6 +516,7 @@ function DailyDrillDown({
                 </span>
                 <span className="flex-1 text-xs font-medium text-[#1F1D1B] truncate">
                   {w.workerName || w.workerId}
+                  {w.isHelper && <HelperTag />}
                 </span>
                 <span className="text-[10px] text-[#5A5550] tabular-nums whitespace-nowrap">
                   {fmtHours(w.workingMinutes)} / {fmtHours(w.productionMinutes)}

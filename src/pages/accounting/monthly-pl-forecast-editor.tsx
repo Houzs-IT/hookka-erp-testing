@@ -5,17 +5,25 @@
 // docs/superpowers/specs/2026-11-10-monthly-pl-forecast-edit-design.md).
 //
 // The Forecast P&L sheet keyed in the P&L's own layout, the actual months
-// beside it. The sheet is the Forecast P&L page's (src/lib/forecast-sheet.ts),
-// saved the same way (PUT /forecast); the table is the route's own layout
-// (plForecastMatrix) with the forecast worked out from the sheet as it is
-// typed, so every figure, total and % follows each keystroke.
+// beside it. The sheet is saved as PUT /forecast (src/lib/forecast-sheet.ts);
+// the table is the route's own layout (plForecastMatrix) with the forecast
+// worked out from the sheet as it is typed, so every figure, total and %
+// follows each keystroke.
+//
+// Since 2026-11-11 it is also the whole Forecast P&L page (owner 「这个actual
+// purchase 会confuse」「这个forecast P&L 就align with montly report 那个的功能就好
+// 不就行了？就是两边都应该是一样的view等等」): one editor, two doors. What only
+// the old page could do comes with it — removing a month, arrow keys between
+// the boxes — and both doors step the financial year here (`period`). Done
+// goes back to the view that opened it, where there is one (`onClose`).
 // ---------------------------------------------------------------------------
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { HidePastMonthsToggle, ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
+import { HidePastMonthsToggle, PeriodStepper, ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
+import { caretEdges, nextCell, type CellPos } from "@/lib/grid-keys";
 import { COMPANY } from "@/lib/constants";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -33,7 +41,9 @@ import {
   forecastSupplierRows,
   forecastTypeSupplierCells,
   forecastTypeSuppliers,
+  supplierActualIds,
   type FcMonthFigures,
+  type FcSupplierActuals,
   type FcSupplierMix,
 } from "@/lib/forecast-pnl";
 import { forecastLinesWindow, forecastPnlWindow, plForecastMatrix, type PlForecastColumn } from "@/lib/pnl-forecast";
@@ -60,8 +70,11 @@ const group = (s: string): string => {
 const BOX = "inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1";
 const INPUT = "w-full min-w-0 bg-transparent py-0.5 text-right text-[11px] tabular-nums outline-none placeholder:text-[#C7C1BA]";
 
+// A box's place for the arrow keys: its column on the sheet and the handler.
+type KeyNav = { col?: number; onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void };
+
 // An RM box: the grouped figure while not focused, the raw draft while typing.
-function RmBox({ value, hint, onChange, label }: { value: string; hint: string; onChange: (v: string) => void; label: string }) {
+function RmBox({ value, hint, onChange, label, col, onKeyDown }: { value: string; hint: string; onChange: (v: string) => void; label: string } & KeyNav) {
   const [focused, setFocused] = useState(false);
   return (
     <span className={`${BOX} w-[7.5rem]`}>
@@ -74,24 +87,43 @@ function RmBox({ value, hint, onChange, label }: { value: string; hint: string; 
         onFocus={(e) => { setFocused(true); e.currentTarget.select(); }}
         onBlur={() => setFocused(false)}
         onChange={(e) => onChange(e.target.value.replace(/,/g, ""))}
+        onKeyDown={onKeyDown}
+        data-fc-col={col}
         className={INPUT}
       />
     </span>
   );
 }
-function PctBox({ value, hint, onChange, label }: { value: string; hint: string; onChange: (v: string) => void; label: string }) {
+function PctBox({ value, hint, onChange, label, col, onKeyDown }: { value: string; hint: string; onChange: (v: string) => void; label: string } & KeyNav) {
   return (
     <span className={`${BOX} w-[4.25rem]`}>
-      <input type="number" step="0.01" aria-label={label} value={value} placeholder={hint || "-"} onChange={(e) => onChange(e.target.value)} className={INPUT} />
+      <input type="number" step="0.01" aria-label={label} value={value} placeholder={hint || "-"} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} data-fc-col={col} className={INPUT} />
       <span className="ml-0.5 text-[10px] text-[#9CA3AF]">%</span>
     </span>
   );
 }
 
-export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastInitial = false }: { anchor: string; onClose: (saved: boolean) => void; hidePast?: boolean }) {
+export function MonthlyPlForecastEditor({
+  anchor,
+  onClose,
+  hidePast: hidePastInitial = false,
+  period,
+  frameTitle,
+}: {
+  /** A month of the financial year shown (the route's anchor). */
+  anchor: string;
+  /** Done goes back to the view that opened the editor; the Forecast P&L page has none. */
+  onClose?: (saved: boolean) => void;
+  hidePast?: boolean;
+  /** The months to step through (each stands for its financial year), shown as the editor's own stepper. */
+  period?: { options: string[]; onChange: (ym: string) => void };
+  frameTitle?: string;
+}) {
   const { toast } = useToast();
   const { confirm } = useConfirm();
   const [base, setBase] = useState<EditBase | null>(null);
+  // The year `base` was read for: another year stepped to shows Loading until it is in.
+  const [baseAnchor, setBaseAnchor] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<CoaAcct[]>([]);
   const [override, setOverride] = useState<Record<string, string>>({});
@@ -116,6 +148,10 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   // the stock detail under it (opening / purchase / closing per stock group)
   // stays folded until Show detail.
   const [showDetail, setShowDetail] = useState(false);
+  // Who each actual purchase was from (owner 2026-11-11 「我看不到actual 的fabric
+  // … 是从谁买」): month → material type → supplier → sen, for the
+  // supplier rows' Actual cells (GET /forecast/supplier-actuals).
+  const [supplierActs, setSupplierActs] = useState<FcSupplierActuals>({});
 
   useEffect(() => {
     let live = true;
@@ -137,6 +173,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
         const labels: Record<string, string> = {};
         for (const c of pl.columns ?? []) if (c.ym && !c.forecast) labels[c.ym] = c.label;
         setBase({ fyLabel: pl.fyLabel ?? "", windows: pl.edit.windows, months: pl.edit.months, labels });
+        setBaseAnchor(anchor);
         const coa = (coaJ?.data ?? coaJ ?? []) as CoaAcct[];
         setAccounts(Array.isArray(coa) ? coa : []);
         setOverride(((mapJ?.data as { map?: Record<string, string> } | undefined)?.map ?? {}) as Record<string, string>);
@@ -157,6 +194,17 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       .catch((e) => { if (live) setLoadError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
   }, [anchor]);
+
+  useEffect(() => {
+    if (!base || base.months.length === 0) return;
+    let live = true;
+    const sorted = [...base.months].sort();
+    fetch(`/api/accounting/forecast/supplier-actuals?from=${sorted[0]}&to=${sorted[sorted.length - 1]}`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { months?: FcSupplierActuals } }>)
+      .then((j) => { if (live && j?.success) setSupplierActs(j.data?.months ?? {}); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [base]);
 
   // The forecast's line structure, the route's way (loadMonthlyPlForecast).
   const groups = useMemo(
@@ -224,7 +272,11 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   );
   const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
   const supplierRowsOf = (type: string) =>
-    forecastSupplierRows(supplierMaster, forecastTypeSuppliers(supplierMix, type), Object.values(sheet).flatMap((m) => Object.entries(m.suppliers?.[type] ?? {}).filter(([, e]) => cellKeyed(e)).map(([id]) => id)));
+    forecastSupplierRows(supplierMaster, forecastTypeSuppliers(supplierMix, type), [
+      ...Object.values(sheet).flatMap((m) => Object.entries(m.suppliers?.[type] ?? {}).filter(([, e]) => cellKeyed(e)).map(([id]) => id)),
+      // A supplier we actually bought this material from in the year shown, active or not.
+      ...supplierActualIds(supplierActs, type),
+    ]);
   const supplierNames = useMemo(() => new Map(supplierMaster.map((s) => [s.id, s.name] as const)), [supplierMaster]);
   const supplierName = (id: string) => (id === "other" ? "Other (new suppliers)" : supplierNames.get(id) ?? `Unknown supplier (${id})`);
 
@@ -258,7 +310,23 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   };
   const close = async () => {
     if (dirty && !(await confirm({ title: "Discard changes?", message: "Your forecast changes are not saved. Leave Edit forecast without saving?", danger: true }))) return;
-    onClose(savedOnce);
+    onClose?.(savedOnce);
+  };
+  // Another financial year: the sheet is read again, so unsaved changes would go.
+  const stepPeriod = async (ym: string) => {
+    if (!period || ym === anchor) return;
+    if (dirty && !(await confirm({ title: "Discard changes?", message: "Your forecast changes are not saved. Show another year without saving?", danger: true }))) return;
+    period.onChange(ym);
+  };
+  // A month's forecast taken off the sheet (the old Forecast P&L page's ×): asks
+  // first, and like every change it goes when you Save.
+  const removeMonth = async (ym: string) => {
+    if (!(await confirm({ title: "Remove month?", message: `Remove ${labelOfYm(ym)}'s forecast? It goes when you Save.`, danger: true }))) return;
+    setSheet((prev) => {
+      const next = { ...prev };
+      delete next[ym];
+      return next;
+    });
   };
 
   // Months that can be added: the year's months and the twelve ahead that
@@ -269,7 +337,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   }, [anchor, curYm, base, sheet]);
 
   if (loadError) return <p className="text-sm text-[#9A3412]">Couldn't open Edit forecast: {loadError}</p>;
-  if (!base || !matrix || savedSnap === null) return <div className="py-12 text-center text-sm text-[#6B7280]">Loading the forecast…</div>;
+  if (!base || !matrix || savedSnap === null || baseAnchor !== anchor) return <div className="py-12 text-center text-sm text-[#6B7280]">Loading the forecast…</div>;
 
   const cols = matrix.columns;
   // Hide past months (as on Cash Flow): a past month's Forecast columns go,
@@ -277,6 +345,33 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   const vis = cols.map((c, j) => [c, j] as const).filter(([c]) => !(hidePast && plPastForecastCol(c, curYm)));
   const hasPast = cols.some((c) => plPastForecastCol(c, curYm));
   const span = vis.length * 2 + 1;
+  // Arrow keys and Enter move between the keyed boxes, as the Forecast P&L page
+  // always did (src/lib/grid-keys.ts): Up / Down never nudge a number; Left /
+  // Right move only from the edge of the text. A box's column is 2 × its
+  // column's place (the RM box), + 1 for the % box.
+  const colOf = (c: PlForecastColumn) => vis.findIndex(([v]) => v.key === c.key) * 2;
+  const onCellKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault();
+    const el = e.currentTarget;
+    const table = el.closest("table");
+    const tr = el.closest("tr");
+    if (!table || !tr) return;
+    const rowsEls = [...table.querySelectorAll<HTMLTableRowElement>("tbody > tr")].filter((r) => r.querySelector("input[data-fc-col]"));
+    const width = vis.length * 2;
+    const caret = caretEdges(el);
+    let pos: CellPos | null = { row: rowsEls.indexOf(tr), col: Number(el.dataset.fcCol) };
+    for (let step = 0; step < rowsEls.length + width; step++) {
+      pos = nextCell(pos, e.key, caret, rowsEls.length, width);
+      if (!pos) return;
+      const target = rowsEls[pos.row]?.querySelector<HTMLInputElement>(`input[data-fc-col="${pos.col}"]`);
+      if (target) {
+        e.preventDefault();
+        target.focus();
+        target.select();
+        return;
+      }
+    }
+  };
   const tagOf = (c: PlForecastColumn) => `${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`;
   const keyMonth = (c: PlForecastColumn) => (c.forecast && !c.accum && c.ym ? c.ym : null);
   const shown = foldStatementRows(matrix.rows, new Set());
@@ -294,10 +389,10 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   const boxes = (c: PlForecastColumn, label: string, e: CellEntry, amtSen: number, salesSen: number, onAmt: (v: string) => void, onPct: (v: string) => void) => (
     <Fragment key={c.key}>
       <td data-cell={`num split${tagOf(c)}`}>
-        <RmBox label={`${label} RM`} value={e.a ?? ""} hint={(e.p ?? "").trim() !== "" ? group((amtSen / 100).toFixed(2)) : ""} onChange={onAmt} />
+        <RmBox label={`${label} RM`} value={e.a ?? ""} hint={(e.p ?? "").trim() !== "" ? group((amtSen / 100).toFixed(2)) : ""} onChange={onAmt} col={colOf(c)} onKeyDown={onCellKey} />
       </td>
       <td data-cell={`num pct${tagOf(c)}`}>
-        <PctBox label={`${label} %`} value={e.p ?? ""} hint={(e.a ?? "").trim() !== "" && salesSen > 0 ? ((amtSen / salesSen) * 100).toFixed(2) : ""} onChange={onPct} />
+        <PctBox label={`${label} %`} value={e.p ?? ""} hint={(e.a ?? "").trim() !== "" && salesSen > 0 ? ((amtSen / salesSen) * 100).toFixed(2) : ""} onChange={onPct} col={colOf(c) + 1} onKeyDown={onCellKey} />
       </td>
     </Fragment>
   );
@@ -327,7 +422,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
         if (customersKeyed(m)) return figure(c, f.salesSen, 100, true, true);
         return (
           <Fragment key={c.key}>
-            <td data-cell={`num split${tagOf(c)}`}><RmBox label={`${label} RM`} value={m.salesStr} hint="" onChange={(v) => setSales(ym, v)} /></td>
+            <td data-cell={`num split${tagOf(c)}`}><RmBox label={`${label} RM`} value={m.salesStr} hint="" onChange={(v) => setSales(ym, v)} col={colOf(c)} onKeyDown={onCellKey} /></td>
             <td data-cell={`num pct${tagOf(c)}`} />
           </Fragment>
         );
@@ -337,18 +432,41 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       return boxes(c, label, m.pct[k] ?? {}, f.amt(k), f.salesSen, (v) => setLine(ym, k, side(v, "a")), (v) => setLine(ym, k, side(v, "p")));
     });
 
-  // A detail row under a keyed row: boxes in the forecast months only.
-  const detailRow = (key: string, depth: number, name: string, cell: (ym: string, c: PlForecastColumn) => ReactNode) => (
+  // A detail row under a keyed row: boxes in the forecast months; `actual`
+  // fills the other columns (a supplier's actual purchases), blank without it.
+  const blankPair = (c: PlForecastColumn) => <Fragment key={c.key}><td data-cell={`num split${tagOf(c)}`} /><td data-cell={`num pct${tagOf(c)}`} /></Fragment>;
+  const detailRow = (key: string, depth: number, name: string, cell: ((ym: string, c: PlForecastColumn) => ReactNode) | null, actual?: (c: PlForecastColumn, j: number) => ReactNode) => (
     <tr key={key} data-row="line">
       <td data-cell="stick" className="text-[12px] text-[#4B5563]" style={{ paddingLeft: `${14 + depth * 18}px` }}>{name}</td>
-      {vis.map(([c]) => {
+      {vis.map(([c, j]) => {
         const ym = keyMonth(c);
-        if (!ym) return <Fragment key={c.key}><td data-cell={`num split${tagOf(c)}`} /><td data-cell={`num pct${tagOf(c)}`} /></Fragment>;
+        if (!ym || !cell) return actual ? actual(c, j) : blankPair(c);
         if (!sheet[ym]) return noMonth(c);
         return cell(ym, c);
       })}
     </tr>
   );
+  // A supplier's actual purchases of a material (owner 2026-11-11 「我看不到
+  // actual 的fabric … 是从谁买」): an Actual column's month, or the
+  // year's months added up in Accumulated; the forecast columns are not theirs.
+  const colSales = (c: PlForecastColumn) => (c.accum ? base.windows.acc?.netSalesSen : c.ym ? base.windows[c.ym]?.netSalesSen : 0) ?? 0;
+  const pctOfSales = (sen: number, c: PlForecastColumn) => { const s = colSales(c); return s ? Math.round((sen / s) * 1000) / 10 : 0; };
+  const actualMonths = (c: PlForecastColumn) => (c.accum ? base.months : c.ym ? [c.ym] : []);
+  const supplierActualSen = (type: string, id: string, c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + (supplierActs[ym]?.[type]?.[id] ?? 0), 0);
+  const allSuppliersActualSen = (type: string, c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + Object.values(supplierActs[ym]?.[type] ?? {}).reduce((a, v) => a + v, 0), 0);
+  const supplierActualCell = (type: string, id: string) => (c: PlForecastColumn) => {
+    if (c.forecast) return blankPair(c);
+    const sen = supplierActualSen(type, id, c);
+    return figure(c, sen, pctOfSales(sen, c), true);
+  };
+  // What the supplier invoices do not explain of a material's purchases (a
+  // journal, an other-creditor bill): its row's purchases less the suppliers'.
+  const remainderOf = (k: string, c: PlForecastColumn, j: number) => {
+    const typeRow = matrix.rows.find((r) => r.kind === "group" && r.fcKey === k);
+    return (typeRow?.purchaseValues?.[j] ?? 0) - allSuppliersActualSen(k.slice(4), c);
+  };
   // A customer, supplier or department row with something keyed in some
   // month — Hide unused keeps only these.
   const detailUsed = (kind: "cu" | "su" | "de", type: string, id: string) =>
@@ -364,7 +482,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
           const sen = Math.max(0, moneyFieldToSen(sheet[ym].customers?.[cr.id] ?? "") ?? 0);
           return (
             <Fragment key={c.key}>
-              <td data-cell={`num split${tagOf(c)}`}><RmBox label={`${labelOfYm(ym)} ${cr.name} sales`} value={sheet[ym].customers?.[cr.id] ?? ""} hint="" onChange={(v) => setCustomer(ym, cr.id, v)} /></td>
+              <td data-cell={`num split${tagOf(c)}`}><RmBox label={`${labelOfYm(ym)} ${cr.name} sales`} value={sheet[ym].customers?.[cr.id] ?? ""} hint="" onChange={(v) => setCustomer(ym, cr.id, v)} col={colOf(c)} onKeyDown={onCellKey} /></td>
               <td data-cell={`num pct${tagOf(c)}`} className="text-[#9CA3AF]">{sen > 0 && f && f.salesSen > 0 ? `${((sen / f.salesSen) * 100).toFixed(1)}%` : ""}</td>
             </Fragment>
           );
@@ -372,13 +490,23 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       );
     if (k.startsWith("cat:")) {
       const type = k.slice(4);
-      return supplierRowsOf(type).filter((sr) => !hideUnused || detailUsed("su", type, sr.id)).map((sr) =>
+      const rows = supplierRowsOf(type).filter((sr) => !hideUnused || detailUsed("su", type, sr.id) || supplierActualIds(supplierActs, type).includes(sr.id)).map((sr) =>
         detailRow(`su-${type}-${sr.id}`, depth, sr.name, (ym, c) => {
           const e = sheet[ym].suppliers?.[type]?.[sr.id] ?? {};
           const sen = new Map(forecastTypeSupplierCells(toFcMonth(sheet[ym]), type)).get(sr.id) ?? 0;
           return boxes(c, `${labelOfYm(ym)} ${type} ${sr.name}`, e, sen, figures.get(ym)?.salesSen ?? 0, (v) => setSupplier(ym, type, sr.id, side(v, "a")), (v) => setSupplier(ym, type, sr.id, side(v, "p")));
-        }),
+        }, supplierActualCell(type, sr.id)),
       );
+      // The rest of the material's actual purchases, so the rows add up to it.
+      const rest = vis.some(([c, j]) => !c.forecast && remainderOf(k, c, j) !== 0);
+      if (rest) {
+        rows.push(detailRow(`su-${type}-rest`, depth, "Other purchases (no supplier invoice)", null, (c, j) => {
+          if (c.forecast) return blankPair(c);
+          const sen = remainderOf(k, c, j);
+          return figure(c, sen, pctOfSales(sen, c), true, true);
+        }));
+      }
+      return rows;
     }
     return deptsPostingTo(k, groups, deptAccount).filter((d) => !hideUnused || detailUsed("de", "", d.code)).map((d) =>
       detailRow(`de-${k}-${d.code}`, depth, d.name, (ym, c) => {
@@ -403,6 +531,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
   return (
     <div className="space-y-3">
       <ReportToolbar>
+        {period && <PeriodStepper value={anchor} options={period.options} onChange={(ym) => void stepPeriod(ym)} />}
         <span className="text-[12px] font-semibold text-[#6B5C32]">Edit forecast</span>
         <select
           aria-label="Add month"
@@ -430,9 +559,11 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
         <Button size="sm" onClick={save} disabled={saving || !dirty}>
           <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save"}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void close()}>
-          <X className="mr-1 h-4 w-4" /> Done
-        </Button>
+        {onClose && (
+          <Button size="sm" variant="outline" onClick={() => void close()}>
+            <X className="mr-1 h-4 w-4" /> Done
+          </Button>
+        )}
       </ReportToolbar>
       {dirty && (
         <div data-fin-banner="todo" className="flex min-h-10 flex-wrap items-center gap-2.5 rounded-[10px] border border-[#E9D9B4] bg-[#FBF6EC] px-3.5 py-2.5">
@@ -442,7 +573,7 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
       )}
       <ReportFrame
         company={COMPANY.HOOKKA.name}
-        title="Monthly Profit-and-Loss (Overall) — Edit forecast"
+        title={frameTitle ?? "Monthly Profit-and-Loss (Overall) — Edit forecast"}
         note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · a material's Actual is that month's purchases · ▸ opens customers, suppliers or departments · all amounts RM${hidePast ? " · past months' forecasts hidden" : ""}${hideUnused ? " · rows with no figure hidden" : ""}`}
         maxHeight="calc(100vh - 340px)"
       >
@@ -455,12 +586,29 @@ export function MonthlyPlForecastEditor({ anchor, onClose, hidePast: hidePastIni
               ))}
             </tr>
             <tr data-row="h2">
-              {vis.map(([c]) => (
-                <Fragment key={c.key}>
-                  <th data-cell={`num split${tagOf(c)}`}>{c.forecast ? "Forecast" : "Actual"}</th>
-                  <th data-cell={`num pct${tagOf(c)}`}>%</th>
-                </Fragment>
-              ))}
+              {vis.map(([c]) => {
+                // A month on the sheet: its Forecast head carries the ×.
+                const ym = keyMonth(c);
+                return (
+                  <Fragment key={c.key}>
+                    <th data-cell={`num split${tagOf(c)}`}>
+                      {c.forecast ? "Forecast" : "Actual"}
+                      {ym && sheet[ym] && (
+                        <button
+                          type="button"
+                          onClick={() => void removeMonth(ym)}
+                          aria-label={`Remove ${labelOfYm(ym)}'s forecast`}
+                          title="Remove this month's forecast — asks first, goes when you Save"
+                          className="ml-1 rounded px-0.5 font-normal text-[#9CA3AF] hover:bg-[#F0ECE9] hover:text-[#1F1D1B]"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </th>
+                    <th data-cell={`num pct${tagOf(c)}`}>%</th>
+                  </Fragment>
+                );
+              })}
             </tr>
           </thead>
           <tbody>

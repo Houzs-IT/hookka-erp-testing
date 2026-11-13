@@ -87,7 +87,10 @@ test("the loader builds the P&L forecast from the Forecast P&L and the last thre
   assert.match(body, /FROM invoices WHERE status NOT IN \('DRAFT','CANCELLED'\) AND invoiceDate >= \? AND invoiceDate < \?/);
   assert.match(body, /FROM purchase_invoices WHERE status IN \('CONFIRMED','APPROVED','PARTIAL_PAID','PAID'\) AND invoiceDate >= \? AND invoiceDate < \?/);
   assert.match(body, /loadPiMaterialWeights\(db, new Set\(\[\.\.\.piWanted, \.\.\.piSup\.keys\(\)\]\), sgOverride\)/, "one read of the material weights");
-  assert.match(body, /const pnlBuilt = buildPnlForecastLegs\(\{/);
+  // The P&L forecast's input is one object since 2026-11-11, so the Forecast
+  // Balance Sheet (GET /bs-forecast) reads the same input through \`capture\`.
+  assert.match(body, /const pnlInput: PnlForecastInput = \{/);
+  assert.match(body, /const pnlBuilt = buildPnlForecastLegs\(pnlInput\);/);
   assert.match(body, /columns: \[\.\.\.built\.columns, \.\.\.pnlBuilt\.columns\]/);
   assert.match(body, /legs: \[\.\.\.built\.legs, \.\.\.pnlBuilt\.legs, \.\.\.sharedForecastLegs\(built\.legs, pnlBuilt\.columns, firstPlanYm\)\]/);
 });
@@ -113,7 +116,7 @@ test("the loader hands the plans to both forecasts, nets this month's real draws
   assert.match(body, /const tfStore = await loadTfPlanStore\(db\);/);
   assert.match(body, /drawnOn: d\.drawDate/, "a draw carries the day it was drawn");
   assert.match(body, /buildForecastLegs\(\{[^}]*tfPlans, tfDrawnThisMonth, tfInterestAccount \}\)/);
-  assert.match(body, /tfPlans, tfDrawnThisMonth, tfInterestAccount,\r?\n\s*\}\);/, "and to the P&L forecast");
+  assert.match(body, /tfPlans, tfDrawnThisMonth, tfInterestAccount,\r?\n\s*\};\r?\n\s*const pnlBuilt = buildPnlForecastLegs\(pnlInput\);/, "and to the P&L forecast");
   assert.match(body, /sharedForecastLegs\(built\.legs, pnlBuilt\.columns, firstPlanYm\)/);
 });
 

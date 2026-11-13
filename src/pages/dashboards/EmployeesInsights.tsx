@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { PieChart, Pie, Cell, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { TAUPE, TEAL, MUTED, BORDER, AMBER, GREEN, fmtN, inPeriod, inFocus, dayLabel, dayList, warnDays, workerDays, auditTier, OVER_TIERS, periodLabel, type AuditTier, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+import { TAUPE, TEAL, MUTED, BORDER, AMBER, GREEN, fmtN, inPeriod, inFocus, dayLabel, dayList, warnDays, workerDays, prodEffOfDay, auditTier, OVER_TIERS, periodLabel, type AuditTier, type Period, CC_TICK, CC_AXIS_LINE, CC_LEGEND } from "./dashboard-shared-lib";
+import { HelperTag } from "@/components/helper-tag";
 import { EFFICIENCY_WARN_LOW, EFFICIENCY_WARN_HIGH, EFFICIENCY_MIN_RANK_MINUTES } from "@/lib/efficiency-bands";
 
 // The Employees tab's time/efficiency panels. Everything here is derived from
@@ -13,7 +14,7 @@ import { EFFICIENCY_WARN_LOW, EFFICIENCY_WARN_HIGH, EFFICIENCY_MIN_RANK_MINUTES 
 // records only holds PRESENT rows; leave lives in leave_records) and per-worker
 // units (attendance_records has no unit count) — see the route's header.
 export type EmployeeSlice = {
-  workers: { id: string; name: string | null; dept: string | null; role: string | null; countsToHeadcount: boolean }[];
+  workers: { id: string; name: string | null; dept: string | null; role: string | null; countsToHeadcount: boolean; isHelper?: boolean }[];
   attendance: {
     employeeId: string | null;
     employeeName: string | null;
@@ -32,7 +33,9 @@ export type EmployeeSlice = {
       workingMinutes: number;
       productionMinutes: number;
       allDeptMinutes?: number;
-      workers?: { workerId: string; workingMinutes: number; productionMinutes: number; allDeptMinutes?: number }[];
+      helperWorkingMinutes?: number;
+      helperProductionMinutes?: number;
+      workers?: { workerId: string; workingMinutes: number; productionMinutes: number; allDeptMinutes?: number; isHelper?: boolean }[];
     }[];
   };
 };
@@ -170,7 +173,8 @@ export function DailyEfficiencyCard({ employee, period, target, onPeriodChange, 
     if (workerId) {
       return workerDays(employee.performance.byDay, workerId, period).map((d) => ({
         iso: d.date, date: d.date.slice(5),
-        Efficiency: d.eff == null ? null : r1(d.eff),
+        // A helper has no personal efficiency (owner 2026-11-11): hours only.
+        Efficiency: d.eff == null || worker?.isHelper ? null : r1(d.eff),
         "Working hours": r1(d.workingMinutes / 60),
         "Production hours": r1(d.productionMinutes / 60),
       }));
@@ -178,7 +182,8 @@ export function DailyEfficiencyCard({ employee, period, target, onPeriodChange, 
     return employee.performance.byDay
       .filter((d) => inPeriod(period, d.date) && d.workingMinutes > 0)
       .sort((a, b) => (a.date < b.date ? -1 : 1))
-      .map((d) => ({ iso: d.date, date: d.date.slice(5), Efficiency: r1((d.productionMinutes / d.workingMinutes) * 100) as number | null }));
+      // Production efficiency: helpers left out (owner 2026-11-11).
+      .map((d) => { const e = prodEffOfDay(d); return { iso: d.date, date: d.date.slice(5), Efficiency: e == null ? null : r1(e) as number | null }; });
   }, [employee.performance.byDay, period, workerId]);
   const measured = daily.filter((d) => d.Efficiency != null);
   const below = measured.filter((d) => d.Efficiency! < target).length;
@@ -311,6 +316,8 @@ function useRankedPeople(employee: EmployeeSlice, period: Period) {
     for (const d of employee.performance.byDay) {
       if (!inFocus(period, d.date)) continue;
       for (const x of d.workers ?? []) {
+        // Helpers are not ranked — no personal efficiency (owner 2026-11-11).
+        if (x.isHelper) continue;
         const cur = m.get(x.workerId) ?? { w: 0, p: 0, days: [] };
         cur.w += x.workingMinutes;
         cur.p += x.productionMinutes;
@@ -321,7 +328,7 @@ function useRankedPeople(employee: EmployeeSlice, period: Period) {
     return [...m.entries()]
       .flatMap(([id, v]) => {
         const w = byId.get(id);
-        if (!w || !w.countsToHeadcount || v.w < MIN_RANK_MINUTES) return [];
+        if (!w || !w.countsToHeadcount || w.isHelper || v.w < MIN_RANK_MINUTES) return [];
         return [{ key: id, name: w.name ?? "—", sub: [w.role, w.dept].filter(Boolean).join(" · "), avg: (v.p / v.w) * 100, days: v.days }];
       })
       .sort((a, b) => b.avg - a.avg);
@@ -333,6 +340,16 @@ export function EfficiencyPanels({ employee, period, target, onPeriodChange, onP
 
   const top = people.slice(0, 5);
   const bottom = people.slice(-5).reverse();
+  // Helpers who clocked production time in the period: listed, not ranked,
+  // efficiency "—" (owner 2026-11-11: "个人效率排行也要show的 就放-").
+  const helpers = useMemo(() => {
+    const on = new Set<string>();
+    for (const d of employee.performance.byDay) {
+      if (!inFocus(period, d.date)) continue;
+      for (const x of d.workers ?? []) if (x.isHelper && x.workingMinutes > 0) on.add(x.workerId);
+    }
+    return employee.workers.filter((w) => on.has(w.id) && w.countsToHeadcount).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  }, [employee, period]);
 
   return (
     <div className="space-y-4 max-md:space-y-3">
@@ -345,6 +362,20 @@ export function EfficiencyPanels({ employee, period, target, onPeriodChange, onP
         <RankCard title="Top 5 performers" hint="Highest efficiency in the period · click a row to see that person day by day" rows={top} total={people.length} fromTop color={GREEN} onPick={onPickEmployee} />
         <RankCard title="Bottom 5 · needs attention" hint="Lowest efficiency (production ÷ working) in the period" rows={bottom} total={people.length} fromTop={false} color={AMBER} onPick={onPickEmployee} />
       </div>
+      {helpers.length > 0 && (
+        <Card>
+          <CardContent className="py-3">
+            <p className="mb-2 text-xs text-[#6B7280]">Helpers · not ranked — they assist others, so they have no personal efficiency</p>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {helpers.map((h) => (
+                <span key={h.id} className="flex items-center gap-2 text-sm text-[#1F1D1B]">
+                  {h.name ?? "—"}<HelperTag className="ml-0" /><span className="font-mono text-[#6B7280]">—</span>
+                </span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <WarningAuditPanel employee={employee} period={period} target={target} onPickEmployee={onPickEmployee} />
     </div>
@@ -453,7 +484,7 @@ export function DailyWarningAudit({ employee, period, target, onPickEmployee, se
       if (!inFocus(period, d.date)) continue;
       for (const x of d.workers ?? []) {
         const wk = byId.get(x.workerId);
-        if (!wk?.countsToHeadcount || x.workingMinutes <= 0) continue;
+        if (!wk?.countsToHeadcount || wk.isHelper || x.isHelper || x.workingMinutes <= 0) continue;
         const eff = (x.productionMinutes / x.workingMinutes) * 100;
         const tier = auditTier(eff, WARN_LOW);
         if (!tier) continue;
