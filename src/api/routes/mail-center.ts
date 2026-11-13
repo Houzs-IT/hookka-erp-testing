@@ -317,6 +317,10 @@ export interface InboundEmailPayload {
   references?: string[] | string;
   date?: string;
   attachments?: InboundAttachmentPayload[];
+  // The one @hookka.com box this copy was delivered to (SMTP envelope
+  // recipient / the IMAP box read). Set by both senders; files the mail under
+  // that box even when it was Bcc'd or the To: header names someone else.
+  deliveredTo?: string;
 }
 
 export type IngestResult =
@@ -469,10 +473,12 @@ export async function ingestInboundEmail(
   const cc = toArray(payload.cc);
   const recipients = [...to, ...cc];
 
-  // Which of OUR addresses did this hit? Prefer an explicit email_addresses
-  // match, else the first @hookka.com recipient, else just the first to:.
+  // Which of OUR addresses did this hit? The delivered-to box when the sender
+  // says (HK-0150); else an explicit email_addresses match, else the first
+  // @hookka.com recipient, else just the first to:.
+  const deliveredTo = (payload.deliveredTo || "").trim().toLowerCase();
   let mailbox = "";
-  for (const r of recipients) {
+  for (const r of deliveredTo ? [deliveredTo] : recipients) {
     const hit = await db
       .prepare(
         `SELECT address FROM email_addresses WHERE org_id = ? AND lower(address) = lower(?) LIMIT 1`,
@@ -485,7 +491,8 @@ export async function ingestInboundEmail(
     }
   }
   if (!mailbox) {
-    mailbox = recipients.find((r) => /@hookka\.com$/i.test(r)) || recipients[0] || "";
+    mailbox =
+      deliveredTo || recipients.find((r) => /@hookka\.com$/i.test(r)) || recipients[0] || "";
   }
 
   const now = new Date().toISOString();
@@ -501,12 +508,18 @@ export async function ingestInboundEmail(
   // This is what lets a re-run of the sync (with the new attachments-capable
   // payload) add attachments to emails that were first ingested before this
   // feature existed — see the "re-backfill" note in the PR description.
+  // The check is per mailbox (HK-0150): one mail to siti@ and lim@ arrives
+  // twice, once per box, and each person must get their own copy.
   if (payload.messageId) {
     const dup = await db
       .prepare(
-        `SELECT id, thread_id FROM email_messages WHERE org_id = ? AND message_id = ? LIMIT 1`,
+        `SELECT m.id, m.thread_id FROM email_messages m
+           JOIN email_threads t ON t.id = m.thread_id
+          WHERE m.org_id = ? AND m.message_id = ?
+            AND LOWER(COALESCE(t.mailbox_address, '')) = LOWER(?)
+          LIMIT 1`,
       )
-      .bind(orgId, payload.messageId)
+      .bind(orgId, payload.messageId, mailbox)
       // The pg driver camelCases result columns (db-pg.ts transform.column.from),
       // so thread_id arrives as threadId. Dual-read so dedupe returns the real
       // threadId instead of undefined on a retry.
@@ -554,15 +567,19 @@ export async function ingestInboundEmail(
     // the id the provider reported (provider_message_id). Brevo rewrites the
     // header with its own id, so a customer's In-Reply-To may name either —
     // match both, or every reply to a mail WE sent would start a new thread.
+    // Only a thread in THIS mailbox: another box's thread is not visible to
+    // this box's owner (HK-0150).
     const ref = await db
       .prepare(
-        `SELECT thread_id FROM email_messages
-          WHERE org_id = ?
-            AND (message_id IN (${placeholders})
-                 OR provider_message_id IN (${placeholders}))
+        `SELECT m.thread_id FROM email_messages m
+           JOIN email_threads t ON t.id = m.thread_id
+          WHERE m.org_id = ?
+            AND (m.message_id IN (${placeholders})
+                 OR m.provider_message_id IN (${placeholders}))
+            AND LOWER(COALESCE(t.mailbox_address, '')) = LOWER(?)
           LIMIT 1`,
       )
-      .bind(orgId, ...refs, ...refs)
+      .bind(orgId, ...refs, ...refs, mailbox)
       // Result columns come back camelCase (db-pg.ts transform.column.from), so
       // thread_id → threadId. Reading the snake key returned undefined → every
       // reply started a NEW thread instead of joining the referenced one.
