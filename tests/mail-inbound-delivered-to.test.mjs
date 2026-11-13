@@ -5,12 +5,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { ensureMailSchema, ingestInboundEmail } from "../src/api/routes/mail-center.ts";
 
 // Minimal D1-shaped adapter. ensureMailSchema's Postgres-only statements
 // (ADD COLUMN IF NOT EXISTS) fail here and are swallowed by its own try/catch.
 // It runs once per process (module flag), so later databases copy its tables.
+// node:sqlite needs Node 22.13+; CI runs Node 20, so the ingest tests skip
+// there and run locally (same pattern as tests/fibre-department.test.mjs).
+let DatabaseSync = null;
+try {
+  ({ DatabaseSync } = await import("node:sqlite"));
+} catch {
+  /* Node 20 */
+}
+const sqliteSkip = DatabaseSync ? false : "node:sqlite is not available on this Node version";
 let schema = null;
 function fakeD1() {
   const sql = new DatabaseSync(":memory:");
@@ -29,7 +37,7 @@ function fakeD1() {
   };
 }
 
-{
+if (DatabaseSync) {
   const err = console.error;
   console.error = () => {};
   const base = fakeD1();
@@ -71,6 +79,7 @@ const po = {
 
 test(
   "a mail to two staff gives each of them a copy; a repeat delivery is still deduped",
+  { skip: sqliteSkip },
   quiet(async () => {
     const db = fakeD1();
     const a = await ingestInboundEmail(db, { ...po, deliveredTo: "siti@hookka.com" });
@@ -85,6 +94,7 @@ test(
 
 test(
   "a Bcc'd mail is filed under the box it was delivered to, not the To: address",
+  { skip: sqliteSkip },
   quiet(async () => {
     const db = fakeD1();
     await ingestInboundEmail(db, {
@@ -99,6 +109,7 @@ test(
 
 test(
   "a reply joins the thread in its own box only",
+  { skip: sqliteSkip },
   quiet(async () => {
     const db = fakeD1();
     await ingestInboundEmail(db, { ...po, deliveredTo: "siti@hookka.com" });
@@ -117,6 +128,7 @@ test(
 
 test(
   "without deliveredTo the old rule stands: first @hookka.com recipient",
+  { skip: sqliteSkip },
   quiet(async () => {
     const db = fakeD1();
     await ingestInboundEmail(db, { ...po, to: ["buyer@example.com", "siti@hookka.com"] });
