@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-11-11** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-13** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 149 mounts, 147 route files in
-`src/api/routes/`, 1063 top-level handler registrations discovered.
+`src/api/routes/`, 1064 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -61,7 +61,7 @@ offsets pointing past the end of their own file.
 | `/api/customers` | `src/api/routes/customers.ts` | `GET /` <sub>:343</sub><br>`POST /` <sub>:379</sub><br>`GET /:id` <sub>:489</sub><br>`POST /_backfill-snapshot-names` <sub>:517</sub><br>`PUT /:id` <sub>:540</sub><br>`DELETE /:id` <sub>:821</sub> | gated |
 | `/api/mail-center` | `src/api/routes/mail-center.ts` | `GET /threads` <sub>:1048</sub><br>`GET /threads/:id` <sub>:1156</sub><br>`POST /threads/:id/messages/:mid/acknowledge` <sub>:1278</sub><br>`GET /outbox` <sub>:1375</sub><br>`GET /outbox/:id` <sub>:1469</sub><br>`GET /outbox/:id/attachments/:idx/download` <sub>:1524</sub><br>`GET /addresses` <sub>:1607</sub><br>`GET /labels` <sub>:1689</sub><br>`POST /labels` <sub>:1706</sub><br>`PATCH /labels/:id` <sub>:1761</sub><br>`DELETE /labels/:id` <sub>:1832</sub><br>`POST /test-inject` <sub>:1899</sub><br>`POST /addresses` <sub>:1935</sub><br>`PATCH /addresses/:id` <sub>:2013</sub><br>`GET /access` <sub>:2088</sub><br>`POST /access` <sub>:2114</sub><br>`DELETE /access` <sub>:2152</sub><br>`GET /directory` <sub>:2206</sub><br>`GET /visibility` <sub>:2333</sub><br>`GET /scope-levels` <sub>:2379</sub><br>`PUT /scope-level` <sub>:2408</sub><br>`POST /threads/:id/reply` <sub>:2577</sub><br>`POST /compose` <sub>:2826</sub><br>`PATCH /threads/:id` <sub>:3025</sub> | gated |
 | `/api/datagrid-layouts` | `src/api/routes/datagrid-layouts.ts` | `GET /` <sub>:140</sub><br>`PUT /` <sub>:185</sub><br>`DELETE /` <sub>:271</sub> | gated |
-| `/api/bom` | `src/api/routes/bom.ts` | `GET /` <sub>:130</sub><br>`POST /` <sub>:144</sub><br>`GET /templates` <sub>:231</sub><br>`POST /templates` <sub>:302</sub><br>`PUT /templates` <sub>:377</sub><br>`PUT /templates/:id` <sub>:484</sub><br>`POST /templates/bulk-process-edit` <sub>:631</sub><br>`POST /resync-job-card-times` <sub>:823</sub><br>`POST /audit-contamination` <sub>:1197</sub><br>`GET /:id` <sub>:1336</sub><br>`PUT /:id` <sub>:1348</sub> | gated |
+| `/api/bom` | `src/api/routes/bom.ts` | `GET /` <sub>:130</sub><br>`POST /` <sub>:144</sub><br>`GET /templates` <sub>:231</sub><br>`POST /templates` <sub>:302</sub><br>`PUT /templates` <sub>:377</sub><br>`PUT /templates/:id` <sub>:484</sub><br>`POST /templates/bulk-process-edit` <sub>:631</sub><br>`POST /templates/bulk-activate` <sub>:803</sub><br>`POST /resync-job-card-times` <sub>:886</sub><br>`POST /audit-contamination` <sub>:1260</sub><br>`GET /:id` <sub>:1399</sub><br>`PUT /:id` <sub>:1411</sub> | gated |
 | `/api/products` | `src/api/routes/products.ts` | `GET /` <sub>:465</sub><br>`GET /setup-incomplete` <sub>:572</sub><br>`POST /` <sub>:590</sub><br>`POST /bulk-import` <sub>:727</sub><br>`GET /:id` <sub>:964</sub><br>`PUT /:id` <sub>:973</sub><br>`DELETE /:id` <sub>:1181</sub><br>`GET /:productId/price-history` <sub>:1304</sub><br>`POST /:productId/prices` <sub>:1330</sub><br>`DELETE /price-row/:priceRowId` <sub>:1466</sub> | gated |
 | `/api/search` | `src/api/routes/search.ts` | `GET /` <sub>:95</sub> | gated |
 | `/api/product-configs` | `src/api/routes/product-configs.ts` | `GET /` <sub>:75</sub> | gated |
