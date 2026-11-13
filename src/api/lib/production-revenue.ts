@@ -21,6 +21,40 @@ import type { Env } from "../worker";
 import { timedFn } from "./step-timing";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "./production-order-line";
 
+export const FINISHED_PRODUCTION_ORDERS_CTE = `per_po AS (
+         SELECT productionOrderId,
+                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
+                              AND completedDate IS NOT NULL
+                         THEN completedDate END) AS unit_completed_at
+           FROM job_cards
+          WHERE departmentCode = 'UPHOLSTERY'
+          GROUP BY productionOrderId
+         HAVING COUNT(*) > 0
+            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
+                              AND completedDate IS NOT NULL
+                         THEN 1 ELSE 0 END) = COUNT(*)
+       )`;
+
+// CO-aware unit price: SO line item OR CO line item OR product master
+// fallback. Without the CO branch, every CO PO got 0 revenue contribution.
+export const PRODUCTION_ORDER_UNIT_PRICE_SQL = `COALESCE(
+                soi.unitPriceSen,
+                coi.unitPriceSen,
+                (SELECT COALESCE(p.basePriceSen, p.price1Sen)
+                   FROM products p
+                  WHERE p.code = po.productCode
+                  ORDER BY p.basePriceSen DESC NULLS LAST, p.id
+                  LIMIT 1),
+                0
+              )`;
+
+export const PRODUCTION_ORDER_PRICE_JOINS_SQL = `LEFT JOIN sales_order_items soi
+                ON soi.salesOrderId = po.salesOrderId
+               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+         LEFT JOIN consignment_order_items coi
+                ON coi.consignmentOrderId = po.consignmentOrderId
+               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}`;
+
 export type ProductionCategory = "SOFA" | "BEDFRAME" | "ACCESSORY";
 
 export type RecognizedProductionOrder = {
@@ -54,36 +88,14 @@ async function loadProductionRevenueUntimed(
   // when only the Divan was done.
   //
   // Fix: GROUP BY across the PO's full upholstery JC set (no status
-  // filter in WHERE), then HAVING requires done_uph = total_uph - i.e.
+  // filter in WHERE), then HAVING requires done JCs = all JCs - i.e.
   // every upholstery JC must be COMPLETED or TRANSFERRED with a non-null
   // completedDate. Recognition date is the MAX completedDate of the
   // done JCs (which equals MAX overall once they are all done).
   await ensureProductionOrderSourceLine(db);
   const rowsRes = await db
     .prepare(
-      `WITH per_po AS (
-         SELECT productionOrderId,
-                COUNT(*) AS total_uph,
-                SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN 1 ELSE 0 END) AS done_uph,
-                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) AS unit_completed_at
-           FROM job_cards
-          WHERE departmentCode = 'UPHOLSTERY'
-          GROUP BY productionOrderId
-         HAVING COUNT(*) > 0
-            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN 1 ELSE 0 END) = COUNT(*)
-            AND MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) >= ?
-            AND MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completedDate IS NOT NULL
-                         THEN completedDate END) <= ?
-       )
+      `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}
        SELECT po.id                AS poId,
               per_po.unit_completed_at AS completedAt,
               po.productCode       AS productCode,
@@ -92,28 +104,13 @@ async function loadProductionRevenueUntimed(
               COALESCE(po.salesOrderNo, po.companyCOId) AS soNo,
               po.quantity          AS qty,
               po.itemCategory      AS category,
-              -- CO-aware unit price: SO line item OR CO line item OR
-              -- product master fallback. Without the CO branch, every CO
-              -- PO got 0 revenue contribution.
-              COALESCE(
-                soi.unitPriceSen,
-                coi.unitPriceSen,
-                (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                   FROM products p
-                  WHERE p.code = po.productCode
-                  ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                  LIMIT 1),
-                0
-              ) AS unitPriceSen
+              ${PRODUCTION_ORDER_UNIT_PRICE_SQL} AS unitPriceSen
          FROM per_po
          JOIN production_orders po ON po.id = per_po.productionOrderId
-         LEFT JOIN sales_order_items soi
-                ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
-         LEFT JOIN consignment_order_items coi
-                ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+         ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
         WHERE po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
+          AND per_po.unit_completed_at >= ?
+          AND per_po.unit_completed_at <= ?
         ORDER BY per_po.unit_completed_at DESC`,
     )
     .bind(from, to)

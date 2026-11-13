@@ -23,7 +23,7 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureNonprodRequests } from "./worker";
-import { loadProductionRevenue } from "../lib/production-revenue";
+import { loadProductionRevenue, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
 
 const app = new Hono<Env>();
@@ -312,24 +312,10 @@ app.get("/production-revenue", async (c) => {
               po.itemCategory      AS "category",
               po.quantity          AS "qty",
               COALESCE(jc.productionTimeMinutes, jc.estMinutes, 0) AS "jcMinutes",
-              COALESCE(
-                soi.unitPriceSen,
-                coi.unitPriceSen,
-                (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                   FROM products p
-                  WHERE p.code = po.productCode
-                  ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                  LIMIT 1),
-                0
-              ) AS "unitPriceSen"
+              ${PRODUCTION_ORDER_UNIT_PRICE_SQL} AS "unitPriceSen"
          FROM job_cards jc
          JOIN production_orders po ON po.id = jc.productionOrderId
-         LEFT JOIN sales_order_items soi
-                ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
-         LEFT JOIN consignment_order_items coi
-                ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+         ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
         WHERE jc.status IN ('COMPLETED','TRANSFERRED')
           AND jc.completedDate IS NOT NULL
           AND jc.completedDate >= ?

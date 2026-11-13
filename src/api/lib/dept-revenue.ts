@@ -29,7 +29,8 @@
 //   `unclassified`: it counts in All only, never guessed into Bedframe.
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
-import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "./production-order-line";
+import { ensureProductionOrderSourceLine } from "./production-order-line";
+import { PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "./production-revenue";
 
 type Db = Env["Variables"]["DB"];
 
@@ -163,16 +164,7 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
        SELECT d.departmentCode AS "deptCode",
               substr(d.done_at::text, 1, 10) AS "day",
               po.itemCategory AS "category",
-              COALESCE(
-                soi.unitPriceSen,
-                coi.unitPriceSen,
-                (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                   FROM products p
-                  WHERE p.code = po.productCode
-                  ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                  LIMIT 1),
-                0
-              ) * po.quantity AS "totalSen",
+              ${PRODUCTION_ORDER_UNIT_PRICE_SQL} * po.quantity AS "totalSen",
               po.quantity AS "qty",
               COALESCE(po.salesOrderId, po.consignmentOrderId, po.id) AS "orderKey",
               CASE WHEN w.has_hb = 1 AND w.has_divan = 1 THEN 'SET'
@@ -182,10 +174,7 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
          FROM per_po_dept d
          JOIN production_orders po ON po.id = d.productionOrderId
          LEFT JOIN po_wip w ON w.productionOrderId = po.id
-         LEFT JOIN sales_order_items soi
-                ON soi.salesOrderId = po.salesOrderId AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
-         LEFT JOIN consignment_order_items coi
-                ON coi.consignmentOrderId = po.consignmentOrderId AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+         ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
         WHERE po.orgId = ?
           AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
           AND d.done_at IS NOT NULL

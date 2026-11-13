@@ -66,7 +66,8 @@ import { loadPoValueMap, loadDoValueMap } from "../lib/do-value";
 import { buildDailySlice } from "../lib/dashboard-daily-slice";
 import { countsToHeadcount } from "../lib/headcount-rule";
 import { buildPerfDays, num, dayKey } from "../lib/workforce-perf";
-import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
+import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
+import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import { helperWorkerIds, loadApprovedExtraTime } from "../lib/efficiency-allowance";
 import { withSnapshot } from "../lib/snapshot";
 import { ensureFeedSnapshotTable, FEED_SNAPSHOT_TABLE, pruneFeedSnapshots } from "../lib/dashboard-snapshot";
@@ -1379,36 +1380,12 @@ app.get("/", async (c) => {
   const prodRevSec = await section("production revenue", async () => {
     await ensureProductionOrderSourceLine(c.var.DB);
     return c.var.DB.prepare(
-      `WITH per_po AS (
-         SELECT production_order_id,
-                MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completed_date IS NOT NULL
-                         THEN completed_date END) AS unit_completed_at
-           FROM job_cards
-          WHERE department_code = 'UPHOLSTERY'
-          GROUP BY production_order_id
-         HAVING COUNT(*) > 0
-            AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
-                              AND completed_date IS NOT NULL
-                         THEN 1 ELSE 0 END) = COUNT(*)
-       ), priced AS (
+      `WITH ${FINISHED_PRODUCTION_ORDERS_CTE}, priced AS (
          SELECT to_char(per_po.unit_completed_at::date, 'YYYY-MM-DD') AS day,
-                COALESCE(
-                  soi.unit_price_sen,
-                  coi.unit_price_sen,
-                  (SELECT COALESCE(p.base_price_sen, p.price1_sen)
-                     FROM products p
-                    WHERE p.code = po.product_code
-                    ORDER BY p.base_price_sen DESC NULLS LAST, p.id
-                    LIMIT 1),
-                  0
-                ) * po.quantity AS sen
+                ${PRODUCTION_ORDER_UNIT_PRICE_SQL} * po.quantity AS sen
            FROM per_po
            JOIN production_orders po ON po.id = per_po.production_order_id
-           LEFT JOIN sales_order_items soi
-                  ON soi.sales_order_id = po.sales_order_id AND soi.line_no = ${PRODUCTION_ORDER_LINE_SQL}
-           LEFT JOIN consignment_order_items coi
-                  ON coi.consignment_order_id = po.consignment_order_id AND coi.line_no = ${PRODUCTION_ORDER_LINE_SQL}
+           ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
           WHERE po.org_id = ?
             AND po.item_category IN ('SOFA','BEDFRAME','ACCESSORY')
             AND per_po.unit_completed_at IS NOT NULL
