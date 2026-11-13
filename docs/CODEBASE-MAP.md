@@ -828,18 +828,18 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
   - PATCH /:id rack-assign — inline rackingNumber UPDATE then `applyPackingRack` (text re-affirm + occupancy) — L4180-4195
   - POST /packing-rack-tokens — authed /p/ token mint (batched: 2 queries + parallel mint) — L6001-6135
 - `src/pages/bom.tsx`
-  - parseMinutes / MinutesInput (typed process minutes, 0-1440; a text box, see BUG-2026-10-05-254) — L173-188
-  - RoutingPill / WIPCodeBuilder / RawMaterialSelect / MaterialScalingEditor helpers — L603-1229
-  - WIPNode (recursive BOM tree node) — L1238-1502
-  - BOMTreeView (template tree render, L1 + WIP; DRAFT badge + Activate button) — L1503-1880
-  - CreateBOMDialog — L1881-2447
-  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM) — L2448-2520 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
-  - flattenWipTree / WipTreeCard / wipNodeAt — L2521-2749 (two-pane tree helpers, shared by Edit BOM and Master Templates)
-  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2750-2973
-  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L2974-3863
-  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3864-4891
-  - BatchEditMaterialsDialog — L4892-5979
-  - BOMManagementPage (default export — page shell, tabs, list) — L5980-6454
+  - parseMinutes / MinutesInput (typed process minutes, 0-1440; a text box, see BUG-2026-10-05-254) — L183-198
+  - RoutingPill / WIPCodeBuilder / RawMaterialSelect / MaterialScalingEditor helpers — L617-1243
+  - WIPNode (recursive BOM tree node) — L1244-1508
+  - BOMTreeView (template tree render, L1 + WIP; DRAFT badge + Activate button) — L1509-1886
+  - CreateBOMDialog — L1887-2453
+  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM) — L2454-2547 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
+  - flattenWipTree / WipTreeCard / wipNodeAt — L2548-2776 (two-pane tree helpers, shared by Edit BOM and Master Templates)
+  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2777-3000
+  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3001-3906
+  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3907-4934
+  - BatchEditMaterialsDialog — L4935-6026
+  - BOMManagementPage (default export — page shell, tabs, list) — L6027-6610
   - (ProductionTimesDialog and DeptPivotCategoryDialog were removed 2026-08-01.)
 
 **Gotchas**
