@@ -46,14 +46,10 @@ main = "src/index.ts"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
 
-# account_id — REUSED from the hookka-erp-testing Cloudflare account.
-# The root Pages wrangler.toml does NOT pin account_id (Pages resolves the
-# account from the CLOUDFLARE_API_TOKEN at deploy time), so paste the Hookka
-# account id here before deploying this standalone Worker. Find it at:
-#   Cloudflare dashboard -> Workers & Pages -> right sidebar "Account ID",
-# or run: `wrangler whoami`.
-# Alternatively, drop this line and export CLOUDFLARE_ACCOUNT_ID in the shell.
-account_id = "816e457307d7fa0491c2a08a72ad5dcd"
+# account_id — the account that holds the hookka.com zone. An Email Routing
+# rule can only send to a Worker in the zone's own account (HK-0150: this
+# said 816e…, the Houzs account, which does not hold hookka.com).
+account_id = "27cd35c9d93a9f81daa809d0b800b059"
 
 # ERP inbound endpoint. Kept as a plain [vars] entry (it's not a secret) so it
 # travels with the deploy. The matching MAIL_INBOUND_SECRET is a real secret —

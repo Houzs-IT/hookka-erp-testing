@@ -178,6 +178,7 @@ function toPayload(parsed, sourceMailbox) {
     references,
     date: parsed.date || undefined,
     attachments: toAttachments(parsed, sourceMailbox),
+    deliveredTo: sourceMailbox,
   };
 }
 
