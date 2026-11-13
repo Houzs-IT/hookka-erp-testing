@@ -2,10 +2,12 @@
 // Mail Center — in-ERP shared inbox for hookka.com email.
 //
 // Architecture (see the owner's decision 2026-06-16):
-//   inbound : Cloudflare Email Routing → standalone email Worker → POST
+//   inbound : hookka.com MX is on Hostinger, so the live path is the Hostinger
+//             IMAP poller (mail-sync/, a GitHub Actions cron) → POST
 //             /api/mail-center/inbound (secret-guarded, machine-to-machine,
 //             registered BEFORE authMiddleware in worker.ts). That handler
-//             calls ingestInboundEmail() below.
+//             calls ingestInboundEmail() below. mail-inbound-worker/ (Cloudflare
+//             Email Routing) posts the same payload but is not deployed (HK-0150).
 //   outbound: replies reuse the existing Brevo/Resend sender (lib/email.ts).
 //             Added in P2.
 //   storage : three tables created lazily here (no migration file yet) so
@@ -289,9 +291,9 @@ export async function ensureMailSchema(db: D1Database): Promise<void> {
 // ---------------------------------------------------------------------------
 // Inbound ingestion — called by the worker.ts pre-auth handler.
 // ---------------------------------------------------------------------------
-// One inbound attachment as it arrives on the /inbound payload. The routing
-// worker (mail-inbound-worker — the ONE inbound channel since T-012 R13
-// retired the Hostinger IMAP poller) base64-encodes the raw bytes so the
+// One inbound attachment as it arrives on the /inbound payload. The sender
+// (the Hostinger IMAP poller in mail-sync/, or mail-inbound-worker if Email
+// Routing is ever switched on) base64-encodes the raw bytes so the
 // JSON POST stays credential-free; the ERP owns storage (uploads to Supabase
 // Storage here). Oversized files are dropped at the worker (see the size caps
 // there) so contentBase64 is always sane to decode here.
@@ -1926,8 +1928,8 @@ app.post("/test-inject", async (c) => {
 // same hard gate that protects user-account management in routes/users.ts),
 // independent of any mail-center:* permission grant.
 //
-// NOTE: this creates an in-ERP ADDRESS RECORD for hookka.com mail received via
-// Cloudflare Email Routing — it is NOT a Google/Gmail account. No Google API
+// NOTE: this creates an in-ERP ADDRESS RECORD for hookka.com mail (read from
+// Hostinger by mail-sync/) — it is NOT a Google/Gmail account. No Google API
 // is touched here.
 // ---------------------------------------------------------------------------
 

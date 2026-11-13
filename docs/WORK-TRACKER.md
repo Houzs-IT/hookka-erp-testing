@@ -2325,7 +2325,9 @@ handlers). CODEBASE-MAP restamped.
   owner set the opposite deliberately.
 - R13 → `mail-sync/` + `.github/workflows/mail-sync.yml` deleted (the Hostinger IMAP poller;
   MX is on Cloudflare since 2026-08-19). The scheduled run keeps firing from `main` until this
-  merges.
+  merges. **Wrong, and undone by HK-0150 (2026-11-13):** hookka.com MX is on Hostinger
+  (nslookup 2026-11-13), Cloudflare Email Routing is off and no inbound worker is deployed, so
+  removing the poller (merged 2026-10-16) stopped all inbound mail. `mail-sync/` is restored.
 - Acknowledgement is asked of STAFF recipients only (an `email_addresses` row); the send is
   refused when none is on the mail. Chase = a reminder through the outbox, once per 24 h.
 - Brevo rewrites `Message-ID`; the inbound resolver matches ours OR the provider's id.
