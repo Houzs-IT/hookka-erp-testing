@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { resolveWipTokens, type BomVariantContext } from "@/api/lib/bom-wip-breakdown";
 import { withProductCategory } from "./bom-category";
+import { pickDisplayTemplates } from "./bom-display-template";
 import { removeWipLevel, moveWipNode, canMoveWipNode } from "@/lib/wip-tree-ops";
 import { BUILT_IN_WIP_TYPES, buildWipTypes, wipTypeAllowed, type WipTypeStyle } from "@/lib/wip-types";
 import { fetchVariantsConfig, getVariantsConfigSync } from "@/lib/kv-config";
@@ -2447,6 +2448,7 @@ function CreateBOMDialog({
 // ---------- Collapsible Group ----------
 function CollapsibleGroup({
   baseModel, prods, existingCodes, activeCodes, selectedProductCode, onSelect,
+  draftCodes, checkedCodes, onToggleChecked,
 }: {
   baseModel: string;
   prods: Product[];
@@ -2454,6 +2456,9 @@ function CollapsibleGroup({
   activeCodes: Set<string>;
   selectedProductCode: string;
   onSelect: (code: string) => void;
+  draftCodes: ReadonlyMap<string, string>;
+  checkedCodes: Set<string>;
+  onToggleChecked: (code: string) => void;
 }) {
   // Auto-expand if a product in this group is selected
   const hasSelected = prods.some((p) => p.code === selectedProductCode);
@@ -2488,30 +2493,47 @@ function CollapsibleGroup({
       {expanded && prods.map((p) => {
         const hasBOM = existingCodes.has(p.code);
         return (
-          <button
+          <div
             key={p.id}
-            onClick={() => onSelect(p.code)}
-            className={`w-full text-left px-3 pl-7 py-2 border-b border-[#E2DDD8]/50 transition-colors ${
+            className={`flex items-stretch border-b border-[#E2DDD8]/50 transition-colors ${
               selectedProductCode === p.code
                 ? "bg-[#6B5C32]/10 border-l-2 border-l-[#6B5C32]"
                 : "hover:bg-[#FAF9F7]"
             }`}
           >
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-medium text-[#111827] truncate">{p.code}</span>
-              {!hasBOM && (
-                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] flex-shrink-0">
-                  PENDING
-                </span>
-              )}
-              {hasBOM && !activeCodes.has(p.code) && (
-                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] flex-shrink-0">
-                  DRAFT
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-gray-500 truncate">{p.name}</div>
-          </button>
+            {draftCodes.has(p.code) ? (
+              <label className="w-11 flex-shrink-0 flex items-center justify-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={checkedCodes.has(p.code)}
+                  onChange={() => onToggleChecked(p.code)}
+                  aria-label={`Select ${p.code} to activate`}
+                  className="w-4 h-4 cursor-pointer accent-[#6B5C32]"
+                />
+              </label>
+            ) : (
+              <span className="w-11 flex-shrink-0" aria-hidden="true" />
+            )}
+            <button
+              onClick={() => onSelect(p.code)}
+              className="flex-1 min-w-0 text-left pr-3 py-2"
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-medium text-[#111827] truncate">{p.code}</span>
+                {!hasBOM && (
+                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] flex-shrink-0">
+                    PENDING
+                  </span>
+                )}
+                {hasBOM && !activeCodes.has(p.code) && (
+                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] flex-shrink-0">
+                    DRAFT
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 truncate">{p.name}</div>
+            </button>
+          </div>
         );
       })}
     </div>
@@ -5998,6 +6020,9 @@ export default function BOMManagementPage() {
   const navigate = useNavigate();
   const [showMaster, setShowMaster] = useState(false);
   const [showBatchEditMat, setShowBatchEditMat] = useState(false);
+  const { confirm } = useConfirm();
+  const [checkedCodes, setCheckedCodes] = useState<Set<string>>(new Set());
+  const [isActivating, setIsActivating] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -6163,22 +6188,86 @@ export default function BOMManagementPage() {
   // CAT 2 / 80m off the ACTIVE row. The Dept-Pivot dialog already filters
   // to ACTIVE-only (see comment at the activeOnly filter); this brings the
   // BOM tree + EditBOMDialog selection in line with the rest of the system.
-  const selectedTemplate = useMemo(() => {
-    const matches = templates.filter((t) => t.productCode === selectedProductCode);
-    if (matches.length === 0) return null;
-    const active = matches.filter((t) => (t.versionStatus ?? "ACTIVE") === "ACTIVE");
-    const pool = active.length > 0 ? active : matches;
-    // Most recent effectiveFrom wins. Empty/missing strings sort last so a
-    // freshly-flipped DRAFT->ACTIVE row beats the legacy ACTIVE row.
-    return [...pool].sort((a, b) => {
-      const af = a.effectiveFrom || "";
-      const bf = b.effectiveFrom || "";
-      if (af === bf) return 0;
-      if (!af) return 1;
-      if (!bf) return -1;
-      return bf.localeCompare(af);
-    })[0] || null;
-  }, [templates, selectedProductCode]);
+  // Most recent effectiveFrom wins. Empty/missing strings sort last so a
+  // freshly-flipped DRAFT->ACTIVE row beats the legacy ACTIVE row.
+  const displayTemplates = useMemo(() => pickDisplayTemplates(templates), [templates]);
+  const selectedTemplate = displayTemplates.get(selectedProductCode) ?? null;
+
+  const draftTemplateIdByCode = useMemo(() => {
+    const draftIds = new Map<string, string>();
+    for (const [productCode, template] of displayTemplates) {
+      if (template.versionStatus === "DRAFT") draftIds.set(productCode, template.id);
+    }
+    return draftIds;
+  }, [displayTemplates]);
+  const checkedDraftCodes = useMemo(
+    () => new Set([...checkedCodes].filter((code) => draftTemplateIdByCode.has(code))),
+    [checkedCodes, draftTemplateIdByCode],
+  );
+  const visibleDraftCodes = useMemo(
+    () => filteredProducts.filter((p) => draftTemplateIdByCode.has(p.code)).map((p) => p.code),
+    [filteredProducts, draftTemplateIdByCode],
+  );
+  const areAllVisibleDraftsChecked =
+    visibleDraftCodes.length > 0 && visibleDraftCodes.every((code) => checkedDraftCodes.has(code));
+
+  function toggleCheckedCode(productCode: string) {
+    setCheckedCodes((previous) => {
+      const next = new Set(previous);
+      if (next.has(productCode)) next.delete(productCode);
+      else next.add(productCode);
+      return next;
+    });
+  }
+
+  function toggleAllVisibleDrafts() {
+    setCheckedCodes((previous) => {
+      const next = new Set(previous);
+      for (const code of visibleDraftCodes) {
+        if (areAllVisibleDraftsChecked) next.delete(code);
+        else next.add(code);
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkActivate() {
+    const templateIds = [...checkedDraftCodes].flatMap((code) => draftTemplateIdByCode.get(code) ?? []);
+    const count = templateIds.length;
+    const plural = count === 1 ? "" : "s";
+    const isConfirmed = await confirm({
+      title: "Activate BOMs",
+      message: `Activate ${count} draft BOM${plural}? Active BOMs are used by WIP times, fabric usage, KPIs, PO costing and sales orders.`,
+      confirmLabel: `Activate ${count}`,
+    });
+    if (!isConfirmed) return;
+    setIsActivating(true);
+    try {
+      const response = await fetch("/api/bom/templates/bulk-activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: templateIds }),
+      });
+      const json = (await response.json().catch(() => null)) as
+        | { success?: boolean; error?: string; activatedIds?: string[]; skippedIds?: string[] }
+        | null;
+      if (!response.ok || !json?.success) throw new Error(json?.error || `HTTP ${response.status}`);
+      const activatedIds = new Set(json.activatedIds ?? []);
+      setTemplates((previous) =>
+        previous.map((t) => (activatedIds.has(t.id) ? { ...t, versionStatus: "ACTIVE" } : t)),
+      );
+      setCheckedCodes(new Set());
+      invalidateCachePrefix("/api/bom");
+      invalidateCachePrefix("/api/products");
+      const skippedCount = json.skippedIds?.length ?? 0;
+      const skippedNote = skippedCount > 0 ? ` ${skippedCount} were no longer DRAFT; reload to see their status.` : "";
+      toast.success(`Activated ${activatedIds.size} BOM${activatedIds.size === 1 ? "" : "s"}.${skippedNote}`);
+    } catch (err) {
+      toast.error(`Failed to activate BOMs: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setIsActivating(false);
+    }
+  }
 
   // Derive variant categories from product category — matches SO variant setup
   const productVariantCategories: VariantCategoryInfo[] = useMemo(() => {
@@ -6329,8 +6418,19 @@ export default function BOMManagementPage() {
                 </button>
               </div>
             )}
-            <div className="text-xs text-gray-400">
-              {filteredProducts.length} products in {groupedProducts.length} groups
+            <div className="flex items-center justify-between gap-2 text-xs text-gray-400">
+              <span>{filteredProducts.length} products in {groupedProducts.length} groups</span>
+              {visibleDraftCodes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={toggleAllVisibleDrafts}
+                  className="-my-1 px-2 py-1 rounded font-medium text-[#6B5C32] hover:bg-[#FAF9F7] hover:underline"
+                >
+                  {areAllVisibleDraftsChecked
+                    ? "Deselect drafts"
+                    : `Select ${visibleDraftCodes.length} draft${visibleDraftCodes.length === 1 ? "" : "s"}`}
+                </button>
+              )}
             </div>
           </div>
 
@@ -6345,6 +6445,9 @@ export default function BOMManagementPage() {
                 activeCodes={activeCodes}
                 selectedProductCode={selectedProductCode}
                 onSelect={setSelectedProductCode}
+                draftCodes={draftTemplateIdByCode}
+                checkedCodes={checkedDraftCodes}
+                onToggleChecked={toggleCheckedCode}
               />
             ))}
             {groupedProducts.length === 0 && (
@@ -6449,6 +6552,34 @@ export default function BOMManagementPage() {
           )}
         </div>
       </div>
+      {checkedDraftCodes.size > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk activate drafts"
+          className="fixed inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 flex items-center gap-3 rounded-xl border border-[#E2DDD8] bg-white px-4 py-3 shadow-lg sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2"
+        >
+          <span className="text-sm font-medium text-[#111827] whitespace-nowrap">
+            {checkedDraftCodes.size} draft{checkedDraftCodes.size === 1 ? "" : "s"} selected
+          </span>
+          <div className="flex-1 sm:w-6 sm:flex-none" />
+          <button
+            type="button"
+            onClick={() => setCheckedCodes(new Set())}
+            disabled={isActivating}
+            className="min-h-[44px] px-3 text-sm text-gray-600 rounded-lg hover:bg-[#FAF9F7] disabled:opacity-60"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={handleBulkActivate}
+            disabled={isActivating}
+            className="min-h-[44px] px-4 bg-[#6B5C32] text-white rounded-lg hover:bg-[#5A4D2A] text-sm font-medium whitespace-nowrap disabled:opacity-60"
+          >
+            {isActivating ? "Activating…" : `Activate ${checkedDraftCodes.size}`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -791,6 +791,69 @@ app.post("/templates/bulk-process-edit", async (c) => {
   }
 });
 
+const MAX_BULK_ACTIVATE_IDS = 2000;
+
+function parseTemplateIds(body: unknown): string[] {
+  const ids = (body as { ids?: unknown } | null)?.ids;
+  if (!Array.isArray(ids)) return [];
+  const validIds = ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+  return [...new Set(validIds)];
+}
+
+app.post("/templates/bulk-activate", async (c) => {
+  const denied = await requirePermission(c, "bom", "update");
+  if (denied) return denied;
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: "Invalid JSON in request body" }, 400);
+  }
+  const requestedIds = parseTemplateIds(body);
+  if (requestedIds.length === 0) {
+    return c.json({ success: false, error: "ids must be a non-empty array of template ids" }, 400);
+  }
+  if (requestedIds.length > MAX_BULK_ACTIVATE_IDS) {
+    return c.json({ success: false, error: `At most ${MAX_BULK_ACTIVATE_IDS} templates per request` }, 400);
+  }
+
+  const draftRows = await c.var.DB.prepare(
+    "SELECT id FROM bom_templates WHERE UPPER(COALESCE(versionStatus, 'DRAFT')) = 'DRAFT'",
+  ).all<{ id: string }>();
+  const draftIds = new Set((draftRows.results ?? []).map((row) => row.id));
+  const activatedIds = requestedIds.filter((id) => draftIds.has(id));
+  const skippedIds = requestedIds.filter((id) => !draftIds.has(id));
+
+  const statements: D1PreparedStatement[] = [];
+  for (const id of activatedIds) {
+    statements.push(
+      c.var.DB.prepare(
+        "UPDATE bom_templates SET versionStatus = 'ACTIVE' WHERE id = ? AND UPPER(COALESCE(versionStatus, 'DRAFT')) = 'DRAFT'",
+      ).bind(id),
+    );
+    const auditStatement = await buildAuditStatement(c, {
+      resource: "bom-templates",
+      resourceId: id,
+      action: "update",
+      before: { versionStatus: "DRAFT" },
+      after: { versionStatus: "ACTIVE" },
+    });
+    if (auditStatement) statements.push(auditStatement);
+  }
+
+  try {
+    if (statements.length > 0) await c.var.DB.batch(statements);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[bom POST /templates/bulk-activate] batch failed: ${message}`);
+    return c.json({ success: false, error: `Activate failed, nothing was changed: ${message}` }, 500);
+  }
+  for (const _id of activatedIds) {
+    recordAuditCreatedMetric(c, { resource: "bom-templates", action: "update" });
+  }
+  return c.json({ success: true, activatedIds, skippedIds });
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/bom/resync-job-card-times — strong-overwrite refresh of
 // production_time_minutes / est_minutes on every job_cards row from the
