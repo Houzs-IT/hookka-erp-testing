@@ -52,3 +52,16 @@ test("live-segments route: read-only, today only, finished rows + 'now in' line 
   assert.match(p, /\.filter\(\(x\) => !x\.open\)\.map\(/);
   assert.match(p, /since \{x\.from\} — closes at punch-out/);
 });
+
+// Owner check 2026-11-14: MA SAN PAY OO scanned R&D and Fab Sew in the same
+// minute; Floor Live and Working Hours picked different "last" scans.
+test("scans in the same minute are ordered by when they were made, everywhere", () => {
+  const files = ["src/api/lib/floor-live-data.ts", "src/api/lib/punch-autofill.ts", "src/api/routes/working-hour-entries.ts", "src/api/routes/worker.ts"];
+  for (const f of files) {
+    const src = read(f);
+    for (const m of src.matchAll(/FROM dept_scan_events[^"`]*ORDER BY ([^"`]*)/g)) {
+      assert.match(m[1], /atmin( DESC)?, createdat/, `${f}: ${m[1]}`);
+    }
+  }
+  assert.match(read("src/api/routes/working-hour-entries.ts"), /if \(last && last\.departmentCode === s\.departmentCode\)/, "same-department stints merge for display");
+});

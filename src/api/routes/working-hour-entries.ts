@@ -821,7 +821,7 @@ app.get("/dept-scans", async (c) => {
   await ensureDeptScanEvents(c.var.DB);
   const [scans, depts] = await Promise.all([
     c.var.DB.prepare(
-      "SELECT workerid, date, departmentcode, atmin FROM dept_scan_events WHERE date >= ? AND date <= ? ORDER BY date, workerid, atmin",
+      "SELECT workerid, date, departmentcode, atmin FROM dept_scan_events WHERE date >= ? AND date <= ? ORDER BY date, workerid, atmin, createdat",
     ).bind(from, to).all<Record<string, unknown>>(),
     c.var.DB.prepare("SELECT code, name, short_name, is_production FROM departments").all<Record<string, unknown>>(),
   ]);
@@ -897,7 +897,16 @@ app.get("/live-segments", async (c) => {
     data: live.map((w) => ({
       workerId: w.workerId,
       date,
-      segments: w.segments.map((s) => ({
+      // Consecutive stints in the SAME department (a category scan inside it,
+      // or a re-scan) show as one line — "Fab Sew 07:39–07:42 | Fab Sew 07:42–"
+      // read like a mistake (owner check 2026-11-14).
+      segments: w.segments.reduce<typeof w.segments>((acc, s) => {
+        const last = acc[acc.length - 1];
+        if (last && last.departmentCode === s.departmentCode) {
+          acc[acc.length - 1] = { ...last, toMin: s.toMin, hours: Math.round((last.hours + s.hours) * 100) / 100, open: s.open, category: last.category === s.category ? last.category : null };
+        } else acc.push(s);
+        return acc;
+      }, []).map((s) => ({
         departmentCode: s.departmentCode,
         departmentName: meta.get(s.departmentCode)?.name ?? s.departmentCode,
         isProduction: meta.get(s.departmentCode)?.isProduction ?? true,

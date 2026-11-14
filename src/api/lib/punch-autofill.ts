@@ -107,7 +107,7 @@ async function loadDeptScanEvents(
   await ensureDeptScanEvents(db);
   const evRes = await db
     .prepare(
-      "SELECT departmentcode, category, atmin FROM dept_scan_events WHERE workerid = ? AND date = ? ORDER BY atmin",
+      "SELECT departmentcode, category, atmin FROM dept_scan_events WHERE workerid = ? AND date = ? ORDER BY atmin, createdat",
     )
     .bind(workerId, date)
     .all<{ departmentcode: string; category: string | null; atmin: number }>();
@@ -425,7 +425,7 @@ export async function liveOpenPunchRows(
   const rules = toAttendanceRules(resolvePayRulesAsOf(versions, args.date));
   await ensureDeptScanEvents(db);
   const ev = await db
-    .prepare("SELECT workerid, departmentcode, category, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin")
+    .prepare("SELECT workerid, departmentcode, category, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin, createdat")
     .bind(args.date)
     .all<{ workerid: string; departmentcode: string; category: string | null; atmin: number }>();
   const byWorker = new Map<string, DeptScanEvent[]>();
@@ -472,7 +472,7 @@ export async function liveTimedSegments(
   const rules = toAttendanceRules(resolvePayRulesAsOf(versions, args.date));
   await ensureDeptScanEvents(db);
   const ev = await db
-    .prepare("SELECT workerid, departmentcode, category, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin")
+    .prepare("SELECT workerid, departmentcode, category, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin, createdat")
     .bind(args.date)
     .all<{ workerid: string; departmentcode: string; category: string | null; atmin: number }>();
   const byWorker = new Map<string, DeptScanEvent[]>();
