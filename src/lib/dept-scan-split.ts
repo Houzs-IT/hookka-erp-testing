@@ -190,3 +190,68 @@ export function currentStation(
   }
   return cur;
 }
+
+/**
+ * The punch window as TIMED segments, in order (Working Hours live rows, owner
+ * 2026-11-14: 「结束了那个department就可以show出来了啊」). Same boundaries as
+ * buildDeptBuckets (home dept until the first scan; a re-scan of the same
+ * station is not a boundary), but NOT summed per department, so each stint
+ * keeps its from–to. Hours = `totalHours` pro-rated by minutes (prorateHours),
+ * so the segments add up to the same total punch-out will save. The last
+ * segment is the one still running (`open`).
+ */
+export function timedSegments(
+  totalHours: number,
+  clockInMin: number,
+  nowMin: number,
+  homeDeptCode: string,
+  events: DeptScanEvent[],
+): Array<{ departmentCode: string; category: string | null; fromMin: number; toMin: number; hours: number; open: boolean }> {
+  const out = Math.max(clockInMin, nowMin);
+  if (out <= clockInMin) return [];
+  const norm = (v: string | null | undefined) => {
+    const s = (v ?? "").trim().toUpperCase();
+    return s === "" ? null : s;
+  };
+  const cleaned = (events ?? [])
+    .filter((e) => e && typeof e.departmentCode === "string" && e.departmentCode.trim() !== "")
+    .map((e) => ({
+      departmentCode: e.departmentCode.trim().toUpperCase(),
+      category: norm(e.category),
+      atMin: Math.min(Math.max(Math.round(e.atMin), clockInMin), out),
+    }))
+    .sort((a, b) => a.atMin - b.atMin);
+  const segs: { departmentCode: string; category: string | null; fromMin: number; toMin: number; weight: number }[] = [];
+  let cursor = clockInMin;
+  let curDept = (homeDeptCode || "").trim().toUpperCase();
+  let curCat: string | null = null;
+  const push = (to: number) => {
+    if (to > cursor && curDept) segs.push({ departmentCode: curDept, category: curCat, fromMin: cursor, toMin: to, weight: to - cursor });
+  };
+  for (const e of cleaned) {
+    if (e.departmentCode === curDept && e.category === curCat) continue;
+    push(e.atMin);
+    cursor = e.atMin;
+    curDept = e.departmentCode;
+    curCat = e.category;
+  }
+  push(out);
+  if (!segs.length) return [];
+  // Pro-rate without folding small fragments away: each stint keeps its row.
+  const totalW = segs.reduce((s, x) => s + x.weight, 0);
+  const cents = Math.max(0, Math.round(totalHours * 100));
+  const exact = segs.map((x) => (cents * x.weight) / totalW);
+  const fl = exact.map((v) => Math.floor(v));
+  let left = cents - fl.reduce((s, v) => s + v, 0);
+  exact.map((v, i) => ({ i, f: v - Math.floor(v) })).sort((a, b) => b.f - a.f).forEach(({ i }) => {
+    if (left > 0) { fl[i] += 1; left -= 1; }
+  });
+  return segs.map((x, i) => ({
+    departmentCode: x.departmentCode,
+    category: x.category,
+    fromMin: x.fromMin,
+    toMin: x.toMin,
+    hours: fl[i] / 100,
+    open: i === segs.length - 1,
+  }));
+}

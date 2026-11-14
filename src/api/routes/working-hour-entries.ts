@@ -22,7 +22,8 @@
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
-import { ensureDeptScanEvents } from "../lib/punch-autofill";
+import { ensureDeptScanEvents, liveTimedSegments } from "../lib/punch-autofill";
+import { mytWallClock } from "../../lib/utils";
 import { ensureNonprodRequests } from "./worker";
 import { loadProductionRevenue, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
@@ -846,6 +847,68 @@ app.get("/dept-scans", async (c) => {
     };
   });
   return c.json({ success: true, data });
+});
+
+// GET /api/working-hour-entries/live-segments?date= — today's open punches as
+// timed department segments (owner 2026-11-14: 「结束了那个department就可以
+// show出来了啊」 / the running stint waits for punch-out). A finished stint is
+// final; the last one is still running. Rows are written at punch-out as before
+// — this only shows them early. Read-only; only today has open punches.
+app.get("/live-segments", async (c) => {
+  const denied = await requirePermission(c, "attendance", "read");
+  if (denied) return denied;
+  const now = mytWallClock();
+  const today = now.toISOString().slice(0, 10);
+  const date = c.req.query("date") ?? today;
+  if (date !== today) return c.json({ success: true, data: [] });
+  const db = c.var.DB;
+  const [att, workers, depts, whe] = await Promise.all([
+    db.prepare("SELECT employee_id, clock_in, clock_out FROM attendance_records WHERE SUBSTR(CAST(date AS TEXT), 1, 10) = ?").bind(date).all<Record<string, unknown>>(),
+    db.prepare("SELECT id, department_code FROM workers").all<Record<string, unknown>>(),
+    db.prepare("SELECT code, name, short_name, is_production FROM departments").all<Record<string, unknown>>(),
+    db.prepare("SELECT worker_id, hours, notes FROM working_hour_entries WHERE SUBSTR(CAST(date AS TEXT), 1, 10) = ?").bind(date).all<Record<string, unknown>>(),
+  ]);
+  const home = new Map((workers.results ?? []).map((w) => [String(w.id ?? ""), String(w.department_code ?? w.departmentCode ?? "")]));
+  const keyed = new Set<string>();
+  const nonProd = new Map<string, number>();
+  for (const r of whe.results ?? []) {
+    const id = String(r.worker_id ?? r.workerId ?? "");
+    if (String(r.notes ?? "").startsWith("Non-production (approved)")) nonProd.set(id, (nonProd.get(id) ?? 0) + (Number(r.hours) || 0));
+    else keyed.add(id);
+  }
+  const punches = (att.results ?? [])
+    .map((a) => ({ workerId: String(a.employee_id ?? a.employeeId ?? ""), clockIn: String(a.clock_in ?? a.clockIn ?? ""), clockOut: a.clock_out ?? a.clockOut ?? null }))
+    .filter((a) => a.workerId && a.clockIn && !a.clockOut && !keyed.has(a.workerId))
+    .map((a) => ({ workerId: a.workerId, clockIn: a.clockIn, homeDeptCode: home.get(a.workerId) ?? null }));
+  const meta = new Map(
+    (depts.results ?? []).map((d) => [
+      String(d.code ?? "").toUpperCase(),
+      {
+        name: String(d.short_name ?? d.shortName ?? "") || String(d.name ?? "") || String(d.code ?? ""),
+        isProduction: d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1,
+      },
+    ]),
+  );
+  const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const live = await liveTimedSegments(db, { date, nowMin: now.getUTCHours() * 60 + now.getUTCMinutes(), punches, nonProdHoursByWorker: nonProd });
+  c.header("Cache-Control", "no-store");
+  return c.json({
+    success: true,
+    data: live.map((w) => ({
+      workerId: w.workerId,
+      date,
+      segments: w.segments.map((s) => ({
+        departmentCode: s.departmentCode,
+        departmentName: meta.get(s.departmentCode)?.name ?? s.departmentCode,
+        isProduction: meta.get(s.departmentCode)?.isProduction ?? true,
+        category: s.category,
+        from: hm(s.fromMin),
+        to: s.open ? null : hm(s.toMin),
+        hours: s.hours,
+        open: s.open,
+      })),
+    })),
+  });
 });
 
 app.get("/", async (c) => {
