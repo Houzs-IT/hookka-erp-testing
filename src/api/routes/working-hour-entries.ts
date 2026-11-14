@@ -22,6 +22,7 @@
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { ensureDeptScanEvents } from "../lib/punch-autofill";
 import { ensureNonprodRequests } from "./worker";
 import { loadProductionRevenue, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
@@ -802,6 +803,51 @@ app.get("/daily-breakdown", async (c) => {
 // ---------------------------------------------------------------------------
 // GET — three query modes (attendanceId | date | workerId+from+to)
 // ---------------------------------------------------------------------------
+// GET /api/working-hour-entries/dept-scans?from=&to= — the department QR scans
+// of each worker-day (owner 2026-11-14: 「中途也可以看 然后就可以tally跟
+// floorlive了」). The office saw only the home department until punch-out split
+// the day; this lets them check mid-day, the same scans Floor Live reads.
+// Read-only.
+app.get("/dept-scans", async (c) => {
+  const denied = await requirePermission(c, "attendance", "read");
+  if (denied) return denied;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? from;
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ymd.test(from) || !ymd.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from <= to" }, 400);
+  }
+  await ensureDeptScanEvents(c.var.DB);
+  const [scans, depts] = await Promise.all([
+    c.var.DB.prepare(
+      "SELECT workerid, date, departmentcode, atmin FROM dept_scan_events WHERE date >= ? AND date <= ? ORDER BY date, workerid, atmin",
+    ).bind(from, to).all<Record<string, unknown>>(),
+    c.var.DB.prepare("SELECT code, name, short_name, is_production FROM departments").all<Record<string, unknown>>(),
+  ]);
+  const meta = new Map(
+    (depts.results ?? []).map((d) => [
+      String(d.code ?? "").toUpperCase(),
+      {
+        name: String(d.short_name ?? d.shortName ?? "") || String(d.name ?? "") || String(d.code ?? ""),
+        isProduction: d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1,
+      },
+    ]),
+  );
+  const data = (scans.results ?? []).map((r) => {
+    const code = String(r.departmentcode ?? r.departmentCode ?? "").toUpperCase();
+    const m = Number(r.atmin ?? r.atMin) || 0;
+    return {
+      workerId: String(r.workerid ?? r.workerId ?? ""),
+      date: String(r.date ?? "").slice(0, 10),
+      departmentCode: code,
+      departmentName: meta.get(code)?.name ?? code,
+      isProduction: meta.get(code)?.isProduction ?? true,
+      at: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`,
+    };
+  });
+  return c.json({ success: true, data });
+});
+
 app.get("/", async (c) => {
   const attendanceId = c.req.query("attendanceId");
   const date = c.req.query("date");

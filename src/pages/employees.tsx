@@ -1019,6 +1019,9 @@ function NonprodApprovalsCard({
   );
 }
 
+/** One department QR scan (GET /api/working-hour-entries/dept-scans). */
+type DeptScan = { workerId: string; date: string; departmentCode: string; departmentName: string; isProduction: boolean; at: string };
+
 function WorkingHoursTab({
   workers,
   refreshAttendance,
@@ -1093,6 +1096,7 @@ function WorkingHoursTab({
   // third time to clear.
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [deptScans, setDeptScans] = useState<Map<string, DeptScan[]>>(new Map());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1127,6 +1131,21 @@ function WorkingHoursTab({
         }
       } catch {
         /* attendance unavailable — grid works without the punch pre-fill */
+      }
+
+      // Department QR scans of each worker-day (owner 2026-11-14: check mid-day
+      // and tally with Floor Live). Best-effort, like the punches above.
+      try {
+        const sRes = await fetch(`/api/working-hour-entries/dept-scans?from=${lo}&to=${hi}`);
+        const sj = (await sRes.json()) as { data?: DeptScan[] };
+        const by = new Map<string, DeptScan[]>();
+        for (const x of sj?.data ?? []) {
+          const k = `${x.workerId}|${x.date}`;
+          by.set(k, [...(by.get(k) ?? []), x]);
+        }
+        setDeptScans(by);
+      } catch {
+        setDeptScans(new Map());
       }
 
       // Segments per worker-day. A day the office SPLIT across departments has
@@ -1991,6 +2010,18 @@ function WorkingHoursTab({
                             >
                               {gTotal.toFixed(1)}h{over ? " · OT" : short ? " · short" : ""}
                             </span>
+                          </div>
+                        )}
+                        {gWorkerId && (deptScans.get(`${gWorkerId}|${row.date}`)?.length ?? 0) > 0 && (
+                          <div className="mt-1 text-[11px] leading-snug text-[#6B7280]" title="Department QR scans today — the same ones Floor Live shows">
+                            <span className="font-semibold">Scans:</span>{" "}
+                            {deptScans.get(`${gWorkerId}|${row.date}`)!.map((x, i) => (
+                              <span key={`${x.at}-${i}`}>
+                                {i > 0 && " → "}
+                                <span className="tabular-nums">{x.at}</span>{" "}
+                                <span className={x.isProduction ? "text-[#1F1D1B]" : "font-semibold text-[#9A3A2D]"}>{x.departmentName}</span>
+                              </span>
+                            ))}
                           </div>
                         )}
                       </td>
