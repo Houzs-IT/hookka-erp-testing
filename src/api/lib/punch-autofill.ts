@@ -26,6 +26,7 @@
 import {
   currentStation,
   splitDayHours,
+  timedSegments,
   type DeptScanEvent,
 } from "../../lib/dept-scan-split";
 import { computeAttendanceDay, hhmmToMinutes } from "../../lib/attendance-rules";
@@ -443,4 +444,51 @@ export async function liveOpenPunchRows(
     for (const r of rows) if (r.hours > 0) out.push({ workerId: p.workerId, date: args.date, departmentCode: r.departmentCode, hours: r.hours });
   }
   return out;
+}
+
+/**
+ * Working Hours live rows (owner 2026-11-14): for each punch still open on
+ * `date`, its timed department segments so far — the finished stints are
+ * final, the last one runs to `nowMin`. Day total = the rules engine from
+ * clock-in to now, less approved non-production hours (same as the phone card
+ * and Floor Live). Read-only.
+ */
+export async function liveTimedSegments(
+  db: D1Database,
+  args: {
+    date: string;
+    nowMin: number;
+    punches: { workerId: string; clockIn: string; homeDeptCode: string | null | undefined }[];
+    nonProdHoursByWorker: ReadonlyMap<string, number>;
+  },
+): Promise<{ workerId: string; segments: ReturnType<typeof timedSegments> }[]> {
+  if (!args.punches.length) return [];
+  let versions: Awaited<ReturnType<typeof loadPayRuleVersions>> = [];
+  try {
+    versions = await loadPayRuleVersions(db);
+  } catch {
+    versions = [];
+  }
+  const rules = toAttendanceRules(resolvePayRulesAsOf(versions, args.date));
+  await ensureDeptScanEvents(db);
+  const ev = await db
+    .prepare("SELECT workerid, departmentcode, category, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin")
+    .bind(args.date)
+    .all<{ workerid: string; departmentcode: string; category: string | null; atmin: number }>();
+  const byWorker = new Map<string, DeptScanEvent[]>();
+  for (const r of ev.results ?? []) {
+    const k = String(r.workerid ?? "");
+    const a = byWorker.get(k) ?? [];
+    a.push({ departmentCode: String(r.departmentcode ?? ""), category: r.category ?? null, atMin: Number(r.atmin) || 0 });
+    byWorker.set(k, a);
+  }
+  return args.punches.flatMap((p) => {
+    const inMin = hhmmToMinutes(p.clockIn);
+    if (inMin == null) return [];
+    const outMin = Math.max(inMin, args.nowMin);
+    const day = computeAttendanceDay(inMin, outMin, rules);
+    const total = Math.max(0, round2((day.regularWorkMin + day.otMin) / 60 - (args.nonProdHoursByWorker.get(p.workerId) ?? 0)));
+    const segments = timedSegments(total, inMin, outMin, (p.homeDeptCode ?? "").trim().toUpperCase(), byWorker.get(p.workerId) ?? []);
+    return segments.length ? [{ workerId: p.workerId, segments }] : [];
+  });
 }

@@ -1019,6 +1019,9 @@ function NonprodApprovalsCard({
   );
 }
 
+/** One timed department stint of an open punch (GET /api/working-hour-entries/live-segments). */
+type LiveSeg = { departmentCode: string; departmentName: string; isProduction: boolean; category: string | null; from: string; to: string | null; hours: number; open: boolean };
+
 /** One department QR scan (GET /api/working-hour-entries/dept-scans). */
 type DeptScan = { workerId: string; date: string; departmentCode: string; departmentName: string; isProduction: boolean; at: string };
 
@@ -1097,6 +1100,7 @@ function WorkingHoursTab({
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [deptScans, setDeptScans] = useState<Map<string, DeptScan[]>>(new Map());
+  const [liveSegs, setLiveSegs] = useState<Map<string, LiveSeg[]>>(new Map());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1146,6 +1150,15 @@ function WorkingHoursTab({
         setDeptScans(by);
       } catch {
         setDeptScans(new Map());
+      }
+      // Today's open punches as timed department segments (owner 2026-11-14:
+      // a finished stint shows at once; the running one waits for punch-out).
+      try {
+        const lRes = await fetch(`/api/working-hour-entries/live-segments?date=${todayYmdMY()}`);
+        const lj = (await lRes.json()) as { data?: { workerId: string; date: string; segments: LiveSeg[] }[] };
+        setLiveSegs(new Map((lj?.data ?? []).map((w) => [`${w.workerId}|${w.date}`, w.segments])));
+      } catch {
+        setLiveSegs(new Map());
       }
 
       // Segments per worker-day. A day the office SPLIT across departments has
@@ -2037,6 +2050,21 @@ function WorkingHoursTab({
                           <option key={d.code} value={d.code}>{d.name}</option>
                         ))}
                       </select>
+                      {firstSeg && (liveSegs.get(`${row.workerId}|${row.date}`)?.length ?? 0) > 1 && (
+                        <div className="mt-1.5 space-y-0.5 rounded border border-dashed border-[#CDBE98] bg-[#FBF8F0] px-2 py-1 text-[11px] tabular-nums" title="Today so far, from department scans — written as rows at punch-out">
+                          {liveSegs.get(`${row.workerId}|${row.date}`)!.filter((x) => !x.open).map((x, i) => (
+                            <div key={`${x.from}-${i}`} className="flex justify-between gap-2">
+                              <span className={x.isProduction ? "text-[#1F1D1B]" : "font-semibold text-[#9A3A2D]"}>{x.departmentName}</span>
+                              <span className="text-[#4B5563]">{x.from}–{x.to} · {x.hours.toFixed(2)}h</span>
+                            </div>
+                          ))}
+                          {liveSegs.get(`${row.workerId}|${row.date}`)!.filter((x) => x.open).map((x) => (
+                            <div key="now" className="text-[#6B7280]">
+                              Now in <span className={x.isProduction ? "" : "font-semibold text-[#9A3A2D]"}>{x.departmentName}</span> since {x.from} — closes at punch-out
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-1.5">
                       <select
