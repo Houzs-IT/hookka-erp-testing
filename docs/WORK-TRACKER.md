@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-14**: Working Hours shows the day's department scans (branch `feat/working-hours-dept-scans`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-13**: Floor Live accuracy — shared pieces split, efficiency report on the shared rule (branch `fix/floor-live-accuracy`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-13**: Board report labour — non-production split out of direct labour (branch `fix/board-labour-split-nonprod`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-13**: Board report — Refresh showed the old copy (branch `fix/board-report-refresh-shows-new`, to `main`); nothing else re-checked.
@@ -310,6 +311,10 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Working Hours: the day's department scans under each worker (feat/working-hours-dept-scans, 2026-11-14)
+
+Owner (14 Nov, Floor Live showed MA SAN PAY OO in R&D since 07:48 but Working Hours had only her home-department row): 「attendance 的打卡记录也没有？是bugs？」 — not a bug: scans live in dept_scan_events and the day is split into department rows only at punch-out (checked: she clocked in 07:46, scanned R&D 07:48, back to Fabric Sewing 13:59 = 371 non-production minutes; most likely a wrong QR). Owner: 「可以帮我调整FE嘛？ 中途也可以看 然后就可以tally跟floorlive了」 → each worker-day on Working Hours lists its scans (`07:48 R&D → 13:59 Fab Sew`, non-production in red) from new read-only `GET /api/working-hour-entries/dept-scans`.
 
 ## 🔵 Board report: Refresh kept showing the old figures (fix/board-report-refresh-shows-new, 2026-11-13)
 
