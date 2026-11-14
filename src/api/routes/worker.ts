@@ -221,7 +221,7 @@ async function getCurrentDeptForWorker(
   try {
     const ds = await db
       .prepare(
-        "SELECT departmentcode FROM dept_scan_events WHERE workerid = ? AND date = ? ORDER BY atmin DESC LIMIT 1",
+        "SELECT departmentcode FROM dept_scan_events WHERE workerid = ? AND date = ? ORDER BY atmin DESC, createdat DESC LIMIT 1",
       )
       .bind(workerId, date)
       .first<{ departmentcode: string | null }>();

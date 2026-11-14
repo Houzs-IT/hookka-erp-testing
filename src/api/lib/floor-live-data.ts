@@ -36,7 +36,7 @@ export async function computeFloorLive(db: D1Database, orgId: string, date: stri
         WHERE org_id = ? AND ${DAY("date")} = ?
         ORDER BY clock_in ASC`,
     ).bind(orgId, date).all<{ employeeId: string | null; departmentCode: string | null; clockIn: string | null; clockOut: string | null }>(),
-    db.prepare(`SELECT workerid, departmentcode, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin`)
+    db.prepare(`SELECT workerid, departmentcode, atmin FROM dept_scan_events WHERE date = ? ORDER BY atmin, createdat`)
       .bind(date).all<{ workerid: string; departmentcode: string; atmin: number }>(),
     db.prepare(
       `SELECT worker_id, date, department_code, hours, notes
