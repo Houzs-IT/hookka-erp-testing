@@ -801,17 +801,32 @@ const UPH_OPEN = [
   { departmentCode: "PACKING", status: "PENDING" },
 ];
 
-test("HK-0153: ready armrest of an unfinished sofa set is not selectable", () => {
-  const sofaOpen = { ...sofaPiece("a"), jobCards: UPH_OPEN };
-  const { ready } = dp.buildReadyPlanning(setInputs([sofaOpen, accPO("arm", "so-1", UPH_DONE)]));
+const sofa8211 = (id, jobCards = UPH_DONE) => ({ ...sofaPiece(id), jobCards, productCode: "8211-6FT" });
+
+test("HK-0153: ready armrest of an unfinished 8211 set is not selectable", () => {
+  const { ready } = dp.buildReadyPlanning(
+    setInputs([sofa8211("a", UPH_OPEN), accPO("arm", "so-1", UPH_DONE)]),
+  );
   const arm = ready.find((r) => r.id === "arm");
   assert.equal(arm.setTotalSiblings, 2);
   assert.equal(arm.setReadySiblings, 1);
   assert.equal(arm.setComplete, false);
 });
 
-test("HK-0153: armrest ships once the whole sofa set is ready", () => {
-  const { ready } = dp.buildReadyPlanning(setInputs([sofaPiece("a"), accPO("arm", "so-1", UPH_DONE)]));
+test("HK-0153: the same holds for an 8210 sofa", () => {
+  const sofa8210 = { ...sofa8211("a", UPH_OPEN), productCode: "8210-3S" };
+  const { ready } = dp.buildReadyPlanning(setInputs([sofa8210, accPO("arm", "so-1", UPH_DONE)]));
+  assert.equal(ready.find((r) => r.id === "arm").setComplete, false);
+});
+
+test("HK-0153: armrest ships once the whole 8211 set is ready", () => {
+  const { ready } = dp.buildReadyPlanning(setInputs([sofa8211("a"), accPO("arm", "so-1", UPH_DONE)]));
+  assert.equal(ready.find((r) => r.id === "arm").setComplete, true);
+});
+
+test("HK-0153: other sofa models' armrests still ship per piece", () => {
+  const sofa5540 = { ...sofaPiece("a"), jobCards: UPH_OPEN, productCode: "5540-1A(LHF)" };
+  const { ready } = dp.buildReadyPlanning(setInputs([sofa5540, accPO("arm", "so-1", UPH_DONE)]));
   assert.equal(ready.find((r) => r.id === "arm").setComplete, true);
 });
 
