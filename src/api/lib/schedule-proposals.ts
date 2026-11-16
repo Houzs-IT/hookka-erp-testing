@@ -28,6 +28,7 @@
 
 import { computeChainWithAssignments } from "../routes/planning-schedule";
 import { todayYmdMY } from "../../lib/utils";
+import { loadLeadTimeSettings } from "./lead-times";
 
 // ── Runtime self-apply (ensureNonprodRequests pattern) ───────────────────────
 
@@ -177,6 +178,11 @@ export async function generateProposals(db: D1Database): Promise<GenerateProposa
       .run();
   } catch (err) {
     console.warn("[schedule-proposals] terminal-row purge failed:", err);
+  }
+
+  // Auto-schedule OFF => due dates stay blank; the agent proposes nothing (HK-0147).
+  if (!(await loadLeadTimeSettings(db)).autoScheduleEnabled) {
+    return { scanned: 0, proposed: 0, superseded: 0, expired, unscheduled: 0, overdue: 0 };
   }
 
   const { assignments } = await computeChainWithAssignments(db);
@@ -359,6 +365,10 @@ export async function applyPendingProposals(
   // which is exactly what was happening. Now it's set-based (2 statements per
   // 200-row chunk), so 2000 rows costs ~20 round-trips, not 4000. The cap now
   // bounds the transaction size, not the survivable work.
+  // Auto-schedule OFF => the drain writes nothing; queued proposals just expire (HK-0147).
+  if (!(await loadLeadTimeSettings(db)).autoScheduleEnabled) {
+    return { approved: 0, skipped: 0, remainingPending: 0 };
+  }
   const limit = Math.max(1, Math.min(2000, opts.limit ?? 300));
   const nowIso = new Date().toISOString();
 
