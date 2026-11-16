@@ -2501,6 +2501,11 @@ function CollapsibleGroup({
               </svg>
               <span className="text-xs font-semibold text-[#6B5C32]">{baseModel}</span>
               <span className="text-[10px] text-gray-400">({prods.length})</span>
+              {hasGroupDrafts && (
+                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FAEFCB] text-[#9C6F1E] whitespace-nowrap">
+                  {groupDraftCodes.length} DRAFT
+                </span>
+              )}
             </div>
             <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
               prods[0].category === "BEDFRAME"
