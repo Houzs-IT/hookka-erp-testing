@@ -181,6 +181,7 @@ test("Pending Delivery: incomplete sofa sets are not selectable; prototype set p
   assert.equal(setStatusLabel({ itemCategory: "SOFA", setComplete: false, setTotalSiblings: 5, setReadySiblings: 3 }), "Set 3 / 5 ready");
   assert.equal(setStatusLabel({ itemCategory: "SOFA", setComplete: true, setTotalSiblings: 3, setReadySiblings: 3 }), "Set 3 / 3 ready");
   assert.equal(setStatusLabel({ itemCategory: "BEDFRAME", setComplete: true, setTotalSiblings: 1, setReadySiblings: 1 }), "");
+  assert.equal(setStatusLabel({ itemCategory: "ACCESSORY", setComplete: false, setTotalSiblings: 7, setReadySiblings: 3 }), "Set 3 / 7 ready");
   assert.match(LIST, /rows\.filter\(\(r\) => r\.setComplete\)/);
 });
 
