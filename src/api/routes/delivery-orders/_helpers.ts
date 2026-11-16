@@ -4438,23 +4438,32 @@ export async function queueDoCustomerNotice(
       // free-typed, or an older DO). Resolve in order so the customer always
       // gets someone to call: (1) the phone stored on the DO → (2) the named
       // 3PL driver's phone → (3) the provider's dispatcher contact (joined via
-      // the DO's providerId). Best-effort; row still omitted only if all empty.
+      // the DO's driverId, which holds the provider id — delivery_orders has
+      // no providerId column). Best-effort; row still omitted only if all
+      // empty, and a failed lookup never drops the email (HK-0157).
       let driverContact = (doRow.driverPhone ?? "").trim();
-      if (!driverContact && (doRow.driverName ?? "").trim()) {
-        const drv = await c.var.DB.prepare(
-          "SELECT phone FROM three_pl_drivers WHERE name = ? AND COALESCE(phone,'') <> '' LIMIT 1",
-        )
-          .bind((doRow.driverName ?? "").trim())
-          .first<{ phone?: string | null }>();
-        if (drv?.phone) driverContact = String(drv.phone).trim();
-      }
-      if (!driverContact) {
-        const prov = await c.var.DB.prepare(
-          "SELECT d.phone AS phone FROM delivery_orders o JOIN drivers d ON d.id = o.providerId WHERE o.id = ? AND COALESCE(d.phone,'') <> '' LIMIT 1",
-        )
-          .bind(doRow.id)
-          .first<{ phone?: string | null }>();
-        if (prov?.phone) driverContact = String(prov.phone).trim();
+      try {
+        if (!driverContact && (doRow.driverName ?? "").trim()) {
+          const drv = await c.var.DB.prepare(
+            "SELECT phone FROM three_pl_drivers WHERE name = ? AND COALESCE(phone,'') <> '' LIMIT 1",
+          )
+            .bind((doRow.driverName ?? "").trim())
+            .first<{ phone?: string | null }>();
+          if (drv?.phone) driverContact = String(drv.phone).trim();
+        }
+        if (!driverContact) {
+          const prov = await c.var.DB.prepare(
+            "SELECT d.phone AS phone FROM delivery_orders o JOIN drivers d ON d.id = o.driverId WHERE o.id = ? AND COALESCE(d.phone,'') <> '' LIMIT 1",
+          )
+            .bind(doRow.id)
+            .first<{ phone?: string | null }>();
+          if (prov?.phone) driverContact = String(prov.phone).trim();
+        }
+      } catch (lookupErr) {
+        console.warn(
+          `[delivery-orders] ${doRow.doNo}: Contact No. lookup failed — sending without it`,
+          lookupErr instanceof Error ? lookupErr.message : lookupErr,
+        );
       }
       subjectHtmlText = dispatchNoticeTemplate({
         doNo: doRow.doNo,
