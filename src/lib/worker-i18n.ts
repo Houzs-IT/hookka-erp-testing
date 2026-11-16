@@ -1602,6 +1602,13 @@ const dict: Dict = {
     zh: '知道了',
     my: 'သဘောပေါက်ပါပြီ',
   },
+  // Tag on a home notice the worker already tapped "Got it" on (HK-0155).
+  'home.announcementAcknowledged': {
+    en: 'Acknowledged',
+    ms: 'Telah diakui',
+    zh: '已确认',
+    my: 'အသိအမှတ်ပြုပြီး',
+  },
   // Collapsed archive header + empty state for expired/hidden notices.
   'home.pastAnnouncements': {
     en: 'Past announcements',
