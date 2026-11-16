@@ -2465,14 +2465,15 @@ function CollapsibleGroup({
   const hasSelected = prods.some((p) => p.code === selectedProductCode);
   const [expanded, setExpanded] = useState(hasSelected);
   const groupDraftCodes = prods.filter((p) => draftCodes.has(p.code)).map((p) => p.code);
+  const hasGroupDrafts = groupDraftCodes.length > 0;
   const checkedGroupDraftCount = groupDraftCodes.filter((code) => checkedCodes.has(code)).length;
-  const areAllGroupDraftsChecked = groupDraftCodes.length > 0 && checkedGroupDraftCount === groupDraftCodes.length;
+  const areAllGroupDraftsChecked = hasGroupDrafts && checkedGroupDraftCount === groupDraftCodes.length;
   const areSomeGroupDraftsChecked = checkedGroupDraftCount > 0 && !areAllGroupDraftsChecked;
 
   return (
     <div>
       <div className="flex items-stretch bg-[#FAF9F7] border-b border-[#E2DDD8] sticky top-0 z-10">
-        {groupDraftCodes.length > 0 ? (
+        {hasGroupDrafts && (
           <label className="w-11 flex-shrink-0 flex items-center justify-center cursor-pointer">
             <input
               type="checkbox"
@@ -2485,12 +2486,10 @@ function CollapsibleGroup({
               className="w-4 h-4 cursor-pointer accent-[#6B5C32]"
             />
           </label>
-        ) : (
-          <span className="w-11 flex-shrink-0" aria-hidden="true" />
         )}
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex-1 min-w-0 pr-3 py-2 hover:bg-[#E2DDD8]/50 transition-colors"
+          className={`flex-1 min-w-0 pr-3 py-2 hover:bg-[#E2DDD8]/50 transition-colors ${hasGroupDrafts ? "" : "pl-3"}`}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
