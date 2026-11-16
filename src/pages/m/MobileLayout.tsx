@@ -79,6 +79,8 @@ const LegacyDashboardRedirect = lazy(() =>
 // The Finance app (finance v2 mobile) is code-split too: its report screens
 // pull in recharts and most phone sessions never open them.
 const FinanceRoute = lazy(() => import("./screens/finance/FinanceRoute"));
+// Claude Design `Employees 3.dc.html` (HK-0125): header + nine-section tab bar around the existing Employees lists.
+const EmployeesRoute = lazy(() => import("./screens/employees/EmployeesRoute"));
 // IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
 // ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
 const ItSupportPage = lazy(() => import("@/pages/it-support"));
@@ -252,6 +254,8 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // Claude Design `Invoices v2.dc.html`: six tabs (each gated on its API read
   // permission), status chips, summary, v2 invoice + record cards. Phone + tablet.
   invoices: InvoicesRoute,
+  // Claude Design `Employees 3.dc.html` (HK-0125). L2 detail stays the generic config-driven one.
+  employees: EmployeesRoute,
   // Claude Design `Customers v3.dc.html` (design-only handoff).
   customers: CustomersRoute,
 };
