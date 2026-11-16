@@ -18,7 +18,10 @@ import { isOverduePO } from "../utils";
 
 type Dept = { code: string; name: string };
 type Person = { id: string; name: string; empNo: string; departmentCode: string };
-type Audience = "ALL" | "DEPTS" | "WORKERS";
+type ErpUser = { id: string; name: string; email: string };
+// USERS (HK-0154): ERP accounts without the worker portal; they get a bell
+// notification (ERP desktop + mobile), not the worker-phone push.
+type Audience = "ALL" | "DEPTS" | "WORKERS" | "USERS";
 
 const MAX_ORDERS = MAX_NOTICE_ORDERS;
 
@@ -49,6 +52,8 @@ export function SendOrderNotificationDialog({
   const [people, setPeople] = useState<Person[]>([]);
   const [selDepts, setSelDepts] = useState<Set<string>>(new Set());
   const [selPeople, setSelPeople] = useState<Set<string>>(new Set());
+  const [users, setUsers] = useState<ErpUser[]>([]);
+  const [selUsers, setSelUsers] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,7 +64,11 @@ export function SendOrderNotificationDialog({
     let alive = true;
     (async () => {
       try {
-        const [d, w] = await Promise.all([fetch("/api/departments"), fetch("/api/workers")]);
+        const [d, w, u] = await Promise.all([
+          fetch("/api/departments"),
+          fetch("/api/workers"),
+          fetch("/api/announcements/erp-users"),
+        ]);
         if (d.ok) {
           const j = (await d.json()) as { data?: Dept[] };
           if (alive && Array.isArray(j.data)) setDepts(j.data.map((x) => ({ code: x.code, name: x.name })));
@@ -73,6 +82,10 @@ export function SendOrderNotificationDialog({
                 .map((x) => ({ id: x.id, name: x.name, empNo: x.empNo, departmentCode: x.departmentCode })),
             );
           }
+        }
+        if (u.ok) {
+          const j = (await u.json()) as { data?: ErpUser[] };
+          if (alive && Array.isArray(j.data)) setUsers(j.data);
         }
       } catch {
         /* pickers stay empty; "Everyone" still works */
@@ -89,6 +102,12 @@ export function SendOrderNotificationDialog({
       ? people.filter((p) => p.name.toLowerCase().includes(q) || p.empNo.toLowerCase().includes(q))
       : people;
   }, [people, search]);
+  const shownUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q
+      ? users.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+      : users;
+  }, [users, search]);
 
   const flip = (set: Set<string>, id: string) => {
     const n = new Set(set);
@@ -98,7 +117,9 @@ export function SendOrderNotificationDialog({
   };
   const tooMany = orders.length > MAX_ORDERS;
   const noRecipient =
-    (audience === "DEPTS" && selDepts.size === 0) || (audience === "WORKERS" && selPeople.size === 0);
+    (audience === "DEPTS" && selDepts.size === 0) ||
+    (audience === "WORKERS" && selPeople.size === 0) ||
+    (audience === "USERS" && selUsers.size === 0);
 
   async function send() {
     setBusy(true);
@@ -115,6 +136,7 @@ export function SendOrderNotificationDialog({
           note,
           targetDeptCodes: audience === "DEPTS" ? [...selDepts] : [],
           targetWorkerIds: audience === "WORKERS" ? [...selPeople] : [],
+          targetUserIds: audience === "USERS" ? [...selUsers] : [],
         }),
       });
       if (!res.ok) {
@@ -137,7 +159,8 @@ export function SendOrderNotificationDialog({
           {orders.length === 1
             ? `Order ${orders[0].poNo}`
             : `${orders.length} orders - one notification listing them all`}
-          . Workers get it on their phone and must acknowledge it.
+          . Workers get it on their phone and must acknowledge it. ERP users get it in their
+          notification bell.
         </p>
 
         <label className="mb-1 block text-[12px] font-semibold text-[#3A2E22]">Priority</label>
@@ -160,10 +183,16 @@ export function SendOrderNotificationDialog({
               ["DEPTS", "Departments"],
               ["WORKERS", "Individual workers"],
               ["ALL", "All workers"],
+              ["USERS", "ERP users"],
             ] as const
           ).map(([v, label]) => (
             <label key={v} className="flex items-center gap-1">
-              <input type="radio" name="hk25-audience" checked={audience === v} onChange={() => setAudience(v)} />
+              <input type="radio" name="hk25-audience" checked={audience === v}
+                onChange={() => {
+                  setAudience(v);
+                  setSearch("");
+                }}
+              />
               {label}
             </label>
           ))}
@@ -204,6 +233,29 @@ export function SendOrderNotificationDialog({
               ))}
             </div>
             <div className="mt-1 text-[11px] text-[#8A7F73]">{selPeople.size} selected</div>
+          </div>
+        )}
+        {audience === "USERS" && (
+          <div className="mb-3">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or email"
+              className="mb-1 h-8 w-full rounded border border-[#D4CFC7] px-2 text-[12px]"
+            />
+            <div className="max-h-40 overflow-y-auto rounded border border-[#E6E0D9] p-1 text-[12px]">
+              {shownUsers.map((u) => (
+                <label key={u.id} className="flex items-center gap-1 py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={selUsers.has(u.id)}
+                    onChange={() => setSelUsers((s) => flip(s, u.id))}
+                  />
+                  {u.name} <span className="text-[#9A918A]">{u.email}</span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-1 text-[11px] text-[#8A7F73]">{selUsers.size} selected</div>
           </div>
         )}
 

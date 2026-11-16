@@ -88,6 +88,11 @@ function makeDb(seed = []) {
   const inserts = [];
   const userLookups = [];
   const pushQueries = [];
+  const bell = new Map(); // notifications rows by id
+  const ERP_USERS = [
+    { id: "user-lim", email: "lim@example.com", displayName: "Lim", orgId: "hookka" },
+    { id: "user-amy", email: "amy@example.com", displayName: "Amy", orgId: "hookka" },
+  ];
   const prepare = (sql) => {
     const s = sql.trim();
     let bound = [];
@@ -105,6 +110,15 @@ function makeDb(seed = []) {
       },
       async all() {
         if (/FROM announcements WHERE org_id = \?/i.test(s)) return { results: [...rows.values()] };
+        if (/FROM users WHERE isActive = 1/i.test(s)) {
+          const [org, ...ids] = bound;
+          return {
+            results: ERP_USERS.filter((u) => u.orgId === org && (ids.length === 0 || ids.includes(u.id))),
+          };
+        }
+        if (/SELECT id FROM notifications WHERE id IN/i.test(s)) {
+          return { results: bound.filter((i) => bell.has(i)).map((id) => ({ id })) };
+        }
         if (/FROM users WHERE orgId = \? AND id IN/i.test(s)) {
           userLookups.push(bound);
           return { results: [{ id: "user-1", displayName: "Supervisor Sam" }] };
@@ -128,12 +142,17 @@ function makeDb(seed = []) {
           inserts.push(row);
           rows.set(row.id, row);
         }
+        if (/INSERT INTO notifications/i.test(s)) {
+          const [id, title, message, severity, link, created_at, org_id, user_id] = bound;
+          if (!bell.has(id)) bell.set(id, { id, title, message, severity, link, created_at, org_id, user_id, type: "PRODUCTION" });
+        }
         return { success: true };
       },
     };
     return o;
   };
-  return { db: { prepare }, inserts, userLookups, pushQueries };
+  const batch = async (stmts) => Promise.all(stmts.map((st) => st.run()));
+  return { db: { prepare, batch }, inserts, userLookups, pushQueries, bell };
 }
 
 async function adminApp(db, tag, role = "SUPER_ADMIN") {
@@ -270,4 +289,55 @@ test("GET list publishes priority, orderNo and who sent it (org-scoped lookup)",
   assert.equal(j.data[0].orderNo, "PO-9");
   assert.equal(j.data[0].createdByName, "Supervisor Sam");
   assert.equal(userLookups[0][0], "hookka");
+});
+
+// ---- HK-0154: ERP users (no worker portal) get a bell row ------------------
+test("POST to ERP users only: bell rows per user, NO announcement, NO push", async () => {
+  const { db, inserts, pushQueries, bell } = makeDb();
+  const app = await adminApp(db, "post-users");
+  const res = await post(app, { priority: "URGENT", orderIds: ["po-1"], targetUserIds: ["user-lim", "user-lim"] });
+  assert.equal(res.status, 201);
+  assert.equal(inserts.length, 0, "an empty worker target would mean ALL workers");
+  assert.equal(pushQueries.length, 0);
+  const rows = [...bell.values()];
+  assert.equal(rows.length, 1, "duplicate ids collapse to one row");
+  assert.equal(rows[0].user_id, "user-lim");
+  assert.equal(rows[0].org_id, "hookka");
+  assert.equal(rows[0].severity, "WARNING");
+  assert.equal(rows[0].title, "URGENT ORDER - PO-001");
+  assert.ok(rows[0].message.includes("Order No.: PO-001"));
+  // Same orders + priority again today -> 409, still one row.
+  const again = await post(app, { priority: "URGENT", orderIds: ["po-1"], targetUserIds: ["user-lim"] });
+  assert.equal(again.status, 409);
+  assert.equal(bell.size, 1);
+});
+
+test("POST to an unknown / other-org user is 400 and writes nothing", async () => {
+  const { db, inserts, bell } = makeDb();
+  const app = await adminApp(db, "post-users-bad");
+  const res = await post(app, { priority: "URGENT", orderIds: ["po-1"], targetUserIds: ["user-lim", "user-nope"] });
+  assert.equal(res.status, 400);
+  assert.equal(inserts.length, 0);
+  assert.equal(bell.size, 0);
+});
+
+test("POST to workers AND ERP users: announcement for the workers plus bell rows", async () => {
+  const { db, inserts, bell } = makeDb();
+  const app = await adminApp(db, "post-mixed");
+  const res = await post(app, {
+    priority: "PRIORITY", orderIds: ["po-2"], targetDeptCodes: ["FAB_CUT"], targetUserIds: ["user-amy"],
+  });
+  assert.equal(res.status, 201);
+  assert.equal(inserts.length, 1);
+  assert.equal(inserts[0].target_type, "DEPTS");
+  assert.equal([...bell.values()][0].severity, "INFO");
+});
+
+test("GET /erp-users lists this org's active users, gated like the send", async () => {
+  const { db } = makeDb();
+  const app = await adminApp(db, "erp-users");
+  const j = await (await app.request("/erp-users", {}, ENV)).json();
+  assert.deepEqual(j.data.map((u) => u.name), ["Amy", "Lim"]);
+  const denied = await adminApp(makeDb().db, "erp-users-denied", "READ_ONLY");
+  assert.equal((await denied.request("/erp-users", {}, ENV)).status, 403);
 });
