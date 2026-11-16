@@ -69,7 +69,7 @@ Owns production **planning, scheduling, MRP and lead times** — the read-mostly
 | `loadLeadTimeSettings` / `saveLeadTimeSettings` | `src/api/lib/lead-times.ts:258 / 285` | Auto-schedule toggle in `kv_config` |
 | `PUT /settings` | `src/api/routes/production-leadtimes.ts:202` | Persist the `autoScheduleEnabled` toggle |
 | `generateProposals` | `src/api/lib/schedule-proposals.ts:161` | Read-only proposal generation |
-| `applyPendingProposals` / `ensureProposalTables` | `src/api/lib/schedule-proposals.ts:350 / 34` | Apply approved batch / self-apply tables |
+| `applyPendingProposals` / `ensureProposalTables` | `src/api/lib/schedule-proposals.ts:358 / 36` | Apply approved batch / self-apply tables |
 | `POST /proposals/approve` | `src/api/routes/schedule-proposals.ts:158` | ONLY writer of `job_cards.dueDate` + `plan_snapshots` |
 | `recordAgentRun` / `isAgentPaused` | `src/api/lib/agent-console.ts:123 / 216` | Agent-run logging + pause gate |
 
@@ -90,7 +90,7 @@ Owns production **planning, scheduling, MRP and lead times** — the read-mostly
 ## Common tasks (mini-playbook)
 - **Change schedule/capacity math** → edit the `src/api/lib` engine (`planning-scheduler.ts` / `planning-chain.ts` / `planning-capacity.ts`), never the thin route. Verify with `tests/planning-scheduler.test.mjs`, `tests/scheduler.test.mjs`, `tests/scheduler-sent-lock.test.mjs`.
 - **Adjust a lead time or DD buffer** → math in `lead-times.ts` (`leadDaysFor:147`, `hookkaDDBufferFor:220`); persist via `PUT /api/production/leadtimes`; after config changes fire `POST /recalc-all`. Keep the inline form + `LeadTimeHistoryDialog` in sync.
-- **Add a proposal field / rule** → change `generateProposals` (`lib/schedule-proposals.ts:161`); it must stay read-only. Only extend the writer inside `POST /proposals/approve` (`schedule-proposals.ts:158`). Tables self-apply in `ensureProposalTables` (`:34`).
+- **Add a proposal field / rule** → change `generateProposals` (`lib/schedule-proposals.ts:161`); it must stay read-only. Only extend the writer inside `POST /proposals/approve` (`schedule-proposals.ts:158`). Tables self-apply in `ensureProposalTables` (`:36`).
 - **Add a Planning tab** → add to `TABS` (`index.tsx:198`) + a `{activeTab === "x" && (...)}` block; back it with a thin `app.get` in `planning-schedule.ts` calling a `src/api/lib` helper.
 - **Touch MRP** → run/read handlers in `mrp.ts` (run `POST /:536`, reads `:397/:458/:479`); page `mrp.tsx`.
 
