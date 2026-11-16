@@ -34,3 +34,15 @@ test("job-card sync from BOM honours the auto-schedule switch", () => {
   assert.match(src, /const blankDueDates = !\(await loadLeadTimeSettings\(db\)\)\.autoScheduleEnabled;/);
   assert.match(src, /const dueDate = blankDueDates \? "" : po\.targetEndDate/);
 });
+
+// Reopened 2026-11-16: the clear on 12 Nov blanked 10,096 cards; the Production
+// Agent's heartbeat wrote 9,908 of them back within a day, because neither the
+// proposal generator nor the auto-approve drain read the switch.
+test("Production Agent proposals honour the auto-schedule switch", () => {
+  const src = read("src/api/lib/schedule-proposals.ts");
+  const gate = /if \(!\(await loadLeadTimeSettings\(db\)\)\.autoScheduleEnabled\) \{/;
+  const gen = src.slice(src.indexOf("export async function generateProposals"), src.indexOf("computeChainWithAssignments(db)"));
+  assert.match(gen, gate, "generateProposals must stop before the engine runs");
+  const apply = src.slice(src.indexOf("export async function applyPendingProposals"), src.indexOf("FROM schedule_proposals WHERE status = 'PENDING'\n        ORDER BY"));
+  assert.match(apply, gate, "the drain must stop before it reads the queue");
+});

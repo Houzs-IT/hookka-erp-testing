@@ -311,6 +311,13 @@ export function buildReadyPlanning(inputs: ReadyPlanningInputs): {
     );
   };
   const siblingsBySo = new Map<string, { total: number; ready: number }>();
+  // HK-0153: in an SO with an 8211 / 8210 sofa, every piece counted in the set
+  // (armrests, sandbacks, cushions with an UPHOLSTERY card) waits for the whole
+  // set, so 1 SO = 1 DO. Other sofa models: only the sofa rows wait (Violet named
+  // these two models only).
+  const BOUND_SOFA_MODEL = /^821[01](?!\d)/;
+  const setMemberIds = new Set<string>();
+  const boundSofaSoIds = new Set<string>();
   for (const po of allPOs) {
     if (po.status === "CANCELLED") continue;
     if (po.consignmentOrderId) continue;
@@ -329,13 +336,22 @@ export function buildReadyPlanning(inputs: ReadyPlanningInputs): {
     if (!siblingsBySo.has(soId)) siblingsBySo.set(soId, { total: 0, ready: 0 });
     const slot = siblingsBySo.get(soId)!;
     slot.total += 1;
+    setMemberIds.add(po.id);
+    if (
+      soId &&
+      (po.itemCategory || "").toUpperCase() === "SOFA" &&
+      BOUND_SOFA_MODEL.test(po.productCode || "")
+    )
+      boundSofaSoIds.add(soId);
     if (pillow ? poReadyForDelivery(po, linkedPOIds) : allUphDone(po)) slot.ready += 1;
   }
 
   const mapPO = (po: ReadyPlanningPO): ReadyPORow => {
     const soInfo = soMap.get(po.salesOrderId || "");
     const isSofa = (po.itemCategory || "").toUpperCase() === "SOFA";
-    const sib = isSofa
+    const inSofaSet =
+      isSofa || (setMemberIds.has(po.id) && boundSofaSoIds.has(po.salesOrderId || ""));
+    const sib = inSofaSet
       ? siblingsBySo.get(po.salesOrderId || "") ?? { total: 1, ready: 1 }
       : { total: 1, ready: 1 };
     const hbOnlyPacking =

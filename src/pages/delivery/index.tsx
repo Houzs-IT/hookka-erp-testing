@@ -4120,7 +4120,8 @@ export default function DeliveryPage() {
         align: "left",
         sortable: false,
         render: (_v, row) => {
-          if ((row.itemCategory || "").toUpperCase() !== "SOFA") {
+          // HK-0153: an accessory of a sofa SO carries the sofa's set (total > 1).
+          if ((row.itemCategory || "").toUpperCase() !== "SOFA" && row.setTotalSiblings <= 1) {
             return <span className="text-[#9CA3AF]">{"\u2014"}</span>;
           }
           if (row.setComplete) {
@@ -5128,7 +5129,8 @@ export default function DeliveryPage() {
                 // clicks the row's checkbox, an incomplete set can't make
                 // it into selectedReadyPOs and therefore can't reach the
                 // Create DO POST. setComplete is true for BF/ACC and for
-                // ready SOFA sets, false only for partial SOFA sets.
+                // ready SOFA sets, false only for partial SOFA sets (incl.
+                // their accessories, HK-0153).
                 setSelectedReadyPOs(
                   new Set(rows.filter((r) => r.setComplete).map((r) => r.id)),
                 )

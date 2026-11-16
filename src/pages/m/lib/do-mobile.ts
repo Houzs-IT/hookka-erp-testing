@@ -355,8 +355,9 @@ export function poSelectable(po: RawRow): boolean {
 /** Prototype pill for SOFA rows only ("Set 3 / 5 ready"); BF / ACC ship per
  *  piece and show no set pill. Same data as desktop's Set Status column. */
 export function setStatusLabel(po: RawRow): string {
-  if (s(po, "itemCategory").toUpperCase() !== "SOFA") return "";
   const total = n(po, "setTotalSiblings") || 1;
+  // HK-0153: an accessory of a sofa SO carries the sofa's set (total > 1).
+  if (s(po, "itemCategory").toUpperCase() !== "SOFA" && total <= 1) return "";
   const ready = n(po, "setReadySiblings") || (po.setComplete === false ? 0 : total);
   return `Set ${ready} / ${total} ready`;
 }

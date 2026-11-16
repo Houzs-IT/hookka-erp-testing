@@ -802,7 +802,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/api/lib/packing-piece-identity.ts` — `packingPieceIdentity` (shared piece warehouse identity; appends `· pc N of M` to notes when pieceNo set + multi-piece) | | |
 | | `src/api/lib/job-card-completed-at.ts` — `ensureJobCardCompletedAt` / `observedCompletionAt` / `reconcileCompletedAt` / `readCompletedAt` (the completion INSTANT, beside the date-only `completed_date`) | `job_cards.completed_at` | `tests/job-card-completed-at.test.mjs` |
 | `src/pages/production/dept.tsx` / `overview.tsx` — thin wrappers over `production/index.tsx`, whose Overview counts now gate on `ordersObserved` (cold landing / in flight / dead read all print "—", -146) | `src/api/routes/wip-times.ts` — minute counts + `coverage.productsWithoutActiveBom` (`number \| null`, from `countProductsWithoutActiveBom` in `src/api/lib/wip-times-core.ts`) | `kv_config` · `products` (read: ACTIVE products with no ACTIVE bom_template) | `tests/sofa-combo.test.mjs` · `tests/planning-production-tile-truthfulness.test.mjs` |
-| `src/pages/bom.tsx` — BOM Management (6454) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
+| `src/pages/bom.tsx` — BOM Management (6639) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
 | `src/pages/cnc-templates.tsx` — CNC drilldown | | | |
 | `src/pages/production/components/` — BatchActionToolbar / CreateStockPODialog / CellBox / ProductDetailLine / OverviewCards (Cards view: WorkOrderCard, WorkOrderHeader, StagePipeline) | | | |
 
@@ -833,13 +833,13 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
   - WIPNode (recursive BOM tree node) — L1244-1508
   - BOMTreeView (template tree render, L1 + WIP; DRAFT badge + Activate button) — L1509-1886
   - CreateBOMDialog — L1887-2453
-  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM) — L2454-2547 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
-  - flattenWipTree / WipTreeCard / wipNodeAt — L2548-2776 (two-pane tree helpers, shared by Edit BOM and Master Templates)
-  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2777-3000
-  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3001-3906
-  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3907-4934
-  - BatchEditMaterialsDialog — L4935-6026
-  - BOMManagementPage (default export — page shell, tabs, list) — L6027-6610
+  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM; a group header with drafts shows an N DRAFT count and a tick box that selects them all) — L2454-2574 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
+  - flattenWipTree / WipTreeCard / wipNodeAt — L2575-2803 (two-pane tree helpers, shared by Edit BOM and Master Templates)
+  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2804-3027
+  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3028-3933
+  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3934-4961
+  - BatchEditMaterialsDialog — L4962-6053
+  - BOMManagementPage (default export — page shell, tabs, list) — L6054-6639
   - (ProductionTimesDialog and DeptPivotCategoryDialog were removed 2026-08-01.)
 
 **Gotchas**
@@ -1010,7 +1010,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/api/routes/payslips.ts` — payslip read/persist (OT buckets) | | |
 | | `src/api/routes/leaves.ts` — leave CRUD | | |
 | | `src/api/routes/payslips.ts` — payslip read/persist (OT buckets) + `calcStatutory` (EPF/SOCSO/EIS + **PCB**); generate writes the whole period in one `batch()` transaction, and approve refuses while `findWorkersMissingPayslip` lists an eligible worker with no payslip (BUG-2026-11-05-425) | `payslips.pcb_status` (mig 0229, runtime ALTER) · `workers.tax_residency` / `tax_category` / `tax_child_relief_sen` | `tests/pcb-calculation.test.mjs` · `tests/pcb-not-fabricated.test.mjs` · `tests/payslip-generate-all-or-nothing.test.mjs` |
-| `src/pages/announcements.tsx` — office compose + per-card **read-receipt panel** (`ReadReceiptPanel`: lazy GET `/:id/acks`, acked/pending lists, **Remind** → POST `/:id/remind`) | `src/api/routes/announcements.ts` — admin + worker sub-apps; auto-translate on POST/PATCH via `src/api/lib/translate-announcement.ts` (Claude, ANTHROPIC_API_KEY). **Read-receipts:** worker POST `/:id/ack` (idempotent upsert), worker GET returns `ackedIds` (SERVER-driven popup gate), admin GET `/:id/acks` (acked-vs-ACTIVE-roster split), admin POST `/:id/remind` (stamps `reminded_at` → re-pop) | `announcements` (snake_case; `translations` JSONB + `reminded_at`, runtime ALTER) · `announcement_acks` (PK `announcement_id,worker_id`; runtime CREATE TABLE) | `tests/announcement-translate.test.mjs` · `tests/announcement-acks.test.mjs` |
+| `src/pages/announcements.tsx` — office compose + per-card **read-receipt panel** (`ReadReceiptPanel`: lazy GET `/:id/acks`, acked/pending lists, **Remind** → POST `/:id/remind`) | `src/api/routes/announcements.ts` — admin + worker sub-apps; auto-translate on POST/PATCH via `src/api/lib/translate-announcement.ts` (Claude, ANTHROPIC_API_KEY). **Read-receipts:** worker POST `/:id/ack` (idempotent upsert), worker GET returns `ackedIds` (SERVER-driven popup gate), admin GET `/:id/acks` (acked-vs-ACTIVE-roster split), admin POST `/:id/remind` (stamps `reminded_at` → re-pop). **ERP users (HK-0154):** POST `targetUserIds` → one `notifications` bell row per active user of the org (`notifyErpUsers`; order notices use a per-MYT-day id, so a retry is a no-op / 409); users-only sends write NO announcement (an empty worker target means ALL workers); admin GET `/erp-users` (gated `announcements:create`) feeds the Production Overview Send Notification dialog's "ERP users" picker | `announcements` (snake_case; `translations` JSONB + `reminded_at`, runtime ALTER) · `announcement_acks` (PK `announcement_id,worker_id`; runtime CREATE TABLE) · `notifications` (bell rows) | `tests/announcement-translate.test.mjs` · `tests/announcement-acks.test.mjs` · `tests/order-notification.test.mjs` |
 
 **Big-file section index** (re-measured 2026-08-14 — the file is 11,784 lines.
 Every number below is the line of the `function` keyword, read out of the file,

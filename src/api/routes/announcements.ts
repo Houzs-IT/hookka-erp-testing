@@ -46,6 +46,7 @@ import {
   type OrderPriority,
 } from "../../lib/order-notification";
 import { capList } from "../lib/list-cap";
+import { ensureNotificationsUserColumn } from "./it-support";
 
 // ---- runtime schema self-apply (idempotent, once per isolate) ----
 let _announcementsMig: Promise<void> | null = null;
@@ -603,6 +604,64 @@ admin.get("/:id/acks", async (c) => {
   });
 });
 
+// GET /api/announcements/erp-users — the ERP users the Overview "Send
+// Notification" dialog can pick (HK-0154): active users of this org. Gated like
+// the send itself, so a sender needs no users:read to fill the picker.
+admin.get("/erp-users", async (c) => {
+  const denied = await requirePermission(c, "announcements", "create");
+  if (denied) return denied;
+  const res = await c.var.DB.prepare(
+    "SELECT id, email, displayName FROM users WHERE isActive = 1 AND (orgId = ? OR orgId IS NULL)",
+  )
+    .bind(adminOrgId(c))
+    .all<{ id: string; email: string | null; displayName?: string | null; display_name?: string | null }>();
+  const data = (res.results ?? [])
+    .map((u) => ({
+      id: u.id,
+      name: u.displayName ?? u.display_name ?? u.email ?? u.id,
+      email: u.email ?? "",
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return c.json({ success: true, data });
+});
+
+// One bell row per ERP user (HK-0154) — the top-bar bell and the /m Updates
+// tab both read /api/notifications. An order notice gets a per-day id per user,
+// so a retry or double click is a no-op; returns how many users got a NEW row.
+async function notifyErpUsers(
+  c: Context<Env>,
+  orgId: string,
+  userIds: string[],
+  n: { title: string; text: string; priority: OrderPriority | null; orderId: string | null },
+): Promise<number> {
+  const db = c.var.DB;
+  await ensureNotificationsUserColumn(db);
+  const base = n.priority && n.orderId
+    ? `ordnote-${mytDayStartIso()}-${n.priority}-${n.orderId}`
+    : genId();
+  const ids = userIds.map((u) => `${base}-${u}`);
+  const seen = await db
+    .prepare(`SELECT id FROM notifications WHERE id IN (${ids.map(() => "?").join(",")})`)
+    .bind(...ids)
+    .all<{ id: string }>();
+  const already = new Set((seen.results ?? []).map((r) => String(r.id)));
+  const fresh = userIds.filter((_, i) => !already.has(ids[i]));
+  if (fresh.length === 0) return 0;
+  const severity = n.priority && orderNoticeCategory(n.priority) === "WARNING" ? "WARNING" : "INFO";
+  const nowIso = new Date().toISOString();
+  await db.batch(
+    fresh.map((u) =>
+      db
+        .prepare(
+          `INSERT INTO notifications (id, type, title, message, severity, is_read, link, created_at, org_id, user_id)
+           VALUES (?, 'PRODUCTION', ?, ?, ?, 0, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+        )
+        .bind(`${base}-${u}`, n.title, n.text, severity, n.priority ? "/production" : null, nowIso, orgId, u),
+    ),
+  );
+  return fresh.length;
+}
+
 // POST /api/announcements — create. Body: { title, body?, expiresAt? }
 admin.post("/", async (c) => {
   const denied = await requirePermission(c, "announcements", "create");
@@ -616,6 +675,16 @@ admin.post("/", async (c) => {
   // server looks the orders up by id AND org and builds the text itself, so a
   // client cannot name an order it does not own or spoof its number.
   const priority = readOrderPriority((body as { priority?: unknown }).priority);
+  // ERP users (HK-0154) get a bell row, not the worker-phone announcement. When
+  // they are the ONLY audience no announcement is written: an empty worker
+  // target would mean ALL workers.
+  const reqUserIds = [
+    ...new Set(readStringArray((body as { targetUserIds?: unknown }).targetUserIds as string[] | undefined)),
+  ];
+  const usersOnly =
+    reqUserIds.length > 0 &&
+    readStringArray((body as { targetDeptCodes?: unknown }).targetDeptCodes as string[] | undefined).length === 0 &&
+    readStringArray((body as { targetWorkerIds?: unknown }).targetWorkerIds as string[] | undefined).length === 0;
   let orderNo: string | null = null;
   let orderId: string | null = null;
   if (priority) {
@@ -669,8 +738,8 @@ admin.post("/", async (c) => {
     orderNo = orders.map((r) => r.poNo).join(", ");
     orderId = ids.slice().sort().join(",");
     // Dedupe: the same orders + priority already sent today (Malaysia day) -> 409, so a
-    // retry / double click never re-alerts the floor.
-    const dup = await c.var.DB.prepare(
+    // retry / double click never re-alerts the floor. (ERP-user rows dedupe by id.)
+    const dup = usersOnly ? null : await c.var.DB.prepare(
       `SELECT id FROM announcements
         WHERE org_id = ? AND priority = ? AND order_id = ? AND created_at >= ?
         LIMIT 1`,
@@ -689,6 +758,33 @@ admin.post("/", async (c) => {
   }
   if (!title) {
     return c.json({ success: false, error: "Title is required" }, 400);
+  }
+  if (reqUserIds.length > 200) {
+    return c.json({ success: false, error: "Pick at most 200 ERP users" }, 400);
+  }
+  if (reqUserIds.length > 0) {
+    // Only active users of this org — checked before anything is written.
+    const ok = await c.var.DB.prepare(
+      `SELECT id FROM users WHERE isActive = 1 AND (orgId = ? OR orgId IS NULL)
+          AND id IN (${reqUserIds.map(() => "?").join(",")})`,
+    )
+      .bind(orgId, ...reqUserIds)
+      .all<{ id: string }>();
+    const known = new Set((ok.results ?? []).map((r) => String(r.id)));
+    const missing = reqUserIds.filter((u) => !known.has(u));
+    if (missing.length > 0) {
+      return c.json({ success: false, error: `User not found: ${missing.join(", ")}` }, 400);
+    }
+  }
+  if (usersOnly) {
+    const notified = await notifyErpUsers(c, orgId, reqUserIds, { title, text, priority, orderId });
+    if (notified === 0) {
+      return c.json(
+        { success: false, error: "This notification was already sent today for these orders" },
+        409,
+      );
+    }
+    return c.json({ success: true, data: { notifiedUsers: notified } }, 201);
   }
   // Optional expiry — accept an ISO/date string; store it verbatim when it
   // parses, else reject (reject-don't-normalize). Empty/absent → never expires.
@@ -798,6 +894,14 @@ admin.post("/", async (c) => {
   } catch (err) {
     // Best-effort only — log and move on. The announcement is already created.
     console.error("[announcements] push fan-out failed (non-fatal):", err);
+  }
+  if (reqUserIds.length > 0) {
+    // Best-effort like the push: the announcement already exists.
+    try {
+      await notifyErpUsers(c, orgId, reqUserIds, { title, text, priority, orderId });
+    } catch (err) {
+      console.error("[announcements] ERP-user bell rows failed (non-fatal):", err);
+    }
   }
   return c.json({ success: true, data: row ? toPublic(row) : null }, 201);
 });
