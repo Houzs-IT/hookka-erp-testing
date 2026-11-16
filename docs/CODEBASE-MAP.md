@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-11-16 on branch `feat/bom-group-draft-count` (to `staging`)**: the `src/pages/bom.tsx` row (line count), the CollapsibleGroup entry (group header N DRAFT count) and the ranges from CollapsibleGroup onward in its line-range index, re-measured from the file. Nothing else re-checked.
 > **Last verified: 2026-11-16 on branch `fix/bom-group-header-align` (to `staging`)**: the `src/pages/bom.tsx` row (line count), the CollapsibleGroup entry and the ranges from CollapsibleGroup onward in its line-range index, re-measured from the file. Nothing else re-checked.
 > **Last verified: 2026-11-16 on branch `feat/bom-select-group-drafts` (to `staging`)**: the `src/pages/bom.tsx` row (line count), the CollapsibleGroup entry (group header tick box) and the ranges from CollapsibleGroup onward in its line-range index, re-measured from the file. Nothing else re-checked.
 
@@ -993,7 +994,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/api/lib/packing-piece-identity.ts` — `packingPieceIdentity` (shared piece warehouse identity; appends `· pc N of M` to notes when pieceNo set + multi-piece) | | |
 | | `src/api/lib/job-card-completed-at.ts` — `ensureJobCardCompletedAt` / `observedCompletionAt` / `reconcileCompletedAt` / `readCompletedAt` (the completion INSTANT, beside the date-only `completed_date`) | `job_cards.completed_at` | `tests/job-card-completed-at.test.mjs` |
 | `src/pages/production/dept.tsx` / `overview.tsx` — thin wrappers over `production/index.tsx`, whose Overview counts now gate on `ordersObserved` (cold landing / in flight / dead read all print "—", -146) | `src/api/routes/wip-times.ts` — minute counts + `coverage.productsWithoutActiveBom` (`number \| null`, from `countProductsWithoutActiveBom` in `src/api/lib/wip-times-core.ts`) | `kv_config` · `products` (read: ACTIVE products with no ACTIVE bom_template) | `tests/sofa-combo.test.mjs` · `tests/planning-production-tile-truthfulness.test.mjs` |
-| `src/pages/bom.tsx` — BOM Management (6609) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
+| `src/pages/bom.tsx` — BOM Management (6614) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
 | `src/pages/cnc-templates.tsx` — CNC drilldown | | | |
 | `src/pages/production/components/` — BatchActionToolbar / CreateStockPODialog / CellBox / ProductDetailLine / OverviewCards (Cards view: WorkOrderCard, WorkOrderHeader, StagePipeline) | | | |
 
@@ -1024,13 +1025,13 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
   - WIPNode (recursive BOM tree node) — L1239-1503
   - BOMTreeView (template tree render, L1 + WIP; DRAFT badge + Activate button) — L1504-1881
   - CreateBOMDialog — L1882-2448
-  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM; a draft row and a group header with drafts carry a tick box for bulk activate) — L2449-2564 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
-  - flattenWipTree / WipTreeCard / wipNodeAt — L2565-2793 (two-pane tree helpers, shared by Edit BOM and Master Templates)
-  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2794-3017
-  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3018-3907
-  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3908-4935
-  - BatchEditMaterialsDialog — L4936-6023
-  - BOMManagementPage (default export — page shell, tabs, list) — L6024-6609
+  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM; a draft row and a group header with drafts carry a tick box for bulk activate; the header also shows an N DRAFT count) — L2449-2569 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
+  - flattenWipTree / WipTreeCard / wipNodeAt — L2570-2798 (two-pane tree helpers, shared by Edit BOM and Master Templates)
+  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2799-3022
+  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3023-3912
+  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3913-4940
+  - BatchEditMaterialsDialog — L4941-6028
+  - BOMManagementPage (default export — page shell, tabs, list) — L6029-6614
   - (ProductionTimesDialog and DeptPivotCategoryDialog were removed 2026-08-01.)
 
 **Gotchas**
