@@ -600,6 +600,16 @@ test("notify-customer endpoint: RBAC, status guards, no-recipient skip, no-invoi
   assert.match(doRouteSrc, /await buildSimpleTablePdf\(\{/);
 });
 
+test("dispatch notice: Contact No. fallback joins on driverId and can't kill the notice (HK-0157)", () => {
+  // delivery_orders has NO providerId column — the 3PL provider id lives in
+  // driverId. Joining on o.providerId threw for every DO without a driver
+  // phone, so the whole dispatch email silently 500'd (DO-2610-087 onward).
+  assert.doesNotMatch(doRouteSrc, /ON d\.id = o\.providerId/);
+  assert.match(doRouteSrc, /JOIN drivers d ON d\.id = o\.driverId/);
+  // Best-effort lookup: a failure degrades to "no Contact No.", never to no email.
+  assert.match(doRouteSrc, /Contact No\. lookup failed — sending without it/);
+});
+
 test("notify-customer idempotency: runtime columns, dual-key reads, atomic claim", () => {
   // Self-applied stamp columns (unquoted camelCase folds lowercase).
   assert.match(
