@@ -991,8 +991,17 @@ export default function WorkerHomePage() {
                 <li key={a.id} className="px-4 py-3">
                   {/* Category badge — always visible (even when collapsed) so
                       the worker can scan notice types at a glance. */}
-                  <div className="mb-1">
+                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
                     <AnnouncementCategoryBadge category={a.category} />
+                    {/* HK-0155: the only ack control is the one-time popup, so
+                        an acked notice must SAY it's acked or it reads as
+                        "no acknowledge button". */}
+                    {!unackedAnnouncements.includes(a) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#EAF3E5] px-2 py-0.5 text-[11px] font-semibold text-[#3F6B2E]">
+                        <CheckCircle2 className="h-3 w-3" />
+                        {t("home.announcementAcknowledged")}
+                      </span>
+                    )}
                   </div>
                   {/* Header row — tap to fold/unfold (owner 2026-06-26). The
                       click still bubbles to the <ul> so it also marks seen. */}
