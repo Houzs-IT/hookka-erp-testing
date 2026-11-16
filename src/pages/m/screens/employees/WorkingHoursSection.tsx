@@ -2,22 +2,28 @@
 //
 // Top: Time adjustment requests (AdjustmentRequests). Below: Daily working hours — one card per worker per day
 // (name, the day's total tag, punch in / out) with the Department / Category / Hours / Notes table inline under the punch
-// times, as in the approved HTML (minus its Edit / Delete buttons). Opens on the whole current Malaysia month; the date button narrows to one
+// times, as in the approved HTML (minus its Edit / Delete buttons). Only the first 5 show here; "View all N" opens a full page
+// (HoursPage) like the Approved / Rejected adjustments. Opens on the whole current Malaysia month; the date button narrows to one
 // work day, the search finds a name or employee number, a chip filters by department. Edit, Delete and the desktop-only
 // "Copy / Print" actions are not offered. Data: the existing working-hour-entries, attendance, workers and departments
 // endpoints; nothing is written.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CalendarDays, Clock, Search } from "lucide-react";
+import { CalendarDays, ChevronRight, Clock, Search } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
+import { printReport, type PrintColumn } from "@/lib/print-report";
 import { todayYmdMYForReads } from "@/lib/staging-today";
 import { M } from "../../theme";
 import { AdjustmentRequests } from "./AdjustmentRequests";
 import DatePickButton from "./DatePickButton";
 import { MIN_DATE } from "./employees-dates";
-import { dayHeading, fmtHours } from "./employees-format";
-import { CARD, CARD_HEAD, CARD_TITLE, COUNT_PILL, INNER, LINK_BUTTON, SEARCH_BOX, SEARCH_INPUT, TAG_TONE } from "./employees-styles";
+import { dayHeading } from "./employees-format";
+import { CARD, CARD_HEAD, CARD_TITLE, COUNT_PILL, LINK_BUTTON, SEARCH_BOX, SEARCH_INPUT } from "./employees-styles";
+import HoursCard from "./HoursCard";
+import { useMenuBridge } from "./menu-context";
+import HoursPage from "./HoursPage";
 import { rowsOf } from "./time-adjustments-model";
+import { buildWorkingHoursPrint } from "./working-hours-print";
 import { useCanReadAttendance, type AdjustmentList } from "./use-time-adjustments";
 import {
   WH_PARAMS,
@@ -42,7 +48,7 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
   const q = params.get("q") ?? "";
   const wdate = /^\d{4}-\d{2}-\d{2}$/.test(params.get("wdate") ?? "") ? (params.get("wdate") as string) : "";
   const dept = params.get("wdept") ?? "";
-  const [showAll, setShowAll] = useState(false);
+  const [pageOpen, setPageOpen] = useState(false);
 
   const setParam = (key: (typeof WH_PARAMS)[number], value: string) =>
     setParams(
@@ -74,7 +80,28 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
   const filtered = useMemo(() => applyFilters(rows, filters), [rows, q, wdate, dept]); // eslint-disable-line react-hooks/exhaustive-deps
   const options = useMemo(() => deptOptions(rows, filters), [rows, q, wdate, dept]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => groupByDate(filtered), [filtered]);
-  const visible = showAll ? groups : limitGroups(groups, PREVIEW_ROWS);
+  const visible = limitGroups(groups, PREVIEW_ROWS);
+
+  // "..." menu → Print: registers while at least one entry matches the filters. It prints EVERY matching entry (not just the
+  // first five cards) with the shared print engine desktop's Working Hours tab uses. Built from primitives so this effect
+  // runs when the data or a filter changes, not on every render.
+  const bridge = useMenuBridge();
+  const printable = filtered.length > 0;
+  useEffect(() => {
+    if (!bridge || !printable) return;
+    bridge.setPrint(() => {
+      const spec = buildWorkingHoursPrint({
+        rows,
+        filters: { q, date: wdate, dept },
+        window: { from: win.from, to: win.to },
+        deptName: (code) => depts.find((d) => d.code === code)?.name || code,
+      });
+      if (spec.entries === 0) return;
+      const columns: PrintColumn[] = spec.columns.map((c, i) => ({ header: c.header, align: c.align, value: (r: unknown) => (r as string[])[i] }));
+      printReport({ title: spec.title, filterSummary: spec.filterSummary, orientation: spec.orientation, cards: spec.cards, sections: [{ columns, rows: spec.rows }] });
+    });
+    return () => bridge.setPrint(null);
+  }, [bridge, printable, rows, q, wdate, dept, win.from, win.to, depts]);
   const loadingFirst = entriesRes.data === null && entriesRes.loading;
   const failed = entriesRes.data === null && !entriesRes.loading && !!entriesRes.error;
 
@@ -88,7 +115,7 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
           <span style={CARD_TITLE}>Daily working hours</span>
           <span style={COUNT_PILL}>{filtered.length}</span>
         </div>
-        <div style={{ display: "grid", gap: 8, padding: "0 10px 10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, padding: "0 10px 10px" }}>
           <div style={{ display: "flex", gap: 8 }}>
             <label style={SEARCH_BOX}>
               <Search size={16} strokeWidth={1.9} color={M.muted} />
@@ -97,7 +124,6 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
                 value={q}
                 onChange={(e) => {
                   setParam("q", e.target.value);
-                  setShowAll(false);
                 }}
                 placeholder="Name or employee no…"
                 className="emp-ph"
@@ -111,7 +137,6 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
               max={today}
               onPick={(d) => {
                 setParam("wdate", d);
-                setShowAll(false);
               }}
               ariaLabel={wdate ? `Work date ${dayHeading(wdate)}. Change date` : "Filter by work date"}
               style={{
@@ -140,8 +165,7 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
                   aria-pressed={on}
                   onClick={() => {
                     setParam("wdept", o.code);
-                    setShowAll(false);
-                  }}
+                    }}
                   style={{
                     flex: "none",
                     height: 34,
@@ -174,13 +198,13 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
         {!loadingFirst && !failed && rows.length === 0 ? <Note>No working hours recorded in this period.</Note> : null}
         {!loadingFirst && !failed && rows.length > 0 && filtered.length === 0 ? <Note>No entries match these filters.</Note> : null}
 
-        <div style={{ display: "grid", gap: 12, padding: "0 10px 10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, padding: "0 10px 10px" }}>
           {visible.map((g) => (
-            <div key={g.date}>
+            <div key={g.date} style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, padding: "2px 4px 6px" }}>
                 <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: M.taupe, textTransform: "uppercase" }}>{g.title}</span>
               </div>
-              <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
                 {g.rows.map((r) => (
                   <HoursCard key={r.key} r={r} />
                 ))}
@@ -189,61 +213,18 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
           ))}
         </div>
         {filtered.length > PREVIEW_ROWS ? (
-          <button type="button" onClick={() => setShowAll((v) => !v)} style={LINK_BUTTON}>
-            {showAll ? "Show fewer" : `Show all ${filtered.length}`}
+          <button type="button" onClick={() => setPageOpen(true)} style={{ ...LINK_BUTTON, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+            View all {filtered.length}
+            <ChevronRight size={15} strokeWidth={2} />
           </button>
         ) : null}
       </section>
 
+      {pageOpen ? <HoursPage rows={filtered} onClose={() => setPageOpen(false)} /> : null}
     </>
   );
 }
 
 function Note({ children }: { children: React.ReactNode }) {
   return <div style={{ padding: "0 14px 12px", fontSize: 12.5, color: M.ink }}>{children}</div>;
-}
-
-/** One worker's day, as in the HTML: name + day-total tag, punch in / out, then the department table. Read-only. */
-function HoursCard({ r }: { r: WhRow }) {
-  const tone = TAG_TONE[r.tag.tone];
-  return (
-    <div style={INNER}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: M.raisin, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {r.name}
-        </span>
-        <span style={{ flex: "none", height: 22, display: "inline-flex", alignItems: "center", padding: "0 8px", borderRadius: 999, background: tone.bg, color: tone.fg, fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-          {r.tag.label}
-        </span>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: M.ink, fontVariantNumeric: "tabular-nums" }}>
-        <Clock size={13} strokeWidth={2} color="#8B7A4E" />
-        <span>Punch in / out</span>
-        <span style={{ fontWeight: 700, color: M.raisin }}>
-          {r.punchIn ?? "—"} → {r.punchOut ?? "—"}
-        </span>
-      </div>
-      {r.segs.length > 1 ? <div style={{ fontSize: 11, color: M.muted, marginTop: 3 }}>Split the day’s hours across the departments</div> : null}
-
-      <div style={{ marginTop: 8, borderRadius: 9, background: M.card, boxShadow: "inset 0 0 0 1px #EEE9E4", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr) 46px", gap: 6, padding: "6px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, color: M.muted, textTransform: "uppercase" }}>
-          <span>Department</span>
-          <span>Category</span>
-          <span style={{ textAlign: "right" }}>Hours</span>
-        </div>
-        {r.segs.map((s, i) => (
-          <div key={`${s.deptCode}-${s.category}-${i}`} style={{ padding: "6px 10px", borderTop: "1px solid #F0ECE9" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr) 46px", gap: 6, alignItems: "center", fontSize: 12.5 }}>
-              <span style={{ minWidth: 0, color: M.raisin, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.deptName}</span>
-              <span style={{ minWidth: 0, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.category ? s.category.charAt(0) + s.category.slice(1).toLowerCase() : "n/a"}</span>
-              <span style={{ textAlign: "right", fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums" }}>{fmtHours(s.hours)} h</span>
-            </div>
-            <div style={{ fontSize: 11.5, color: s.notes ? M.raisin : M.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              <span style={{ color: M.muted }}>Notes:</span> {s.notes || "—"}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }

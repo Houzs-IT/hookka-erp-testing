@@ -6,18 +6,26 @@
 // had), through the generic ModuleListScreen in its `embedded` mode. Rows still open /m/employees/:id and
 // /m/payslips/:id exactly as before.
 //
-// Employee Master is not one of the nine sections in the design, so it stays reachable from the "⋯" menu.
+// Employee Master is desktop-only: it is not one of the nine sections and not in any "⋯" menu. A section whose menu has no
+// ready item shows no "⋯" button.
 // The section lives in the URL (`?section=`) so Back from a detail screen returns to the same section.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useCachedJson } from "@/lib/cached-fetch";
 import { useSearchParams } from "react-router-dom";
-import { ChevronRight, Ellipsis, Users } from "lucide-react";
-import { MobileHeader, Sheet } from "../../components";
+import { Ellipsis } from "lucide-react";
+import { usePermissions } from "@/lib/use-permission";
+import { MobileHeader } from "../../components";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
 import { M } from "../../theme";
 import { ModuleListScreen } from "../ModuleListScreen";
 import AttendanceSection from "./AttendanceSection";
+import MenuSheet from "./MenuSheet";
+import OverviewSection from "./OverviewSection";
 import { ATT_PARAMS } from "./attendance-model";
-import { EMPLOYEES_SECTIONS, MASTER_TAB, resolveSection, sectionConfig, type EmployeesSectionKey } from "./employees-sections";
+import { EMPLOYEES_SECTIONS, resolveSection, sectionConfig, type EmployeesSectionKey } from "./employees-sections";
+import { dayHeading } from "./employees-format";
+import { EFFICIENCY_REPORT_URL, menuItems, menuTitle, type MenuAction } from "./employees-menu";
+import { MenuBridgeContext, type MenuBridge } from "./menu-context";
 import { pendingBadge } from "./time-adjustments-model";
 import { usePendingAdjustments } from "./use-time-adjustments";
 import WorkingHoursSection from "./WorkingHoursSection";
@@ -30,6 +38,10 @@ export default function EmployeesRoute() {
   const [params, setParams] = useSearchParams();
   const section = resolveSection(params.get("section"));
   const [menuOpen, setMenuOpen] = useState(false);
+  // Working Hours registers its Print action here while it has entries to print (see menu-context.ts).
+  const [whPrint, setWhPrint] = useState<(() => void) | null>(null);
+  const bridge = useMemo<MenuBridge>(() => ({ setPrint: (fn) => setWhPrint(() => fn) }), []);
+  const { hasPermission } = usePermissions();
   const barTop = useStickyBelowHeader();
   const barRef = useRef<HTMLDivElement>(null);
   // Fetched ONCE here: the Working Hours tab badge and the request card below read this same list.
@@ -59,19 +71,29 @@ export default function EmployeesRoute() {
 
   const listConfig = useMemo(() => {
     if (section === "overview" || section === "working-hours" || section === "attendance") return null;
-    if (section === "employee-master") return sectionConfig(MASTER_TAB);
     const tab = EMPLOYEES_SECTIONS.find((s) => s.key === section)?.tab;
     return tab ? sectionConfig(tab) : null;
   }, [section]);
 
+  const items = menuItems(section, {
+    canWorkersRead: hasPermission("workers", "read"),
+    canPrintWorkingHours: section === "working-hours" && whPrint !== null,
+  });
+  function pick(a: MenuAction) {
+    setMenuOpen(false);
+    if (a === "efficiency-report") window.open(EFFICIENCY_REPORT_URL, "_blank", "noopener"); // no date: the previous working day
+    else if (a === "print-working-hours") whPrint?.(); // inside the tap, so the print window is allowed to open
+  }
+
   return (
-    <>
+    <MenuBridgeContext.Provider value={bridge}>
       {/* The HTML turns every input placeholder brown at 75% (input::placeholder). */}
       <style>{".emp-ph::placeholder{color:#6B5C32;opacity:.75}"}</style>
       <MobileHeader
         title="Employees"
         menu
         trailing={
+          items.length === 0 ? undefined : (
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
@@ -96,6 +118,7 @@ export default function EmployeesRoute() {
           >
             <Ellipsis size={19} strokeWidth={2} />
           </button>
+          )
         }
       />
 
@@ -181,15 +204,11 @@ export default function EmployeesRoute() {
         </div>
       </div>
 
-      {section === "overview" ? <OverviewPlaceholder /> : null}
+      {section === "overview" ? <OverviewSection pending={adj} onGo={go} /> : null}
       {section === "working-hours" ? <WorkingHoursSection pending={adj} /> : null}
       {section === "attendance" ? <AttendanceSection /> : null}
 
-      {section === "employee-master" ? (
-        <div style={{ padding: "12px 18px 0", fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe }}>
-          EMPLOYEE MASTER
-        </div>
-      ) : null}
+      {section === "efficiency" ? <EfficiencyPeriodNote /> : null}
 
       {listConfig ? (
         <ModuleListScreen
@@ -200,69 +219,29 @@ export default function EmployeesRoute() {
         />
       ) : null}
 
-      <Sheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Employees">
-        <button
-          type="button"
-          onClick={() => {
-            setMenuOpen(false);
-            go("employee-master");
-          }}
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "12px 4px",
-            border: "none",
-            background: "none",
-            fontFamily: "inherit",
-            textAlign: "left",
-            cursor: "pointer",
-            color: M.raisin,
-          }}
-        >
-          <span
-            style={{
-              width: 36,
-              height: 36,
-              flex: "none",
-              borderRadius: 10,
-              background: M.card,
-              boxShadow: "inset 0 0 0 1px #E6E0D9",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: M.taupe,
-            }}
-          >
-            <Users size={18} strokeWidth={1.9} />
-          </span>
-          <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>Employee Master</span>
-          <ChevronRight size={16} strokeWidth={2} color={M.muted} />
-        </button>
-      </Sheet>
-    </>
+      <MenuSheet
+        open={menuOpen}
+        title={menuTitle(section, EMPLOYEES_SECTIONS.find((x) => x.key === section)?.label)}
+        items={items}
+        onClose={() => setMenuOpen(false)}
+        onPick={pick}
+      />
+    </MenuBridgeContext.Provider>
   );
 }
 
-/** Overview arrives in a later phase (the four month-to-date cards + Needs action). Nothing here pretends to be data. */
-function OverviewPlaceholder() {
+/**
+ * The Efficiency Overview list is still the old one: the report for ONE day (the previous working day, picked by the
+ * server), not a month. Say so, with the actual date, so it is not read as the Overview card's month-to-date figure.
+ * The period is aligned with the Overview and the shared date range in Phase 4.
+ */
+function EfficiencyPeriodNote() {
+  const { data } = useCachedJson<{ data?: { date?: string } }>("/api/reports/efficiency.json");
+  const date = data?.data?.date;
   return (
-    <div style={{ padding: "14px 18px 0" }}>
-      <div
-        role="status"
-        style={{
-          padding: 16,
-          borderRadius: 16,
-          background: M.card,
-          boxShadow: "0 1px 2px rgba(31,29,27,.05), 0 12px 28px -16px rgba(31,29,27,.22)",
-        }}
-      >
-        <div style={{ fontSize: 14, fontWeight: 700, color: M.raisin }}>Overview is coming soon</div>
-        <div style={{ fontSize: 12.5, color: M.ink, marginTop: 4, lineHeight: 1.45 }}>
-          The month-to-date cards and Needs action will appear here. Every other section opens as before.
-        </div>
-      </div>
+    <div role="status" style={{ margin: "12px 18px 0", padding: "10px 12px", borderRadius: 12, background: "#F4EFE6", fontSize: 12.5, lineHeight: 1.35, color: M.raisin }}>
+      <b style={{ fontWeight: 700 }}>Period: {date ? dayHeading(date) : "the previous working day"}</b>
+      <div style={{ color: M.ink }}>The previous working day, not month to date.</div>
     </div>
   );
 }

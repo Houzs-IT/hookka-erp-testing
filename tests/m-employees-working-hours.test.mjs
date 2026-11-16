@@ -194,7 +194,7 @@ test("history search matches name, date, department, note, job and reason", () =
 
 // ---- wiring ---------------------------------------------------------------------------------------------------------
 test("writes are limited to Approve / Reject of pending requests: Daily Working Hours, Attendance and Remove stay read-only", () => {
-  for (const f of ["WorkingHoursSection.tsx", "AttendanceSection.tsx", "AttendanceDetail.tsx", "PunchPhotoViewer.tsx"]) {
+  for (const f of ["WorkingHoursSection.tsx", "HoursCard.tsx", "HoursPage.tsx", "AttendanceSection.tsx", "AttendanceDetail.tsx", "PunchPhotoViewer.tsx"]) {
     const s = src(f);
     assert.ok(!/method:\s*["'](POST|PUT|PATCH|DELETE)["']|mutateJson|adjustment-actions/i.test(s), `${f} makes no write`);
     assert.ok(!/>\s*(Approve|Reject|Edit|Delete|Remove)\s*</.test(s), `${f} has no action button`);
@@ -228,9 +228,10 @@ test("the pending badge and the card share one list (the shell fetches it once a
 // ---- Phase 2 review fixes: compact list + read-only detail card, working date button ----------------------------------
 test("the Working Hours card follows the HTML: the department table sits inline under the punch times, read-only", () => {
   const code = (t) => t.replace(/^\s*\/\/.*$/gm, "");
-  const list = code(src("WorkingHoursSection.tsx"));
+  const list = code(src("WorkingHoursSection.tsx") + src("HoursCard.tsx"));
   for (const col of ["Department", "Category", "Hours", "Notes:", "Punch in / out"]) assert.ok(list.includes(col), `card has ${col}`);
-  assert.ok(!/HoursDetail|role="button"|ChevronRight/.test(list), "no tap-to-open detail on a Working Hours card");
+  assert.ok(!/HoursDetail|role="button"/.test(list), "no tap-to-open detail on a Working Hours card");
+  assert.ok(!/ChevronRight/.test(code(src("HoursCard.tsx"))), "the card itself has no chevron (it is not tappable)");
   assert.ok(!/>\s*(Edit|Delete)\s*</.test(list), "no Edit / Delete buttons");
   assert.ok(!/Pencil|Trash/.test(list));
 });
@@ -257,7 +258,7 @@ test("the work date input is bounded: not after today (Malaysia), not before 202
 
 test("Daily working hours is the HTML card without extras: no period line, no per-date totals, no day-total captions", () => {
   const code = (t) => t.replace(/^\s*\/\/.*$/gm, "");
-  const list = code(src("WorkingHoursSection.tsx"));
+  const list = code(src("WorkingHoursSection.tsx") + src("HoursCard.tsx"));
   assert.ok(!/day totals, all departments|all days/.test(list), "no period line under the title");
   assert.ok(!/workers\} \{|g\.workers|g\.hours/.test(list), "no worker / hour totals beside the date heading");
   assert.ok(!/day total/.test(list.replace(/Split the day/g, "")), "no 'X h of Y h day total' caption");
@@ -336,4 +337,28 @@ test("Reject needs a reason; Approve / Reject appear only with attendance:update
   assert.match(card, /Enter a reason to reject\./);
   assert.match(card, /The worker sees this reason\./);
   assert.match(card, /min of \{req\} requested/);
+});
+
+test("Daily working hours: first 5 rows, then 'View all N' opens a full page (not an inline expansion); the cards cannot widen past the screen", () => {
+  const sec = src("WorkingHoursSection.tsx");
+  assert.match(sec, /limitGroups\(groups, PREVIEW_ROWS\)/);
+  assert.match(sec, /View all \{filtered\.length\}/);
+  assert.match(sec, /setPageOpen\(true\)/);
+  assert.match(sec, /<HoursPage rows=\{filtered\}/);
+  assert.ok(!/showAll|Show fewer|Show all/.test(sec), "no inline Show all / Show fewer any more");
+  const page = src("HoursPage.tsx");
+  assert.match(page, /position: "fixed", inset: 0, zIndex: 70/);
+  assert.match(page, /const PAGE = 30/);
+  assert.match(page, /Load \{PAGE\} more/);
+  assert.match(page, /NEWEST FIRST/);
+  assert.match(page, /aria-label="Back"/);
+  assert.match(page, /<HoursCard key=\{r\.key\} r=\{r\} \/>/, "the same card as the list");
+  // the clipping bug: grid items default to min-width:auto, so a long nowrap note widened the whole card; every grid here is
+  // a single shrinkable column and every item may shrink
+  for (const f of ["WorkingHoursSection.tsx", "HoursPage.tsx"]) {
+    const s = src(f);
+    assert.ok(!/display: "grid", gap:/.test(s), `${f}: a grid without a shrinkable column`);
+    assert.match(s, /gridTemplateColumns: "minmax\(0, 1fr\)"/);
+  }
+  assert.match(src("HoursCard.tsx"), /\.\.\.INNER, minWidth: 0/);
 });

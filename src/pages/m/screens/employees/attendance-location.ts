@@ -53,6 +53,19 @@ export function rowLocation(r: LocPunch): RowLoc {
 /** One punch, in words (the detail card shows the clock-in and clock-out separately). */
 export const PUNCH_LABEL: Record<PunchLoc, string> = { in: "At factory", out: "Off-site", none: "No GPS" };
 
+/** Distance of the farthest punch with usable GPS, in metres; null when there is none. */
+export function rowFarthestMeters(r: LocPunch): number | null {
+  const ms: number[] = [];
+  if (punchLoc(r.clockInLat, r.clockInLng) !== "none") ms.push(metersFromFactory(r.clockInLat as number, r.clockInLng as number));
+  if (punchLoc(r.clockOutLat, r.clockOutLng) !== "none") ms.push(metersFromFactory(r.clockOutLat as number, r.clockOutLng as number));
+  return ms.length ? Math.max(...ms) : null;
+}
+
+/** The clock time of the punch that put the row Off-site (the in-punch if it is outside the fence, else the out-punch). */
+export function offsitePunchTime(r: LocPunch & { clockIn?: string | null; clockOut?: string | null }): string | null {
+  return punchLoc(r.clockInLat, r.clockInLng) === "out" ? (r.clockIn ?? null) : (r.clockOut ?? null);
+}
+
 /** 38 → "38 m"; 1380 → "1.4 km". */
 export function fmtDistance(meters: number): string {
   return meters < 1000 ? `${Math.round(meters)} m` : `${(meters / 1000).toFixed(1)} km`;

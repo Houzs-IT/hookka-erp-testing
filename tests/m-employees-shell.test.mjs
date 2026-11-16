@@ -98,7 +98,7 @@ test("the date helpers hold no hard-coded date and never read the clock", () => 
   assert.ok(!/2026-11-13|new Date\(\)/.test(sheet), "the sheet takes `today` from its caller");
 });
 
-test("pill order matches Employees 3.dc.html and Employee Master is only in the menu", () => {
+test("pill order matches Employees 3.dc.html and Employee Master is not on the phone (desktop only)", () => {
   const route = src("screens/employees/employees-sections.ts");
   const menu = src("screens/employees/EmployeesRoute.tsx");
   const labels = [...route.matchAll(/\{ key: "[a-z-]+", label: "([^"]+)", tab: /g)].map((m) => m[1]);
@@ -114,7 +114,8 @@ test("pill order matches Employees 3.dc.html and Employee Master is only in the 
     "Payroll",
   ]);
   assert.ok(!labels.includes("Employee Master"));
-  assert.match(menu, /Employee Master<\/span>/, "reachable from the ⋯ menu");
+  assert.ok(!/Employee Master/.test(src("screens/employees/employees-menu.ts").replace(/\/\/.*$/gm, "")), "not in any ⋯ menu");
+  assert.ok(menu.includes("menuItems("), "the shell builds its menu from menuItems");
 });
 
 test("every section but Overview maps to an existing data source tab", () => {

@@ -70,9 +70,22 @@ export function attendanceLink(opts: { loc?: LocFilter; from?: string; to?: stri
   return `/m/employees?${p.toString()}`;
 }
 
-/** Only rows with a punch, as desktop's Attendance tab does. */
+/**
+ * Only rows with a punch, as desktop's Attendance tab does, and each attendance record ONCE (by id). The Overview's
+ * "Attendance exceptions" count and the Attendance list both come through here, so they cannot disagree.
+ */
 export function punchRows(raw: readonly AttRow[] | null | undefined): AttRow[] {
-  return (raw ?? []).filter((r) => r.clockIn || r.clockOut);
+  const seen = new Set<string>();
+  const out: AttRow[] = [];
+  for (const r of raw ?? []) {
+    if (!(r.clockIn || r.clockOut)) continue;
+    if (r.id) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+    }
+    out.push(r);
+  }
+  return out;
 }
 
 export function periodLabel(period: AttPeriod): string {

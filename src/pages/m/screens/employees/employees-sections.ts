@@ -16,16 +16,13 @@ export const EMPLOYEES_SECTIONS = [
   { key: "payroll", label: "Payroll", tab: "payroll" },
 ] as const;
 
-export type EmployeesSectionKey = (typeof EMPLOYEES_SECTIONS)[number]["key"] | "employee-master";
+export type EmployeesSectionKey = (typeof EMPLOYEES_SECTIONS)[number]["key"];
 
-// Phase 1 keeps landing on Working Hours (the first tab the screen always opened on) because Overview is still a
-// placeholder; Phase 3 switches the default to "overview", the design's default pill.
-export const DEFAULT_SECTION: EmployeesSectionKey = "working-hours";
-export const MASTER_TAB = "directory";
+// Overview is the design's default pill (HK-0125 Phase 3); it was Working Hours until Overview was built.
+export const DEFAULT_SECTION: EmployeesSectionKey = "overview";
 
-/** Pure: a `?section=` value → a known section (unknown / missing → DEFAULT_SECTION). */
+/** Pure: a `?section=` value → a known section (unknown / missing, including the old Employee Master value, → DEFAULT_SECTION). */
 export function resolveSection(raw: string | null): EmployeesSectionKey {
-  if (raw === "employee-master") return "employee-master";
   return EMPLOYEES_SECTIONS.some((s) => s.key === raw) ? (raw as EmployeesSectionKey) : DEFAULT_SECTION;
 }
 
