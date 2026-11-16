@@ -244,7 +244,7 @@ const STATUS_LABEL: Record<string, string> = {
 const NEEDS_REPORTER = new Set(["waiting_reporter", "resolved"]);
 
 let notificationsUserColumn: Promise<void> | null = null;
-const ensureNotificationsUserColumn = (db: Parameters<typeof runSelfApply>[0]) =>
+export const ensureNotificationsUserColumn = (db: Parameters<typeof runSelfApply>[0]) =>
   memoizeSelfApply(
     () => notificationsUserColumn,
     (p) => { notificationsUserColumn = p; },
