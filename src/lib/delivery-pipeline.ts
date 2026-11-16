@@ -543,3 +543,17 @@ export function buildCnReadyPlanning(inputs: CnReadyPlanningInputs): {
     .map(mapPO);
   return { planning, ready };
 }
+
+// HK-0153: the Pending Delivery grid lets an incomplete-set row be ticked, but
+// the page drops it before Create DO. This line tells the user why.
+export function incompleteSetHint(
+  rows: Pick<ReadyPORow, "salesOrderNo" | "setReadySiblings" | "setTotalSiblings" | "setComplete">[],
+): string {
+  const bySo = new Map<string, string>();
+  for (const r of rows) {
+    if (r.setComplete || bySo.has(r.salesOrderNo)) continue;
+    bySo.set(r.salesOrderNo, `${r.salesOrderNo} (${r.setReadySiblings}/${r.setTotalSiblings} ready)`);
+  }
+  if (bySo.size === 0) return "";
+  return `Waiting for the full set: ${[...bySo.values()].join(", ")}. Create DO appears when every piece is ready.`;
+}
