@@ -844,3 +844,23 @@ test("HK-0141: non-pillow accessory does not join the sofa set", () => {
   const { ready } = dp.buildReadyPlanning(setInputs([sofaPiece("a"), cushion]));
   assert.equal(ready.find((r) => r.id === "a").setTotalSiblings, 1);
 });
+
+// HK-0153 follow-up: ticking a row of an incomplete set does nothing, so the
+// page says why (YH, 16 Nov: "Yes, add hint").
+test("HK-0153: incompleteSetHint names each waiting SO once", () => {
+  const row = (salesOrderNo, ready, total) => ({
+    salesOrderNo,
+    setReadySiblings: ready,
+    setTotalSiblings: total,
+    setComplete: ready === total,
+  });
+  assert.equal(dp.incompleteSetHint([row("SO-1", 2, 2)]), "");
+  assert.equal(
+    dp.incompleteSetHint([row("SO-2610-078", 3, 7), row("SO-2610-078", 3, 7), row("SO-9", 1, 1)]),
+    "Waiting for the full set: SO-2610-078 (3/7 ready). Create DO appears when every piece is ready.",
+  );
+  assert.equal(
+    dp.incompleteSetHint([row("SO-A", 3, 7), row("SO-B", 4, 5)]),
+    "Waiting for the full set: SO-A (3/7 ready), SO-B (4/5 ready). Create DO appears when every piece is ready.",
+  );
+});

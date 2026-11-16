@@ -60,6 +60,7 @@ import { mutationWithData, MutationResultSchema } from "@/lib/schemas/common";
 import { DeliveryOrderSchema } from "@/lib/schemas/delivery-order";
 import { SalesOrderSchema } from "@/lib/schemas/sales-order";
 import {
+  incompleteSetHint,
   isHbOnlySpecial,
   pickRelevantUphCards,
   poInPlanning,
@@ -1015,6 +1016,8 @@ export default function DeliveryPage() {
   // per-DO Resend). Drives the spinner + disables the Resend button.
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [selectedReadyPOs, setSelectedReadyPOs] = useState<Set<string>>(new Set());
+  // HK-0153: why a ticked row did not count (its set is incomplete).
+  const [setHint, setSetHint] = useState("");
   const [creatingDOFromPO, setCreatingDOFromPO] = useState(false);
   // T-006 R10 — the DO create route is wrapped in withIdempotency server-side;
   // without this header that wrapper is a no-op. A create that times out at
@@ -5107,6 +5110,11 @@ export default function DeliveryPage() {
             </div>
           </CardHeader>
           <CardContent>
+            {setHint && (
+              <p role="status" className="mb-2 text-xs text-amber-700">
+                {setHint}
+              </p>
+            )}
             <DataGrid<ReadyPORow>
               columns={pendingDeliveryColumns}
               data={readyPage}
@@ -5131,9 +5139,12 @@ export default function DeliveryPage() {
                 // Create DO POST. setComplete is true for BF/ACC and for
                 // ready SOFA sets, false only for partial SOFA sets (incl.
                 // their accessories, HK-0153).
-                setSelectedReadyPOs(
-                  new Set(rows.filter((r) => r.setComplete).map((r) => r.id)),
-                )
+                {
+                  setSelectedReadyPOs(
+                    new Set(rows.filter((r) => r.setComplete).map((r) => r.id)),
+                  );
+                  setSetHint(incompleteSetHint(rows));
+                }
               }
             />
             {!search.trim() && (
