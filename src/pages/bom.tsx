@@ -2448,7 +2448,7 @@ function CreateBOMDialog({
 // ---------- Collapsible Group ----------
 function CollapsibleGroup({
   baseModel, prods, existingCodes, activeCodes, selectedProductCode, onSelect,
-  draftCodes, checkedCodes, onToggleChecked,
+  draftCodes, checkedCodes, onToggleChecked, onToggleCodes,
 }: {
   baseModel: string;
   prods: Product[];
@@ -2459,37 +2459,60 @@ function CollapsibleGroup({
   draftCodes: ReadonlyMap<string, string>;
   checkedCodes: Set<string>;
   onToggleChecked: (code: string) => void;
+  onToggleCodes: (codes: readonly string[]) => void;
 }) {
   // Auto-expand if a product in this group is selected
   const hasSelected = prods.some((p) => p.code === selectedProductCode);
   const [expanded, setExpanded] = useState(hasSelected);
+  const groupDraftCodes = prods.filter((p) => draftCodes.has(p.code)).map((p) => p.code);
+  const checkedGroupDraftCount = groupDraftCodes.filter((code) => checkedCodes.has(code)).length;
+  const areAllGroupDraftsChecked = groupDraftCodes.length > 0 && checkedGroupDraftCount === groupDraftCodes.length;
+  const areSomeGroupDraftsChecked = checkedGroupDraftCount > 0 && !areAllGroupDraftsChecked;
 
   return (
     <div>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-3 py-2 bg-[#FAF9F7] border-b border-[#E2DDD8] sticky top-0 z-10 hover:bg-[#E2DDD8]/50 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <svg
-              className={`w-3 h-3 text-gray-400 transition-transform flex-shrink-0 ${expanded ? "rotate-90" : ""}`}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
-            <span className="text-xs font-semibold text-[#6B5C32]">{baseModel}</span>
-            <span className="text-[10px] text-gray-400">({prods.length})</span>
+      <div className="flex items-stretch bg-[#FAF9F7] border-b border-[#E2DDD8] sticky top-0 z-10">
+        {groupDraftCodes.length > 0 ? (
+          <label className="w-11 flex-shrink-0 flex items-center justify-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={areAllGroupDraftsChecked}
+              ref={(element) => {
+                if (element) element.indeterminate = areSomeGroupDraftsChecked;
+              }}
+              onChange={() => onToggleCodes(groupDraftCodes)}
+              aria-label={`Select all ${groupDraftCodes.length} drafts in ${baseModel}`}
+              className="w-4 h-4 cursor-pointer accent-[#6B5C32]"
+            />
+          </label>
+        ) : (
+          <span className="w-11 flex-shrink-0" aria-hidden="true" />
+        )}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex-1 min-w-0 pr-3 py-2 hover:bg-[#E2DDD8]/50 transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <svg
+                className={`w-3 h-3 text-gray-400 transition-transform flex-shrink-0 ${expanded ? "rotate-90" : ""}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-xs font-semibold text-[#6B5C32]">{baseModel}</span>
+              <span className="text-[10px] text-gray-400">({prods.length})</span>
+            </div>
+            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+              prods[0].category === "BEDFRAME"
+                ? "bg-[#FAEFCB] text-[#9C6F1E]"
+                : "bg-[#E0EDF0] text-[#3E6570]"
+            }`}>
+              {prods[0].category}
+            </span>
           </div>
-          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-            prods[0].category === "BEDFRAME"
-              ? "bg-[#FAEFCB] text-[#9C6F1E]"
-              : "bg-[#E0EDF0] text-[#3E6570]"
-          }`}>
-            {prods[0].category}
-          </span>
-        </div>
-      </button>
+        </button>
+      </div>
       {expanded && prods.map((p) => {
         const hasBOM = existingCodes.has(p.code);
         return (
@@ -6220,11 +6243,12 @@ export default function BOMManagementPage() {
     });
   }
 
-  function toggleAllVisibleDrafts() {
+  function toggleCodes(productCodes: readonly string[]) {
     setCheckedCodes((previous) => {
       const next = new Set(previous);
-      for (const code of visibleDraftCodes) {
-        if (areAllVisibleDraftsChecked) next.delete(code);
+      const areAllChecked = productCodes.every((code) => previous.has(code));
+      for (const code of productCodes) {
+        if (areAllChecked) next.delete(code);
         else next.add(code);
       }
       return next;
@@ -6423,7 +6447,7 @@ export default function BOMManagementPage() {
               {visibleDraftCodes.length > 0 && (
                 <button
                   type="button"
-                  onClick={toggleAllVisibleDrafts}
+                  onClick={() => toggleCodes(visibleDraftCodes)}
                   className="-my-1 px-2 py-1 rounded font-medium text-[#6B5C32] hover:bg-[#FAF9F7] hover:underline"
                 >
                   {areAllVisibleDraftsChecked
@@ -6448,6 +6472,7 @@ export default function BOMManagementPage() {
                 draftCodes={draftTemplateIdByCode}
                 checkedCodes={checkedDraftCodes}
                 onToggleChecked={toggleCheckedCode}
+                onToggleCodes={toggleCodes}
               />
             ))}
             {groupedProducts.length === 0 && (
