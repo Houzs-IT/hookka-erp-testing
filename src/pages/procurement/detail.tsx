@@ -42,6 +42,7 @@ import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 // Review C1-5: photos / videos / PDFs on the PO and on each of its lines.
 import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
 import { useFlowLineFiles } from "@/lib/use-flow-line-files";
+import { PoLineUnitSelect } from "@/components/po-line-unit-select";
 
 const ComposeDialog = lazy(() =>
   import("@/pages/mail-center/compose").then((m) => ({ default: m.ComposeDialog })),
@@ -1082,9 +1083,12 @@ export default function PurchaseOrderDetailPage() {
                         </div>
                         <div>
                           <label className="block text-xs text-[#6B7280] mb-1">Unit</label>
-                          <div className="h-8 flex items-center px-2 text-xs text-[#374151] bg-white rounded border border-[#E2DDD8]">
-                            {line.unit}
-                          </div>
+                          <PoLineUnitSelect
+                            className="w-full"
+                            value={line.unit}
+                            disabled={line.receivedQty > 0}
+                            onChange={(u) => updateLine(idx, { unit: u })}
+                          />
                         </div>
                         <div className="col-span-5 flex items-end justify-end">
                           <span className="text-xs font-medium text-[#1F1D1B]">

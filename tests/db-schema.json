@@ -2531,6 +2531,7 @@
     "pi_id",
     "po_id",
     "po_item_id",
+    "po_qty",
     "qty",
     "supplier_sku",
     "tax_sen",

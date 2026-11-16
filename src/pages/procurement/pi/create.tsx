@@ -112,6 +112,10 @@ type PILineDraft = {
   /** HK-0149: the unit billed in, and the PO line's own (PO-picked lines only). */
   uom?: string | null;
   poUnit?: string | null;
+  /** HK-0149: with another unit, how much of the PO line it covers; and the
+   *  quantity it was picked with (the default for that). */
+  poQty?: number | null;
+  pickedQty?: number;
 };
 
 function emptyPILine(): PILineDraft {
@@ -294,6 +298,7 @@ function CreatePurchaseInvoicePage() {
             poItemId: it.id,
             uom: it.unit ?? null,
             poUnit: it.unit ?? null,
+            pickedQty: it.quantity,
           }));
           setLines(prefilled.length > 0 ? prefilled : [emptyPILine()]);
         })
@@ -477,6 +482,7 @@ function CreatePurchaseInvoicePage() {
       poItemId: l.poItemId,
       uom: l.unit ?? null,
       poUnit: l.unit ?? null,
+      pickedQty: l.qty,
     }));
     setLines((prev) => {
       if (!append) return incoming.length > 0 ? incoming : [emptyPILine()];
@@ -614,6 +620,7 @@ function CreatePurchaseInvoicePage() {
               poItemId: l.poItemId ?? null,
               // HK-0149: the server keeps it only when it differs from the PO line's.
               uom: l.uom ?? null,
+              poQty: l.poQty ?? null,
             };
           });
         })(),
@@ -1091,6 +1098,9 @@ function CreatePurchaseInvoicePage() {
                           poUnit={line.poUnit}
                           editable={!!line.poItemId && !line.grnItemId}
                           onChange={(u) => updateLine(idx, "uom", u)}
+                          poQty={line.poQty}
+                          defaultPoQty={line.pickedQty}
+                          onPoQtyChange={(q) => updateLine(idx, "poQty", q)}
                         />
                       </td>
                       {/* Unit Price (RM) */}

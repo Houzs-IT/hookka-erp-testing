@@ -48,6 +48,7 @@ import type { Supplier, SupplierMaterialBinding, RawMaterial } from "@/types";
 import { ArrowLeft, Check, Plus, Save, Trash2, X } from "lucide-react";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
+import { PoLineUnitSelect } from "@/components/po-line-unit-select";
 
 // Same shape used by the modal in procurement/index.tsx — kept identical
 // so the POST payload matches what the existing /api/purchase-orders
@@ -385,6 +386,10 @@ function CreatePurchaseOrderPage() {
       next[idx] = { ...next[idx], quantity: qty };
       return next;
     });
+  };
+
+  const updateItemUnit = (idx: number, unit: string) => {
+    setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, unit } : it)));
   };
 
   const updateItemPrice = (idx: number, priceSen: number) => {
@@ -977,7 +982,9 @@ function CreatePurchaseOrderPage() {
                             />
                           </td>
                           {/* Unit */}
-                          <td className="px-3 py-2 text-sm text-[#374151]">{item.unit}</td>
+                          <td className="px-3 py-2">
+                            <PoLineUnitSelect value={item.unit} onChange={(u) => updateItemUnit(idx, u)} />
+                          </td>
                           {/* Lead */}
                           <td className="px-3 py-2 text-right text-sm text-[#374151]">
                             {item.leadTimeDays}d

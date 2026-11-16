@@ -80,6 +80,8 @@ type DraftLine = {
   /** HK-0149: the unit billed in, and the PO line's own. */
   uom?: string | null;
   poUnit?: string | null;
+  /** HK-0149: with another unit, how much of the PO line it covers. */
+  poQty?: number | null;
 };
 
 // Status lifecycle (post-simplification, owner 2026-06-29):
@@ -128,6 +130,7 @@ type PurchaseInvoiceItem = {
   /** HK-0149: billed unit when it differs from the PO line's; the PO line's unit. */
   uom?: string | null;
   poUnit?: string | null;
+  poQty?: number | null;
 };
 
 // Linked documents, returned by GET /api/purchase-invoices/:id alongside the
@@ -457,6 +460,7 @@ export default function PurchaseInvoiceDetailPage() {
         poItemId: it.poItemId ?? null,
         uom: it.uom ?? it.poUnit ?? null,
         poUnit: it.poUnit ?? null,
+        poQty: it.poQty ?? null,
       })),
     );
     setDirty(false);
@@ -572,6 +576,7 @@ export default function PurchaseInvoiceDetailPage() {
         poItemId: l.poItemId ?? null,
         // HK-0149: the server keeps it only when it differs from the PO line's.
         uom: l.uom ?? null,
+        poQty: l.poQty ?? null,
       }));
       const res = await fetch(`/api/purchase-invoices/${pi.id}`, {
         method: "PUT",
@@ -922,8 +927,8 @@ export default function PurchaseInvoiceDetailPage() {
                           <td className="h-12 px-3 text-[#4B5563]">
                             {it.uom || it.poUnit || "-"}
                             {it.uom && it.poUnit && (
-                              <div className="text-[11px] leading-tight text-[#B8860B]" title="Billed in another unit than the PO line: not counted against the PO quantity or received into stock">
-                                PO in {it.poUnit}
+                              <div className="text-[11px] leading-tight text-[#B8860B]" title="Billed in another unit than the PO line: this quantity goes into stock; the PO line counts what it covers">
+                                for {it.poQty ?? 0} {it.poUnit}
                               </div>
                             )}
                           </td>
@@ -1147,6 +1152,9 @@ export default function PurchaseInvoiceDetailPage() {
                             poUnit={l.poUnit}
                             editable={!!l.poItemId && !l.grnItemId}
                             onChange={(u) => patchLine(i, { uom: u })}
+                            poQty={l.poQty}
+                            defaultPoQty={Number(l.qty) || 0}
+                            onPoQtyChange={(q) => patchLine(i, { poQty: q })}
                           />
                         </td>
                         <td className="px-2 py-1.5">
