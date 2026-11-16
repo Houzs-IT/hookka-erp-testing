@@ -802,7 +802,7 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
 | | `src/api/lib/packing-piece-identity.ts` — `packingPieceIdentity` (shared piece warehouse identity; appends `· pc N of M` to notes when pieceNo set + multi-piece) | | |
 | | `src/api/lib/job-card-completed-at.ts` — `ensureJobCardCompletedAt` / `observedCompletionAt` / `reconcileCompletedAt` / `readCompletedAt` (the completion INSTANT, beside the date-only `completed_date`) | `job_cards.completed_at` | `tests/job-card-completed-at.test.mjs` |
 | `src/pages/production/dept.tsx` / `overview.tsx` — thin wrappers over `production/index.tsx`, whose Overview counts now gate on `ordersObserved` (cold landing / in flight / dead read all print "—", -146) | `src/api/routes/wip-times.ts` — minute counts + `coverage.productsWithoutActiveBom` (`number \| null`, from `countProductsWithoutActiveBom` in `src/api/lib/wip-times-core.ts`) | `kv_config` · `products` (read: ACTIVE products with no ACTIVE bom_template) | `tests/sofa-combo.test.mjs` · `tests/planning-production-tile-truthfulness.test.mjs` |
-| `src/pages/bom.tsx` — BOM Management (6454) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
+| `src/pages/bom.tsx` — BOM Management (6639) | `src/api/routes/production-leadtimes.ts` — due-date buffer | | |
 | `src/pages/cnc-templates.tsx` — CNC drilldown | | | |
 | `src/pages/production/components/` — BatchActionToolbar / CreateStockPODialog / CellBox / ProductDetailLine / OverviewCards (Cards view: WorkOrderCard, WorkOrderHeader, StagePipeline) | | | |
 
@@ -833,13 +833,13 @@ authoritative current detail.** New here? Start with [ONBOARDING-PATH.md](ONBOAR
   - WIPNode (recursive BOM tree node) — L1244-1508
   - BOMTreeView (template tree render, L1 + WIP; DRAFT badge + Activate button) — L1509-1886
   - CreateBOMDialog — L1887-2453
-  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM) — L2454-2547 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
-  - flattenWipTree / WipTreeCard / wipNodeAt — L2548-2776 (two-pane tree helpers, shared by Edit BOM and Master Templates)
-  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2777-3000
-  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3001-3906
-  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3907-4934
-  - BatchEditMaterialsDialog — L4935-6026
-  - BOMManagementPage (default export — page shell, tabs, list) — L6027-6610
+  - CollapsibleGroup (product list; PENDING = no BOM, DRAFT = no ACTIVE BOM; a group header with drafts shows an N DRAFT count and a tick box that selects them all) — L2454-2574 (the old recursive SubWIPTree was deleted 2026-10-07; nothing renders it now)
+  - flattenWipTree / WipTreeCard / wipNodeAt — L2575-2803 (two-pane tree helpers, shared by Edit BOM and Master Templates)
+  - WipNodeDetail (right pane — edits ONE node at any depth; "+ Above" shows only when the caller passes onWrap) — L2804-3027
+  - EditBOMDialog (L1 tab + two-pane WIP tab; Copy From has a search box) — L3028-3933
+  - MasterTemplatesDialog (Bedframe/Sofa/Accessory tabs + copy-from, then the same L1 / two-pane WIP tabs as Edit BOM) — L3934-4961
+  - BatchEditMaterialsDialog — L4962-6053
+  - BOMManagementPage (default export — page shell, tabs, list) — L6054-6639
   - (ProductionTimesDialog and DeptPivotCategoryDialog were removed 2026-08-01.)
 
 **Gotchas**
