@@ -1879,7 +1879,7 @@ Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tes
 | 2 | Efficiency: the payslip splits a shared card by PIC 1 / PIC 2; Department Performance and the dashboard split by piece (`efficiency-allowance.ts` vs `workforce-perf.ts`) | ⬜ open, a pay change, needs the owner |
 | 3 | Efficiency: the AI assistant tools divide estimate by "actual" card minutes, not keyed hours (`assistant-tools.ts`) | ⬜ open |
 | 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ⬜ open |
-| 5 | Production revenue: the same recognition SQL in four places (`production-revenue.ts`, `dept-revenue.ts`, `dashboard-overview.ts`, `dashboard-prototype.ts`); the Daily panel on main joins the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ⬜ open |
+| 5 | Production revenue: the same recognition SQL in nine places and the price lookup in six; the Daily panel on main joined the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ✅ structure 2026-11-11: one copy of the rule, price and joins in `production-revenue.ts` (guard `tests/one-production-revenue-sql.test.mjs`); line join fixed in BUG-2026-11-11-502. ⬜ still open: the quantity rule and the shared loader's missing company filter |
 | 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ⬜ open, needs a browser check |
 
 Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`.

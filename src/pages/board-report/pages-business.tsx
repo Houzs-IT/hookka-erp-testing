@@ -58,12 +58,12 @@ export function CustomersPage({ r }: P) {
             <Tile label="Sofa, average per set" value={<>RM {rm(d.company?.sofaAvg ?? null)}</>} sub={`${d.company?.sofaSets ?? 0} sets`} />
           </div>
           <table className="brp-table">
-            <thead><tr><th>Customer</th><th>Confirmed orders, RM</th><th>Share</th><th>Bedframe avg / unit</th><th>Units</th><th>Sofa avg / set</th><th>Sets</th></tr></thead>
+            <thead><tr><th>Customer</th><th>Confirmed orders, RM</th><th>Share</th><th>Bedframe, RM</th><th>Bedframe avg / unit</th><th>Units</th><th>Sofa, RM</th><th>Sofa avg / set</th><th>Sets</th></tr></thead>
             <tbody>
               {d.rows.map((x) => (
-                <tr key={x.name}><td>{x.name}</td><td><Money v={x.total} /></td><td>{pctText(x.share)}</td><td><Money v={x.bedframeAvg} /></td><td>{x.bedframeUnits || "-"}</td><td><Money v={x.sofaAvg} /></td><td>{x.sofaSets || "-"}</td></tr>
+                <tr key={x.name}><td>{x.name}</td><td><Money v={x.total} /></td><td>{pctText(x.share)}</td><td><Money v={x.bedframeTotal ?? null} /></td><td><Money v={x.bedframeAvg} /></td><td>{x.bedframeUnits || "-"}</td><td><Money v={x.sofaTotal ?? null} /></td><td><Money v={x.sofaAvg} /></td><td>{x.sofaSets || "-"}</td></tr>
               ))}
-              <tr className="strong"><td>All customers</td><td><Money v={d.concentration?.totalSen ?? d.company?.total ?? null} /></td><td>100.0%</td><td /><td /><td /><td /></tr>
+              <tr className="strong"><td>All customers</td><td><Money v={d.concentration?.totalSen ?? d.company?.total ?? null} /></td><td>100.0%</td><td><Money v={d.company && d.company.bedframeAvg !== null ? Math.round(d.company.bedframeAvg * d.company.bedframeUnits) : null} /></td><td /><td /><td><Money v={d.company && d.company.sofaAvg !== null ? Math.round(d.company.sofaAvg * d.company.sofaSets) : null} /></td><td /><td /></tr>
             </tbody>
           </table>
           <h3>Share of confirmed orders</h3>
@@ -72,7 +72,7 @@ export function CustomersPage({ r }: P) {
             <Donut items={d.rows.slice(0, 6).map((x) => ({ label: x.name, value: x.total ?? 0 }))} centre={pctText(d.concentration?.largestPct ?? null)} />
             <ShareBars rows={d.rows.map((x) => ({ label: x.name, value: x.total, pct: x.share }))} />
           </div>
-          <p className="brp-small">Confirmed sales orders in the month (the Dashboard&apos;s sales figure), not invoices. Source: Dashboard › Sales (AOV by customer, concentration).</p>
+          <p className="brp-small">Confirmed sales orders in the month (the Dashboard&apos;s sales figure), not invoices. Bedframe / Sofa RM = average x count (accessories make up the rest). Source: Dashboard › Sales (AOV by customer, concentration).</p>
         </>
       ))}
     </BrPage>

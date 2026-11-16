@@ -78,11 +78,13 @@ const PRICE_LOOKUP_FILES = [
 
 test("everyPriceLookupMatchesTheRealLineNotThePieceNumber", () => {
   assert.equal(PRODUCTION_ORDER_LINE_SQL, "COALESCE(po.source_line_no, po.lineNo)");
+  const shared = read("src/api/lib/production-revenue.ts");
+  assert.match(shared, /soi\.lineNo = \$\{PRODUCTION_ORDER_LINE_SQL\}/);
+  assert.match(shared, /coi\.lineNo = \$\{PRODUCTION_ORDER_LINE_SQL\}/);
   for (const file of PRICE_LOOKUP_FILES) {
     const source = read(file);
     assert.doesNotMatch(source, /line(No|_no) = po\.line(No|_no)/, `${file} still joins on the piece number`);
-    assert.match(source, /soi\.line(No|_no) = \$\{PRODUCTION_ORDER_LINE_SQL\}/, file);
-    assert.match(source, /coi\.line(No|_no) = \$\{PRODUCTION_ORDER_LINE_SQL\}/, file);
+    assert.match(source, /\$\{PRODUCTION_ORDER_PRICE_JOINS_SQL\}/, `${file} must use the shared price joins`);
     assert.match(source, /await ensureProductionOrderSourceLine\(/, `${file} must make sure the column exists`);
   }
 });

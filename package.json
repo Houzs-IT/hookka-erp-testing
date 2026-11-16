@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test": "node --import tsx/esm --test tests/*.test.mjs",
-    "build": "node scripts/gen-dark-theme.mjs && node scripts/gen-refined-theme.mjs && vite build",
+    "build": "node scripts/gen-dark-theme.mjs && vite build",
     "build:strict": "npm run typecheck:app && npm run build",
     "typecheck": "tsc -b",
     "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
@@ -28,8 +28,7 @@
     "_LEGACY_db:studio": "echo 'LEGACY: D1 retired. Inspect Supabase via the Supabase dashboard or psql with DATABASE_URL from .dev.vars.'",
     "prepare": "husky",
     "trust": "node scripts/trust-report.mjs",
-    "gen:dark": "node scripts/gen-dark-theme.mjs",
-    "gen:refined": "node scripts/gen-refined-theme.mjs"
+    "gen:dark": "node scripts/gen-dark-theme.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx}": "node node_modules/eslint/bin/eslint.js"

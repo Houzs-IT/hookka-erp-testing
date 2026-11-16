@@ -30,12 +30,9 @@ npm i
 
 ### (b) Configure the account id, secret, and vars
 
-1. **Account id** — open `wrangler.toml` and replace
-   `REPLACE_WITH_HOOKKA_CLOUDFLARE_ACCOUNT_ID` with the Hookka Cloudflare
-   account id (Cloudflare dashboard → Workers & Pages → right sidebar
-   "Account ID", or run `wrangler whoami`). The ERP's Pages project doesn't pin
-   an account id, so this Worker needs it set here (or via the
-   `CLOUDFLARE_ACCOUNT_ID` env var).
+1. **Account id** — `wrangler.toml` pins `27cd35c9d93a9f81daa809d0b800b059`,
+   the account that holds the `hookka.com` zone. The Worker must live in the
+   zone's account, or Email Routing cannot send to it.
 
 2. **`MAIL_INBOUND_SECRET`** (secret — same value as on the Pages project):
 
@@ -118,10 +115,14 @@ The worker builds and POSTs exactly this JSON (matches the ERP's
   "messageId":  "<abc@example.com>",         // dedup key on the ERP side
   "inReplyTo":  "<parent@example.com>",      // optional, for threading
   "references": ["<root@example.com>"],      // optional, for threading
-  "date":       "2026-06-17T08:00:00.000Z"   // optional
+  "date":       "2026-06-17T08:00:00.000Z",  // optional
+  "deliveredTo": "siti@hookka.com"           // the box this copy was delivered to
 }
 ```
 
-`from` is the only field the ERP requires; everything else is optional. On a
+`from` is the only field the ERP requires; everything else is optional.
+Cloudflare calls the worker once per recipient; the ERP files each call under
+its `deliveredTo` box and dedups by `messageId` **within that box**, so a mail
+to two staff gives each of them a copy. On a
 non-2xx response the worker throws, and Cloudflare retries the `email()`
 handler — safe because the ERP dedups by `messageId`.

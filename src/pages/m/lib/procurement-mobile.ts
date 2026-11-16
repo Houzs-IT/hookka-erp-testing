@@ -20,7 +20,7 @@
 import { allocateDiscountSen, roundUnitPriceSen } from "../../../lib/unit-price";
 import { isPiEditable } from "../../../lib/purchase-edit-rules";
 import { poItemsSearchText } from "../../../lib/po-items-search";
-import { n, rows, s, type RawRow } from "./do-mobile";
+import { fmtDate, n, rows, s, type RawRow } from "./do-mobile";
 
 export { n, rows, s, type RawRow };
 
@@ -105,6 +105,8 @@ export type ChipDef = { key: string; label: string; tone?: Tone };
 export const CHIPS: Record<Section, ChipDef[]> = {
   po: [
     { key: "", label: "All" },
+    // HK-0125: everything still owed by suppliers (see poIsOutstanding), in one tap.
+    { key: "OUTSTANDING", label: "Outstanding", tone: "warning" },
     { key: "DRAFT", label: "Draft", tone: "neutral" },
     { key: "SUBMITTED", label: "Submitted", tone: "info" },
     { key: "CONFIRMED", label: "Confirmed", tone: "info" },
@@ -134,6 +136,7 @@ export function chipMatches(section: Section, chip: string, row: RawRow): boolea
   const st = s(row, "status");
   if (section === "grn" && chip === "QC_PENDING") return s(row, "qcStatus") === "PENDING";
   if (section === "pi") return normalizePiStatus(st) === chip;
+  if (section === "po" && chip === "OUTSTANDING") return poIsOutstanding(row);
   return st === chip;
 }
 
@@ -158,10 +161,65 @@ export function matchesQuery(section: Section, row: RawRow, q: string): boolean 
 // ---------------------------------------------------------------------------
 const OPEN_PO = ["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED"];
 
+/** HK-0125 combined "Outstanding": a PO that has been issued and is not closed out
+ *  (SUBMITTED / CONFIRMED / PARTIAL_RECEIVED — the same open statuses the overdue flag uses)
+ *  AND still has quantity to come (poOutstanding > 0). DRAFT, RECEIVED, CLOSED and CANCELLED
+ *  are never outstanding. */
+export function poIsOutstanding(po: RawRow): boolean {
+  if (!OPEN_PO.includes(s(po, "status"))) return false;
+  return (poOutstanding(po) ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// HK-0125 Supplier filter (client-side over the full PO list, as desktop does: by supplier).
+// ---------------------------------------------------------------------------
+export type SupplierOption = { key: string; label: string; count: number };
+/** A PO's supplier key: its supplierId, else its name (older rows can lack an id). */
+export function poSupplierKey(po: RawRow): string {
+  const id = s(po, "supplierId").trim();
+  if (id) return id;
+  const name = s(po, "supplierName").trim();
+  return name ? `name:${name.toUpperCase()}` : "";
+}
+/** Distinct suppliers across the PO list, A→Z, for the filter. POs with no supplier are left out. */
+export function poSupplierOptions(list: RawRow[]): SupplierOption[] {
+  const by = new Map<string, { label: string; count: number }>();
+  for (const po of list) {
+    const key = poSupplierKey(po);
+    if (!key) continue;
+    const hit = by.get(key);
+    if (hit) hit.count += 1;
+    else by.set(key, { label: s(po, "supplierName").trim() || key, count: 1 });
+  }
+  return [...by].map(([key, v]) => ({ key, label: v.label, count: v.count })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
+/** "" = All suppliers. */
+export function poSupplierMatches(po: RawRow, supplierKey: string): boolean {
+  return !supplierKey || poSupplierKey(po) === supplierKey;
+}
+
 /** Σ max(0, quantity − receivedQty) — desktop list Outstanding; null when closed out. */
 export function poOutstanding(po: RawRow): number | null {
   if (["RECEIVED", "CANCELLED", "CLOSED"].includes(s(po, "status"))) return null;
   return rows(po.items).reduce((a, i) => a + Math.max(0, n(i, "quantity") - n(i, "receivedQty")), 0);
+}
+/** HK-0125 list-card "Outstanding" text. Remaining lines that all share one known unit show the
+ *  balance with it ("25 TIN"); mixed or missing units show how many lines still have a balance
+ *  ("2 of 3 lines"). Same eligibility as poOutstanding: null (shown as "—") when closed out. */
+export function fmtQty(v: number): string {
+  return String(Math.round(v * 1000) / 1000);
+}
+export function poOutstandingLabel(po: RawRow): string | null {
+  if (poOutstanding(po) == null) return null;
+  const items = rows(po.items);
+  const open = items.filter((i) => n(i, "quantity") - n(i, "receivedQty") > 0);
+  if (!open.length) return "0";
+  const units = open.map((i) => s(i, "unit").trim());
+  const first = units[0];
+  if (first && units.every((u) => u.toUpperCase() === first.toUpperCase())) {
+    return `${fmtQty(open.reduce((a, i) => a + (n(i, "quantity") - n(i, "receivedQty")), 0))} ${first}`;
+  }
+  return `${open.length} of ${items.length} lines`;
 }
 export function poQtyTotals(po: RawRow): { ordered: number; received: number } {
   const it = rows(po.items);
@@ -170,6 +228,144 @@ export function poQtyTotals(po: RawRow): { ordered: number; received: number } {
 export function poExpectedLate(po: RawRow, today: string): boolean {
   const d = dateOnly(s(po, "expectedDate"));
   return !!d && d < today && OPEN_PO.includes(s(po, "status"));
+}
+// ---------------------------------------------------------------------------
+// HK-0125 PO summary + filter sheet (design handoff). Frontend only, existing reads:
+//   GET /api/purchase-orders        every PO with items (no ?page, so counts are complete)
+//   GET /api/purchase-orders/stats  every PO header + `deliveredInFull` (HK-0114), desktop's overdue input
+// ---------------------------------------------------------------------------
+const PO_CLOSED_OUT = ["RECEIVED", "CLOSED", "CANCELLED"];
+
+/** Ids of POs billed in full without a GRN, from the /stats rows. null = stats unavailable. */
+export function deliveredIdsOf(statsRows: RawRow[] | null): Set<string> | null {
+  if (!statsRows) return null;
+  return new Set(statsRows.filter((p) => p.deliveredInFull === true).map((p) => s(p, "id")));
+}
+/** Desktop isOverdue (procurement/index.tsx): expected date before today, not billed in full without
+ *  a GRN, and not RECEIVED / CLOSED / CANCELLED. A DRAFT past its expected date counts, as on desktop. */
+export function poIsOverdue(po: RawRow, today: string, delivered: ReadonlySet<string>): boolean {
+  const exp = dateOnly(s(po, "expectedDate"));
+  if (!exp || exp >= today) return false;
+  if (delivered.has(s(po, "id"))) return false;
+  return !PO_CLOSED_OUT.includes(s(po, "status"));
+}
+/** The red Expected date: the desktop rule when /stats is available, else the earlier mobile rule. */
+export function poOverdueFlag(po: RawRow, today: string, delivered: ReadonlySet<string> | null): boolean {
+  return delivered ? poIsOverdue(po, today, delivered) : poExpectedLate(po, today);
+}
+/** Whole days late (desktop daysLate), never negative. */
+export function poDaysLate(po: RawRow, today: string): number {
+  const exp = dateOnly(s(po, "expectedDate"));
+  if (!exp) return 0;
+  const a = Date.parse(`${exp}T00:00:00Z`);
+  const b = Date.parse(`${today}T00:00:00Z`);
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, Math.floor((b - a) / 86400000)) : 0;
+}
+
+export type PoSummary = {
+  total: number;
+  pending: number;
+  /** null = /stats unavailable, so the desktop rule cannot be applied. */
+  overdue: number | null;
+  bands: { yellow: number; orange: number; red: number };
+  outstandingLines: number;
+};
+/** The four summary tiles over the (already supplier-scoped) POs. Search / status / date never change them. */
+export function poSummary(list: RawRow[], today: string, delivered: ReadonlySet<string> | null): PoSummary {
+  const bands = { yellow: 0, orange: 0, red: 0 };
+  let overdue = 0;
+  let pending = 0;
+  let outstandingLines = 0;
+  for (const po of list) {
+    if (["SUBMITTED", "CONFIRMED"].includes(s(po, "status"))) pending++;
+    if (poIsOutstanding(po)) outstandingLines += rows(po.items).filter((i) => n(i, "quantity") - n(i, "receivedQty") > 0).length;
+    if (delivered && poIsOverdue(po, today, delivered)) {
+      overdue++;
+      const d = poDaysLate(po, today);
+      if (d >= 31) bands.red++;
+      else if (d >= 8) bands.orange++;
+      else if (d >= 1) bands.yellow++;
+    }
+  }
+  return { total: list.length, pending, overdue: delivered ? overdue : null, bands, outstandingLines };
+}
+
+// ---- Date filter -----------------------------------------------------------
+export type DateField = "exp" | "order";
+export type DateRangeKey = "any" | "7d" | "n7" | "tm" | "lm" | "nm" | "custom";
+export const DATE_FIELDS: { key: DateField; label: string }[] = [
+  { key: "order", label: "Order date" },
+  { key: "exp", label: "Expected date" },
+];
+export const DATE_RANGES: Record<DateField, { key: DateRangeKey; label: string }[]> = {
+  order: [{ key: "any", label: "Any time" }, { key: "7d", label: "Last 7 days" }, { key: "tm", label: "This month" }, { key: "lm", label: "Last month" }, { key: "custom", label: "Custom" }],
+  exp: [{ key: "any", label: "Any time" }, { key: "n7", label: "Next 7 days" }, { key: "tm", label: "This month" }, { key: "nm", label: "Next month" }, { key: "custom", label: "Custom" }],
+};
+/** An unknown field / range (a stale URL) reads as the default: Expected date, Any time. */
+export function cleanDateField(v: string): DateField {
+  return v === "order" ? "order" : "exp";
+}
+export function cleanDateRange(field: DateField, v: string): DateRangeKey {
+  return DATE_RANGES[field].some((r) => r.key === v) ? (v as DateRangeKey) : "any";
+}
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function monthBounds(year: number, month: number): [string, string] {
+  const y = year + Math.floor((month - 1) / 12);
+  const m = ((((month - 1) % 12) + 12) % 12) + 1;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, "0");
+  return [`${y}-${mm}-01`, `${y}-${mm}-${String(last).padStart(2, "0")}`];
+}
+/** Inclusive [from, to] for a range, built from Malaysia-today with UTC-safe day maths. null = open end. */
+export function dateRangeBounds(range: DateRangeKey, today: string, from = "", to = ""): [string | null, string | null] {
+  const y = Number(today.slice(0, 4));
+  const m = Number(today.slice(5, 7));
+  switch (range) {
+    case "7d": return [addDays(today, -6), today];
+    case "n7": return [today, addDays(today, 6)];
+    case "tm": return monthBounds(y, m);
+    case "lm": return monthBounds(y, m - 1);
+    case "nm": return monthBounds(y, m + 1);
+    case "custom": {
+      const a = from || null;
+      const b = to || null;
+      return a && b && a > b ? [b, a] : [a, b];
+    }
+    default: return [null, null];
+  }
+}
+/** True when the date filter actually restricts something (Custom with no dates does not). */
+export function dateFilterActive(range: DateRangeKey, from = "", to = ""): boolean {
+  return range !== "any" && (range !== "custom" || !!from || !!to);
+}
+/** A PO with no date never matches an active range (a Custom "To only" range must not let it through). */
+export function poDateMatches(po: RawRow, field: DateField, range: DateRangeKey, from: string, to: string, today: string): boolean {
+  const [a, b] = dateRangeBounds(range, today, from, to);
+  if (!a && !b) return true;
+  const v = dateOnly(s(po, field === "exp" ? "expectedDate" : "orderDate"));
+  if (!v) return false;
+  return (!a || v >= a) && (!b || v <= b);
+}
+
+export type PoFilters = { supplier: string; chip: string; field: DateField; range: DateRangeKey; from: string; to: string; overdue: boolean };
+/** One predicate for the list, the chip counts and "Show N POs", so they can never disagree.
+ *  `overdue` is ignored while /stats is unavailable (delivered === null). */
+export function poMatchesFilters(po: RawRow, f: PoFilters, q: string, today: string, delivered: ReadonlySet<string> | null): boolean {
+  if (!poSupplierMatches(po, f.supplier)) return false;
+  if (!poDateMatches(po, f.field, f.range, f.from, f.to, today)) return false;
+  if (f.overdue && delivered && !poIsOverdue(po, today, delivered)) return false;
+  if (!matchesQuery("po", po, q)) return false;
+  return chipMatches("po", f.chip, po);
+}
+
+/** Subtitle of a linked Goods Receipt in a document-lineage chain: its status, then its receive date
+ *  ("Posted · 9 Nov 2026"), the same text PO detail shows. No receive date: the status alone. */
+export function grnLineageSub(g: RawRow): string {
+  return [statusOf("grn", s(g, "status")).label, fmtDate(dateOnly(s(g, "receiveDate")))].filter(Boolean).join(" · ");
 }
 /** A receipt is "full" when every line received at least what was ordered. */
 export function grnIsFull(g: RawRow): boolean {

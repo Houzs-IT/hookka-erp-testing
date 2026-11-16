@@ -428,6 +428,19 @@ app.get("/board", async (c) => {
       return { ...r, notes: { ...r.notes, text: n.text, updatedAt: n.updatedAt, updatedBy: n.updatedBy } };
     };
 
+    // A poll after Refresh must wait for the NEW build: while that build's
+    // lock is fresh, answer "building" instead of the old copy — before this,
+    // the first poll got the previous report straight back and the page showed
+    // stale figures as if Refresh did nothing (owner 2026-11-13: October net
+    // profit RM 136,673 on the board vs RM 93,618 live; the copy predated the
+    // month's payroll posting).
+    if (!rebuild && c.req.query("poll") === "1") {
+      const started = await cache.buildStartedAt(db, month);
+      if (started && Date.now() - Date.parse(started) < cache.LOCK_STALE_MS) {
+        return c.json({ success: true, building: true, startedAt: started }, 202);
+      }
+    }
+
     if (!rebuild) {
       const kept = await cache.readBoardCache<Report>(db, month);
       if (kept) return c.json({ success: true, data: { ...(await withFreshNotes(kept)), canEditNotes, cached: true } });

@@ -952,7 +952,8 @@ app.post("/bulk-import", async (c) => {
         itemCode,
         description,
         itemGroup,
-        balanceQty: 0,
+        // An existing code keeps its fabric stock (BUG-2026-11-12-506); a new one starts at 0.
+        balanceQty: existingId ? undefined : 0,
       });
       statements.push(...cascadeStmts);
     }

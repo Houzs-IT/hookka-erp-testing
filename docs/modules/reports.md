@@ -57,7 +57,7 @@ Two unrelated report worlds share the name **Reports**:
 | `TABS` | `reports.tsx:406` | Tab definitions |
 | `DailyReportPage` | `src/pages/daily-report.tsx:1009` | Compliance exceptions page |
 | `ForecastPage` | `src/pages/analytics/forecast.tsx:50` | Forecast vs historical-sales view |
-| `GET /compliance.json` | `src/api/routes/reports.ts:716` | Daily Report JSON (cached) |
+| `GET /compliance.json` | `src/api/routes/reports.ts:729` | Daily Report JSON (cached) |
 | `buildComplianceCached` | `reports.ts:672` | SWR snapshot wrapper (serve-stale) |
 | `collectComplianceData` | `src/api/lib/compliance-report.ts:1412` | Daily Report exception engine |
 | `dispatchReport` | `reports.ts:783` | Shared send path (cron + Agent Console + manual) |
@@ -67,10 +67,10 @@ Two unrelated report worlds share the name **Reports**:
 | `GET /operations.json` | `reports.ts:369` | Ops rollup (daily/weekly/monthly) |
 | `collectEfficiencyData` / `renderEfficiencyHtml` | `efficiency-report.ts:133 / 439` | Worker efficiency data + HTML |
 | `collectScheduleData` / `collectOverdueData` | `schedule-overdue-report.ts:113 / 229` | Schedule + overdue data |
-| `collectOperationsReport` | `operations-report.ts:1112` | Ops report builder |
+| `collectOperationsReport` | `operations-report.ts:1113` | Ops report builder |
 | `collectBriefData` / `renderBriefHtml` | `production-brief.ts:386 / 467` | Morning production brief |
 | `GET /` (list) / `POST /` (create) | `src/api/routes/forecasts.ts:55 / 80` | `forecast_entries` CRUD |
-| `GET /` (overview) | `src/api/routes/dashboard-overview.ts:81` | Consolidated dashboard payload |
+| `GET /` (overview) | `src/api/routes/dashboard-overview.ts:82` | Consolidated dashboard payload |
 | `buildReportHTML` / `printReport` | `src/lib/print-report.ts:218 / 339` | Shared WYSIWYG print engine |
 | `exportReportCsv/Xlsx/Pdf` | `src/lib/export-report.ts:27 / 41 / 82` | Shared export helpers |
 

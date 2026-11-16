@@ -2,10 +2,12 @@
 // Mail Center — in-ERP shared inbox for hookka.com email.
 //
 // Architecture (see the owner's decision 2026-06-16):
-//   inbound : Cloudflare Email Routing → standalone email Worker → POST
+//   inbound : hookka.com MX is on Hostinger, so the live path is the Hostinger
+//             IMAP poller (mail-sync/, a GitHub Actions cron) → POST
 //             /api/mail-center/inbound (secret-guarded, machine-to-machine,
 //             registered BEFORE authMiddleware in worker.ts). That handler
-//             calls ingestInboundEmail() below.
+//             calls ingestInboundEmail() below. mail-inbound-worker/ (Cloudflare
+//             Email Routing) posts the same payload but is not deployed (HK-0150).
 //   outbound: replies reuse the existing Brevo/Resend sender (lib/email.ts).
 //             Added in P2.
 //   storage : three tables created lazily here (no migration file yet) so
@@ -289,9 +291,9 @@ export async function ensureMailSchema(db: D1Database): Promise<void> {
 // ---------------------------------------------------------------------------
 // Inbound ingestion — called by the worker.ts pre-auth handler.
 // ---------------------------------------------------------------------------
-// One inbound attachment as it arrives on the /inbound payload. The routing
-// worker (mail-inbound-worker — the ONE inbound channel since T-012 R13
-// retired the Hostinger IMAP poller) base64-encodes the raw bytes so the
+// One inbound attachment as it arrives on the /inbound payload. The sender
+// (the Hostinger IMAP poller in mail-sync/, or mail-inbound-worker if Email
+// Routing is ever switched on) base64-encodes the raw bytes so the
 // JSON POST stays credential-free; the ERP owns storage (uploads to Supabase
 // Storage here). Oversized files are dropped at the worker (see the size caps
 // there) so contentBase64 is always sane to decode here.
@@ -315,6 +317,10 @@ export interface InboundEmailPayload {
   references?: string[] | string;
   date?: string;
   attachments?: InboundAttachmentPayload[];
+  // The one @hookka.com box this copy was delivered to (SMTP envelope
+  // recipient / the IMAP box read). Set by both senders; files the mail under
+  // that box even when it was Bcc'd or the To: header names someone else.
+  deliveredTo?: string;
 }
 
 export type IngestResult =
@@ -467,10 +473,12 @@ export async function ingestInboundEmail(
   const cc = toArray(payload.cc);
   const recipients = [...to, ...cc];
 
-  // Which of OUR addresses did this hit? Prefer an explicit email_addresses
-  // match, else the first @hookka.com recipient, else just the first to:.
+  // Which of OUR addresses did this hit? The delivered-to box when the sender
+  // says (HK-0150); else an explicit email_addresses match, else the first
+  // @hookka.com recipient, else just the first to:.
+  const deliveredTo = (payload.deliveredTo || "").trim().toLowerCase();
   let mailbox = "";
-  for (const r of recipients) {
+  for (const r of deliveredTo ? [deliveredTo] : recipients) {
     const hit = await db
       .prepare(
         `SELECT address FROM email_addresses WHERE org_id = ? AND lower(address) = lower(?) LIMIT 1`,
@@ -483,7 +491,8 @@ export async function ingestInboundEmail(
     }
   }
   if (!mailbox) {
-    mailbox = recipients.find((r) => /@hookka\.com$/i.test(r)) || recipients[0] || "";
+    mailbox =
+      deliveredTo || recipients.find((r) => /@hookka\.com$/i.test(r)) || recipients[0] || "";
   }
 
   const now = new Date().toISOString();
@@ -499,12 +508,18 @@ export async function ingestInboundEmail(
   // This is what lets a re-run of the sync (with the new attachments-capable
   // payload) add attachments to emails that were first ingested before this
   // feature existed — see the "re-backfill" note in the PR description.
+  // The check is per mailbox (HK-0150): one mail to siti@ and lim@ arrives
+  // twice, once per box, and each person must get their own copy.
   if (payload.messageId) {
     const dup = await db
       .prepare(
-        `SELECT id, thread_id FROM email_messages WHERE org_id = ? AND message_id = ? LIMIT 1`,
+        `SELECT m.id, m.thread_id FROM email_messages m
+           JOIN email_threads t ON t.id = m.thread_id
+          WHERE m.org_id = ? AND m.message_id = ?
+            AND LOWER(COALESCE(t.mailbox_address, '')) = LOWER(?)
+          LIMIT 1`,
       )
-      .bind(orgId, payload.messageId)
+      .bind(orgId, payload.messageId, mailbox)
       // The pg driver camelCases result columns (db-pg.ts transform.column.from),
       // so thread_id arrives as threadId. Dual-read so dedupe returns the real
       // threadId instead of undefined on a retry.
@@ -552,15 +567,19 @@ export async function ingestInboundEmail(
     // the id the provider reported (provider_message_id). Brevo rewrites the
     // header with its own id, so a customer's In-Reply-To may name either —
     // match both, or every reply to a mail WE sent would start a new thread.
+    // Only a thread in THIS mailbox: another box's thread is not visible to
+    // this box's owner (HK-0150).
     const ref = await db
       .prepare(
-        `SELECT thread_id FROM email_messages
-          WHERE org_id = ?
-            AND (message_id IN (${placeholders})
-                 OR provider_message_id IN (${placeholders}))
+        `SELECT m.thread_id FROM email_messages m
+           JOIN email_threads t ON t.id = m.thread_id
+          WHERE m.org_id = ?
+            AND (m.message_id IN (${placeholders})
+                 OR m.provider_message_id IN (${placeholders}))
+            AND LOWER(COALESCE(t.mailbox_address, '')) = LOWER(?)
           LIMIT 1`,
       )
-      .bind(orgId, ...refs, ...refs)
+      .bind(orgId, ...refs, ...refs, mailbox)
       // Result columns come back camelCase (db-pg.ts transform.column.from), so
       // thread_id → threadId. Reading the snake key returned undefined → every
       // reply started a NEW thread instead of joining the referenced one.
@@ -1926,8 +1945,8 @@ app.post("/test-inject", async (c) => {
 // same hard gate that protects user-account management in routes/users.ts),
 // independent of any mail-center:* permission grant.
 //
-// NOTE: this creates an in-ERP ADDRESS RECORD for hookka.com mail received via
-// Cloudflare Email Routing — it is NOT a Google/Gmail account. No Google API
+// NOTE: this creates an in-ERP ADDRESS RECORD for hookka.com mail (read from
+// Hostinger by mail-sync/) — it is NOT a Google/Gmail account. No Google API
 // is touched here.
 // ---------------------------------------------------------------------------
 

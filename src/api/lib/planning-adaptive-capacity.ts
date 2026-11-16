@@ -77,8 +77,9 @@ export const MIN_BUDGET_MIN = 30;
 // longer exists — "工厂有时候我添加人、减少人". 15 working days (~2.5 weeks of
 // Mon-Sat) is short enough that a headcount change shows up within a fortnight,
 // while still giving the trim 13 days to work with after the extremes are cut.
-/** Working days of history used for the robust capacity estimate. */
-export const CAPACITY_WINDOW_DAYS = 15;
+/** Working days of history used for the robust capacity estimate. Owner
+ *  2026-11-12: every capacity figure uses 12 working days (two weeks). */
+export const CAPACITY_WINDOW_DAYS = 12;
 /** Fraction discarded from EACH end before averaging. */
 export const TRIM_FRACTION = 0.1;
 /** Below this many samples, trimming throws away more signal than noise. */

@@ -7,7 +7,7 @@
 //
 // Reads (the desktop's, full lists — no paging, so chips / counts / search
 // always see every row):
-//   Orders    GET /api/purchase-orders
+//   Orders    GET /api/purchase-orders (+ /api/purchase-orders/stats for the desktop overdue rule)
 //   Receipts  GET /api/grn
 //   Invoices  GET /api/purchase-invoices (+ /api/grn for the GRN number, when readable)
 //   Low stock GET /api/inventory?buckets=rawMaterials + /api/supplier-materials
@@ -25,10 +25,10 @@ import { money } from "../../config/helpers";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { useDebounced } from "../../lib/use-debounced";
 import { SEGMENT_WRAP } from "../../lib/control-styles";
-import { fmtShort } from "../../lib/do-mobile";
+import { fmtDate, fmtShort } from "../../lib/do-mobile";
 import {
   CHIPS, SECTIONS, bulkSubmitEligible, chipMatches, dateOnly, grnIsFull, lowStockRms, matchesQuery, n, piPastDue,
-  poExpectedLate, poOutstanding, rows, s, statusOf, todayIso, visibleSections,
+  DATE_RANGES, cleanDateField, cleanDateRange, dateFilterActive, deliveredIdsOf, poMatchesFilters, poOutstandingLabel, poOverdueFlag, poSummary, poSupplierKey, poSupplierOptions, rows, s, statusOf, todayIso, visibleSections,
   type RawRow, type Section,
 } from "../../lib/procurement-mobile";
 import { EmptyCard } from "../delivery/DeliveryCards";
@@ -36,7 +36,7 @@ import { BottomDock, Notice, PrimaryButton } from "../delivery/ui";
 import { SHADOW_CARD, pill } from "../delivery/ui-tokens";
 import { useConfirmSheet, useMobileToast } from "../delivery/ui-hooks";
 import { submitDrafts } from "./actions";
-import { Chips, DocCard, ErrorCard, HeaderPlus, SearchRow, SectionSwitch, SkeletonCards } from "./parts";
+import { Chips, DocCard, ErrorCard, HeaderPlus, SearchRow, SectionSwitch, SkeletonCards, FilterButton, FilterPills, FilterSheet, SummaryGrid, type FilterDraft } from "./parts";
 import { PoForm, type PoFormMode } from "./PoForm";
 import { ReceiveForm } from "./ReceiveForm";
 import { PiForm } from "./PiForm";
@@ -67,11 +67,18 @@ export function ProcurementScreen() {
 
   const [secRaw] = useUrlState<string>("sec", "");
   const [statusRaw] = useUrlState<string>("status", "");
+  const [supplierRaw] = useUrlState<string>("supplier", "");
+  const [odRaw] = useUrlState<string>("od", "");
+  const [dfRaw] = useUrlState<string>("df", "");
+  const [drRaw] = useUrlState<string>("dr", "");
+  const [fromRaw] = useUrlState<string>("from", "");
+  const [toRaw] = useUrlState<string>("to", "");
   const setUrl = useUrlBatch();
   const sec: Section | null = (sections.includes(secRaw as Section) ? (secRaw as Section) : sections[0]) ?? null;
   const chip = sec && CHIPS[sec].some((c) => c.key === statusRaw) ? statusRaw : "";
 
   const [q, setQ] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
   const dq = useDebounced(q).trim();
 
   // ---- reads (desktop's) ----
@@ -81,6 +88,11 @@ export function ProcurementScreen() {
   const piList = useCachedJson<Envelope>(sec === "pi" ? "/api/purchase-invoices" : null);
   const inv = useCachedJson<{ success?: boolean; data?: { rawMaterials?: RawRow[] } }>(sec === "po" && canCreatePo ? "/api/inventory?buckets=rawMaterials" : null);
   const bindingsResp = useCachedJson<{ data?: RawRow[] } | RawRow[]>(sec === "po" && canCreatePo ? "/api/supplier-materials" : null);
+
+  // Desktop's overdue input: /stats rows carry `deliveredInFull` (HK-0114). When it fails the Overdue
+  // tile / filter are unavailable and the list and every other filter keep working.
+  const stats = useCachedJson<Envelope>(sec === "po" ? "/api/purchase-orders/stats" : null);
+  const delivered = useMemo(() => (stats.data?.success ? deliveredIdsOf(rows(stats.data.data)) : null), [stats.data]);
 
   const source = sec === "po" ? poList : sec === "grn" ? grnList : piList;
   const all = useMemo(() => rows(source.data?.data), [source.data]);
@@ -92,11 +104,24 @@ export function ProcurementScreen() {
   }, [bindingsResp.data]);
   const lowStock = useMemo(() => lowStockRms(rawMaterials), [rawMaterials]);
 
-  // Plain derivations (the React Compiler memoizes them).
-  const matched = sec ? all.filter((r) => matchesQuery(sec, r, dq)) : [];
+  // HK-0125 PO filters (POs only). Supplier + status + date + Overdue + search all combine through ONE
+  // predicate (poMatchesFilters), so the list, the chip counts and the sheet's "Show N POs" agree.
+  const supplierOptions = sec === "po" ? poSupplierOptions(all) : [];
+  const supplier = sec === "po" && supplierOptions.some((o) => o.key === supplierRaw) ? supplierRaw : "";
+  const field = cleanDateField(dfRaw);
+  const range = cleanDateRange(field, drRaw);
+  const dateFrom = range === "custom" ? fromRaw : "";
+  const dateTo = range === "custom" ? toRaw : "";
+  const overdueOn = sec === "po" && odRaw === "1" && delivered != null;
+  const today = todayIso();
+  const applied: FilterDraft = { supplier, chip, field, range, from: dateFrom, to: dateTo, overdue: overdueOn };
+  const summary = poSummary(sec === "po" ? all.filter((r) => !supplier || poSupplierKey(r) === supplier) : [], today, delivered);
+  const match = (r: RawRow, f: FilterDraft) => poMatchesFilters(r, f, dq, today, delivered);
+
+  const base = sec === "po" ? all.filter((r) => match(r, { ...applied, chip: "" })) : sec ? all.filter((r) => matchesQuery(sec, r, dq)) : [];
   const counts: Record<string, number> = {};
-  if (sec) for (const ch of CHIPS[sec]) counts[ch.key] = matched.filter((r) => chipMatches(sec, ch.key, r)).length;
-  const shown = sec ? matched.filter((r) => chipMatches(sec, chip, r)) : [];
+  if (sec) for (const ch of CHIPS[sec]) counts[ch.key] = base.filter((r) => chipMatches(sec, ch.key, r)).length;
+  const shown = sec ? base.filter((r) => chipMatches(sec, chip, r)) : [];
   const totalSen = shown.reduce((a, r) => a + (sec === "po" ? n(r, "totalSen") : sec === "grn" ? n(r, "totalAmount") : n(r, "amountSen")), 0);
 
   // ---- selection (PO drafts → Submit N drafts) ----
@@ -116,8 +141,9 @@ export function ProcurementScreen() {
   const [piOpen, setPiOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const FILTER_KEYS = { supplier: null, od: null, df: null, dr: null, from: null, to: null } as const;
   const goSection = (k: Section) => {
-    setUrl({ sec: k === sections[0] ? null : k, status: null });
+    setUrl({ sec: k === sections[0] ? null : k, status: null, ...FILTER_KEYS });
     setQ("");
     clearSel();
   };
@@ -125,6 +151,41 @@ export function ProcurementScreen() {
     setUrl({ status: k || null });
     clearSel();
   };
+  const applyFilters = (d: FilterDraft) => {
+    setUrl({
+      status: d.chip || null,
+      supplier: d.supplier || null,
+      od: d.overdue ? "1" : null,
+      df: d.field === "exp" ? null : d.field,
+      dr: d.range === "any" ? null : d.range,
+      from: d.range === "custom" && d.from ? d.from : null,
+      to: d.range === "custom" && d.to ? d.to : null,
+    });
+    clearSel();
+    setFilterOpen(false);
+  };
+  const clearFilters = () => {
+    setUrl(FILTER_KEYS);
+    clearSel();
+  };
+  const toggleOverdue = () => {
+    setUrl({ od: overdueOn ? null : "1" });
+    clearSel();
+  };
+  const dateActive = dateFilterActive(range, dateFrom, dateTo);
+  const filterCount = (supplier ? 1 : 0) + (dateActive ? 1 : 0) + (overdueOn ? 1 : 0);
+  const pills = [
+    supplier ? { key: "sup", label: `Supplier: ${supplierOptions.find((o) => o.key === supplier)?.label ?? ""}`, aria: "Clear supplier", clear: () => setUrl({ supplier: null }) } : null,
+    dateActive
+      ? {
+          key: "date",
+          label: `${field === "exp" ? "Expected" : "Ordered"}: ${range === "custom" ? `${dateFrom ? fmtDate(dateFrom) : "…"} – ${dateTo ? fmtDate(dateTo) : "…"}` : DATE_RANGES[field].find((r) => r.key === range)?.label ?? ""}`,
+          aria: "Clear date",
+          clear: () => setUrl({ df: null, dr: null, from: null, to: null }),
+        }
+      : null,
+    overdueOn ? { key: "od", label: "Overdue", aria: "Clear overdue", clear: () => setUrl({ od: null }) } : null,
+  ].filter((x): x is NonNullable<typeof x> => !!x);
   const openDoc = (id: string) => navigate({ pathname: `/m/procurement/${encodeURIComponent(id)}`, search: location.search });
 
   const createFor: Record<Section, { label: string; allowed: boolean; open: () => void }> = {
@@ -154,13 +215,11 @@ export function ProcurementScreen() {
     else toast.show(`Submitted ${res.ok} order${res.ok !== 1 ? "s" : ""} successfully.`, "success");
   };
 
-  const today = todayIso();
   const card = (r: RawRow) => {
     const id = s(r, "id");
     const current = inPane && id === openId;
     if (sec === "po") {
       const st = statusOf("po", s(r, "status"));
-      const out = poOutstanding(r);
       const draft = s(r, "status") === "DRAFT";
       const selectable = selecting && draft;
       return (
@@ -172,8 +231,8 @@ export function ProcurementScreen() {
           title={s(r, "supplierName") || "—"}
           sub={rows(r.items).map((i) => s(i, "materialName")).filter(Boolean).join(", ") || "No items"}
           metas={[
-            { k: "EXPECTED", v: fmtShort(dateOnly(s(r, "expectedDate"))) || "—", warn: poExpectedLate(r, today) },
-            { k: "OUTSTANDING", v: out == null ? "—" : String(out) },
+            { k: "EXPECTED", v: fmtShort(dateOnly(s(r, "expectedDate"))) || "—", warn: poOverdueFlag(r, today, delivered) },
+            { k: "OUTSTANDING", v: poOutstandingLabel(r) ?? "—" },
             { k: "TOTAL", v: money(n(r, "totalSen")), bold: true, align: "right" },
           ]}
           selectable={selectable}
@@ -269,8 +328,20 @@ export function ProcurementScreen() {
             </div>
           ) : null}
 
+          {sec === "po" ? <SummaryGrid summary={summary} columns={tablet && !inPane ? 4 : 2} overdueOn={overdueOn} onOverdue={toggleOverdue} /> : null}
           {sec ? <SearchRow q={q} setQ={setQ} placeholder={SEARCH_PH[sec]} /> : null}
           {sec ? <Chips label="Status" chips={CHIPS[sec]} value={chip} counts={source.data ? counts : null} onPick={goChip} /> : null}
+          {sec === "po" ? (
+            <FilterSheet
+              open={filterOpen}
+              onClose={() => setFilterOpen(false)}
+              applied={applied}
+              supplierOptions={supplierOptions}
+              statusChips={CHIPS.po}
+              countFor={(d) => all.filter((r) => match(r, d)).length}
+              onApply={applyFilters}
+            />
+          ) : null}
 
           {sec === "po" && selecting ? (
             <div style={{ margin: "10px 18px 0" }}>
@@ -287,13 +358,14 @@ export function ProcurementScreen() {
           ) : null}
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 20px 8px", minHeight: 24 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-              {loading || !sec ? "" : `${shown.length} ${NOUN[sec]}${shown.length === 1 ? "" : "S"}`}
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+              {loading || !sec ? "" : `${shown.length} ${overdueOn ? "OVERDUE " : ""}${NOUN[sec]}${shown.length === 1 ? "" : "S"}`}
             </span>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              {!loading && shown.length ? (
-                <span style={{ fontSize: 12.5, color: M.ink, whiteSpace: "nowrap" }}>
-                  Total <span style={{ fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums" }}>{money(totalSen)}</span>
+            <span aria-hidden style={{ flex: 1, minWidth: 0, height: 1, background: "#E6E0D9" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flex: "none" }}>
+              {!loading && shown.length && sec !== "po" ? (
+                <span aria-label={`Total ${money(totalSen)}`} style={{ fontSize: 12.5, color: M.ink, whiteSpace: "nowrap" }}>
+                  {tablet ? "Total " : ""}<span style={{ fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums" }}>{money(totalSen)}</span>
                 </span>
               ) : null}
               {canSelect ? (
@@ -305,8 +377,10 @@ export function ProcurementScreen() {
                   {selecting ? "Cancel" : "Select"}
                 </button>
               ) : null}
+              {sec === "po" ? <FilterButton count={filterCount} onClick={() => setFilterOpen(true)} /> : null}
             </div>
           </div>
+          {sec === "po" ? <FilterPills pills={pills} onClearAll={clearFilters} /> : null}
 
           <div style={{ padding: `0 18px ${selecting && selectedDrafts.length ? 140 : 32}px` }}>
             {loading ? (
@@ -314,7 +388,23 @@ export function ProcurementScreen() {
             ) : failed ? (
               <ErrorCard text="Couldn’t load this list. Check your connection and try again." onRetry={() => source.refresh()} />
             ) : shown.length === 0 ? (
-              <EmptyCard text={dq ? "No matches for your search." : "Nothing here yet."} />
+              <>
+                <EmptyCard text={dq ? "No matches for your search." : filterCount || chip ? "No purchase orders match these filters." : "Nothing here yet."} />
+                {sec === "po" && (filterCount || chip) ? (
+                  <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 6 }}>
+                    {filterCount ? (
+                      <button type="button" onClick={clearFilters} style={{ border: "none", background: "none", padding: 6, fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: M.taupe, cursor: "pointer" }}>
+                        Clear filters
+                      </button>
+                    ) : null}
+                    {chip ? (
+                      <button type="button" onClick={() => goChip("")} style={{ border: "none", background: "none", padding: 6, fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: M.taupe, cursor: "pointer" }}>
+                        All statuses
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
             ) : (
               <ResponsiveGrid maxColumns={gridMaxColumns} gap={10}>{shown.map(card)}</ResponsiveGrid>
             )}

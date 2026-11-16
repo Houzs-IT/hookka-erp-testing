@@ -69,15 +69,15 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11986` | 9-tab admin host (default export, at file tail) |
-| `WorkingHoursTab` | `src/pages/employees.tsx:1021` | Tab 1 — flat working-hours grid |
-| `EmployeeMasterTab` | `src/pages/employees.tsx:2416` | Tab 2 — worker master + salary |
-| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3911` | Tab 3 — efficiency overview |
-| `DepartmentLaborTab` | `src/pages/employees.tsx:4489` | Dept labor cost breakdown |
-| `EmployeeDetailTab` | `src/pages/employees.tsx:5468` | Tab 4 — guard-unmounted detail |
-| `PayrollTab` | `src/pages/employees.tsx:6869` | Tab 5 — payroll drafts |
-| `LaborCostTab` | `src/pages/employees.tsx:8862` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10605 / 11673` | Leave + attendance tabs |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:12045` | 9-tab admin host (default export, at file tail) |
+| `WorkingHoursTab` | `src/pages/employees.tsx:1028` | Tab 1 — flat working-hours grid |
+| `EmployeeMasterTab` | `src/pages/employees.tsx:2476` | Tab 2 — worker master + salary |
+| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3971` | Tab 3 — efficiency overview |
+| `DepartmentLaborTab` | `src/pages/employees.tsx:4548` | Dept labor cost breakdown |
+| `EmployeeDetailTab` | `src/pages/employees.tsx:5527` | Tab 4 — guard-unmounted detail |
+| `PayrollTab` | `src/pages/employees.tsx:6928` | Tab 5 — payroll drafts |
+| `LaborCostTab` | `src/pages/employees.tsx:8921` | Tab 5b — labor cost + DepartmentsManager |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10664 / 11673` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |
@@ -91,7 +91,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `payrollPeriodForApproval` / `findPenaltyDrift` / `postPenaltiesForPeriod` | `src/api/lib/worker-penalties.ts:303 / 449 / 502` | Penalty payroll month, approval drift guard, posting on payroll approval |
 | `POST /login` / `resolveWorkerToken` | `src/api/routes/worker-auth.ts:124 / 337` | PIN login + token resolution |
 | `getWorker` (token gate) | `src/api/routes/worker.ts:163` | X-Worker-Token → ACTIVE worker or 401/403 |
-| `POST /clock` / `POST /dept-scan` | `src/api/routes/worker.ts:1182 / 1439` | Clock in/out + department scan |
+| `POST /clock` / `POST /dept-scan` | `src/api/routes/worker.ts:1262 / 1519` | Clock in/out + department scan |
 | `buildDeptDay` | `src/api/routes/worker.ts:262` | DEV-31 "Today's departments" payload (live or saved) |
 | `computeLiveDeptDay` | `src/api/lib/punch-autofill.ts:327` | Live split: punch-out maths with now as the end |
 | `splitDayHours` / `currentStation` | `src/lib/dept-scan-split.ts:148 / 171` | Shared split (autofill + live) and where the worker is now |

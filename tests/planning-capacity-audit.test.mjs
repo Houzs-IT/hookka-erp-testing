@@ -89,9 +89,9 @@ test("audit reports every department and never writes", async () => {
     }
     if (sql.includes("job_cards")) {
       return [
-        { dept: "FAB_CUT", minutes: 951 * 7 },
-        { dept: "FAB_SEW", minutes: 2704 * 7 },
-        { dept: "WOOD_CUT", minutes: 1156 * 7 },
+        { dept: "FAB_CUT", minutes: 951 * 12 },
+        { dept: "FAB_SEW", minutes: 2704 * 12 },
+        { dept: "WOOD_CUT", minutes: 1156 * 12 },
       ];
     }
     return [];
@@ -115,7 +115,7 @@ test("audit reports every department and never writes", async () => {
       "WOOD_CUT",
     ],
   );
-  assert.equal(audit.windowWorkingDays, 7);
+  assert.equal(audit.windowWorkingDays, 12); // owner 2026-11-12: two weeks
 
   const by = Object.fromEntries(audit.depts.map((d) => [d.dept, d]));
 

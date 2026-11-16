@@ -31,6 +31,7 @@ import {
   type ProductionOrderRow,
 } from "../lib/expected-job-cards";
 import { planZeroMinuteFills, writeZeroMinuteFills } from "../lib/fill-zero-minutes";
+import { loadLeadTimeSettings } from "../lib/lead-times";
 
 const app = new Hono<Env>();
 
@@ -51,6 +52,7 @@ app.post("/", async (c) => {
   if (denied) return denied;
   const db = c.var.DB;
   const poIdParam = c.req.query("poId");
+  const blankDueDates = !(await loadLeadTimeSettings(db)).autoScheduleEnabled;
 
   // Load departments once — every INSERT needs deptId + deptName lookups.
   const deptRes = await db
@@ -115,7 +117,8 @@ app.post("/", async (c) => {
       existing.add(`${row.wipKey ?? ""}::${row.departmentCode ?? ""}`);
     }
 
-    const dueDate = po.targetEndDate || po.startDate || "";
+    // Auto-schedule OFF => blank, same rule as the SO-confirm builder (HK-0147).
+    const dueDate = blankDueDates ? "" : po.targetEndDate || po.startDate || "";
     const createdForThisPO: string[] = [];
     for (const exp of expected) {
       const key = `${exp.wipKey}::${exp.deptCode}`;

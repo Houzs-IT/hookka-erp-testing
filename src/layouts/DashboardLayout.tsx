@@ -6,7 +6,6 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import { fetchVariantsConfig } from "@/lib/kv-config";
 import { useAutoUpdateOnNavigate } from "@/lib/use-version-check";
 import { DASHBOARD_ROUTE_ELEMENTS } from "@/dashboard-routes";
@@ -15,30 +14,14 @@ import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { isPhoneUa, prefersDesktop, setPreferDesktop, shouldRedirectToMobile } from "@/lib/prefer-desktop";
 
 // Lives inside ToastProvider so it can pop a toast when a new deploy lands.
-// Polls for a new bundle hash every 2 min + on focus. On change: offers an
-// immediate reload, and — whatever the answer — reloads on the next page
-// change anyway (never mid-form), so no tab stays on an old deploy.
+// Polls for a new bundle hash every 2 min + on focus. On change: a toast only,
+// then reloads on the next page change (never mid-form), so no tab stays on an
+// old deploy. HK-0146: no blocking "Reload?" dialog — it popped up on every
+// deploy mid-work and added nothing the next-page-change reload doesn't do.
 function NewVersionWatcher() {
   const { toast } = useToast();
-  const { confirm } = useConfirm();
   useAutoUpdateOnNavigate(() => {
-      toast.info("A new version is available — it will load on your next page change.");
-      // After the toast, prompt for reload. Delay so the toast is visible.
-      // Fires from useVersionCheck's onNewVersion callback (not a render),
-      // so useTimeout doesn't apply — this is a one-shot reaction to an
-      // event, not a lifecycle-bound effect.
-      // eslint-disable-next-line no-restricted-syntax -- one-shot delay inside event-style callback, not in a React effect
-      window.setTimeout(async () => {
-        if (
-          await confirm({
-            title: "Reload for new version?",
-            message: "A new version is available. Reload now? Unsaved changes may be lost.",
-            confirmLabel: "Reload",
-          })
-        ) {
-          window.location.reload();
-        }
-      }, 1500);
+    toast.info("A new version is available — it will load on your next page change.");
   });
   return null;
 }

@@ -56,6 +56,7 @@ import { deriveWipName } from "@/lib/wip-name";
 import { todayYmdMY } from "@/lib/utils";
 import { z } from "zod";
 import { DeptDayCard, type DeptDay } from "./dept-day-card";
+import { DeptCompletedCard } from "./dept-completed-card";
 
 // Loose passthrough envelopes — runtime validation at boundaries while
 // keeping the page's local Order/JobCard types as the typed view of `data`.
@@ -2397,6 +2398,9 @@ export default function WorkerScanPage() {
   return (
     <div className="space-y-4 pt-2">
       <h1 className="text-xl font-bold">{t("scan.title")}</h1>
+
+      {/* Owner 2026-11-12: everyone sees the department's count each time they open Scan. */}
+      <DeptCompletedCard />
 
       {/* Batch-upload progress badge */}
       {batchActive && (

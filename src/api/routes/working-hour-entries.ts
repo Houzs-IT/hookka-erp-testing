@@ -22,8 +22,10 @@
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
+import { ensureDeptScanEvents, liveTimedSegments } from "../lib/punch-autofill";
+import { mytWallClock } from "../../lib/utils";
 import { ensureNonprodRequests } from "./worker";
-import { loadProductionRevenue } from "../lib/production-revenue";
+import { loadProductionRevenue, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
 
 const app = new Hono<Env>();
@@ -312,24 +314,10 @@ app.get("/production-revenue", async (c) => {
               po.itemCategory      AS "category",
               po.quantity          AS "qty",
               COALESCE(jc.productionTimeMinutes, jc.estMinutes, 0) AS "jcMinutes",
-              COALESCE(
-                soi.unitPriceSen,
-                coi.unitPriceSen,
-                (SELECT COALESCE(p.basePriceSen, p.price1Sen)
-                   FROM products p
-                  WHERE p.code = po.productCode
-                  ORDER BY p.basePriceSen DESC NULLS LAST, p.id
-                  LIMIT 1),
-                0
-              ) AS "unitPriceSen"
+              ${PRODUCTION_ORDER_UNIT_PRICE_SQL} AS "unitPriceSen"
          FROM job_cards jc
          JOIN production_orders po ON po.id = jc.productionOrderId
-         LEFT JOIN sales_order_items soi
-                ON soi.salesOrderId = po.salesOrderId
-               AND soi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
-         LEFT JOIN consignment_order_items coi
-                ON coi.consignmentOrderId = po.consignmentOrderId
-               AND coi.lineNo = ${PRODUCTION_ORDER_LINE_SQL}
+         ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
         WHERE jc.status IN ('COMPLETED','TRANSFERRED')
           AND jc.completedDate IS NOT NULL
           AND jc.completedDate >= ?
@@ -816,6 +804,122 @@ app.get("/daily-breakdown", async (c) => {
 // ---------------------------------------------------------------------------
 // GET — three query modes (attendanceId | date | workerId+from+to)
 // ---------------------------------------------------------------------------
+// GET /api/working-hour-entries/dept-scans?from=&to= — the department QR scans
+// of each worker-day (owner 2026-11-14: 「中途也可以看 然后就可以tally跟
+// floorlive了」). The office saw only the home department until punch-out split
+// the day; this lets them check mid-day, the same scans Floor Live reads.
+// Read-only.
+app.get("/dept-scans", async (c) => {
+  const denied = await requirePermission(c, "attendance", "read");
+  if (denied) return denied;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? from;
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ymd.test(from) || !ymd.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to must be YYYY-MM-DD, from <= to" }, 400);
+  }
+  await ensureDeptScanEvents(c.var.DB);
+  const [scans, depts] = await Promise.all([
+    c.var.DB.prepare(
+      "SELECT workerid, date, departmentcode, atmin FROM dept_scan_events WHERE date >= ? AND date <= ? ORDER BY date, workerid, atmin, createdat",
+    ).bind(from, to).all<Record<string, unknown>>(),
+    c.var.DB.prepare("SELECT code, name, short_name, is_production FROM departments").all<Record<string, unknown>>(),
+  ]);
+  const meta = new Map(
+    (depts.results ?? []).map((d) => [
+      String(d.code ?? "").toUpperCase(),
+      {
+        name: String(d.short_name ?? d.shortName ?? "") || String(d.name ?? "") || String(d.code ?? ""),
+        isProduction: d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1,
+      },
+    ]),
+  );
+  const data = (scans.results ?? []).map((r) => {
+    const code = String(r.departmentcode ?? r.departmentCode ?? "").toUpperCase();
+    const m = Number(r.atmin ?? r.atMin) || 0;
+    return {
+      workerId: String(r.workerid ?? r.workerId ?? ""),
+      date: String(r.date ?? "").slice(0, 10),
+      departmentCode: code,
+      departmentName: meta.get(code)?.name ?? code,
+      isProduction: meta.get(code)?.isProduction ?? true,
+      at: `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`,
+    };
+  });
+  return c.json({ success: true, data });
+});
+
+// GET /api/working-hour-entries/live-segments?date= — today's open punches as
+// timed department segments (owner 2026-11-14: 「结束了那个department就可以
+// show出来了啊」 / the running stint waits for punch-out). A finished stint is
+// final; the last one is still running. Rows are written at punch-out as before
+// — this only shows them early. Read-only; only today has open punches.
+app.get("/live-segments", async (c) => {
+  const denied = await requirePermission(c, "attendance", "read");
+  if (denied) return denied;
+  const now = mytWallClock();
+  const today = now.toISOString().slice(0, 10);
+  const date = c.req.query("date") ?? today;
+  if (date !== today) return c.json({ success: true, data: [] });
+  const db = c.var.DB;
+  const [att, workers, depts, whe] = await Promise.all([
+    db.prepare("SELECT employee_id, clock_in, clock_out FROM attendance_records WHERE SUBSTR(CAST(date AS TEXT), 1, 10) = ?").bind(date).all<Record<string, unknown>>(),
+    db.prepare("SELECT id, department_code FROM workers").all<Record<string, unknown>>(),
+    db.prepare("SELECT code, name, short_name, is_production FROM departments").all<Record<string, unknown>>(),
+    db.prepare("SELECT worker_id, hours, notes FROM working_hour_entries WHERE SUBSTR(CAST(date AS TEXT), 1, 10) = ?").bind(date).all<Record<string, unknown>>(),
+  ]);
+  const home = new Map((workers.results ?? []).map((w) => [String(w.id ?? ""), String(w.department_code ?? w.departmentCode ?? "")]));
+  const keyed = new Set<string>();
+  const nonProd = new Map<string, number>();
+  for (const r of whe.results ?? []) {
+    const id = String(r.worker_id ?? r.workerId ?? "");
+    if (String(r.notes ?? "").startsWith("Non-production (approved)")) nonProd.set(id, (nonProd.get(id) ?? 0) + (Number(r.hours) || 0));
+    else keyed.add(id);
+  }
+  const punches = (att.results ?? [])
+    .map((a) => ({ workerId: String(a.employee_id ?? a.employeeId ?? ""), clockIn: String(a.clock_in ?? a.clockIn ?? ""), clockOut: a.clock_out ?? a.clockOut ?? null }))
+    .filter((a) => a.workerId && a.clockIn && !a.clockOut && !keyed.has(a.workerId))
+    .map((a) => ({ workerId: a.workerId, clockIn: a.clockIn, homeDeptCode: home.get(a.workerId) ?? null }));
+  const meta = new Map(
+    (depts.results ?? []).map((d) => [
+      String(d.code ?? "").toUpperCase(),
+      {
+        name: String(d.short_name ?? d.shortName ?? "") || String(d.name ?? "") || String(d.code ?? ""),
+        isProduction: d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1,
+      },
+    ]),
+  );
+  const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const live = await liveTimedSegments(db, { date, nowMin: now.getUTCHours() * 60 + now.getUTCMinutes(), punches, nonProdHoursByWorker: nonProd });
+  c.header("Cache-Control", "no-store");
+  return c.json({
+    success: true,
+    data: live.map((w) => ({
+      workerId: w.workerId,
+      date,
+      // Consecutive stints in the SAME department (a category scan inside it,
+      // or a re-scan) show as one line — "Fab Sew 07:39–07:42 | Fab Sew 07:42–"
+      // read like a mistake (owner check 2026-11-14).
+      segments: w.segments.reduce<typeof w.segments>((acc, s) => {
+        const last = acc[acc.length - 1];
+        if (last && last.departmentCode === s.departmentCode) {
+          acc[acc.length - 1] = { ...last, toMin: s.toMin, hours: Math.round((last.hours + s.hours) * 100) / 100, open: s.open, category: last.category === s.category ? last.category : null };
+        } else acc.push(s);
+        return acc;
+      }, []).map((s) => ({
+        departmentCode: s.departmentCode,
+        departmentName: meta.get(s.departmentCode)?.name ?? s.departmentCode,
+        isProduction: meta.get(s.departmentCode)?.isProduction ?? true,
+        category: s.category,
+        from: hm(s.fromMin),
+        to: s.open ? null : hm(s.toMin),
+        hours: s.hours,
+        open: s.open,
+      })),
+    })),
+  });
+});
+
 app.get("/", async (c) => {
   const attendanceId = c.req.query("attendanceId");
   const date = c.req.query("date");

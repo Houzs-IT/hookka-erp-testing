@@ -716,7 +716,7 @@ export default function MobileHome() {
       loadPct,
       workforce: overview?.employee?.activeHeadcount ?? null,
       rows: [
-        { label: "Daily Capacity", sub: period === CUR_YM ? "7-day avg" : `${period} avg`, value: dailyCap ? hrs(dailyCap) : "—", icon: Calendar },
+        { label: "Daily Capacity", sub: period === CUR_YM ? "12-day avg" : `${period} avg`, value: dailyCap ? hrs(dailyCap) : "—", icon: Calendar },
         {
           label: "Total Backlog",
           sub: "per dept",
@@ -983,7 +983,7 @@ export default function MobileHome() {
   })();
   const phonePlantTiles = plant
     ? [
-        { ...plant.rows[0], sub: isCurrentPeriod ? "7-day avg" : `${periodLabel(period)} avg` },
+        { ...plant.rows[0], sub: isCurrentPeriod ? "12-day avg" : `${periodLabel(period)} avg` },
         { ...plant.rows[1], sub: "days · hours queued" },
         { ...plant.rows[2], sub: "pending · bedframe / sofa" },
         { ...plant.rows[3], sub: `${isCurrentPeriod ? "yesterday" : lastDayLabel} · bedframe / sofa` },

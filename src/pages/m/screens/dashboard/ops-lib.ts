@@ -14,7 +14,7 @@ import { formatCurrency } from "../../../../lib/utils";
 import { parseDashPeriod } from "../../../../api/lib/dash-period";
 import { inFocus, inPeriod, monthLabel, shiftMonth, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
-import { pickCat, type RevCat } from "../../../dashboard-b/revenue-split";
+import { pickCat, pickSets, type RevCat, type SetCount } from "../../../dashboard-b/revenue-split";
 
 // ---------------------------------------------------------------------------
 // Request lifecycle → one status per section
@@ -82,7 +82,7 @@ export type OpsOverview = {
     completedLast7: { date: string; bedframeUnits: number; sofaSets: number }[];
     completedRange?: { bedframeUnits: number; sofaSets: number };
     capacityDays: { date: string; minutes: number; workers: number }[];
-    backlogByDept: { dept: string; sofaMin: number; bedframeMin: number; totalMin: number; dailyCapMin: number; backlogDays: number | null }[];
+    backlogByDept: { dept: string; sofaMin: number; bedframeMin: number; totalMin: number; dailyCapMin: number; backlogDays: number | null; sofaCapMin?: number; bedframeCapMin?: number; sofaDays?: number | null; bedframeDays?: number | null }[];
     backlogGrandMin: number;
   };
   purchasing?: { openPOCount: number; outstandingPOValueSen: number; itemsPendingReceipt: number };
@@ -223,7 +223,7 @@ export type SplitResp = {
   period?: string;
   granularity?: "day" | "week" | "month";
   revenue?: { bucket: string; production: CatSplit }[];
-  departments?: { code: string; label: string; period: CatSplit; byBucket: CatSplit[] }[];
+  departments?: { code: string; label: string; period: CatSplit; byBucket: CatSplit[]; sets?: SetCount; setsByBucket?: SetCount[] }[];
 };
 export type OpsRevCat = Extract<RevCat, "all" | "bedframe" | "sofa">;
 
@@ -231,17 +231,19 @@ export type OpsRevCat = Extract<RevCat, "all" | "bedframe" | "sofa">;
 export const splitDayIndex = (d: SplitResp | null | undefined, day: string | undefined): number =>
   !day || d?.granularity !== "day" ? -1 : (d.revenue ?? []).findIndex((r) => r.bucket === day);
 
-export type DeptRevRow = { code: string; label: string; value: number; frac: number };
+export type DeptRevRow = { code: string; label: string; value: number; frac: number; sets: number };
 /**
  * One row per department in the order the API returns (the desktop's fixed floor order,
  * which the desktop card does not re-sort). The value is the picked day's when the split is
  * daily and the day is in it, else the whole period's. Departments are never summed.
+ * Sets (HK-0148) follow the same day-or-period rule as the value.
  */
 export function deptRevenueRows(d: SplitResp | null | undefined, cat: OpsRevCat, day: string | undefined): DeptRevRow[] {
   const di = splitDayIndex(d, day);
   const rows = (d?.departments ?? []).map((x) => ({
     code: x.code, label: x.label,
     value: pickCat(di >= 0 ? x.byBucket[di] ?? undefined : x.period, cat),
+    sets: pickSets(di >= 0 ? x.setsByBucket?.[di] : x.sets, cat) ?? 0,
   }));
   const max = Math.max(0, ...rows.map((r) => r.value));
   return rows.map((r) => ({ ...r, frac: max > 0 ? r.value / max : 0 }));
@@ -279,9 +281,9 @@ export function stateTag(snap: OpsOverview["stateSnapshot"]): StateTag {
   return snap.isHistorical ? { kind: "live-no-history", text: "live (no history before today)" } : null;
 }
 
-/** "7-day avg" for the current month, else "<period> avg" (the desktop's wording). */
+/** "12-day avg" for the current month, else "<period> avg" (the desktop's wording). */
 export function capacityWindowLabel(periodKey: string, curYm: string): string {
-  return periodKey === curYm ? "7-day avg" : `${periodKey} avg`;
+  return periodKey === curYm ? "12-day avg" : `${periodKey} avg`;
 }
 
 /** Average capacity per worker: avg/day ÷ avg workers over days that credit a worker (desktop). */
@@ -292,21 +294,39 @@ export function perWorkerMin(capacityDays: { minutes: number; workers: number }[
   return avg > 0 ? Math.round(dailyCapacityMin / avg) : null;
 }
 
-export type BacklogRow = { dept: string; sofaMin: number; bedframeMin: number; totalMin: number; dailyCapMin: number; days: number | null; sofaDays: number; bedDays: number; shown: number | null };
+export type BacklogRow = {
+  dept: string; sofaMin: number; bedframeMin: number; totalMin: number; dailyCapMin: number; days: number | null;
+  sofaDays: number; bedDays: number; shown: number | null;
+  /** Only one category shown (owner 2026-11-12): its queued minutes and that department's capacity for it. */
+  single: { label: "Sofa" | "Bedframe"; queuedMin: number; capMin: number } | null;
+};
 /**
- * Backlog rows in the server's order (stalled first, then most days). The bars are scaled by
- * DAYS (minutes ÷ the department's daily capacity), as on the desktop; hiding a category
- * re-sums the days of what is left, and a stalled department stays stalled.
+ * Backlog rows. Bars are scaled by DAYS, as on the desktop. Both categories
+ * shown = total queued / total capacity (the server's backlogDays, order kept).
+ * One category shown = that category's queue over the department's own
+ * capacity for it (owner 2026-11-12: 「如果选bedframe or 选sofa」), sorted by
+ * those days, stalled first. An older feed without the per-category fields
+ * falls back to splitting the total capacity.
  */
 export function backlogRows(rows: NonNullable<OpsOverview["production"]>["backlogByDept"], showSofa: boolean, showBed: boolean): BacklogRow[] {
-  return rows.map((d) => {
+  const both = showSofa === showBed;
+  const out = rows.map((d) => {
     const cap = d.dailyCapMin;
+    const base = { dept: d.dept, sofaMin: d.sofaMin, bedframeMin: d.bedframeMin, totalMin: d.totalMin, dailyCapMin: cap, days: d.backlogDays };
+    const hasCat = d.sofaDays !== undefined || d.bedframeDays !== undefined;
+    if (!both && hasCat) {
+      const sofa = showSofa;
+      const days = sofa ? (d.sofaDays ?? null) : (d.bedframeDays ?? null);
+      const single = { label: sofa ? "Sofa" as const : "Bedframe" as const, queuedMin: sofa ? d.sofaMin : d.bedframeMin, capMin: (sofa ? d.sofaCapMin : d.bedframeCapMin) ?? 0 };
+      return { ...base, sofaDays: sofa ? days ?? 0 : 0, bedDays: sofa ? 0 : days ?? 0, shown: days, single };
+    }
     const sofaDays = cap > 0 ? d.sofaMin / cap : 0;
     const bedDays = cap > 0 ? d.bedframeMin / cap : 0;
-    const both = showSofa && showBed;
     const shown = d.backlogDays == null ? null : both ? d.backlogDays : Math.round(((showSofa ? sofaDays : 0) + (showBed ? bedDays : 0)) * 10) / 10;
-    return { dept: d.dept, sofaMin: d.sofaMin, bedframeMin: d.bedframeMin, totalMin: d.totalMin, dailyCapMin: cap, days: d.backlogDays, sofaDays, bedDays, shown };
+    return { ...base, sofaDays, bedDays, shown, single: null };
   });
+  if (both || !out.some((r) => r.single)) return out;
+  return out.sort((a, b) => (b.shown ?? Infinity) - (a.shown ?? Infinity));
 }
 
 /** The headline of the Completed drill: all-time is not offered on mobile, so it is the period's running total (the server's deduped range total first). */

@@ -72,17 +72,22 @@ export function piecesDoneByWorker(
   const add = (w: string | null, n: number) => {
     if (w) out.set(w, (out.get(w) ?? 0) + n);
   };
+  // A piece made by two people counts half to each (owner 2026-11-13: 「2也是
+  // 解决」) — the same split efficiency uses, so "Pcs done today" is the real
+  // number of pieces, not doubled.
+  const split = (a: string | null, b: string | null, n: number) => {
+    if (a && b && a !== b) {
+      add(a, n / 2);
+      add(b, n / 2);
+    } else add(a ?? b, n);
+  };
   for (const jc of jobCards) {
     const pieces = byJc.get(jc.id);
     if (pieces && pieces.length) {
-      for (const p of pieces) {
-        add(p.pic1Id, 1);
-        add(p.pic2Id, 1);
-      }
+      for (const p of pieces) split(p.pic1Id, p.pic2Id, 1);
     } else {
       const q = Math.max(1, Math.round(Number(jc.wipQty) || 1));
-      add(jc.pic1Id, q);
-      add(jc.pic2Id, q);
+      split(jc.pic1Id, jc.pic2Id, q);
     }
   }
   return out;

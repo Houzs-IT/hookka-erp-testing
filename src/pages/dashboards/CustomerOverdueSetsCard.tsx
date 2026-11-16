@@ -5,6 +5,7 @@ import { filterCustomersByProduction, PRODUCTION_FILTERS } from "@/api/lib/custo
 import type { CustomerOverdueSets, OverdueSetsOrder, OverdueSetsSummary, ProductionFilter } from "@/api/lib/customer-overdue-sets";
 import { fmtN } from "./dashboard-shared-lib";
 import { OverdueOrderProgress } from "./OverdueOrderProgress";
+import { orderStages } from "./ops-floor-lib";
 
 export interface CustomerOverdueSetsCardProps {
   summary: OverdueSetsSummary | null | undefined;
@@ -46,6 +47,25 @@ function CustomerRow({ customer, asOf }: { customer: CustomerOverdueSets; asOf: 
   );
 }
 
+/** Owner 2026-11-12: "每个order 都show current stage" — where the order's
+ *  undispatched sets are now, in floor order: "Upholstery 3 · Packing 2 · Done 1". */
+function StageSummary({ stages }: { stages: OverdueSetsOrder["stages"] | undefined }) {
+  const list = orderStages(stages);
+  if (list.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1" aria-label="Current stage">
+      {list.map((s) => (
+        <span
+          key={s.stage}
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${s.stage === "DONE" ? "bg-[#E6F0E8] text-[#2F6B3F]" : s.stage === "NOT_STARTED" ? "bg-[#F0ECE9] text-[#6B7280]" : "bg-[#EFE9DC] text-[#6B5C32]"}`}
+        >
+          {s.label} <span className="ml-1 tabular-nums">{fmtN(s.sets)}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function OrderRow({ order }: { order: OverdueSetsOrder }) {
   const [isOpen, setIsOpen] = useState(false);
   return (
@@ -60,6 +80,7 @@ function OrderRow({ order }: { order: OverdueSetsOrder }) {
           {order.customerState && <span className="text-[#6B7280]">{order.customerState}</span>}
           <span className="text-[#6B7280]">due {order.dueDate}</span>
           <LatePill days={order.daysLate} />
+          <StageSummary stages={order.stages} />
           <span className="ml-auto tabular-nums text-[#1F1D1B]">
             <span className="font-semibold">{fmtN(order.remainingSets)}</span> of {fmtN(order.orderedSets)} sets to dispatch
           </span>

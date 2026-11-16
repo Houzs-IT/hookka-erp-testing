@@ -18,6 +18,15 @@ export interface OverdueSetsOrderRow {
   dispatchedSets: number | string | null;
   productionOrders?: number | string | null;
   unfinishedProductionOrders?: number | string | null;
+  /** Where the not-yet-dispatched sets are now (attached after the main query). */
+  stages?: OverdueSetsStage[];
+}
+
+/** A department code (job card departmentCode), "DONE" (production finished,
+ *  not dispatched yet) or "NOT_STARTED" — with the sets sitting there. */
+export interface OverdueSetsStage {
+  stage: string;
+  sets: number;
 }
 
 export interface OverdueSetsOrder {
@@ -30,6 +39,8 @@ export interface OverdueSetsOrder {
   orderedSets: number;
   remainingSets: number;
   isProductionComplete: boolean;
+  /** Owner 2026-11-12: every order shows its current stage on the row. */
+  stages: OverdueSetsStage[];
 }
 
 export interface CustomerOverdueSets {
@@ -113,7 +124,41 @@ export async function collectOverdueSetsRows(
     )
     .bind(orgId, todayYmd)
     .all<OverdueSetsOrderRow>();
-  return result.results ?? [];
+  const rows = result.results ?? [];
+  // Current stage of each order's production orders that are not on a
+  // dispatched DO yet (same "dispatched" rule as above), in sets.
+  const stageResult = await db
+    .prepare(
+      `SELECT po.sales_order_id AS "soId",
+              CASE WHEN po.status IN ('COMPLETED', 'TRANSFERRED') THEN 'DONE'
+                   ELSE COALESCE(NULLIF(po.current_department, ''), 'NOT_STARTED') END AS "stage",
+              SUM(po.quantity) AS "sets"
+         FROM production_orders po
+        WHERE po.org_id = ?
+          AND po.status <> 'CANCELLED'
+          AND NULLIF(po.sales_order_id, '') IS NOT NULL
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM delivery_order_items di
+                  JOIN delivery_orders d ON d.id = di.delivery_order_id
+                 WHERE di.production_order_id = po.id
+                   AND d.status NOT IN ('DRAFT', 'CANCELLED'))
+        GROUP BY po.sales_order_id,
+                 CASE WHEN po.status IN ('COMPLETED', 'TRANSFERRED') THEN 'DONE'
+                      ELSE COALESCE(NULLIF(po.current_department, ''), 'NOT_STARTED') END`,
+    )
+    .bind(orgId)
+    .all<{ soId: string; stage: string; sets: number | string | null }>();
+  const stagesBySo = new Map<string, OverdueSetsStage[]>();
+  for (const r of stageResult.results ?? []) {
+    const sets = Number(r.sets) || 0;
+    if (sets <= 0) continue;
+    const list = stagesBySo.get(r.soId) ?? [];
+    list.push({ stage: r.stage, sets });
+    stagesBySo.set(r.soId, list);
+  }
+  for (const row of rows) row.stages = stagesBySo.get(row.soId) ?? [];
+  return rows;
 }
 
 function daysBetween(fromYmd: string, toYmd: string): number {
@@ -125,7 +170,7 @@ function toOverdueOrder(row: OverdueSetsOrderRow, dueDate: string, todayYmd: str
   const remainingSets = Math.max(0, orderedSets - (Number(row.dispatchedSets) || 0));
   if (remainingSets === 0 || dueDate >= todayYmd) return null;
   const isProductionComplete = (Number(row.productionOrders) || 0) > 0 && (Number(row.unfinishedProductionOrders) || 0) === 0;
-  return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, customerState: row.customerState, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets, isProductionComplete };
+  return { soId: row.soId, soNo: row.soNo, customerPo: row.customerPo, customerState: row.customerState, dueDate, daysLate: daysBetween(dueDate, todayYmd), orderedSets, remainingSets, isProductionComplete, stages: row.stages ?? [] };
 }
 
 function groupByCustomer(entries: { row: OverdueSetsOrderRow; order: OverdueSetsOrder }[]): CustomerOverdueSets[] {

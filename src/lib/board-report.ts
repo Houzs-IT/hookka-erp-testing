@@ -183,7 +183,9 @@ export type MaterialCat = { name: string; spend: number; purchase: number; closi
 export type BsRow = { label: string; strong: boolean; cur: number | null; prev: number | null; change: number | null; quarterAgo: number | null };
 export type CashMonth = { ym: string; label: string; kind: "actual" | "mtd"; operating: number; investing: number; financing: number; net: number; fcf: number };
 export type CashForecastMonth = { ym: string; label: string; actual: number | null; docs: number | null; pnl: number | null };
-export type CustomerRow = { name: string; total: number; share: number | null; bedframeAvg: number | null; bedframeUnits: number; sofaAvg: number | null; sofaSets: number };
+export type CustomerRow = { name: string; total: number; share: number | null; bedframeAvg: number | null; bedframeUnits: number; sofaAvg: number | null; sofaSets: number;
+  /** Owner 2026-11-13 「你还可以分bedframe sofa啊」: the order value by category (avg x count). */
+  bedframeTotal?: number | null; sofaTotal?: number | null };
 export type ProdDept = { code: string; label: string; total: number; prev: number | null; change: number | null };
 export type OutlookMonth = { ym: string; label: string; mtd: DashSlice | null; forecast: DashSlice | null };
 export type Flag = { level: "alert" | "check" | "info"; text: string };
@@ -533,6 +535,8 @@ function shapeCustomers(ov: OverviewPayload): BoardReport["customers"] {
     name: r.customerName, total: r.totalSen, share: pct(r.totalSen, total),
     bedframeAvg: r.bedframeUnits > 0 ? r.bedframeAvgSen : null, bedframeUnits: r.bedframeUnits,
     sofaAvg: r.sofaSets > 0 ? r.sofaAvgSen : null, sofaSets: r.sofaSets,
+    bedframeTotal: r.bedframeUnits > 0 ? Math.round(r.bedframeAvgSen * r.bedframeUnits) : null,
+    sofaTotal: r.sofaSets > 0 ? Math.round(r.sofaAvgSen * r.sofaSets) : null,
   }));
   const shownTotal = sum(rows.map((r) => r.total));
   const restCount = (conc?.customerCount ?? rows.length) - rows.length;

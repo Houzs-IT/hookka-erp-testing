@@ -65,7 +65,9 @@ export default function BoardReportPage() {
     (async () => {
       try {
         // The first read after Refresh rebuilds; polls only re-read.
-        const rebuild = reloadKey > 0 && poll === 0 ? "&rebuild=1" : "";
+        // Polls say so, so the server waits for the running build instead of
+        // handing back the previous copy.
+        const rebuild = reloadKey > 0 && poll === 0 ? "&rebuild=1" : poll > 0 ? "&poll=1" : "";
         const res = await fetch(`/api/reports/board?month=${reqKey.split("#")[0]}${rebuild}`);
         if (!res.ok) throw new Error(await responseErrorMessage(res, "The board report could not be loaded"));
         const json = (await res.json()) as { success?: boolean; data?: Payload; error?: string; building?: boolean };

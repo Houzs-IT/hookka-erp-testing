@@ -145,24 +145,38 @@ export function IncomePage({ r }: P) {
 export function LabourPage({ r }: P) {
   return (
     <BrPage title="Labour by department" kicker="Page 3 · Direct labour" month={r.monthLabel}>
-      {withSection(r.labour, (d) => (
+      {withSection(r.labour, (d) => {
+        // Owner 2026-11-13: payroll is filed under each worker's HOME (production)
+        // department; the time production staff spent in non-production
+        // departments is split OUT of direct labour and shown on its own rows
+        // (「确保nonproduction也有分出来」), every column filled (「根据column去填入」).
+        const np = d.nonProd ?? [];
+        const npTotal = d.nonProdTotal ?? 0;
+        const npPrevs = np.map((x) => x.prev).filter((x): x is number => x !== null);
+        const npPrev = npPrevs.length ? npPrevs.reduce((a, b) => a + b, 0) : 0;
+        const npFcs = np.map((x) => x.forecast).filter((x): x is number => x !== null);
+        const npFc = npFcs.length ? npFcs.reduce((a, b) => a + b, 0) : null;
+        const payroll = d.total;
+        const direct = payroll - npTotal;
+        const directPrev = d.prevTotal !== null ? d.prevTotal - npPrev : null;
+        return (
         <>
           <div className="brp-tiles four">
-            <Tile label="Direct labour" value={<>RM {rm(d.total)}</>} sub={<>last month RM {rm(d.prevTotal)} <Delta p={changePct(d.total, d.prevTotal)} invert /></>} />
-            <Tile label="Forecast (production)" value={<>RM {rm(d.forecastTotal)}</>} sub={<Delta p={changePct(d.total, d.forecastTotal)} invert />} />
-            <Tile label="% of production revenue" value={pctText(pct(d.total, d.productionRevenue))} sub={<>production revenue RM {rm(d.productionRevenue)}</>} />
-            <Tile label="Per head" value={<>RM {rm(d.headcount ? Math.round(d.total / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} on payroll · {d.units ?? "-"} units completed</>} />
+            <Tile label="Direct labour" value={<>RM {rm(direct)}</>} sub={<>last month RM {rm(directPrev)} <Delta p={changePct(direct, directPrev)} invert /></>} />
+            <Tile label="Forecast (production)" value={<>RM {rm(d.forecastTotal)}</>} sub={<Delta p={changePct(direct, d.forecastTotal)} invert />} />
+            <Tile label="% of production revenue" value={pctText(pct(direct, d.productionRevenue))} sub={<>production revenue RM {rm(d.productionRevenue)}</>} />
+            <Tile label="Payroll per head" value={<>RM {rm(d.headcount ? Math.round(payroll / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} on payroll · RM {rm(payroll)} · {d.units ?? "-"} units completed</>} />
           </div>
           <table className="brp-table">
             <thead>
-              <tr><th>Department</th><th>Direct labour</th><th>Share</th><th>% of total prod. revenue</th><th>% of own prod. revenue</th><th>Last month</th><th>Forecast</th><th>vs forecast</th></tr>
+              <tr><th>Department</th><th>Labour</th><th>Share of payroll</th><th>% of total prod. revenue</th><th>% of own prod. revenue</th><th>Last month</th><th>Forecast</th><th>vs forecast</th></tr>
             </thead>
             <tbody>
               {d.depts.map((x) => (
                 <tr key={x.dept}>
                   <td>{deptName(x.dept)}</td>
                   <td><Money v={x.cost} /></td>
-                  <td>{pctText(x.share)}</td>
+                  <td>{pctText(pct(x.cost, payroll))}</td>
                   <td>{pctText(x.pctTotalProdRev)}</td>
                   <td>{pctText(x.pctOwnProdRev)}</td>
                   <td><Money v={x.prev} /></td>
@@ -170,24 +184,28 @@ export function LabourPage({ r }: P) {
                   <td><Delta p={changePct(x.cost, x.forecast)} invert /></td>
                 </tr>
               ))}
-              <tr className="strong"><td>Production total</td><td><Money v={d.total} /></td><td>100.0%</td><td>{pctText(pct(d.total, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={d.forecastTotal} /></td><td><Delta p={changePct(d.total, d.forecastTotal)} invert /></td></tr>
-              {/* Non-production departments (owner review 2026-11-10). */}
-              <tr className="brp-subhead"><td colSpan={8}>Non-production</td></tr>
-              {(d.nonProd ?? []).length === 0 ? (
-                <tr><td colSpan={8} className="brp-muted">No non-production salary recorded this month.</td></tr>
+              <tr><td>Payroll in production departments</td><td><Money v={payroll} /></td><td>100.0%</td><td>{pctText(pct(payroll, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td /><td /></tr>
+              <tr><td>Less: time in non-production departments</td><td><Money v={-npTotal} /></td><td>{pctText(pct(-npTotal, payroll))}</td><td>{pctText(pct(-npTotal, d.productionRevenue))}</td><td /><td><Money v={npPrev ? -npPrev : null} /></td><td><Money v={npFc !== null ? -npFc : null} /></td><td /></tr>
+              <tr className="strong"><td>Direct labour (production)</td><td><Money v={direct} /></td><td>{pctText(pct(direct, payroll))}</td><td>{pctText(pct(direct, d.productionRevenue))}</td><td /><td><Money v={directPrev} /></td><td><Money v={d.forecastTotal} /></td><td><Delta p={changePct(direct, d.forecastTotal)} invert /></td></tr>
+              <tr className="brp-subhead"><td colSpan={8}>Non-production · production staff&apos;s time in these departments (split out of the payroll above)</td></tr>
+              {np.length === 0 ? (
+                <tr><td colSpan={8} className="brp-muted">No non-production time recorded this month.</td></tr>
               ) : (
-                (d.nonProd ?? []).map((x) => (
+                np.map((x) => (
                   <tr key={x.dept}>
                     <td>{deptName(x.dept)}</td>
                     <td><Money v={x.cost} /></td>
-                    <td>-</td><td>-</td><td>-</td>
+                    <td>{pctText(pct(x.cost, payroll))}</td>
+                    <td>{pctText(pct(x.cost, d.productionRevenue))}</td>
+                    <td>-</td>
                     <td><Money v={x.prev} /></td>
                     <td><Money v={x.forecast} /></td>
                     <td><Delta p={changePct(x.cost, x.forecast)} invert /></td>
                   </tr>
                 ))
               )}
-              <tr className="strong"><td>All labour</td><td><Money v={d.total + (d.nonProdTotal ?? 0)} /></td><td /><td /><td /><td /><td /><td /></tr>
+              <tr className="strong"><td>Non-production total</td><td><Money v={npTotal} /></td><td>{pctText(pct(npTotal, payroll))}</td><td>{pctText(pct(npTotal, d.productionRevenue))}</td><td>-</td><td><Money v={npPrev || null} /></td><td><Money v={npFc} /></td><td><Delta p={changePct(npTotal, npFc)} invert /></td></tr>
+              <tr className="strong"><td>All labour (payroll)</td><td><Money v={payroll} /></td><td>100.0%</td><td>{pctText(pct(payroll, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td /><td /></tr>
             </tbody>
           </table>
           <h3>Production salary by month</h3>
@@ -203,7 +221,8 @@ export function LabourPage({ r }: P) {
           </Elastic>
           <p className="brp-small">Production revenue = value of work completed (Employees › Labor Cost vs Revenue), not sales. Own production revenue = the department&apos;s own completed value (Dashboard › revenue split). Source: Forecasting › Dashboard production salary.</p>
         </>
-      ))}
+        );
+      })}
     </BrPage>
   );
 }

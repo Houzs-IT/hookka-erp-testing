@@ -84,6 +84,7 @@ interface InboundEmailPayload {
   references?: string[];
   date?: string;
   attachments?: InboundAttachmentPayload[];
+  deliveredTo?: string;
 }
 
 // A postal-mime attachment. `content` is an ArrayBuffer (or a view) of the raw
@@ -222,6 +223,10 @@ export default {
       attachments: toAttachments(
         parsed.attachments as ParsedAttachment[] | undefined,
       ),
+      // The box Cloudflare delivered THIS copy to (one call per recipient).
+      // The ERP files the mail there, so a Bcc'd or Cc'd person gets their own
+      // copy (HK-0150).
+      deliveredTo: message.to || undefined,
     };
 
     // Best-effort safety-net copy. Forward BEFORE the POST and outside its

@@ -81,6 +81,9 @@ import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/emplo
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
+import { loadDeptCompletedByDay, usualDays } from "../lib/dept-completed";
+import { cached } from "../lib/kv-cache";
+import { loadHolidaySet } from "../lib/agent-learning";
 
 const app = new Hono<Env>();
 
@@ -218,7 +221,7 @@ async function getCurrentDeptForWorker(
   try {
     const ds = await db
       .prepare(
-        "SELECT departmentcode FROM dept_scan_events WHERE workerid = ? AND date = ? ORDER BY atmin DESC LIMIT 1",
+        "SELECT departmentcode FROM dept_scan_events WHERE workerid = ? AND date = ? ORDER BY atmin DESC, createdat DESC LIMIT 1",
       )
       .bind(workerId, date)
       .first<{ departmentcode: string | null }>();
@@ -328,6 +331,81 @@ async function buildDeptDay(
     hoursSoFar: live.hoursSoFar,
   };
 }
+
+// ============================================================
+// GET /api/worker/dept-completed?month=YYYY-MM — "Department completed today"
+// on the Scan screen + its history (owner 2026-11-12, design
+// https://claude.ai/artifact/VGJkETK2UuzsMjcYqMZshE). The DEPARTMENT's count,
+// not the worker's: bedframe units + sofa sets, each department's 12-working-day
+// average beside it (rules: src/api/lib/dept-completed.ts — outsourced work
+// counted). Departments shown: the one scanned into now first, then the
+// worker's own set; an Operator Leader sees every department. On a Sunday or
+// public holiday it shows the last working day (owner: 0 would alarm).
+// ============================================================
+app.get("/dept-completed", async (c) => {
+  const auth = await getWorker(c);
+  if (!auth.ok) return auth.response;
+  const db = c.var.DB;
+  const today = malaysiaNow().toISOString().slice(0, 10);
+  const askedMonth = (c.req.query("month") || "").trim();
+  const month = /^\d{4}-\d{2}$/.test(askedMonth) && askedMonth <= today.slice(0, 7) ? askedMonth : today.slice(0, 7);
+  try {
+    const [days, names, holidays, deptDay, deptRows] = await Promise.all([
+      cached(c, "dept-completed:byday:all", 120, () => loadDeptCompletedByDay(db, null)),
+      loadDeptNames(db),
+      loadHolidaySet(db),
+      buildDeptDaySafe(db, auth.worker),
+      db.prepare("SELECT code, is_production FROM departments").all<Record<string, unknown>>(),
+    ]);
+    // Production departments only (owner 2026-11-12: 「nonprod 部门不需要show」).
+    const production = new Set(
+      (deptRows.results ?? [])
+        .filter((d) => d.is_production === true || d.is_production === 1 || d.isProduction === true || d.isProduction === 1)
+        .map((d) => String(d.code ?? "").trim().toUpperCase()),
+    );
+    const off = (d: string) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0 || holidays.has(d);
+    const isWorkDay = !off(today);
+    let shownDate = today;
+    if (!isWorkDay) {
+      const t = new Date(`${today}T00:00:00Z`);
+      for (let i = 0; i < 14; i++) {
+        t.setUTCDate(t.getUTCDate() - 1);
+        const d = t.toISOString().slice(0, 10);
+        if (!off(d)) { shownDate = d; break; }
+      }
+    }
+    const own = parseWorkerDepartmentCodes(auth.worker.departmentCodes, auth.worker.departmentCode)
+      .map((d) => d.trim().toUpperCase()).filter(Boolean);
+    const now = (deptDay?.current?.departmentCode ?? "").toUpperCase() || null;
+    const isLeader = (auth.worker.position ?? "") === "Operator Leader";
+    const order: string[] = [];
+    const add = (d: string | null) => { if (d && (production.size === 0 || production.has(d)) && !order.includes(d)) order.push(d); };
+    add(now);
+    own.forEach(add);
+    if (isLeader) [...new Set(days.map((d) => d.dept.toUpperCase()))].sort().forEach(add);
+    const usual = usualDays(days, today);
+    const onDay = new Map(days.filter((d) => d.date === shownDate).map((d) => [d.dept.toUpperCase(), d]));
+    const depts = order.map((code) => {
+      const d = onDay.get(code);
+      const u = usual.get(code) ?? { bed: 0, sofa: 0 };
+      return {
+        code,
+        name: names.get(code) ?? code,
+        bedframeUnits: d?.bedframeUnits ?? 0,
+        sofaSets: d?.sofaSets ?? 0,
+        usualBedframe: u.bed,
+        usualSofa: u.sofa,
+      };
+    });
+    const inMonth = days
+      .filter((d) => d.date.startsWith(month) && d.date <= today && order.includes(d.dept.toUpperCase()))
+      .map((d) => ({ ...d, dept: d.dept.toUpperCase() }));
+    return c.json({ success: true, data: { today, shownDate, isWorkDay, now, isLeader, depts, month, days: inMonth } });
+  } catch (err) {
+    console.error("[worker] dept-completed failed:", err);
+    return c.json({ success: false, error: "Could not load the department count" }, 500);
+  }
+});
 
 // The card is extra: a failure here must never take down /today or a scan.
 async function buildDeptDaySafe(

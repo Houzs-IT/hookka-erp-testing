@@ -45,10 +45,29 @@ export type DeptBacklog = {
   bedframeMin: number;
   totalMin: number;
   dailyCapMin: number;
+  /** Per-category capacity + days (owner 2026-11-12): Sofa queue ÷ the dept's
+   *  Sofa output, Bedframe ÷ Bedframe output. null = stalled. Optional: a cached
+   *  older feed lacks them and the row falls back to the shared capacity. */
+  sofaCapMin?: number;
+  bedframeCapMin?: number;
+  sofaDays?: number | null;
+  bedframeDays?: number | null;
   // null = "stalled" (zero completions in the rolling window — no honest way
   // to express the queue in days).
   backlogDays: number | null;
 };
+
+/** Days when ONE category is shown: that category's queue over that
+ *  department's own capacity for it (owner 2026-11-12). Both shown → null, so
+ *  the caller keeps total / total (「两个都显示时候就拿total 除total」); also null
+ *  for an older feed without the per-category fields. */
+export function categoryDays(d: DeptBacklog, sofaOn: boolean, bedOn: boolean): { showDays: number | null; sofaDays: number; bedDays: number } | null {
+  if (sofaOn === bedOn) return null;
+  if (d.sofaDays === undefined && d.bedframeDays === undefined) return null;
+  const days = sofaOn ? (d.sofaDays ?? null) : (d.bedframeDays ?? null);
+  if (days === null) return { showDays: null, sofaDays: 0, bedDays: 0 };
+  return { showDays: days, sofaDays: sofaOn ? days : 0, bedDays: bedOn ? days : 0 };
+}
 export type StateSnapshot = {
   source: "live" | "snapshot" | "reconstructed";
   isHistorical: boolean; // true → past-month value (snapshot-less): live or reconstructed
@@ -377,6 +396,8 @@ export function deptBacklogRows(
   unrounded = false,
 ) {
   const rows = depts.map((d) => {
+    const cat = categoryDays(d, sofaOn, bedOn);
+    if (cat) return { d, ...cat };
     const stalled = !(d.dailyCapMin > 0);
     const cap = stalled ? 1 : d.dailyCapMin;
     const sofaDays = sofaOn && !stalled ? d.sofaMin / cap : 0;

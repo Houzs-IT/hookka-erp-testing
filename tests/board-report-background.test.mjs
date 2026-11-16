@@ -44,7 +44,8 @@ test("route: cached read, rebuild on request, 'building' instead of a second bui
 
 test("page: polls while building, Refresh rebuilds, says you can leave", () => {
   const page = readFileSync("src/pages/board-report/index.tsx", "utf8");
-  assert.match(page, /const rebuild = reloadKey > 0 && poll === 0 \? "&rebuild=1" : "";/);
+  // Polls carry &poll=1 so the server waits for the running build (owner 2026-11-13: Refresh showed the old copy).
+  assert.match(page, /const rebuild = reloadKey > 0 && poll === 0 \? "&rebuild=1" : poll > 0 \? "&poll=1" : "";/);
   assert.match(page, /if \(json\.success && json\.building\)/);
   assert.match(page, /you can leave this page/);
 });
@@ -54,4 +55,12 @@ test("month start: the last closed month is pre-built daily and kept (never rebu
   assert.match(w, /app\.post\("\/api\/internal\/board-report-prebuild"/);
   assert.match(w, /if \(!body\.force && \(await cache\.readBoardCache\(db, month\)\)\)/);
   assert.match(readFileSync(".github/workflows/board-report-prebuild.yml", "utf8"), /cron: '30 16 \* \* \*'/);
+});
+
+test("a poll after Refresh waits for the new build instead of returning the previous copy (owner 2026-11-13)", () => {
+  const src = readFileSync("src/api/routes/reports.ts", "utf8");
+  const i = src.indexOf('if (!rebuild && c.req.query("poll") === "1")');
+  assert.ok(i > 0, "poll guard present");
+  assert.ok(i < src.indexOf("cache.readBoardCache<Report>(db, month)"), "checked before the old copy is read");
+  assert.match(src.slice(i, i + 400), /Date\.now\(\) - Date\.parse\(started\) < cache\.LOCK_STALE_MS/);
 });
