@@ -53,6 +53,7 @@ import {
   readCompanyCode,
   classifyBatchReassign,
 } from "../../lib/company-dimension";
+import { repriceSoItems, soPriceEditBlock } from "../lib/so-price-edit";
 import {
   invalidateHubChangeSnapshots,
   invalidateOrderCascadeSnapshots,
@@ -6041,6 +6042,121 @@ app.patch("/:id/dates", async (c) => {
     console.error("[PATCH /api/sales-orders/:id/dates] failed:", msg, err);
     return c.json(
       { success: false, error: msg || "Internal error updating dates" },
+      500,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/sales-orders/:id/prices — HK-0156. Change line base prices only,
+// after the full Edit page has locked (production started or past
+// IN_PRODUCTION). No item / qty / spec change, so production is untouched.
+// Open until the order is invoiced (see lib/so-price-edit.ts).
+//
+// Body: { items: [{ id, basePriceSen }], reason?: string }
+// ---------------------------------------------------------------------------
+app.patch("/:id/prices", async (c) => {
+  const denied = await requirePermission(c, "sales-orders", "update");
+  if (denied) return denied;
+  if (isCustomerScoped(c)) {
+    return c.json({ success: false, error: "Forbidden" }, 403);
+  }
+  const id = c.req.param("id");
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const so = await c.var.DB
+      .prepare("SELECT * FROM sales_orders WHERE id = ?")
+      .bind(id)
+      .first<SalesOrderRow>();
+    if (!so) {
+      return c.json({ success: false, error: "Sales order not found" }, 404);
+    }
+    const invoice = await c.var.DB
+      .prepare(
+        `SELECT id FROM invoices
+          WHERE (salesOrderId = ? OR companySOId = ?
+                 OR deliveryOrderId IN (SELECT id FROM delivery_orders WHERE salesOrderId = ?))
+            AND status <> 'CANCELLED'
+          LIMIT 1`,
+      )
+      .bind(so.id, so.companySOId ?? "", so.id)
+      .first<{ id: string }>();
+    const blocked = soPriceEditBlock(so.status, !!invoice);
+    if (blocked) return c.json({ success: false, error: blocked }, 409);
+
+    const itemsRes = await c.var.DB
+      .prepare("SELECT * FROM sales_order_items WHERE salesOrderId = ? ORDER BY lineNo ASC")
+      .bind(so.id)
+      .all<SalesOrderItemRow>();
+    const stored = itemsRes.results ?? [];
+    const priced = repriceSoItems(stored, body.items);
+    if (!priced.ok) return c.json({ success: false, error: priced.error }, 400);
+    if (priced.changed.length === 0) {
+      return c.json({ success: true, data: rowToSO(so, stored), changed: 0 });
+    }
+
+    const now = new Date().toISOString();
+    const reason =
+      (typeof body.reason === "string" && body.reason.trim().slice(0, 500)) ||
+      "Price edit after production start";
+    const userId = c.get("userId" as never) as string | undefined;
+    const actorRow = userId
+      ? await c.var.DB.prepare("SELECT displayName FROM users WHERE id = ? LIMIT 1")
+          .bind(userId)
+          .first<{ displayName: string | null }>()
+      : null;
+    const actor = actorRow?.displayName || userId || "Admin";
+    const statements: D1PreparedStatement[] = [];
+    for (const ch of priced.changed) {
+      statements.push(
+        c.var.DB
+          .prepare(
+            `UPDATE sales_order_items
+                SET basePriceSen = ?, unitPriceSen = ?, lineTotalSen = ?
+              WHERE id = ? AND salesOrderId = ?`,
+          )
+          .bind(ch.basePriceSen, ch.unitPriceSen, ch.lineTotalSen, ch.id, so.id),
+        c.var.DB
+          .prepare(
+            `INSERT INTO price_overrides
+               (id, soId, soNumber, lineIndex, originalPrice, overridePrice,
+                reason, approvedBy, timestamp)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(genOverrideId(), so.id, so.companySOId ?? "", ch.lineIndex,
+            ch.oldUnitPriceSen, ch.unitPriceSen, reason, actor, now),
+      );
+    }
+    statements.push(
+      c.var.DB
+        .prepare("UPDATE sales_orders SET subtotalSen = ?, totalSen = ?, updated_at = ? WHERE id = ?")
+        .bind(priced.subtotalSen, priced.subtotalSen, now, so.id),
+    );
+    await c.var.DB.batch(statements);
+
+    try {
+      await invalidateHubChangeSnapshots(c.var.DB, getOrgId(c), "sales");
+    } catch (err) {
+      console.warn(
+        "[PATCH /api/sales-orders/:id/prices] cache invalidation failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    await emitAudit(c, {
+      resource: "sales-orders",
+      resourceId: so.id,
+      action: "price-change",
+      before: { totalSen: so.totalSen, lines: priced.changed.map((ch) => ({ id: ch.id, unitPriceSen: ch.oldUnitPriceSen })) },
+      after: { totalSen: priced.subtotalSen, lines: priced.changed.map((ch) => ({ id: ch.id, unitPriceSen: ch.unitPriceSen })) },
+    });
+
+    return c.json({ success: true, changed: priced.changed.length, totalSen: priced.subtotalSen });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[PATCH /api/sales-orders/:id/prices] failed:", msg, err);
+    return c.json(
+      { success: false, error: msg || "Internal error updating prices" },
       500,
     );
   }

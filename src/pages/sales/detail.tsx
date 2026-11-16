@@ -23,6 +23,7 @@ import { CreateServiceCaseModal } from "@/pages/service-cases";
 import { HubEditModal } from "@/components/orders/HubEditModal";
 import { CustomerEditModal } from "@/components/orders/CustomerEditModal";
 import { DatesEditModal } from "@/components/orders/DatesEditModal";
+import { PricesEditModal } from "@/components/orders/PricesEditModal";
 // generateSOPdf is dynamic-imported at the click handler so the 1MB jspdf
 // vendor chunk only ships when the user actually prints.
 import { DocumentChainMap } from "@/components/ui/document-chain-map";
@@ -819,6 +820,14 @@ export default function SalesOrderDetailPage() {
       ? `Dates locked: order already ${order.status}.`
       : "";
 
+  // Price-only edit (HK-0156) — must match soPriceEditBlock in lib/so-price-edit.ts.
+  const [pricesModalOpen, setPricesModalOpen] = useState(false);
+  const hasLiveInvoice = (orderResp?.success ? orderResp.linkedInvoices ?? [] : []).some(
+    (i) => (i.status || "").toUpperCase() !== "CANCELLED",
+  );
+  const canEditPrices =
+    !!order && !hasLiveInvoice && !["INVOICED", "CLOSED", "CANCELLED"].includes(order.status);
+
   const customerLockReason = shippedDo
     ? `Customer locked: DO ${shippedDo.doNo} already ${shippedDo.status}.`
     : issuedInvoice
@@ -1420,6 +1429,11 @@ export default function SalesOrderDetailPage() {
                 <Edit className="h-4 w-4" /> Edit (locked)
               </Button>
             )}
+            {!canEdit && canEditPrices && (
+              <Button variant="outline" size="sm" onClick={() => setPricesModalOpen(true)} title="Change line prices only">
+                <Edit className="h-4 w-4" /> Edit Prices
+              </Button>
+            )}
             {!canEdit && productionWindowLocked && (
               <>
                 <Button
@@ -1704,6 +1718,21 @@ export default function SalesOrderDetailPage() {
           fetchOrder();
         }}
       />
+
+      {pricesModalOpen && (
+        <PricesEditModal
+          open={pricesModalOpen}
+          endpoint={`/api/sales-orders/${order.id}/prices`}
+          lines={order.items}
+          onClose={() => setPricesModalOpen(false)}
+          onSaved={(changed) => {
+            setPricesModalOpen(false);
+            toast.success(`Updated ${changed} price${changed === 1 ? "" : "s"}.`);
+            invalidateCachePrefix("/api/sales-orders");
+            fetchOrder();
+          }}
+        />
+      )}
 
       {datesModalOpen && (
         <DatesEditModal
