@@ -27,6 +27,7 @@ import {
   resolveRmForGRNItem,
 } from "../routes/grn";
 import { todayYmdMY } from "../../lib/utils";
+import { sameUom } from "../../lib/material-variants";
 
 export interface AutoGrnPiLine {
   id: string;
@@ -39,6 +40,8 @@ export interface AutoGrnPiLine {
   grnItemId: string | null;
   /** HK-0149: set only when billed in another unit than the PO line. */
   uom?: string | null;
+  /** HK-0149: with uom set, how much of the PO line it covers, in the PO line's unit. */
+  poQty?: number | null;
 }
 
 export interface AutoGrnPoLine {
@@ -57,8 +60,15 @@ export interface AutoGrnPlannedLine {
   poItemId: string;
   materialCode: string;
   materialName: string;
+  /** What goes into stock, in the line's own unit. */
   qty: number;
   unitPriceSen: number;
+  /** HK-0149: billed in another unit — no grn_item_id pointer. */
+  otherUnit?: boolean;
+  /** HK-0149: that unit; must be the material's stock unit or the line is skipped. */
+  uom?: string;
+  /** What the PO line's receivedQty moves by, when not `qty` (another unit). */
+  poQty?: number;
 }
 
 export interface AutoGrnSkippedLine {
@@ -94,9 +104,35 @@ export function planPiAutoGrn(
     if (qty <= 0) continue;
     if ((pl.lineType ?? "STOCKED") !== "STOCKED") { skip("NOT_STOCKED"); continue; }
     if (pl.grnItemId) { skip("FROM_GRN"); continue; }
-    // HK-0149: billed in another unit than the PO line (e.g. MTR on a ROLL
-    // line) — no factor exists, so receiving it would post metres as rolls.
-    if (pl.uom) { skip("UOM_DIFFERS"); continue; }
+    // HK-0149 (Violet 2026-11-16): ordered 3 ROLL, stock and production in
+    // MTR, metres per roll vary. The bill says the metres (qty) and how many
+    // rolls they cover (poQty): stock gets the metres, the PO line the rolls.
+    if (pl.uom) {
+      const own = poLines.find((po) => po.poId === pl.poId && String(po.id) === String(pl.poItemId));
+      if (!own) { skip("UOM_DIFFERS"); continue; }
+      if (!OPEN_PO.has(String(own.poStatus).toUpperCase())) { skip("PO_NOT_OPEN"); continue; }
+      if (!norm(own.materialCode)) { skip("NO_CODE"); continue; }
+      const room = open.get(own.id) ?? 0;
+      if (room <= 0) { skip("ALREADY_RECEIVED"); continue; }
+      // shortcut: the GRN line stores metres only, so cancelling this receipt
+      // takes metres off the PO line's rolls (clamped at 0) — store the rolls
+      // on grn_items if a cancel must restore a part-received line exactly.
+      const rolls = Math.min(room, Math.max(0, Number(pl.poQty) || 0));
+      open.set(own.id, room - rolls);
+      lines.push({
+        piLineId: pl.id,
+        poId: own.poId,
+        poItemId: String(own.id),
+        materialCode: String(own.materialCode ?? "").trim(),
+        materialName: own.materialName ?? "",
+        qty,
+        unitPriceSen: Number(pl.unitPriceSen) || 0,
+        otherUnit: true,
+        uom: pl.uom,
+        poQty: rolls,
+      });
+      continue;
+    }
     if (!pl.poId) { skip("NO_PO"); continue; }
     const ofPo = poLines.filter((po) => po.poId === pl.poId);
     if (ofPo.length > 0 && !OPEN_PO.has(String(ofPo[0].poStatus).toUpperCase())) { skip("PO_NOT_OPEN"); continue; }
@@ -151,12 +187,14 @@ const PI_HEADER_SQL = `SELECT pi.id, pi.piNo AS "piNo", pi.status AS "status", p
   FROM purchase_invoices pi`;
 const PI_LINE_SQL = `SELECT pii.id, pii.pi_id AS "piId", COALESCE(pii.po_id, pi.purchaseOrderId) AS "poId",
        pii.po_item_id AS "poItemId", pii.material_code AS "mc", pii.qty AS "qty",
-       pii.unit_price_sen AS "price", pii.line_type AS "lt", pii.grn_item_id AS "grnItem", pii.uom AS "uom"
+       pii.unit_price_sen AS "price", pii.line_type AS "lt", pii.grn_item_id AS "grnItem", pii.uom AS "uom",
+       pii.po_qty AS "poQty"
   FROM purchase_invoice_items pii JOIN purchase_invoices pi ON pi.id = pii.pi_id`;
 
 type PiLineRow = {
   id: string | number; piId: string; poId: string | null; poItemId: string | number | null; mc: string | null;
   qty: number; price: number; lt: string | null; grnItem: string | number | null; uom?: string | null;
+  poQty?: number | string | null;
 };
 
 function toPiLine(r: PiLineRow): AutoGrnPiLine {
@@ -170,6 +208,7 @@ function toPiLine(r: PiLineRow): AutoGrnPiLine {
     lineType: r.lt ?? "STOCKED",
     grnItemId: r.grnItem == null || r.grnItem === "" ? null : String(r.grnItem),
     uom: r.uom ?? null,
+    poQty: r.poQty == null ? null : Number(r.poQty) || 0,
   };
 }
 
@@ -208,7 +247,7 @@ async function loadPoLines(db: D1Database, poIds: string[]): Promise<AutoGrnPoLi
   }));
 }
 
-type RmHit = { itemCode: string; description: string | null } | null;
+type RmHit = { itemCode: string; description: string | null; baseUOM?: string | null } | null;
 
 // Drops planned lines whose material is not a raw material, and hands the
 // stock writer a name its resolver will find ("itemCode - description").
@@ -224,15 +263,20 @@ async function resolvePlannedRm(
     if (!cache.has(key)) {
       const hit =
         (await db
-          .prepare(`SELECT itemCode AS "itemCode", description AS "description" FROM raw_materials WHERE itemCode = ? LIMIT 1`)
+          .prepare(`SELECT itemCode AS "itemCode", description AS "description", baseUOM AS "baseUOM" FROM raw_materials WHERE itemCode = ? LIMIT 1`)
           .bind(l.materialCode)
-          .first<{ itemCode: string; description: string | null }>()) ??
+          .first<{ itemCode: string; description: string | null; baseUOM: string | null }>()) ??
         (await resolveRmForGRNItem(db, l.materialCode, l.materialName));
-      cache.set(key, hit ? { itemCode: hit.itemCode, description: hit.description } : null);
+      cache.set(key, hit ? { itemCode: hit.itemCode, description: hit.description, baseUOM: (hit as { baseUOM?: string | null }).baseUOM ?? null } : null);
     }
     const rm = cache.get(key);
     if (!rm) {
       skipped.push({ piLineId: l.piLineId, materialCode: l.materialCode, qty: l.qty, reason: "NOT_RAW_MATERIAL" });
+      continue;
+    }
+    // HK-0149: metres go into stock only when the stock is kept in metres.
+    if (l.uom && !sameUom(l.uom, rm.baseUOM ?? "")) {
+      skipped.push({ piLineId: l.piLineId, materialCode: l.materialCode, qty: l.qty, reason: "UOM_DIFFERS" });
       continue;
     }
     out.push({ ...l, stockName: `${rm.itemCode} - ${rm.description ?? l.materialName}` });
@@ -264,7 +308,7 @@ export interface AutoGrnResult {
 export function buildPiGrnLinkStatements(
   db: D1Database,
   grnId: string,
-  lines: readonly { piLineId: string; qty: number }[],
+  lines: readonly { piLineId: string; qty: number; otherUnit?: boolean }[],
 ): D1PreparedStatement[] {
   const nth = (i: number) => `(SELECT gi.id FROM grn_items gi WHERE gi.grnId = ? ORDER BY gi.id LIMIT 1 OFFSET ${i})`;
   const perPiLine = new Map<string, number>();
@@ -274,7 +318,8 @@ export function buildPiGrnLinkStatements(
     out.push(
       db.prepare(`UPDATE grn_items SET invoiced_qty = COALESCE(invoiced_qty, 0) + ? WHERE id = ${nth(i)}`).bind(l.qty, grnId),
     );
-    if (perPiLine.get(l.piLineId) === 1) {
+    // A line in another unit keeps no pointer: it would read as GRN-sourced.
+    if (perPiLine.get(l.piLineId) === 1 && !l.otherUnit) {
       out.push(
         db
           .prepare(
@@ -352,7 +397,12 @@ export async function autoReceivePiStock(db: D1Database, piId: string): Promise<
       lines.map((l) => ({ acceptedQty: l.qty, materialCode: l.materialCode, materialName: l.stockName, unitPrice: l.unitPriceSen })),
     );
     statements.push(...stock.statements);
-    statements.push(...buildPoReceiptStatements(db, lines.map((l) => ({ poId: l.poId, poItemId: l.poItemId, qty: l.qty }))));
+    statements.push(
+      ...buildPoReceiptStatements(
+        db,
+        lines.map((l) => ({ poId: l.poId, poItemId: l.poItemId, qty: l.poQty ?? l.qty })).filter((t) => t.qty > 0),
+      ),
+    );
     await db.batch(statements);
     return { grnId, grnNumber, received: lines, skipped: plan.skipped };
   } catch (e) {
