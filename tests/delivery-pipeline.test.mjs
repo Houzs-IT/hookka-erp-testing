@@ -788,6 +788,42 @@ test("HK-0141: pillow completed -> sofa set 4/4 complete", () => {
   assert.equal(sofa.setComplete, true);
 });
 
+// HK-0153 — an accessory with an UPHOLSTERY card (A01 armrest, SB02 sandback,
+// BC05-MF back cushion of an 8211 sofa) already counted in the sofa's set; it
+// is now also held back until the whole set is ready, so 1 SO ships on 1 DO.
+const accPO = (id, salesOrderId, jobCards) => ({
+  ...po({ id, itemCategory: "ACCESSORY", salesOrderId, jobCards }),
+  poNo: id,
+  productName: "ARMREST 01",
+});
+const UPH_OPEN = [
+  { departmentCode: "UPHOLSTERY", status: "IN_PROGRESS" },
+  { departmentCode: "PACKING", status: "PENDING" },
+];
+
+test("HK-0153: ready armrest of an unfinished sofa set is not selectable", () => {
+  const sofaOpen = { ...sofaPiece("a"), jobCards: UPH_OPEN };
+  const { ready } = dp.buildReadyPlanning(setInputs([sofaOpen, accPO("arm", "so-1", UPH_DONE)]));
+  const arm = ready.find((r) => r.id === "arm");
+  assert.equal(arm.setTotalSiblings, 2);
+  assert.equal(arm.setReadySiblings, 1);
+  assert.equal(arm.setComplete, false);
+});
+
+test("HK-0153: armrest ships once the whole sofa set is ready", () => {
+  const { ready } = dp.buildReadyPlanning(setInputs([sofaPiece("a"), accPO("arm", "so-1", UPH_DONE)]));
+  assert.equal(ready.find((r) => r.id === "arm").setComplete, true);
+});
+
+test("HK-0153: accessory-only SO still ships per piece", () => {
+  const { ready } = dp.buildReadyPlanning(
+    setInputs([accPO("arm1", "so-2", UPH_DONE), accPO("arm2", "so-2", UPH_OPEN)]),
+  );
+  const arm = ready.find((r) => r.id === "arm1");
+  assert.equal(arm.setTotalSiblings, 1);
+  assert.equal(arm.setComplete, true);
+});
+
 test("HK-0141: non-pillow accessory does not join the sofa set", () => {
   const cushion = { ...pillowPO("IN_PROGRESS", "IN_PROGRESS"), productName: "SEAT CUSHION" };
   const { ready } = dp.buildReadyPlanning(setInputs([sofaPiece("a"), cushion]));
