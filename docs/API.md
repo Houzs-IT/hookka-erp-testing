@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 153 mounts, 151 route files in
-`src/api/routes/`, 1118 top-level handler registrations discovered.
+`src/api/routes/`, 1119 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -67,8 +67,8 @@ offsets pointing past the end of their own file.
 | `/api/product-configs` | `src/api/routes/product-configs.ts` | `GET /` <sub>:75</sub> | gated |
 | `/api/workers` | `src/api/routes/workers.ts` | `GET /` <sub>:264</sub><br>`POST /` <sub>:290</sub><br>`GET /:id` <sub>:469</sub><br>`PUT /:id` <sub>:484</sub><br>`DELETE /:id` <sub>:903</sub><br>`POST /:id/set-pin` <sub>:1018</sub><br>`POST /bulk-generate-pins` <sub>:1094</sub><br>`GET /:id/salary-history` <sub>:1205</sub><br>`POST /:id/salary-history` <sub>:1226</sub><br>`GET /salary/effective` <sub>:1267</sub><br>`DELETE /:id/salary-history/:rowId` <sub>:1322</sub> | gated |
 | `/api/worker-auth` | `src/api/routes/worker-auth.ts` | `POST /login` <sub>:124</sub><br>`POST /reset-pin` <sub>:241</sub><br>`POST /logout` <sub>:297</sub><br>`GET /me` <sub>:312</sub> | **public** (PUBLIC_PREFIXES) |
-| `/api/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:493</sub><br>`GET /:id/acks` <sub>:539</sub><br>`POST /` <sub>:607</sub><br>`PATCH /:id` <sub>:807</sub><br>`POST /:id/remind` <sub>:960</sub><br>`DELETE /:id` <sub>:1024</sub> | gated |
-| `/api/worker/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:1169</sub><br>`POST /:id/ack` <sub>:1265</sub> | **public** (PUBLIC_PREFIXES) |
+| `/api/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:494</sub><br>`GET /:id/acks` <sub>:540</sub><br>`GET /erp-users` <sub>:610</sub><br>`POST /` <sub>:666</sub><br>`PATCH /:id` <sub>:911</sub><br>`POST /:id/remind` <sub>:1064</sub><br>`DELETE /:id` <sub>:1128</sub> | gated |
+| `/api/worker/announcements` | `src/api/routes/announcements.ts` | `GET /` <sub>:1273</sub><br>`POST /:id/ack` <sub>:1369</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/worker` | `src/api/routes/worker.ts` | `GET /dept-completed` <sub>:345</sub><br>`GET /ann-files/:id/download` <sub>:515</sub><br>`GET /today` <sub>:570</sub><br>`GET /wip-times` <sub>:735</sub><br>`GET /current-dept` <sub>:785</sub><br>`GET /scan-lookup` <sub>:811</sub><br>`GET /racks` <sub>:1024</sub><br>`POST /packing-rack` <sub>:1049</sub><br>`POST /clock` <sub>:1262</sub><br>`POST /dept-scan` <sub>:1519</sub><br>`GET /history` <sub>:1586</sub><br>`GET /payslips` <sub>:2172</sub><br>`GET /penalties` <sub>:2613</sub><br>`GET /payslip/:period` <sub>:2753</sub><br>`GET /leaves` <sub>:2863</sub><br>`POST /leaves` <sub>:2955</sub><br>`POST /issues` <sub>:3021</sub><br>`GET /issues` <sub>:3055</sub><br>`GET /qc-today` <sub>:3151</sub><br>`POST /qc/:id/complete` <sub>:3233</sub><br>`PATCH /profile` <sub>:3319</sub><br>`GET /nonprod-departments` <sub>:3475</sub><br>`GET /production-departments` <sub>:3504</sub><br>`GET /nonprod-requests` <sub>:3528</sub><br>`POST /nonprod-requests` <sub>:3555</sub><br>`GET /team-stats` <sub>:3671</sub><br>`GET /department-performance` <sub>:3994</sub><br>`POST /rack-bulk-stock-in` <sub>:4526</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/departments` | `src/api/routes/departments.ts` | `GET /` <sub>:217</sub><br>`POST /` <sub>:233</sub><br>`PUT /:id` <sub>:338</sub><br>`DELETE /:id` <sub>:457</sub> | gated |
 | `/api/customer-hubs` | `src/api/routes/customer-hubs.ts` | `GET /` <sub>:58</sub> | gated |
