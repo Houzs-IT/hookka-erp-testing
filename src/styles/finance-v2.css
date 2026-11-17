@@ -512,3 +512,34 @@ body:has([data-fin-ui]) [data-dg="menu"] {
 [data-fin-ui] [data-fin-pop] {
   animation: fin-pop .18s ease-out;
 }
+
+/* ── Full screen report (owner 2026-11-17 「空间太小了」) ────────────────────
+   report-shell.tsx FullScreenToggle marks the report's container. It covers
+   the window; the frame takes the height left under the toolbar and its
+   scroll box fills the frame (--fin-full-h lifts a page's maxHeight). */
+[data-fin-ui] [data-report-full] {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--fin-page);
+  --fin-full-h: none;
+}
+[data-fin-ui] [data-report-full] > * {
+  flex: none;
+  margin: 0;
+}
+[data-fin-ui] [data-report-full] > [data-fin-frame] {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+[data-fin-ui] [data-report-full] > [data-fin-frame] > [data-fin-report-scroll] {
+  flex: 1 1 auto;
+  min-height: 0;
+}

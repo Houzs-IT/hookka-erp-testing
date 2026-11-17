@@ -7,7 +7,7 @@
 // data-row / data-cell, so each report keeps its own rows and engine.
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Download } from "lucide-react";
+import { Download, Maximize2, Minimize2 } from "lucide-react";
 import { useEscapeClose } from "@/lib/escape-stack";
 import { todayYmdMY } from "@/lib/utils";
 import { codesInRange, periodGroup, periodKind, periodLabel, periodShort, stepPeriod, type PeriodKind } from "@/lib/finance-reports";
@@ -287,9 +287,55 @@ export function DownloadMenu({ items }: { items: { label: string; onSelect: () =
   );
 }
 
-/** The toolbar on a report's title row; groups split by ToolbarDivider. */
+/** Full screen (owner 2026-11-17 「这个我要能scroll fullpages的 / 空间太小了」,
+ *  then 「cashflow 和PNL 也是」): lays the report — its toolbar and its framed
+ *  table — over the whole window, and the table's scroll box grows to fill it
+ *  (finance-v2.css, [data-report-full]). It marks the nearest ancestor of the
+ *  toolbar that holds a ReportFrame, so every report gets it with no page edit,
+ *  and shows only where such a frame exists. Esc or the button returns.
+ *  A page scroll was not used: the table also scrolls sideways, and a
+ *  sideways-scrolling box cannot keep its header stuck to the page. */
+function FullScreenToggle() {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    let el = ref.current?.parentElement ?? null;
+    while (el && !el.querySelector("[data-fin-frame]")) el = el.parentElement;
+    if (el !== target) setTarget(el);
+  });
+  useEffect(() => {
+    if (!target) return;
+    if (full) target.setAttribute("data-report-full", "");
+    else target.removeAttribute("data-report-full");
+    return () => { target.removeAttribute("data-report-full"); };
+  }, [full, target]);
+  useEscapeClose(() => setFull(false), full);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-pressed={full}
+      onClick={() => setFull((v) => !v)}
+      hidden={!target}
+      title={full ? "Back to the normal page (Esc)" : "Show the report on the whole screen"}
+      className={`${CTRL_SHAPE} inline-flex items-center gap-1.5 px-3 ${full ? "border-[#1F1D1B] bg-[#1F1D1B] text-white hover:bg-black" : `${CTRL_IDLE} hover:bg-[#F4F6F8]`}`}
+    >
+      {full ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+      {full ? "Exit full screen" : "Full screen"}
+    </button>
+  );
+}
+
+/** The toolbar on a report's title row; groups split by ToolbarDivider.
+ *  It ends with the Full screen switch wherever the report has a frame. */
 export function ReportToolbar({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap items-center justify-end gap-2.5">{children}</div>;
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2.5">
+      {children}
+      <FullScreenToggle />
+    </div>
+  );
 }
 
 /** The strip under the title: what was checked on the left, the verdict on
@@ -329,7 +375,7 @@ export function ReportFrame({
         <div className="mt-0.5 text-[13px] text-[#4B5563]">{title}</div>
         {note && <div className="mt-0.5 text-[12px] text-[#9CA3AF]">{note}</div>}
       </div>
-      <div data-fin-report-scroll className="overflow-auto" style={maxHeight ? { maxHeight } : undefined}>
+      <div data-fin-report-scroll className="overflow-auto" style={maxHeight ? { maxHeight: `var(--fin-full-h, ${maxHeight})` } : undefined}>
         {children}
       </div>
     </div>
