@@ -320,6 +320,7 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+<<<<<<< HEAD
 ## 🔵 Credit note: pick its date (feat/cn-date-picker, 2026-11-17)
 
 Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' end-of-May invoices left open after its opening receipt HOR-2606-010 is knocked off (INV-2606-030 RM 1,230.00 and INV-2606-041 RM 1,525.00) are to be cleared by CN, 「开cn 日期放5月31」. The CN create route always dated a note today and Edit never changed it, so a 31 May CN could not be raised.
@@ -331,10 +332,19 @@ Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' en
     - Opening: Houzs' 14 pre-opening invoices (INV-2605-003…066, RM 25,518.55) flagged opening; opening re-posted with 300-0000 +RM 25,518.55, 500-0020 +RM 22,875.55, 500-0000 +RM 2,643.00 (split by product lines); the other 31 lines unchanged. This cleared the AR control drift (−RM 25,000, from HOR-2607-001 paying those invoices with no opening behind them).
     - PI-2611-055 (HUGYP MADE, RM 640, dated 2025-11-12, entered Nov 2026) set aside from the opening (ap-exclude) so the re-post kept the creditor opening as posted. 🟡 Owner to decide later 「hugyp made先不理」: un-exclude + re-post with a purchase account, or leave out.
     - MEASURED after: AR control drift 0, unapplied advances 0; Houzs Debtor Aging only Current; The Conts 3+ mth = the two CN amounts.
+=======
+## 🔵 Board report: same six months and a forecast on every chart; access locked (feat/board-report-six-months + fix/kv-config-finance-keys-gated, 2026-11-17)
+
+Asks (17 Nov): (1) 「全部员工都可以看到的」 → owner chose *restrict*: the page and API were already `accounting:read` (10 of 20 active accounts: 8 Super Admins, Lim, Finance), but the kept copy leaked through `/api/kv-config` to any login, BUG-2026-11-17-530, fixed in #1430; (2) 「forecast 上个月 这个月 前三个月-6个月 看那个chart的大小…labor Rawmaterial 等等全部都是…有些有forecast有些没有 怪怪的」 → owner chose 6 months: every month chart (cover, income, labour, materials, trend, balance sheet, cash flow, production value) now shows the last six closed months from Jun 26 (`CHART_MONTHS`), plus the forecast months where the page had them; the income chart gains its revenue forecast line and the labour chart its All-labour forecast line (department names in its legend, not codes). No forecast exists in the data for the balance sheet, production value by department or customers, so those pages still show actual vs last month only — told the owner.
+>>>>>>> origin/main
 
 ## 🔵 Reports: full screen (feat/forecast-pl-full-screen, 2026-11-17)
 
 Asks (17 Nov, screenshots of Accounting › Forecast and Cash Flow): 「这个我要能scroll fullpages的 / 空间太小了」 then 「cashflow 和PNL 也是」. Every framed finance report (Forecast P&L, Cash Flow, P&L, Balance Sheet and the rest) gets a Full screen button at the end of its toolbar: the toolbar and the table cover the whole window, the table's scroll box fills the height left (header and Item column still stick), Esc or Exit full screen returns. Built once in `report-shell.tsx` (ReportToolbar) + `finance-v2.css`, so no page edit. A true page scroll was not used: the table also scrolls sideways, and a box that scrolls sideways cannot keep its header stuck to the page.
+
+## 🔵 Board report labour tiles: production and non-production side by side (feat/board-labour-tiles-split, 2026-11-17)
+
+Ask (17 Nov, screenshot of page 3): 「这个上面你放prod和non prod 分别的数字…现在一个prod而已 另外要给non prod…两个都tally calculation一样 两个都可以看到」. Page 3's tiles are now Direct labour (production), Non-production and All labour (payroll), each with the same three figures: actual, forecast (vs forecast %) and last month (change %). Direct labour + Non-production = All labour on every figure, matching the table's rows below. The old "Forecast (incl. non-production)" tile is folded into those three; % of production revenue and Payroll per head stay.
 
 ## 🔵 HK-0124: job card finish date in Malaysia time, one-decimal Avg Efficiency (fix/jc-finish-date-myt-eff-decimal, 2026-11-17)
 

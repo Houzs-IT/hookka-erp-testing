@@ -145,7 +145,8 @@ test("5. trend page bars use the forecast for months after M", () => {
 test("6. balance sheet chart leaves out months with no balance sheet", () => {
   const r = build();
   assert.ok(r.balance.ok);
-  assert.deepEqual(r.balance.data.trend.map((x) => x.ym), ["2026-05", "2026-09", "2026-10"], "April's all-zero balance sheet is dropped");
+  // Owner 2026-11-17: months before BOARD_DATA_FROM (Jun 26) are left off every chart too.
+  assert.deepEqual(r.balance.data.trend.map((x) => x.ym), ["2026-09", "2026-10"], "April's all-zero balance sheet and May are dropped");
 });
 
 test("7. cash flow: forecast months after M by activity, P&L forecast first", () => {

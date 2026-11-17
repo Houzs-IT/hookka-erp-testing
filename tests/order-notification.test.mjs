@@ -73,6 +73,31 @@ test("builder: ticket wording, dd/mm/yyyy date, optional supervisor note", () =>
   assert.ok(m.body.includes("Order No.: PO-1") && m.body.includes("Order No.: PO-2"));
 });
 
+test("HK-0155 link: one order -> that order; one SO -> that SO; mixed -> the Overview", () => {
+  assert.equal(
+    lib.orderNoticeLink([{ id: "pord-so-9d12d0d0-01", poNo: "SO-2611-292-01" }]),
+    "/production?soId=SO-2611-292-01&po=pord-so-9d12d0d0-01",
+  );
+  assert.equal(
+    lib.orderNoticeLink([
+      { id: "a", poNo: "SO-2609-295-03" },
+      { id: "b", poNo: "SO-2609-295-01" },
+    ]),
+    "/production?soId=SO-2609-295-",
+  );
+  assert.equal(
+    lib.orderNoticeLink([
+      { id: "a", poNo: "SO-2611-003-01" },
+      { id: "b", poNo: "SO-2610-448-03" },
+    ]),
+    "/production",
+  );
+  // Order numbers without a line suffix cannot be grouped by SO.
+  assert.equal(lib.orderNoticeLink([{ id: "a", poNo: "PO-X" }, { id: "b", poNo: "PO-X" }]), "/production");
+  // Ids are URL-encoded, so a stored link stays one safe path.
+  assert.equal(lib.orderNoticeLink([{ id: "a&b", poNo: "SO 1" }]), "/production?soId=SO%201&po=a%26b");
+});
+
 // ---- route -----------------------------------------------------------------
 // The fake DB routes by table/clause, never by column NAMES in the INSERT's
 // value order beyond the parsed column list; pushes are counted via the one
@@ -306,6 +331,8 @@ test("POST to ERP users only: bell rows per user, NO announcement, NO push", asy
   assert.equal(rows[0].severity, "WARNING");
   assert.equal(rows[0].title, "URGENT ORDER - PO-001");
   assert.ok(rows[0].message.includes("Order No.: PO-001"));
+  // HK-0155: the bell row opens THIS order, not the whole production list.
+  assert.equal(rows[0].link, "/production?soId=PO-001&po=po-1");
   // Same orders + priority again today -> 409, still one row.
   const again = await post(app, { priority: "URGENT", orderIds: ["po-1"], targetUserIds: ["user-lim"] });
   assert.equal(again.status, 409);

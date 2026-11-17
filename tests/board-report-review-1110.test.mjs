@@ -22,7 +22,8 @@ test("labour shows department names, not codes", () => {
 test("cash flow stops at the report month and drops empty months before the books opened", () => {
   // Owner review 2026-11-15: also from BOARD_DATA_FROM, with forecast months after M.
   assert.match(fin, /const upTo = d\.months\.filter\(\(x\) => x\.ym <= r\.month && x\.ym >= BOARD_DATA_FROM\);/);
-  assert.match(fin, /const cols = \[\.\.\.shown\.slice\(-\(8 - fc\.length\)\), \.\.\.fc\];/);
+  // Owner 2026-11-17: six closed months, like every chart, then the forecast months.
+  assert.match(fin, /const cols = \[\.\.\.shown\.slice\(-6\), \.\.\.fc\];/);
   assert.doesNotMatch(fin, /d\.months\.slice\(-8\)/);
 });
 
@@ -46,11 +47,15 @@ test("second pass: income page chart fills the gap; labour lists non-production;
   assert.match(f, /<td>Less: time in non-production departments<\/td><td><Money v=\{-npTotal\} \/>/);
   assert.match(f, /<td>Direct labour \(production\)<\/td><td><Money v=\{direct\} \/>/);
   assert.match(f, /<td>All labour \(payroll\)<\/td><td><Money v=\{payroll\} \/>/);
-  assert.match(f, /<Tile label="Direct labour" value=\{<>RM \{rm\(direct\)\}<\/>\}/);
+  // Owner 2026-11-17: production and non-production tiles side by side, same
+  // calculation (actual / forecast / last month), and All labour = their sum.
+  assert.match(f, /<Tile label="Direct labour \(production\)" value=\{<>RM \{rm\(direct\)\}<\/>\} sub=\{<>forecast RM \{rm\(d\.forecastTotal\)\}/);
+  assert.match(f, /<Tile label="Non-production" value=\{<>RM \{rm\(npTotal\)\}<\/>\} sub=\{<>forecast RM \{rm\(npFc\)\}/);
+  assert.match(f, /<Tile label="All labour \(payroll\)" value=\{<>RM \{rm\(payroll\)\}<\/>\} sub=\{<>forecast RM \{rm\(fcAll\)\}/);
+  assert.doesNotMatch(f, /Forecast \(incl\. non-production\)/);
   assert.doesNotMatch(f, /d\.total \+ \(d\.nonProdTotal/);
   assert.match(f, /const np = d\.nonProd \?\? \[\];/, "a report kept before this change has no nonProd");
-  // Owner review 2026-11-15: the forecast tile includes the non-production forecast.
-  assert.match(f, /label="Forecast \(incl\. non-production\)" value=\{<>RM \{rm\(fcAll\)\}<\/>\}/);
+  // Owner review 2026-11-15: the all-labour forecast includes the non-production forecast.
   assert.match(f, /const fcAll = d\.forecastTotal === null && npFc === null \? null : \(d\.forecastTotal \?\? 0\) \+ \(npFc \?\? 0\);/);
   assert.match(f, /\{\/\* Total row \(owner review 2026-11-10\)\. \*\/\}/);
   const lib = readFileSync("src/lib/board-report.ts", "utf8");

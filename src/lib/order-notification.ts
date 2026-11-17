@@ -62,6 +62,23 @@ export function mytDayStartIso(now: Date = new Date()): string {
   return new Date(d.getTime() - 8 * 3_600_000).toISOString();
 }
 
+/**
+ * HK-0155: where an order notice's bell row opens, instead of the whole order list.
+ * One order: the Overview filtered to it (`?soId=`, a substring filter on the
+ * order no.) plus `?po=<id>`, which the /m Updates tab turns into that order's
+ * department-stage screen. Several orders of one SO: the Overview filtered to that
+ * SO (trailing dash, as productionOverviewHref). Anything else: the Overview.
+ */
+export function orderNoticeLink(orders: { id: string; poNo: string }[]): string {
+  if (orders.length === 1) {
+    const { id, poNo } = orders[0];
+    return `/production?soId=${encodeURIComponent(poNo)}&po=${encodeURIComponent(id)}`;
+  }
+  const sos = new Set(orders.map((o) => (/-\d+$/.test(o.poNo) ? o.poNo.replace(/-\d+$/, "") : "")));
+  const [so] = [...sos];
+  return sos.size === 1 && so ? `/production?soId=${encodeURIComponent(`${so}-`)}` : "/production";
+}
+
 /** Hard cap per notice - enforced by POST /api/announcements, mirrored in the dialog. */
 export const MAX_NOTICE_ORDERS = 10;
 

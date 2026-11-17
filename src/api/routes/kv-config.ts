@@ -39,8 +39,24 @@ function blankSurcharges(v: unknown): unknown {
   return v;
 }
 
+// Finance figures kept in kv_config must not be readable by every login
+// (owner 2026-11-17 「全部员工都可以看到的」 → restrict): the Board Report copy
+// (payroll, profit, cash), its notes, the Forecast P&L and Cash Flow forecast
+// inputs, and the P&L opening balances. Each key needs the same permission as
+// the page that shows it; every other key keeps its open read.
+export const GATED_KEYS: { test: (key: string) => boolean; resource: string }[] = [
+  { test: (k) => k.startsWith("board_report_"), resource: "accounting" },
+  { test: (k) => k.startsWith("pnl_"), resource: "accounting" },
+  { test: (k) => k === "forecast_pnl" || k.startsWith("cashflow_forecast_"), resource: "forecasts" },
+];
+
 app.get("/:key", async (c) => {
   const key = c.req.param("key");
+  const gate = GATED_KEYS.find((g) => g.test(key));
+  if (gate) {
+    const denied = await requirePermission(c, gate.resource, "read");
+    if (denied) return denied;
+  }
   const row = await c.var.DB.prepare(
     "SELECT key, value, updated_at FROM kv_config WHERE key = ?",
   )
