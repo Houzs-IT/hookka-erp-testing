@@ -143,9 +143,10 @@ export function IncomePage({ r }: P) {
                     w={w}
                     h={h}
                     data={incomeTrend
-                      .map<Datum>((p) => ({ label: p.label, faded: p.kind !== "actual", values: { s: p.sales, g: p.gross, n: p.net } }))}
+                      .map<Datum>((p) => ({ label: p.label, faded: p.kind !== "actual", values: { s: p.sales, g: p.gross, n: p.net, f: p.forecastSales } }))}
                     series={[
                       { key: "s", label: "Revenue", color: C.navy, type: "bar" },
+                      { key: "f", label: "Revenue forecast", color: C.grey, type: "line", dashed: true },
                       { key: "g", label: "Gross profit", color: C.gold, type: "line" },
                       { key: "n", label: "Net profit", color: C.green, type: "line" },
                     ]}
@@ -239,8 +240,13 @@ export function LabourPage({ r }: P) {
               <ComboChart
                 w={w}
                 h={h}
-                data={d.trend.map((t) => ({ label: t.label, values: t.byDept }))}
-                series={d.series.map((s, i) => ({ key: s, label: s, color: PALETTE[i % PALETTE.length], type: "bar" as const, stack: "a" }))}
+                data={d.trend.map((t) => ({ label: t.label, values: { ...t.byDept, __fc: t.forecast ?? null } }))}
+                series={[
+                  ...d.series.map((s, i) => ({ key: s, label: deptName(s), color: PALETTE[i % PALETTE.length], type: "bar" as const, stack: "a" })),
+                  // Owner 2026-11-17: every chart carries its forecast — the
+                  // month's All labour forecast (production + non-production).
+                  { key: "__fc", label: "Forecast (all labour)", color: C.ink, type: "line" as const, dashed: true },
+                ]}
               />
             )}
           </Elastic>
@@ -431,7 +437,7 @@ export function CashFlowPage({ r }: P) {
         const shown = firstLive === -1 ? upTo : upTo.slice(firstLive);
         const m = shown.find((x) => x.ym === r.month) ?? shown[shown.length - 1] ?? d.months[d.months.length - 1];
         const fc = d.forecast ?? [];
-        const cols = [...shown.slice(-(8 - fc.length)), ...fc];
+        const cols = [...shown.slice(-6), ...fc];
         const head = (x: (typeof cols)[number]) => (x.kind === "forecast" ? `${x.label} F` : x.kind === "mtd" ? `${x.label}*` : x.label);
         return (
           <>

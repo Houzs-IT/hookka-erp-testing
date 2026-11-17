@@ -22,7 +22,8 @@ test("labour shows department names, not codes", () => {
 test("cash flow stops at the report month and drops empty months before the books opened", () => {
   // Owner review 2026-11-15: also from BOARD_DATA_FROM, with forecast months after M.
   assert.match(fin, /const upTo = d\.months\.filter\(\(x\) => x\.ym <= r\.month && x\.ym >= BOARD_DATA_FROM\);/);
-  assert.match(fin, /const cols = \[\.\.\.shown\.slice\(-\(8 - fc\.length\)\), \.\.\.fc\];/);
+  // Owner 2026-11-17: six closed months, like every chart, then the forecast months.
+  assert.match(fin, /const cols = \[\.\.\.shown\.slice\(-6\), \.\.\.fc\];/);
   assert.doesNotMatch(fin, /d\.months\.slice\(-8\)/);
 });
 

@@ -319,6 +319,10 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Board report: same six months and a forecast on every chart; access locked (feat/board-report-six-months + fix/kv-config-finance-keys-gated, 2026-11-17)
+
+Asks (17 Nov): (1) 「全部员工都可以看到的」 → owner chose *restrict*: the page and API were already `accounting:read` (10 of 20 active accounts: 8 Super Admins, Lim, Finance), but the kept copy leaked through `/api/kv-config` to any login, BUG-2026-11-17-530, fixed in #1430; (2) 「forecast 上个月 这个月 前三个月-6个月 看那个chart的大小…labor Rawmaterial 等等全部都是…有些有forecast有些没有 怪怪的」 → owner chose 6 months: every month chart (cover, income, labour, materials, trend, balance sheet, cash flow, production value) now shows the last six closed months from Jun 26 (`CHART_MONTHS`), plus the forecast months where the page had them; the income chart gains its revenue forecast line and the labour chart its All-labour forecast line (department names in its legend, not codes). No forecast exists in the data for the balance sheet, production value by department or customers, so those pages still show actual vs last month only — told the owner.
+
 ## 🔵 Reports: full screen (feat/forecast-pl-full-screen, 2026-11-17)
 
 Asks (17 Nov, screenshots of Accounting › Forecast and Cash Flow): 「这个我要能scroll fullpages的 / 空间太小了」 then 「cashflow 和PNL 也是」. Every framed finance report (Forecast P&L, Cash Flow, P&L, Balance Sheet and the rest) gets a Full screen button at the end of its toolbar: the toolbar and the table cover the whole window, the table's scroll box fills the height left (header and Item column still stick), Esc or Exit full screen returns. Built once in `report-shell.tsx` (ReportToolbar) + `finance-v2.css`, so no page edit. A true page scroll was not used: the table also scrolls sideways, and a box that scrolls sideways cannot keep its header stuck to the page.
