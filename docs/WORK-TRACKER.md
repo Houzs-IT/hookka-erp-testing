@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-17**: HK-0124 job card finish date in Malaysia time + one-decimal efficiency (branch `fix/jc-finish-date-myt-eff-decimal`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: dept scans in the same minute ordered by createdat (branch `fix/dept-scan-same-minute-order`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: Working Hours live department rows (branch `feat/working-hours-live-rows`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: Working Hours shows the day's department scans (branch `feat/working-hours-dept-scans`, to `main`); nothing else re-checked.
@@ -313,6 +314,10 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 HK-0124: job card finish date in Malaysia time, one-decimal Avg Efficiency (fix/jc-finish-date-myt-eff-decimal, 2026-11-17)
+
+Asks (17 Nov): (1) what "actual minutes" means on Reports: answered, a copy of the standard minutes, no change; (2) save the finish time in Malaysia time: BUG-2026-11-17-517, job card and import finish dates now `todayYmdMY()` at 6 sites, old rows not backfilled; (3) worker phone days not adding up to the total: answered, waits on the owner's PIC vs piece split (C33 rows 2 and 4); (4) a better Avg Efficiency: BUG-2026-11-17-518, one decimal from Department Performance, print card total ÷ total.
 
 ## 🔵 Working Hours: the day's department scans under each worker (feat/working-hours-dept-scans, 2026-11-14)
 

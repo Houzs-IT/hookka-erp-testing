@@ -1,6 +1,7 @@
 import { applyWipInventoryChange, type JobCardRow, type ProductionOrderRow } from "../production-orders";
 import { postJobCardLabor } from "../../lib/po-cost-cascade";
 import { postProductionOrderCompletion } from "../../lib/fg-completion";
+import { todayYmdMY } from "../../../lib/utils";
 // (`createProductionOrdersForOrder` used to be imported here; it is referenced
 // only from a comment at :1462 and eslint blocks the commit on it. Removed as a
 // dead import, not as part of this change's subject.)
@@ -600,7 +601,7 @@ export async function processRow(
           );
         if (allDone && po.status !== "COMPLETED") {
           const nowIso = new Date().toISOString();
-          const today = nowIso.split("T")[0];
+          const today = todayYmdMY();
           if (!dryRun) {
             try {
               await db

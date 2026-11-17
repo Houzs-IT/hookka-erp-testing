@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-11-17**: branch `fix/jc-finish-date-myt-eff-decimal`, to `main`, adds **C33 row 7** (one-decimal Avg Efficiency, print card total ÷ total, BUG-2026-11-17-518). Nothing else re-checked.
+
 > **Last verified: 2026-10-17**: branch `fix/edit-keeps-bank-match`, to `main`, closes **C5 rows 8–10** and **C31 rows 2–5** (one shared rule each: `restoreEditedFamilyStatements`, `planEditBankCarry`) and **adds C32, a stored account code the chart later renamed** (BUG-2026-10-17-320 to -323). Nothing else re-checked.
 
 > **Last verified: 2026-10-17**: branch `feat/or-edit`, to `main`, adds **C5 rows 7–11** (the official-receipt edit, born correct; three unvoid paths found open on the way) and **C31, an edit that re-posts a bank leg under a new id**. Nothing else re-checked.
@@ -1881,5 +1883,6 @@ Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tes
 | 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ⬜ open |
 | 5 | Production revenue: the same recognition SQL in nine places and the price lookup in six; the Daily panel on main joined the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ✅ structure 2026-11-11: one copy of the rule, price and joins in `production-revenue.ts` (guard `tests/one-production-revenue-sql.test.mjs`); line join fixed in BUG-2026-11-11-502. ⬜ still open: the quantity rule and the shared loader's missing company filter |
 | 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ⬜ open, needs a browser check |
+| 7 | Efficiency: Department Performance rounded to a whole % and pages printed it as "84.0%"; the printed Efficiency Overview averaged each worker's % instead of total ÷ total (`department-performance.ts`, `employees.tsx`) | ✅ on branch (BUG-2026-11-17-518) |
 
 Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`.

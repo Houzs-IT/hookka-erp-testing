@@ -4448,7 +4448,7 @@ export async function applyPoUpdate(
   // `today` still feeds completed_date, which is date-only BY DESIGN and stays
   // that way. What was missing is the instant beside it — `nowIso` is now also
   // stored, in job_cards.completed_at.
-  const today = nowIso.split("T")[0];
+  const today = todayYmdMY();
   // Migrations are inert on deploy (CLAUDE.md) — job_cards.completed_at reaches
   // prod only through this awaited self-apply, and it must land before the
   // first statement below that mentions the column.
@@ -4537,7 +4537,7 @@ export async function applyPoUpdate(
           updated.completedDate = today;
           // The card is being observed to complete RIGHT NOW, so this is the
           // one place on the office path where a real instant exists. `today`
-          // is the same `nowIso` with its time thrown away — keep the whole
+          // is the Malaysia date of that same `nowIso` — keep the whole
           // thing here. (Only stamped when we also stamp the date: if the card
           // already carried a date, this transition is a status re-label of an
           // earlier completion, not an observation of one.)

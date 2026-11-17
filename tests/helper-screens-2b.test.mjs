@@ -21,7 +21,7 @@ test("helper lookup reads an aliased id (a stub that ignores WHERE can't make ev
 test("Department Performance route: production efficiency + Overall, helper rows flagged", () => {
   const s = read("src/api/routes/department-performance.ts");
   assert.match(s, /const helperIds = await helperWorkerIds\(c\.var\.DB\);/);
-  assert.match(s, /efficiencyPct: work - hw > 0 \? Math\.round\(\(\(prod - hp\) \/ \(work - hw\)\) \* 100\) : 0,/);
+  assert.match(s, /efficiencyPct: work - hw > 0 \? Math\.round\(\(\(prod - hp\) \/ \(work - hw\)\) \* 1000\) \/ 10 : 0,/);
   assert.match(s, /\.\.\.\(helperIds\.has\(w\.workerId\) \? \{ isHelper: true \} : \{\}\),/);
   assert.match(s, /avgEfficiencyPct: totalPair\.efficiencyPct,/);
 });

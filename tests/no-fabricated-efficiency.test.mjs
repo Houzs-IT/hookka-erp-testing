@@ -177,7 +177,7 @@ test("the fully-measured efficiency metric still divides by clocked time", () =>
   );
   assert.match(
     src,
-    /w\.workingMinutes > 0\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 100\)/,
+    /w\.workingMinutes > 0\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 1000\) \/ 10/,
     "department-performance.ts: per-worker efficiency must stay " +
       "productionMinutes ÷ workingMinutes",
   );

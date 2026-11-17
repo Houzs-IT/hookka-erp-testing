@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 import { findClockDayReads, scanSrcApi } from "../scripts/check-clock-dates.mjs";
-import { mytWallClock } from "../src/lib/utils.ts";
+import { mytWallClock, todayYmdMY } from "../src/lib/utils.ts";
 
 // `new Date().toISOString().slice(0, 10)` is the UTC date: before 08:00 in
 // Malaysia it is YESTERDAY. Every "today" in src must come from todayYmdMY()
@@ -83,4 +83,21 @@ test("the sites fixed in P2 use the Malaysia day", () => {
   assert.match(src("src/api/lib/procurement-agent.ts"), /function todayLocalIso\(\): string \{\n\s+return todayYmdMY\(\);/);
   assert.match(src("src/api/lib/schedule-proposals.ts"), /function localToday\(\): string \{\n\s+return todayYmdMY\(\);/);
   assert.equal((src("src/api/routes/worker.ts").match(/const today = mytWallClock\(\);/g) ?? []).length, 3);
+});
+
+// A finish time before 08:00 in Malaysia used to save yesterday's date on the
+// job card, because the date was cut from the UTC timestamp string (`nowIso`),
+// which the one-line guard above does not see.
+test("job card finish dates use the Malaysia day", () => {
+  const src = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+  const stamp = /const nowIso = new Date\(\)\.toISOString\(\);\n\s+const today = todayYmdMY\(\);/g;
+  assert.equal((src("src/api/routes/production-orders.ts").match(stamp) ?? []).length, 3);
+  assert.equal((src("src/api/routes/production-orders/_helpers.ts").match(/const today = todayYmdMY\(\);/g) ?? []).length, 1);
+  assert.match(src("src/api/lib/fg-completion.ts"), /po\.completedDate \|\| todayYmdMY\(\)/);
+  assert.equal((src("src/api/routes/import-completion/_shared.ts").match(stamp) ?? []).length, 1);
+});
+
+test("a 03:00 Malaysia finish on 1 Dec is dated 1 Dec", (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-11-30T19:00:00Z"));
+  assert.equal(todayYmdMY(), "2026-12-01");
 });

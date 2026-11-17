@@ -207,7 +207,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
         // isHelper tells the caller to render "—".
         efficiencyPct:
           !w.isHelper && w.workingMinutes > 0
-            ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
+            ? Math.round((w.productionMinutes / w.workingMinutes) * 1000) / 10
             : 0,
         ...(w.isHelper ? { isHelper: true } : {}),
         jobCards: w.jobCardIds.size,
@@ -712,10 +712,10 @@ app.get("/", async (c) => {
   // Helpers / 杂工 (owner 2026-11-11): kept in the hours, left out of production
   // efficiency, no personal efficiency. Before is_helper exists: nobody.
   const helperIds = await helperWorkerIds(c.var.DB);
-  // Production efficiency (helpers out) and Overall (everyone), rounded %.
+  // Production efficiency (helpers out) and Overall (everyone), % to one decimal.
   const effPair = (work: number, prod: number, hw: number, hp: number) => ({
-    efficiencyPct: work - hw > 0 ? Math.round(((prod - hp) / (work - hw)) * 100) : 0,
-    overallPct: work > 0 ? Math.round((prod / work) * 100) : 0,
+    efficiencyPct: work - hw > 0 ? Math.round(((prod - hp) / (work - hw)) * 1000) / 10 : 0,
+    overallPct: work > 0 ? Math.round((prod / work) * 1000) / 10 : 0,
     helperWorkingMinutes: hw,
   });
 
@@ -731,7 +731,7 @@ app.get("/", async (c) => {
           productionMinutes: w.productionMinutes,
           efficiencyPct:
             !helperIds.has(w.workerId) && w.workingMinutes > 0
-              ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
+              ? Math.round((w.productionMinutes / w.workingMinutes) * 1000) / 10
               : 0,
           ...(helperIds.has(w.workerId) ? { isHelper: true } : {}),
           jobs: w.jobs
