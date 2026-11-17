@@ -2328,7 +2328,12 @@ export default function WorkerScanPage() {
         } else {
           setResult({
             kind: "error",
-            message: data.error || t("common.error"),
+            // Server scan gate (owner 2026-11-17, src/api/lib/scan-gate.ts):
+            // punch in + scan the department QR before completing a card.
+            message:
+              data.code === "PUNCH_IN_FIRST"
+                ? t("scan.deptNeedPunchIn")
+                : data.error || t("common.error"),
           });
         }
       }
