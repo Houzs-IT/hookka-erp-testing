@@ -1,6 +1,5 @@
 # Employees & Payroll — Module Guide
 
-> **Last verified: 2026-11-17** (branch `fix/labor-cost-outsource-direct`, to `main`): the Labor Cost tab Payroll Reconciliation now counts outsourced cost as Production Labor wherever it was keyed (owner 2026-11-06), the same as the dashboard labour split; `EmployeesPage` tab anchors re-derived. Nothing else re-checked.
 > **Last verified: 2026-10-16** (branch `fix/resigned-month-absence`, to `main`, BUG-2026-10-16-301): `labor-engine.ts` anchors re-derived after `postEmploymentAbsentDates` was added. Nothing else re-checked.
 > **Last verified: 2026-10-12** (branch `feat/labor-cost-incl-payroll-card`): `EmployeesPage` / `LeaveManagementTab` / `AttendanceTab` anchors re-derived after the Labor Cost tab grew a card ("Labor Cost incl. EPF & Allowances"). Nothing else re-checked.
 > **Last verified: 2026-10-08** (branch `fix/ot-hourly-rate-display`): the hourly-rate gotcha now names the seeded ÷9 rule from 2026-10-01 (`seedHoursOnlyRule`). Nothing else re-checked.
