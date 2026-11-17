@@ -589,7 +589,22 @@ export async function collectWorkforce(
     }>();
 
   const workers = workerRows.results ?? [];
-  const nameById = new Map(workers.map((w) => [w.id, w.name] as const));
+  // Names for the efficiency ranks come from EVERY worker, not only the active
+  // ones: a worker who resigned mid-month still has efficiency for it, and was
+  // printed as his raw id ("worker-2e73bcfa", owner review 2026-11-15). A
+  // blank name falls back to the employee number; TEST accounts never rank.
+  const allWorkerRows = await db
+    .prepare(`SELECT id, name, empNo FROM workers`)
+    .bind()
+    .all<{ id: string; name: string | null; empNo?: string | null; emp_no?: string | null }>();
+  const nameById = new Map<string, string>();
+  const testIds = new Set<string>();
+  for (const w of allWorkerRows.results ?? []) {
+    const empNo = String(w.empNo ?? w.emp_no ?? "").trim();
+    if (/^TEST/i.test(empNo)) testIds.add(String(w.id));
+    const name = String(w.name ?? "").trim() || empNo;
+    if (name) nameById.set(String(w.id), name);
+  }
 
   let bonusEarned = 0;
   for (const w of workers) {
@@ -603,10 +618,10 @@ export async function collectWorkforce(
 
   const ranked: WorkerEff[] = [];
   for (const [workerId, eff] of effMap.entries()) {
-    if (eff.pct === null) continue;
+    if (eff.pct === null || testIds.has(workerId)) continue;
     ranked.push({
       workerId,
-      name: nameById.get(workerId) ?? workerId,
+      name: nameById.get(workerId) ?? "Unknown worker",
       pct: Math.round(eff.pct * 10) / 10,
     });
   }

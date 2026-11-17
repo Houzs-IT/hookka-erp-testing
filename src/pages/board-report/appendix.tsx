@@ -50,9 +50,9 @@ function Statement({ letter, title, month, block, note }: { letter: string; titl
 export function Appendices({ r }: { r: BoardReport }) {
   return (
     <>
-      <Statement letter="A" title="Monthly P&L" month={r.monthLabel} block={r.appendixPl} note="Source: Finance › Monthly P&L. The last six months to this one, then the financial year to date." />
+      <Statement letter="A" title="Monthly P&L" month={r.monthLabel} block={r.appendixPl} note="Source: Finance › Monthly P&L, at group level (the opening stock / purchase / closing stock detail under each purchase group is left out; its group row carries the sum). The last six months to this one, then the financial year to date." />
       <Statement letter="B" title="Balance sheet" month={r.monthLabel} block={r.appendixBs} note="Source: Finance › Balance Sheet, by account, this month end against last month end." />
-      <Statement letter="C" title="Cash flow statement" month={r.monthLabel} block={r.appendixCf} note="Source: Finance › Cash Flow (cash basis, bank-true). The last six months to this one, then the financial year to date." />
+      <Statement letter="C" title="Cash flow statement" month={r.monthLabel} block={r.appendixCf} note="Source: Finance › Cash Flow (cash basis, bank-true), at group level (the lines under each purchase group are left out; the group row carries the sum). The last six months to this one, then the financial year to date." />
     </>
   );
 }

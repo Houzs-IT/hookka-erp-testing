@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Forecasting › Board Report — /board-report?month=YYYY-MM (owner 2026-11-10:
 // "every figure from live ERP data; nobody should have to ask Claude each
-// month"). Thirteen A4 portrait pages plus the full statements as
+// month"). Twelve A4 portrait pages plus the full statements as
 // appendices, all from ONE read: GET /api/reports/board (accounting:read),
 // which reads the ERP's own report endpoints and arranges their figures
 // (src/lib/board-report.ts). Default month = the last closed month.
@@ -9,19 +9,18 @@
 // PDF = the browser's print to PDF: every <BrPage> is exactly one A4 page
 // (board-report.css: @page A4, a page break after each), app chrome is
 // hidden in print by DashboardLayout, and "Download PDF" calls window.print().
-// Page 13's notes are typed here by Finance (accounting:update) and stored in
+// Page 13 (notes) is no longer rendered (owner review 2026-11-15); notes stay stored in
 // kv_config `board_report_notes:<YYYY-MM>` via PUT /api/reports/board/notes.
 // ---------------------------------------------------------------------------
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileDown, RefreshCw } from "lucide-react";
 import { FinancePageTitle } from "@/components/finance/page-title";
-import { useToast } from "@/components/ui/toast";
 import { responseErrorMessage } from "@/lib/response-error";
 import { addMonths, lastClosedMonth, longMonth, YM_RE, type BoardReport } from "@/lib/board-report";
 import { todayYmdMY } from "@/lib/utils";
 import { CoverPage, IncomePage, LabourPage, MaterialsPage, TrendPage, BalancePage, CashFlowPage } from "./pages-finance";
-import { CashForecastPage, CustomersPage, NewModelsPage, OperationsPage, OutlookPage, NotesPage, NotesEditor } from "./pages-business";
+import { CashForecastPage, CustomersPage, NewModelsPage, OperationsPage, OutlookPage } from "./pages-business";
 import { Appendices } from "./appendix";
 import "./board-report.css";
 
@@ -51,10 +50,6 @@ export default function BoardReportPage() {
   const loading = current === null;
   const data = current?.data ?? null;
   const error = current?.error ?? null;
-  const setData = useCallback((fn: (d: Payload | null) => Payload | null) => {
-    setResult((r) => (r ? { ...r, data: fn(r.data) } : r));
-  }, []);
-  const { toast } = useToast();
 
   // The twelve months up to the running one, newest first.
   const months = useMemo(() => Array.from({ length: 13 }, (_, i) => addMonths(today.slice(0, 7), -i)), [today]);
@@ -102,33 +97,12 @@ export default function BoardReportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- buildingSince is read, not a trigger
   }, [reqKey, poll]);
 
-  const saveNotes = useCallback(async (text: string): Promise<boolean> => {
-    const res = await fetch("/api/reports/board/notes", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ month, text }),
-    });
-    if (!res.ok) {
-      toast.error(await responseErrorMessage(res, "Notes not saved"));
-      return false;
-    }
-    const json = (await res.json().catch(() => null)) as { success?: boolean; data?: Payload["notes"]; error?: string } | null;
-    if (!json?.success || !json.data) {
-      toast.error(json?.error || "Notes not saved");
-      return false;
-    }
-    const saved = json.data;
-    setData((d) => (d ? { ...d, notes: { ...d.notes, text: saved.text, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy } } : d));
-    toast.success("Notes saved");
-    return true;
-  }, [month, toast, setData]);
-
   return (
     <div className="brp-root" data-theme="light">
       <div className="print:hidden">
         <FinancePageTitle
           title="Board Report"
-          explain="The monthly board report, built from live ERP figures each time it is opened: income statement, labour, materials, trend, balance sheet, cash flow and its forecast, customers, new models, operations, outlook, and Finance's notes, then the full statements. Download PDF prints it as A4 pages."
+          explain="The monthly board report, built from live ERP figures each time it is opened: income statement, labour, materials, trend, balance sheet, cash flow and its forecast, customers, new models, operations and outlook, then the full statements. Download PDF prints it as A4 pages."
           links={[
             { label: "Financial Dashboard", to: "/finance-dashboard" },
             { label: "Forecast P&L", to: "/forecast" },
@@ -193,8 +167,10 @@ export default function BoardReportPage() {
           <NewModelsPage r={data} />
           <OperationsPage r={data} />
           <OutlookPage r={data} />
-          <NotesPage r={data} />
-          {data.canEditNotes && <NotesEditor key={`${data.month}:${data.notes.updatedAt ?? ""}`} r={data} onSave={saveNotes} />}
+          {/* Owner review 2026-11-15: page 13 (automatic checks + Finance
+              notes) is left out of the report entirely. The notes API and
+              stored notes are untouched; NotesPage / NotesEditor stay in
+              pages-business.tsx should it come back. */}
           <Appendices r={data} />
         </div>
       )}

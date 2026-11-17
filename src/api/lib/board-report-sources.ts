@@ -35,8 +35,13 @@ import type { StockTakeCheck } from "../../lib/stock-take-check";
 import {
   addMonths,
   boardWindows,
+  monthEnd,
   notesKey,
   parseNotes,
+  productionHeadcount,
+  type HeadcountHours,
+  type HeadcountPayload,
+  type HeadcountPayslip,
   type BoardSources,
   type CfPayload,
   type DashPayload,
@@ -128,6 +133,32 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     };
   });
 
+  // Production headcount (owner review 2026-11-15): workers with a payslip in
+  // a production department that month (hours clocked, for a month with no
+  // payslips yet) — not everyone on the worker master. Payroll data, so the
+  // same gate as the labour figures beside it.
+  const headcount = guarded<HeadcountPayload>(async () => {
+    if (!(await hasPermission(c, "accounting", "read"))) return { ok: false, error: "Not available to your role (needs accounting read)" };
+    const orgId = getOrgId(c);
+    const [slips, hours, depts] = await Promise.all([
+      // Same predicate as the dashboard's payslip read; the month filter is
+      // applied in productionHeadcount (period is read as text, YYYY-MM…).
+      db.prepare("SELECT period, departmentCode, employeeId FROM payslips WHERE orgId = ? AND status != 'CANCELLED'")
+        .bind(orgId).all<HeadcountPayslip>(),
+      db.prepare("SELECT workerId, departmentCode, date, hours FROM working_hour_entries WHERE date >= ? AND date <= ?")
+        .bind(`${w.prev}-01`, monthEnd(month)).all<HeadcountHours>(),
+      db.prepare("SELECT code, is_production FROM departments").all<{ code: string | null; isProduction?: number | null; is_production?: number | null }>(),
+    ]);
+    const nonProd = new Set<string>();
+    for (const r of depts.results ?? []) {
+      const code = String(r.code ?? "").trim();
+      if (code && Number(r.isProduction ?? r.is_production ?? 1) === 0) nonProd.add(code);
+    }
+    const cur = productionHeadcount(month, slips.results ?? [], hours.results ?? [], nonProd);
+    const prev = productionHeadcount(w.prev, slips.results ?? [], hours.results ?? [], nonProd);
+    return { ok: true, data: { cur: cur.n, prev: prev.n, basis: cur.basis } };
+  });
+
   const notes = (async () => {
     try {
       const row = await db.prepare("SELECT value FROM kv_config WHERE key = ?").bind(notesKey(month)).first<{ value: string }>();
@@ -153,6 +184,7 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     workforce,
     notes,
   ]);
+  const headcountR = await headcount;
 
   return {
     dashboard,
@@ -168,6 +200,7 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     defects: defectsR,
     workforce: workforceR,
     stockTake,
+    headcount: headcountR,
     notes: notesR,
   };
 }

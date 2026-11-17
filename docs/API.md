@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-11-16** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-17** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -125,7 +125,7 @@ offsets pointing past the end of their own file.
 | `/api/auth/oauth` | `src/api/routes/auth-oauth.ts` | `GET /google/start` <sub>:53</sub><br>`GET /google/callback` <sub>:98</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/auth/totp` | `src/api/routes/auth-totp.ts` | `POST /enroll` <sub>:85</sub><br>`POST /verify` <sub>:142</sub><br>`POST /login-verify` <sub>:198</sub><br>`POST /setup-start` <sub>:401</sub><br>`POST /setup-confirm` <sub>:477</sub><br>`POST /dismiss-prompt` <sub>:548</sub><br>`POST /disable` <sub>:570</sub> | gated (some paths public) |
 | `/api/auth/sessions` | `src/api/routes/auth-sessions.ts` | `GET /` <sub>:33</sub><br>`POST /revoke-others` <sub>:40</sub><br>`DELETE /:id` <sub>:59</sub> | gated |
-| `/api/auth` | `src/api/routes/auth.ts` | `POST /login` <sub>:153</sub><br>`POST /logout` <sub>:466</sub><br>`GET /me` <sub>:499</sub><br>`GET /me/permissions` <sub>:529</sub><br>`POST /change-password` <sub>:683</sub><br>`POST /forgot-password` <sub>:815</sub><br>`POST /reset-password` <sub>:971</sub><br>`GET /role-permissions/:role` <sub>:1152</sub><br>`GET /invite/:token` <sub>:1206</sub><br>`POST /accept-invite` <sub>:1251</sub> | gated (some paths public) |
+| `/api/auth` | `src/api/routes/auth.ts` | `POST /login` <sub>:153</sub><br>`POST /logout` <sub>:466</sub><br>`GET /me` <sub>:499</sub><br>`GET /me/permissions` <sub>:529</sub><br>`POST /change-password` <sub>:691</sub><br>`POST /forgot-password` <sub>:823</sub><br>`POST /reset-password` <sub>:979</sub><br>`GET /role-permissions/:role` <sub>:1160</sub><br>`GET /invite/:token` <sub>:1214</sub><br>`POST /accept-invite` <sub>:1259</sub> | gated (some paths public) |
 | `/api/users` | `src/api/routes/users.ts` | `POST /backfill-org-from-aliases` <sub>:170</sub><br>`GET /` <sub>:229</sub><br>`POST /` <sub>:258</sub><br>`PUT /:id` <sub>:374</sub><br>`DELETE /:id` <sub>:575</sub><br>`POST /:id/reset-password` <sub>:651</sub><br>`POST /invite` <sub>:796</sub><br>`GET /invites` <sub>:955</sub><br>`POST /invites/:token/resend` <sub>:976</sub><br>`DELETE /invites/:token` <sub>:1031</sub><br>`GET /:id` <sub>:1061</sub> | gated |
 | `/api/presence` | `src/api/routes/presence.ts` | `POST /` <sub>:56</sub><br>`GET /` <sub>:106</sub><br>`DELETE /` <sub>:131</sub> | gated |
 | `/api/bom-master-templates` | `src/api/routes/bom-master-templates.ts` | `GET /` <sub>:106</sub><br>`GET /:id` <sub>:115</sub><br>`PUT /:id` <sub>:127</sub><br>`DELETE /:id` <sub>:206</sub><br>`PUT /` <sub>:217</sub> | gated |

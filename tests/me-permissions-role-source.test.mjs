@@ -30,8 +30,17 @@ test("the role query selects the legacy users.role text, not just the join", () 
   assert.match(SRC, /u\.role AS "legacyRole"/);
 });
 
-test("the join result may be null — the legacy text stands in before READ_ONLY", () => {
-  assert.match(SRC, /roleRow\.roleName \?\? roleRow\.legacyRole \?\? null/);
+test("users.role (what the gate reads) wins; the join is only the fallback (owner 2026-11-17)", () => {
+  // Lim was changed to Admin on User Management, which writes users.role only;
+  // the stale roleId still named his old role, so the menu said "No access".
+  assert.match(SRC, /roleRow\.legacyRole \|\| roleRow\.roleName \|\| null/);
+});
+
+test("a table-defined role's permissions are looked up by role NAME, like the gate", () => {
+  const i = SRC.indexOf('app.get("/me/permissions"');
+  const body = SRC.slice(i, SRC.indexOf("\n});\n", i));
+  assert.match(body, /WHERE r\.name = \?`,\n\s+\)\n\s+\.bind\(roleName\)/);
+  assert.doesNotMatch(body, /WHERE rp\.roleId = \?/);
 });
 
 test("ADMIN bypasses alongside SUPER_ADMIN, as the gate does", () => {
