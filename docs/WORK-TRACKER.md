@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-17**: credit note date picker (branch `feat/cn-date-picker`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 in-house efficiency (branch `fix/in-house-efficiency`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 live check, Labour cost card follows the period (branch `fix/labour-card-follows-period`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 shared-card halves kept, not rounded per card (branch `fix/credit-half-minutes`, to `main`); nothing else re-checked.
@@ -318,6 +319,12 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Credit note: pick its date (feat/cn-date-picker, 2026-11-17)
+
+Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' end-of-May invoices left open after its opening receipt HOR-2606-010 is knocked off (INV-2606-030 RM 1,230.00 and INV-2606-041 RM 1,525.00) are to be cleared by CN, 「开cn 日期放5月31」. The CN create route always dated a note today and Edit never changed it, so a 31 May CN could not be raised.
+1. 🔵 The Credit Note form has a Date (today unless picked). The server takes `date` on create and on Edit of a draft (`resolveNoteDate`, `src/api/lib/note-edit.ts`): blank = today, never after today, never before its invoice's date. The ledger already posts a note on its own date (`note-ledger.ts` `docDate`), so a 31 May CN lands in May. Debit notes unchanged. Tests: `tests/cn-date-picker.test.mjs`; the edit pins in `notes-edit-duplicate-delete` follow.
+2. ⚪ After deploy: knock off HOR-2606-010 on Customer Payments, then raise the two CNs dated 2026-05-31 (owner's staff, list in chat 2026-11-17). Houzs Century's balance next (owner: 「houzs 那边的balance 我等下也要解决掉」).
 
 ## 🔵 Reports: full screen (feat/forecast-pl-full-screen, 2026-11-17)
 

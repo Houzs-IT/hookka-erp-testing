@@ -6,7 +6,7 @@ import { KpiCards } from "@/components/finance/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataGrid, type Column, type ContextMenuItem } from "@/components/ui/data-grid";
-import { formatCurrency, formatDateDMY, formatRM } from "@/lib/utils";
+import { formatCurrency, formatDateDMY, formatRM, todayYmdMY } from "@/lib/utils";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
@@ -124,6 +124,10 @@ export default function CreditNotesPage() {
   );
   const [reason, setReason] = useState<CreditNote["reason"]>("RETURN");
   const [reasonDetail, setReasonDetail] = useState("");
+  // The note's own date (owner 2026-11-17 「开cn 日期放5月31」): today unless
+  // picked; never after today, never before the invoice (the server checks).
+  const [noteDate, setNoteDate] = useState(todayYmdMY);
+  const selectedInvoiceDate = (invoices.find((inv) => inv.id === selectedInvoiceId)?.invoiceDate ?? "").slice(0, 10);
   // Editor rows carry a client-only `_uid` so React keys stay stable across
   // add / remove / reorder. The uid is stripped before POST in handleCreate().
   // PR 0 (2026-05-20) — field renamed from `unitPrice` to `unitPriceSen` so
@@ -240,8 +244,8 @@ export default function CreditNotesPage() {
       : [newCNItem()]);
     openCreate();
   };
-  const openEdit = (cn: CreditNote) => { setEditingNote(cn); setCopyOf(""); fillFromNote(cn); };
-  const openDuplicate = (cn: CreditNote) => { setEditingNote(null); setCopyOf(cn.noteNumber); fillFromNote(cn); };
+  const openEdit = (cn: CreditNote) => { setEditingNote(cn); setCopyOf(""); setNoteDate((cn.date || todayYmdMY()).slice(0, 10)); fillFromNote(cn); };
+  const openDuplicate = (cn: CreditNote) => { setEditingNote(null); setCopyOf(cn.noteNumber); setNoteDate(todayYmdMY()); fillFromNote(cn); };
   const resetForm = () => {
     setFromReturnDraft(null);
     setEditingNote(null);
@@ -250,6 +254,7 @@ export default function CreditNotesPage() {
     setSelectedInvoiceId("");
     setReason("RETURN");
     setReasonDetail("");
+    setNoteDate(todayYmdMY());
     setItems([newCNItem()]);
   };
   // A cancelled Edit / Duplicate leaves nothing behind for the next New.
@@ -262,7 +267,7 @@ export default function CreditNotesPage() {
   // anything in the form changed since it opened — a dropdown pick counts
   // (review pass 2 C2-1). Cancel and ✕ still close at once.
   const [formDirty] = useFormDirty(
-    { selectedCustomerId, selectedInvoiceId, reason, reasonDetail, items: items.map((it) => [it.description, it.quantity, it.priceStr, it.unitPriceSen]) },
+    { selectedCustomerId, selectedInvoiceId, noteDate, reason, reasonDetail, items: items.map((it) => [it.description, it.quantity, it.priceStr, it.unitPriceSen]) },
     showCreateModal,
   );
   const formGuard = useDiscardGuard({ open: showCreateModal, dirty: formDirty, onClose: closeForm, busy: creating });
@@ -295,7 +300,7 @@ export default function CreditNotesPage() {
       const payloadItems = items
         .filter((i) => i.description && i.unitPriceSen > 0)
         .map((i) => ({ description: i.description, quantity: i.quantity, unitPriceSen: i.unitPriceSen }));
-      const body = { invoiceId: selectedInvoiceId, reason, reasonDetail, items: payloadItems };
+      const body = { invoiceId: selectedInvoiceId, date: noteDate, reason, reasonDetail, items: payloadItems };
       const data = editingNote
         ? await fetchJson(`/api/credit-notes/${encodeURIComponent(editingNote.id)}/edit`, CNMutationSchema, { method: "PUT", body })
         : await createIdem.withKey((key) =>
@@ -318,6 +323,7 @@ export default function CreditNotesPage() {
           setSelectedInvoiceId("");
           setReason("RETURN");
           setReasonDetail("");
+          setNoteDate(todayYmdMY());
           setItems([newCNItem()]);
         }
         invalidateCachePrefix("/api/credit-notes");
@@ -688,6 +694,24 @@ export default function CreditNotesPage() {
                 </select>
               </div>
 
+              {/* Date */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="cn-date">Date</label>
+                <input
+                  id="cn-date"
+                  type="date"
+                  data-cn-date=""
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  value={noteDate}
+                  min={selectedInvoiceDate || undefined}
+                  max={todayYmdMY()}
+                  onChange={(e) => setNoteDate(e.target.value)}
+                />
+                {selectedInvoiceDate && noteDate && noteDate < selectedInvoiceDate ? (
+                  <p className="mt-1 text-[12px] text-[#B42318]">Before the invoice date ({formatDateDMY(selectedInvoiceDate)}).</p>
+                ) : null}
+              </div>
+
               {/* Reason */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
@@ -783,7 +807,7 @@ export default function CreditNotesPage() {
               <Button variant="ghost" onClick={closeForm}>Cancel</Button>
               <Button
                 onClick={handleCreate}
-                disabled={creating || !selectedInvoiceId || items.every((i) => !i.description)}
+                disabled={creating || !selectedInvoiceId || !noteDate || (!!selectedInvoiceDate && noteDate < selectedInvoiceDate) || items.every((i) => !i.description)}
               >
                 {editingNote ? (creating ? "Saving..." : "Save Changes") : creating ? "Creating..." : "Create Credit Note"}
               </Button>

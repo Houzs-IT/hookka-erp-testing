@@ -20,6 +20,31 @@ type NoteLabel = "Credit note" | "Debit note";
 export const CREDIT_NOTE_REASONS = ["RETURN", "PRICE_ADJUSTMENT", "DAMAGE", "OVERCHARGE", "OTHER"] as const;
 export const DEBIT_NOTE_REASONS = ["UNDERCHARGE", "ADDITIONAL_CHARGE", "PRICE_ADJUSTMENT", "OTHER"] as const;
 
+/** A credit note's own date (owner 2026-11-17 「开cn 日期放5月31」: a CN that
+ *  clears an opening-month invoice belongs to that month). Blank = today, as
+ *  before. Never after today, never before the invoice it credits. The ledger
+ *  posts the note on this date (note-ledger.ts `docDate`). */
+export function resolveNoteDate(
+  raw: unknown,
+  invoiceDate: string | null | undefined,
+  today: string,
+  label: NoteLabel,
+): { date: string } | { error: string } {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return { date: today };
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  const d = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+  if (!m || !d || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) {
+    return { error: `${label} date must be a real date (YYYY-MM-DD), got "${s}".` };
+  }
+  if (s > today) return { error: `${label} date ${s} is in the future.` };
+  const inv = String(invoiceDate ?? "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(inv) && s < inv) {
+    return { error: `${label} date ${s} is before its invoice's date ${inv}.` };
+  }
+  return { date: s };
+}
+
 /** Why this note cannot be edited or deleted — null when it can (a draft). */
 export function noteDraftOnly(label: NoteLabel, noteNumber: string, status: string | null, verb: "edited" | "deleted"): string | null {
   if ((status ?? "DRAFT") === "DRAFT") return null;
