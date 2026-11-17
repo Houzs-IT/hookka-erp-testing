@@ -36,7 +36,7 @@ import {
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
 import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
-import { punchInHeadcountByDay, type HeadcountWorker, type PunchRow } from "../../lib/capacity-headcount";
+import { outsourceMinutesByDay, punchInHeadcountByDay, type CardCredit, type HeadcountWorker, type PunchRow } from "../../lib/capacity-headcount";
 import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
 import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import {
@@ -189,7 +189,7 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const overviewV = "v29"; // v29 (2026-11-17): capacityDays[].workers = punched-in headcount, + picWorkers / capacityWorkersSource
+  const overviewV = "v30"; // v30 (2026-11-18): capacityDays[].outsourceMinutes / inHouseMinutes; v29: workers = punched-in headcount
   const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}`;
   const computeOverview = async () => {
     const db = c.var.DB;
@@ -772,6 +772,9 @@ app.get("/", async (c) => {
     // Daily Capacity drill-down. Same job-card set that feeds capByDay, so
     // capacity ÷ workers is internally consistent.
     const workersByDay = new Map<string, Set<string>>();
+    // Each window card's minutes + PICs, to take outsource minutes out of the
+    // per-worker figure (owner 2026-11-18).
+    const capCards: CardCredit[] = [];
     for (const jc of jcRes.results ?? []) {
       // jcMinutesTotal applies ×wipQty for normal depts and skips it for
       // FAB_CUT (estMinutes/actualMinutes is already the per-SET total there),
@@ -795,6 +798,7 @@ app.get("/", async (c) => {
           }
           if (jc.pic1Id) wset.add(jc.pic1Id);
           if (jc.pic2Id) wset.add(jc.pic2Id);
+          capCards.push({ date: jc.completedDate, minutes: mins, pic1Id: jc.pic1Id, pic2Id: jc.pic2Id });
         }
       }
       // (The old all-JC backlogMin accumulation was removed 2026-07-11: the
@@ -820,6 +824,7 @@ app.get("/", async (c) => {
     // count is kept as `picWorkers` for reference. A failed read falls back to
     // the PIC count rather than breaking the feed.
     let punchByDay: Map<string, number> | null = null;
+    let outsourceByDay: Map<string, number> | null = null;
     if (windowDays.length) {
       try {
         const marks = windowDays.map(() => "?").join(",");
@@ -845,6 +850,9 @@ app.get("/", async (c) => {
           return { employeeId: (x.employeeId ?? x.employee_id) as string, date: x.date as string, clockIn: x.clockIn ?? x.clock_in };
         });
         punchByDay = punchInHeadcountByDay(punches, workers);
+        // Outsource are not in the headcount, so their minutes leave the
+        // per-worker numerator too: inHouseMinutes = minutes − outsourceMinutes.
+        outsourceByDay = outsourceMinutesByDay(capCards, workers);
       } catch (e) {
         console.warn("[dashboard-overview] punch-in headcount failed, using job-card PICs:", e);
       }
@@ -853,9 +861,13 @@ app.get("/", async (c) => {
       .sort((a, b) => a.localeCompare(b))
       .map((date) => {
         const picWorkers = workersByDay.get(date)?.size ?? 0;
+        const minutes = capByDay.get(date) ?? 0;
+        const outsourceMinutes = Math.min(minutes, outsourceByDay?.get(date) ?? 0);
         return {
           date,
-          minutes: capByDay.get(date) ?? 0,
+          minutes,
+          outsourceMinutes,
+          inHouseMinutes: minutes - outsourceMinutes,
           workers: punchByDay ? (punchByDay.get(date) ?? 0) : picWorkers,
           picWorkers,
         };

@@ -49,3 +49,37 @@ test("the overview feed uses the punch-in count, keeps the PIC count, refreshes 
   const page = readFileSync("src/pages/dashboard-b/index.tsx", "utf8");
   assert.match(page, /everyone who punched in that day, helpers included, outsource excluded/);
 });
+
+test("outsource minutes per day: a card's minutes split evenly over its PICs (owner 2026-11-18)", async () => {
+  const { outsourceMinutesByDay } = await import("../src/lib/capacity-headcount.ts");
+  const m = outsourceMinutesByDay(
+    [
+      { date: "2026-11-12", minutes: 120, pic1Id: "o1" }, // all outsource
+      { date: "2026-11-12", minutes: 100, pic1Id: "w1", pic2Id: "o3" }, // half
+      { date: "2026-11-12", minutes: 80, pic1Id: "w1" }, // in-house
+      { date: "2026-11-12", minutes: 60 }, // no PIC — in-house
+      { date: "2026-11-13", minutes: 30, pic1Id: "o2", pic2Id: "o1" },
+    ],
+    workers,
+  );
+  assert.equal(m.get("2026-11-12"), 170);
+  assert.equal(m.get("2026-11-13"), 30);
+});
+
+test("per worker = in-house minutes ÷ punched-in staff, desktop and phone share it", async () => {
+  const { perWorkerMin } = await import("../src/pages/m/screens/dashboard/ops-lib.ts");
+  const days = [
+    { minutes: 600, outsourceMinutes: 120, workers: 4 },
+    { minutes: 400, outsourceMinutes: 80, workers: 4 },
+  ];
+  // daily 500, outsource 100/day → 400 in-house ÷ 4 = 100
+  assert.equal(perWorkerMin(days, 500), 100);
+  // an older feed with no outsource field divides the whole day
+  assert.equal(perWorkerMin([{ minutes: 500, workers: 5 }], 500), 100);
+  const src = readFileSync("src/api/routes/dashboard-overview.ts", "utf8");
+  assert.match(src, /outsourceByDay = outsourceMinutesByDay\(capCards, workers\)/);
+  assert.match(src, /inHouseMinutes: minutes - outsourceMinutes/);
+  const page = readFileSync("src/pages/dashboard-b/index.tsx", "utf8");
+  assert.match(page, /perWorkerMin\(days, prod\.dailyCapacityMin\)/);
+  assert.match(page, /hm\(Math\.round\(inHouse \/ w\)\)/);
+});
