@@ -17,13 +17,14 @@
 // the boxes — and both doors step the financial year here (`period`). Done
 // goes back to the view that opened it, where there is one (`onClose`).
 // ---------------------------------------------------------------------------
-import { Fragment, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { HidePastMonthsToggle, PeriodStepper, ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
 import { caretEdges, nextCell, type CellPos } from "@/lib/grid-keys";
+import { buildTsv, extendFocus, isBlockText, isMultiCell, parsePasteBlock, pastedSel, placePaste, selRange, type GridPos, type GridSel } from "@/lib/forecast-sheet-clipboard";
 import { COMPANY } from "@/lib/constants";
 import { useNavGuard } from "@/lib/use-nav-guard";
 import { invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -70,8 +71,18 @@ const group = (s: string): string => {
   const n = parseMoneyInput(s);
   return n !== null ? n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : s;
 };
-const BOX = "inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1";
+// A box in the copy / paste selection carries data-fc-sel (set by the editor).
+const BOX = "inline-flex items-center rounded border border-[#E2DDD8] bg-[#FFFBF2] px-1 data-[fc-sel]:border-[#3B82F6] data-[fc-sel]:bg-[#DBEAFE]";
 const INPUT = "w-full min-w-0 bg-transparent py-0.5 text-right text-[11px] tabular-nums outline-none placeholder:text-[#C7C1BA]";
+
+// Copy / paste like Excel (owner 2026-11-17 "i only want to copy certain cell
+// like excel"; src/lib/forecast-sheet-clipboard.ts): each box's own change
+// handler, so a pasted figure goes into the sheet exactly as typing would.
+const boxSetters = new WeakMap<HTMLInputElement, (v: string) => void>();
+const keepSetter = (onChange: (v: string) => void) => (el: HTMLInputElement | null) => { if (el) boxSetters.set(el, onChange); };
+// The sheet's grid: the body rows that have keyed boxes (totals and computed lines are not in it).
+const sheetRows = (table: HTMLTableElement) => [...table.querySelectorAll<HTMLTableRowElement>("tbody > tr")].filter((r) => r.querySelector("input[data-fc-col]"));
+const boxAt = (rows: HTMLTableRowElement[], p: GridPos) => rows[p.row]?.querySelector<HTMLInputElement>(`input[data-fc-col="${p.col}"]`) ?? null;
 
 // A box's place for the arrow keys: its column on the sheet and the handler.
 type KeyNav = { col?: number; onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void };
@@ -91,6 +102,7 @@ function RmBox({ value, hint, onChange, label, col, onKeyDown }: { value: string
         onBlur={() => setFocused(false)}
         onChange={(e) => onChange(e.target.value.replace(/,/g, ""))}
         onKeyDown={onKeyDown}
+        ref={keepSetter(onChange)}
         data-fc-col={col}
         className={INPUT}
       />
@@ -100,7 +112,7 @@ function RmBox({ value, hint, onChange, label, col, onKeyDown }: { value: string
 function PctBox({ value, hint, onChange, label, col, onKeyDown }: { value: string; hint: string; onChange: (v: string) => void; label: string } & KeyNav) {
   return (
     <span className={`${BOX} w-[4.25rem]`}>
-      <input type="number" step="0.01" aria-label={label} value={value} placeholder={hint || "-"} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} data-fc-col={col} className={INPUT} />
+      <input type="number" step="0.01" aria-label={label} value={value} placeholder={hint || "-"} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} ref={keepSetter(onChange)} data-fc-col={col} className={INPUT} />
       <span className="ml-0.5 text-[10px] text-[#9CA3AF]">%</span>
     </span>
   );
@@ -351,6 +363,26 @@ export function MonthlyPlForecastEditor({
     return [...new Set([...(base?.months ?? []), ...ahead])].filter((ym) => !sheet[ym]).sort();
   }, [anchor, curYm, base, sheet]);
 
+  // The copy / paste selection, in the sheet's grid (row = a body row with
+  // boxes, col = data-fc-col). Shift+click, Shift+arrow or a drag makes it;
+  // Esc, a plain click or a plain arrow clears it.
+  const [sel, setSel] = useState<GridSel | null>(null);
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const dragFrom = useRef<GridPos | null>(null);
+  // The rows move under it when the view changes, so it goes.
+  useEffect(() => setSel(null), [open, showDetail, hideUnused, hidePast, anchor]);
+  // Highlight the selected boxes (after every render: typing re-draws the rows).
+  useEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    table.querySelectorAll("[data-fc-sel]").forEach((n) => n.removeAttribute("data-fc-sel"));
+    if (!isMultiCell(sel)) return;
+    const r = selRange(sel);
+    const rows = sheetRows(table);
+    for (let row = r.top; row <= r.bottom; row++)
+      for (let col = r.left; col <= r.right; col++) boxAt(rows, { row, col })?.parentElement?.setAttribute("data-fc-sel", "");
+  });
+
   if (loadError) return <p className="text-sm text-[#9A3412]">Couldn't open Edit forecast: {loadError}</p>;
   if (!base || !matrix || savedSnap === null || baseAnchor !== anchor) return <div className="py-12 text-center text-sm text-[#6B7280]">Loading the forecast…</div>;
 
@@ -365,14 +397,44 @@ export function MonthlyPlForecastEditor({
   // Right move only from the edge of the text. A box's column is 2 × its
   // column's place (the RM box), + 1 for the % box.
   const colOf = (c: PlForecastColumn) => vis.findIndex(([v]) => v.key === c.key) * 2;
+  const posOf = (el: HTMLInputElement, rows: HTMLTableRowElement[]): GridPos | null => {
+    const tr = el.closest("tr");
+    const row = tr ? rows.indexOf(tr) : -1;
+    return row < 0 ? null : { row, col: Number(el.dataset.fcCol) };
+  };
   const onCellKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") { if (sel) { e.preventDefault(); setSel(null); } return; }
+    // Ctrl/Cmd+C on a selection: written straight to the clipboard (a browser
+    // that fires no copy event with nothing selected in the box still copies);
+    // without the clipboard API the copy event below does it.
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && isMultiCell(sel) && navigator.clipboard?.writeText) {
+      const tsv = selTsv();
+      if (tsv !== null) {
+        e.preventDefault();
+        void navigator.clipboard.writeText(tsv).catch(() => toast.error("Couldn't copy — please try again."));
+      }
+      return;
+    }
     if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault();
     const el = e.currentTarget;
     const table = el.closest("table");
     const tr = el.closest("tr");
     if (!table || !tr) return;
-    const rowsEls = [...table.querySelectorAll<HTMLTableRowElement>("tbody > tr")].filter((r) => r.querySelector("input[data-fc-col]"));
+    const rowsEls = sheetRows(table);
     const width = vis.length * 2;
+    // Shift + an arrow stretches the selection from the box; the box keeps the focus.
+    if (e.shiftKey && e.key.startsWith("Arrow")) {
+      const here = posOf(el, rowsEls);
+      if (!here) return;
+      e.preventDefault();
+      const from = sel ?? { anchor: here, focus: here };
+      const to = extendFocus(from.focus, e.key, rowsEls.length, width);
+      if (!to) return;
+      setSel({ anchor: from.anchor, focus: to });
+      (boxAt(rowsEls, to) ?? rowsEls[to.row])?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      return;
+    }
+    if (e.key.startsWith("Arrow") || e.key === "Enter") setSel(null);
     const caret = caretEdges(el);
     let pos: CellPos | null = { row: rowsEls.indexOf(tr), col: Number(el.dataset.fcCol) };
     for (let step = 0; step < rowsEls.length + width; step++) {
@@ -386,6 +448,78 @@ export function MonthlyPlForecastEditor({
         return;
       }
     }
+  };
+  // Mouse: Shift+click stretches from the focused box (or the selection's
+  // start); a drag across boxes selects them; a plain click starts afresh.
+  const boxOf = (t: EventTarget) => (t instanceof HTMLInputElement && t.dataset.fcCol !== undefined ? t : null);
+  const onSheetMouseDown = (e: MouseEvent<HTMLTableElement>) => {
+    const el = boxOf(e.target);
+    const table = tableRef.current;
+    if (!el || !table) { dragFrom.current = null; setSel(null); return; }
+    const rows = sheetRows(table);
+    const here = posOf(el, rows);
+    if (!here) return;
+    if (e.shiftKey) {
+      const active = document.activeElement instanceof HTMLInputElement ? posOf(document.activeElement, rows) : null;
+      const from = sel?.anchor ?? active;
+      if (from) {
+        e.preventDefault();
+        setSel({ anchor: from, focus: here });
+        return;
+      }
+    }
+    dragFrom.current = here;
+    setSel(null);
+  };
+  const onSheetMouseOver = (e: MouseEvent<HTMLTableElement>) => {
+    const from = dragFrom.current;
+    const el = boxOf(e.target);
+    const table = tableRef.current;
+    if (!from || !el || !table) return;
+    if ((e.buttons & 1) === 0) { dragFrom.current = null; return; }
+    const here = posOf(el, sheetRows(table));
+    if (here && (here.row !== from.row || here.col !== from.col)) {
+      setSel({ anchor: from, focus: here });
+      window.getSelection()?.removeAllRanges();
+    }
+  };
+  // Ctrl/Cmd+C on a selection: its boxes as tab-separated rows (one box copies as usual).
+  function selTsv(): string | null {
+    const table = tableRef.current;
+    if (!isMultiCell(sel) || !table) return null;
+    const rows = sheetRows(table);
+    return buildTsv(selRange(sel), (row, col) => boxAt(rows, { row, col })?.value ?? null);
+  }
+  const onSheetCopy = (e: ClipboardEvent<HTMLTableElement>) => {
+    const tsv = selTsv();
+    if (tsv === null) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", tsv);
+  };
+  // Ctrl/Cmd+V of a block (from here, Excel or Google Sheets): spread from the
+  // focused box — or the selection's top-left — down the rows and across the
+  // columns. A single value pastes as usual.
+  const onSheetPaste = (e: ClipboardEvent<HTMLTableElement>) => {
+    const el = boxOf(e.target);
+    const table = tableRef.current;
+    const text = e.clipboardData.getData("text/plain");
+    if (!el || !table || !isBlockText(text)) return;
+    const rows = sheetRows(table);
+    const here = posOf(el, rows);
+    if (!here) return;
+    e.preventDefault();
+    const start = isMultiCell(sel) ? { row: selRange(sel).top, col: selRange(sel).left } : here;
+    const width = vis.length * 2;
+    const grid = parsePasteBlock(text);
+    for (const w of placePaste(grid, start, rows.length, width)) {
+      const box = boxAt(rows, w);
+      const set = box ? boxSetters.get(box) : undefined;
+      if (!box || !set) continue;
+      // A blank clears only a box holding a figure (the empty side of a keyed pair stays as it is).
+      if (w.value === "" && box.value === "") continue;
+      set(w.value);
+    }
+    setSel(pastedSel(grid, start, rows.length, width));
   };
   const tagOf = (c: PlForecastColumn) => `${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`;
   const keyMonth = (c: PlForecastColumn) => (c.forecast && !c.accum && c.ym ? c.ym : null);
@@ -620,10 +754,20 @@ export function MonthlyPlForecastEditor({
       <ReportFrame
         company={COMPANY.HOOKKA.name}
         title={frameTitle ?? "Monthly Profit-and-Loss (Overall) — Edit forecast"}
-        note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · a material's Actual is that month's purchases · ▸ opens customers, suppliers or departments · all amounts RM${hidePast ? " · past months' forecasts hidden" : ""}${hideUnused ? " · rows with no figure hidden" : ""}`}
+        note={`${base.fyLabel} · each month's Forecast takes RM or % of that month's sales · a material's Actual is that month's purchases · ▸ opens customers, suppliers or departments · Shift+click or drag selects boxes to copy and paste · all amounts RM${hidePast ? " · past months' forecasts hidden" : ""}${hideUnused ? " · rows with no figure hidden" : ""}`}
         maxHeight="calc(100vh - 340px)"
       >
-        <table data-col-resize="first" data-fin-report data-fin-fit>
+        <table
+          data-col-resize="first"
+          data-fin-report
+          data-fin-fit
+          ref={tableRef}
+          onMouseDown={onSheetMouseDown}
+          onMouseOver={onSheetMouseOver}
+          onMouseUp={() => { dragFrom.current = null; }}
+          onCopy={onSheetCopy}
+          onPaste={onSheetPaste}
+        >
           <thead>
             <tr data-row="h1">
               <th rowSpan={2} data-cell="stick" className="min-w-[260px]">Item</th>
