@@ -112,7 +112,7 @@ test("month maths and the default month (last closed, Malaysia date)", () => {
   assert.equal(resolveBoardMonth("2026-13", "2026-11-10"), "2026-10");
   const w = boardWindows("2026-10", "2026-11-10");
   assert.deepEqual([w.prev, w.quarterAgo, w.running, w.dashFrom, w.dashTo], ["2026-09", "2026-07", "2026-11", "2025-11", "2027-02"]);
-  assert.deepEqual([w.newModelsFrom, w.newModelsTo], ["2026-08-01", "2026-10-31"]);
+  assert.deepEqual([w.newModelsFrom, w.newModelsTo], ["2026-10-01", "2026-10-31"], "the report month only (owner 2026-11-17)");
 });
 
 test("capRows folds the tail into one Other (n more) row", () => {

@@ -119,7 +119,7 @@ export function CustomersPage({ r }: P) {
 
 export function NewModelsPage({ r }: P) {
   return (
-    <BrPage title="New models" kicker="Page 10 · Added in the last three months" month={r.monthLabel}>
+    <BrPage title="New models" kicker="Page 10 · Added this month" month={r.monthLabel}>
       {withSection(r.newModels, (d) => (
         <>
           <p className="brp-lead">Models whose first product was created between {d.from} and {d.to}, one card per family.</p>
