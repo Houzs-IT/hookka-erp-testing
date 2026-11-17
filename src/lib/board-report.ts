@@ -47,6 +47,24 @@ export const shortMonth = (ym: string): string => `${MONTHS[parseInt(ym.slice(5,
 export const longMonth = (ym: string): string => `${MONTHS_LONG[parseInt(ym.slice(5, 7), 10) - 1] ?? "?"} ${ym.slice(0, 4)}`;
 /** The last closed month = the month before today's (Malaysia) month. */
 export const lastClosedMonth = (todayYmd: string): string => addMonths(todayYmd.slice(0, 7), -1);
+
+/** Owner 2026-11-17 「每个月最后一天…重新generate 然后7号 10号 15号 也是重新generate
+ *  所以我不需要去点」: the last closed month's kept report is renewed on these
+ *  days of the month (Malaysia date). */
+export const BOARD_REFRESH_DAYS = [1, 7, 10, 15] as const;
+/** 00:00 Malaysia time of the latest refresh day on or before today. */
+export function boardRefreshPoint(todayYmd: string): string {
+  const d = Number(todayYmd.slice(8, 10));
+  const day = Math.max(...BOARD_REFRESH_DAYS.filter((x) => x <= d));
+  return new Date(`${todayYmd.slice(0, 8)}${String(day).padStart(2, "0")}T00:00:00+08:00`).toISOString();
+}
+/** A kept copy of the last closed month built before the latest refresh day
+ *  is out of date: the first open after that day rebuilds it. */
+export function boardKeptIsStale(month: string, todayYmd: string, generatedAt: string | null | undefined): boolean {
+  if (month !== lastClosedMonth(todayYmd)) return false;
+  const at = generatedAt ? Date.parse(generatedAt) : NaN;
+  return !Number.isFinite(at) || at < Date.parse(boardRefreshPoint(todayYmd));
+}
 /** Last day of a month as YYYY-MM-DD. */
 export function monthEnd(ym: string): string {
   const [y, m] = ym.split("-").map((x) => parseInt(x, 10));
