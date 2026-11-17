@@ -481,7 +481,7 @@ app.post("/api/internal/board-report-prebuild", async (c) => {
     return c.json({ ok: false, error: "forbidden" }, 403);
   }
   const t0 = Date.now();
-  const body = (await c.req.json().catch(() => ({}))) as { month?: string; force?: boolean };
+  const body = (await c.req.json().catch(() => ({}))) as { month?: string; force?: boolean; check?: boolean };
   try {
     const { resolveBoardMonth, shapeBoardReport } = await import("../lib/board-report");
     const { loadBoardSources } = await import("./lib/board-report-sources");
@@ -490,24 +490,45 @@ app.post("/api/internal/board-report-prebuild", async (c) => {
     const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
     const month = resolveBoardMonth(body.month, today);
     const db = c.var.DB;
+    type Kept = { generatedAt?: string };
+    // {check:true}: when was the kept copy built, and is a build running? The
+    // workflow polls this after starting a build.
+    if (body.check) {
+      const kept = await cache.readBoardCache<Kept>(db, month);
+      return c.json({ ok: true, month, generatedAt: kept?.generatedAt ?? null, building: !!(await cache.buildStartedAt(db, month)), elapsedMs: Date.now() - t0 });
+    }
     if (!body.force && (await cache.readBoardCache(db, month))) {
       return c.json({ ok: true, month, built: false, note: "already kept", elapsedMs: Date.now() - t0 });
     }
     if (!(await cache.takeBuildLock(db, month))) {
       return c.json({ ok: true, month, built: false, note: "a build is already running", elapsedMs: Date.now() - t0 });
     }
+    const setVar = c.set as unknown as (k: string, v: unknown) => void;
+    setVar("orgId", DEFAULT_ORG_ID);
+    setVar("userRole", "SUPER_ADMIN");
+    setVar("userId", "system:board-report-prebuild");
+    // Build in the background exactly like Refresh on the page (GET
+    // /api/reports/board?rebuild=1): answer within BUILD_WAIT_MS and let
+    // waitUntil finish. Building inside the request instead died with
+    // "Worker exceeded resource limits" (503, 17 Nov 2026) — every scheduled
+    // run before that only ever answered "already kept", so it never built.
+    const build = (async () => {
+      try {
+        const sources = await loadBoardSources(c as never, month, today);
+        const report = shapeBoardReport(sources, month, today, new Date().toISOString());
+        await cache.writeBoardCache(db, month, report);
+        return report;
+      } finally {
+        await cache.releaseBuildLock(db, month).catch(() => {});
+      }
+    })();
     try {
-      const setVar = c.set as unknown as (k: string, v: unknown) => void;
-      setVar("orgId", DEFAULT_ORG_ID);
-      setVar("userRole", "SUPER_ADMIN");
-      setVar("userId", "system:board-report-prebuild");
-      const sources = await loadBoardSources(c as never, month, today);
-      const report = shapeBoardReport(sources, month, today, new Date().toISOString());
-      await cache.writeBoardCache(db, month, report);
-    } finally {
-      await cache.releaseBuildLock(db, month).catch(() => {});
+      c.executionCtx.waitUntil(build.catch((e) => console.error("[board-report-prebuild] background build failed:", e)));
+    } catch {
+      void build.catch(() => {});
     }
-    return c.json({ ok: true, month, built: true, elapsedMs: Date.now() - t0 });
+    const done = await cache.within(build, cache.BUILD_WAIT_MS);
+    return c.json({ ok: true, month, built: !!done, building: !done, elapsedMs: Date.now() - t0 }, done ? 200 : 202);
   } catch (e) {
     console.error("[board-report-prebuild]", e);
     return c.json({ ok: false, error: e instanceof Error ? e.message : "prebuild failed" }, 500);
