@@ -176,6 +176,6 @@ test("the shell mounts the section and the old one-day note and generic list are
   const route = strip(src("EmployeesRoute.tsx"));
   assert.match(route, /section === "efficiency" \? <EfficiencySection \/> : null/);
   assert.ok(!/EfficiencyPeriodNote/.test(route));
-  assert.match(route, /section === "overview" \|\| section === "working-hours" \|\| section === "attendance" \|\| section === "efficiency" \|\| section === "employee-performance" \|\| section === "department-labor"/);
+  assert.match(route, /section === "overview" \|\| section === "working-hours" \|\| section === "attendance" \|\| section === "efficiency" \|\| section === "employee-performance" \|\| section === "department-labor" \|\| section === "department-performance" \|\| section === "labor-cost"/);
   assert.match(route, /EFF_PARAMS/, "the search clears when you change section");
 });

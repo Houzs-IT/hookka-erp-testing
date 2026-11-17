@@ -19,14 +19,18 @@ import { M } from "../../theme";
 import { ModuleListScreen } from "../ModuleListScreen";
 import AttendanceSection from "./AttendanceSection";
 import DepartmentLaborSection from "./DepartmentLaborSection";
+import DepartmentPerformanceSection from "./DepartmentPerformanceSection";
 import EfficiencySection from "./EfficiencySection";
 import EmployeePerformanceSection from "./EmployeePerformanceSection";
+import LaborCostSection from "./LaborCostSection";
 import MenuSheet from "./MenuSheet";
 import OverviewSection from "./OverviewSection";
 import { ATT_PARAMS } from "./attendance-model";
 import { EMPLOYEES_SECTIONS, resolveSection, sectionConfig, type EmployeesSectionKey } from "./employees-sections";
+import { DP_PARAMS } from "./department-performance-model";
 import { EFF_PARAMS } from "./efficiency-model";
 import { EP_PARAMS } from "./employee-performance-model";
+import { LC_PARAMS } from "./labor-cost-model";
 import { EFFICIENCY_REPORT_URL, menuItems, menuTitle, type MenuAction } from "./employees-menu";
 import { MenuBridgeContext, type MenuBridge } from "./menu-context";
 import { pendingBadge } from "./time-adjustments-model";
@@ -57,7 +61,7 @@ export default function EmployeesRoute() {
         const p = new URLSearchParams(prev);
         p.set("section", next);
         // A section's own filters (date, search, location…) never follow you to another section.
-        for (const k of [...WH_PARAMS, ...ATT_PARAMS, ...EFF_PARAMS, ...EP_PARAMS]) p.delete(k);
+        for (const k of [...WH_PARAMS, ...ATT_PARAMS, ...EFF_PARAMS, ...EP_PARAMS, ...DP_PARAMS, ...LC_PARAMS]) p.delete(k);
         return p;
       },
       { replace: true },
@@ -73,7 +77,7 @@ export default function EmployeesRoute() {
   }, [section]);
 
   const listConfig = useMemo(() => {
-    if (section === "overview" || section === "working-hours" || section === "attendance" || section === "efficiency" || section === "employee-performance" || section === "department-labor") return null;
+    if (section === "overview" || section === "working-hours" || section === "attendance" || section === "efficiency" || section === "employee-performance" || section === "department-labor" || section === "department-performance" || section === "labor-cost") return null;
     const tab = EMPLOYEES_SECTIONS.find((s) => s.key === section)?.tab;
     return tab ? sectionConfig(tab) : null;
   }, [section]);
@@ -214,6 +218,8 @@ export default function EmployeesRoute() {
       {section === "efficiency" ? <EfficiencySection /> : null}
       {section === "employee-performance" ? <EmployeePerformanceSection /> : null}
       {section === "department-labor" ? <DepartmentLaborSection /> : null}
+      {section === "department-performance" ? <DepartmentPerformanceSection /> : null}
+      {section === "labor-cost" ? <LaborCostSection /> : null}
 
       {listConfig ? (
         <ModuleListScreen
