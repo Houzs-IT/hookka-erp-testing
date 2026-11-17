@@ -46,9 +46,27 @@ export default function EmployeesRoute() {
   const [params, setParams] = useSearchParams();
   const section = resolveSection(params.get("section"));
   const [menuOpen, setMenuOpen] = useState(false);
-  // The open section registers the menu actions that are ready right now here (see menu-context.ts / employees-menu.ts).
-  const [registry, setRegistry] = useState<MenuRegistry>({});
-  const bridge = useMemo<MenuBridge>(() => ({ set: (r) => setRegistry(r ?? {}) }), []);
+  // The open section registers the menu actions that are ready right now here (see menu-context.ts / employees-menu.ts). The latest
+  // `run` closures live in a ref; only the SHAPE (which actions, busy, note) is state. A section re-registers on its own renders, so
+  // putting the closures in state would re-render this shell on every registration, which re-renders the section, which registers
+  // again: an endless loop (PR #1422 regression: the Labor Cost tab froze every other tab). An unchanged shape is a no-op.
+  const runs = useRef<MenuRegistry>({});
+  const [shape, setShape] = useState("{}");
+  const bridge = useMemo<MenuBridge>(
+    () => ({
+      set: (r) => {
+        runs.current = r ?? {};
+        const meta: Record<string, { busy?: boolean; note?: string }> = {};
+        for (const k of Object.keys(runs.current).sort()) meta[k] = { busy: runs.current[k as MenuAction]?.busy, note: runs.current[k as MenuAction]?.note };
+        setShape(JSON.stringify(meta));
+      },
+    }),
+    [],
+  );
+  const registry: MenuRegistry = useMemo(() => {
+    const meta = JSON.parse(shape) as Record<string, { busy?: boolean; note?: string }>;
+    return Object.fromEntries(Object.entries(meta).map(([k, m]) => [k, { run: () => undefined, busy: m.busy, note: m.note }]));
+  }, [shape]);
   const barTop = useStickyBelowHeader();
   const barRef = useRef<HTMLDivElement>(null);
   // Fetched ONCE here: the Working Hours tab badge and the request card below read this same list.
@@ -85,7 +103,7 @@ export default function EmployeesRoute() {
   const items = menuItems(section, registry);
   function pick(a: MenuAction) {
     setMenuOpen(false);
-    registry[a]?.run(); // inside the tap, so a print / report window is allowed to open
+    runs.current[a]?.run(); // inside the tap, so a print / report window is allowed to open
   }
 
   return (
