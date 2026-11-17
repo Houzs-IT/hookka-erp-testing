@@ -6,8 +6,9 @@
 // Costing is desktop's Department Labor tab (department-labor-model.ts) so the two can be compared for the same period. The cost
 // line says "Total" (and "matches Payroll") ONLY for an unfiltered, completed calendar month whose payroll data loaded; otherwise
 // "Estimated Labor Cost", and "Unavailable" when the data the estimate needs did not load. Nothing is written.
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowUpDown, CalendarDays, DollarSign, Search } from "lucide-react";
+import { printDeptQrPoster } from "@/lib/dept-qr-poster";
 import { formatRM } from "@/lib/utils";
 import { M } from "../../theme";
 import DeptLaborFilterSheet from "./DeptLaborFilterSheet";
@@ -26,6 +27,9 @@ import {
 } from "./department-labor-model";
 import { thisMonthRange } from "./employees-dates";
 import { CARD, SHEET_CARD, TONE } from "./employees-styles";
+import { useMenuBridge } from "./menu-context";
+import { departmentLaborPrint } from "./menu-prints";
+import { runPrintDoc } from "./run-print";
 import { PeriodSheet } from "./PeriodSheet";
 import { laborState, useDepartmentLabor } from "./use-department-labor";
 import { useEmployeesPeriod } from "./use-employees-period";
@@ -118,6 +122,20 @@ export default function DepartmentLaborSection() {
   const n = filterCount(filters);
   const mode: CostMode = result?.mode ?? "estimate";
   const note = result ? footnote(result, filters) : null;
+
+  // "..." → Print report (the departments on screen, as desktop prints its grid) and Department QR poster (desktop's poster,
+  // shared: src/lib/dept-qr-poster.ts). The poster window is opened HERE, inside the tap, because a phone blocks one opened later.
+  const bridge = useMenuBridge();
+  const printable = rows.length > 0;
+  useEffect(() => {
+    if (!bridge || !data.allowed) return;
+    bridge.set({
+      ...(printable ? { print: { run: () => runPrintDoc(departmentLaborPrint({ rows, mode, range, category: sheet.category })) } } : {}),
+      "qr-poster": { run: () => void printDeptQrPoster(window.open("", "_blank")) },
+    });
+    return () => bridge.set(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `rows` / `mode` derive from `result` + the filters; re-register when those change
+  }, [bridge, data.allowed, printable, result, q, sheet, range.from, range.to]);
   const base = thisMonthRange(today);
   const isDefaultPeriod = range.from === base.from && range.to === base.to;
   const dateBtn: CSSProperties = {
