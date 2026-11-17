@@ -567,7 +567,13 @@ app.get("/me/permissions", async (c) => {
       return c.json({ success: true, permissions: [] });
     }
 
-    const resolvedRole = roleRow.roleName ?? roleRow.legacyRole ?? null;
+    // The GATE reads users.role (auth-middleware stamps u.role as userRole),
+    // so that text wins here too. Owner 2026-11-17: Lim was changed to Admin on
+    // User Management (which writes users.role only); users.roleId still named
+    // the old role, so this endpoint answered with the old role's permissions
+    // and the Employees dashboard showed "No access" for labour cost while the
+    // API itself would have answered. roles.name is only the fallback now.
+    const resolvedRole = roleRow.legacyRole || roleRow.roleName || null;
 
     // SUPER_ADMIN / ADMIN bypass — sentinel list keeps the payload tiny and
     // matches the rbac.ts short-circuit, which grants BOTH "*:*".
@@ -581,7 +587,6 @@ app.get("/me/permissions", async (c) => {
       });
     }
 
-    const roleId = roleRow.roleId ?? "role_read_only";
     const roleName = resolvedRole ?? "READ_ONLY";
 
     // An account a Super Admin has edited uses its OWN list — the same lookup,
@@ -618,13 +623,16 @@ app.get("/me/permissions", async (c) => {
       });
     }
 
+    // By role NAME, exactly as the gate looks it up (rbac.ts loadRolePermissions),
+    // so a role changed on User Management (users.role) is read the same way.
     const permsRes = await c.var.DB.prepare(
       `SELECT p.resource AS resource, p.action AS action
          FROM role_permissions rp
+         JOIN roles r       ON r.id  = rp.roleId
          JOIN permissions p ON rp.permissionId = p.id
-        WHERE rp.roleId = ?`,
+        WHERE r.name = ?`,
     )
-      .bind(roleId)
+      .bind(roleName)
       .all<{ resource: string; action: string }>();
 
     const rows = permsRes.results ?? [];
