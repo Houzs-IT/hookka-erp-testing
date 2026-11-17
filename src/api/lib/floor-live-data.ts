@@ -58,6 +58,19 @@ export async function computeFloorLive(db: D1Database, orgId: string, date: stri
   const whe = wheRes.results ?? [];
   const jobCards = jcRes.results ?? [];
 
+  // Piece-level PICs for the day's cards, in parallel chunks of 200.
+  const ids = jobCards.map((j) => j.id);
+  const chunks = Array.from({ length: Math.ceil(ids.length / 200) }, (_, i) => ids.slice(i * 200, i * 200 + 200));
+  const picRes = await Promise.all(
+    chunks.map((chunk) =>
+      db
+        .prepare(`SELECT job_card_id, pic1_id, pic2_id FROM piece_pics WHERE org_id = ? AND job_card_id IN (${chunk.map(() => "?").join(",")})`)
+        .bind(orgId, ...chunk)
+        .all<{ jobCardId: string; pic1Id: string | null; pic2Id: string | null }>(),
+    ),
+  );
+  const pics = picRes.flatMap((r) => r.results ?? []);
+
   // Live only: hours so far for punches still open (working_hour_entries land
   // at punch-out). Same as the dashboard feed. Steps every 5 minutes.
   let liveRows: Awaited<ReturnType<typeof liveOpenPunchRows>> = [];
