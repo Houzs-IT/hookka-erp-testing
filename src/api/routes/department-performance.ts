@@ -156,6 +156,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
       workerName: string;
       workingMinutes: number;
       productionMinutes: number;
+      workedDayProductionMinutes: number;
       isHelper: boolean;
       jobCardIds: Set<string>;
     }
@@ -169,6 +170,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
           workerName: w.workerName,
           workingMinutes: 0,
           productionMinutes: 0,
+          workedDayProductionMinutes: 0,
           isHelper: false,
           jobCardIds: new Set(),
         };
@@ -176,6 +178,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
       }
       cell.workingMinutes += w.workingMinutes;
       cell.productionMinutes += w.productionMinutes;
+      if (w.workingMinutes > 0) cell.workedDayProductionMinutes += w.productionMinutes;
       if (w.isHelper) cell.isHelper = true;
       for (const j of w.jobs ?? []) cell.jobCardIds.add(j.jobCardId);
       if (!cell.workerName && w.workerName) cell.workerName = w.workerName;
@@ -200,6 +203,9 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
         workerName: w.workerName,
         workingMinutes: w.workingMinutes,
         productionMinutes: w.productionMinutes,
+        // Earned only on days this person logged production hours: what the
+        // factory and department totals add up (owner 2026-11-17).
+        workedDayProductionMinutes: w.workedDayProductionMinutes,
         // Identical to the per-day expression, applied to the range sums. A
         // worker who clocked nothing gets 0 here and the CALLER must render
         // that as "—" rather than as zero efficiency.
@@ -715,18 +721,23 @@ app.get("/", async (c) => {
         }))
         .sort((a, b) => b.productionMinutes - a.productionMinutes);
 
+      // Earned minutes count only for people who logged production hours that
+      // day: outsource (paid by piece), cards with no PIC and work whose hours
+      // land at punch-out stay out (owner 2026-11-17).
+      let production = 0;
       let hw = 0;
       let hp = 0;
       for (const w of workers) {
+        if (w.workingMinutes > 0) production += w.productionMinutes;
         if (!w.isHelper) continue;
         hw += w.workingMinutes;
-        hp += w.productionMinutes;
+        if (w.workingMinutes > 0) hp += w.productionMinutes;
       }
       return {
         date,
         workingMinutes: cell.workingMinutes,
-        productionMinutes: cell.productionMinutes,
-        ...effPair(cell.workingMinutes, cell.productionMinutes, hw, hp),
+        productionMinutes: production,
+        ...effPair(cell.workingMinutes, production, hw, hp),
         helperProductionMinutes: hp,
         workers,
         jobs,

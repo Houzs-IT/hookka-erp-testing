@@ -70,12 +70,6 @@ export function buildPerfDays(input: {
   const { productionDepts } = input;
   const helperIds = input.helperIds ?? new Set<string>();
 
-  // FAB_CUT stores the per-SET total on the card (wipQty = piece count), every
-  // other department stores per-PIECE minutes. Multiplying FAB_CUT by wipQty
-  // triple-counts it. Same rule as src/lib/job-card-minutes.ts.
-  const jcMinutesTotal = (perUnit: number, dept: string | null, wipQty: number): number =>
-    (dept ?? "") === "FAB_CUT" ? perUnit : perUnit * Math.max(1, wipQty || 1);
-
   // date -> { working, production, allDept } and date -> worker -> { same }.
   // `workingMinutes` stays PRODUCTION-DEPARTMENT-ONLY clocked time (unchanged
   // meaning — it is "Prod Hours" downstream). `allDeptMinutes` is new: EVERY
@@ -127,13 +121,9 @@ export function buildPerfDays(input: {
     if (actual !== null && actual > 0 && actual !== num(jc.estMinutes)) perfMeasuredCards++;
 
     const wipQty = num(jc.wipQty);
-    // Day total credits the card ONCE, regardless of how many workers are on it.
-    perfDay(d).productionMinutes += jcMinutesTotal(
-      actual ?? num(jc.estMinutes), jc.departmentCode, wipQty,
-    );
+    perfDay(d);
 
-    // Per-worker share is keyed on est ?? actual (note the order — it differs
-    // from the day total on purpose; mirrors department-performance.ts).
+    // Per-worker share is keyed on est ?? actual (mirrors department-performance.ts).
     const jcMins = num(jc.estMinutes) || (actual ?? 0);
     const perWorker = creditCardToPics(jcMins, { ...jc, wipQty });
     for (const [wid, raw] of perWorker) {
@@ -147,7 +137,7 @@ export function buildPerfDays(input: {
     const d = dayKey(extra.date);
     const minutes = Math.round(num(extra.hours) * 60);
     if (!d || !extra.workerId || minutes <= 0) continue;
-    perfDay(d).productionMinutes += minutes;
+    perfDay(d);
     perfWorker(d, extra.workerId).productionMinutes += minutes;
   }
 
@@ -155,14 +145,19 @@ export function buildPerfDays(input: {
     .map((e) => {
       const workers: PerfWorker[] = [...(perfByDayWorker.get(e.date) ?? new Map<string, Minutes>()).entries()]
         .map(([workerId, v]) => (helperIds.has(workerId) ? { workerId, isHelper: true, ...v } : { workerId, ...v }));
+      // Earned minutes count only for people who logged production hours that
+      // day: outsource (paid by piece), cards with no PIC and work whose hours
+      // land at punch-out stay out (owner 2026-11-17).
+      let productionMinutes = 0;
       let helperWorkingMinutes = 0;
       let helperProductionMinutes = 0;
       for (const w of workers) {
+        if (w.workingMinutes > 0) productionMinutes += w.productionMinutes;
         if (!w.isHelper) continue;
         helperWorkingMinutes += w.workingMinutes;
-        helperProductionMinutes += w.productionMinutes;
+        if (w.workingMinutes > 0) helperProductionMinutes += w.productionMinutes;
       }
-      return { ...e, helperWorkingMinutes, helperProductionMinutes, workers };
+      return { ...e, productionMinutes, helperWorkingMinutes, helperProductionMinutes, workers };
     })
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
