@@ -181,14 +181,16 @@ export function LabourPage({ r }: P) {
         const fcAll = d.forecastTotal === null && npFc === null ? null : (d.forecastTotal ?? 0) + (npFc ?? 0);
         return (
         <>
-          <div className="brp-tiles four">
-            <Tile label="Direct labour" value={<>RM {rm(direct)}</>} sub={<>last month RM {rm(directPrev)} <Delta p={changePct(direct, directPrev)} invert /></>} />
-            {/* Owner review 2026-11-15: the forecast tile covers ALL labour —
-                production departments plus the non-production forecast — and
-                compares with the whole payroll. */}
-            <Tile label="Forecast (incl. non-production)" value={<>RM {rm(fcAll)}</>} sub={<>payroll vs forecast <Delta p={changePct(payroll, fcAll)} invert /> · production RM {rm(d.forecastTotal)} + non-production RM {rm(npFc)}</>} />
-            <Tile label="% of production revenue" value={pctText(pct(direct, d.productionRevenue))} sub={<>production revenue RM {rm(d.productionRevenue)}</>} />
-            <Tile label="Payroll per head" value={<>RM {rm(d.headcount ? Math.round(payroll / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} production workers paid ·RM {rm(payroll)} · {d.units ?? "-"} units completed</>} />
+          {/* Owner 2026-11-17 「prod和non prod 分别的数字…两个都tally calculation
+              一样」: production and non-production each get the same tile —
+              actual, forecast and last month — and the third adds them up, so
+              Direct labour + Non-production = All labour on every figure. */}
+          <div className="brp-tiles five">
+            <Tile label="Direct labour (production)" value={<>RM {rm(direct)}</>} sub={<>forecast RM {rm(d.forecastTotal)} <Delta p={changePct(direct, d.forecastTotal)} invert /> · last month RM {rm(directPrev)} <Delta p={changePct(direct, directPrev)} invert /></>} />
+            <Tile label="Non-production" value={<>RM {rm(npTotal)}</>} sub={<>forecast RM {rm(npFc)} <Delta p={changePct(npTotal, npFc)} invert /> · last month RM {rm(npPrev || null)} <Delta p={changePct(npTotal, npPrev || null)} invert /></>} />
+            <Tile label="All labour (payroll)" value={<>RM {rm(payroll)}</>} sub={<>forecast RM {rm(fcAll)} <Delta p={changePct(payroll, fcAll)} invert /> · last month RM {rm(d.prevTotal)} <Delta p={changePct(payroll, d.prevTotal)} invert /></>} />
+            <Tile label="% of production revenue" value={pctText(pct(direct, d.productionRevenue))} sub={<>direct labour ÷ production revenue RM {rm(d.productionRevenue)}</>} />
+            <Tile label="Payroll per head" value={<>RM {rm(d.headcount ? Math.round(payroll / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} production workers paid · {d.units ?? "-"} units completed</>} />
           </div>
           <table className="brp-table">
             <thead>

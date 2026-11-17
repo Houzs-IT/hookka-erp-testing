@@ -319,9 +319,15 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+<<<<<<< HEAD
 ## 🔵 Reports: full screen (feat/forecast-pl-full-screen, 2026-11-17)
 
 Asks (17 Nov, screenshots of Accounting › Forecast and Cash Flow): 「这个我要能scroll fullpages的 / 空间太小了」 then 「cashflow 和PNL 也是」. Every framed finance report (Forecast P&L, Cash Flow, P&L, Balance Sheet and the rest) gets a Full screen button at the end of its toolbar: the toolbar and the table cover the whole window, the table's scroll box fills the height left (header and Item column still stick), Esc or Exit full screen returns. Built once in `report-shell.tsx` (ReportToolbar) + `finance-v2.css`, so no page edit. A true page scroll was not used: the table also scrolls sideways, and a box that scrolls sideways cannot keep its header stuck to the page.
+=======
+## 🔵 Board report labour tiles: production and non-production side by side (feat/board-labour-tiles-split, 2026-11-17)
+
+Ask (17 Nov, screenshot of page 3): 「这个上面你放prod和non prod 分别的数字…现在一个prod而已 另外要给non prod…两个都tally calculation一样 两个都可以看到」. Page 3's tiles are now Direct labour (production), Non-production and All labour (payroll), each with the same three figures: actual, forecast (vs forecast %) and last month (change %). Direct labour + Non-production = All labour on every figure, matching the table's rows below. The old "Forecast (incl. non-production)" tile is folded into those three; % of production revenue and Payroll per head stay.
+>>>>>>> 45261d61c (feat(board-report): labour tiles split production and non-production)
 
 ## 🔵 HK-0124: job card finish date in Malaysia time, one-decimal Avg Efficiency (fix/jc-finish-date-myt-eff-decimal, 2026-11-17)
 
