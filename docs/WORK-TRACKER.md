@@ -1,5 +1,5 @@
 # Hookka ERP — Work Tracker
-> **Last verified: 2026-11-17**: HK-0124 job card finish date in Malaysia time + one-decimal efficiency (branch `fix/jc-finish-date-myt-eff-decimal`, to `main`); nothing else re-checked.
+> **Last verified: 2026-11-17**: HK-0124 job card finish date in Malaysia time, one-decimal efficiency, one credit rule (branch `fix/jc-finish-date-myt-eff-decimal`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: board report owner review of October 2026, 13 items (branch `feat/board-report-owner-review-1115`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: dept scans in the same minute ordered by createdat (branch `fix/dept-scan-same-minute-order`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: Working Hours live department rows (branch `feat/working-hours-live-rows`, to `main`); nothing else re-checked.
@@ -318,7 +318,7 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 ## 🔵 HK-0124: job card finish date in Malaysia time, one-decimal Avg Efficiency (fix/jc-finish-date-myt-eff-decimal, 2026-11-17)
 
-Asks (17 Nov): (1) what "actual minutes" means on Reports: answered, a copy of the standard minutes, no change; (2) save the finish time in Malaysia time: BUG-2026-11-17-517, job card and import finish dates now `todayYmdMY()` at 6 sites, old rows not backfilled; (3) worker phone days not adding up to the total: answered, waits on the owner's PIC vs piece split (C33 rows 2 and 4); (4) a better Avg Efficiency: BUG-2026-11-17-518, one decimal from Department Performance, print card total ÷ total.
+Asks (17 Nov): (1) what "actual minutes" means on Reports: answered, a copy of the standard minutes, no change; (2) save the finish time in Malaysia time: BUG-2026-11-17-517, job card and import finish dates now `todayYmdMY()` at 6 sites, old rows not backfilled; (3) worker phone days not adding up to the total: BUG-2026-11-17-521, every screen now credits a shared card the payslip's way (PIC slots, half each) and History days carry extra time; prod October check 37 workers, 0 differ. Open for the owner: 183 Fabric Cutting cards where the office added THI THI AYE to PIC 2 after the card was done (142 on 2 Nov); (4) a better Avg Efficiency: BUG-2026-11-17-518, one decimal from Department Performance, print card total ÷ total.
 
 ## 🔵 Board report: owner's marked-up review of October 2026 (feat/board-report-owner-review-1115, 2026-11-15)
 

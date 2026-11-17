@@ -390,7 +390,8 @@ app.get("/", async (c) => {
   // cache hit — bumping makes that window zero instead of waiting out the
   // 60s TTL.
   // v9 (2026-11-11): efficiency counts approved extra production time.
-  const protoV = "v9";
+  // v10 (2026-11-17): a shared card is credited to its two PIC slots, half each (payslip rule).
+  const protoV = "v10";
   const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
   const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------
@@ -694,15 +695,6 @@ app.get("/", async (c) => {
       .then((r) => r.results ?? []),
   );
 
-  const picsSec = await section("piece pics", () =>
-    c.var.DB.prepare(
-      `SELECT job_card_id, pic1_id, pic2_id FROM piece_pics WHERE org_id = ?`,
-    )
-      .bind(orgId)
-      .all<{ jobCardId: string; pic1Id: string | null; pic2Id: string | null }>()
-      .then((r) => r.results ?? []),
-  );
-
   const extraTimeSec = await section("approved extra time", () =>
     loadApprovedExtraTime(c.var.DB, "0001-01-01", "9999-12-31"),
   );
@@ -739,7 +731,6 @@ app.get("/", async (c) => {
   const { perfDays, perfCards, perfMeasuredCards } = buildPerfDays({
     whe: [...wheSec.rows, ...liveWheSec.rows],
     jobCards: jcSec.rows,
-    pics: picsSec.rows,
     approvedExtraTime: extraTimeSec.rows,
     productionDepts,
     helperIds,
@@ -1680,8 +1671,7 @@ app.get("/", async (c) => {
       service: { live: !serviceSec.error, reason: serviceSec.error ?? undefined },
       employee: {
         live: !attSec.error && !workersSec.error && !wheSec.error && !jcSec.error && !extraTimeSec.error,
-        reason: attSec.error ?? workersSec.error ?? wheSec.error ?? jcSec.error
-          ?? picsSec.error ?? deptSec.error ?? extraTimeSec.error ?? undefined,
+        reason: attSec.error ?? workersSec.error ?? wheSec.error ?? jcSec.error ?? deptSec.error ?? extraTimeSec.error ?? undefined,
         workers: workerRows.length,
         attendanceRows: attendance.length,
         // Named so the page can render a dash instead of a fabricated figure.

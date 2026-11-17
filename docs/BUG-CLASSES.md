@@ -1,6 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
-> **Last verified: 2026-11-17**: branch `fix/jc-finish-date-myt-eff-decimal`, to `main`, adds **C33 row 7** (one-decimal Avg Efficiency, print card total ÷ total, BUG-2026-11-17-518). Nothing else re-checked.
+> **Last verified: 2026-11-17**: branch `fix/jc-finish-date-myt-eff-decimal`, to `main`, adds **C33 row 7** (one-decimal Avg Efficiency, print card total ÷ total, BUG-2026-11-17-518) and closes **C33 rows 2 and 4** (one credit rule, BUG-2026-11-17-521). Nothing else re-checked.
 
 > **Last verified: 2026-10-17**: branch `fix/edit-keeps-bank-match`, to `main`, closes **C5 rows 8–10** and **C31 rows 2–5** (one shared rule each: `restoreEditedFamilyStatements`, `planEditBankCarry`) and **adds C32, a stored account code the chart later renamed** (BUG-2026-10-17-320 to -323). Nothing else re-checked.
 
@@ -1878,11 +1878,11 @@ Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tes
 | # | where | state |
 |---|---|---|
 | 1 | Efficiency: approved extra time missing from the dashboard Employees tab, KPI, board report, Floor Live and daily email; the dashboard counted earned minutes on days with no keyed hours; the daily email divided by all-department hours; "Production time" / "Prod hours" swapped between pages | ✅ fixed 2026-11-11 (BUG-2026-11-11-501) |
-| 2 | Efficiency: the payslip splits a shared card by PIC 1 / PIC 2; Department Performance and the dashboard split by piece (`efficiency-allowance.ts` vs `workforce-perf.ts`) | ⬜ open, a pay change, needs the owner |
+| 2 | Efficiency: the payslip splits a shared card by PIC 1 / PIC 2; Department Performance and the dashboard split by piece (`efficiency-allowance.ts` vs `workforce-perf.ts`) | ✅ on branch (BUG-2026-11-17-521): every screen uses the payslip's split, `creditCardToPics` |
 | 3 | Efficiency: the AI assistant tools divide estimate by "actual" card minutes, not keyed hours (`assistant-tools.ts`) | ⬜ open |
-| 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ⬜ open |
+| 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ✅ on branch (BUG-2026-11-17-521) |
 | 5 | Production revenue: the same recognition SQL in nine places and the price lookup in six; the Daily panel on main joined the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ✅ structure 2026-11-11: one copy of the rule, price and joins in `production-revenue.ts` (guard `tests/one-production-revenue-sql.test.mjs`); line join fixed in BUG-2026-11-11-502. ⬜ still open: the quantity rule and the shared loader's missing company filter |
 | 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ⬜ open, needs a browser check |
 | 7 | Efficiency: Department Performance rounded to a whole % and pages printed it as "84.0%"; the printed Efficiency Overview averaged each worker's % instead of total ÷ total (`department-performance.ts`, `employees.tsx`) | ✅ on branch (BUG-2026-11-17-518) |
 
-Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`.
+Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`, `tests/credit-card-to-pics.test.mjs` (rows 2 and 4).

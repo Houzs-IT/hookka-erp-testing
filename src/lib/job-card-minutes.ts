@@ -12,3 +12,23 @@ export function jcMinutesTotal(
   if ((jc.departmentCode ?? "") === "FAB_CUT") return perUnitMinutes || 0;
   return (perUnitMinutes || 0) * Math.max(1, jc.wipQty ?? 1);
 }
+
+export interface CardPics {
+  departmentCode?: string | null;
+  wipQty?: number | null;
+  pic1Id?: string | null;
+  pic2Id?: string | null;
+}
+
+/**
+ * Minutes each worker earns from a finished card: the payslip rule
+ * (efficiency-allowance.ts). The card's two PIC slots share it, half each when
+ * both are filled; who scanned which piece does not change the split.
+ */
+export function creditCardToPics(perUnitMinutes: number, card: CardPics): Map<string, number> {
+  const slots = [card.pic1Id, card.pic2Id].filter((id): id is string => !!id);
+  const credit = new Map<string, number>();
+  const share = jcMinutesTotal(perUnitMinutes, card) / Math.max(1, slots.length);
+  for (const workerId of slots) credit.set(workerId, (credit.get(workerId) ?? 0) + share);
+  return credit;
+}
