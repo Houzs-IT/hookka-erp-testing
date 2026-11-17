@@ -53,18 +53,36 @@ jobs:
             exit 1
           fi
           data=$(jq -nc --arg m "$MONTH" --arg f "$FORCE" '{} + (if $m != "" then {month:$m} else {} end) + (if $f == "true" then {force:true} else {} end)')
-          response=$(curl --silent --show-error --write-out '\nHTTP_STATUS:%{http_code}' \
-            --max-time 240 \
-            --request POST \
-            --header "Content-Type: application/json" \
-            --header "x-cron-secret: $CRON_SECRET" \
-            --data "$data" \
-            'https://hookka-erp-testing.pages.dev/api/internal/board-report-prebuild')
+          url='https://hookka-erp-testing.pages.dev/api/internal/board-report-prebuild'
+          post() {
+            curl --silent --show-error --write-out '\nHTTP_STATUS:%{http_code}' --max-time 120 \
+              --request POST --header "Content-Type: application/json" \
+              --header "x-cron-secret: $CRON_SECRET" --data "$1" "$url"
+          }
+          started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          response=$(post "$data")
           status=$(echo "$response" | tail -n1 | sed 's/HTTP_STATUS://')
           body=$(echo "$response" | sed '$d')
           echo "Status: $status"
-          echo "Body: $(printf '%s' "$body" | jq -rc '{ok, month, built, note, elapsedMs, error}' 2>/dev/null || echo "<${#body} bytes, not JSON>")"
-          if [ "$status" != "200" ]; then
+          echo "Body: $(printf '%s' "$body" | jq -rc '{ok, month, built, building, note, elapsedMs, error}' 2>/dev/null || echo "<${#body} bytes, not JSON>")"
+          if [ "$status" = "200" ]; then exit 0; fi
+          if [ "$status" != "202" ]; then
             echo "::error::Board Report pre-build failed with status $status"
             exit 1
           fi
+          # 202 = the build carries on in the background (like Refresh on the
+          # page). Poll until the kept copy is newer than this run's start.
+          month=$(printf '%s' "$body" | jq -r '.month')
+          check=$(jq -nc --arg m "$month" '{month:$m, check:true}')
+          for i in $(seq 1 18); do
+            sleep 20
+            got=$(post "$check" | sed '$d')
+            gen=$(printf '%s' "$got" | jq -r '.generatedAt // ""' 2>/dev/null)
+            echo "Check $i: $(printf '%s' "$got" | jq -rc '{generatedAt, building}' 2>/dev/null || echo '<not JSON>')"
+            if [ -n "$gen" ] && [ "$gen" \> "$started" ]; then
+              echo "Built: $gen"
+              exit 0
+            fi
+          done
+          echo "::error::Board Report build for $month did not finish within 6 minutes"
+          exit 1
