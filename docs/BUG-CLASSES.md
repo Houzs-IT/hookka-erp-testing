@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-11-17**: branch `fix/labor-cost-outsource-direct`, to `main`, adds **C33 row 9** (Labor Cost Reconciliation counts outsource as direct, BUG-2026-11-17-526). Nothing else re-checked.
+
 > **Last verified: 2026-11-17**: branch `fix/in-house-efficiency`, to `main`, adds **C33 row 8** (in-house efficiency, BUG-2026-11-17-525). Nothing else re-checked.
 
 > **Last verified: 2026-11-17**: branch `fix/labour-card-follows-period`, to `main`, updates **C33 row 6** (Labour cost card follows the period, BUG-2026-11-17-524). Nothing else re-checked.
@@ -1891,5 +1893,6 @@ Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tes
 | 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ✅ tile #1345; live check 17 Nov found the Labour cost card still summed whole months, on branch (BUG-2026-11-17-524, `labourMonthsWithin`) |
 | 7 | Efficiency: Department Performance rounded to a whole % and pages printed it as "84.0%"; the printed Efficiency Overview averaged each worker's % instead of total ÷ total (`department-performance.ts`, `employees.tsx`) | ✅ #1417 (BUG-2026-11-17-518) |
 | 8 | Efficiency: factory totals added every finished card (outsource, today's cards before punch-out, no-PIC cards) over in-house hours, while per-person figures did not; Employees header 124.1% vs print 114.0% for Nov (`workforce-perf.ts`, `department-performance.ts`, `employees.tsx`) | ✅ on branch (BUG-2026-11-17-525): earned minutes count only for people with logged production hours that day |
+| 9 | Labour: the dashboard split counts outsource as direct wherever it was keyed (owner 2026-11-06); the Labor Cost Payroll Reconciliation filed it by the keyed department, so Production Labor was RM 140.15 (Aug) and RM 55.44 (Sep) under the dashboard (`labour-to-date.ts` vs `employees.tsx`) | ✅ on branch (BUG-2026-11-17-526): one outsource test (`isOutsourceWorker`) shared by both; the move itself is still two copies (server step 5, page `sumOutsourceOffProduction`) |
 
-Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`, `tests/credit-card-to-pics.test.mjs` (rows 2 and 4).
+Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`, `tests/credit-card-to-pics.test.mjs` (rows 2 and 4), `tests/labour-to-date.test.mjs` (row 9).

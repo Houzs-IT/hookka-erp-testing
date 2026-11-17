@@ -69,15 +69,15 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:12056` | 9-tab admin host (default export, at file tail) |
-| `WorkingHoursTab` | `src/pages/employees.tsx:1028` | Tab 1 — flat working-hours grid |
-| `EmployeeMasterTab` | `src/pages/employees.tsx:2476` | Tab 2 — worker master + salary |
-| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3971` | Tab 3 — efficiency overview |
-| `DepartmentLaborTab` | `src/pages/employees.tsx:4559` | Dept labor cost breakdown |
-| `EmployeeDetailTab` | `src/pages/employees.tsx:5538` | Tab 4 — guard-unmounted detail |
-| `PayrollTab` | `src/pages/employees.tsx:6939` | Tab 5 — payroll drafts |
-| `LaborCostTab` | `src/pages/employees.tsx:8932` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10675 / 11820` | Leave + attendance tabs |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:12068` | 9-tab admin host (default export, at file tail) |
+| `WorkingHoursTab` | `src/pages/employees.tsx:1029` | Tab 1 — flat working-hours grid |
+| `EmployeeMasterTab` | `src/pages/employees.tsx:2477` | Tab 2 — worker master + salary |
+| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3972` | Tab 3 — efficiency overview |
+| `DepartmentLaborTab` | `src/pages/employees.tsx:4560` | Dept labor cost breakdown |
+| `EmployeeDetailTab` | `src/pages/employees.tsx:5539` | Tab 4 — guard-unmounted detail |
+| `PayrollTab` | `src/pages/employees.tsx:6940` | Tab 5 — payroll drafts |
+| `LaborCostTab` | `src/pages/employees.tsx:8934` | Tab 5b — labor cost + DepartmentsManager |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10687 / 11832` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |

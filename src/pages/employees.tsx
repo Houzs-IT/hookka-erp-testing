@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, startTransition, Fra
 import { usePermissions } from "@/lib/use-permission";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { laborCostInclPayroll, loggedDayShare } from "@/lib/labor-cost-incl-payroll";
+import { isOutsourceWorker, sumOutsourceOffProduction } from "@/lib/labour-to-date";
 import { dayTypedOt, workerDayEntryCostsSen } from "@/lib/labor-day-cost";
 import { humanizeError } from "@/lib/humanize-error";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
@@ -8614,6 +8615,7 @@ type LaborCostRow = {
   isProduction: boolean;
   isShortfall: boolean;
   isWarehousing: boolean;
+  outsourceSen: number;
 };
 
 function periodToDateRange(period: string): { from: string; to: string } {
@@ -9333,8 +9335,15 @@ function LaborCostTab({
 
     // Group by (departmentCode, category). Hours summed; cost = sum over each
     // entry of regular_hours × regular_rate + ot_hours × ot_base_rate × multiplier.
-    type Bucket = { hours: number; laborCostSen: number };
+    type Bucket = { hours: number; laborCostSen: number; outsourceSen: number };
     const buckets = new Map<string, Bucket>();
+    const addToBucket = (bucketKey: string, hours: number, cost: number, isOutsource: boolean) => {
+      const cur = buckets.get(bucketKey) ?? { hours: 0, laborCostSen: 0, outsourceSen: 0 };
+      cur.hours += hours;
+      cur.laborCostSen += cost;
+      if (isOutsource) cur.outsourceSen += cost;
+      buckets.set(bucketKey, cur);
+    };
 
     // Pro-rata OT split per (worker, date): if a worker did 11h split as
     // 5h Webbing + 6h Framing, the 2h OT is distributed proportionally
@@ -9355,6 +9364,7 @@ function LaborCostTab({
       const [workerId] = k.split("|");
       const w = workersById.get(workerId);
       if (!w) continue;
+      const isOutsource = isOutsourceWorker(w);
       // Outsourced / per-day people: day rate × days logged, split across the
       // day's entries. They never reach the monthly maths below — there is no
       // salary behind it for them. Owner 2026-08-02.
@@ -9365,11 +9375,7 @@ function LaborCostTab({
           const cost = dailyPaidEntryCostSen(w, hours, dayHours);
           const cat = (typeof e.category === "string" ? e.category.trim().toUpperCase() : "") as Category;
           if (categoryFilter && cat !== categoryFilter && cat !== "") continue;
-          const bucketKey = `${e.departmentCode}|${cat}`;
-          const cur = buckets.get(bucketKey) ?? { hours: 0, laborCostSen: 0 };
-          cur.hours += hours;
-          cur.laborCostSen += cost;
-          buckets.set(bucketKey, cur);
+          addToBucket(`${e.departmentCode}|${cat}`, hours, cost, isOutsource);
         }
         continue;
       }
@@ -9402,11 +9408,7 @@ function LaborCostTab({
         // below - they are not category-tagged labor and stay visible so
         // operators don't lose sight of borrowed / idle hours.
         if (categoryFilter && cat !== categoryFilter && cat !== "") continue;
-        const bucketKey = `${e.departmentCode}|${cat}`;
-        const cur = buckets.get(bucketKey) ?? { hours: 0, laborCostSen: 0 };
-        cur.hours += hours;
-        cur.laborCostSen += cost;
-        buckets.set(bucketKey, cur);
+        addToBucket(`${e.departmentCode}|${cat}`, hours, cost, isOutsource);
       }
     }
 
@@ -9432,6 +9434,7 @@ function LaborCostTab({
         isProduction,
         isShortfall: departmentCode === "PRODUCTION_SHORTFALL",
         isWarehousing: departmentCode === "WAREHOUSING",
+        outsourceSen: b.outsourceSen,
       });
     }
     out.sort((a, b) => {
@@ -9865,7 +9868,9 @@ function LaborCostTab({
         nonProdGrossSen += Number(p.grossPay) || 0;
         continue;
       }
-      const b = bucketOf(code);
+      // Outsource is direct labour whatever its home department (owner 2026-11-06).
+      const worker = workersById.get(p.employeeId);
+      const b = worker && isOutsourceWorker(worker) ? "production" : bucketOf(code);
       stat[b] += statutorySen;
       adj[b] +=
         (absenceLeniencyByPayslip.get(p.id) ?? 0) +
@@ -9880,7 +9885,14 @@ function LaborCostTab({
         (Number(p.allowances) || 0);
     }
     return { stat, adj, nonProdGrossSen };
-  }, [reconPayslips, absenceLeniencyByPayslip, otAdjustmentByPayslip, lateDockAdjByPayslip, prodCodes, factoryDeptCodes]);
+  }, [reconPayslips, absenceLeniencyByPayslip, otAdjustmentByPayslip, lateDockAdjByPayslip, prodCodes, factoryDeptCodes, workersById]);
+
+  // Outsourced hours keyed under a non-production department, by the line they
+  // would otherwise sit on. They move to Production Labor (owner 2026-11-06).
+  const outsourceOffProduction = useMemo(() => sumOutsourceOffProduction(rows), [rows]);
+  const outsourceMovedToProductionSen = roundSen(
+    outsourceOffProduction.warehousing + outsourceOffProduction.shortfall + outsourceOffProduction.overhead,
+  );
 
   // Loaded department buckets = logged labor + that department's own statutory
   // + its absent-day adjustment. Production / Warehousing / Shortfall computed
@@ -9888,11 +9900,11 @@ function LaborCostTab({
   // to Total Payroll Cost (it absorbs its own overhead labor + statutory + adj +
   // any office/sales salaries + sub-ringgit rounding).
   const loadedProductionSen =
-    productionLaborCostSen + reconBurden.stat.production + reconBurden.adj.production;
+    productionLaborCostSen + reconBurden.stat.production + reconBurden.adj.production + outsourceMovedToProductionSen;
   const loadedWarehousingSen =
-    warehousingLaborCostSen + reconBurden.stat.warehousing + reconBurden.adj.warehousing;
+    warehousingLaborCostSen + reconBurden.stat.warehousing + reconBurden.adj.warehousing - roundSen(outsourceOffProduction.warehousing);
   const loadedShortfallSen =
-    shortfallLaborCostSen + reconBurden.stat.shortfall + reconBurden.adj.shortfall;
+    shortfallLaborCostSen + reconBurden.stat.shortfall + reconBurden.adj.shortfall - roundSen(outsourceOffProduction.shortfall);
   // Under-recorded hours — the genuine paid-but-not-logged gap. Same per-worker
   // figure the "who & why" panel itemises, so both lines (and Department Labor's
   // Under-recorded column) show the identical number.
@@ -10276,7 +10288,7 @@ function LaborCostTab({
                   <tr className="border-b border-[#E2DDD8]">
                     <td
                       className="py-1.5 pr-3 text-[#4B5563]"
-                      title="Logged production hours plus these workers' own EPF / SOCSO / EIS and the small ÷26-vs-÷working-days adjustment on their absent days."
+                      title="Logged production hours plus these workers' own EPF / SOCSO / EIS and the small ÷26-vs-÷working-days adjustment on their absent days. Outsourced work counts here whichever department it was keyed under."
                     >
                       Production Labor <span className="text-[#9CA3AF]">(incl. EPF)</span>
                     </td>

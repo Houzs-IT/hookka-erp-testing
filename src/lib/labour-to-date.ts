@@ -17,8 +17,8 @@
 // The payslips are the stored ones (drafts included), else the live estimate
 // (labour-projection) — the card's own rule.
 //
-// The DB loader is src/api/lib/labour-to-date.ts. The card computes in the browser (src/pages/employees.tsx — left untouched:
-// the Employees module isn't this work's). This file mirrors its rules line for
+// The DB loader is src/api/lib/labour-to-date.ts. The card computes in the browser (src/pages/employees.tsx,
+// which takes isOutsourceWorker and sumOutsourceOffProduction from here). This file mirrors its rules line for
 // line; the total goes through the same laborCostInclPayroll, and the split is
 // trued up to that total, so the P&L carries the card's figure to the sen.
 // ---------------------------------------------------------------------------
@@ -129,6 +129,38 @@ export type LabourMonth = {
   byDept: { departmentCode: string; workers: number; costSen: number; outsourceSen: number }[];
   workers: LabourWorker[];
 };
+
+export interface OutsourceIdentity {
+  empNo: unknown;
+  name: unknown;
+}
+
+export function isOutsourceWorker({ empNo, name }: OutsourceIdentity): boolean {
+  return /^OSC/i.test(String(empNo ?? "")) || /^OUTSOURCE/i.test(String(name ?? "").trim());
+}
+
+export interface LaborLineRow {
+  isProduction: boolean;
+  isShortfall: boolean;
+  isWarehousing: boolean;
+  outsourceSen: number;
+}
+
+export interface OutsourceOffProductionSen {
+  warehousing: number;
+  shortfall: number;
+  overhead: number;
+}
+
+export function sumOutsourceOffProduction(rows: readonly LaborLineRow[]): OutsourceOffProductionSen {
+  const moved: OutsourceOffProductionSen = { warehousing: 0, shortfall: 0, overhead: 0 };
+  for (const { isProduction, isShortfall, isWarehousing, outsourceSen } of rows) {
+    if (isProduction || !outsourceSen) continue;
+    const line = isShortfall ? "shortfall" : isWarehousing ? "warehousing" : "overhead";
+    moved[line] += outsourceSen;
+  }
+  return moved;
+}
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 

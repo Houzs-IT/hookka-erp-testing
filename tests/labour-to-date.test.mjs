@@ -199,3 +199,29 @@ test("outsource is direct wherever it logged; people add up to the lines to the 
   assert.equal(out.workerSplit.reduce((a, w) => a + w.directSen, 0), out.split.directSen);
   assert.equal(out.workerSplit.reduce((a, w) => a + w.nonProductionSen, 0), out.split.nonProductionSen);
 });
+
+test("outsource is recognised the same way on the server and the Labor Cost page", () => {
+  assert.equal(td.isOutsourceWorker({ empNo: "OSC-001", name: "Ali" }), true);
+  assert.equal(td.isOutsourceWorker({ empNo: "osc-002", name: null }), true);
+  assert.equal(td.isOutsourceWorker({ empNo: "", name: "  Outsource Team" }), true);
+  assert.equal(td.isOutsourceWorker({ empNo: "EMP-010", name: "Ali" }), false);
+  assert.equal(td.isOutsourceWorker({ empNo: null, name: undefined }), false);
+  const LOADER = readFileSync(resolve(process.cwd(), "src/api/lib/labour-to-date.ts"), "utf8");
+  assert.match(LOADER, /isOutsourceWorker\(/);
+});
+
+test("Labor Cost reconciliation: outsourced hours keyed outside production move to Production Labor", () => {
+  const row = (flags, outsourceSen) => ({ isProduction: false, isShortfall: false, isWarehousing: false, outsourceSen, ...flags });
+  const moved = td.sumOutsourceOffProduction([
+    row({ isProduction: true }, 99999),
+    row({ isWarehousing: true }, 1200.4),
+    row({ isShortfall: true }, 300),
+    row({}, 5544),
+    row({}, 0),
+  ]);
+  assert.deepEqual(moved, { warehousing: 1200.4, shortfall: 300, overhead: 5544 });
+  assert.deepEqual(td.sumOutsourceOffProduction([]), { warehousing: 0, shortfall: 0, overhead: 0 });
+  const PAGE = readFileSync(resolve(process.cwd(), "src/pages/employees.tsx"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(PAGE, /sumOutsourceOffProduction\(rows\)/);
+  assert.match(PAGE, /isOutsourceWorker\(worker\) \? "production" : bucketOf\(code\)/);
+});
