@@ -5,7 +5,7 @@
 // under it, the day's workers and their job cards. The list reads the API's SUMMARY view; the tapped day is fetched on its own with
 // the same filters. Every figure is the server's (the efficiency is never recomputed here); the filters and the period are in the
 // URL (`dpd`, `dpc`, `from`, `to`) so the same view can be opened on desktop. Nothing is written.
-import { useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ArrowUpDown, CalendarDays, ChevronRight, Lock } from "lucide-react";
 import { M } from "../../theme";
@@ -13,7 +13,11 @@ import DeptPerfDayPage from "./DeptPerfDayPage";
 import DeptPerfFilterSheet from "./DeptPerfFilterSheet";
 import { dayCards, filterCount, kpiCells, parseCategory, scopeTitle } from "./department-performance-model";
 import { thisMonthRange } from "./employees-dates";
+import { efficiencyReportUrl } from "./employees-menu";
 import { CARD, SHEET_CARD } from "./employees-styles";
+import { useMenuBridge } from "./menu-context";
+import { departmentPerformancePrint } from "./menu-prints";
+import { printDocInto, showInWindow } from "./run-print";
 import { PeriodSheet } from "./PeriodSheet";
 import { useDepartmentPerformance } from "./use-department-performance";
 import { useEmployeesPeriod } from "./use-employees-period";
@@ -33,7 +37,14 @@ export default function DepartmentPerformanceSection() {
   const [periodOpen, setPeriodOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const data = useDepartmentPerformance(range, dept, cat, day);
+  // The printed report lists every day's workers, which the summary list does not carry. That full payload (large for a long period) is
+  // requested ONLY when "Print Report" is tapped — never to draw the list and not when the "..." menu opens — and only for the scope
+  // (period + filters) that was tapped. The tap opens the print window itself (a phone blocks one opened after the fetch); the data
+  // fills it when it arrives.
+  const scopeKey = `${range.from}|${range.to}|${dept}|${cat}`;
+  const [wantKey, setWantKey] = useState<string | null>(null);
+  const pendingWin = useRef<Window | null>(null);
+  const data = useDepartmentPerformance(range, dept, cat, day, wantKey === scopeKey);
   const deptOptions = [...(data.depts ?? [])]
     .sort((a, b) => {
       if (!!a.isProduction !== !!b.isProduction) return a.isProduction ? -1 : 1;
@@ -46,6 +57,47 @@ export default function DepartmentPerformanceSection() {
   const scope = scopeTitle(deptName, cat);
   const totals = data.list.data?.totals ?? null;
   const cards = dayCards(data.list.data?.daily ?? []);
+
+  // "..." → Print Report (this tab's filters, every day with its workers — desktop's report) and Daily Efficiency (A4): the
+  // all-departments single-day report for the "To" date, ignoring these filters (desktop opens the same URL). Both need workers:read.
+  const bridge = useMenuBridge();
+  const fullData = data.full.data;
+  const fullError = data.full.error;
+  const printArgs = { range, deptLabel: deptName ?? "All departments", category: cat };
+  const printArgsRef = useRef(printArgs);
+  printArgsRef.current = printArgs; // eslint-disable-line react-hooks/refs -- latest scope for the late fill below
+  // The data arrived (or failed) for a tap: fill the window that tap opened.
+  useEffect(() => {
+    const w = pendingWin.current;
+    if (!w || wantKey !== scopeKey) return;
+    if (fullData) {
+      pendingWin.current = null;
+      printDocInto(w, departmentPerformancePrint({ totals: fullData.totals, daily: fullData.daily, ...printArgsRef.current }));
+    } else if (fullError) {
+      pendingWin.current = null;
+      showInWindow(w, "Couldn't load the Department Performance report. Close this window and try again.");
+    }
+  }, [fullData, fullError, wantKey, scopeKey]);
+  useEffect(() => {
+    if (!bridge || !data.allowed) return;
+    bridge.set({
+      print: {
+        run: () => {
+          const w = window.open("", "_blank"); // inside the tap
+          if (!w) return;
+          showInWindow(w, "Preparing the report…");
+          pendingWin.current = w;
+          setWantKey(scopeKey); // starts the fetch; an already-cached full payload fills the window straight away
+          if (fullData && wantKey === scopeKey) {
+            pendingWin.current = null;
+            printDocInto(w, departmentPerformancePrint({ totals: fullData.totals, daily: fullData.daily, ...printArgsRef.current }));
+          }
+        },
+      },
+      "efficiency-a4": { run: () => window.open(efficiencyReportUrl(range.to), "_blank", "noopener") },
+    });
+    return () => bridge.set(null);
+  }, [bridge, data.allowed, fullData, wantKey, scopeKey, range.to]);
   const n = filterCount(dept, cat);
   const base = thisMonthRange(today);
   const isDefaultPeriod = range.from === base.from && range.to === base.to;

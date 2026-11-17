@@ -1,41 +1,76 @@
 // employees-menu.ts — what the Employees "..." menu offers per section (Employees 3.dc.html `openMore`, HK-0125). Pure.
 //
-// HTML: the bottom sheet is titled "Employees" on Overview and with the section's name elsewhere; its rows are an icon tile
-// and a label, no chevron. Item order follows the HTML. Employee Master is NOT offered on the phone (owner 2026-11-16: it is
-// desktop-only). A section with no ready item gets NO "..." button at all (menuItems returns []).
-//
-// Step 1 (owner-approved 2026-11-16) — only items whose destination is READY are offered:
-//   Overview      Daily Efficiency Report ONLY (owner 2026-11-16: Departments, Public holidays and Pay rules are desktop-only)
-//   Working Hours Print (needs at least one entry to print)
-//   Attendance    nothing yet: Print (new content), both Copy actions and every maintenance edit are held for review
-// An item that needs a permission is simply not shown without it (the server enforces it as well).
+// HTML: the bottom sheet is titled "Employees" on Overview and with the section's name elsewhere; its rows are an icon tile and a
+// label, no chevron. Item ORDER and LABELS follow the HTML per section (`S.XX.more`). Which items exist was checked against the
+// desktop Employees page (owner 2026-11-17):
+//   Overview               no menu (owner: the button is removed)
+//   Working Hours          Copy yesterday · Copy from another date · Print
+//   Attendance             no menu (desktop has no print / export there)
+//   Labor Cost             Settle month · Print report            (the standalone "Regenerate payslips" is not offered)
+//   Efficiency Overview    Print report
+//   Department Labor       Print report · Department QR poster
+//   Employee Performance   Print Report                           (the selected employee)
+//   Department Performance Print Report · Daily Efficiency (A4)
+//   Payroll                Export CSV · Print Report · Calculation Guide   (no Print on the payslip detail)
+// A section REGISTERS the items that are ready right now (permission held, data loaded); an item that is not registered is not
+// shown, and a section with nothing registered gets no "..." button at all. Employee Master is desktop-only.
 
 export type MenuAction =
-  | "efficiency-report"
-  | "print-working-hours";
+  | "copy-yesterday"
+  | "copy-from"
+  | "print"
+  | "settle-month"
+  | "qr-poster"
+  | "efficiency-a4"
+  | "export-csv"
+  | "calc-guide";
 
-export type MenuIcon = "FileText" | "Printer";
-export type MenuItem = { action: MenuAction; label: string; icon: MenuIcon };
+export type MenuIcon = "CopyPlus" | "Copy" | "Printer" | "Wand" | "QrCode" | "FileText" | "Download";
 
-/** What is ready right now (permissions and loaded data). */
-export type MenuReady = {
-  /** `workers:read` — the Daily Efficiency Report endpoint's gate. */
-  canWorkersRead: boolean;
-  /** Working Hours has at least one entry matching its filters to print. */
-  canPrintWorkingHours: boolean;
+/** What a section hands the shell for one action. `busy` shows the row greyed with `note` (data still preparing). */
+export type MenuEntry = { run: () => void; busy?: boolean; note?: string };
+export type MenuRegistry = Partial<Record<MenuAction, MenuEntry>>;
+
+export type MenuItem = { action: MenuAction; label: string; icon: MenuIcon; busy?: boolean; note?: string };
+
+type Def = { action: MenuAction; label: string; icon: MenuIcon };
+
+/** The HTML's order and wording per section. */
+export const SECTION_MENU: Record<string, readonly Def[]> = {
+  "working-hours": [
+    { action: "copy-yesterday", label: "Copy yesterday", icon: "CopyPlus" },
+    { action: "copy-from", label: "Copy from another date", icon: "Copy" },
+    { action: "print", label: "Print", icon: "Printer" },
+  ],
+  "labor-cost": [
+    { action: "settle-month", label: "Settle month", icon: "Wand" },
+    { action: "print", label: "Print report", icon: "Printer" },
+  ],
+  efficiency: [{ action: "print", label: "Print report", icon: "Printer" }],
+  "department-labor": [
+    { action: "print", label: "Print report", icon: "Printer" },
+    { action: "qr-poster", label: "Department QR poster", icon: "QrCode" },
+  ],
+  "employee-performance": [{ action: "print", label: "Print Report", icon: "Printer" }],
+  "department-performance": [
+    { action: "print", label: "Print Report", icon: "Printer" },
+    { action: "efficiency-a4", label: "Daily Efficiency (A4)", icon: "FileText" },
+  ],
+  payroll: [
+    { action: "export-csv", label: "Export CSV", icon: "Download" },
+    { action: "print", label: "Print Report", icon: "Printer" },
+    { action: "calc-guide", label: "Calculation Guide", icon: "Printer" },
+  ],
 };
 
-const EFFICIENCY: MenuItem = { action: "efficiency-report", label: "Daily Efficiency Report", icon: "FileText" };
-const PRINT_WH: MenuItem = { action: "print-working-hours", label: "Print", icon: "Printer" };
-
-export function menuItems(section: string, ready: MenuReady): MenuItem[] {
-  const items: MenuItem[] = [];
-  if (section === "overview") {
-    if (ready.canWorkersRead) items.push(EFFICIENCY);
-  } else if (section === "working-hours") {
-    if (ready.canPrintWorkingHours) items.push(PRINT_WH);
+/** The rows of the sheet: the section's items, in the HTML's order, that the section has registered. */
+export function menuItems(section: string, registry: MenuRegistry): MenuItem[] {
+  const out: MenuItem[] = [];
+  for (const d of SECTION_MENU[section] ?? []) {
+    const e = registry[d.action];
+    if (e) out.push({ ...d, busy: e.busy, note: e.note });
   }
-  return items;
+  return out;
 }
 
 /** "Employees" on Overview, the section's own name elsewhere. */
@@ -44,8 +79,7 @@ export function menuTitle(section: string, sectionLabel: string | undefined): st
 }
 
 /**
- * The Daily Efficiency Report URL. NO `date`: the server then uses the previous working day (Sundays and public holidays
- * skipped) — the same default as the Efficiency Overview list, so both name the same day. Desktop passes its "To" date,
- * which defaults to the end of the month.
+ * The Daily Efficiency Report (A4) URL — desktop's Department Performance button opens it for the "To" date, all departments,
+ * ignoring that tab's filters. `workers:read` is the gate the server enforces on it.
  */
-export const EFFICIENCY_REPORT_URL = "/api/reports/efficiency";
+export const efficiencyReportUrl = (to: string): string => `/api/reports/efficiency?date=${encodeURIComponent(to)}`;

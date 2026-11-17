@@ -12,8 +12,8 @@ import {
   dailyPaidEntryCostSen,
 } from "@/lib/labor-engine";
 import { computeAttendanceDay, hhmmToMinutes, type AttendanceRules } from "@/lib/attendance-rules";
-import { getQRCodeDataURL } from "@/lib/qr-utils";
-import { appOrigin } from "@/lib/app-origin";
+import { printDeptQrPoster as printDeptQrPosterShared } from "@/lib/dept-qr-poster";
+import { buildCalcGuide } from "@/lib/calc-guide";
 import {
   resolvePayRulesAsOf,
   toAttendanceRules,
@@ -5132,82 +5132,8 @@ function DepartmentLaborTab({
   // / Maintenance / R&D) get a single card. Workers scan when they start
   // work and whenever they switch line or department; punch-out ends it.
   // PRODUCTION_SHORTFALL is a virtual bucket, not a place, so it's skipped.
-  const printDeptQrPoster = useCallback(async () => {
-    try {
-      const res = await fetch("/api/departments");
-      const j = (await res.json().catch(() => ({}))) as {
-        data?: Array<{ code?: string; name?: string; shortName?: string; isProduction?: boolean | number }>;
-      };
-      const depts = (j?.data ?? []).filter(
-        (d) => d.code && d.code !== "PRODUCTION_SHORTFALL",
-      );
-      if (depts.length === 0) return;
-      // Canonical origin so printed dept-QR cards show erp.hookka.com on prod.
-      const origin = appOrigin();
-      const CATS = ["SOFA", "BEDFRAME", "ACCESSORY"] as const;
-      const wanted: Array<{ code: string; label: string; cat: string | null }> = [];
-      for (const d of depts) {
-        const base = { code: d.code as string, label: d.shortName || d.name || (d.code as string) };
-        if (d.isProduction) {
-          for (const cat of CATS) wanted.push({ ...base, cat });
-        } else {
-          wanted.push({ ...base, cat: null });
-        }
-      }
-      const cards = await Promise.all(
-        wanted.map(async (cdef) => ({
-          ...cdef,
-          // 1000px → crisp at the full-page 130mm print size.
-          qr: await getQRCodeDataURL(
-            `${origin}/worker/scan?deptscan=${encodeURIComponent(cdef.code)}${cdef.cat ? `&deptcat=${encodeURIComponent(cdef.cat)}` : ""}`,
-            1000,
-          ),
-        })),
-      );
-      const catLabel = (cat: string | null) =>
-        cat ? cat.charAt(0) + cat.slice(1).toLowerCase() : "";
-      const cardsHtml = cards
-        .map(
-          (cd) => `
-        <div class="card">
-          <div class="dept">${cd.label}</div>
-          ${cd.cat ? `<div class="cat cat-${cd.cat.toLowerCase()}">${catLabel(cd.cat)}</div>` : ""}
-          <div class="code">${cd.code}${cd.cat ? ` · ${cd.cat}` : ""}</div>
-          <img src="${cd.qr}" alt="${cd.code}${cd.cat ? "-" + cd.cat : ""}" />
-          <div class="hint">Scan with the Worker Portal when you START working ${cd.cat ? `on the <b>${catLabel(cd.cat)}</b> line here` : "in this department"}.<br/>Scan again when you switch line or department · punching out ends it.</div>
-        </div>`,
-        )
-        .join("");
-      const w = window.open("", "_blank");
-      if (!w) return;
-      // One card per FULL A4 page (owner 2026-06-12: "每一个都是 A4 size") —
-      // poster-sized name + ~13cm QR, scannable from arm's length on the wall.
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Department QR Codes - Hookka</title>
-        <style>
-          @page { size: A4 portrait; margin: 10mm; }
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; color: #1F1D1B; }
-          .card { border: 2px solid #1F1D1B; border-radius: 6mm; padding: 12mm; text-align: center;
-                  min-height: 270mm; display: flex; flex-direction: column; align-items: center;
-                  justify-content: center; gap: 6mm; page-break-after: always; }
-          .card:last-child { page-break-after: auto; }
-          .dept { font-size: 48pt; font-weight: 800; line-height: 1.1; }
-          .cat { display: inline-block; padding: 2mm 10mm; border: 2px solid #1F1D1B; border-radius: 10mm; font-size: 26pt; font-weight: 800; letter-spacing: 2px; }
-          .cat-sofa { background: #E8EEF0; }
-          .cat-bedframe { background: #F0EAE0; }
-          .cat-accessory { background: #ECECEC; }
-          .code { font-size: 14pt; color: #6B7280; letter-spacing: 2px; }
-          img { width: 130mm; height: 130mm; }
-          .hint { font-size: 13pt; color: #4B5563; line-height: 1.5; max-width: 150mm; }
-        </style></head><body>
-        ${cardsHtml}
-        <script>window.onload = () => setTimeout(() => window.print(), 250);</script>
-        </body></html>`);
-      w.document.close();
-    } catch {
-      /* poster is a convenience — never crash the tab */
-    }
-  }, []);
+  // The poster itself lives in src/lib/dept-qr-poster.ts (shared with the phone).
+  const printDeptQrPoster = useCallback(() => void printDeptQrPosterShared(), []);
 
   return (
     <Card>
@@ -7509,112 +7435,7 @@ function PayrollTab({ workers }: { workers: Worker[] }) {
   // rules in force TODAY (divisor modes, shift, grace, multipliers, statutory)
   // so it can never go stale — change a rule, reprint, the guide follows.
   // Worked example fixed at RM2,050 · 9h/day so the arithmetic is concrete.
-  const printCalcGuide = useCallback(() => {
-    const cfg = payRulesToday;
-    const S = 2050; // example salary (RM)
-    const now = new Date();
-    const monthName = now.toLocaleDateString("en-MY", { month: "long", year: "numeric" });
-    const calDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    let monSat = 0;
-    for (let i = 1; i <= calDays; i++) {
-      if (new Date(now.getFullYear(), now.getMonth(), i).getDay() !== 0) monSat++;
-    }
-    const lunchH = cfg.lunchMin / 60;
-    const lunchTxt = `${cfg.lunchMin % 60 === 0 ? lunchH.toFixed(0) : lunchH.toFixed(1)}h`;
-    const stdH = (cfg.shiftEndMin - cfg.shiftStartMin - cfg.lunchMin) / 60;
-    const shiftTxt = `${minToHhmm(cfg.shiftStartMin)}-${minToHhmm(cfg.shiftEndMin)}`;
-    // Day rate per the configured divisor mode.
-    const dayDiv = cfg.dayRateDivisorMode === "calendarDays" ? calDays : cfg.dayRateDivisorMode === "workingDays" ? monSat : 26;
-    const dayDivTxt =
-      cfg.dayRateDivisorMode === "calendarDays"
-        ? `the month's calendar days (${monthName}: ${calDays})`
-        : cfg.dayRateDivisorMode === "workingDays"
-          ? `the month's working days (${monthName}: ${monSat}, Mon-Sat before public holidays)`
-          : "26 — the same every month";
-    const dayRate = S / dayDiv;
-    // Hour rate per the configured mode (example worker = 9h/day).
-    const hourDiv = cfg.hourRateDivisorMode === "fixed" ? cfg.rateHoursPerDay : cfg.hourRateDivisorMode === "hoursOnly" ? 9 : 9 + lunchH;
-    const hourDivTxt =
-      cfg.hourRateDivisorMode === "fixed"
-        ? `${cfg.rateHoursPerDay} (the same fixed number for everyone)`
-        : cfg.hourRateDivisorMode === "hoursOnly"
-          ? "the worker's daily hours (9h worker → ÷9)"
-          : `the worker's daily hours + ${lunchTxt} lunch (9h worker → ÷${9 + lunchH})`;
-    // Rounded to the sen like the engine (payrollHourRateSen).
-    const hourRate = Math.round((dayRate / Math.max(1, hourDiv)) * 100) / 100;
-    const rm = (v: number) => `RM${v.toFixed(2)}`;
-    const grace = cfg.lateGraceMin;
-    const block = cfg.lateBlockMin;
-    const lateIn = minToHhmm(cfg.shiftStartMin + grace + 1);
-    const onTimeIn = minToHhmm(cfg.shiftStartMin + Math.max(0, grace - 2));
-    const sun = cfg.sundayOtMultiplier;
-    const ph = cfg.holidayOtMultiplier;
-    type GuideRow = { item: string; rule: string; example: string };
-    // Item bold + Example in the house gold, so the three columns read as
-    // name / explanation / number instead of one grey block (owner 2026-06-11).
-    // Same widths in every section so the three columns line up down the
-    // whole page (owner: sections must align, not each table auto-sizing).
-    const col = [
-      { header: "Item", width: "19%", value: (r: unknown) => ({ text: (r as GuideRow).item, bold: true }) },
-      { header: "How it is calculated", width: "53%", value: (r: unknown) => (r as GuideRow).rule },
-      { header: "Example", width: "28%", value: (r: unknown) => ({ text: (r as GuideRow).example, color: "#6B5C32", bold: true }) },
-    ];
-    const s = (title: string, rows: GuideRow[]) => ({ title, columns: col, rows });
-    printReport({
-      title: "Salary Calculation Guide",
-      filterSummary: `Worked example: RM2,050/month · 9h/day worker · ${monthName} · Shift ${shiftTxt}, ${lunchTxt} unpaid lunch = ${stdH}h standard day · printed from the rules in force today`,
-      cards: [
-        { label: "Example salary", value: "RM2,050 / month" },
-        { label: "Day rate", value: `2,050 ÷ ${dayDiv} = ${rm(dayRate)}` },
-        { label: "Hour rate", value: `${rm(dayRate)} ÷ ${hourDiv} = ${rm(hourRate)}` },
-        { label: "OT rates", value: `Weekday 1.5x · Sunday ${sun}x · Holiday ${ph}x` },
-      ],
-      sections: [
-        s("1. Daily & hourly rates", [
-          { item: "Day rate", rule: `Monthly salary ÷ ${dayDivTxt} · used for absences and join/resign`, example: `2,050 ÷ ${dayDiv} = ${rm(dayRate)} / day` },
-          { item: "Hour rate", rule: `Day rate ÷ ${hourDivTxt} · used for lateness, short hours AND the overtime base`, example: `${rm(dayRate)} ÷ ${hourDiv} = ${rm(hourRate)} / hour` },
-          { item: "Production cost day rate", rule: "Monthly salary ÷ working days of the month (internal costing only — never changes pay)", example: `2,050 ÷ ${monSat} ≈ ${rm(S / Math.max(1, monSat))} / day` },
-        ]),
-        s("2. Working hours from the punch clock", [
-          { item: "Standard day", rule: `Punch in to punch out, minus the ${lunchTxt} unpaid lunch`, example: `${shiftTxt} − ${lunchTxt} = ${stdH}h` },
-          { item: "Late grace", rule: `Up to ${grace} minutes late is forgiven`, example: `${onTimeIn} in → counted as on time` },
-          { item: "Lateness rounding", rule: `Beyond grace, lateness rounds UP in ${block}-min blocks`, example: `${lateIn} → ${block} min late` },
-          // The 15-min-block wording predates the owner's 2026-07-04 rule
-          // ("OT 要30分鐘才算") and told workers 16 min earned 15 min of OT while
-          // the engine paid nothing under 30. The guide is handed to workers —
-          // it has to state what they are actually paid.
-          { item: "Overtime counting", rule: `Only after ${minToHhmm(cfg.shiftEndMin)}, and only once it reaches 30 minutes; then in 15-min blocks`, example: "29 min → 0; 30 min → 30 min; 45 min → 45 min" },
-        ]),
-        s("3. Lateness / short hours deduction", [
-          { item: "Deduction", rule: `Short hours × the hour rate (${rm(hourRate)}/h)`, example: `30 min late, no OT → 0.5h × ${hourRate.toFixed(2)} = −${rm(hourRate / 2)}` },
-          { item: "Same-day OT offsets first", rule: "Evening OT covers the morning gap 1:1; only the remainder is deducted", example: "30 min late + 2h OT → deduction RM0, paid OT 1.5h" },
-          { item: "Review", rule: "The office can Keep pay (no deduction) or Deduct each short day; every deduction can be undone", example: "Shown in the worker app under 'Late / short hours'" },
-        ]),
-        s("4. Overtime pay", [
-          { item: "Weekday OT", rule: `Hours above the ${stdH}h standard × hour rate × the worker's multiplier (usually 1.5)`, example: `2h → 2 × ${hourRate.toFixed(2)} × 1.5 = ${rm(2 * hourRate * 1.5)}` },
-          { item: "Sunday work", rule: `EVERY hour that day × hour rate × ${sun} (Sundays are non-working)`, example: `8h Sunday → ${rm(8 * hourRate * sun)}` },
-          { item: "Public holiday work", rule: `EVERY hour that day × hour rate × ${ph}`, example: `8h holiday → ${rm(8 * hourRate * ph)}` },
-        ]),
-        s("5. Absence", [
-          { item: "Absent working day", rule: "Each confirmed absent day deducts the day rate", example: `1 day → −${rm(dayRate)}` },
-          { item: "Grace before confirming", rule: `A blank day only becomes an absence after ${cfg.absenceGraceWorkingDays} working days (it may just not be keyed yet)`, example: "Shown as 'Pending' until confirmed" },
-          { item: "Backfilling hours", rule: "Keying the hours later removes the absence automatically", example: "No button needed; regenerate if the month was finalised" },
-        ]),
-        s("6. Joining / resigning mid-month", [
-          { item: "One rule for everyone", rule: "No separate part-month formula — every working day of the month not worked counts as an absent day at the day rate", example: `Same −${rm(dayRate)} per day` },
-          { item: "Join mid-month", rule: "Full salary − the working days before the join date (they count as absences)", example: `3 working days before joining → 2,050 − 3 × ${dayRate.toFixed(2)} = ${rm(S - 3 * dayRate)}` },
-          { item: "Resign mid-month", rule: "Working days after the last day also count as absent days", example: `Each later working day deducts ${rm(dayRate)}` },
-        ]),
-        s("7. Allowance, statutory & net pay", [
-          { item: "Efficiency allowance", rule: "Flat bonus when the month's cumulative efficiency reaches the worker's target, else RM0 (no proration)", example: "RM150 at 100%" },
-          { item: "Leadership allowance", rule: "Flat monthly bonus pro-rated by attendance — no efficiency threshold", example: `27 working days, 2 absent → 25/27 of the configured amount` },
-          { item: "Statutory (per-worker toggle)", rule: `EPF ${cfg.epfEmployeePct}% employee / ${cfg.epfEmployerPct}% employer on basic · SOCSO RM${(cfg.socsoEmployeeSen / 100).toFixed(2)}/${(cfg.socsoEmployerSen / 100).toFixed(2)} · EIS RM${(cfg.eisEmployeeSen / 100).toFixed(2)}/${(cfg.eisEmployerSen / 100).toFixed(2)}`, example: "Deducted only when enabled" },
-          { item: "Net pay", rule: "Basic − absence − late/short + OT + allowance − employee statutory − salary advances already taken", example: "What the worker receives" },
-          { item: "Salary advance", rule: "Cash drawn during the month is paid back out of that same month's pay. It is not an earning and not a statutory deduction, so EPF / SOCSO / EIS / PCB are unaffected", example: "Draw RM300 on the 12th → RM300 less in the pay-out" },
-        ]),
-      ],
-    });
-  }, [payRulesToday]);
+  const printCalcGuide = useCallback(() => printReport(buildCalcGuide(payRulesToday)), [payRulesToday]);
 
   return (
     <div className="space-y-4">

@@ -5,13 +5,22 @@
 // card per payslip (top 5, then "Show all N workers") and a TOTAL strip that follows the search and filters. A worker card opens its payslip
 // detail (PayslipPage, `pay` in the URL; Back keeps the month, search and filters). Figures and rules: payroll-model.ts. A month with no stored payslips reads "No payslip records
 // … Payslips are generated on desktop."; the current Malaysia month shows desktop's live estimate (marked "Estimate") only when the stored
-// request succeeded with zero records; a failed request is an error, never an empty month. Nothing is written.
-import { useState, type CSSProperties } from "react";
+// request succeeded with zero records; a failed request is an error, never an empty month. Nothing is written. "..." offers Export CSV,
+// Print Report and Calculation Guide (all read-only; payroll-prints.ts, src/lib/calc-guide.ts).
+import { useEffect, useState, type CSSProperties } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CalendarDays, ChevronDown, ChevronRight, DollarSign, Lock, Search, ArrowUpDown } from "lucide-react";
+import { buildCalcGuide } from "@/lib/calc-guide";
+import { useCachedJson } from "@/lib/cached-fetch";
+import { DEFAULT_PAY_RULES, type PayRulesConfig } from "@/lib/pay-rules";
+import { printReport } from "@/lib/print-report";
+import { usePermissions } from "@/lib/use-permission";
 import { M } from "../../theme";
 import { initialsOf } from "./employee-performance-model";
 import { SHEET_CARD } from "./employees-styles";
+import { useMenuBridge, useMenuOpen } from "./menu-context";
+import { csvFileName, payrollCsv, payrollPrint, type AdvanceDay, type PenaltyLine } from "./payroll-prints";
+import { runPrintDoc } from "./run-print";
 import { CardSheetView, FilterSheet, MonthSheet } from "./PayrollSheets";
 import PayslipPage from "./PayslipPage";
 import type { DetailRow } from "./payslip-detail-model";
@@ -69,6 +78,53 @@ export default function PayrollSection() {
   const nFilters = filterCount(f);
   const payId = params.get("pay");
   const open = payId ? (rows.find((r) => r.id === payId) as DetailRow | undefined) : undefined;
+
+  // "..." → Export CSV · Print Report · Calculation Guide, for the WHOLE month (desktop's Payroll tab has no filters, so neither does
+  // the file or the printout). The CSV adds advance dates and penalty references, which come from two more lists fetched once the
+  // menu has been opened, only where the existing permission allows (a role without it gets those two cells blank, as a role without
+  // the right sees none on desktop). The guide needs the pay rules in force today.
+  const bridge = useMenuBridge();
+  const menuOpen = useMenuOpen();
+  const { hasPermission } = usePermissions();
+  const [wantExtras, setWantExtras] = useState(false);
+  if (menuOpen && !wantExtras) setWantExtras(true);
+  const detailRows = rows as DetailRow[];
+  const needAdv = wantExtras && data.allowed && detailRows.some((r) => Number(r.advanceDeductionSen) > 0);
+  const needPen = wantExtras && hasPermission("worker-penalties", "read") && detailRows.some((r) => Number(r.penaltyDeductionSen) > 0);
+  const advRes = useCachedJson<{ data?: { workerId: string; date: string; amountSen: number }[] }>(needAdv ? `/api/employee-advances?period=${month}` : null, 120);
+  const penRes = useCachedJson<{ data?: { penaltyNo: string; poNo?: string; status?: string; lines?: { workerId: string; amountSen: number; payrollPeriod?: string }[] }[] }>(needPen ? `/api/worker-penalties?period=${month}` : null, 120);
+  const rulesRes = useCachedJson<{ data?: { effectiveToday?: PayRulesConfig } }>(wantExtras && data.allowed ? "/api/pay-rules" : null, 300);
+  const monthRows = detailRows.length;
+  const csvWaiting = (needAdv && advRes.data === null && !advRes.error) || (needPen && penRes.data === null && !penRes.error);
+  useEffect(() => {
+    if (!bridge || !data.allowed || monthRows === 0) return;
+    const advances: AdvanceDay[] = advRes.data?.data ?? [];
+    const penalties: PenaltyLine[] = [];
+    for (const pn of penRes.data?.data ?? []) {
+      if (pn.status !== "APPROVED" && pn.status !== "POSTED") continue;
+      for (const l of pn.lines ?? []) if (l.payrollPeriod === month) penalties.push({ workerId: l.workerId, penaltyNo: pn.penaltyNo, poNo: pn.poNo, amountSen: l.amountSen });
+    }
+    const rules = rulesRes.data?.data?.effectiveToday ?? (rulesRes.error ? DEFAULT_PAY_RULES : null);
+    bridge.set({
+      "export-csv": csvWaiting
+        ? { run: () => undefined, busy: true, note: "Preparing…" }
+        : {
+            run: () => {
+              const blob = new Blob([payrollCsv(detailRows, advances, penalties)], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = csvFileName(month);
+              a.click();
+              URL.revokeObjectURL(url);
+            },
+          },
+      print: { run: () => runPrintDoc(payrollPrint(detailRows, labelOfMonth(month), data.view.kind === "estimate")) },
+      "calc-guide": rules ? { run: () => printReport(buildCalcGuide(rules)) } : { run: () => undefined, busy: true, note: "Preparing…" },
+    });
+    return () => bridge.set(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-register when the month's rows or the extra lists change
+  }, [bridge, data.allowed, month, monthRows, data.view.kind, rows, csvWaiting, advRes.data, penRes.data, rulesRes.data, rulesRes.error]);
 
   // Opening a payslip PUSHES a history entry (the month, search and filters stay in the URL), so Back and the hardware back return to the
   // list exactly as it was. With no earlier entry (a reload or a shared link) Back just removes the payslip from the URL.

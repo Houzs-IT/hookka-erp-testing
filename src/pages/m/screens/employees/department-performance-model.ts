@@ -59,6 +59,15 @@ export function dayUrl(date: string, dept: string, cat: DpCategory): string {
   return `/api/department-performance?from=${date}&to=${date}&departmentCode=${encodeURIComponent(dept)}&category=${cat}`;
 }
 
+/**
+ * The PRINT request: the same endpoint and filters over the whole period, full payload (every day with its workers) — what desktop's
+ * Print Report walks. Large for a long period (the summary view exists for that reason), so it is requested only once the "..." menu
+ * has been opened, never to draw the list.
+ */
+export function fullUrl(range: { from: string; to: string }, dept: string, cat: DpCategory): string {
+  return `/api/department-performance?from=${range.from}&to=${range.to}&departmentCode=${encodeURIComponent(dept)}&category=${cat}`;
+}
+
 export const dmy = (ymd: string) => (/^\d{4}-\d{2}-\d{2}$/.test(ymd) ? `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(0, 4)}` : ymd);
 
 export const GREY = "#9A9082";
