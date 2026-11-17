@@ -46,7 +46,10 @@ test("the dashboard engine credits a two-slot card half each", async () => {
   const { buildPerfDays } = await import("../src/api/lib/workforce-perf.ts");
   const { perfDays } = buildPerfDays({
     productionDepts: new Set(["FAB_CUT"]),
-    whe: [],
+    whe: [
+      { workerId: "ei", date: "2026-10-15", departmentCode: "FAB_CUT", hours: 8 },
+      { workerId: "thi", date: "2026-10-15", departmentCode: "FAB_CUT", hours: 8 },
+    ],
     jobCards: [
       { id: "c1", departmentCode: "FAB_CUT", pic1Id: "ei", pic2Id: "thi", completedDate: "2026-10-15", estMinutes: 126, actualMinutes: 126, wipQty: 4 },
     ],

@@ -4019,6 +4019,13 @@ function EfficiencyOverviewTab({
   // + Efficiency % columns alongside the existing working-hours pivot without
   // pulling every JC row to the client.
   const jcSummaryUrl = `/api/job-cards/summary?from=${dateFrom}&to=${dateTo}`;
+  const { data: perfSummaryResp } = useCachedJson<{ data?: { workers?: { workerId: string; workedDayProductionMinutes?: number }[] } }>(
+    `/api/department-performance?view=summary&from=${dateFrom}&to=${dateTo}`,
+  );
+  const workedDayEarnedByWorker = useMemo(
+    () => new Map((perfSummaryResp?.data?.workers ?? []).map((w) => [w.workerId, w.workedDayProductionMinutes ?? 0])),
+    [perfSummaryResp],
+  );
   const { data: jcSummaryResp } = useCachedJson<{ data?: { workerId: string; productionMinutes: number; jcCount: number }[] }>(jcSummaryUrl);
   const prodMinsByWorker = useMemo(() => {
     const m = new Map<string, number>();
@@ -4430,25 +4437,25 @@ function EfficiencyOverviewTab({
     // KPI dashboard cards — computed over the visible rows.
     const present = printableRows.filter((r) => r.totalHours > 0).length;
     const totalHrs = printableRows.reduce((s, r) => s + r.totalHours, 0);
-    // Total earned ÷ total hours, the same way as the page header (not a mean of each row's %).
+    // In-house earned (days with logged hours only) ÷ total hours: the page header's rule.
     const effTotals = printableRows.reduce(
       (sum, r) => {
         const ph = prodHoursOf(r);
         if (ph <= 0 || r.daysWithEntries === 0) return sum;
         if (workerById.get(r.workerId)?.isHelper) return sum; // no personal efficiency
         return {
-          earnedMinutes: sum.earnedMinutes + (prodMinsByWorker.get(r.workerId) ?? 0),
+          earnedMinutes: sum.earnedMinutes + (workedDayEarnedByWorker.get(r.workerId) ?? 0),
           hoursMinutes: sum.hoursMinutes + ph * 60,
         };
       },
       { earnedMinutes: 0, hoursMinutes: 0 },
     );
-    const avgEff = effTotals.hoursMinutes > 0 ? (effTotals.earnedMinutes / effTotals.hoursMinutes) * 100 : 0;
+    const avgEff = perfSummaryResp && effTotals.hoursMinutes > 0 ? (effTotals.earnedMinutes / effTotals.hoursMinutes) * 100 : null;
     const cards: PrintCard[] = [
       { label: "Workers", value: String(printableRows.length) },
       { label: "Present", value: `${present} / ${printableRows.length}` },
       { label: "Total Working Hours", value: `${totalHrs.toFixed(1)}h` },
-      { label: "Avg Efficiency", value: `${avgEff.toFixed(1)}%`, color: avgEff >= 100 ? "#15803D" : avgEff >= 60 ? "#9C6F1E" : "#9A3A2D" },
+      { label: "Avg Efficiency", value: avgEff == null ? "—" : `${avgEff.toFixed(1)}%`, color: avgEff == null ? "#6B7280" : avgEff >= 100 ? "#15803D" : avgEff >= 60 ? "#9C6F1E" : "#9A3A2D" },
     ];
     printReport({
       title: "Efficiency Overview",
@@ -4457,7 +4464,7 @@ function EfficiencyOverviewTab({
       cards,
       sections: [{ columns, rows: printableRows }],
     });
-  }, [rows, printRows, prodMinsByWorker, productionDeptCodes, dateFrom, dateTo, workerById]);
+  }, [rows, printRows, prodMinsByWorker, productionDeptCodes, dateFrom, dateTo, workerById, perfSummaryResp, workedDayEarnedByWorker]);
 
   return (
     <Card>

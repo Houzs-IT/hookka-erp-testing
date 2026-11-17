@@ -260,7 +260,7 @@ test("the surviving efficiency metric keeps its clocked denominator", () => {
     src,
     // Helpers / 杂工 (owner 2026-11-11): the rollup leaves helpers' clocked and earned
     // minutes out of production efficiency; the denominator is still the clocked sum.
-    /\.\.\.effPair\(cell\.workingMinutes, cell\.productionMinutes, hw, hp\)/,
+    /\.\.\.effPair\(cell\.workingMinutes, production, hw, hp\)/,
     "department-performance.ts: the per-day rollup must divide by clocked time too",
   );
   assert.match(

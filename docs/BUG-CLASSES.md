@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-11-17**: branch `fix/in-house-efficiency`, to `main`, adds **C33 row 8** (in-house efficiency, BUG-2026-11-17-525). Nothing else re-checked.
+
 > **Last verified: 2026-11-17**: branch `fix/labour-card-follows-period`, to `main`, updates **C33 row 6** (Labour cost card follows the period, BUG-2026-11-17-524). Nothing else re-checked.
 
 > **Last verified: 2026-11-17**: branch `fix/credit-half-minutes`, to `main`, updates **C33 row 2** (shared-card halves kept, BUG-2026-11-17-522). Nothing else re-checked.
@@ -1887,6 +1889,7 @@ Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tes
 | 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ✅ on branch (BUG-2026-11-17-521) |
 | 5 | Production revenue: the same recognition SQL in nine places and the price lookup in six; the Daily panel on main joined the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ✅ structure 2026-11-11: one copy of the rule, price and joins in `production-revenue.ts` (guard `tests/one-production-revenue-sql.test.mjs`); line join fixed in BUG-2026-11-11-502. ⬜ still open: the quantity rule and the shared loader's missing company filter |
 | 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ✅ tile #1345; live check 17 Nov found the Labour cost card still summed whole months, on branch (BUG-2026-11-17-524, `labourMonthsWithin`) |
-| 7 | Efficiency: Department Performance rounded to a whole % and pages printed it as "84.0%"; the printed Efficiency Overview averaged each worker's % instead of total ÷ total (`department-performance.ts`, `employees.tsx`) | ✅ on branch (BUG-2026-11-17-518) |
+| 7 | Efficiency: Department Performance rounded to a whole % and pages printed it as "84.0%"; the printed Efficiency Overview averaged each worker's % instead of total ÷ total (`department-performance.ts`, `employees.tsx`) | ✅ #1417 (BUG-2026-11-17-518) |
+| 8 | Efficiency: factory totals added every finished card (outsource, today's cards before punch-out, no-PIC cards) over in-house hours, while per-person figures did not; Employees header 124.1% vs print 114.0% for Nov (`workforce-perf.ts`, `department-performance.ts`, `employees.tsx`) | ✅ on branch (BUG-2026-11-17-525): earned minutes count only for people with logged production hours that day |
 
 Tests: `tests/efficiency-one-rule.test.mjs` (row 1), `tests/workforce-perf.test.mjs`, `tests/credit-card-to-pics.test.mjs` (rows 2 and 4).
