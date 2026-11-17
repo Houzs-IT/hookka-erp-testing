@@ -226,7 +226,7 @@ export type BoardReport = {
   income: Section<{ rows: IncomeRow[]; sinceLabel: string; costStructure: { label: string; value: number }[];
     /** Owner review 2026-11-15: where revenue went — COGS, operating expenses, net profit. */
     revenueSplit?: { label: string; value: number }[]; margins: { label: string; actual: number | null; forecast: number | null; prev: number | null }[]; estimated: number }>;
-  labour: Section<{ depts: LabourDept[]; nonProd: { dept: string; cost: number; prev: number | null; forecast: number | null }[]; nonProdTotal: number; total: number; prevTotal: number | null; forecastTotal: number | null; productionRevenue: number | null; headcount: number | null; units: number | null; trend: { ym: string; label: string; byDept: Record<string, number>; total: number }[]; series: string[] }>;
+  labour: Section<{ depts: LabourDept[]; nonProd: { dept: string; cost: number; prev: number | null; forecast: number | null }[]; nonProdTotal: number; total: number; prevTotal: number | null; forecastTotal: number | null; productionRevenue: number | null; headcount: number | null; units: number | null; trend: { ym: string; label: string; byDept: Record<string, number>; total: number; forecast?: number | null }[]; series: string[] }>;
   materials: Section<{ cats: MaterialCat[]; total: number; sales: number | null;
     /** P&L materials not split by category (carriage inwards 700-1015 + SST 706-0000) = total − Σ categories. */
     unsplit?: number; trend: { ym: string; label: string; actual: number | null; forecast: number | null }[] }>;
@@ -280,6 +280,14 @@ function closedMonths(rows: readonly DashRow[], month: string): DashRow[] {
   return rows.filter((r) => r.key <= month && r.actual !== null);
 }
 
+/** Owner 2026-11-17 「上个月 这个月 前三个月-6个月…全部都是」: every month chart
+ *  shows the same window — the last six closed months, none before
+ *  BOARD_DATA_FROM (incomplete books). */
+export const CHART_MONTHS = 6;
+function chartMonths(rows: readonly DashRow[], month: string): DashRow[] {
+  return closedMonths(rows, month).filter((r) => r.key >= BOARD_DATA_FROM).slice(-CHART_MONTHS);
+}
+
 export function buildTrend(rows: readonly DashRow[], month: string, running: string): TrendPoint[] {
   const out: TrendPoint[] = [];
   for (const r of closedMonths(rows, month)) {
@@ -328,7 +336,8 @@ function shapeCover(d: DashPayload, month: string, running: string, cash: CfPayl
   const conc = ov?.customerConcentration?.all;
   if (conc?.largestName && conc.largestPct !== null) highlights.push(`Largest customer ${conc.largestName}: ${conc.largestPct}% of confirmed sales orders.`);
   // Owner review 2026-11-15: months before BOARD_DATA_FROM are left off the chart.
-  const trend = buildTrend(d.rows, month, running).filter((t) => t.ym >= BOARD_DATA_FROM && (t.kind !== "forecast" || t.forecastSales !== null));
+  const all = buildTrend(d.rows, month, running).filter((t) => t.ym >= BOARD_DATA_FROM && (t.kind !== "forecast" || t.forecastSales !== null));
+  const trend = [...all.filter((t) => t.ym <= month).slice(-CHART_MONTHS), ...all.filter((t) => t.ym > month)];
   return { ok: true, data: { tiles, trend, highlights } };
 }
 
@@ -408,7 +417,7 @@ function shapeLabour(d: DashPayload, month: string, rev: RevSplitPayload | null,
   });
   // Trend: production salary per month, stacked by the six biggest departments of M.
   const series = depts.slice(0, 6).map((x) => x.dept);
-  const trend = closedMonths(d.rows, month).slice(-12).map((row) => {
+  const trend = chartMonths(d.rows, month).map((row) => {
     const byDept: Record<string, number> = {};
     let t = 0;
     for (const x of prod(row)) {
@@ -417,7 +426,12 @@ function shapeLabour(d: DashPayload, month: string, rev: RevSplitPayload | null,
       byDept[k] = (byDept[k] ?? 0) + x.costSen;
     }
     if (!prod(row).length && row.actual) { byDept.Other = row.actual.labour; t = row.actual.labour; }
-    return { ym: row.key, label: shortMonth(row.key), byDept, total: t };
+    // The month's labour forecast on the same basis as the table's All labour
+    // forecast: production departments + non-production (owner 2026-11-17:
+    // every chart carries its forecast).
+    const fcs = (row.salaryByDept ?? []).filter((x) => x.dept.toUpperCase() !== "PRODUCTION_SHORTFALL").map((x) => x.forecastSen ?? 0);
+    const forecast = fcs.some((x) => x !== 0) ? sum(fcs) : row.forecast?.labour ?? null;
+    return { ym: row.key, label: shortMonth(row.key), byDept, total: t, forecast };
   });
   const prevTotal = prevRow ? (prod(prevRow).length ? sum(prod(prevRow).map((x) => x.costSen)) : prevRow.actual?.labour ?? null) : null;
   const fcAll = cur.map((x) => x.forecastSen ?? 0);
@@ -473,7 +487,7 @@ function shapeMaterials(d: DashPayload, month: string): BoardReport["materials"]
     const fcs = rest.map((x) => x.forecast).filter((x): x is number => x !== null);
     return { name: label, spend, purchase: sum(rest.map((x) => x.purchase)), closing: sum(rest.map((x) => x.closing)), forecast: fcs.length ? sum(fcs) : null, prev: prevs.length ? sum(prevs) : null, pctOfSales: pct(spend, sales) };
   });
-  const trend = closedMonths(d.rows, month).slice(-12).map((row) => ({ ym: row.key, label: shortMonth(row.key), actual: row.actual?.materials ?? null, forecast: row.forecast?.materials ?? null }));
+  const trend = chartMonths(d.rows, month).map((row) => ({ ym: row.key, label: shortMonth(row.key), actual: row.actual?.materials ?? null, forecast: row.forecast?.materials ?? null }));
   // The P&L materials line = Σ categories + carriage inwards + SST charges
   // (computePnlWindow: rmConsumed + carriage + sst), so the tile and the
   // category table differ by exactly those two lines (owner review 2026-11-15).
@@ -484,8 +498,8 @@ function shapeMaterials(d: DashPayload, month: string): BoardReport["materials"]
 function shapeTrend(d: DashPayload, month: string, running: string): BoardReport["trend"] {
   const points = buildTrend(d.rows, month, running);
   if (!points.length) return { ok: false, error: "No monthly figures" };
-  const actual = points.filter((p) => p.kind === "actual" && p.ym <= month);
-  const tail = [...actual.slice(-6), ...points.filter((p) => p.ym > month)];
+  const actual = points.filter((p) => p.kind === "actual" && p.ym <= month && p.ym >= BOARD_DATA_FROM);
+  const tail = [...actual.slice(-CHART_MONTHS), ...points.filter((p) => p.ym > month)];
   const summary = tail.map((p) => {
     const s = p.kind === "forecast" ? p.forecastSales : p.sales;
     const n = p.kind === "forecast" ? p.forecastNet : p.net;
@@ -496,7 +510,7 @@ function shapeTrend(d: DashPayload, month: string, running: string): BoardReport
     };
   });
   const last3 = actual.slice(-3).map((p) => ({ label: p.label, sales: p.sales, fcSales: p.forecastSales, net: p.net, fcNet: p.forecastNet }));
-  return { ok: true, data: { points, summary, last3 } };
+  return { ok: true, data: { points: tail, summary, last3 } };
 }
 
 function shapeBalance(d: DashPayload, month: string): BoardReport["balance"] {
@@ -534,7 +548,7 @@ function shapeBalance(d: DashPayload, month: string): BoardReport["balance"] {
   // Owner review 2026-11-15: months with no balance sheet yet (every account
   // zero before the books opened) are left off the chart.
   const hasBs = (x: DashBs) => x.assets !== 0 || x.liabilities !== 0 || x.equity !== 0;
-  const trend = closedMonths(d.rows, month).filter((r) => r.balanceSheet && hasBs(r.balanceSheet)).slice(-12).map((r) => ({ ym: r.key, label: shortMonth(r.key), assets: r.balanceSheet!.assets, liabilities: r.balanceSheet!.liabilities, equity: r.balanceSheet!.equity }));
+  const trend = closedMonths(d.rows, month).filter((r) => r.key >= BOARD_DATA_FROM && r.balanceSheet && hasBs(r.balanceSheet)).slice(-CHART_MONTHS).map((r) => ({ ym: r.key, label: shortMonth(r.key), assets: r.balanceSheet!.assets, liabilities: r.balanceSheet!.liabilities, equity: r.balanceSheet!.equity }));
   return { ok: true, data: { rows, ratios, equity, trend } };
 }
 
@@ -664,7 +678,7 @@ function shapeOperations(d: DashPayload, month: string, revCur: Src<RevSplitPayl
     .filter((x) => x.total !== 0 || (x.prev ?? 0) !== 0);
   const pr = r?.productionRevenue ?? null;
   const categoryMix = pr ? [{ label: "Bedframe", value: pr.bedframe }, { label: "Sofa", value: pr.sofa }, { label: "Accessory", value: pr.accessory }].filter((x) => x.value > 0) : [];
-  const trend = closedMonths(d.rows, month).slice(-12).map((row) => ({ ym: row.key, label: shortMonth(row.key), bedframe: row.productionRevenue?.bedframe ?? 0, sofa: row.productionRevenue?.sofa ?? 0, accessory: row.productionRevenue?.accessory ?? 0 }));
+  const trend = chartMonths(d.rows, month).map((row) => ({ ym: row.key, label: shortMonth(row.key), bedframe: row.productionRevenue?.bedframe ?? 0, sofa: row.productionRevenue?.sofa ?? 0, accessory: row.productionRevenue?.accessory ?? 0 }));
   if (!r && !revCur.ok) return { ok: false, error: revCur.error };
   return {
     ok: true,
