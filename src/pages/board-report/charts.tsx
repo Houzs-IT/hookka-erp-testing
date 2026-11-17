@@ -42,9 +42,10 @@ export type Series = { key: string; label: string; color: string; type: "bar" | 
 export type Datum = { label: string; values: Record<string, number | null | undefined>; faded?: boolean; note?: string };
 
 /** Bars (grouped or stacked by `stack`) with lines over them, a zero line and a legend. */
-export function ComboChart({ data, series, w, h, legend = true }: { data: Datum[]; series: Series[]; w: number; h: number; legend?: boolean }) {
+/** `labels` writes each bar's value above it (owner 2026-11-17, page 12). */
+export function ComboChart({ data, series, w, h, legend = true, labels = false }: { data: Datum[]; series: Series[]; w: number; h: number; legend?: boolean; labels?: boolean }) {
   const legendH = legend ? 18 : 0;
-  const pad = { l: 44, r: 8, t: 8 + legendH, b: 20 };
+  const pad = { l: 44, r: 8, t: 8 + legendH + (labels ? 12 : 0), b: 20 };
   const iw = Math.max(10, w - pad.l - pad.r);
   const ih = Math.max(10, h - pad.t - pad.b);
   const bars = series.filter((s) => s.type === "bar");
@@ -105,7 +106,12 @@ export function ComboChart({ data, series, w, h, legend = true }: { data: Datum[
                 const top = base + v;
                 if (v >= 0) pos = top; else neg = top;
                 const ya = y(Math.max(base, top)), yb = y(Math.min(base, top));
-                return <rect key={s.key} x={x0 + si * barW + 1} y={ya} width={Math.max(1, barW - 2)} height={Math.max(0.5, yb - ya)} fill={s.color} />;
+                return (
+                  <g key={s.key}>
+                    <rect x={x0 + si * barW + 1} y={ya} width={Math.max(1, barW - 2)} height={Math.max(0.5, yb - ya)} fill={s.color} />
+                    {labels && <text x={x0 + si * barW + barW / 2} y={v >= 0 ? ya - 3 : yb + 10} fontSize={9} textAnchor="middle" fill={C.ink}>{rmShort(v)}</text>}
+                  </g>
+                );
               });
             })}
             <text x={pad.l + i * band + band / 2} y={h - 6} fontSize={9} textAnchor="middle" fill={C.muted}>{d.label}</text>
