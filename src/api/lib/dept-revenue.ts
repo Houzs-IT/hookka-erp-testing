@@ -10,8 +10,10 @@
 // completedDate. Every department books the full value, so a RM 2,000 sofa
 // through 9 departments shows RM 18,000 across the departments; equal rows
 // mean balanced output. An order with no card in a department books nothing
-// there — except Fabric Cutting, whose one card per order covers every module
-// (see order_cut in loadDeptRevenue). The UPHOLSTERY row therefore equals the chart's Production line.
+// there — unless a COMBINED card of the same order and category covers it (the
+// sofa fabric-cutting card names every module; see order_dept in
+// loadDeptRevenue). The same rule holds for every department. The UPHOLSTERY
+// row therefore equals the chart's Production line.
 //
 // This is NOT the Labor Cost tab's "category revenue" (working-hour-entries.ts),
 // which splits one order's value across departments by minutes so the slices
@@ -155,36 +157,47 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
                               AND completedDate IS NOT NULL
                          THEN 1 ELSE 0 END) = COUNT(*)
        ),
-       -- Fabric is cut ONCE per order: a sofa order's FAB_CUT card sits on its
-       -- first production order and covers every module ("5568-2A(LHF)+L(RHF)",
-       -- qty 2). Measured on prod 2026-11-17: 884 of 1,663 sofa POs have no
-       -- FAB_CUT card of their own while another PO of the same order does,
-       -- so Fabric Cutting booked only the -01 module (Nov: sofa RM 83,914 vs
-       -- Fabric Sewing RM 195,170). A PO with no FAB_CUT card books FAB_CUT
-       -- when ALL of its order's FAB_CUT cards are done, on the last one's day.
-       order_cut AS (
+       -- ONE RULE FOR EVERY DEPARTMENT: a COMBINED card covers its sibling
+       -- modules. Some cards are made once for several production orders of the
+       -- same order and category — the sofa fabric-cutting card sits on the -01
+       -- PO and names every module ("5568-2A(LHF)+L(RHF)", qty 2). A combined
+       -- card = its label joins pieces with '+', or its qty is above its own
+       -- PO's quantity. When an order + category has one in department X, its
+       -- POs with no X card of their own book X once ALL that order +
+       -- category's X cards are done, on the last one's day.
+       -- Measured on prod 2026-11-17 (all production orders): sofa FAB_CUT
+       -- 883 POs covered this way (Nov: Fabric Cutting sofa RM 83,914 vs Fabric
+       -- Sewing RM 195,170 before), bedframe WOOD_CUT / FRAMING / WEBBING 8
+       -- each, sofa FIBRE 11, sofa FOAM_CUTTING 6, accessory PACKING 5. A PO
+       -- that lacks a department because its item does not go there (a pillow
+       -- has no Framing) has no combined sibling card and books nothing, as before.
+       order_dept AS (
          SELECT COALESCE(cpo.salesOrderId, cpo.consignmentOrderId) AS order_id,
+                cpo.itemCategory AS category,
+                cj.departmentCode AS dept,
                 MAX(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
                               AND cj.completedDate IS NOT NULL
                          THEN cj.completedDate END) AS done_at
            FROM job_cards cj
            JOIN production_orders cpo ON cpo.id = cj.productionOrderId
-          WHERE cj.departmentCode = 'FAB_CUT'
+          WHERE cj.departmentCode IS NOT NULL
             AND COALESCE(cpo.salesOrderId, cpo.consignmentOrderId) IS NOT NULL
-          GROUP BY COALESCE(cpo.salesOrderId, cpo.consignmentOrderId)
-         HAVING SUM(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
+          GROUP BY COALESCE(cpo.salesOrderId, cpo.consignmentOrderId), cpo.itemCategory, cj.departmentCode
+         HAVING SUM(CASE WHEN cj.wipLabel LIKE '%+%' OR cj.wipQty > cpo.quantity THEN 1 ELSE 0 END) > 0
+            AND SUM(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
                               AND cj.completedDate IS NOT NULL
                          THEN 1 ELSE 0 END) = COUNT(*)
        ),
        dept_done AS (
          SELECT productionOrderId, departmentCode, done_at FROM per_po_dept
          UNION ALL
-         SELECT spo.id AS productionOrderId, 'FAB_CUT' AS departmentCode, oc.done_at
+         SELECT spo.id AS productionOrderId, od.dept AS departmentCode, od.done_at
            FROM production_orders spo
-           JOIN order_cut oc ON oc.order_id = COALESCE(spo.salesOrderId, spo.consignmentOrderId)
+           JOIN order_dept od ON od.order_id = COALESCE(spo.salesOrderId, spo.consignmentOrderId)
+                             AND od.category = spo.itemCategory
           WHERE spo.status <> 'CANCELLED'
             AND NOT EXISTS (SELECT 1 FROM job_cards sj
-                             WHERE sj.productionOrderId = spo.id AND sj.departmentCode = 'FAB_CUT')
+                             WHERE sj.productionOrderId = spo.id AND sj.departmentCode = od.dept)
        ),
        po_wip AS (
          SELECT productionOrderId,
