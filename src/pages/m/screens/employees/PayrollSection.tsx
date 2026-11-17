@@ -42,7 +42,7 @@ import {
   type PayFilters,
 } from "./payroll-model";
 import { usePayroll } from "./use-payroll";
-import { todayYmdMYForReads } from "@/lib/staging-today";
+import { todayYmdMY } from "@/lib/utils";
 
 const PREVIEW = 5;
 
@@ -54,7 +54,7 @@ const Status = ({ children, sub }: { children: string; sub?: string }) => (
 );
 
 export default function PayrollSection() {
-  const today = todayYmdMYForReads();
+  const today = todayYmdMY();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const month = parseMonth(params.get("pm"), today);

@@ -6,7 +6,7 @@
 // Phase 1 builds the state; no section consumes it yet, so no tab shows a period picker until its data follows it.
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { todayYmdMYForReads } from "@/lib/staging-today";
+import { todayYmdMY } from "@/lib/utils";
 import { parseRange, rangeLabel, validateRange, type YmdRange } from "./employees-dates";
 
 export function useEmployeesPeriod(): {
@@ -16,7 +16,7 @@ export function useEmployeesPeriod(): {
   setRange: (r: YmdRange) => boolean;
 } {
   const [params, setParams] = useSearchParams();
-  const today = todayYmdMYForReads();
+  const today = todayYmdMY();
   const from = params.get("from");
   const to = params.get("to");
   const range = useMemo(() => parseRange(from, to, today), [from, to, today]);

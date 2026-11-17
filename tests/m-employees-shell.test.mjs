@@ -93,7 +93,7 @@ test("the date helpers hold no hard-coded date and never read the clock", () => 
   assert.ok(!/\bnew Date\(\)|Date\.now\(|toISOString/.test(dates), "employees-dates.ts must take `today` as an argument");
   assert.ok(!/2026-11-13/.test(dates), "no sample 'today' in the helpers");
   const hook = src("screens/employees/use-employees-period.ts");
-  assert.match(hook, /todayYmdMYForReads\(\)/, "the hook gets today from the Malaysia helper");
+  assert.match(hook, /todayYmdMY\(\)/, "the hook gets today from the Malaysia helper");
   const sheet = src("screens/employees/PeriodSheet.tsx");
   assert.ok(!/2026-11-13|new Date\(\)/.test(sheet), "the sheet takes `today` from its caller");
 });

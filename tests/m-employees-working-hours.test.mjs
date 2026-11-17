@@ -253,7 +253,7 @@ test("the work date input is bounded: not after today (Malaysia), not before 202
   const s = src("WorkingHoursSection.tsx");
   assert.match(s, /min=\{MIN_DATE\}/);
   assert.match(s, /max=\{today\}/);
-  assert.match(s, /todayYmdMYForReads\(\)/);
+  assert.match(s, /todayYmdMY\(\)/);
 });
 
 test("Daily working hours is the HTML card without extras: no period line, no per-date totals, no day-total captions", () => {

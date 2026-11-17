@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarDays, CameraOff, ChevronRight, UserRound } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { todayYmdMYForReads } from "@/lib/staging-today";
+import { todayYmdMY } from "@/lib/utils";
 import { M } from "../../theme";
 import AttendanceDetail from "./AttendanceDetail";
 import DatePickButton from "./DatePickButton";
@@ -43,7 +43,7 @@ const PILL: Record<RowLoc, { bg: string; fg: string }> = {
 
 export default function AttendanceSection() {
   const [params, setParams] = useSearchParams();
-  const today = todayYmdMYForReads();
+  const today = todayYmdMY();
   const { period, loc } = parseAttendanceParams((k) => params.get(k), today);
   const allowed = useCanReadAttendance();
   const { data, loading, error } = useCachedJson<unknown>(allowed ? attendanceUrl(period) : null, 60);

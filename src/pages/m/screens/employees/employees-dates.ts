@@ -1,7 +1,7 @@
 // employees-dates.ts — pure date helpers for the mobile Employees shared period (HK-0125).
 //
 // Every function takes `today` (a Malaysia YYYY-MM-DD) as an argument instead of reading the clock, so the rules are
-// testable and never hard-code a date. The caller supplies `todayYmdMYForReads()`.
+// testable and never hard-code a date. The caller supplies `todayYmdMY()`.
 //
 // Rules (desktop employees.tsx wins): a tab opens on the whole CURRENT calendar month (1st..last day), the same as
 // `readPersistedDateRangeThisMonth`. Future months are disabled; a custom From/To cannot end after today.

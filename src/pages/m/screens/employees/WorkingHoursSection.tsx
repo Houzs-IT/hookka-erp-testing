@@ -14,7 +14,7 @@ import { CalendarDays, ChevronRight, Clock, Search } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { printReport, type PrintColumn } from "@/lib/print-report";
 import { usePermissions } from "@/lib/use-permission";
-import { todayYmdMYForReads } from "@/lib/staging-today";
+import { todayYmdMY } from "@/lib/utils";
 import { M } from "../../theme";
 import { AdjustmentRequests } from "./AdjustmentRequests";
 import DatePickButton from "./DatePickButton";
@@ -47,7 +47,7 @@ const PREVIEW_ROWS = 5;
 
 export default function WorkingHoursSection({ pending }: { pending: AdjustmentList & { allowed: boolean } }) {
   const [params, setParams] = useSearchParams();
-  const today = todayYmdMYForReads();
+  const today = todayYmdMY();
   const q = params.get("q") ?? "";
   const wdate = /^\d{4}-\d{2}-\d{2}$/.test(params.get("wdate") ?? "") ? (params.get("wdate") as string) : "";
   const dept = params.get("wdept") ?? "";

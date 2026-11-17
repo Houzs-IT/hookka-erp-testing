@@ -7,7 +7,7 @@
 // HTML's; the figures are the app's (overview-model.ts).
 import { Activity, ChevronRight, CircleCheck, Clock, UserCheck, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { todayYmdMYForReads } from "@/lib/staging-today";
+import { todayYmdMY } from "@/lib/utils";
 import { M } from "../../theme";
 import { attendanceLink } from "./attendance-model";
 import { monthToDate, needsAction, overviewLabel, buildCards, type CardTone, type OverviewCard } from "./overview-model";
@@ -30,7 +30,7 @@ export default function OverviewSection({
   onGo: (section: Target) => void;
 }) {
   const navigate = useNavigate();
-  const today = todayYmdMYForReads();
+  const today = todayYmdMY();
   const data = useOverview(today);
   const range = monthToDate(today);
   const depts = useCachedJson<unknown>("/api/departments", 300);
