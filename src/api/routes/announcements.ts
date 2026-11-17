@@ -1388,13 +1388,35 @@ worker.post("/:id/ack", async (c) => {
   ) {
     return c.json({ success: true, acked: false });
   }
-  await c.var.DB.prepare(
+  const ins = await c.var.DB.prepare(
     `INSERT INTO announcement_acks (announcement_id, worker_id, acked_at)
      VALUES (?, ?, ?)
      ON CONFLICT (announcement_id, worker_id) DO NOTHING`,
   )
     .bind(id, workerId, new Date().toISOString())
     .run();
+  // HK-0154: bell the ERP user who posted it, one row per worker. Only a NEW
+  // ack row notifies, so a double-tap or retry never sends a second alert.
+  const sender = row.createdBy ?? row.created_by ?? null;
+  if (sender && Number((ins as { meta?: { changes?: number } })?.meta?.changes ?? 0) > 0) {
+    try {
+      const w = await c.var.DB.prepare("SELECT name, empNo FROM workers WHERE id = ?")
+        .bind(workerId)
+        .first<{ name?: string | null; empNo?: string | null; emp_no?: string | null }>();
+      const empNo = w?.empNo ?? w?.emp_no ?? null;
+      const who = w?.name ? (empNo ? `${w.name} (${empNo})` : w.name) : (empNo ?? workerId);
+      await notifyErpUsers(c, row.orgId ?? row.org_id ?? DEFAULT_ORG_ID, [sender], {
+        title: `Acknowledged: ${row.title}`,
+        text: `${who} tapped "Got it".`,
+        priority: null,
+        orderId: null,
+        link: "/announcements",
+      });
+    } catch (e) {
+      // Best-effort: the ack is already saved; a bell failure must not fail it.
+      console.error("[announcements] ack notify failed", e);
+    }
+  }
   return c.json({ success: true, acked: true });
 });
 
