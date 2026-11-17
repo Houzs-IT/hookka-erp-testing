@@ -86,6 +86,7 @@ test("keyed boxes carry their column and the key handler; Up / Down never nudge 
 });
 
 test("calm cells: the keyed boxes are warm", () => {
-  assert.match(src, /const BOX = "inline-flex items-center rounded border border-\[#E2DDD8\] bg-\[#FFFBF2\] px-1";/);
+  // (2026-11-17: the copy / paste selection adds data-[fc-sel] classes after these.)
+  assert.match(src, /const BOX = "inline-flex items-center rounded border border-\[#E2DDD8\] bg-\[#FFFBF2\] px-1[" ]/);
   assert.equal((src.match(/className=\{`\$\{BOX\} w-/g) ?? []).length, 2, "the RM box and the % box");
 });
