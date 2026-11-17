@@ -88,6 +88,16 @@
 .brp-donut li { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
 .brp-donut .sw { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
 .brp-donut .lb { flex: 1; }
+/* A forecast column beside actual ones (owner review 2026-11-15). */
+.brp-table .brp-fc { font-style: italic; background: #f6f7fa; }
+/* Page 2: the revenue donut with GP / NP stated beside it (owner review 2026-11-15). */
+.brp-split { display: flex; flex-direction: column; gap: 6px; }
+.brp-split-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.brp-split-facts > div { border: 1px solid var(--brp-rule); border-radius: 4px; padding: 4px 6px; display: flex; flex-direction: column; }
+.brp-split-facts span { font-size: 7.5pt; color: var(--brp-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.brp-split-facts b { font-size: 11pt; }
+.brp-split-facts em { font-style: normal; font-size: 8pt; color: var(--brp-muted); }
+.brp-split-facts p { grid-column: 1 / -1; margin: 0; }
 .brp-sharebars .row { display: grid; grid-template-columns: 34% 1fr 52px; align-items: center; gap: 8px; padding: 2px 0; font-size: 8.5pt; }
 .brp-sharebars .bar { height: 10px; background: #f0f1f4; border-radius: 2px; overflow: hidden; }
 .brp-sharebars .bar > span { display: block; height: 100%; }

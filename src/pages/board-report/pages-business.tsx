@@ -27,6 +27,28 @@ export function CashForecastPage({ r }: P) {
               ))}
             </tbody>
           </table>
+          {/* Owner review 2026-11-15 「Operating & Investing & Financing」: each
+              month's cash flow by activity — the actual column for a closed
+              month, both forecasts beside it. */}
+          {d.months.some((m) => m.actualCf || m.docsCf || m.pnlCf) && (
+            <>
+              <h3>Cash flow by activity, RM</h3>
+              <table className="brp-table compact">
+                <thead><tr><th /><th />{d.months.map((m) => <th key={m.ym}>{m.label}</th>)}</tr></thead>
+                <tbody>
+                  {([["actualCf", "Actual"], ["docsCf", "Forecast (Docs)"], ["pnlCf", "Forecast (P&L)"]] as const).flatMap(([src, srcLabel]) =>
+                    d.months.some((m) => m[src]) ? (["operating", "investing", "financing", "net"] as const).map((k, i) => (
+                      <tr key={`${src}-${k}`} className={k === "net" ? "strong" : ""}>
+                        <td>{i === 0 ? srcLabel : ""}</td>
+                        <td>{{ operating: "Operating", investing: "Investing", financing: "Financing", net: "Net cash flow" }[k]}</td>
+                        {d.months.map((m) => <td key={m.ym} className={src === "actualCf" ? undefined : "brp-fc"}><Money v={m[src]?.[k] ?? null} /></td>)}
+                      </tr>
+                    )) : [],
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
           <h3>Month-end bank balance</h3>
           <Elastic>
             {(w, h) => (
@@ -39,7 +61,7 @@ export function CashForecastPage({ r }: P) {
                 ]} />
             )}
           </Elastic>
-          <p className="brp-small">{d.asOf ? `Forecast as at ${d.asOf}. ` : ""}Source: Finance › Cash Flow with Forecast on.</p>
+          <p className="brp-small">{d.asOf ? `Forecast as at ${d.asOf}. ` : ""}Operating = net operation surplus; investing = capex; financing = trade finance, loans, deposits and finance cost (the Financial Dashboard&apos;s split). Source: Finance › Cash Flow with Forecast on.</p>
         </>
       ))}
     </BrPage>
@@ -68,10 +90,26 @@ export function CustomersPage({ r }: P) {
           </table>
           <h3>Share of confirmed orders</h3>
           {/* Owner review 2026-11-10: half the page was empty — a donut next to the bars. */}
-          <div className="brp-grid2 brp-fill">
+          <div className="brp-grid2">
             <Donut items={d.rows.slice(0, 6).map((x) => ({ label: x.name, value: x.total ?? 0 }))} centre={pctText(d.concentration?.largestPct ?? null)} />
             <ShareBars rows={d.rows.map((x) => ({ label: x.name, value: x.total, pct: x.share }))} />
           </div>
+          {/* Owner review 2026-11-15: the space below compares each top
+              customer's bedframe and sofa order value. */}
+          <h3>Bedframe vs sofa by customer, RM</h3>
+          <Elastic>
+            {(w, h) => (
+              <ComboChart w={w} h={h}
+                data={d.rows
+                  .filter((x) => !x.name.startsWith("Other ("))
+                  .slice(0, 10)
+                  .map((x) => ({ label: x.name.length > 12 ? `${x.name.slice(0, 11)}…` : x.name, values: { b: x.bedframeTotal ?? 0, s: x.sofaTotal ?? 0 } }))}
+                series={[
+                  { key: "b", label: "Bedframe", color: C.navy, type: "bar" },
+                  { key: "s", label: "Sofa", color: C.gold, type: "bar" },
+                ]} />
+            )}
+          </Elastic>
           <p className="brp-small">Confirmed sales orders in the month (the Dashboard&apos;s sales figure), not invoices. Bedframe / Sofa RM = average x count (accessories make up the rest). Source: Dashboard › Sales (AOV by customer, concentration).</p>
         </>
       ))}
@@ -122,7 +160,7 @@ export function OperationsPage({ r }: P) {
             <div className="brp-tiles four">
               <Tile label="Production revenue" value={<>RM {rm(d.prodTotal)}</>} sub="value of work completed" />
               <Tile label="Units completed" value={d.units ?? "-"} sub={<>last month {d.prevUnits ?? "-"} <Delta p={changePct(d.units, d.prevUnits)} /></>} />
-              <Tile label="Headcount (production payroll)" value={d.headcount ?? "-"} sub={<>units per head {perHead ?? "-"} (last month {prevPerHead ?? "-"})</>} />
+              <Tile label="Production workers paid" value={d.headcount ?? "-"} sub={<>units per head {perHead ?? "-"} (last month {prevPerHead ?? "-"})</>} />
               <Tile label="Defect rate" value={pctText(defUnits ? pct(defTotal, defUnits) : null)} sub={d.defects ? `${defTotal} cases / ${defUnits} units shipped` : d.defectsError ?? ""} />
             </div>
             <div className="brp-grid2">
@@ -183,7 +221,7 @@ export function OperationsPage({ r }: P) {
                   ]} />
               )}
             </Elastic>
-            <p className="brp-small">Defect rate = service cases logged ÷ units delivered (our defects: transport and customer causes left out). Highest / lowest efficiency = standard minutes earned ÷ clocked minutes (Operations Report); bands = each worker's production ÷ working minutes for the month (Employees insights). Units completed run high (known duplicate completions).</p>
+            <p className="brp-small">Defect rate = service cases logged ÷ units delivered (our defects: transport and customer causes left out). Highest / lowest efficiency = standard minutes earned ÷ clocked minutes (Operations Report); bands = each worker's production ÷ working minutes for the month (Employees insights). Units completed run high (known duplicate completions). Production workers paid = workers with a payslip in a production department that month (hours clocked, before payslips exist).</p>
           </>
         );
       })}
@@ -202,6 +240,8 @@ export function OutlookPage({ r }: P) {
               {([["sales", "Revenue"], ["cogs", "Cost of goods sold"], ["gross", "Gross profit"], ["expenses", "Operating expenses"], ["net", "Net profit"]] as const).map(([k, label]) => (
                 <tr key={k} className={k === "gross" || k === "net" ? "strong" : ""}><td>{label}</td>{d.months.map((m) => <td key={m.ym}><Money v={m.forecast?.[k] ?? null} /></td>)}</tr>
               ))}
+              {/* Owner review 2026-11-15: GP % beside the net margin. */}
+              <tr><td>GP %</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.forecast ? pct(m.forecast.gross, m.forecast.sales) : null)}</td>)}</tr>
               <tr><td>Net margin</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.forecast ? pct(m.forecast.net, m.forecast.sales) : null)}</td>)}</tr>
               <tr className="muted"><td>Revenue to date (running month)</td>{d.months.map((m) => <td key={m.ym}><Money v={m.mtd?.sales ?? null} /></td>)}</tr>
             </tbody>
@@ -210,27 +250,48 @@ export function OutlookPage({ r }: P) {
             <>
               <h3>Quarter outlook — {d.quarter.label}</h3>
               <table className="brp-table compact">
-                <thead><tr><th>Month</th><th>Revenue</th><th>Net profit</th></tr></thead>
+                {/* Owner review 2026-11-15: a Difference column — a closed
+                    month's actual against its forecast. */}
+                <thead><tr><th>Month</th><th>Revenue</th><th>Net profit</th><th>Revenue forecast</th><th>Net profit forecast</th><th>Difference, revenue</th><th>Difference, net profit</th></tr></thead>
                 <tbody>
-                  {d.quarter.rows.map((x) => <tr key={x.label}><td>{x.label}</td><td><Money v={x.sales} /></td><td><Money v={x.net} /></td></tr>)}
-                  <tr className="strong"><td>Quarter</td><td><Money v={d.quarter.sales} /></td><td><Money v={d.quarter.net} /></td></tr>
+                  {d.quarter.rows.map((x) => {
+                    const act = x.kind === "actual";
+                    const fs = x.fcSales ?? null, fn = x.fcNet ?? null;
+                    return (
+                      <tr key={x.label}>
+                        <td>{x.label}</td><td><Money v={x.sales} /></td><td><Money v={x.net} /></td>
+                        <td>{act ? <Money v={fs} /> : null}</td><td>{act ? <Money v={fn} /> : null}</td>
+                        <td>{act && x.sales !== null && fs !== null ? <><Money v={x.sales - fs} /> <Delta p={changePct(x.sales, fs)} /></> : null}</td>
+                        <td>{act && x.net !== null && fn !== null ? <><Money v={x.net - fn} /> <Delta p={changePct(x.net, fn)} /></> : null}</td>
+                      </tr>
+                    );
+                  })}
+                  {(() => {
+                    const acts = d.quarter.rows.filter((x) => x.kind === "actual" && x.sales !== null && x.fcSales != null);
+                    const actsN = d.quarter.rows.filter((x) => x.kind === "actual" && x.net !== null && x.fcNet != null);
+                    const ds = acts.length ? acts.reduce((t, x) => t + (x.sales as number) - (x.fcSales as number), 0) : null;
+                    const dn = actsN.length ? actsN.reduce((t, x) => t + (x.net as number) - (x.fcNet as number), 0) : null;
+                    return <tr className="strong"><td>Quarter</td><td><Money v={d.quarter.sales} /></td><td><Money v={d.quarter.net} /></td><td /><td /><td><Money v={ds} /></td><td><Money v={dn} /></td></tr>;
+                  })()}
                 </tbody>
               </table>
             </>
           )}
-          <h3>Forecast revenue and net profit</h3>
+          {/* Owner review 2026-11-15: gross profit beside net profit on the chart. */}
+          <h3>Forecast revenue, gross profit and net profit</h3>
           <Elastic>
             {(w, h) => (
               <ComboChart w={w} h={h}
-                data={d.months.map((m) => ({ label: m.label, values: { s: m.forecast?.sales ?? null, m: m.mtd?.sales ?? null, n: m.forecast?.net ?? null } }))}
+                data={d.months.map((m) => ({ label: m.label, values: { s: m.forecast?.sales ?? null, m: m.mtd?.sales ?? null, g: m.forecast?.gross ?? null, n: m.forecast?.net ?? null } }))}
                 series={[
                   { key: "s", label: "Revenue forecast", color: C.navy, type: "bar" },
                   { key: "m", label: "Revenue to date", color: C.light, type: "bar" },
+                  { key: "g", label: "Gross profit forecast", color: C.green, type: "line" },
                   { key: "n", label: "Net profit forecast", color: C.gold, type: "line" },
                 ]} />
             )}
           </Elastic>
-          <p className="brp-small">Source: Forecasting › Forecast P&amp;L as keyed by Finance; a month with no forecast keyed is left out.</p>
+          <p className="brp-small">Difference = actual − forecast, for months already closed. Source: Forecasting › Forecast P&amp;L as keyed by Finance; a month with no forecast keyed is left out.</p>
         </>
       ))}
     </BrPage>

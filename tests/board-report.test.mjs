@@ -170,10 +170,13 @@ test("materials merge a category across lines and keep the forecast", () => {
   assert.equal(fabric.prev, 9_000_00);
 });
 
-test("trend: closed months, the running month to date, next month's forecast", () => {
+test("trend: closed months, then the running month and next month as forecast (owner review 2026-11-15)", () => {
   const r = shapeBoardReport(fixture(), "2026-10", "2026-11-10", "x");
   assert.ok(r.trend.ok);
-  assert.deepEqual(r.trend.data.points.map((p) => `${p.ym}:${p.kind}`), ["2026-08:actual", "2026-09:actual", "2026-10:actual", "2026-11:mtd", "2026-12:forecast"]);
+  assert.deepEqual(r.trend.data.points.map((p) => `${p.ym}:${p.kind}`), ["2026-08:actual", "2026-09:actual", "2026-10:actual", "2026-11:forecast", "2026-12:forecast"]);
+  const nov = r.trend.data.summary.find((s) => s.label.startsWith("Nov 26"));
+  assert.equal(nov.label, "Nov 26 (forecast)");
+  assert.equal(nov.sales, 48_000_00, "the running month shows its forecast, not the 20,000 to date");
   assert.equal(r.trend.data.summary.at(-1).sales, 52_000_00);
   assert.equal(r.trend.data.last3.length, 3);
 });
@@ -314,10 +317,12 @@ test("the page prints as A4: one page per section, page breaks, Download PDF = w
   const page = read("src/pages/board-report/index.tsx");
   assert.match(page, /onClick=\{\(\) => window\.print\(\)\}/);
   assert.match(page, /\/api\/reports\/board\?month=/);
-  assert.match(page, /\/api\/reports\/board\/notes/);
-  for (const p of ["CoverPage", "IncomePage", "LabourPage", "MaterialsPage", "TrendPage", "BalancePage", "CashFlowPage", "CashForecastPage", "CustomersPage", "NewModelsPage", "OperationsPage", "OutlookPage", "NotesPage", "Appendices"]) {
+  for (const p of ["CoverPage", "IncomePage", "LabourPage", "MaterialsPage", "TrendPage", "BalancePage", "CashFlowPage", "CashForecastPage", "CustomersPage", "NewModelsPage", "OperationsPage", "OutlookPage", "Appendices"]) {
     assert.ok(page.includes(`<${p} r={data} />`), p);
   }
+  // Owner review 2026-11-15: page 13 (automatic checks + Finance notes) is left out.
+  assert.ok(!page.includes("<NotesPage"), "page 13 is not rendered");
+  assert.ok(!page.includes("<NotesEditor"), "nor its edit box");
   // Every page has exactly one elastic chart at most, so each fills its sheet without overflowing.
   for (const f of ["pages-finance.tsx", "pages-business.tsx"]) {
     const s = read(`src/pages/board-report/${f}`);
