@@ -10,8 +10,9 @@ import { deptName } from "./ops-floor-lib";
 // ---------------------------------------------------------------------------
 // Labour cost (owner 2026-11-06): total labour, split into direct labour
 // (outsource included) and non-production labour, each with RM and %. The same
-// figures as Costing and the Labor Cost page's Payroll Reconciliation: they all
-// come from LabourMonth. Layer 2 lists every department and person.
+// figures as Costing (LabourMonth) and the Labor Cost page's Payroll
+// Reconciliation, which applies the same outsource rule. Layer 2 lists every
+// department and person.
 // ---------------------------------------------------------------------------
 type Person = { id: string; name: string | null; dept: string | null; empNo?: string | null };
 

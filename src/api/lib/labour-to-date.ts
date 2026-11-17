@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 import type { Env } from "../worker";
 import { effectiveSalarySenForMonth } from "../../lib/labor-engine";
-import { computeLabourToDate, runningMonthYm, type LabourMonth, type LabourToDate, type TdEntry, type TdPayslip, type TdWorker } from "../../lib/labour-to-date";
+import { computeLabourToDate, isOutsourceWorker, runningMonthYm, type LabourMonth, type LabourToDate, type TdEntry, type TdPayslip, type TdWorker } from "../../lib/labour-to-date";
 import { loadPayRuleVersions } from "./pay-rules-store";
 import { projectedPayslipsForMonth } from "./labour-projection";
 import { requestMemo, timed } from "./step-timing";
@@ -80,7 +80,7 @@ async function loadLabourToDateUntimed(
   for (const r of wRes.results ?? []) {
     const id = String(r.id ?? "");
     if (!id) continue;
-    if (/^OSC/i.test(String(pick(r, "empNo", "emp_no") ?? "")) || /^OUTSOURCE/i.test(String(r.name ?? "").trim())) outsourceWorkerIds.add(id);
+    if (isOutsourceWorker({ empNo: pick(r, "empNo", "emp_no"), name: r.name })) outsourceWorkerIds.add(id);
     const basic = num(pick(r, "basicSalarySen", "basic_salary_sen"));
     const otm = pick(r, "otMultiplier", "ot_multiplier");
     workers.set(id, {
