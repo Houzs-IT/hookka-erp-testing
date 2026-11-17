@@ -552,8 +552,7 @@ app.get("/", async (c) => {
       const jcMins = jc.estMinutes ?? jc.actualMinutes ?? 0;
       const perWorkerMins = creditCardToPics(jcMins, jc);
 
-      for (const [wid, rawMins] of perWorkerMins) {
-        const myMins = Math.round(rawMins);
+      for (const [wid, myMins] of perWorkerMins) {
         let wc = day.workersByWorker.get(wid);
         if (!wc) {
           // Worker has JC credit but no working_hour_entries row for this date.

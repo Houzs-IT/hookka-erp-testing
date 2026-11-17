@@ -137,7 +137,7 @@ export function buildPerfDays(input: {
     const jcMins = num(jc.estMinutes) || (actual ?? 0);
     const perWorker = creditCardToPics(jcMins, { ...jc, wipQty });
     for (const [wid, raw] of perWorker) {
-      perfWorker(d, wid).productionMinutes += Math.round(raw);
+      perfWorker(d, wid).productionMinutes += raw;
     }
   }
 

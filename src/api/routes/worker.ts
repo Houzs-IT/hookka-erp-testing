@@ -1960,7 +1960,7 @@ app.get("/history", async (c) => {
       departmentCode: jc.departmentCode ?? "",
       estMinutes: jc.estMinutes,
       actualMinutes: jc.actualMinutes,
-      myMinutes: Math.round(myMinutes),
+      myMinutes,
       piecesWorked,
       piecesShared,
       totalPieces: pieces.length || (jc.wipQty || 1),
@@ -4328,8 +4328,7 @@ app.get("/department-performance", async (c) => {
       const jcMins = jc.estMinutes ?? jc.actualMinutes ?? 0;
       const perWorkerMins = creditCardToPics(jcMins, jc);
 
-      for (const [wid, rawMins] of perWorkerMins) {
-        const myMins = Math.round(rawMins);
+      for (const [wid, myMins] of perWorkerMins) {
         let wc = day.workersByWorker.get(wid);
         if (!wc) {
           wc = {
