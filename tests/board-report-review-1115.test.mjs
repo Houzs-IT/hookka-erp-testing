@@ -237,3 +237,14 @@ test("13. appendix keeps group rows and drops the stock detail lines under purch
   };
   assert.deepEqual(shapeMatrix(p, "2026-10").rows.map((r) => r.label), ["COST OF GOODS SOLD", "RAW MATERIALS", "PURCHASE - B.M FABRIC", "CARRIAGE INWARDS", "WAGES"]);
 });
+
+test("outlook chart: GP and NP as labelled bars, no month-to-date bar (owner 2026-11-17)", () => {
+  const b = readFileSync("src/pages/board-report/pages-business.tsx", "utf8");
+  assert.match(b, /<ComboChart w=\{w\} h=\{h\} labels/);
+  assert.match(b, /\{ key: "g", label: "Gross profit forecast", color: C\.green, type: "bar" \}/);
+  assert.match(b, /\{ key: "n", label: "Net profit forecast", color: C\.gold, type: "bar" \}/);
+  assert.doesNotMatch(b, /label: "Revenue to date"/);
+  assert.doesNotMatch(b, /<td>Revenue to date \(running month\)<\/td>/, "the table row goes too");
+  const c = readFileSync("src/pages/board-report/charts.tsx", "utf8");
+  assert.match(c, /\{labels && <text /);
+});

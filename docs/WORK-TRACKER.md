@@ -331,6 +331,9 @@ Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' en
     - Opening: Houzs' 14 pre-opening invoices (INV-2605-003…066, RM 25,518.55) flagged opening; opening re-posted with 300-0000 +RM 25,518.55, 500-0020 +RM 22,875.55, 500-0000 +RM 2,643.00 (split by product lines); the other 31 lines unchanged. This cleared the AR control drift (−RM 25,000, from HOR-2607-001 paying those invoices with no opening behind them).
     - PI-2611-055 (HUGYP MADE, RM 640, dated 2025-11-12, entered Nov 2026) set aside from the opening (ap-exclude) so the re-post kept the creditor opening as posted. 🟡 Owner to decide later 「hugyp made先不理」: un-exclude + re-post with a purchase account, or leave out.
     - MEASURED after: AR control drift 0, unapplied advances 0; Houzs Debtor Aging only Current; The Conts 3+ mth = the two CN amounts.
+## 🔵 Board report page 12: GP and NP bars, no revenue to date (feat/outlook-chart-gp-np, 2026-11-17)
+
+Ask (17 Nov, screenshot of page 12): 「没有NP？GP？不需要revenue to date」. The outlook chart now draws revenue, gross profit and net profit forecasts as three bars per month with each amount written above (`ComboChart labels`); the "Revenue to date" bar and table row are gone. Customer forecast: owner 「先不用」 (17 Nov).
 
 ## 🔵 Board report: same six months and a forecast on every chart; access locked (feat/board-report-six-months + fix/kv-config-finance-keys-gated, 2026-11-17)
 

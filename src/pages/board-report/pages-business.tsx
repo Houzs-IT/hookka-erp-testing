@@ -243,7 +243,6 @@ export function OutlookPage({ r }: P) {
               {/* Owner review 2026-11-15: GP % beside the net margin. */}
               <tr><td>GP %</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.forecast ? pct(m.forecast.gross, m.forecast.sales) : null)}</td>)}</tr>
               <tr><td>Net margin</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.forecast ? pct(m.forecast.net, m.forecast.sales) : null)}</td>)}</tr>
-              <tr className="muted"><td>Revenue to date (running month)</td>{d.months.map((m) => <td key={m.ym}><Money v={m.mtd?.sales ?? null} /></td>)}</tr>
             </tbody>
           </table>
           {d.quarter && (
@@ -281,13 +280,14 @@ export function OutlookPage({ r }: P) {
           <h3>Forecast revenue, gross profit and net profit</h3>
           <Elastic>
             {(w, h) => (
-              <ComboChart w={w} h={h}
-                data={d.months.map((m) => ({ label: m.label, values: { s: m.forecast?.sales ?? null, m: m.mtd?.sales ?? null, g: m.forecast?.gross ?? null, n: m.forecast?.net ?? null } }))}
+              // Owner 2026-11-17 「没有NP？GP？不需要revenue to date」: gross and net
+              // profit as bars beside revenue, each with its amount; no month-to-date bar.
+              <ComboChart w={w} h={h} labels
+                data={d.months.map((m) => ({ label: m.label, values: { s: m.forecast?.sales ?? null, g: m.forecast?.gross ?? null, n: m.forecast?.net ?? null } }))}
                 series={[
                   { key: "s", label: "Revenue forecast", color: C.navy, type: "bar" },
-                  { key: "m", label: "Revenue to date", color: C.light, type: "bar" },
-                  { key: "g", label: "Gross profit forecast", color: C.green, type: "line" },
-                  { key: "n", label: "Net profit forecast", color: C.gold, type: "line" },
+                  { key: "g", label: "Gross profit forecast", color: C.green, type: "bar" },
+                  { key: "n", label: "Net profit forecast", color: C.gold, type: "bar" },
                 ]} />
             )}
           </Elastic>
