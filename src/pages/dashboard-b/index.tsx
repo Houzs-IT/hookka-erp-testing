@@ -102,7 +102,8 @@ type Overview = {
     completedLast7: { date: string; bedframeUnits: number; sofaSets: number }[];
     /** Whole-window totals, deduped — NOT the per-day series added up. */
     completedRange?: { bedframeUnits: number; sofaSets: number };
-    capacityDays: { date: string; minutes: number; workers: number }[];
+    capacityDays: { date: string; minutes: number; workers: number; picWorkers?: number }[];
+    capacityWorkersSource?: "punch-in" | "job-card-pic";
     // backlogDays: null = "stalled" (zero completions in the rolling window —
     // no honest way to express the queue in days).
     backlogByDept: {
@@ -1529,7 +1530,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                       : "—";
                   setDrill({
                     title: capacityDrillTitle,
-                    subtitle: `Average ${hm(prod.dailyCapacityMin)}/day · ${perWorkerAvg}/worker across all production depts`,
+                    subtitle: `Average ${hm(prod.dailyCapacityMin)}/day · ${perWorkerAvg}/worker across all production depts · ${prod.capacityWorkersSource === "job-card-pic" ? "Workers = people named on the cards finished that day" : "Workers = everyone who punched in that day, helpers included, outsource excluded"}`,
                     node: (
                       <MiniTable
                         cols={[

@@ -158,3 +158,12 @@ test("sets per department follow the same rows (and buckets) as its revenue", ()
   const wc = summarizeDeptRevenue(rows, days, same).find((d) => d.code === "WOOD_CUT");
   assert.equal(wc.sets.total, 0);
 });
+
+test("Fabric Cutting: a module with no cutting card books when its order's one cutting card is done (owner 2026-11-17)", () => {
+  const src = readFileSync(resolve(process.cwd(), "src/api/lib/dept-revenue.ts"), "utf8");
+  assert.match(src, /order_cut AS \(/);
+  assert.match(src, /WHERE cj\.departmentCode = 'FAB_CUT'/);
+  assert.match(src, /NOT EXISTS \(SELECT 1 FROM job_cards sj\s+WHERE sj\.productionOrderId = spo\.id AND sj\.departmentCode = 'FAB_CUT'\)/);
+  assert.match(src, /WHERE spo\.status <> 'CANCELLED'/);
+  assert.match(src, /FROM dept_done d\s+JOIN production_orders po/);
+});

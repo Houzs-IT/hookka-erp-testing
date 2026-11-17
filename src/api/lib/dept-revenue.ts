@@ -10,7 +10,8 @@
 // completedDate. Every department books the full value, so a RM 2,000 sofa
 // through 9 departments shows RM 18,000 across the departments; equal rows
 // mean balanced output. An order with no card in a department books nothing
-// there. The UPHOLSTERY row therefore equals the chart's Production line.
+// there — except Fabric Cutting, whose one card per order covers every module
+// (see order_cut in loadDeptRevenue). The UPHOLSTERY row therefore equals the chart's Production line.
 //
 // This is NOT the Labor Cost tab's "category revenue" (working-hour-entries.ts),
 // which splits one order's value across departments by minutes so the slices
@@ -154,6 +155,37 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
                               AND completedDate IS NOT NULL
                          THEN 1 ELSE 0 END) = COUNT(*)
        ),
+       -- Fabric is cut ONCE per order: a sofa order's FAB_CUT card sits on its
+       -- first production order and covers every module ("5568-2A(LHF)+L(RHF)",
+       -- qty 2). Measured on prod 2026-11-17: 884 of 1,663 sofa POs have no
+       -- FAB_CUT card of their own while another PO of the same order does,
+       -- so Fabric Cutting booked only the -01 module (Nov: sofa RM 83,914 vs
+       -- Fabric Sewing RM 195,170). A PO with no FAB_CUT card books FAB_CUT
+       -- when ALL of its order's FAB_CUT cards are done, on the last one's day.
+       order_cut AS (
+         SELECT COALESCE(cpo.salesOrderId, cpo.consignmentOrderId) AS order_id,
+                MAX(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
+                              AND cj.completedDate IS NOT NULL
+                         THEN cj.completedDate END) AS done_at
+           FROM job_cards cj
+           JOIN production_orders cpo ON cpo.id = cj.productionOrderId
+          WHERE cj.departmentCode = 'FAB_CUT'
+            AND COALESCE(cpo.salesOrderId, cpo.consignmentOrderId) IS NOT NULL
+          GROUP BY COALESCE(cpo.salesOrderId, cpo.consignmentOrderId)
+         HAVING SUM(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
+                              AND cj.completedDate IS NOT NULL
+                         THEN 1 ELSE 0 END) = COUNT(*)
+       ),
+       dept_done AS (
+         SELECT productionOrderId, departmentCode, done_at FROM per_po_dept
+         UNION ALL
+         SELECT spo.id AS productionOrderId, 'FAB_CUT' AS departmentCode, oc.done_at
+           FROM production_orders spo
+           JOIN order_cut oc ON oc.order_id = COALESCE(spo.salesOrderId, spo.consignmentOrderId)
+          WHERE spo.status <> 'CANCELLED'
+            AND NOT EXISTS (SELECT 1 FROM job_cards sj
+                             WHERE sj.productionOrderId = spo.id AND sj.departmentCode = 'FAB_CUT')
+       ),
        po_wip AS (
          SELECT productionOrderId,
                 MAX(CASE WHEN UPPER(wipType) = 'HEADBOARD' THEN 1 ELSE 0 END) AS has_hb,
@@ -171,7 +203,7 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
                    WHEN w.has_hb = 1 THEN 'HB'
                    WHEN w.has_divan = 1 THEN 'DIVAN'
                    ELSE 'UNKNOWN' END AS "bedPiece"
-         FROM per_po_dept d
+         FROM dept_done d
          JOIN production_orders po ON po.id = d.productionOrderId
          LEFT JOIN po_wip w ON w.productionOrderId = po.id
          ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
