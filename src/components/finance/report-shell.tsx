@@ -354,7 +354,15 @@ export function CheckStrip({ ok, label, children }: { ok: boolean; label: string
 
 /** The framed report: centred company / report / note, then the table. A
  *  `maxHeight` keeps a long report scrolling inside the frame so its header
- *  stays in view. */
+ *  stays in view.
+ *
+ *  Fill the screen (owner 2026-11-17 「为什么我的forecast 不能scroll下去？还是很
+ *  小…占满我的整个电脑的感觉」): the page's own maxHeight left a short box,
+ *  and a wheel over the table scrolled only the table, so the title and
+ *  toolbar never moved away. Now the box is as tall as the window under the
+ *  sticky top bar, and scrolling down over it moves the PAGE first until the
+ *  frame reaches the top bar — then the table scrolls, filling the screen.
+ *  Full screen (FullScreenToggle) still overrides through --fin-full-h. */
 export function ReportFrame({
   company,
   title,
@@ -368,14 +376,41 @@ export function ReportFrame({
   maxHeight?: string;
   children: ReactNode;
 }) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [fill, setFill] = useState<number | null>(null);
+  useEffect(() => {
+    if (!maxHeight) return;
+    const barH = () => (document.querySelector("header.sticky") as HTMLElement | null)?.offsetHeight ?? 64;
+    const size = () => setFill(Math.max(240, window.innerHeight - barH() - (headRef.current?.offsetHeight ?? 0) - 16));
+    size();
+    window.addEventListener("resize", size);
+    const box = scrollRef.current;
+    const onWheel = (e: WheelEvent) => {
+      const frame = frameRef.current;
+      if (!frame || frame.closest("[data-report-full]")) return;
+      if (e.deltaY <= 0 || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const gap = frame.getBoundingClientRect().top - barH() - 8;
+      const page = document.scrollingElement;
+      if (gap <= 1 || !page || page.scrollTop + window.innerHeight >= page.scrollHeight - 1) return;
+      e.preventDefault();
+      window.scrollBy(0, Math.min(e.deltaY, gap));
+    };
+    box?.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      window.removeEventListener("resize", size);
+      box?.removeEventListener("wheel", onWheel);
+    };
+  }, [maxHeight]);
   return (
-    <div data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
-      <div className="border-b-[1.5px] border-[#7A6E5E] px-4 pb-3 pt-3.5 text-center">
+    <div ref={frameRef} data-fin-frame className="overflow-hidden rounded-[10px] border-[1.5px] border-[#7A6E5E] bg-white">
+      <div ref={headRef} className="border-b-[1.5px] border-[#7A6E5E] px-4 pb-3 pt-3.5 text-center">
         <div className="text-[15px] font-bold tracking-[.02em] text-[#1F1D1B]">{company}</div>
         <div className="mt-0.5 text-[13px] text-[#4B5563]">{title}</div>
         {note && <div className="mt-0.5 text-[12px] text-[#9CA3AF]">{note}</div>}
       </div>
-      <div data-fin-report-scroll className="overflow-auto" style={maxHeight ? { maxHeight: `var(--fin-full-h, ${maxHeight})` } : undefined}>
+      <div ref={scrollRef} data-fin-report-scroll className="overflow-auto" style={maxHeight ? { maxHeight: `var(--fin-full-h, ${fill !== null ? `${fill}px` : maxHeight})` } : undefined}>
         {children}
       </div>
     </div>

@@ -334,6 +334,9 @@ Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' en
 ## 🔵 Board report page 12: GP and NP bars, no revenue to date (feat/outlook-chart-gp-np, 2026-11-17)
 
 Ask (17 Nov, screenshot of page 12): 「没有NP？GP？不需要revenue to date」. The outlook chart now draws revenue, gross profit and net profit forecasts as three bars per month with each amount written above (`ComboChart labels`); the "Revenue to date" bar and table row are gone. Customer forecast: owner 「先不用」 (17 Nov).
+## 🔵 Reports fill the screen; Board report auto-rebuild schedule; New models = the report month (fix/report-fill-screen, 2026-11-17)
+
+Asks (17 Nov): (1) 「为什么我的forecast 不能scroll下去？还是很小…占满我的整个电脑的感觉」 + 「刚刚我不是说了 那些reporting 的问题吗」 — the normal (not full screen) view: every framed report's table box is now as tall as the window under the sticky top bar, and a wheel over the table scrolls the PAGE first until the frame reaches the top bar, then the table (`ReportFrame`, `report-shell.tsx`); (2) 「每个月最后一天的12点重新generate 然后7号 10号 15号 也是重新generate…generate了就snapshot起来 打开可以直接download」 — `board-report-prebuild.yml` now force-rebuilds the last closed month on the 1st (the night the month closes), 7th, 10th and 15th (Malaysia date); other days only build a month not kept yet. GitHub starts scheduled runs hours late (17 Nov: 00:24 UTC for a 16:30 UTC cron), so it lands early morning; (3) 「newmodel看那个月份而已 不需要看三个月」 — page 10 lists models added in the report month only.
 
 ## 🔵 Board report: same six months and a forecast on every chart; access locked (feat/board-report-six-months + fix/kv-config-finance-keys-gated, 2026-11-17)
 

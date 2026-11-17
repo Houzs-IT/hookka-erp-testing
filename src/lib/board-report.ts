@@ -15,7 +15,7 @@
 //   cashForecast  GET /api/accounting/cashflow-forecast?period=running month
 //   overview      GET /api/dashboard/overview?period=M           (customers)
 //   revSplit*     GET /api/dashboard/overview/revenue-split?period=M / M-1
-//   newModels     GET /api/products/new-models?from=&to=          (last 3 months)
+//   newModels     GET /api/products/new-models?from=&to=          (the report month only)
 //   defects       defectRates() over buildServiceSlice()          (service cases)
 //   workforce     collectOperationsReport().workforce             (workers:read only)
 //                 + efficiency bands: the Employees insights per-person figure
@@ -70,7 +70,8 @@ export function boardWindows(month: string, todayYmd: string) {
     dashFrom: addMonths(month, -11),
     // Forecast reach: the running month plus three, at least M + 3.
     dashTo: addMonths(ahead, 3),
-    newModelsFrom: `${addMonths(month, -2)}-01`,
+    // Owner 2026-11-17 「newmodel看那个月份而已 不需要看三个月」: the report month only.
+    newModelsFrom: `${month}-01`,
     newModelsTo: monthEnd(month),
   };
 }

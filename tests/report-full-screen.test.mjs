@@ -21,8 +21,16 @@ test("it marks the nearest container holding a report frame, and hides where non
 });
 
 test("full screen covers the window and lifts the page's maxHeight", () => {
-  assert.match(shell, /maxHeight: `var\(--fin-full-h, \$\{maxHeight\}\)`/);
+  assert.match(shell, /maxHeight: `var\(--fin-full-h, \$\{fill !== null \? `\$\{fill\}px` : maxHeight\}\)`/);
   assert.match(css, /\[data-fin-ui\] \[data-report-full\] \{\n  position: fixed;\n  inset: 0;/);
   assert.match(css, /--fin-full-h: none;/);
   assert.match(css, /\[data-report-full\] > \[data-fin-frame\] > \[data-fin-report-scroll\] \{\n  flex: 1 1 auto;\n  min-height: 0;/);
+});
+
+test("normal view fills the screen: box sized to the window, page scrolls first (owner 2026-11-17)", () => {
+  assert.match(shell, /setFill\(Math\.max\(240, window\.innerHeight - barH\(\) - \(headRef\.current\?\.offsetHeight \?\? 0\) - 16\)\)/);
+  assert.match(shell, /box\?\.addEventListener\("wheel", onWheel, \{ passive: false \}\)/);
+  assert.match(shell, /if \(!frame \|\| frame\.closest\("\[data-report-full\]"\)\) return;/, "full screen keeps its own scrolling");
+  assert.match(shell, /page\.scrollTop \+ window\.innerHeight >= page\.scrollHeight - 1\) return;/, "never traps the wheel when the page cannot move");
+  assert.match(shell, /window\.scrollBy\(0, Math\.min\(e\.deltaY, gap\)\);/);
 });

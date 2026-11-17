@@ -95,7 +95,7 @@ test("the frame: 1.5px strong line, radius 10, centred company / report / note",
   assert.match(f, /text-\[15px\] font-bold tracking-\[\.02em\] text-\[#1F1D1B\]">\{company\}/);
   assert.match(f, /text-\[13px\] text-\[#4B5563\]">\{title\}/);
   assert.match(f, /text-\[12px\] text-\[#9CA3AF\]">\{note\}/);
-  assert.match(f, /style=\{maxHeight \? \{ maxHeight: `var\(--fin-full-h, \$\{maxHeight\}\)` \} : undefined\}/, "a long report scrolls inside the frame so its header stays; full screen lifts the cap");
+  assert.match(f, /style=\{maxHeight \? \{ maxHeight: `var\(--fin-full-h, \$\{fill !== null \? `\$\{fill\}px` : maxHeight\}\)` \} : undefined\}/, "a long report scrolls inside the frame so its header stays; full screen lifts the cap");
 });
 
 // The z-index a rule sets, by its exact selector.
