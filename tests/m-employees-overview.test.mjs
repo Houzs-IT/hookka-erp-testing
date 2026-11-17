@@ -182,7 +182,7 @@ test("Overview is the default Employees tab; the placeholder is gone; every sect
   assert.match(route, /<OverviewSection pending=\{adj\} onGo=\{go\} \/>/);
 });
 
-test("card taps go where the HTML says; Avg Efficiency still opens the existing Efficiency Overview, with its period stated", () => {
+test("card taps go where the HTML says; Avg Efficiency opens Efficiency Overview", () => {
   const ui = src("OverviewSection.tsx");
   assert.match(ui, /onTap=\{\(\) => onGo\(c\.target\)\}/);
   assert.match(ui, /key === "pending" \? onGo\("working-hours"\)/);
@@ -190,9 +190,8 @@ test("card taps go where the HTML says; Avg Efficiency still opens the existing 
   assert.equal(cards[0].target, "attendance");
   assert.equal(cards[3].target, "efficiency");
   const route = src("EmployeesRoute.tsx");
-  assert.match(route, /section === "efficiency" \? <EfficiencyPeriodNote \/>/);
-  assert.match(route, /\/api\/reports\/efficiency\.json/);
-  assert.match(route, /not month to date/);
+  // Phase 4 step 1: the Efficiency tab now follows the shared period itself (the old one-day note is gone)
+  assert.match(route, /section === "efficiency" \? <EfficiencySection \/>/);
 });
 
 test("the Overview writes nothing", () => {

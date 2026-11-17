@@ -10,7 +10,6 @@
 // ready item shows no "⋯" button.
 // The section lives in the URL (`?section=`) so Back from a detail screen returns to the same section.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useCachedJson } from "@/lib/cached-fetch";
 import { useSearchParams } from "react-router-dom";
 import { Ellipsis } from "lucide-react";
 import { usePermissions } from "@/lib/use-permission";
@@ -19,11 +18,15 @@ import { useStickyBelowHeader } from "../../lib/header-geometry";
 import { M } from "../../theme";
 import { ModuleListScreen } from "../ModuleListScreen";
 import AttendanceSection from "./AttendanceSection";
+import DepartmentLaborSection from "./DepartmentLaborSection";
+import EfficiencySection from "./EfficiencySection";
+import EmployeePerformanceSection from "./EmployeePerformanceSection";
 import MenuSheet from "./MenuSheet";
 import OverviewSection from "./OverviewSection";
 import { ATT_PARAMS } from "./attendance-model";
 import { EMPLOYEES_SECTIONS, resolveSection, sectionConfig, type EmployeesSectionKey } from "./employees-sections";
-import { dayHeading } from "./employees-format";
+import { EFF_PARAMS } from "./efficiency-model";
+import { EP_PARAMS } from "./employee-performance-model";
 import { EFFICIENCY_REPORT_URL, menuItems, menuTitle, type MenuAction } from "./employees-menu";
 import { MenuBridgeContext, type MenuBridge } from "./menu-context";
 import { pendingBadge } from "./time-adjustments-model";
@@ -54,7 +57,7 @@ export default function EmployeesRoute() {
         const p = new URLSearchParams(prev);
         p.set("section", next);
         // A section's own filters (date, search, location…) never follow you to another section.
-        for (const k of [...WH_PARAMS, ...ATT_PARAMS]) p.delete(k);
+        for (const k of [...WH_PARAMS, ...ATT_PARAMS, ...EFF_PARAMS, ...EP_PARAMS]) p.delete(k);
         return p;
       },
       { replace: true },
@@ -70,7 +73,7 @@ export default function EmployeesRoute() {
   }, [section]);
 
   const listConfig = useMemo(() => {
-    if (section === "overview" || section === "working-hours" || section === "attendance") return null;
+    if (section === "overview" || section === "working-hours" || section === "attendance" || section === "efficiency" || section === "employee-performance" || section === "department-labor") return null;
     const tab = EMPLOYEES_SECTIONS.find((s) => s.key === section)?.tab;
     return tab ? sectionConfig(tab) : null;
   }, [section]);
@@ -208,7 +211,9 @@ export default function EmployeesRoute() {
       {section === "working-hours" ? <WorkingHoursSection pending={adj} /> : null}
       {section === "attendance" ? <AttendanceSection /> : null}
 
-      {section === "efficiency" ? <EfficiencyPeriodNote /> : null}
+      {section === "efficiency" ? <EfficiencySection /> : null}
+      {section === "employee-performance" ? <EmployeePerformanceSection /> : null}
+      {section === "department-labor" ? <DepartmentLaborSection /> : null}
 
       {listConfig ? (
         <ModuleListScreen
@@ -227,21 +232,5 @@ export default function EmployeesRoute() {
         onPick={pick}
       />
     </MenuBridgeContext.Provider>
-  );
-}
-
-/**
- * The Efficiency Overview list is still the old one: the report for ONE day (the previous working day, picked by the
- * server), not a month. Say so, with the actual date, so it is not read as the Overview card's month-to-date figure.
- * The period is aligned with the Overview and the shared date range in Phase 4.
- */
-function EfficiencyPeriodNote() {
-  const { data } = useCachedJson<{ data?: { date?: string } }>("/api/reports/efficiency.json");
-  const date = data?.data?.date;
-  return (
-    <div role="status" style={{ margin: "12px 18px 0", padding: "10px 12px", borderRadius: 12, background: "#F4EFE6", fontSize: 12.5, lineHeight: 1.35, color: M.raisin }}>
-      <b style={{ fontWeight: 700 }}>Period: {date ? dayHeading(date) : "the previous working day"}</b>
-      <div style={{ color: M.ink }}>The previous working day, not month to date.</div>
-    </div>
   );
 }

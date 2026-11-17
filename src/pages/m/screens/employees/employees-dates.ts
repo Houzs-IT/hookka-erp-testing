@@ -29,6 +29,12 @@ export function isYmd(s: string | null | undefined): s is string {
   return d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
 }
 
+/** YYYY-MM-DD shifted by whole days (calendar arithmetic, no time zone). */
+export function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10)) + days));
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
 /** First..last day of a calendar month. `month` is 1-12. */
 export function monthRange(year: number, month: number): YmdRange {
   const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
