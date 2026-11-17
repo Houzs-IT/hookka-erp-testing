@@ -22,6 +22,7 @@ import { OcrAccuracyCard } from "./OcrAccuracyCard";
 import { DeptRevenueCard, CatToggle } from "./DeptRevenueCard";
 import { pickCat, type RevCat, type RevenueSplitResp } from "./revenue-split";
 import { dropIdleSundays } from "@/lib/idle-sundays";
+import { perWorkerMin } from "@/pages/m/screens/dashboard/ops-lib";
 // recharts (~357 KB) is loaded lazily so the KPI numbers paint first; the
 // chart code streams in behind a placeholder. See ./charts.tsx.
 const RevenueChart = lazy(() =>
@@ -102,7 +103,7 @@ type Overview = {
     completedLast7: { date: string; bedframeUnits: number; sofaSets: number }[];
     /** Whole-window totals, deduped — NOT the per-day series added up. */
     completedRange?: { bedframeUnits: number; sofaSets: number };
-    capacityDays: { date: string; minutes: number; workers: number; picWorkers?: number }[];
+    capacityDays: { date: string; minutes: number; workers: number; picWorkers?: number; outsourceMinutes?: number; inHouseMinutes?: number }[];
     capacityWorkersSource?: "punch-in" | "job-card-pic";
     // backlogDays: null = "stalled" (zero completions in the rolling window —
     // no honest way to express the queue in days).
@@ -1524,18 +1525,20 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     ? wDays.reduce((s, d) => s + (d.workers ?? 0), 0) /
                       wDays.length
                     : 0;
-                  const perWorkerAvg =
-                    avgWorkers > 0
-                      ? hm(Math.round(prod.dailyCapacityMin / avgWorkers))
-                      : "—";
+                  // Per worker = IN-HOUSE minutes ÷ punched-in staff: outsource
+                  // are not counted as workers, so their minutes come off too
+                  // (owner 2026-11-18). perWorkerMin is shared with /m.
+                  const perWorkerMinAvg = perWorkerMin(days, prod.dailyCapacityMin);
+                  const perWorkerAvg = perWorkerMinAvg != null && avgWorkers > 0 ? hm(perWorkerMinAvg) : "—";
                   setDrill({
                     title: capacityDrillTitle,
-                    subtitle: `Average ${hm(prod.dailyCapacityMin)}/day · ${perWorkerAvg}/worker across all production depts · ${prod.capacityWorkersSource === "job-card-pic" ? "Workers = people named on the cards finished that day" : "Workers = everyone who punched in that day, helpers included, outsource excluded"}`,
+                    subtitle: `Average ${hm(prod.dailyCapacityMin)}/day · ${perWorkerAvg}/worker across all production depts · ${prod.capacityWorkersSource === "job-card-pic" ? "Workers = people named on the cards finished that day" : "Workers = everyone who punched in that day, helpers included, outsource excluded; Per Worker leaves out the outsource minutes"}`,
                     node: (
                       <MiniTable
                         cols={[
                           "Date",
                           "Production time",
+                          "Outsource",
                           "Workers",
                           "Per Worker",
                           "vs Avg",
@@ -1545,11 +1548,13 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                           .map((d) => {
                             const diff = d.minutes - prod.dailyCapacityMin;
                             const w = d.workers ?? 0;
+                            const inHouse = d.inHouseMinutes ?? d.minutes - (d.outsourceMinutes ?? 0);
                             return [
                               d.date,
                               hm(d.minutes),
+                              d.outsourceMinutes ? hm(d.outsourceMinutes) : "—",
                               w > 0 ? String(w) : "—",
-                              w > 0 ? hm(Math.round(d.minutes / w)) : "—",
+                              w > 0 ? hm(Math.round(inHouse / w)) : "—",
                               `${diff >= 0 ? "+" : "−"}${hm(Math.abs(diff))}`,
                             ];
                           })}

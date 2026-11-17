@@ -286,12 +286,24 @@ export function capacityWindowLabel(periodKey: string, curYm: string): string {
   return periodKey === curYm ? "12-day avg" : `${periodKey} avg`;
 }
 
-/** Average capacity per worker: avg/day ÷ avg workers over days that credit a worker (desktop). */
-export function perWorkerMin(capacityDays: { minutes: number; workers: number }[], dailyCapacityMin: number): number | null {
+/**
+ * Average capacity per worker: in-house minutes/day ÷ avg workers over days
+ * with a worker (desktop). Workers are the punched-in staff without outsource,
+ * so outsource minutes (`outsourceMinutes`, owner 2026-11-18) come off the
+ * daily average first; an older feed without the field divides the whole day.
+ */
+export function perWorkerMin(
+  capacityDays: { minutes: number; workers: number; outsourceMinutes?: number }[],
+  dailyCapacityMin: number,
+): number | null {
   const w = capacityDays.filter((d) => (d.workers ?? 0) > 0);
   if (!w.length) return null;
   const avg = w.reduce((a, d) => a + d.workers, 0) / w.length;
-  return avg > 0 ? Math.round(dailyCapacityMin / avg) : null;
+  const outsourcePerDay = capacityDays.length
+    ? capacityDays.reduce((a, d) => a + (d.outsourceMinutes ?? 0), 0) / capacityDays.length
+    : 0;
+  const inHouse = Math.max(0, dailyCapacityMin - outsourcePerDay);
+  return avg > 0 ? Math.round(inHouse / avg) : null;
 }
 
 export type BacklogRow = {
