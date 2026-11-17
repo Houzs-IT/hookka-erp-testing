@@ -55,6 +55,17 @@ test("known desktop links map to their mobile list screen", () => {
   assert.equal(toMobilePath("/announcements"), "/m/announcements");
 });
 
+test("HK-0155: a one-order notice opens that order, not the production list", () => {
+  const { toMobilePath } = links;
+  assert.equal(
+    toMobilePath("/production?soId=SO-2611-292-01&po=pord-so-9d12d0d0-01"),
+    "/m/production/pord-so-9d12d0d0-01",
+  );
+  assert.equal(toMobilePath("/production?soId=SO-2609-295-"), "/m/production");
+  assert.equal(toMobilePath("/production?po=a%2Fb"), "/m/production/a%2Fb");
+  assert.equal(toMobilePath("/sales?po=x"), "/m/sales", "po is read only for production links");
+});
+
 test("IT Support keeps only the ticket deep link", () => {
   const { toMobilePath } = links;
   assert.equal(toMobilePath("/it-support?ticket=HK-0001"), "/m/it-support?ticket=HK-0001");
