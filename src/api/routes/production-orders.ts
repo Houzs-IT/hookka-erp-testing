@@ -106,6 +106,7 @@ import type {
   ProductionOrderRow,
 } from "./production-orders/_helpers";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
+import { checkWorkerScanGate } from "../lib/scan-gate";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -2036,6 +2037,14 @@ app.post("/:id/scan-complete", async (c) => {
   if (!scannedJc) {
     return c.json({ success: false, error: "Job card not found" }, 404);
   }
+
+  // Owner 2026-11-17: on the worker phone a card completes only after the
+  // worker punched in and scanned this department's QR today (outsource
+  // exempt). src/api/lib/scan-gate.ts. The office scanner is not gated.
+  if (!ctxUserId) {
+    const gateFail = await checkWorkerScanGate(db, workerId, scannedJc.departmentCode);
+    if (gateFail) return c.json({ success: false, ...gateFail }, 409);
+  }
   // Worker-token scan-complete is open to ALL departments (Wei Siang
   // 2026-06-14). The Code 128 printed on the Production Schedule lets every
   // dept — including the no-sticker ones (Woodcutting / Framing / Webbing) —
@@ -2658,6 +2667,14 @@ app.post("/:id/scan-complete-dept", async (c) => {
     return c.json({ success: false, error: "Worker not found" }, 400);
   }
 
+  // Owner 2026-11-17: on the worker phone a card completes only after the
+  // worker punched in and scanned this department's QR today (outsource
+  // exempt). src/api/lib/scan-gate.ts. The office scanner is not gated.
+  if (!ctxUserId) {
+    const gateFail = await checkWorkerScanGate(db, workerId, deptCode);
+    if (gateFail) return c.json({ success: false, ...gateFail }, 409);
+  }
+
   // The compartment set for this variant in this department. COMPLETED cards are
   // KEPT (only TRANSFERRED excluded) so a 2nd different worker can co-sign as
   // PIC2 even after the 1st worker's scan already completed the card — owner
@@ -2964,6 +2981,14 @@ app.post("/:id/scan-complete-shared", async (c) => {
     }>();
   if (!worker) {
     return c.json({ success: false, error: "Worker not found" }, 400);
+  }
+
+  // Owner 2026-11-17: on the worker phone a card completes only after the
+  // worker punched in and scanned a department QR today (a Sew / Upholstery section sticker: any department scan) (outsource
+  // exempt). src/api/lib/scan-gate.ts. The office scanner is not gated.
+  if (!ctxUserId) {
+    const gateFail = await checkWorkerScanGate(db, workerId, null);
+    if (gateFail) return c.json({ success: false, ...gateFail }, 409);
   }
 
   // SOFA exception: a sofa BASE compartment represents the WHOLE variant — its

@@ -189,7 +189,7 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const overviewV = "v28";
+  const overviewV = "v29"; // v29 (2026-11-17): capacityDays[].workers = punched-in headcount, + picWorkers / capacityWorkersSource
   const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}`;
   const computeOverview = async () => {
     const db = c.var.DB;
