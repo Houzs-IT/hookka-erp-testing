@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-17**: board report owner review of October 2026, 13 items (branch `feat/board-report-owner-review-1115`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: dept scans in the same minute ordered by createdat (branch `fix/dept-scan-same-minute-order`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: Working Hours live department rows (branch `feat/working-hours-live-rows`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-14**: Working Hours shows the day's department scans (branch `feat/working-hours-dept-scans`, to `main`); nothing else re-checked.
@@ -313,6 +314,10 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Board report: owner's marked-up review of October 2026 (feat/board-report-owner-review-1115, 2026-11-15)
+
+Owner marked up the printed October report (13 items). On the branch: (1) cover chart from Jun 2026 (`BOARD_DATA_FROM`), running month drawn from its Forecast P&L; (2) page 2 donut = revenue split into COGS / operating expenses / net profit, GP and NP with margins beside it (owner confirmed); (3) labour forecast tile includes the non-production forecast, compared with the whole payroll; (4) materials: tile vs table gap = carriage inwards 700-1015 + SST 706-0000 (the P&L materials line = categories + carriage + SST) — own row, total now equals the tile; (5) trend page: running month = forecast, labelled "(forecast)"; (6) balance-sheet chart drops all-zero months — NO balance-sheet forecast exists in the data, none invented; (7) cash flow page from Jun 2026 + up to 3 forecast months (operating / investing / financing of the Cash Flow forecast's P&L column, else Docs, via `cashFlowCardMonth`); (8) cash flow forecast page: operating / investing / financing per month for Actual, Docs and P&L; (9) customers: bedframe vs sofa bar chart; (10) efficiency ranks name every worker (all workers, not only active; blank name → emp no; TEST never ranks) and headcount = workers with a payslip in a production department that month (hours before payslips) — new `headcount` source; (11) outlook: GP % row, Difference columns on the quarter table, gross profit line; (12) page 13 no longer rendered at all (owner update; notes API/data untouched); (13) appendix P&L and cash flow drop detail lines deeper than L2 (OPENING STOCK / PURCHASE / CLOSING STOCK under each purchase group). Tests `tests/board-report-review-1115.test.mjs`. Not yet checked on prod.
 
 ## 🔵 Working Hours: the day's department scans under each worker (feat/working-hours-dept-scans, 2026-11-14)
 

@@ -27,6 +27,7 @@
 // the base is missing / zero — never a fabricated 0.
 // ---------------------------------------------------------------------------
 
+import { cashFlowCardMonth } from "./cashflow-card";
 import type { EfficiencyBandCounts } from "./efficiency-bands";
 import type { StockTakeCheck } from "./stock-take-check";
 
@@ -73,6 +74,13 @@ export function boardWindows(month: string, todayYmd: string) {
     newModelsTo: monthEnd(month),
   };
 }
+
+/**
+ * Owner review 2026-11-15: months before June 2026 carry incomplete data (the
+ * books were still being brought in), so the month-by-month charts and the
+ * cash flow table start here. Single-month tables are unaffected.
+ */
+export const BOARD_DATA_FROM = "2026-06";
 
 // ── maths helpers ─────────────────────────────────────────────────────────
 export const pct = (v: number | null | undefined, base: number | null | undefined): number | null =>
@@ -129,7 +137,7 @@ export type DashPayload = { openingDate?: string | null; rows: DashRow[] };
 export type MatrixCol = { key: string; label: string; accum?: boolean; ym?: string; forecast?: boolean; forecastKind?: string; future?: boolean; blank?: boolean };
 export type PlMatrixRow = { kind: string; depth: number; label: string; values: number[] };
 export type PlMonthlyPayload = { fyLabel?: string; columns: MatrixCol[]; rows: PlMatrixRow[] };
-export type CfRowLite = { kind: string; depth: number; label: string; values: (number | null)[] };
+export type CfRowLite = { kind: string; depth: number; label: string; section?: string; values: (number | null)[] };
 export type CfPayload = { columns: MatrixCol[]; rows: CfRowLite[]; today?: string };
 export type BsLine = { accountCode: string; accountName: string; category: string; balance: number };
 export type PlPayload = { totals?: { netProfit?: number; revenue?: number }; balanceSheet?: BsLine[]; sheetStock?: { month: string; totalSen: number } | null; sheetStockError?: string | null };
@@ -154,6 +162,13 @@ export type WorkforcePayload = {
   bands?: EfficiencyBandCounts | null;
   bandsError?: string | null;
 };
+/**
+ * Production workers actually on the floor (owner review 2026-11-15: the
+ * "Headcount (production payroll)" tile counted everyone on the worker master):
+ * distinct workers with a payslip filed under a PRODUCTION department in the
+ * month — or, for a month with no payslips yet, with hours clocked in one.
+ */
+export type HeadcountPayload = { cur: number | null; prev: number | null; basis: "payslips" | "hours" | null };
 export type BoardNotes = { text: string; updatedAt: string | null; updatedBy: string | null };
 
 export type BoardSources = {
@@ -170,6 +185,8 @@ export type BoardSources = {
   defects: Src<DefectsPayload>;
   workforce: Src<WorkforcePayload>;
   stockTake: Src<StockTakeCheck>;
+  /** Optional: a source set without it falls back to the dashboard's labourBase headcount. */
+  headcount?: Src<HeadcountPayload>;
   notes: BoardNotes;
 };
 
@@ -181,8 +198,14 @@ export type TrendPoint = { ym: string; label: string; kind: "actual" | "mtd" | "
 export type LabourDept = { dept: string; cost: number; prev: number | null; forecast: number | null; share: number | null; pctTotalProdRev: number | null; pctOwnProdRev: number | null; ownProdRev: number | null };
 export type MaterialCat = { name: string; spend: number; purchase: number; closing: number; forecast: number | null; prev: number | null; pctOfSales: number | null };
 export type BsRow = { label: string; strong: boolean; cur: number | null; prev: number | null; change: number | null; quarterAgo: number | null };
-export type CashMonth = { ym: string; label: string; kind: "actual" | "mtd"; operating: number; investing: number; financing: number; net: number; fcf: number };
-export type CashForecastMonth = { ym: string; label: string; actual: number | null; docs: number | null; pnl: number | null };
+export type CashMonth = { ym: string; label: string; kind: "actual" | "mtd" | "forecast"; operating: number; investing: number; financing: number; net: number; fcf: number;
+  /** A forecast month: which Cash Flow forecast it is read from. */
+  basis?: "pnl" | "docs" };
+/** Operating / investing / financing of one statement column (cashflow-card.ts — the dashboard card's split). */
+export type CashActivities = { operating: number; investing: number; financing: number; net: number };
+export type CashForecastMonth = { ym: string; label: string; actual: number | null; docs: number | null; pnl: number | null;
+  /** Owner review 2026-11-15 「Operating & Investing & Financing」: each column's activities; null where the column is absent. */
+  actualCf?: CashActivities | null; docsCf?: CashActivities | null; pnlCf?: CashActivities | null };
 export type CustomerRow = { name: string; total: number; share: number | null; bedframeAvg: number | null; bedframeUnits: number; sofaAvg: number | null; sofaSets: number;
   /** Owner 2026-11-13 「你还可以分bedframe sofa啊」: the order value by category (avg x count). */
   bedframeTotal?: number | null; sofaTotal?: number | null };
@@ -200,12 +223,18 @@ export type BoardReport = {
   generatedAt: string;
   openingDate: string | null;
   cover: Section<{ tiles: Tile[]; trend: TrendPoint[]; highlights: string[] }>;
-  income: Section<{ rows: IncomeRow[]; sinceLabel: string; costStructure: { label: string; value: number }[]; margins: { label: string; actual: number | null; forecast: number | null; prev: number | null }[]; estimated: number }>;
+  income: Section<{ rows: IncomeRow[]; sinceLabel: string; costStructure: { label: string; value: number }[];
+    /** Owner review 2026-11-15: where revenue went — COGS, operating expenses, net profit. */
+    revenueSplit?: { label: string; value: number }[]; margins: { label: string; actual: number | null; forecast: number | null; prev: number | null }[]; estimated: number }>;
   labour: Section<{ depts: LabourDept[]; nonProd: { dept: string; cost: number; prev: number | null; forecast: number | null }[]; nonProdTotal: number; total: number; prevTotal: number | null; forecastTotal: number | null; productionRevenue: number | null; headcount: number | null; units: number | null; trend: { ym: string; label: string; byDept: Record<string, number>; total: number }[]; series: string[] }>;
-  materials: Section<{ cats: MaterialCat[]; total: number; sales: number | null; trend: { ym: string; label: string; actual: number | null; forecast: number | null }[] }>;
+  materials: Section<{ cats: MaterialCat[]; total: number; sales: number | null;
+    /** P&L materials not split by category (carriage inwards 700-1015 + SST 706-0000) = total − Σ categories. */
+    unsplit?: number; trend: { ym: string; label: string; actual: number | null; forecast: number | null }[] }>;
   trend: Section<{ points: TrendPoint[]; summary: { label: string; kind: TrendPoint["kind"]; sales: number | null; gross: number | null; net: number | null; grossPct: number | null; netPct: number | null }[]; last3: { label: string; sales: number | null; fcSales: number | null; net: number | null; fcNet: number | null }[] }>;
   balance: Section<{ rows: BsRow[]; ratios: { label: string; cur: number | null; prev: number | null; unit: "x" | "%" }[]; equity: { opening: number | null; net: number | null; other: number | null; closing: number | null }; trend: { ym: string; label: string; assets: number; liabilities: number; equity: number }[] }>;
-  cashFlow: Section<{ months: CashMonth[]; bankClose: number | null }>;
+  cashFlow: Section<{ months: CashMonth[]; bankClose: number | null;
+    /** Months after M from the Cash Flow forecast (P&L forecast, else Docs). */
+    forecast?: CashMonth[] }>;
   cashForecast: Section<{ months: CashForecastMonth[]; asOf: string | null }>;
   customers: Section<{ rows: CustomerRow[]; concentration: Concentration | null; company: { bedframeAvg: number | null; bedframeUnits: number; sofaAvg: number | null; sofaSets: number; total: number } | null }>;
   newModels: Section<{ from: string; to: string; models: NewModelLite[]; more: string[]; priceNote: string; undated: number }>;
@@ -216,7 +245,9 @@ export type BoardReport = {
     workforce: WorkforcePayload | null; workforceNote: string | null;
     trend: { ym: string; label: string; bedframe: number; sofa: number; accessory: number }[];
   }>;
-  outlook: Section<{ months: OutlookMonth[]; quarter: { label: string; rows: { label: string; kind: "actual" | "mtd" | "forecast"; sales: number | null; net: number | null }[]; sales: number | null; net: number | null } | null }>;
+  outlook: Section<{ months: OutlookMonth[]; quarter: { label: string; rows: { label: string; kind: "actual" | "mtd" | "forecast"; sales: number | null; net: number | null;
+    /** Owner review 2026-11-15: the month's forecast, for the Difference column beside a closed month's actual. */
+    fcSales?: number | null; fcNet?: number | null }[]; sales: number | null; net: number | null } | null }>;
   notes: { flags: Flag[]; text: string; updatedAt: string | null; updatedBy: string | null };
   appendixPl: Section<TableBlock & { title: string }>;
   appendixBs: Section<TableBlock>;
@@ -254,12 +285,18 @@ export function buildTrend(rows: readonly DashRow[], month: string, running: str
   for (const r of closedMonths(rows, month)) {
     out.push({ ym: r.key, label: shortMonth(r.key), kind: "actual", sales: r.actual!.sales, net: r.actual!.net, gross: r.actual!.gross, forecastSales: r.forecast?.sales ?? null, forecastNet: r.forecast?.net ?? null });
   }
-  // Months after M up to the running month: month to date (the running month)
-  // or a closed month later than the one being reported (an older report).
+  // Months after M up to the running month: a closed month later than the
+  // one being reported (an older report) shows its actual; the running month
+  // shows its FORECAST (owner review 2026-11-15 — a month-to-date bar reads as
+  // a collapse; the Forecast P&L is what the month is expected to be).
   for (let ym = addMonths(month, 1); ym <= running; ym = addMonths(ym, 1)) {
     const r = rowAt(rows, ym);
     if (!r) continue;
-    out.push({ ym, label: shortMonth(ym), kind: ym === running ? "mtd" : "actual", sales: r.actual?.sales ?? null, net: r.actual?.net ?? null, gross: r.actual?.gross ?? null, forecastSales: r.forecast?.sales ?? null, forecastNet: r.forecast?.net ?? null });
+    if (ym === running) {
+      if (r.forecast) out.push({ ym, label: shortMonth(ym), kind: "forecast", sales: null, net: null, gross: null, forecastSales: r.forecast.sales, forecastNet: r.forecast.net });
+      continue;
+    }
+    out.push({ ym, label: shortMonth(ym), kind: "actual", sales: r.actual?.sales ?? null, net: r.actual?.net ?? null, gross: r.actual?.gross ?? null, forecastSales: r.forecast?.sales ?? null, forecastNet: r.forecast?.net ?? null });
   }
   const next = addMonths(running > month ? running : month, 1);
   const nr = rowAt(rows, next);
@@ -290,7 +327,9 @@ function shapeCover(d: DashPayload, month: string, running: string, cash: CfPayl
   if (a.net < 0) highlights.push(`A net loss for the month.`);
   const conc = ov?.customerConcentration?.all;
   if (conc?.largestName && conc.largestPct !== null) highlights.push(`Largest customer ${conc.largestName}: ${conc.largestPct}% of confirmed sales orders.`);
-  return { ok: true, data: { tiles, trend: buildTrend(d.rows, month, running).filter((t) => t.kind !== "forecast" || t.forecastSales !== null), highlights } };
+  // Owner review 2026-11-15: months before BOARD_DATA_FROM are left off the chart.
+  const trend = buildTrend(d.rows, month, running).filter((t) => t.ym >= BOARD_DATA_FROM && (t.kind !== "forecast" || t.forecastSales !== null));
+  return { ok: true, data: { tiles, trend, highlights } };
 }
 
 function shapeIncome(d: DashPayload, month: string): BoardReport["income"] {
@@ -318,16 +357,24 @@ function shapeIncome(d: DashPayload, month: string): BoardReport["income"] {
     { label: "Staff cost", value: a.staffCost },
     { label: "Other expenses", value: a.otherOpex },
   ].filter((x) => x.value > 0);
+  // Owner review 2026-11-15 「not from costs; COGS & NP, GP missing」: the donut
+  // splits revenue into where it went. A loss has no slice — the panel
+  // beside the donut states it.
+  const revenueSplit = [
+    { label: "Cost of goods sold", value: a.cogs },
+    { label: "Operating expenses", value: a.expenses },
+    { label: "Net profit", value: a.net },
+  ].filter((x) => x.value > 0);
   const margins = [
     { label: "Gross margin", actual: pct(a.gross, a.sales), forecast: f ? pct(f.gross, f.sales) : null, prev: p ? pct(p.gross, p.sales) : null },
     { label: "Net margin", actual: pct(a.net, a.sales), forecast: f ? pct(f.net, f.sales) : null, prev: p ? pct(p.net, p.sales) : null },
     { label: "Materials / revenue", actual: pct(a.materials, a.sales), forecast: f ? pct(f.materials, f.sales) : null, prev: p ? pct(p.materials, p.sales) : null },
     { label: "Labour / revenue", actual: pct(a.labour, a.sales), forecast: f ? pct(f.labour, f.sales) : null, prev: p ? pct(p.labour, p.sales) : null },
   ];
-  return { ok: true, data: { rows, sinceLabel, costStructure, margins, estimated: a.estimated ?? 0 } };
+  return { ok: true, data: { rows, sinceLabel, costStructure, revenueSplit, margins, estimated: a.estimated ?? 0 } };
 }
 
-function shapeLabour(d: DashPayload, month: string, rev: RevSplitPayload | null): BoardReport["labour"] {
+function shapeLabour(d: DashPayload, month: string, rev: RevSplitPayload | null, head: HeadcountPayload | null): BoardReport["labour"] {
   const r = rowAt(d.rows, month);
   if (!r || !r.actual) return { ok: false, error: `No figures for ${longMonth(month)}` };
   const prevRow = rowAt(d.rows, addMonths(month, -1));
@@ -392,7 +439,7 @@ function shapeLabour(d: DashPayload, month: string, rev: RevSplitPayload | null)
       prevTotal,
       forecastTotal: fcAll.some((x) => x !== 0) ? sum(fcAll) : r.forecast?.labour ?? null,
       productionRevenue: prodRev,
-      headcount: r.labourBase?.headcount ?? null,
+      headcount: head ? head.cur : r.labourBase?.headcount ?? null,
       units: r.labourBase?.unitsCompleted ?? null,
       trend,
       series: trend.some((t) => t.byDept.Other) ? [...series, "Other"] : series,
@@ -427,7 +474,11 @@ function shapeMaterials(d: DashPayload, month: string): BoardReport["materials"]
     return { name: label, spend, purchase: sum(rest.map((x) => x.purchase)), closing: sum(rest.map((x) => x.closing)), forecast: fcs.length ? sum(fcs) : null, prev: prevs.length ? sum(prevs) : null, pctOfSales: pct(spend, sales) };
   });
   const trend = closedMonths(d.rows, month).slice(-12).map((row) => ({ ym: row.key, label: shortMonth(row.key), actual: row.actual?.materials ?? null, forecast: row.forecast?.materials ?? null }));
-  return { ok: true, data: { cats: capped, total: r.actual.materials, sales, trend } };
+  // The P&L materials line = Σ categories + carriage inwards + SST charges
+  // (computePnlWindow: rmConsumed + carriage + sst), so the tile and the
+  // category table differ by exactly those two lines (owner review 2026-11-15).
+  const unsplit = cats.length ? r.actual.materials - sum(cats.map((x) => x.spend)) : 0;
+  return { ok: true, data: { cats: capped, total: r.actual.materials, unsplit, sales, trend } };
 }
 
 function shapeTrend(d: DashPayload, month: string, running: string): BoardReport["trend"] {
@@ -480,7 +531,10 @@ function shapeBalance(d: DashPayload, month: string): BoardReport["balance"] {
   const closing = cur.balanceSheet.equity;
   const net = cur.actual?.net ?? null;
   const equity = { opening, net, other: opening !== null && net !== null ? closing - opening - net : null, closing };
-  const trend = closedMonths(d.rows, month).filter((r) => r.balanceSheet).slice(-12).map((r) => ({ ym: r.key, label: shortMonth(r.key), assets: r.balanceSheet!.assets, liabilities: r.balanceSheet!.liabilities, equity: r.balanceSheet!.equity }));
+  // Owner review 2026-11-15: months with no balance sheet yet (every account
+  // zero before the books opened) are left off the chart.
+  const hasBs = (x: DashBs) => x.assets !== 0 || x.liabilities !== 0 || x.equity !== 0;
+  const trend = closedMonths(d.rows, month).filter((r) => r.balanceSheet && hasBs(r.balanceSheet)).slice(-12).map((r) => ({ ym: r.key, label: shortMonth(r.key), assets: r.balanceSheet!.assets, liabilities: r.balanceSheet!.liabilities, equity: r.balanceSheet!.equity }));
   return { ok: true, data: { rows, ratios, equity, trend } };
 }
 
@@ -493,13 +547,40 @@ export function bankCloseAt(cf: CfPayload, ym: string): number | null {
   return typeof v === "number" ? v : null;
 }
 
-function shapeCashFlow(d: DashPayload, month: string, running: string, cash: CfPayload | null): BoardReport["cashFlow"] {
+function shapeCashFlow(d: DashPayload, month: string, running: string, cash: CfPayload | null, fc: CfPayload | null): BoardReport["cashFlow"] {
   const months: CashMonth[] = d.rows
     .filter((r) => r.cashFlow && (r.key <= month || (r.key === running && running > month)) && (r.actual !== null || r.key <= month))
     .slice(-13)
     .map((r) => ({ ym: r.key, label: shortMonth(r.key), kind: r.key === running ? "mtd" : "actual", operating: r.cashFlow!.operating, investing: r.cashFlow!.investing, financing: r.cashFlow!.financing, net: r.cashFlow!.net, fcf: r.cashFlow!.freeCashFlow }));
   if (!months.length) return { ok: false, error: "No cash flow figures" };
-  return { ok: true, data: { months, bankClose: cash ? bankCloseAt(cash, month) : null } };
+  return { ok: true, data: { months, bankClose: cash ? bankCloseAt(cash, month) : null, forecast: fc ? cashForecastMonths(fc, month) : [] } };
+}
+
+/**
+ * Owner review 2026-11-15: forecast months after M on the cash flow page —
+ * operating / investing / financing of each month's forecast column of the
+ * Cash Flow forecast (cashFlowCardMonth: the same line-by-section split the
+ * dashboard card uses). The P&L forecast (Forecast P&L turned into cash) where
+ * the month has one, else the Docs forecast; at most `max` months.
+ */
+export function cashForecastMonths(cf: CfPayload, month: string, max = 3): CashMonth[] {
+  const byYm = new Map<string, { pnl?: number; docs?: number }>();
+  cf.columns.forEach((c, i) => {
+    if (!c.forecast || c.accum || c.blank) return;
+    const ym = c.ym ?? c.key.replace(/^f[cp]:/, "");
+    if (!YM_RE.test(ym) || ym <= month) return;
+    const e = byYm.get(ym) ?? {};
+    if (c.forecastKind === "pnl" || c.key.startsWith("fp:")) e.pnl = i; else e.docs = i;
+    byYm.set(ym, e);
+  });
+  return [...byYm.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(0, max)
+    .map(([ym, e]) => {
+      const basis: "pnl" | "docs" = e.pnl !== undefined ? "pnl" : "docs";
+      const a = cashFlowCardMonth(cf.rows, (basis === "pnl" ? e.pnl : e.docs) as number);
+      return { ym, label: shortMonth(ym), kind: "forecast" as const, basis, ...a, fcf: a.operating + a.investing };
+    });
 }
 
 /** Month-end bank balance per month: the Actual column, the Docs forecast (fc:) and the P&L forecast (fp:). */
@@ -509,7 +590,7 @@ export function shapeCashForecast(cf: CfPayload, month: string): BoardReport["ca
   const by = new Map<string, CashForecastMonth>();
   const get = (ym: string) => {
     let e = by.get(ym);
-    if (!e) { e = { ym, label: shortMonth(ym), actual: null, docs: null, pnl: null }; by.set(ym, e); }
+    if (!e) { e = { ym, label: shortMonth(ym), actual: null, docs: null, pnl: null, actualCf: null, docsCf: null, pnlCf: null }; by.set(ym, e); }
     return e;
   };
   cf.columns.forEach((c, i) => {
@@ -518,9 +599,10 @@ export function shapeCashForecast(cf: CfPayload, month: string): BoardReport["ca
     if (!YM_RE.test(ym)) return;
     const v = row.values[i];
     const val = typeof v === "number" ? v : null;
-    if (!c.forecast) { if (!c.future) get(ym).actual = val; }
-    else if (c.forecastKind === "pnl" || c.key.startsWith("fp:")) get(ym).pnl = val;
-    else get(ym).docs = val;
+    const acts = cashFlowCardMonth(cf.rows, i);
+    if (!c.forecast) { if (!c.future) { get(ym).actual = val; get(ym).actualCf = acts; } }
+    else if (c.forecastKind === "pnl" || c.key.startsWith("fp:")) { get(ym).pnl = val; get(ym).pnlCf = acts; }
+    else { get(ym).docs = val; get(ym).docsCf = acts; }
   });
   const months = [...by.values()].filter((m) => m.ym >= addMonths(month, -2)).sort((a, b) => a.ym.localeCompare(b.ym)).slice(0, 9);
   if (!months.length) return { ok: false, error: "No months in the Cash Flow forecast" };
@@ -570,7 +652,7 @@ function shapeNewModels(nm: NewModelsPayload): BoardReport["newModels"] {
   };
 }
 
-function shapeOperations(d: DashPayload, month: string, revCur: Src<RevSplitPayload>, revPrev: Src<RevSplitPayload>, defects: Src<DefectsPayload>, workforce: Src<WorkforcePayload>): BoardReport["operations"] {
+function shapeOperations(d: DashPayload, month: string, revCur: Src<RevSplitPayload>, revPrev: Src<RevSplitPayload>, defects: Src<DefectsPayload>, workforce: Src<WorkforcePayload>, head: HeadcountPayload | null): BoardReport["operations"] {
   const r = rowAt(d.rows, month);
   const prevRow = rowAt(d.rows, addMonths(month, -1));
   const prevBy = new Map((revPrev.ok ? revPrev.data.departments ?? [] : []).map((x) => [x.code, x.period.total] as const));
@@ -594,8 +676,8 @@ function shapeOperations(d: DashPayload, month: string, revCur: Src<RevSplitPayl
       }),
       prodTotal: pr?.total ?? sum(prodMix.map((x) => x.total)),
       categoryMix,
-      headcount: r?.labourBase?.headcount ?? null,
-      prevHeadcount: prevRow?.labourBase?.headcount ?? null,
+      headcount: head ? head.cur : r?.labourBase?.headcount ?? null,
+      prevHeadcount: head ? head.prev : prevRow?.labourBase?.headcount ?? null,
       units: r?.labourBase?.unitsCompleted ?? null,
       prevUnits: prevRow?.labourBase?.unitsCompleted ?? null,
       defects: defects.ok ? defects.data.month : null,
@@ -623,7 +705,7 @@ function shapeOutlook(d: DashPayload, month: string, running: string): BoardRepo
     const r = rowAt(d.rows, ym);
     const kind: "actual" | "mtd" | "forecast" = ym < running ? "actual" : ym === running ? "mtd" : "forecast";
     const s = kind === "actual" ? r?.actual : r?.forecast;
-    return { label: `${shortMonth(ym)} ${kind === "actual" ? "actual" : "forecast"}`, kind, sales: s?.sales ?? null, net: s?.net ?? null };
+    return { label: `${shortMonth(ym)} ${kind === "actual" ? "actual" : "forecast"}`, kind, sales: s?.sales ?? null, net: s?.net ?? null, fcSales: r?.forecast?.sales ?? null, fcNet: r?.forecast?.net ?? null };
   });
   const allSales = qRows.map((x) => x.sales), allNet = qRows.map((x) => x.net);
   const quarter = {
@@ -651,12 +733,20 @@ function pickMonthCols(cols: readonly MatrixCol[], month: string, max = 6): { id
   return out;
 }
 
-export function shapeMatrix(p: { columns: MatrixCol[]; rows: { kind: string; depth: number; label: string; values: (number | null)[] }[] }, month: string): TableBlock {
+/**
+ * Owner review 2026-11-15: the appendix is read at L2/L3 — every group and
+ * total row stays, but the detail LINES nested deeper than `maxLineDepth`
+ * (OPENING STOCK / PURCHASE / CLOSING STOCK under each purchase group; the
+ * supplier lines under a cash flow purchase group) are left out. Their group
+ * row carries their sum, so no total changes.
+ */
+export const APPENDIX_MAX_LINE_DEPTH = 2;
+export function shapeMatrix(p: { columns: MatrixCol[]; rows: { kind: string; depth: number; label: string; values: (number | null)[] }[] }, month: string, maxLineDepth = APPENDIX_MAX_LINE_DEPTH): TableBlock {
   const cols = pickMonthCols(p.columns, month);
   return {
     columns: cols.map((c) => c.label),
     rows: p.rows
-      .filter((r) => r.kind !== "gap")
+      .filter((r) => r.kind !== "gap" && !(r.kind === "line" && r.depth > maxLineDepth))
       .map((r) => ({
         label: r.label,
         depth: Math.max(0, Math.min(4, r.depth)),
@@ -786,6 +876,8 @@ export function shapeBoardReport(s: BoardSources, month: string, todayYmd: strin
   const cash = s.cashflow.ok ? s.cashflow.data : null;
   const ov = s.overview.ok ? s.overview.data : null;
   const need = <T,>(f: (x: DashPayload) => Section<T>): Section<T> => (dash ? f(dash) : fail<T>(d as { ok: false; error: string }));
+  const head = s.headcount?.ok ? s.headcount.data : null;
+  const cfFc = s.cashForecast.ok ? s.cashForecast.data : null;
   return {
     month,
     monthLabel: longMonth(month),
@@ -794,21 +886,48 @@ export function shapeBoardReport(s: BoardSources, month: string, todayYmd: strin
     openingDate: dash?.openingDate ?? null,
     cover: need((x) => shapeCover(x, month, running, cash, ov)),
     income: need((x) => shapeIncome(x, month)),
-    labour: need((x) => shapeLabour(x, month, s.revSplitCur.ok ? s.revSplitCur.data : null)),
+    labour: need((x) => shapeLabour(x, month, s.revSplitCur.ok ? s.revSplitCur.data : null, head)),
     materials: need((x) => shapeMaterials(x, month)),
     trend: need((x) => shapeTrend(x, month, running)),
     balance: need((x) => shapeBalance(x, month)),
-    cashFlow: need((x) => shapeCashFlow(x, month, running, cash)),
+    cashFlow: need((x) => shapeCashFlow(x, month, running, cash, cfFc)),
     cashForecast: s.cashForecast.ok ? shapeCashForecast(s.cashForecast.data, month) : fail(s.cashForecast),
     customers: ov ? shapeCustomers(ov) : fail(s.overview as { ok: false; error: string }),
     newModels: s.newModels.ok ? shapeNewModels(s.newModels.data) : fail(s.newModels),
-    operations: need((x) => shapeOperations(x, month, s.revSplitCur, s.revSplitPrev, s.defects, s.workforce)),
+    operations: need((x) => shapeOperations(x, month, s.revSplitCur, s.revSplitPrev, s.defects, s.workforce, head)),
     outlook: need((x) => shapeOutlook(x, month, running)),
     notes: { flags: boardFlags(s, month), text: s.notes.text, updatedAt: s.notes.updatedAt, updatedBy: s.notes.updatedBy },
     appendixPl: s.plMonthly.ok ? { ok: true, data: { title: s.plMonthly.data.fyLabel ?? "", ...shapeMatrix(s.plMonthly.data, month) } } : fail(s.plMonthly),
     appendixBs: s.plCur.ok ? { ok: true, data: shapeBsAppendix(s.plCur.data, s.plPrev.ok ? s.plPrev.data : null) } : fail(s.plCur),
     appendixCf: cash ? { ok: true, data: { title: "", ...shapeMatrix(cash, month) } } : fail(s.cashflow as { ok: false; error: string }),
   };
+}
+
+// ── production headcount (owner review 2026-11-15) ───────────────────────
+export type HeadcountPayslip = { period?: string | null; departmentCode?: string | null; department_code?: string | null; employeeId?: string | null; employee_id?: string | null };
+export type HeadcountHours = { date?: string | null; workerId?: string | null; worker_id?: string | null; departmentCode?: string | null; department_code?: string | null; hours?: number | null };
+/**
+ * Distinct workers with a payslip filed under a production department in `ym`
+ * (a department is production unless the master flags is_production = 0).
+ * A month with no payslips yet (still running) counts the workers with hours
+ * clocked in a production department instead; null when neither has any.
+ */
+export function productionHeadcount(ym: string, slips: readonly HeadcountPayslip[], hours: readonly HeadcountHours[], nonProd: ReadonlySet<string>): { n: number | null; basis: "payslips" | "hours" | null } {
+  const isProd = (dept: string) => dept !== "" && !nonProd.has(dept);
+  const fromSlips = new Set<string>();
+  for (const p of slips) {
+    if (String(p.period ?? "").slice(0, 7) !== ym) continue;
+    const id = String(p.employeeId ?? p.employee_id ?? "");
+    if (id && isProd(String(p.departmentCode ?? p.department_code ?? "").trim())) fromSlips.add(id);
+  }
+  if (fromSlips.size) return { n: fromSlips.size, basis: "payslips" };
+  const fromHours = new Set<string>();
+  for (const h of hours) {
+    if (String(h.date ?? "").slice(0, 7) !== ym || !(Number(h.hours) > 0)) continue;
+    const id = String(h.workerId ?? h.worker_id ?? "");
+    if (id && isProd(String(h.departmentCode ?? h.department_code ?? "").trim())) fromHours.add(id);
+  }
+  return fromHours.size ? { n: fromHours.size, basis: "hours" } : { n: null, basis: null };
 }
 
 // ── notes (kv_config board_report_notes:<YYYY-MM>) ────────────────────────

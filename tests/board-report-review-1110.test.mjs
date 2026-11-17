@@ -20,8 +20,9 @@ test("labour shows department names, not codes", () => {
 });
 
 test("cash flow stops at the report month and drops empty months before the books opened", () => {
-  assert.match(fin, /const upTo = d\.months\.filter\(\(x\) => x\.ym <= r\.month\);/);
-  assert.match(fin, /shown\.slice\(-8\)/);
+  // Owner review 2026-11-15: also from BOARD_DATA_FROM, with forecast months after M.
+  assert.match(fin, /const upTo = d\.months\.filter\(\(x\) => x\.ym <= r\.month && x\.ym >= BOARD_DATA_FROM\);/);
+  assert.match(fin, /const cols = \[\.\.\.shown\.slice\(-\(8 - fc\.length\)\), \.\.\.fc\];/);
   assert.doesNotMatch(fin, /d\.months\.slice\(-8\)/);
 });
 
@@ -48,7 +49,9 @@ test("second pass: income page chart fills the gap; labour lists non-production;
   assert.match(f, /<Tile label="Direct labour" value=\{<>RM \{rm\(direct\)\}<\/>\}/);
   assert.doesNotMatch(f, /d\.total \+ \(d\.nonProdTotal/);
   assert.match(f, /const np = d\.nonProd \?\? \[\];/, "a report kept before this change has no nonProd");
-  assert.match(f, /label="Forecast \(production\)"/);
+  // Owner review 2026-11-15: the forecast tile includes the non-production forecast.
+  assert.match(f, /label="Forecast \(incl\. non-production\)" value=\{<>RM \{rm\(fcAll\)\}<\/>\}/);
+  assert.match(f, /const fcAll = d\.forecastTotal === null && npFc === null \? null : \(d\.forecastTotal \?\? 0\) \+ \(npFc \?\? 0\);/);
   assert.match(f, /\{\/\* Total row \(owner review 2026-11-10\)\. \*\/\}/);
   const lib = readFileSync("src/lib/board-report.ts", "utf8");
   assert.match(lib, /x\.nonProd && x\.dept\.toUpperCase\(\) !== "PRODUCTION_SHORTFALL"/);

@@ -3,7 +3,7 @@
 // GET /api/reports/board (src/lib/board-report.ts); nothing is computed here
 // beyond picking colours and labels.
 import type { BoardReport } from "@/lib/board-report";
-import { changePct, pct } from "@/lib/board-report";
+import { BOARD_DATA_FROM, changePct, pct, shortMonth } from "@/lib/board-report";
 import { ComboChart, Donut, Elastic, type Datum } from "./charts";
 import { C, PALETTE, deptName, pctText, rm } from "./format";
 import { BrPage, Delta, Money, Tile } from "./page-kit";
@@ -51,10 +51,12 @@ export function CoverPage({ r }: P) {
               <ComboChart
                 w={w}
                 h={h}
+                // Owner review 2026-11-15: a month after this one (the running
+                // month, next month) is drawn from its Forecast P&L, faded.
                 data={d.trend.map<Datum>((t) => ({
-                  label: t.kind === "mtd" ? `${t.label}*` : t.label,
+                  label: t.kind === "actual" ? t.label : `${t.label} F`,
                   faded: t.kind !== "actual",
-                  values: { sales: t.kind === "forecast" ? null : t.sales, net: t.kind === "forecast" ? null : t.net, fc: t.forecastSales },
+                  values: { sales: t.kind === "actual" ? t.sales : t.forecastSales, net: t.kind === "actual" ? t.net : t.forecastNet, fc: t.forecastSales },
                 }))}
                 series={[
                   { key: "sales", label: "Revenue", color: C.navy, type: "bar" },
@@ -64,7 +66,7 @@ export function CoverPage({ r }: P) {
               />
             )}
           </Elastic>
-          <p className="brp-small">* month to date. Source: Forecasting › Dashboard (the Monthly P&L engine); cash from the Cash Flow statement.</p>
+          <p className="brp-small">F = forecast (Forecasting › Forecast P&amp;L), drawn faded. From {shortMonth(BOARD_DATA_FROM)}; earlier months are incomplete. Source: Forecasting › Dashboard (the Monthly P&amp;L engine); cash from the Cash Flow statement.</p>
         </>
       ))}
     </BrPage>
@@ -97,9 +99,26 @@ export function IncomePage({ r }: P) {
           </table>
           {d.estimated > 0 && <p className="brp-small">Includes RM {rm(d.estimated)} of estimates for recurring costs not yet recorded.</p>}
           <div className="brp-grid2 brp-fill">
+            {/* Owner review 2026-11-15 「not from costs; COGS & NP, GP missing」:
+                where each ringgit of revenue went, with GP and NP stated. */}
             <div>
-              <h3>Cost structure (% of costs)</h3>
-              <Donut items={d.costStructure} size={160} />
+              <h3>Where revenue went</h3>
+              {(() => {
+                const sales = d.rows.find((x) => x.key === "sales")?.actual ?? null;
+                const gp = d.rows.find((x) => x.key === "gross")?.actual ?? null;
+                const np = d.rows.find((x) => x.key === "net")?.actual ?? null;
+                const oi = d.rows.find((x) => x.key === "otherIncome")?.actual ?? 0;
+                return (
+                  <div className="brp-split">
+                    <Donut items={d.revenueSplit ?? []} size={140} />
+                    <div className="brp-split-facts">
+                      <div><span>Gross profit</span><b><Money v={gp} /></b><em>{pctText(pct(gp, sales))} margin</em></div>
+                      <div><span>{np !== null && np < 0 ? "Net loss" : "Net profit"}</span><b><Money v={np} /></b><em>{pctText(pct(np, sales))} margin</em></div>
+                      {np !== null && np < 0 ? <p className="brp-small">Costs exceeded revenue, so the donut has no profit slice.</p> : oi ? <p className="brp-small">Shares are of revenue plus RM {rm(oi)} other income.</p> : null}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
             <div>
               <h3>Margins</h3>
@@ -159,13 +178,17 @@ export function LabourPage({ r }: P) {
         const payroll = d.total;
         const direct = payroll - npTotal;
         const directPrev = d.prevTotal !== null ? d.prevTotal - npPrev : null;
+        const fcAll = d.forecastTotal === null && npFc === null ? null : (d.forecastTotal ?? 0) + (npFc ?? 0);
         return (
         <>
           <div className="brp-tiles four">
             <Tile label="Direct labour" value={<>RM {rm(direct)}</>} sub={<>last month RM {rm(directPrev)} <Delta p={changePct(direct, directPrev)} invert /></>} />
-            <Tile label="Forecast (production)" value={<>RM {rm(d.forecastTotal)}</>} sub={<Delta p={changePct(direct, d.forecastTotal)} invert />} />
+            {/* Owner review 2026-11-15: the forecast tile covers ALL labour —
+                production departments plus the non-production forecast — and
+                compares with the whole payroll. */}
+            <Tile label="Forecast (incl. non-production)" value={<>RM {rm(fcAll)}</>} sub={<>payroll vs forecast <Delta p={changePct(payroll, fcAll)} invert /> · production RM {rm(d.forecastTotal)} + non-production RM {rm(npFc)}</>} />
             <Tile label="% of production revenue" value={pctText(pct(direct, d.productionRevenue))} sub={<>production revenue RM {rm(d.productionRevenue)}</>} />
-            <Tile label="Payroll per head" value={<>RM {rm(d.headcount ? Math.round(payroll / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} on payroll · RM {rm(payroll)} · {d.units ?? "-"} units completed</>} />
+            <Tile label="Payroll per head" value={<>RM {rm(d.headcount ? Math.round(payroll / d.headcount) : null)}</>} sub={<>{d.headcount ?? "-"} production workers paid ·RM {rm(payroll)} · {d.units ?? "-"} units completed</>} />
           </div>
           <table className="brp-table">
             <thead>
@@ -205,7 +228,7 @@ export function LabourPage({ r }: P) {
                 ))
               )}
               <tr className="strong"><td>Non-production total</td><td><Money v={npTotal} /></td><td>{pctText(pct(npTotal, payroll))}</td><td>{pctText(pct(npTotal, d.productionRevenue))}</td><td>-</td><td><Money v={npPrev || null} /></td><td><Money v={npFc} /></td><td><Delta p={changePct(npTotal, npFc)} invert /></td></tr>
-              <tr className="strong"><td>All labour (payroll)</td><td><Money v={payroll} /></td><td>100.0%</td><td>{pctText(pct(payroll, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td /><td /></tr>
+              <tr className="strong"><td>All labour (payroll)</td><td><Money v={payroll} /></td><td>100.0%</td><td>{pctText(pct(payroll, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={fcAll} /></td><td><Delta p={changePct(payroll, fcAll)} invert /></td></tr>
             </tbody>
           </table>
           <h3>Production salary by month</h3>
@@ -246,18 +269,29 @@ export function MaterialsPage({ r }: P) {
                   <td><Money v={x.prev} /></td><td><Money v={x.forecast} /></td><td><Delta p={changePct(x.spend, x.forecast)} invert /></td>
                 </tr>
               ))}
+              {/* Owner review 2026-11-15: the tile (the P&L materials line) and
+                  the table total disagreed — the P&L line also carries carriage
+                  inwards and SST charges, which are not split by category. They
+                  get their own row, so the total equals the tile. */}
+              {(d.unsplit ?? 0) !== 0 && (
+                <tr>
+                  <td>Carriage inwards &amp; SST (not by category)</td><td><Money v={d.unsplit ?? 0} /></td><td>{pctText(pct(d.unsplit ?? 0, d.sales))}</td>
+                  <td /><td /><td /><td /><td />
+                </tr>
+              )}
               {/* Total row (owner review 2026-11-10). */}
               {(() => {
                 const tot = (k: "spend" | "purchase" | "closing" | "prev" | "forecast") => {
                   const v = d.cats.map((x) => x[k]).filter((x): x is number => typeof x === "number");
                   return v.length ? v.reduce((a, b) => a + b, 0) : null;
                 };
-                const spend = tot("spend"), fc = tot("forecast");
+                const catSpend = tot("spend"), fc = tot("forecast");
+                const spend = catSpend === null ? null : catSpend + (d.unsplit ?? 0);
                 return (
                   <tr className="strong">
-                    <td>Total</td><td><Money v={spend} /></td><td>{pctText(d.cats.reduce((a, x) => a + (x.pctOfSales ?? 0), 0))}</td>
+                    <td>Total</td><td><Money v={spend} /></td><td>{pctText(pct(spend, d.sales))}</td>
                     <td><Money v={tot("purchase")} /></td><td><Money v={tot("closing")} /></td><td><Money v={tot("prev")} /></td>
-                    <td><Money v={fc} /></td><td><Delta p={changePct(spend, fc)} invert /></td>
+                    <td><Money v={fc} /></td><td><Delta p={changePct(catSpend, fc)} invert /></td>
                   </tr>
                 );
               })()}
@@ -274,7 +308,7 @@ export function MaterialsPage({ r }: P) {
               />
             )}
           </Elastic>
-          <p className="brp-small">Used = opening + purchases − closing per category (Stock Take basis). Source: Forecasting › Dashboard cost structure.</p>
+          <p className="brp-small">Used = opening stock + purchases − closing stock per category (Stock Take basis) — the closing stock is deducted. The P&amp;L raw-materials line adds carriage inwards (700-1015) and SST charges (706-0000), shown on their own row. Source: Forecasting › Dashboard cost structure.</p>
         </>
       ))}
     </BrPage>
@@ -314,7 +348,7 @@ export function TrendPage({ r }: P) {
               <Elastic>
                 {(w, h) => (
                   <ComboChart w={w} h={h}
-                    data={d.points.map((p) => ({ label: p.kind === "mtd" ? `${p.label}*` : p.label, faded: p.kind !== "actual", values: { s: p.sales, f: p.forecastSales } }))}
+                    data={d.points.map((p) => ({ label: p.kind === "actual" ? p.label : `${p.label} F`, faded: p.kind !== "actual", values: { s: p.kind === "actual" ? p.sales : p.forecastSales, f: p.forecastSales } }))}
                     series={[{ key: "s", label: "Revenue", color: C.navy, type: "bar" }, { key: "f", label: "Forecast", color: C.gold, type: "line", dashed: true }]} />
                 )}
               </Elastic>
@@ -324,13 +358,13 @@ export function TrendPage({ r }: P) {
               <Elastic>
                 {(w, h) => (
                   <ComboChart w={w} h={h}
-                    data={d.points.map((p) => ({ label: p.kind === "mtd" ? `${p.label}*` : p.label, faded: p.kind !== "actual", values: { n: p.net, f: p.forecastNet } }))}
+                    data={d.points.map((p) => ({ label: p.kind === "actual" ? p.label : `${p.label} F`, faded: p.kind !== "actual", values: { n: p.kind === "actual" ? p.net : p.forecastNet, f: p.forecastNet } }))}
                     series={[{ key: "n", label: "Net profit", color: C.green, type: "bar" }, { key: "f", label: "Forecast", color: C.gold, type: "line", dashed: true }]} />
                 )}
               </Elastic>
             </div>
           </div>
-          <p className="brp-small">* month to date. The last column is next month&apos;s Forecast P&L. Source: Forecasting › Dashboard.</p>
+          <p className="brp-small">F / (forecast) = Forecasting › Forecast P&amp;L for the months after this one — the month still running included (owner review 2026-11-15), drawn faded. Source: Forecasting › Dashboard.</p>
         </>
         );
       })}
@@ -371,11 +405,11 @@ export function BalancePage({ r }: P) {
           <Elastic>
             {(w, h) => (
               <ComboChart w={w} h={h}
-                data={d.trend.map((t) => ({ label: t.label, values: { a: t.assets, l: t.liabilities, e: t.equity } }))}
+                data={d.trend.filter((t) => t.assets !== 0 || t.liabilities !== 0 || t.equity !== 0).map((t) => ({ label: t.label, values: { a: t.assets, l: t.liabilities, e: t.equity } }))}
                 series={[{ key: "a", label: "Total assets", color: C.navy, type: "bar" }, { key: "l", label: "Total liabilities", color: C.gold, type: "bar" }, { key: "e", label: "Equity", color: C.green, type: "line" }]} />
             )}
           </Elastic>
-          <p className="brp-small">Stock is the P&L&apos;s closing stock; equity includes this year&apos;s un-closed earnings. Source: Forecasting › Dashboard balance sheet (Finance › Balance Sheet).</p>
+          <p className="brp-small">Stock is the P&L&apos;s closing stock; equity includes this year&apos;s un-closed earnings. Months before the books opened (no balance sheet) are left off the chart. No balance-sheet forecast is kept in the ERP, so none is drawn. Source: Forecasting › Dashboard balance sheet (Finance › Balance Sheet).</p>
         </>
       ))}
     </BrPage>
@@ -388,10 +422,15 @@ export function CashFlowPage({ r }: P) {
       {withSection(r.cashFlow, (d) => {
         // Owner review 2026-11-10: a September report showed October and
         // November, and empty months before the books opened.
-        const upTo = d.months.filter((x) => x.ym <= r.month);
+        // Owner review 2026-11-15: months before BOARD_DATA_FROM (May 26) are
+        // crossed out, and the months after this one follow as forecast.
+        const upTo = d.months.filter((x) => x.ym <= r.month && x.ym >= BOARD_DATA_FROM);
         const firstLive = upTo.findIndex((x) => x.operating || x.investing || x.financing || x.net);
         const shown = firstLive === -1 ? upTo : upTo.slice(firstLive);
         const m = shown.find((x) => x.ym === r.month) ?? shown[shown.length - 1] ?? d.months[d.months.length - 1];
+        const fc = d.forecast ?? [];
+        const cols = [...shown.slice(-(8 - fc.length)), ...fc];
+        const head = (x: (typeof cols)[number]) => (x.kind === "forecast" ? `${x.label} F` : x.kind === "mtd" ? `${x.label}*` : x.label);
         return (
           <>
             <div className="brp-tiles five">
@@ -402,12 +441,12 @@ export function CashFlowPage({ r }: P) {
               <Tile label="Bank, month end" value={<Money v={d.bankClose} />} />
             </div>
             <table className="brp-table compact">
-              <thead><tr><th>RM</th>{shown.slice(-8).map((x) => <th key={x.ym}>{x.kind === "mtd" ? `${x.label}*` : x.label}</th>)}</tr></thead>
+              <thead><tr><th>RM</th>{cols.map((x) => <th key={x.ym} className={x.kind === "forecast" ? "brp-fc" : undefined}>{head(x)}</th>)}</tr></thead>
               <tbody>
                 {(["operating", "investing", "financing", "net", "fcf"] as const).map((k) => (
                   <tr key={k} className={k === "net" ? "strong" : ""}>
                     <td>{{ operating: "Operating", investing: "Investing", financing: "Financing", net: "Net cash flow", fcf: "Free cash flow" }[k]}</td>
-                    {shown.slice(-8).map((x) => <td key={x.ym}><Money v={x[k]} /></td>)}
+                    {cols.map((x) => <td key={x.ym} className={x.kind === "forecast" ? "brp-fc" : undefined}><Money v={x[k]} /></td>)}
                   </tr>
                 ))}
               </tbody>
@@ -416,7 +455,7 @@ export function CashFlowPage({ r }: P) {
             <Elastic>
               {(w, h) => (
                 <ComboChart w={w} h={h}
-                  data={shown.map((x) => ({ label: x.kind === "mtd" ? `${x.label}*` : x.label, faded: x.kind === "mtd", values: { o: x.operating, i: x.investing, f: x.financing, n: x.net } }))}
+                  data={[...shown, ...fc].map((x) => ({ label: head(x), faded: x.kind !== "actual", values: { o: x.operating, i: x.investing, f: x.financing, n: x.net } }))}
                   series={[
                     { key: "o", label: "Operating", color: C.navy, type: "bar" },
                     { key: "i", label: "Investing", color: C.gold, type: "bar" },
@@ -425,7 +464,10 @@ export function CashFlowPage({ r }: P) {
                   ]} />
               )}
             </Elastic>
-            <p className="brp-small">* month to date. Free cash flow = operating − capex. Source: Forecasting › Dashboard cash flow (Finance › Cash Flow statement).</p>
+            <p className="brp-small">
+              F = forecast, from Finance › Cash Flow with Forecast on: {fc.length === 0 ? "no forecast months are available after this one." : fc.map((x) => `${x.label} ${x.basis === "pnl" ? "P&L forecast" : "Docs forecast"}`).join(", ") + " (the P&L forecast where the month has one, else the Docs forecast)."}
+              {" "}Free cash flow = operating − capex. Source: Forecasting › Dashboard cash flow (Finance › Cash Flow statement).
+            </p>
           </>
         );
       })}
