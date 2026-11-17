@@ -6,6 +6,7 @@ import { usePermissions } from "@/lib/use-permission";
 import { formatCurrency } from "@/lib/utils";
 import { useLabourCost } from "./use-labour-cost";
 import { LabourSplitCard } from "./LabourSplitCard";
+import { labourMonthsWithin } from "@/lib/labour-to-payroll";
 import { monthsOf, useProductionRevenue } from "./use-production-revenue";
 import { dropIdleSundays } from "@/lib/idle-sundays";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -150,6 +151,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
 
   // ---- Salary + production revenue -------------------------------------------
   const { byWorkerDay: costByWorkerDay, byWorkerDayDept: costByDept, entries: hourEntries, months: labourMonths, ready: salaryReady } = useLabourCost(range.from, range.to, canSalary);
+  const periodLabourMonths = useMemo(() => labourMonthsWithin(labourMonths, costByWorkerDay), [labourMonths, costByWorkerDay]);
   const prevYm = anchor ? shiftMonth(anchor.slice(0, 7), -1) : "";
   const prevTo = prevYm ? ymd(new Date(Number(prevYm.slice(0, 4)), Number(prevYm.slice(5, 7)), 0)) : "";
   const { byWorkerDay: prevCost } = useLabourCost(prevYm ? `${prevYm}-01` : "", prevTo, canSalary);
@@ -432,7 +434,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         />
         <Tile label="Production efficiency" value={pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} sub={`${hrs(totals.prod)} earned / ${hrs(totals.work)} worked${totals.hw > 0 ? ` Â· Overall ${pct(eff(totals.prod, totals.work))} (incl. helpers ${hrs(totals.hw)})` : ""} Â· click for each worker`} color={effColor(peff(totals.prod, totals.work, totals.hp, totals.hw), target)} onClick={() => setTileDrill("eff")} />
       </div>
-      {canSalary && <LabourSplitCard months={labourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? periodTotals.revenue : null} fullTimePeople={periodTotals.fte} />}
+      {canSalary && <LabourSplitCard months={periodLabourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? periodTotals.revenue : null} fullTimePeople={periodTotals.fte} />}
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
         {winLabel} · full-time people = worker-days ÷ working days ({fmtN(totals.workerDays)} ÷ {fmtN(totals.workingDays)}), so a joiner, a leaver or a day off counts by the days actually worked.
       </p>

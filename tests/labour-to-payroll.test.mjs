@@ -59,3 +59,25 @@ test("the dashboard hook reads whole months of hours before it scales", () => {
   assert.match(source, /working-hour-entries\?from=\$\{hoursRange\.from\}&to=\$\{hoursRange\.to\}/);
   assert.match(source, /keepDaysWithin\(scaled\.byWorkerDay, from, to\)/);
 });
+
+test("the card's months cut to the days shown: one day of October costs that day, not the month", async () => {
+  const { labourMonthsWithin } = await import("../src/lib/labour-to-payroll.ts");
+  const october = { ...month([w("a", 800), w("b", 200)], 1000), byDept: [{ departmentCode: "FAB_SEW", workers: 2, costSen: 1000, outsourceSen: 0 }], split: { ...split, nonProductionLines: [{ departmentCode: "REPAIR", sen: 100 }] } };
+  const oneDay = new Map([["a|2026-10-31", 40], ["b|2026-10-31", 10]]);
+  const [cut] = labourMonthsWithin([october], oneDay);
+  assert.equal(cut.totalSen, 50);
+  assert.deepEqual(cut.workers.map((x) => x.costSen), [40, 10]);
+  assert.equal(cut.split.directSen, 45);
+  assert.equal(cut.split.nonProductionLines[0].sen, 5);
+  assert.equal(cut.byDept[0].costSen, 50);
+  assert.equal(sumLabourMonths([cut]).totalSen, 50);
+});
+
+test("a whole month comes back unchanged", async () => {
+  const { labourMonthsWithin } = await import("../src/lib/labour-to-payroll.ts");
+  const october = month([w("a", 800), w("b", 200)], 1000);
+  const wholeMonth = new Map([["a|2026-10-01", 300], ["a|2026-10-02", 500], ["b|2026-10-01", 200]]);
+  const [cut] = labourMonthsWithin([october], wholeMonth);
+  assert.equal(cut.totalSen, 1000);
+  assert.equal(cut.split.directSen, 900);
+});

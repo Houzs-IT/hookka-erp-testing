@@ -79,6 +79,47 @@ export function keepDaysWithin(costByKey: ReadonlyMap<string, number>, from: str
   return kept;
 }
 
+/**
+ * The months cut to the days a screen shows. `byWorkerDay` is the payroll-scaled
+ * per-day cost already kept to the period (`worker|date` → sen). Each person
+ * keeps what their own days cost; the month's split, lines and departments
+ * shrink by the month's share. A whole month comes back unchanged.
+ */
+export function labourMonthsWithin(months: readonly LabourMonth[], byWorkerDay: ReadonlyMap<string, number>): LabourMonth[] {
+  const periodCost = new Map<string, number>();
+  for (const [key, sen] of byWorkerDay) {
+    const [worker, date] = key.split("|");
+    const k = `${date.slice(0, 7)}|${worker}`;
+    periodCost.set(k, (periodCost.get(k) ?? 0) + sen);
+  }
+  return months.map((month) => {
+    const workers = month.workers.map((w) => {
+      const costSen = periodCost.get(`${month.ym}|${w.id}`) ?? 0;
+      const share = w.costSen ? costSen / w.costSen : 0;
+      return { ...w, costSen, directSen: w.directSen * share, nonProductionSen: w.nonProductionSen * share };
+    });
+    const monthCost = month.workers.reduce((sum, w) => sum + w.costSen, 0);
+    const share = monthCost ? workers.reduce((sum, w) => sum + w.costSen, 0) / monthCost : 0;
+    const { split } = month;
+    return {
+      ...month,
+      totalSen: month.totalSen * share,
+      split: {
+        directSen: split.directSen * share,
+        nonProductionSen: split.nonProductionSen * share,
+        outsourceSen: split.outsourceSen * share,
+        warehousingSen: split.warehousingSen * share,
+        shortfallSen: split.shortfallSen * share,
+        overheadSen: split.overheadSen * share,
+        underRecordedSen: split.underRecordedSen * share,
+        nonProductionLines: (split.nonProductionLines ?? []).map((line) => ({ ...line, sen: line.sen * share })),
+      },
+      byDept: month.byDept.map((d) => ({ ...d, costSen: d.costSen * share, outsourceSen: d.outsourceSen * share })),
+      workers,
+    };
+  });
+}
+
 /** Months added up: what a card shows for a quarter or a year. */
 export function sumLabourMonths(months: readonly LabourMonth[]) {
   const t = { totalSen: 0, directSen: 0, nonProductionSen: 0, outsourceSen: 0, warehousingSen: 0, shortfallSen: 0, overheadSen: 0, underRecordedSen: 0, draft: 0, approved: 0 };
