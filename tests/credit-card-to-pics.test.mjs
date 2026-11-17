@@ -56,3 +56,17 @@ test("the dashboard engine credits a two-slot card half each", async () => {
   assert.deepEqual(minutes, { ei: 63, thi: 63 });
   assert.equal(perfDays[0].productionMinutes, 126);
 });
+
+test("an odd card's halves are kept, so a month of them sums to the payslip", async () => {
+  const { buildPerfDays } = await import("../src/api/lib/workforce-perf.ts");
+  const card = (id) => ({ id, departmentCode: "WOOD_CUT", pic1Id: "ye", pic2Id: "chit", completedDate: "2026-10-15", estMinutes: 113, actualMinutes: 113, wipQty: 1 });
+  const { perfDays } = buildPerfDays({ productionDepts: new Set(["WOOD_CUT"]), whe: [], jobCards: [card("a"), card("b")], approvedExtraTime: [] });
+  const minutes = Object.fromEntries(perfDays[0].workers.map((w) => [w.workerId, w.productionMinutes]));
+  assert.deepEqual(minutes, { ye: 113, chit: 113 });
+});
+
+test("hours display rounds a half minute", async () => {
+  const { formatHours } = await import("../src/lib/utils.ts");
+  assert.equal(formatHours(56.5), "0h 57m");
+  assert.equal(formatHours(120), "2h");
+});

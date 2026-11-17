@@ -391,7 +391,8 @@ app.get("/", async (c) => {
   // 60s TTL.
   // v9 (2026-11-11): efficiency counts approved extra production time.
   // v10 (2026-11-17): a shared card is credited to its two PIC slots, half each (payslip rule).
-  const protoV = "v10";
+  // v11 (2026-11-17): shared-card halves kept, not rounded per card.
+  const protoV = "v11";
   const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
   const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------
