@@ -5,7 +5,7 @@
 // Days) and the department-hours chips. Top 5, then "Show all N". Every figure follows the shared period (URL from / to).
 // A card opens Employee Performance for that worker with the same range and the search carried along (a pushed history entry,
 // so Back returns here). Nothing is written. Rules and numbers: efficiency-model.ts; data: use-efficiency.ts.
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarDays, ChevronRight, Search } from "lucide-react";
 import { M } from "../../theme";
@@ -13,6 +13,9 @@ import { EFF_PREVIEW, buildEfficiencyRows, efficiencyTone, filterEfficiencyRows,
 import { toEmployeePerformance } from "./employee-performance-model";
 import { thisMonthRange } from "./employees-dates";
 import { CARD, SHEET_CARD } from "./employees-styles";
+import { useMenuBridge } from "./menu-context";
+import { efficiencyPrint } from "./menu-prints";
+import { runPrintDoc } from "./run-print";
 import { PeriodSheet } from "./PeriodSheet";
 import { efficiencyState, useEfficiency } from "./use-efficiency";
 import { useEmployeesPeriod } from "./use-employees-period";
@@ -109,6 +112,16 @@ export default function EfficiencySection() {
   const found = rows ? filterEfficiencyRows(rows, q) : [];
   const shown = all ? found : found.slice(0, EFF_PREVIEW);
   const count = `${found.length} worker${found.length === 1 ? "" : "s"}`;
+
+  // "..." → Print report: the rows on screen (the search applied), as desktop's Efficiency Overview prints its grid.
+  const bridge = useMenuBridge();
+  const printable = found.length > 0;
+  useEffect(() => {
+    if (!bridge || !printable) return;
+    bridge.set({ print: { run: () => runPrintDoc(efficiencyPrint(found, range)) } });
+    return () => bridge.set(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `found` is derived from `rows` + `q`; re-register when those change
+  }, [bridge, printable, rows, q, range.from, range.to]);
 
   const dateBtn: CSSProperties = {
     flex: "none",

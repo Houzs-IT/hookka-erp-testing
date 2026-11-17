@@ -1,44 +1,55 @@
-// m-employees-menu.test.mjs — HK-0125: the Employees "..." menus, step 1 (owner-approved 2026-11-16).
+// m-employees-menu.test.mjs — HK-0125: the Employees "..." menus (owner-approved 2026-11-16 / 2026-11-17).
 // Pure logic with worked examples; the wiring checks read the source text. Sample values only.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { EFFICIENCY_REPORT_URL, menuItems, menuTitle } from "../src/pages/m/screens/employees/employees-menu.ts";
+import { efficiencyReportUrl, menuItems, menuTitle, SECTION_MENU } from "../src/pages/m/screens/employees/employees-menu.ts";
 import { buildWorkingHoursPrint, dmy, printPeriod } from "../src/pages/m/screens/employees/working-hours-print.ts";
 import { buildRows } from "../src/pages/m/screens/employees/working-hours-model.ts";
 
 const src = (p) => readFileSync(new URL(`../src/pages/m/screens/employees/${p}`, import.meta.url), "utf8");
-const all = { canWorkersRead: true, canPrintWorkingHours: true };
-const none = { canWorkersRead: false, canPrintWorkingHours: false };
-const labels = (section, ready) => menuItems(section, ready).map((i) => i.label);
+const run = () => undefined;
+const reg = (...actions) => Object.fromEntries(actions.map((a) => [a, { run }]));
+const labels = (section, registry) => menuItems(section, registry).map((i) => i.label);
+const EVERY = reg("copy-yesterday", "copy-from", "print", "settle-month", "qr-poster", "efficiency-a4", "export-csv", "calc-guide");
 
-test("Overview menu: the Daily Efficiency Report ONLY (Departments, Public holidays, Pay rules are desktop-only)", () => {
-  assert.deepEqual(labels("overview", all), ["Daily Efficiency Report"]);
-  assert.deepEqual(menuItems("overview", all).map((i) => i.icon), ["FileText"]);
+test("each section's menu follows the HTML's order and wording (desktop-checked, owner 2026-11-17)", () => {
+  assert.deepEqual(labels("working-hours", EVERY), ["Copy yesterday", "Copy from another date", "Print"]);
+  assert.deepEqual(labels("labor-cost", EVERY), ["Settle month", "Print report"]);
+  assert.deepEqual(labels("efficiency", EVERY), ["Print report"]);
+  assert.deepEqual(labels("department-labor", EVERY), ["Print report", "Department QR poster"]);
+  assert.deepEqual(labels("employee-performance", EVERY), ["Print Report"]);
+  assert.deepEqual(labels("department-performance", EVERY), ["Print Report", "Daily Efficiency (A4)"]);
+  assert.deepEqual(labels("payroll", EVERY), ["Export CSV", "Print Report", "Calculation Guide"]);
 });
 
-test("Working Hours menu: Print only (when there is something to print); no Copy actions yet", () => {
-  assert.deepEqual(labels("working-hours", all), ["Print"]);
-  assert.equal(menuItems("working-hours", all)[0].icon, "Printer");
-  assert.deepEqual(labels("working-hours", { ...all, canPrintWorkingHours: false }), []);
-  assert.ok(!labels("working-hours", all).some((l) => /copy/i.test(l)), "Copy yesterday / Copy from another date are held for review");
+test("Overview and Attendance have NO menu, whatever a section registers (so no button)", () => {
+  assert.deepEqual(menuItems("overview", EVERY), []);
+  assert.deepEqual(menuItems("attendance", EVERY), []);
+  assert.ok(!("overview" in SECTION_MENU) && !("attendance" in SECTION_MENU));
+  assert.ok(!labels("labor-cost", EVERY).some((l) => /regenerate/i.test(l)), "the standalone Regenerate payslips item is not offered");
 });
 
-test("Attendance and every other section have NO menu items (so no button): Attendance Print is held", () => {
-  for (const s of ["attendance", "labor-cost", "efficiency", "department-labor", "employee-performance", "department-performance", "payroll"]) {
-    assert.deepEqual(labels(s, all), [], s);
-  }
+test("only the items a section has REGISTERED show; an unregistered item and a foreign action are dropped", () => {
+  assert.deepEqual(labels("working-hours", reg("print")), ["Print"]);
+  assert.deepEqual(labels("working-hours", reg("copy-from")), ["Copy from another date"]);
+  assert.deepEqual(menuItems("working-hours", {}), []);
+  assert.deepEqual(labels("efficiency", reg("settle-month", "qr-poster")), [], "an action that is not this section's never shows");
 });
 
-test("the report needs workers:read; Employee Master is never offered (desktop only)", () => {
-  assert.deepEqual(labels("overview", none), []);
-  for (const s of ["overview", "working-hours", "attendance", "payroll"]) {
-    assert.ok(!labels(s, all).includes("Employee Master") && !labels(s, none).includes("Employee Master"), s);
-  }
+test("a busy item shows greyed with its note and cannot be picked", () => {
+  const items = menuItems("payroll", { "export-csv": { run, busy: true, note: "Preparing…" }, print: { run } });
+  assert.deepEqual(items.map((i) => [i.label, !!i.busy, i.note ?? ""]), [["Export CSV", true, "Preparing…"], ["Print Report", false, ""]]);
+  const ui = src("MenuSheet.tsx");
+  assert.match(ui, /onClick=\{\(\) => \(it\.busy \? undefined : onPick\(it\.action\)\)\}/);
+  assert.match(ui, /disabled=\{it\.busy\}/);
+});
+
+test("Employee Master is never offered (desktop only); no items -> no button", () => {
+  for (const s of Object.keys(SECTION_MENU)) assert.ok(!labels(s, EVERY).includes("Employee Master"), s);
   const route = src("EmployeesRoute.tsx");
   assert.match(route, /items\.length === 0 \? undefined/, "no items -> no ... button");
   assert.ok(!/employee-master/.test(route + src("employees-sections.ts") + src("employees-menu.ts")), "no Employee Master route or action");
-  for (const gone of ["MenuPages", "menu-pages-model", "departments", "holidays", "pay-rules"]) assert.ok(!route.includes(gone), `${gone} is not on the phone`);
 });
 
 test("sheet title: 'Employees' on Overview, the section's own name elsewhere", () => {
@@ -47,12 +58,12 @@ test("sheet title: 'Employees' on Overview, the section's own name elsewhere", (
   assert.equal(menuTitle("attendance", "Attendance"), "Attendance");
 });
 
-test("Daily Efficiency Report opens the existing report with NO date, so the server uses the previous working day", () => {
-  assert.equal(EFFICIENCY_REPORT_URL, "/api/reports/efficiency");
-  assert.ok(!/date=/.test(EFFICIENCY_REPORT_URL));
-  const route = src("EmployeesRoute.tsx");
-  assert.match(route, /window\.open\(EFFICIENCY_REPORT_URL, "_blank", "noopener"\)/);
-  assert.ok(!/fetch\(|mutateJson/.test(route.replace(/^\s*\/\/.*$/gm, "")), "opening the report writes and fetches nothing from the menu");
+test("Daily Efficiency (A4) opens the existing report for the selected To date, all departments (desktop's URL), needing workers:read", () => {
+  assert.equal(efficiencyReportUrl("2026-11-13"), "/api/reports/efficiency?date=2026-11-13");
+  const sec = src("DepartmentPerformanceSection.tsx");
+  assert.match(sec, /window\.open\(efficiencyReportUrl\(range\.to\), "_blank", "noopener"\)/);
+  assert.match(sec, /if \(!bridge \|\| !data\.allowed\) return;/, "workers:read gates it");
+  assert.ok(!/fetch\(|mutateJson/.test(src("EmployeesRoute.tsx").replace(/^\s*\/\/.*$/gm, "")), "the shell fetches and writes nothing from the menu");
 });
 
 // ---- Working Hours Print -----------------------------------------------------------------------------------------------
@@ -125,15 +136,15 @@ test("the filter line names the period and the active filters", () => {
   );
 });
 
-test("Print is wired through the shell's menu bridge using the shared print engine; it registers only with entries to print", () => {
+test("Print is wired through the shell's menu registry using the shared print engine; it registers only with entries to print", () => {
   const sec = src("WorkingHoursSection.tsx");
   assert.match(sec, /from "@\/lib\/print-report"/);
-  assert.match(sec, /bridge\.setPrint\(\(\) =>/);
-  assert.match(sec, /return \(\) => bridge\.setPrint\(null\)/);
+  assert.match(sec, /bridge\.set\(\{/);
+  assert.match(sec, /return \(\) => bridge\.set\(null\)/);
   assert.match(sec, /const printable = filtered\.length > 0/);
   const route = src("EmployeesRoute.tsx");
-  assert.match(route, /canPrintWorkingHours: section === "working-hours" && whPrint !== null/);
-  assert.match(route, /whPrint\?\.\(\)/);
+  assert.match(route, /const items = menuItems\(section, registry\)/);
+  assert.match(route, /registry\[a\]\?\.run\(\)/);
 });
 
 test("the menu changes nothing", () => {
@@ -149,4 +160,15 @@ test("the sheet matches the HTML: a 32px icon tile, a 13.5px label, no chevron, 
   assert.match(ui, /width: 32, height: 32/);
   assert.match(ui, /fontSize: 13\.5, fontWeight: 600/);
   assert.match(ui, /borderRadius: 9/);
+});
+
+test("Department Performance fetches the full per-worker report ONLY when Print Report is tapped (not on the list, not when the menu opens)", () => {
+  const sec = src("DepartmentPerformanceSection.tsx").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/useMenuOpen/.test(sec), "opening the menu is not a trigger");
+  assert.match(sec, /useDepartmentPerformance\(range, dept, cat, day, wantKey === scopeKey\)/);
+  assert.match(sec, /const \[wantKey, setWantKey\] = useState<string \| null>\(null\)/, "nothing is wanted until a tap");
+  const run = sec.slice(sec.indexOf("run: () => {"), sec.indexOf('"efficiency-a4"'));
+  assert.match(run, /window\.open\("", "_blank"\)/, "the tap opens the print window itself");
+  assert.match(run, /setWantKey\(scopeKey\)/, "the tap starts the fetch");
+  assert.match(src("use-department-performance.ts"), /allowed && wantFull \? fullUrl\(/, "no request without wantFull");
 });

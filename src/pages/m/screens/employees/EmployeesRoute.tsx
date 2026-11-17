@@ -12,7 +12,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Ellipsis } from "lucide-react";
-import { usePermissions } from "@/lib/use-permission";
 import { MobileHeader } from "../../components";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
 import { M } from "../../theme";
@@ -33,8 +32,8 @@ import { EFF_PARAMS } from "./efficiency-model";
 import { EP_PARAMS } from "./employee-performance-model";
 import { LC_PARAMS } from "./labor-cost-model";
 import { PAY_PARAMS } from "./payroll-model";
-import { EFFICIENCY_REPORT_URL, menuItems, menuTitle, type MenuAction } from "./employees-menu";
-import { MenuBridgeContext, type MenuBridge } from "./menu-context";
+import { menuItems, menuTitle, type MenuAction, type MenuRegistry } from "./employees-menu";
+import { MenuBridgeContext, MenuOpenContext, type MenuBridge } from "./menu-context";
 import { pendingBadge } from "./time-adjustments-model";
 import { usePendingAdjustments } from "./use-time-adjustments";
 import WorkingHoursSection from "./WorkingHoursSection";
@@ -47,10 +46,9 @@ export default function EmployeesRoute() {
   const [params, setParams] = useSearchParams();
   const section = resolveSection(params.get("section"));
   const [menuOpen, setMenuOpen] = useState(false);
-  // Working Hours registers its Print action here while it has entries to print (see menu-context.ts).
-  const [whPrint, setWhPrint] = useState<(() => void) | null>(null);
-  const bridge = useMemo<MenuBridge>(() => ({ setPrint: (fn) => setWhPrint(() => fn) }), []);
-  const { hasPermission } = usePermissions();
+  // The open section registers the menu actions that are ready right now here (see menu-context.ts / employees-menu.ts).
+  const [registry, setRegistry] = useState<MenuRegistry>({});
+  const bridge = useMemo<MenuBridge>(() => ({ set: (r) => setRegistry(r ?? {}) }), []);
   const barTop = useStickyBelowHeader();
   const barRef = useRef<HTMLDivElement>(null);
   // Fetched ONCE here: the Working Hours tab badge and the request card below read this same list.
@@ -84,18 +82,15 @@ export default function EmployeesRoute() {
     return tab ? sectionConfig(tab) : null;
   }, [section]);
 
-  const items = menuItems(section, {
-    canWorkersRead: hasPermission("workers", "read"),
-    canPrintWorkingHours: section === "working-hours" && whPrint !== null,
-  });
+  const items = menuItems(section, registry);
   function pick(a: MenuAction) {
     setMenuOpen(false);
-    if (a === "efficiency-report") window.open(EFFICIENCY_REPORT_URL, "_blank", "noopener"); // no date: the previous working day
-    else if (a === "print-working-hours") whPrint?.(); // inside the tap, so the print window is allowed to open
+    registry[a]?.run(); // inside the tap, so a print / report window is allowed to open
   }
 
   return (
     <MenuBridgeContext.Provider value={bridge}>
+     <MenuOpenContext.Provider value={menuOpen}>
       {/* The HTML turns every input placeholder brown at 75% (input::placeholder). */}
       <style>{".emp-ph::placeholder{color:#6B5C32;opacity:.75}"}</style>
       <MobileHeader
@@ -240,6 +235,7 @@ export default function EmployeesRoute() {
         onClose={() => setMenuOpen(false)}
         onPick={pick}
       />
+     </MenuOpenContext.Provider>
     </MenuBridgeContext.Provider>
   );
 }

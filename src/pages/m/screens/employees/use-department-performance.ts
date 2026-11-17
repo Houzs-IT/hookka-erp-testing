@@ -5,7 +5,7 @@
 // plus /api/departments (no gate) for the filter's department names.
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
-import { dayUrl, listUrl, type DpCategory, type DpData } from "./department-performance-model";
+import { dayUrl, fullUrl, listUrl, type DpCategory, type DpData } from "./department-performance-model";
 import type { YmdRange } from "./employees-dates";
 
 type Resp = { success?: boolean; data?: DpData };
@@ -13,11 +13,12 @@ const dataOf = (r: Resp | null): DpData | null => (r && r.success !== false && r
 
 export type DpDept = { code: string; name?: string; shortName?: string; isProduction?: boolean; sequence?: number };
 
-export function useDepartmentPerformance(range: YmdRange, dept: string, cat: DpCategory, day: string | null) {
+export function useDepartmentPerformance(range: YmdRange, dept: string, cat: DpCategory, day: string | null, wantFull = false) {
   const { hasPermission, loading: permLoading } = usePermissions();
   const allowed = !permLoading && hasPermission("workers", "read");
   const list = useCachedJson<Resp>(allowed ? listUrl(range, dept, cat) : null, 120);
   const detail = useCachedJson<Resp>(allowed && day ? dayUrl(day, dept, cat) : null, 120);
+  const full = useCachedJson<Resp>(allowed && wantFull ? fullUrl(range, dept, cat) : null, 120);
   const depts = useCachedJson<unknown>(allowed ? "/api/departments" : null, 300);
   const deptRows = Array.isArray(depts.data) ? (depts.data as DpDept[]) : Array.isArray((depts.data as { data?: unknown } | null)?.data) ? ((depts.data as { data: DpDept[] }).data) : null;
   return {
@@ -25,6 +26,8 @@ export function useDepartmentPerformance(range: YmdRange, dept: string, cat: DpC
     allowed,
     list: { data: dataOf(list.data), loading: list.loading, error: !!list.error || (list.data !== null && dataOf(list.data) === null) },
     detail: { data: dataOf(detail.data), loading: detail.loading, error: !!detail.error || (detail.data !== null && dataOf(detail.data) === null) },
+    /** The whole period with every day's workers — only for the printed report (requested once `wantFull`). */
+    full: { data: dataOf(full.data), loading: full.loading, error: !!full.error || (full.data !== null && dataOf(full.data) === null) },
     depts: deptRows,
   };
 }

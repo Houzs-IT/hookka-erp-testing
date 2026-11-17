@@ -5,13 +5,15 @@
 // times, as in the approved HTML (minus its Edit / Delete buttons). Only the first 5 show here; "View all N" opens a full page
 // (HoursPage) like the Approved / Rejected adjustments. Opens on the whole current Malaysia month; the date button narrows to one
 // work day, the search finds a name or employee number, a chip filters by department. Edit, Delete and the desktop-only
-// "Copy / Print" actions are not offered. Data: the existing working-hour-entries, attendance, workers and departments
-// endpoints; nothing is written.
+// actions are not offered. "..." offers Print and (with attendance:create) Copy yesterday / Copy from another date: drafts are built
+// from another day and reviewed in CopySheet, and only its Save writes (working-hours-copy.ts). Data: the existing working-hour-entries,
+// attendance, workers and departments endpoints.
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarDays, ChevronRight, Clock, Search } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { printReport, type PrintColumn } from "@/lib/print-report";
+import { usePermissions } from "@/lib/use-permission";
 import { todayYmdMYForReads } from "@/lib/staging-today";
 import { M } from "../../theme";
 import { AdjustmentRequests } from "./AdjustmentRequests";
@@ -20,6 +22,7 @@ import { MIN_DATE } from "./employees-dates";
 import { dayHeading } from "./employees-format";
 import { CARD, CARD_HEAD, CARD_TITLE, COUNT_PILL, LINK_BUTTON, SEARCH_BOX, SEARCH_INPUT } from "./employees-styles";
 import HoursCard from "./HoursCard";
+import CopySheet from "./CopySheet";
 import { useMenuBridge } from "./menu-context";
 import HoursPage from "./HoursPage";
 import { rowsOf } from "./time-adjustments-model";
@@ -49,6 +52,7 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
   const wdate = /^\d{4}-\d{2}-\d{2}$/.test(params.get("wdate") ?? "") ? (params.get("wdate") as string) : "";
   const dept = params.get("wdept") ?? "";
   const [pageOpen, setPageOpen] = useState(false);
+  const [copyMode, setCopyMode] = useState<"yesterday" | "from" | null>(null);
 
   const setParam = (key: (typeof WH_PARAMS)[number], value: string) =>
     setParams(
@@ -87,9 +91,13 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
   // runs when the data or a filter changes, not on every render.
   const bridge = useMenuBridge();
   const printable = filtered.length > 0;
+  const { hasPermission } = usePermissions();
+  const canCopy = hasPermission("attendance", "create"); // the gate the server enforces on POST /api/working-hour-entries
   useEffect(() => {
-    if (!bridge || !printable) return;
-    bridge.setPrint(() => {
+    if (!bridge || (!printable && !canCopy)) return;
+    bridge.set({
+      ...(canCopy ? { "copy-yesterday": { run: () => setCopyMode("yesterday") }, "copy-from": { run: () => setCopyMode("from") } } : {}),
+      ...(!printable ? {} : { print: { run: () => {
       const spec = buildWorkingHoursPrint({
         rows,
         filters: { q, date: wdate, dept },
@@ -99,9 +107,10 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
       if (spec.entries === 0) return;
       const columns: PrintColumn[] = spec.columns.map((c, i) => ({ header: c.header, align: c.align, value: (r: unknown) => (r as string[])[i] }));
       printReport({ title: spec.title, filterSummary: spec.filterSummary, orientation: spec.orientation, cards: spec.cards, sections: [{ columns, rows: spec.rows }] });
+    } } }),
     });
-    return () => bridge.setPrint(null);
-  }, [bridge, printable, rows, q, wdate, dept, win.from, win.to, depts]);
+    return () => bridge.set(null);
+  }, [bridge, printable, canCopy, rows, q, wdate, dept, win.from, win.to, depts]);
   const loadingFirst = entriesRes.data === null && entriesRes.loading;
   const failed = entriesRes.data === null && !entriesRes.loading && !!entriesRes.error;
 
@@ -221,6 +230,17 @@ export default function WorkingHoursSection({ pending }: { pending: AdjustmentLi
       </section>
 
       {pageOpen ? <HoursPage rows={filtered} onClose={() => setPageOpen(false)} /> : null}
+      {copyMode ? (
+        <CopySheet
+          open
+          mode={copyMode}
+          selectedDate={wdate}
+          today={today}
+          nameOf={(id) => rowsOf<WhWorker>(workersRes.data).find((w) => w.id === id)?.name || id}
+          deptName={deptName}
+          onClose={() => setCopyMode(null)}
+        />
+      ) : null}
     </>
   );
 }

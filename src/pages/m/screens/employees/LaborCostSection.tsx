@@ -7,14 +7,24 @@
 //   Revenue Raw Data (needs `revenue-figures:read`) — the first five recognised units, then "View all N units" on its own page.
 // Costing is desktop's Labor Cost tab (labor-cost-model.ts). Without `revenue-figures:read` the revenue columns and the Revenue
 // Raw Data card are not drawn and a grey lock note says why. If the data the cost needs failed to load, labor cost reads
-// "Unavailable" (hours still show). The category is in the URL (`lcc`) with the shared period. Nothing is written.
-import { useState, type CSSProperties, type ReactNode } from "react";
+// "Unavailable" (hours still show). The category is in the URL (`lcc`) with the shared period. The only write is "..." → Settle month
+// (SettleSheet / settle-month.ts), offered for one full finished month with payslips when payslips:update + create are held.
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarDays, ChevronDown, ChevronRight, Factory, Lock, PackageCheck, Warehouse } from "lucide-react";
+import { useCachedJson } from "@/lib/cached-fetch";
+import { usePermissions } from "@/lib/use-permission";
 import { formatRM } from "@/lib/utils";
 import { M } from "../../theme";
 import { thisMonthRange } from "./employees-dates";
+import { payrollEligible } from "./department-labor-model";
 import { CARD, SHEET_CARD } from "./employees-styles";
+import { useMenuBridge } from "./menu-context";
+import { laborCostPrint } from "./menu-prints";
+import { labelOfMonth, payslipRows } from "./payroll-model";
+import { runPrintDoc } from "./run-print";
+import SettleSheet from "./SettleSheet";
+import { settleAvailable } from "./settle-month";
 import { catLabel, computeLaborCost, costRatio, overheadBucket, parseLcCategory, productionDeptCount, revenueUnits, type LcCategory, type LcRow, type RevenueUnit } from "./labor-cost-model";
 import { PeriodSheet } from "./PeriodSheet";
 import RevenueUnitsPage from "./RevenueUnitsPage";
@@ -109,6 +119,7 @@ export default function LaborCostSection() {
   const [all, setAll] = useState<{ prod: boolean; oh: boolean }>({ prod: false, oh: false });
   const [periodOpen, setPeriodOpen] = useState(false);
   const [unitsPage, setUnitsPage] = useState(false);
+  const [settleOpen, setSettleOpen] = useState(false);
 
   const data = useLaborCost(range);
   const st = laborCostState(data);
@@ -131,6 +142,32 @@ export default function LaborCostSection() {
   const money = (sen: number) => (result?.mode === "unavailable" ? "Unavailable" : formatRM(sen));
   const revOk = st.revenue === "ok";
   const units: RevenueUnit[] = revOk && revenue.value ? revenueUnits(revenue.value.rows, category) : [];
+
+  // "..." → Print report (the Production Breakdown; revenue only with revenue-figures:read) and Settle month. Settle month needs ONE
+  // full finished month with no category and stored payslips (desktop's rule), plus the two permissions the server enforces.
+  const bridge = useMenuBridge();
+  const { hasPermission } = usePermissions();
+  const month = range.from.slice(0, 7);
+  const settleRange = payrollEligible(range, category, today);
+  const monthPayslips = useCachedJson<unknown>(data.allowed && settleRange ? `/api/payslips?period=${month}` : null, 120);
+  const settleOk = settleAvailable({
+    range,
+    category,
+    today,
+    hasPayslips: (payslipRows(monthPayslips.data)?.length ?? 0) > 0,
+    canUpdate: hasPermission("payslips", "update"),
+    canCreate: hasPermission("payslips", "create"),
+  });
+  const printable = !!result && result.production.length > 0;
+  useEffect(() => {
+    if (!bridge || !data.allowed) return;
+    bridge.set({
+      ...(settleOk ? { "settle-month": { run: () => setSettleOpen(true) } } : {}),
+      ...(printable && result ? { print: { run: () => runPrintDoc(laborCostPrint({ result, range, category, canSeeRevenue: data.canRevenue })) } } : {}),
+    });
+    return () => bridge.set(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `result` is derived from the loaded sources; re-register when it changes
+  }, [bridge, data.allowed, data.canRevenue, settleOk, printable, result, range.from, range.to, category]);
 
   const base = thisMonthRange(today);
   const isDefaultPeriod = range.from === base.from && range.to === base.to;
@@ -320,6 +357,7 @@ export default function LaborCostSection() {
         <div style={{ height: 96 }} />
       </div>
 
+      <SettleSheet open={settleOpen} period={month} monthLabel={labelOfMonth(month)} onClose={() => setSettleOpen(false)} />
       {unitsPage && revOk ? <RevenueUnitsPage rows={units} sub={`${label}${category ? ` · ${catLabel(category)}` : ""}`} onClose={() => setUnitsPage(false)} /> : null}
       <PeriodSheet open={periodOpen} onClose={() => setPeriodOpen(false)} range={range} today={today} onApply={(r) => setRange(r)} />
     </>

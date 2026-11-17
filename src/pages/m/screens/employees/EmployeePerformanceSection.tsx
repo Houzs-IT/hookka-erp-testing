@@ -5,7 +5,7 @@
 // Overview ranking lands here with the SAME worker and range, and the efficiency shown is the ranking's own: this screen builds
 // the worker's row with the same `buildEfficiencyRows` from the same cached requests (see employee-performance-model.ts).
 // Extra Production Time is a separate display-only tile that is shown only when it can be verified. Nothing is written.
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarDays, ChevronLeft } from "lucide-react";
 import { M } from "../../theme";
@@ -29,6 +29,9 @@ import {
 import { thisMonthRange } from "./employees-dates";
 import { shortDate } from "./employees-format";
 import { CARD, SHEET_CARD } from "./employees-styles";
+import { useMenuBridge } from "./menu-context";
+import { employeePerformancePrint } from "./menu-prints";
+import { runPrintDoc } from "./run-print";
 import { PeriodSheet } from "./PeriodSheet";
 import { useEmployeeExtras } from "./use-employee-performance";
 import { efficiencyState, useEfficiency } from "./use-efficiency";
@@ -137,6 +140,16 @@ export default function EmployeePerformanceSection() {
         { l: "Total OT", v: otMin !== null && otMin > 0 ? fmtHM(otMin) : "—", fg: M.raisin },
       ]
     : [];
+
+  // "..." → Print Report for the SELECTED employee: the tiles + the Daily Breakdown rows, as desktop's Employee Performance prints.
+  const bridge = useMenuBridge();
+  const printable = !!worker && cards !== null;
+  useEffect(() => {
+    if (!bridge || !printable || !worker || !cards) return;
+    bridge.set({ print: { run: () => runPrintDoc(employeePerformancePrint({ workerLabel: workerLabel(worker), range, tiles, effPct: row?.eff ?? null, rows: cards })) } });
+    return () => bridge.set(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `tiles` / `cards` derive from the loaded data; re-register when it changes
+  }, [bridge, printable, worker?.id, row, extras.cards.rows, extras.claims.rows, extras.attendance.rows, range.from, range.to]);
 
   const info: { k: string; v: ReactNode; w: number }[] = worker
     ? [
