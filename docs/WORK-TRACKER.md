@@ -320,6 +320,11 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Forecast P&L: actual sales per customer (feat/forecast-customer-actuals, 2026-11-17)
+
+Ask (owner, 17 Nov, Forecasting › Forecast P&L with SALES opened): 「sales的actual customer的sales没有show by customer？」 — each customer row showed only its Forecast boxes; the Actual columns were blank.
+1. 🔵 New `GET /api/accounting/forecast/customer-actuals?from&to` (accounting read): the P&L's own Sales source — ledger legs on REVENUE-bucket accounts, credit − debit, by document date — narrowed to sales invoices / credit notes / debit notes (voids and restates included) and given each document's customer (`customerActualsFromLegs`, `src/lib/forecast-pnl.ts`). Edit forecast shows each customer's Actual + % of sales, lists customers that sold but have no forecast (`customerActualIds`), keeps them under Hide unused, and adds "Other sales (no customer invoice / note)" = Sales row − customers, so the rows add up exactly (same as the supplier remainder). Test: `tests/forecast-customer-actuals.test.mjs`. Not yet checked against prod numbers.
+
 ## 🔵 Credit note: pick its date (feat/cn-date-picker, 2026-11-17)
 
 Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' end-of-May invoices left open after its opening receipt HOR-2606-010 is knocked off (INV-2606-030 RM 1,230.00 and INV-2606-041 RM 1,525.00) are to be cleared by CN, 「开cn 日期放5月31」. The CN create route always dated a note today and Edit never changed it, so a 31 May CN could not be raised.

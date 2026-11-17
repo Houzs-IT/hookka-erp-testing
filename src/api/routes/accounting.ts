@@ -70,7 +70,7 @@ import {
   type TfPlanStore,
   type PnlForecastInput,
 } from "../../lib/cashflow-forecast";
-import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastMonthFigures, forecastMonthHasFigures, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, supplierActualsFromLegs, type FcLineGroups, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
+import { cleanPurchasesByType, cleanSalesByCustomer, forecastDepts, forecastLineGroups, forecastMaterialAccountTypes, forecastMonthFigures, forecastMonthHasFigures, forecastSalesSen, forecastTypeSupplierCells, forecastTypeSupplierSen, supplierActualsFromLegs, customerActualsFromLegs, type FcLineGroups, type FcMonth, type FcSupplierCell } from "../../lib/forecast-pnl";
 import { FC_AR, FORECAST_BS_LINES, forecastBsDeltas, forecastBsMonths, openingReceiptsByYm, type BsForecastPayload, type ForecastBsAccrual } from "../../lib/forecast-bs";
 import { loadForecastSupplierMix, supplierMixFrom } from "../lib/forecast-supplier-mix";
 import { docNumberPreview, docTypePrefix, getDocNumberPrefixes, getDocTypePrefixes, issueDocNumber, issueDocNumberWithPrefix, nextSelfNumber } from "../lib/doc-number-service";
@@ -17666,6 +17666,83 @@ app.get("/forecast/supplier-actuals", async (c) => {
     });
   }
   return c.json({ success: true, data: { months: supplierActualsFromLegs(legs, (code) => types.get(code)) } });
+});
+
+// GET /api/accounting/forecast/customer-actuals?from=YYYY-MM&to=YYYY-MM — each
+// month's actual sales BY CUSTOMER (owner 2026-11-17 「sales的actual customer的
+// sales没有show by customer？」): the Edit forecast lists them on the customer
+// rows under Sales. Source chosen to match how the P&L builds its Sales actual
+// (computePnlWindow: every REVENUE-bucket account's ledger net, credit minus
+// debit, dated by the source document — SALES - BEDFRAME / ACCESSORY / SOFA,
+// DISCOUNT ALLOWED and RETURN INWARDS alike): the SAME ledger legs, narrowed to
+// the customer documents — sales invoices, credit notes and debit notes (their
+// _void / _restate legs too) — each leg given its document's customer. Not the
+// invoices table's own totals: those carry SST and miss the credit notes, so
+// they could never add up to the P&L line. What no customer document explains
+// (a journal, the opening slice, a pre-opening month from the historical P&L)
+// is left to the page's remainder row. Legs before the opening are left out,
+// as the P&L leaves them. Read only.
+app.get("/forecast/customer-actuals", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const from = String(c.req.query("from") ?? "");
+  const to = String(c.req.query("to") ?? "");
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to are months (YYYY-MM), from not after to" }, 400);
+  }
+  const db = c.var.DB;
+  const none = { results: [] as Record<string, unknown>[] };
+  const [coaList, override, resolveAcct, dc, invRes, cnRes, dnRes, legRes] = await Promise.all([
+    // Inactive accounts too: the P&L's ledger window reads the whole chart.
+    loadCoaList(db, true),
+    getPnlSectionMap(db),
+    loadAccountResolver(db),
+    loadDocDateResolver(db),
+    db.prepare("SELECT id, invoiceNo, customerId FROM invoices").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, noteNumber, customerId FROM credit_notes").all<Record<string, unknown>>().catch(() => none),
+    db.prepare("SELECT id, noteNumber, customerId FROM debit_notes").all<Record<string, unknown>>().catch(() => none),
+    db.prepare("SELECT accountCode, sourceId, sourceType, debitSen, creditSen, postedAt FROM ledger_journal_entries WHERE hidden = 0 AND (sourceType LIKE 'invoice%' OR sourceType LIKE 'credit_note%' OR sourceType LIKE 'debit_note%')").all<Record<string, unknown>>(),
+  ]);
+  const coaType = new Map(coaList.map((a) => [a.code, a.type] as const));
+  const isRevenue = (code: string) => {
+    const t = coaType.get(code);
+    return t !== undefined && pnlBucketFor(code, t, override) === "REVENUE";
+  };
+  // A document by its id or its number, per family (posters set sourceId either way).
+  const customerOf = new Map<string, Map<string, string>>();
+  const index = (fam: string, rows: Record<string, unknown>[]) => {
+    const m = new Map<string, string>();
+    for (const r of rows) {
+      const cust = String(r.customerId ?? r.customer_id ?? "");
+      if (!cust) continue;
+      for (const key of [r.id, r.invoiceNo ?? r.invoice_no, r.noteNumber ?? r.note_number]) if (key) m.set(String(key), cust);
+    }
+    customerOf.set(fam, m);
+  };
+  index("invoice", invRes.results ?? []);
+  index("credit_note", cnRes.results ?? []);
+  index("debit_note", dnRes.results ?? []);
+  const legs: { customerId: string; accountCode: string; ym: string; debitSen: number; creditSen: number }[] = [];
+  for (const l of legRes.results ?? []) {
+    const sourceType = String(l.sourceType ?? l.source_type ?? "");
+    const sourceId = String(l.sourceId ?? l.source_id ?? "");
+    const fam = customerOf.get(stripLegSuffix(sourceType));
+    if (!fam) continue;
+    const dd = dc.docDate(sourceType, sourceId, String(l.postedAt ?? l.posted_at ?? ""));
+    if (legBeforeOpening(sourceType, dd, dc.openingDate)) continue;
+    const ym = dd.slice(0, 7);
+    if (ym < from || ym > to) continue;
+    const cust = fam.get(sourceId) ?? fam.get(stripSourceIdSuffix(sourceId));
+    if (!cust) continue;
+    legs.push({
+      customerId: cust,
+      accountCode: resolveAcct(String(l.accountCode ?? l.account_code ?? "")),
+      ym,
+      debitSen: Number(l.debitSen ?? l.debit_sen) || 0,
+      creditSen: Number(l.creditSen ?? l.credit_sen) || 0,
+    });
+  }
+  return c.json({ success: true, data: { months: customerActualsFromLegs(legs, isRevenue) } });
 });
 
 app.put("/forecast", async (c) => {

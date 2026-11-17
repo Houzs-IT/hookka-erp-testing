@@ -42,6 +42,9 @@ import {
   forecastTypeSupplierCells,
   forecastTypeSuppliers,
   supplierActualIds,
+  customerActualIds,
+  FC_OTHER_CUSTOMER,
+  type FcCustomerActuals,
   type FcMonthFigures,
   type FcSupplierActuals,
   type FcSupplierMix,
@@ -152,6 +155,10 @@ export function MonthlyPlForecastEditor({
   // … 是从谁买」): month → material type → supplier → sen, for the
   // supplier rows' Actual cells (GET /forecast/supplier-actuals).
   const [supplierActs, setSupplierActs] = useState<FcSupplierActuals>({});
+  // Who each actual sale was to (owner 2026-11-17 「sales的actual customer的sales
+  // 没有show by customer？」): month → customer → sen, for the customer rows'
+  // Actual cells (GET /forecast/customer-actuals).
+  const [customerActs, setCustomerActs] = useState<FcCustomerActuals>({});
 
   useEffect(() => {
     let live = true;
@@ -202,6 +209,10 @@ export function MonthlyPlForecastEditor({
     fetch(`/api/accounting/forecast/supplier-actuals?from=${sorted[0]}&to=${sorted[sorted.length - 1]}`, { cache: "no-store" })
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { months?: FcSupplierActuals } }>)
       .then((j) => { if (live && j?.success) setSupplierActs(j.data?.months ?? {}); })
+      .catch(() => {});
+    fetch(`/api/accounting/forecast/customer-actuals?from=${sorted[0]}&to=${sorted[sorted.length - 1]}`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { months?: FcCustomerActuals } }>)
+      .then((j) => { if (live && j?.success) setCustomerActs(j.data?.months ?? {}); })
       .catch(() => {});
     return () => { live = false; };
   }, [base]);
@@ -267,8 +278,12 @@ export function MonthlyPlForecastEditor({
   const side = (v: string, s: "a" | "p"): CellEntry => (v === "" ? {} : s === "a" ? { a: v } : { p: v });
 
   const customerRows = useMemo(
-    () => forecastCustomerRows(customerMaster, Object.values(sheet).flatMap((m) => Object.entries(m.customers ?? {}).filter(([, v]) => (v ?? "").trim() !== "").map(([id]) => id))),
-    [customerMaster, sheet],
+    () => forecastCustomerRows(customerMaster, [
+      ...Object.values(sheet).flatMap((m) => Object.entries(m.customers ?? {}).filter(([, v]) => (v ?? "").trim() !== "").map(([id]) => id)),
+      // A customer we actually sold to in the year shown, active or not.
+      ...customerActualIds(customerActs),
+    ]),
+    [customerMaster, sheet, customerActs],
   );
   const customerName = (id: string) => customerRows.find((r) => r.id === id)?.name ?? id;
   const supplierRowsOf = (type: string) =>
@@ -467,6 +482,26 @@ export function MonthlyPlForecastEditor({
     const typeRow = matrix.rows.find((r) => r.kind === "group" && r.fcKey === k);
     return (typeRow?.purchaseValues?.[j] ?? 0) - allSuppliersActualSen(k.slice(4), c);
   };
+  // A customer's actual sales (owner 2026-11-17 「sales的actual customer的sales
+  // 没有show by customer？」): an Actual column's month, or the year's months
+  // added up in Accumulated; the forecast columns are not theirs.
+  const customerActualSen = (id: string, c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + (customerActs[ym]?.[id] ?? 0), 0);
+  const allCustomersActualSen = (c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + Object.values(customerActs[ym] ?? {}).reduce((a, v) => a + v, 0), 0);
+  const customerActualCell = (id: string) => (c: PlForecastColumn) => {
+    if (c.forecast) return blankPair(c);
+    const sen = customerActualSen(id, c);
+    return figure(c, sen, pctOfSales(sen, c), true);
+  };
+  // What the customer documents do not explain of Sales (a journal, the
+  // opening slice, a month from the historical P&L): the Sales row less the
+  // customers', so the customer rows add up to it exactly.
+  const salesRemainder = (c: PlForecastColumn, j: number) => {
+    const salesRow = matrix.rows.find((r) => r.kind === "group" && r.fcKey === "sales");
+    return (salesRow?.values[j] ?? 0) - allCustomersActualSen(c);
+  };
+  const customerHasActual = new Set(customerActualIds(customerActs));
   // A customer, supplier or department row with something keyed in some
   // month — Hide unused keeps only these.
   const detailUsed = (kind: "cu" | "su" | "de", type: string, id: string) =>
@@ -475,8 +510,8 @@ export function MonthlyPlForecastEditor({
     );
   const details = (k: string, depth: number): ReactNode => {
     if (!open[k]) return null;
-    if (k === "sales")
-      return customerRows.filter((cr) => !hideUnused || detailUsed("cu", "", cr.id)).map((cr) =>
+    if (k === "sales") {
+      const rows = customerRows.filter((cr) => !hideUnused || detailUsed("cu", "", cr.id) || customerHasActual.has(cr.id)).map((cr) =>
         detailRow(`cu-${cr.id}`, depth, cr.name, (ym, c) => {
           const f = figures.get(ym);
           const sen = Math.max(0, moneyFieldToSen(sheet[ym].customers?.[cr.id] ?? "") ?? 0);
@@ -486,8 +521,19 @@ export function MonthlyPlForecastEditor({
               <td data-cell={`num pct${tagOf(c)}`} className="text-[#9CA3AF]">{sen > 0 && f && f.salesSen > 0 ? `${((sen / f.salesSen) * 100).toFixed(1)}%` : ""}</td>
             </Fragment>
           );
-        }),
+        }, cr.id === FC_OTHER_CUSTOMER ? undefined : customerActualCell(cr.id)),
       );
+      // The rest of the actual Sales, so the customer rows add up to it.
+      const rest = vis.some(([c, j]) => !c.forecast && salesRemainder(c, j) !== 0);
+      if (rest) {
+        rows.push(detailRow("cu-rest", depth, "Other sales (no customer invoice / note)", null, (c, j) => {
+          if (c.forecast) return blankPair(c);
+          const sen = salesRemainder(c, j);
+          return figure(c, sen, pctOfSales(sen, c), true, true);
+        }));
+      }
+      return rows;
+    }
     if (k.startsWith("cat:")) {
       const type = k.slice(4);
       const rows = supplierRowsOf(type).filter((sr) => !hideUnused || detailUsed("su", type, sr.id) || supplierActualIds(supplierActs, type).includes(sr.id)).map((sr) =>
