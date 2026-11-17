@@ -320,6 +320,10 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Board report renews on the first open after the 1st / 7th / 10th / 15th (fix/board-report-refresh-on-open, 2026-11-17)
+
+The scheduled pre-build still could not finish a build after #1435 (2 forced runs, kept copy unchanged after 6 min), BUG-2026-11-17-531. The owner's "no clicking" renewal now happens on the first open of the last closed month after 00:00 MYT on those days (same path as Refresh, which works). Customer actual sales under Forecast P&L Sales (#1436) checked live 17 Nov: customers add up to the P&L Sales for Sep (RM 371,430), Oct (RM 463,324) and Nov to date (RM 268,839).
+
 ## 🔵 Forecast P&L: actual sales per customer (feat/forecast-customer-actuals, 2026-11-17)
 
 Ask (owner, 17 Nov, Forecasting › Forecast P&L with SALES opened): 「sales的actual customer的sales没有show by customer？」 — each customer row showed only its Forecast boxes; the Actual columns were blank.

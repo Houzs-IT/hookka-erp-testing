@@ -5,13 +5,12 @@
 # the month that just closed, so the first open is instant; on other days it
 # finds the report already kept and does nothing.
 #
-# Owner 2026-11-17 「每个月最后一天的12点重新generate 然后7号 10号 15号 也是重新
-# generate 所以我不需要去点」: on the 1st (the night the month closes), 7th, 10th
-# and 15th (Malaysia date) the last closed month is REBUILT even if kept, so the
-# kept copy picks up payroll / purchases Finance posts after month end and
-# opens ready to download. Other days only build a month not kept yet.
-# GitHub often starts scheduled runs hours late; the day is read in Malaysia
-# time when the run starts, so a late start still lands on the right day.
+# Owner 2026-11-17 asked for the report to renew itself on the 1st, 7th, 10th and
+# 15th. A build started from here does not finish (BUG-2026-11-17-531: inside the
+# request it hits the Worker's resource limit; in the background it never lands),
+# so the renewal happens on the FIRST OPEN after each of those days instead
+# (GET /api/reports/board, boardKeptIsStale). This job stays a best-effort
+# pre-build: a timeout is a warning, not a failure — the first open builds it.
 #
 # Manual run: Actions › Board Report pre-build › Run workflow (optional month
 # YYYY-MM, tick "force" to rebuild a kept month).
@@ -43,11 +42,6 @@ jobs:
           MONTH: ${{ github.event.inputs.month }}
           FORCE: ${{ github.event.inputs.force }}
         run: |
-          day=$(TZ=Asia/Kuala_Lumpur date +%d)
-          if [ "${{ github.event_name }}" = "schedule" ] && { [ "$day" = "01" ] || [ "$day" = "07" ] || [ "$day" = "10" ] || [ "$day" = "15" ]; }; then
-            FORCE=true
-            echo "Malaysia day $day: rebuilding the kept report"
-          fi
           if [ -z "$CRON_SECRET" ]; then
             echo "::error::CRON_SECRET repo secret is empty. See refresh-mvs.yml header for setup."
             exit 1
@@ -84,5 +78,5 @@ jobs:
               exit 0
             fi
           done
-          echo "::error::Board Report build for $month did not finish within 6 minutes"
-          exit 1
+          echo "::warning::Board Report build for $month did not finish within 6 minutes; the first open of the report builds it"
+          exit 0

@@ -443,7 +443,13 @@ app.get("/board", async (c) => {
 
     if (!rebuild) {
       const kept = await cache.readBoardCache<Report>(db, month);
-      if (kept) return c.json({ success: true, data: { ...(await withFreshNotes(kept)), canEditNotes, cached: true } });
+      // On the 1st, 7th, 10th and 15th the first open renews the last closed
+      // month's copy (owner 2026-11-17), the same way Refresh does — the
+      // scheduled pre-build cannot finish a build on its own (BUG-2026-11-17-531).
+      // A poll never triggers it, so a failed build cannot loop.
+      const { boardKeptIsStale } = await import("../../lib/board-report");
+      const renew = !!kept && c.req.query("poll") !== "1" && boardKeptIsStale(month, today, (kept as { generatedAt?: string }).generatedAt);
+      if (kept && !renew) return c.json({ success: true, data: { ...(await withFreshNotes(kept)), canEditNotes, cached: true } });
     }
 
     if (!(await cache.takeBuildLock(db, month))) {
