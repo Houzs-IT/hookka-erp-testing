@@ -42,6 +42,7 @@ import {
   buildOrderNotice,
   mytDayStartIso,
   orderNoticeCategory,
+  orderNoticeLink,
   readOrderPriority,
   type OrderPriority,
 } from "../../lib/order-notification";
@@ -632,7 +633,7 @@ async function notifyErpUsers(
   c: Context<Env>,
   orgId: string,
   userIds: string[],
-  n: { title: string; text: string; priority: OrderPriority | null; orderId: string | null },
+  n: { title: string; text: string; priority: OrderPriority | null; orderId: string | null; link?: string | null },
 ): Promise<number> {
   const db = c.var.DB;
   await ensureNotificationsUserColumn(db);
@@ -656,7 +657,7 @@ async function notifyErpUsers(
           `INSERT INTO notifications (id, type, title, message, severity, is_read, link, created_at, org_id, user_id)
            VALUES (?, 'PRODUCTION', ?, ?, ?, 0, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
         )
-        .bind(`${base}-${u}`, n.title, n.text, severity, n.priority ? "/production" : null, nowIso, orgId, u),
+        .bind(`${base}-${u}`, n.title, n.text, severity, n.link ?? null, nowIso, orgId, u),
     ),
   );
   return fresh.length;
@@ -687,6 +688,7 @@ admin.post("/", async (c) => {
     readStringArray((body as { targetWorkerIds?: unknown }).targetWorkerIds as string[] | undefined).length === 0;
   let orderNo: string | null = null;
   let orderId: string | null = null;
+  let orderLink: string | null = null;
   if (priority) {
     const ids = [
       ...new Set(
@@ -737,6 +739,7 @@ admin.post("/", async (c) => {
     text = built.body;
     orderNo = orders.map((r) => r.poNo).join(", ");
     orderId = ids.slice().sort().join(",");
+    orderLink = orderNoticeLink(orders.map((r) => ({ id: String(r.id), poNo: String(r.poNo ?? "") })));
     // Dedupe: the same orders + priority already sent today (Malaysia day) -> 409, so a
     // retry / double click never re-alerts the floor. (ERP-user rows dedupe by id.)
     const dup = usersOnly ? null : await c.var.DB.prepare(
@@ -777,7 +780,7 @@ admin.post("/", async (c) => {
     }
   }
   if (usersOnly) {
-    const notified = await notifyErpUsers(c, orgId, reqUserIds, { title, text, priority, orderId });
+    const notified = await notifyErpUsers(c, orgId, reqUserIds, { title, text, priority, orderId, link: orderLink });
     if (notified === 0) {
       return c.json(
         { success: false, error: "This notification was already sent today for these orders" },
@@ -898,7 +901,7 @@ admin.post("/", async (c) => {
   if (reqUserIds.length > 0) {
     // Best-effort like the push: the announcement already exists.
     try {
-      await notifyErpUsers(c, orgId, reqUserIds, { title, text, priority, orderId });
+      await notifyErpUsers(c, orgId, reqUserIds, { title, text, priority, orderId, link: orderLink });
     } catch (err) {
       console.error("[announcements] ERP-user bell rows failed (non-fatal):", err);
     }

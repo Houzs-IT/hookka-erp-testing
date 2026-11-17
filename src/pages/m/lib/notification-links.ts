@@ -82,6 +82,11 @@ export function toMobilePath(link: unknown): string | null {
     return MOBILE_SEGMENTS.has(segment) ? path : null;
   }
 
+  // HK-0155: a one-order notice carries ?po=<production order id>; open that
+  // order's stage screen, not the whole list.
+  const po = underPrefix(path, "/production") ? query.get("po") : null;
+  if (po) return `/m/production/${encodeURIComponent(po)}`;
+
   for (const { from, to } of DESKTOP_TO_MOBILE) {
     if (underPrefix(path, from)) return to;
   }
