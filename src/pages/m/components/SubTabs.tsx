@@ -17,10 +17,13 @@ type Props = {
   onChange: (key: string) => void;
   /** Optional per-tab counts (keyed by tab key) shown as a trailing badge. */
   counts?: Record<string, number>;
+  /** Extra px below the header to pin under (a parent's own sticky bar). 0/omitted = as before. */
+  stickyOffset?: number;
 };
 
-export function SubTabs({ tabs, active, onChange, counts }: Props) {
-  const top = useStickyBelowHeader();
+export function SubTabs({ tabs, active, onChange, counts, stickyOffset = 0 }: Props) {
+  const below = useStickyBelowHeader();
+  const top = stickyOffset ? `calc(${typeof below === "number" ? `${below}px` : below} + ${stickyOffset}px)` : below;
   return (
     <div
       style={{
