@@ -36,6 +36,7 @@ import {
   type DashboardStateMetrics,
 } from "../lib/dashboard-state-snapshot";
 import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
+import { punchInHeadcountByDay, type HeadcountWorker, type PunchRow } from "../../lib/capacity-headcount";
 import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
 import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
 import {
@@ -77,6 +78,7 @@ const OVERVIEW_SOURCE_TABLES = [
   "purchase_invoices",
   "grns",
   "kv_config",
+  "attendance_records",
 ] as const;
 
 function fmtISO(d: Date): string {
@@ -813,13 +815,52 @@ app.get("/", async (c) => {
     // owner tally audit 2026-07-11).
     // Daily Capacity drill-down: the widget window's working days, oldest
     // first (rolling 7 for all-time / current; the month for a selection).
+    // Workers = everyone who PUNCHED IN that day, helpers included, outsource
+    // excluded (owner 2026-11-17) — capacityDays[].workers. The job-card PIC
+    // count is kept as `picWorkers` for reference. A failed read falls back to
+    // the PIC count rather than breaking the feed.
+    let punchByDay: Map<string, number> | null = null;
+    if (windowDays.length) {
+      try {
+        const marks = windowDays.map(() => "?").join(",");
+        const [punchRes, wRes] = await Promise.all([
+          db
+            .prepare(
+              `SELECT employee_id AS "employeeId", date::text AS date, clock_in::text AS "clockIn"
+                 FROM attendance_records
+                WHERE org_id = ? AND clock_in IS NOT NULL AND date::text IN (${marks})`,
+            )
+            .bind(orgId, ...windowDays)
+            .all<PunchRow>(),
+          db.prepare("SELECT id, empNo, name, isOutsource FROM workers").all<Record<string, unknown>>(),
+        ]);
+        const workers: HeadcountWorker[] = (wRes.results ?? []).map((r) => ({
+          id: String(r.id),
+          empNo: (r.empNo ?? r.emp_no) as string | null,
+          name: r.name as string | null,
+          isOutsource: r.isOutsource ?? r.is_outsource,
+        }));
+        const punches: PunchRow[] = (punchRes.results ?? []).map((r) => {
+          const x = r as unknown as Record<string, unknown>;
+          return { employeeId: (x.employeeId ?? x.employee_id) as string, date: x.date as string, clockIn: x.clockIn ?? x.clock_in };
+        });
+        punchByDay = punchInHeadcountByDay(punches, workers);
+      } catch (e) {
+        console.warn("[dashboard-overview] punch-in headcount failed, using job-card PICs:", e);
+      }
+    }
     const capacityDays = [...windowDays]
       .sort((a, b) => a.localeCompare(b))
-      .map((date) => ({
-        date,
-        minutes: capByDay.get(date) ?? 0,
-        workers: workersByDay.get(date)?.size ?? 0,
-      }));
+      .map((date) => {
+        const picWorkers = workersByDay.get(date)?.size ?? 0;
+        return {
+          date,
+          minutes: capByDay.get(date) ?? 0,
+          workers: punchByDay ? (punchByDay.get(date) ?? 0) : picWorkers,
+          picWorkers,
+        };
+      });
+    const capacityWorkersSource: "punch-in" | "job-card-pic" = punchByDay ? "punch-in" : "job-card-pic";
 
     // ---- Backlog per department (mirror of Planning capacityData) ----
     // Same list + flow order as the progressive-revenue table (dept-revenue.ts),
@@ -1797,6 +1838,7 @@ app.get("/", async (c) => {
         sofaSets: Number(compRangeRes?.sofaSets) || 0,
       },
       capacityDays,
+      capacityWorkersSource,
       backlogByDept,
       backlogGrandMin,
     };
