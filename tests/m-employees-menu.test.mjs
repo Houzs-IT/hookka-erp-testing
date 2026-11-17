@@ -144,7 +144,7 @@ test("Print is wired through the shell's menu registry using the shared print en
   assert.match(sec, /const printable = filtered\.length > 0/);
   const route = src("EmployeesRoute.tsx");
   assert.match(route, /const items = menuItems\(section, registry\)/);
-  assert.match(route, /registry\[a\]\?\.run\(\)/);
+  assert.match(route, /runs\.current\[a\]\?\.run\(\)/);
 });
 
 test("the menu changes nothing", () => {
@@ -171,4 +171,18 @@ test("Department Performance fetches the full per-worker report ONLY when Print 
   assert.match(run, /window\.open\("", "_blank"\)/, "the tap opens the print window itself");
   assert.match(run, /setWantKey\(scopeKey\)/, "the tap starts the fetch");
   assert.match(src("use-department-performance.ts"), /allowed && wantFull \? fullUrl\(/, "no request without wantFull");
+});
+
+test("registering menu actions can never loop: the shell keeps only the SHAPE in state, the run closures in a ref (PR #1422 regression)", () => {
+  const route = src("EmployeesRoute.tsx").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(route, /const runs = useRef<MenuRegistry>\(\{\}\)/, "closures live in a ref");
+  assert.match(route, /const \[shape, setShape\] = useState\("\{\}"\)/, "state is a string shape, so an unchanged registration is a no-op");
+  assert.match(route, /setShape\(JSON\.stringify\(meta\)\)/);
+  assert.ok(!/setRegistry/.test(route), "no registry object in state");
+  // and the root cause: values an effect depends on must be stable between renders
+  const lc = src("LaborCostSection.tsx").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(lc, /const result = useMemo\(/, "Labor Cost's result is memoised");
+  const hook = src("use-labor-cost.ts").replace(/^\s*\/\/.*$/gm, "");
+  assert.match(hook, /const rev: RevenueData \| null = useMemo\(/, "the revenue value is memoised on the response");
+  assert.match(hook, /const NO_HOLIDAYS: string\[\] = \[\]/, "no fresh [] per render");
 });

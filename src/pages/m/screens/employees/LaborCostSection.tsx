@@ -9,7 +9,7 @@
 // Raw Data card are not drawn and a grey lock note says why. If the data the cost needs failed to load, labor cost reads
 // "Unavailable" (hours still show). The category is in the URL (`lcc`) with the shared period. The only write is "..." → Settle month
 // (SettleSheet / settle-month.ts), offered for one full finished month with payslips when payslips:update + create are held.
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarDays, ChevronDown, ChevronRight, Factory, Lock, PackageCheck, Warehouse } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
@@ -124,21 +124,26 @@ export default function LaborCostSection() {
   const data = useLaborCost(range);
   const st = laborCostState(data);
   const { workers, entries, depts, holidays, effSalary, versions, revenue } = data;
-  const result =
-    st.ready && workers.value && entries.value && depts.value
-      ? computeLaborCost({
-          entries: entries.value,
-          workers: workers.value,
-          depts: depts.value,
-          holidays: holidays.value ?? [],
-          versions: versions.value ?? [],
-          effSalary: effSalary.value ?? {},
-          range: { from: range.from, to: range.to },
-          category,
-          byDeptCategory: revenue.value?.byDeptCategory ?? null,
-          costDataOk: st.costDataOk,
-        })
-      : null;
+  // MEMOISED: the menu effect below depends on `result`. A fresh object every render re-ran that effect every render, and its
+  // bridge.set() re-renders the shell, which re-renders this section: an endless loop that froze the other tabs (PR #1422 regression).
+  const result = useMemo(
+    () =>
+      st.ready && workers.value && entries.value && depts.value
+        ? computeLaborCost({
+            entries: entries.value,
+            workers: workers.value,
+            depts: depts.value,
+            holidays: holidays.value ?? [],
+            versions: versions.value ?? [],
+            effSalary: effSalary.value ?? {},
+            range: { from: range.from, to: range.to },
+            category,
+            byDeptCategory: revenue.value?.byDeptCategory ?? null,
+            costDataOk: st.costDataOk,
+          })
+        : null,
+    [st.ready, st.costDataOk, workers.value, entries.value, depts.value, holidays.value, versions.value, effSalary.value, revenue.value, range.from, range.to, category],
+  );
   const money = (sen: number) => (result?.mode === "unavailable" ? "Unavailable" : formatRM(sen));
   const revOk = st.revenue === "ok";
   const units: RevenueUnit[] = revOk && revenue.value ? revenueUnits(revenue.value.rows, category) : [];

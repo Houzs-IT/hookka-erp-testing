@@ -9,6 +9,7 @@
 //   /api/departments                                           (no gate)
 //   /api/working-hour-entries/production-revenue?from&to       revenue-figures:read    category totals, per (department|category)
 //                                                                                      revenue and the recognised unit rows
+import { useMemo } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import type { PayRuleVersion } from "../../../../lib/pay-rules";
@@ -38,6 +39,9 @@ export type LaborCostData = {
   revenue: Source<RevenueData>;
 };
 
+/** One shared empty list: a fresh `[]` per render would look like new data to every effect / memo that depends on it. */
+const NO_HOLIDAYS: string[] = [];
+
 export function useLaborCost(range: YmdRange): LaborCostData {
   const { hasPermission, loading: permLoading } = usePermissions();
   const allowed = !permLoading && hasPermission("workers", "read") && hasPermission("payslips", "read");
@@ -54,16 +58,22 @@ export function useLaborCost(range: YmdRange): LaborCostData {
   const revRes = useCachedJson<{ success?: boolean; data?: { byDeptCategory?: unknown; rows?: unknown } }>(canRevenue ? `/api/working-hour-entries/production-revenue?from=${from}&to=${to}` : null, 120);
 
   const src = <T,>(res: { loading: boolean; error?: unknown }, value: T | null): Source<T> => ({ value, loading: res.loading, error: !!res.error });
-  const hol = holidaysRes.data === null ? null : holidaysRes.data.data === null ? [] : Array.isArray(holidaysRes.data.data) ? (holidaysRes.data.data as string[]) : null;
+  const hol = holidaysRes.data === null ? null : holidaysRes.data.data === null ? NO_HOLIDAYS : Array.isArray(holidaysRes.data.data) ? (holidaysRes.data.data as string[]) : null;
   const eff = effRes.data === null ? null : effRes.data.data && typeof effRes.data.data === "object" && !Array.isArray(effRes.data.data) ? (effRes.data.data as Record<string, number>) : null;
   const ver = rulesRes.data === null ? null : Array.isArray(rulesRes.data.data?.versions) ? (rulesRes.data.data?.versions as PayRuleVersion[]) : null;
-  const rev: RevenueData | null =
-    revRes.data && revRes.data.success !== false && revRes.data.data
-      ? {
-          byDeptCategory: revRes.data.data.byDeptCategory && typeof revRes.data.data.byDeptCategory === "object" ? (revRes.data.data.byDeptCategory as Record<string, number>) : {},
-          rows: Array.isArray(revRes.data.data.rows) ? (revRes.data.data.rows as RevenueUnit[]) : [],
-        }
-      : null;
+  // MEMOISED on the response: a new object every render made `revenue.value` look changed each time, which re-ran every effect and
+  // memo that depends on it (the Labor Cost "..." menu registration looped; PR #1422 regression).
+  const revBody = revRes.data;
+  const rev: RevenueData | null = useMemo(
+    () =>
+      revBody && revBody.success !== false && revBody.data
+        ? {
+            byDeptCategory: revBody.data.byDeptCategory && typeof revBody.data.byDeptCategory === "object" ? (revBody.data.byDeptCategory as Record<string, number>) : {},
+            rows: Array.isArray(revBody.data.rows) ? (revBody.data.rows as RevenueUnit[]) : [],
+          }
+        : null,
+    [revBody],
+  );
 
   return {
     permLoading,
