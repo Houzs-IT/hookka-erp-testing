@@ -194,6 +194,40 @@ export function supplierActualIds(acts: FcSupplierActuals, type: string): string
   return [...ids];
 }
 
+/** Each month's actual SALES BY CUSTOMER: month → customer id → sen (owner
+ *  2026-11-17 「sales的actual customer的sales没有show by customer？」). The
+ *  customer documents' ledger legs (sales invoices, credit notes, debit notes —
+ *  their voids and restates included) on the P&L's REVENUE accounts, credit
+ *  minus debit, in the month of the document's date — the way the P&L reads
+ *  net sales (SALES lines, DISCOUNT ALLOWED, RETURN INWARDS alike). Anything
+ *  else on those accounts (a journal, the opening slice, a month keyed from
+ *  the historical P&L) has no customer here; the Edit forecast shows it as the
+ *  remainder. A customer netting to zero in a month drops out. */
+export type FcCustomerActuals = Record<string, Record<string, number>>;
+export function customerActualsFromLegs(
+  legs: readonly { customerId: string; accountCode: string; ym: string; debitSen: number; creditSen: number }[],
+  isRevenue: (code: string) => boolean,
+): FcCustomerActuals {
+  const out: FcCustomerActuals = {};
+  for (const l of legs) {
+    if (!l.customerId || !isRevenue(l.accountCode) || !/^\d{4}-\d{2}$/.test(l.ym)) continue;
+    const byCust = (out[l.ym] ??= {});
+    byCust[l.customerId] = (byCust[l.customerId] ?? 0) + Math.round(Number(l.creditSen) || 0) - Math.round(Number(l.debitSen) || 0);
+  }
+  for (const ym of Object.keys(out)) {
+    for (const [id, sen] of Object.entries(out[ym])) if (sen === 0) delete out[ym][id];
+    if (Object.keys(out[ym]).length === 0) delete out[ym];
+  }
+  return out;
+}
+
+/** The customers with an actual sale in any month. */
+export function customerActualIds(acts: FcCustomerActuals): string[] {
+  const ids = new Set<string>();
+  for (const byCust of Object.values(acts)) for (const id of Object.keys(byCust)) ids.add(id);
+  return [...ids];
+}
+
 export function forecastTypeSuppliers(mix: FcSupplierMix, type: string): string[] {
   return Object.entries(mix.bySupplier)
     .filter(([, w]) => (w[type] ?? 0) > 0)
