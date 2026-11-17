@@ -23,7 +23,8 @@ import type { Context } from "hono";
 import type { Env } from "../worker";
 import { resolveWorkerToken } from "./worker-auth";
 import { computeMonthlyLabor, computeAttendanceDayDetail, absenceCutoffDay, effectiveSalarySenForMonth, workerPayrollDayRateSen } from "../../lib/labor-engine";
-import { jcMinutesTotal } from "../../lib/job-card-minutes";
+import { creditCardToPics, jcMinutesTotal } from "../../lib/job-card-minutes";
+import { dayKey } from "../lib/workforce-perf";
 import { deriveBarcodeToken, deptOfBarcodeToken, isBarcodeToken } from "../../lib/job-card-id";
 import { computeMonthlyEfficiencyByWorker, helperWorkerIds, resolveEfficiencyAllowanceSen, monthBounds } from "../lib/efficiency-allowance";
 import { resolveLeadershipAllowanceSen } from "../lib/leadership-allowance";
@@ -1685,26 +1686,30 @@ app.get("/history", async (c) => {
   // Soft-fails to empty (cold isolate / missing column) → pre-feature numbers.
   let addProdTotalMin = 0;
   const addProdMinByJobCard = new Map<string, number>();
+  const addProdMinByDate = new Map<string, number>();
   try {
     await ensureNonprodRequests(db);
     const apRes = await db.prepare(
-      `SELECT COALESCE(approved_hours, hours) AS hours, job_card_id AS jobCardId
+      `SELECT COALESCE(approved_hours, hours) AS hours, job_card_id AS jobCardId, date
          FROM worker_nonprod_requests
         WHERE worker_id = ? AND kind = 'ADD_PROD' AND status = 'APPROVED'
           AND date >= ? AND date <= ?`,
     )
       .bind(workerId, fromStr, toStr)
-      .all<{ hours: number | string | null; jobCardId: string | null }>();
+      .all<{ hours: number | string | null; jobCardId: string | null; date: string | null }>();
     for (const r of apRes.results ?? []) {
       const h = typeof r.hours === "number" ? r.hours : Number(r.hours) || 0;
       const mins = Math.round(h * 60);
       addProdTotalMin += mins;
       const jc = (r.jobCardId ?? "").trim();
       if (jc) addProdMinByJobCard.set(jc, (addProdMinByJobCard.get(jc) ?? 0) + mins);
+      const day = dayKey(r.date);
+      if (day) addProdMinByDate.set(day, (addProdMinByDate.get(day) ?? 0) + mins);
     }
   } catch {
     addProdTotalMin = 0;
     addProdMinByJobCard.clear();
+    addProdMinByDate.clear();
   }
 
   const standardMins = hoursPerDay * 60;
@@ -1903,25 +1908,17 @@ app.get("/history", async (c) => {
     let role: "PIC1" | "PIC2" | "MIXED" = "PIC1";
     const rolesSeen = new Set<"PIC1" | "PIC2">();
 
+    // Minutes follow the payslip rule: the card's two PIC slots, half each.
+    // The piece scans below only describe which pieces the worker did.
+    myMinutes = creditCardToPics(jc.estMinutes || 0, jc).get(workerId) ?? 0;
+    const isInCardSlot = jc.pic1Id === workerId || jc.pic2Id === workerId;
+
     if (pieces.length > 0) {
-      // Per-piece minute base. Normal depts store per-PIECE estMinutes, so each
-      // piece row carries jc.estMinutes (summing over the piece rows the worker
-      // did = their share of the JC). Merged FAB_CUT cards store the per-SET
-      // TOTAL on the JC (not per-piece), so the per-piece base is that total ÷
-      // piece count — a worker who did every piece sums to the stored total
-      // (credited once), not total × piece count (the 3× over-count this fix
-      // removes); a worker who did only some pieces still gets their pro-rata
-      // share. Co-pic halving (÷ picCount) then applies per piece as before.
-      const perPieceMinutes =
-        (jc.departmentCode ?? "") === "FAB_CUT"
-          ? (jc.productionTimeMinutes || jc.estMinutes || 0) / Math.max(1, pieces.length)
-          : jc.estMinutes || 0;
       for (const s of pieces) {
         const isPic1 = s.pic1Id === workerId;
         const isPic2 = s.pic2Id === workerId;
         if (!isPic1 && !isPic2) continue;
         const picCount = (s.pic1Id ? 1 : 0) + (s.pic2Id ? 1 : 0);
-        myMinutes += perPieceMinutes / Math.max(1, picCount);
         piecesWorked++;
         if (picCount >= 2) {
           piecesShared++;
@@ -1931,7 +1928,12 @@ app.get("/history", async (c) => {
         if (isPic1) rolesSeen.add("PIC1");
         if (isPic2) rolesSeen.add("PIC2");
       }
-      if (piecesWorked === 0) continue;
+      if (piecesWorked === 0 && !isInCardSlot) continue;
+      if (piecesWorked === 0) {
+        rolesSeen.add(jc.pic1Id === workerId ? "PIC1" : "PIC2");
+        const otherPic = jc.pic1Id === workerId ? jc.pic2Id : jc.pic1Id;
+        if (otherPic) sharedIds.add(otherPic);
+      }
       role =
         rolesSeen.size === 2
           ? "MIXED"
@@ -1940,18 +1942,8 @@ app.get("/history", async (c) => {
             : "PIC1";
     } else {
       // Legacy path (pre piece_pics — single-JC PIC tracking).
-      // B2 fix (2026-05-11 audit): jc.estMinutes is per-UNIT; the pieces
-      // path above implicitly sums across pieces (one row per piece), but
-      // the legacy path treats the JC as a single chunk and forgot to
-      // multiply by wipQty. Result: a worker on a 6-unit divan JC (10 min
-      // per unit, no co-pic) was credited 10 min not 60 → under-payment.
-      // Mirror the pieces-path math: jc.estMinutes × wipQty ÷ coPicCount.
-      // jcMinutesTotal applies that ×wipQty for normal depts and skips it for
-      // FAB_CUT (estMinutes is already the per-SET total there) — keeps this
-      // legacy credit consistent with the FAB_CUT pieces-path base above.
-      if (jc.pic1Id !== workerId && jc.pic2Id !== workerId) continue;
+      if (!isInCardSlot) continue;
       const coPicCount = (jc.pic1Id ? 1 : 0) + (jc.pic2Id ? 1 : 0);
-      myMinutes = jcMinutesTotal(jc.estMinutes || 0, jc) / Math.max(1, coPicCount);
       piecesWorked = 1;
       piecesShared = coPicCount >= 2 ? 1 : 0;
       role = jc.pic1Id === workerId ? "PIC1" : "PIC2";
@@ -2031,6 +2023,18 @@ app.get("/history", async (c) => {
       };
     prev.productionMinutes += c2.myMinutes || 0;
     if (!prev.departmentName) prev.departmentName = c2.departmentCode;
+    dailyMap.set(d, prev);
+  }
+  // Approved extra time lands on its own day, as in the period total.
+  for (const [d, mins] of addProdMinByDate) {
+    const prev =
+      dailyMap.get(d) ?? {
+        date: d,
+        departmentName: "",
+        workingMinutes: wheMinutesByDate.get(d) ?? 0,
+        productionMinutes: 0,
+      };
+    prev.productionMinutes += mins;
     dailyMap.set(d, prev);
   }
   const daily = Array.from(dailyMap.values())
@@ -4320,48 +4324,9 @@ app.get("/department-performance", async (c) => {
         workerIds: jcWorkerIds,
       });
 
-      // Per-worker pro-rated share — same logic as the admin endpoint.
-      // B3 fix: pieces path iterates pieces.length (= wipQty) times so
-      // jcMins-per-piece sums to total naturally. Legacy path treats the
-      // JC as one chunk → needs × wipQty.
+      // Per-worker share — the payslip rule, same as the admin endpoint.
       const jcMins = jc.estMinutes ?? jc.actualMinutes ?? 0;
-      const pieces = picsByJc.get(jc.id) ?? [];
-      const perWorkerMins = new Map<string, number>();
-      if (pieces.length > 0) {
-        // Per-piece minute base. Non-FAB_CUT: jcMins is per-piece, so each
-        // piece row credits jcMins (summed over pieces.length ≈ wipQty → JC
-        // total). FAB_CUT stores the per-SET total on the JC (not per-piece),
-        // so the per-piece base is total ÷ piece count — keeps the per-piece
-        // sum equal to jcMinutesTotal instead of total × piece count (the 3×
-        // over-count this fix removes). Mirrors department-performance.ts.
-        const perPieceMins =
-          (jc.departmentCode ?? "") === "FAB_CUT"
-            ? jcMinutesTotal(jcMins, jc) / Math.max(1, pieces.length)
-            : jcMins;
-        for (const s of pieces) {
-          const picCount = (s.pic1Id ? 1 : 0) + (s.pic2Id ? 1 : 0);
-          const share = perPieceMins / Math.max(1, picCount);
-          if (s.pic1Id) {
-            perWorkerMins.set(
-              s.pic1Id,
-              (perWorkerMins.get(s.pic1Id) ?? 0) + share,
-            );
-          }
-          if (s.pic2Id) {
-            perWorkerMins.set(
-              s.pic2Id,
-              (perWorkerMins.get(s.pic2Id) ?? 0) + share,
-            );
-          }
-        }
-      } else {
-        // jcMinutesTotal applies the ×wipQty for normal depts and skips it for
-        // FAB_CUT (jcMins is already the per-SET total there).
-        const picCount = (jc.pic1Id ? 1 : 0) + (jc.pic2Id ? 1 : 0);
-        const share = jcMinutesTotal(jcMins, jc) / Math.max(1, picCount);
-        if (jc.pic1Id) perWorkerMins.set(jc.pic1Id, share);
-        if (jc.pic2Id) perWorkerMins.set(jc.pic2Id, share);
-      }
+      const perWorkerMins = creditCardToPics(jcMins, jc);
 
       for (const [wid, rawMins] of perWorkerMins) {
         const myMins = Math.round(rawMins);

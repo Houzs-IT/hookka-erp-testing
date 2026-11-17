@@ -35,7 +35,7 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
-import { jcMinutesTotal } from "../../lib/job-card-minutes";
+import { creditCardToPics, jcMinutesTotal } from "../../lib/job-card-minutes";
 import {
   writeEmployeeStateSnapshot,
   type EmployeeStateMetrics,
@@ -207,7 +207,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
         // isHelper tells the caller to render "—".
         efficiencyPct:
           !w.isHelper && w.workingMinutes > 0
-            ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
+            ? Math.round((w.productionMinutes / w.workingMinutes) * 1000) / 10
             : 0,
         ...(w.isHelper ? { isHelper: true } : {}),
         jobCards: w.jobCardIds.size,
@@ -547,51 +547,10 @@ app.get("/", async (c) => {
         workerIds: jcWorkerIds,
       });
 
-      // ---- Per-worker pro-rated share for THIS jc.
-      // Mirrors /api/worker/history (worker.ts ~570-640): per-piece split when
-      // piece_pics rows exist, otherwise legacy single-pic split on the JC
-      // itself. Keyed against (estMinutes ?? actualMinutes) per task spec.
+      // ---- Per-worker share for THIS jc: the payslip rule, the card's two PIC
+      // slots half each. Keyed against (estMinutes ?? actualMinutes) per task spec.
       const jcMins = jc.estMinutes ?? jc.actualMinutes ?? 0;
-      const pieces = picsByJc.get(jc.id) ?? [];
-      const perWorkerMins = new Map<string, number>();
-      if (pieces.length > 0) {
-        // Per-piece minute base. Non-FAB_CUT: jcMins is per-piece, so each
-        // piece row credits jcMins (summed over pieces.length ≈ wipQty → JC
-        // total). FAB_CUT stores the per-SET total on the JC (not per-piece),
-        // so the per-piece base is total ÷ piece count — keeps the per-piece
-        // sum equal to jcMinutesTotal instead of total × piece count (the 3×
-        // over-count this fix removes). Mirrors the FAB_CUT branch in worker.ts.
-        const perPieceMins =
-          (jc.departmentCode ?? "") === "FAB_CUT"
-            ? jcMinutesTotal(jcMins, jc) / Math.max(1, pieces.length)
-            : jcMins;
-        for (const s of pieces) {
-          const picCount = (s.pic1Id ? 1 : 0) + (s.pic2Id ? 1 : 0);
-          const share = perPieceMins / Math.max(1, picCount);
-          if (s.pic1Id) {
-            perWorkerMins.set(
-              s.pic1Id,
-              (perWorkerMins.get(s.pic1Id) ?? 0) + share,
-            );
-          }
-          if (s.pic2Id) {
-            perWorkerMins.set(
-              s.pic2Id,
-              (perWorkerMins.get(s.pic2Id) ?? 0) + share,
-            );
-          }
-        }
-      } else {
-        // B3 fix: legacy path = no pieces, so jcMins (per-unit) needs
-        // explicit × wipQty for total. Pieces path above is fine because
-        // it iterates pieces.length × jcMins per worker = wipQty × jcMins.
-        // jcMinutesTotal applies the ×wipQty for normal depts and skips it for
-        // FAB_CUT (jcMins is already the per-SET total there).
-        const picCount = (jc.pic1Id ? 1 : 0) + (jc.pic2Id ? 1 : 0);
-        const share = jcMinutesTotal(jcMins, jc) / Math.max(1, picCount);
-        if (jc.pic1Id) perWorkerMins.set(jc.pic1Id, share);
-        if (jc.pic2Id) perWorkerMins.set(jc.pic2Id, share);
-      }
+      const perWorkerMins = creditCardToPics(jcMins, jc);
 
       for (const [wid, rawMins] of perWorkerMins) {
         const myMins = Math.round(rawMins);
@@ -712,10 +671,10 @@ app.get("/", async (c) => {
   // Helpers / 杂工 (owner 2026-11-11): kept in the hours, left out of production
   // efficiency, no personal efficiency. Before is_helper exists: nobody.
   const helperIds = await helperWorkerIds(c.var.DB);
-  // Production efficiency (helpers out) and Overall (everyone), rounded %.
+  // Production efficiency (helpers out) and Overall (everyone), % to one decimal.
   const effPair = (work: number, prod: number, hw: number, hp: number) => ({
-    efficiencyPct: work - hw > 0 ? Math.round(((prod - hp) / (work - hw)) * 100) : 0,
-    overallPct: work > 0 ? Math.round((prod / work) * 100) : 0,
+    efficiencyPct: work - hw > 0 ? Math.round(((prod - hp) / (work - hw)) * 1000) / 10 : 0,
+    overallPct: work > 0 ? Math.round((prod / work) * 1000) / 10 : 0,
     helperWorkingMinutes: hw,
   });
 
@@ -731,7 +690,7 @@ app.get("/", async (c) => {
           productionMinutes: w.productionMinutes,
           efficiencyPct:
             !helperIds.has(w.workerId) && w.workingMinutes > 0
-              ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
+              ? Math.round((w.productionMinutes / w.workingMinutes) * 1000) / 10
               : 0,
           ...(helperIds.has(w.workerId) ? { isHelper: true } : {}),
           jobs: w.jobs

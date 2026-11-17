@@ -93,7 +93,7 @@ export async function computeFloorLive(db: D1Database, orgId: string, date: stri
   const productionDepts = new Set(departments.filter((d) => d.isProduction).map((d) => d.code));
   const approvedExtraTime = await loadApprovedExtraTime(db, date, date);
   const helperIds = await helperWorkerIds(db);
-  const { perfDays } = buildPerfDays({ whe: [...whe, ...liveRows], jobCards, pics, approvedExtraTime, productionDepts, helperIds });
+  const { perfDays } = buildPerfDays({ whe: [...whe, ...liveRows], jobCards, approvedExtraTime, productionDepts, helperIds });
   const dayPerf = perfDays.find((d) => d.date === date);
   const perf = new Map((dayPerf?.workers ?? []).map((w) => [w.workerId, w]));
 
@@ -229,21 +229,10 @@ export async function loadClosedDayPerf(
     }>(),
   ]);
   const jobCards = jcRes.results ?? [];
-  const ids = jobCards.map((j) => j.id);
-  const chunks = Array.from({ length: Math.ceil(ids.length / 200) }, (_, i) => ids.slice(i * 200, i * 200 + 200));
-  const picRes = await Promise.all(
-    chunks.map((chunk) =>
-      db
-        .prepare(`SELECT job_card_id, pic1_id, pic2_id FROM piece_pics WHERE ${org("org_id")} AND job_card_id IN (${chunk.map(() => "?").join(",")})`)
-        .bind(...orgArgs, ...chunk)
-        .all<{ jobCardId: string; pic1Id: string | null; pic2Id: string | null }>(),
-    ),
-  );
-  const pics = picRes.flatMap((r) => r.results ?? []);
   const productionDepts = new Set((deptRes.results ?? []).filter((d) => d.isProduction).map((d) => d.code));
   const approvedExtraTime = await loadApprovedExtraTime(db, date, date);
   const helperIds = await helperWorkerIds(db);
-  const { perfDays } = buildPerfDays({ whe: wheRes.results ?? [], jobCards, pics, approvedExtraTime, productionDepts, helperIds });
+  const { perfDays } = buildPerfDays({ whe: wheRes.results ?? [], jobCards, approvedExtraTime, productionDepts, helperIds });
   const day = perfDays.find((d) => d.date === date);
   return new Map((day?.workers ?? []).map((w) => [w.workerId, w]));
 }

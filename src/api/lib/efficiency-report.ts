@@ -8,7 +8,7 @@
 //
 // Data sources mirror /api/department-performance:
 //   - working_hour_entries  → worker × dept × date work minutes
-//   - job_cards (COMPLETED/TRANSFERRED) + production_orders + piece_pics
+//   - job_cards (COMPLETED/TRANSFERRED) + production_orders
 //                          → production minutes per JC, pro-rated per worker
 //   - workers + departments → names, dept rollup
 //
@@ -17,7 +17,7 @@
 // completedDate; per-worker share = total / |distinct workers credited|.
 // ---------------------------------------------------------------------------
 import { DEFAULT_FACTORY_GEOFENCE, evalPunchLocation } from "./geofence";
-import { jcMinutesTotal } from "../../lib/job-card-minutes";
+import { creditCardToPics, jcMinutesTotal } from "../../lib/job-card-minutes";
 import { helperWorkerIds, loadApprovedExtraTime } from "./efficiency-allowance";
 import { loadClosedDayPerf } from "./floor-live-data";
 
@@ -120,7 +120,6 @@ type JcRow = {
   wipQty: number | null;
 };
 
-type PicRow = { jobCardId: string; pic1Id: string | null; pic2Id: string | null };
 
 type WorkerRow = {
   id: string;
@@ -258,26 +257,7 @@ export async function collectEfficiencyData(
     .all<JcRow>();
   const jcs = jcRes.results ?? [];
 
-  // 6. piece_pics for those JCs — adds the workers credited per piece.
-  let pics: PicRow[] = [];
-  if (jcs.length > 0) {
-    const ph = jcs.map(() => "?").join(",");
-    const r = await db
-      .prepare(
-        `SELECT jobCardId, pic1Id, pic2Id FROM piece_pics WHERE jobCardId IN (${ph})`,
-      )
-      .bind(...jcs.map((j) => j.id))
-      .all<PicRow>();
-    pics = r.results ?? [];
-  }
-  const picsByJc = new Map<string, PicRow[]>();
-  for (const p of pics) {
-    const arr = picsByJc.get(p.jobCardId) ?? [];
-    arr.push(p);
-    picsByJc.set(p.jobCardId, arr);
-  }
-
-  // 7. Pro-rate per JC: minutes / |distinct worker ids credited|.
+  // 7. Per JC: the payslip rule, the card's two PIC slots half each.
   const productionMinsByWorker = new Map<string, number>();
   const jcsCompletedByWorker = new Map<string, number>();
   for (const jc of jcs) {
@@ -287,17 +267,7 @@ export async function collectEfficiencyData(
     const totalMins = jcMinutesTotal(jc.actualMinutes ?? jc.estMinutes ?? 0, jc);
     if (totalMins <= 0) continue;
 
-    const workerIds = new Set<string>();
-    if (jc.pic1Id) workerIds.add(jc.pic1Id);
-    if (jc.pic2Id) workerIds.add(jc.pic2Id);
-    for (const p of picsByJc.get(jc.id) ?? []) {
-      if (p.pic1Id) workerIds.add(p.pic1Id);
-      if (p.pic2Id) workerIds.add(p.pic2Id);
-    }
-    if (workerIds.size === 0) continue;
-
-    const share = totalMins / workerIds.size;
-    for (const wid of workerIds) {
+    for (const [wid, share] of creditCardToPics(jc.actualMinutes ?? jc.estMinutes ?? 0, jc)) {
       productionMinsByWorker.set(
         wid,
         (productionMinsByWorker.get(wid) ?? 0) + share,

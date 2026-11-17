@@ -35,7 +35,6 @@ import {
   dailyEfficiencyPct,
   type PerfWheRow,
   type PerfJcRow,
-  type PerfPicRow,
   type PerfDay,
 } from "./workforce-perf";
 import {
@@ -805,18 +804,11 @@ export async function loadMonthPerfDays(db: Context<Env>["var"]["DB"], orgId: st
   )
     .bind(orgId, start, next)
     .all<PerfJcRow>();
-  const pics = await db.prepare(
-    `SELECT job_card_id, pic1_id, pic2_id FROM piece_pics
-      WHERE org_id = ? AND job_card_id IN (SELECT id FROM job_cards WHERE ${doneInMonth})`,
-  )
-    .bind(orgId, orgId, start, next)
-    .all<PerfPicRow>();
   const approvedExtraTime = await loadApprovedExtraTime(db, start, end);
 
   return buildPerfDays({
     whe: whe.results ?? [],
     jobCards: jobCards.results ?? [],
-    pics: pics.results ?? [],
     approvedExtraTime,
     productionDepts,
     helperIds: await helperWorkerIds(db),

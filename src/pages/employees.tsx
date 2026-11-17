@@ -4430,16 +4430,20 @@ function EfficiencyOverviewTab({
     // KPI dashboard cards — computed over the visible rows.
     const present = printableRows.filter((r) => r.totalHours > 0).length;
     const totalHrs = printableRows.reduce((s, r) => s + r.totalHours, 0);
-    const effVals = printableRows
-      .map((r) => {
+    // Total earned ÷ total hours, the same way as the page header (not a mean of each row's %).
+    const effTotals = printableRows.reduce(
+      (sum, r) => {
         const ph = prodHoursOf(r);
-        if (ph <= 0 || r.daysWithEntries === 0) return null;
-        if (workerById.get(r.workerId)?.isHelper) return null; // no personal efficiency
-        const pm = prodMinsByWorker.get(r.workerId) ?? 0;
-        return (pm / (ph * 60)) * 100;
-      })
-      .filter((v): v is number => v != null);
-    const avgEff = effVals.length ? effVals.reduce((s, v) => s + v, 0) / effVals.length : 0;
+        if (ph <= 0 || r.daysWithEntries === 0) return sum;
+        if (workerById.get(r.workerId)?.isHelper) return sum; // no personal efficiency
+        return {
+          earnedMinutes: sum.earnedMinutes + (prodMinsByWorker.get(r.workerId) ?? 0),
+          hoursMinutes: sum.hoursMinutes + ph * 60,
+        };
+      },
+      { earnedMinutes: 0, hoursMinutes: 0 },
+    );
+    const avgEff = effTotals.hoursMinutes > 0 ? (effTotals.earnedMinutes / effTotals.hoursMinutes) * 100 : 0;
     const cards: PrintCard[] = [
       { label: "Workers", value: String(printableRows.length) },
       { label: "Present", value: `${present} / ${printableRows.length}` },

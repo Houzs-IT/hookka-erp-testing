@@ -205,7 +205,7 @@ test('per-worker range rollup sums the SAME per-day numbers (no second formula)'
     assert.equal(w.productionMinutes, e.production);
     assert.equal(
       w.efficiencyPct,
-      e.working > 0 ? Math.round((e.production / e.working) * 100) : 0,
+      e.working > 0 ? Math.round((e.production / e.working) * 1000) / 10 : 0,
     );
   }
 });

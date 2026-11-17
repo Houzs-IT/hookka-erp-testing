@@ -2161,7 +2161,7 @@ app.post("/:id/scan-complete", async (c) => {
   // are hoisted here so both fill branches and the rollup share them.
   const wholeCard = body?.completeWholeCard === true;
   const nowIso = new Date().toISOString();
-  const today = nowIso.split("T")[0];
+  const today = todayYmdMY();
   let assignedSlot: 1 | 2 = 1;
   let newCompletedAt: string | null = target.slot.completedAt ?? null;
   // Barcode (whole-card) feedback parity with QR: did THIS scan actually
@@ -2333,7 +2333,7 @@ app.post("/:id/scan-complete", async (c) => {
     mergedJc.status = "COMPLETED";
     mergedJc.completedDate = today;
     // The scan IS the observation — this is the moment the last piece of the
-    // card was recorded done. `today` is `nowIso` with the time discarded;
+    // card was recorded done. `today` is the Malaysia date of that moment;
     // keep the whole instant beside it so the card's real duration
     // (completed_at − distributed_at) becomes derivable.
     mergedJc.completedAt = observedCompletionAt(nowIso);
@@ -2694,7 +2694,7 @@ app.post("/:id/scan-complete-dept", async (c) => {
   // complete any dept directly; no "earlier dept hasn't completed" gate.
 
   const nowIso = new Date().toISOString();
-  const today = nowIso.split("T")[0];
+  const today = todayYmdMY();
   const completedJcIds: string[] = [];
 
   for (const jc of cards) {
@@ -3135,7 +3135,7 @@ app.post("/:id/scan-complete-shared", async (c) => {
   // complete any dept directly; no "earlier dept hasn't completed" gate.
 
   const nowIso = new Date().toISOString();
-  const today = nowIso.split("T")[0];
+  const today = todayYmdMY();
   const completedJcIds: string[] = [];
   let anyFilled = false; // did this scan claim any slot on any card?
   let anyPicFull = false; // a card's pic1+pic2 already taken by other people

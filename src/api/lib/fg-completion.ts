@@ -24,6 +24,7 @@
 // repeatedly for the same PO is a no-op after the first success.
 // ---------------------------------------------------------------------------
 import { generateFGUnitsForPO } from "../routes/fg-units";
+import { todayYmdMY } from "../../lib/utils";
 import { applyPackingRack } from "./packing-rack-write";
 import { buildFgUnitBatchStampStatement } from "./fg-batch-link";
 import {
@@ -138,7 +139,7 @@ export async function postProductionOrderCompletion(
     }
     if (productId) {
       const now = new Date().toISOString();
-      const completedDate = po.completedDate || now.split("T")[0];
+      const completedDate = po.completedDate || todayYmdMY();
 
       // batchNo format: FGB-<YYMMDD>-<NN> — NN is a count of same-day batches
       // (monotonic per calendar date). The row id embeds the batchNo for

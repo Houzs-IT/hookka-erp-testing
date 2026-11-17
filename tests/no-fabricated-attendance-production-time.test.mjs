@@ -247,7 +247,7 @@ test("the surviving efficiency metric keeps its clocked denominator", () => {
   assert.equal(
     (
       src.match(
-        /w\.workingMinutes > 0\s*\n?\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 100\)/g,
+        /w\.workingMinutes > 0\s*\n?\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 1000\) \/ 10/g,
       ) ?? []
     ).length,
     2,
@@ -265,7 +265,7 @@ test("the surviving efficiency metric keeps its clocked denominator", () => {
   );
   assert.match(
     src,
-    /efficiencyPct: work - hw > 0 \? Math\.round\(\(\(prod - hp\) \/ \(work - hw\)\) \* 100\) : 0,/,
+    /efficiencyPct: work - hw > 0 \? Math\.round\(\(\(prod - hp\) \/ \(work - hw\)\) \* 1000\) \/ 10 : 0,/,
     "department-performance.ts: effPair must divide earned by CLOCKED minutes",
   );
 });

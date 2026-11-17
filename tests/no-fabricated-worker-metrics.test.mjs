@@ -175,7 +175,7 @@ test("view=summary projects the trusted engine, it does not recompute it", () =>
   // Same expression as the daily rows, applied to the range sums.
   assert.match(
     body,
-    /w\.workingMinutes > 0\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 100\)/,
+    /w\.workingMinutes > 0\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 1000\) \/ 10/,
     "department-performance.ts: the range efficiency must be the same " +
       "productionMinutes ÷ workingMinutes the daily rows use",
   );
@@ -281,7 +281,7 @@ test("the range roll-up equals the daily rows it was folded from", async () => {
   assert.equal(byId.w1.efficiencyPct, 100);
   assert.equal(byId.w1.jobCards, 3, "jc-a, jc-b, jc-c — jc-a counted once");
   assert.equal(byId.w2.workingMinutes, 900, "360 + 540");
-  assert.equal(byId.w2.efficiencyPct, 67, "600 / 900 rounded");
+  assert.equal(byId.w2.efficiencyPct, 66.7, "600 / 900 to one decimal");
 
   // A worker who clocked nothing gets 0 here; the PAGE is what must turn that
   // into "—" (asserted above), because 0% would read as terrible performance

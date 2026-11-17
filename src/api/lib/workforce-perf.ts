@@ -15,6 +15,8 @@
 //                      minutes skipped.
 // ---------------------------------------------------------------------------
 
+import { creditCardToPics } from "../../lib/job-card-minutes";
+
 export const num = (v: unknown): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -43,7 +45,6 @@ export type PerfJcRow = {
   actualMinutes: number | string | null;
   wipQty: number | string | null;
 };
-export type PerfPicRow = { jobCardId: string; pic1Id: string | null; pic2Id: string | null };
 export type PerfExtraTimeRow = { workerId: string | null; date: string | null; hours: number | string | null };
 
 type Minutes = { workingMinutes: number; productionMinutes: number; allDeptMinutes: number };
@@ -61,7 +62,6 @@ export type PerfDay = { date: string } & Minutes & HelperMinutes & { workers: Pe
 export function buildPerfDays(input: {
   whe: readonly PerfWheRow[];
   jobCards: readonly PerfJcRow[];
-  pics: readonly PerfPicRow[];
   approvedExtraTime: readonly PerfExtraTimeRow[];
   productionDepts: Set<string>;
   /** Workers flagged as helpers (workers.is_helper). Omitted = nobody. */
@@ -75,13 +75,6 @@ export function buildPerfDays(input: {
   // triple-counts it. Same rule as src/lib/job-card-minutes.ts.
   const jcMinutesTotal = (perUnit: number, dept: string | null, wipQty: number): number =>
     (dept ?? "") === "FAB_CUT" ? perUnit : perUnit * Math.max(1, wipQty || 1);
-
-  const picsByJc = new Map<string, Array<{ pic1: string | null; pic2: string | null }>>();
-  for (const p of input.pics) {
-    const arr = picsByJc.get(p.jobCardId) ?? [];
-    arr.push({ pic1: p.pic1Id, pic2: p.pic2Id });
-    picsByJc.set(p.jobCardId, arr);
-  }
 
   // date -> { working, production, allDept } and date -> worker -> { same }.
   // `workingMinutes` stays PRODUCTION-DEPARTMENT-ONLY clocked time (unchanged
@@ -142,24 +135,7 @@ export function buildPerfDays(input: {
     // Per-worker share is keyed on est ?? actual (note the order — it differs
     // from the day total on purpose; mirrors department-performance.ts).
     const jcMins = num(jc.estMinutes) || (actual ?? 0);
-    const pieces = picsByJc.get(jc.id) ?? [];
-    const perWorker = new Map<string, number>();
-    if (pieces.length > 0) {
-      const perPiece = (jc.departmentCode ?? "") === "FAB_CUT"
-        ? jcMinutesTotal(jcMins, jc.departmentCode, wipQty) / Math.max(1, pieces.length)
-        : jcMins;
-      for (const s of pieces) {
-        const picCount = (s.pic1 ? 1 : 0) + (s.pic2 ? 1 : 0);
-        const share = perPiece / Math.max(1, picCount);
-        if (s.pic1) perWorker.set(s.pic1, (perWorker.get(s.pic1) ?? 0) + share);
-        if (s.pic2) perWorker.set(s.pic2, (perWorker.get(s.pic2) ?? 0) + share);
-      }
-    } else {
-      const picCount = (jc.pic1Id ? 1 : 0) + (jc.pic2Id ? 1 : 0);
-      const share = jcMinutesTotal(jcMins, jc.departmentCode, wipQty) / Math.max(1, picCount);
-      if (jc.pic1Id) perWorker.set(jc.pic1Id, share);
-      if (jc.pic2Id) perWorker.set(jc.pic2Id, share);
-    }
+    const perWorker = creditCardToPics(jcMins, { ...jc, wipQty });
     for (const [wid, raw] of perWorker) {
       perfWorker(d, wid).productionMinutes += Math.round(raw);
     }
