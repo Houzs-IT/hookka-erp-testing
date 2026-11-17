@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-17**: credit note date picker (branch `feat/cn-date-picker`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 in-house efficiency (branch `fix/in-house-efficiency`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 live check, Labour cost card follows the period (branch `fix/labour-card-follows-period`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 shared-card halves kept, not rounded per card (branch `fix/credit-half-minutes`, to `main`); nothing else re-checked.
@@ -318,6 +319,18 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Credit note: pick its date (feat/cn-date-picker, 2026-11-17)
+
+Ask (owner, 17 Nov, after the Debtor Aging opening-balance check): The Conts' end-of-May invoices left open after its opening receipt HOR-2606-010 is knocked off (INV-2606-030 RM 1,230.00 and INV-2606-041 RM 1,525.00) are to be cleared by CN, 「开cn 日期放5月31」. The CN create route always dated a note today and Edit never changed it, so a 31 May CN could not be raised.
+1. 🔵 The Credit Note form has a Date (today unless picked). The server takes `date` on create and on Edit of a draft (`resolveNoteDate`, `src/api/lib/note-edit.ts`): blank = today, never after today, never before its invoice's date. The ledger already posts a note on its own date (`note-ledger.ts` `docDate`), so a 31 May CN lands in May. Debit notes unchanged. Tests: `tests/cn-date-picker.test.mjs`; the edit pins in `notes-edit-duplicate-delete` follow.
+2. ✅ Done on prod 2026-11-17 (owner's go-ahead in chat, through the ERP's own endpoints): HOR-2606-010 knocked off INV-2606-016, 027 and 030 (RM 1,515.00 of it). ⚪ After this deploys: the two CNs dated 2026-05-31 — INV-2606-030 RM 1,230.00, INV-2606-041 RM 1,525.00.
+3. ✅ Houzs Century, done on prod 2026-11-17 (owner: the 「INVOICE MAY 2026」 transfers paid HKMFG's invoices; 「方法A」, then 「你自己帮我补opening吧」):
+    - HLBB June bank reco reopened (reason recorded), HOR-2606-004…009 unmatched; HOR-2606-005…009 voided; HOR-2606-004 cut to RM 5,005.55 (INV-2606-048 part, 051, INV-2605-066 RM 518.55); HOR-2606-003 knocked off the other 14 end-of-May invoices + INV-2606-048 part.
+    - Official receipts HOR-2606-011…016 (HLBB, Cr 406-0000 HKMFG; dates and amounts of the replaced receipts; 011 = RM 29,994.45), statement lines re-matched (06-08 split 004 + 011), June re-finalised. MEASURED before/after: June report identical (GL −RM 2,102.83, balanced, 11 uncleared −RM 6,389.00, 0 unbooked).
+    - Opening: Houzs' 14 pre-opening invoices (INV-2605-003…066, RM 25,518.55) flagged opening; opening re-posted with 300-0000 +RM 25,518.55, 500-0020 +RM 22,875.55, 500-0000 +RM 2,643.00 (split by product lines); the other 31 lines unchanged. This cleared the AR control drift (−RM 25,000, from HOR-2607-001 paying those invoices with no opening behind them).
+    - PI-2611-055 (HUGYP MADE, RM 640, dated 2025-11-12, entered Nov 2026) set aside from the opening (ap-exclude) so the re-post kept the creditor opening as posted. 🟡 Owner to decide later 「hugyp made先不理」: un-exclude + re-post with a purchase account, or leave out.
+    - MEASURED after: AR control drift 0, unapplied advances 0; Houzs Debtor Aging only Current; The Conts 3+ mth = the two CN amounts.
 
 ## 🔵 Board report: same six months and a forecast on every chart; access locked (feat/board-report-six-months + fix/kv-config-finance-keys-gated, 2026-11-17)
 

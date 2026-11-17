@@ -95,10 +95,13 @@ function makeDb({ notes = [], invoices = [], deleted = [] } = {}) {
       },
       async run() {
         if (/^UPDATE (credit|debit)_notes SET invoiceId = \?/.test(s)) {
-          const [invoiceId, invoiceNumber, customerId, customerName, customerState, customerAddress, attention, customerPhone, reason, reasonDetail, totalAmount, items, id, orgId] = b;
+          // The credit note also sets its date (owner 2026-11-17, cn-date-picker); the debit note does not.
+          const dated = /items = \?, date = \?/.test(s);
+          const [invoiceId, invoiceNumber, customerId, customerName, customerState, customerAddress, attention, customerPhone, reason, reasonDetail, totalAmount, items] = b;
+          const [date, id, orgId] = dated ? b.slice(12) : [undefined, ...b.slice(12)];
           const n = store.notes.get(id);
           if (n && n.orgId === orgId && n.status === "DRAFT") {
-            Object.assign(n, { invoiceId, invoiceNumber, customerId, customerName, customerState, customerAddress, attention, customerPhone, reason, reasonDetail, totalAmount, items });
+            Object.assign(n, { invoiceId, invoiceNumber, customerId, customerName, customerState, customerAddress, attention, customerPhone, reason, reasonDetail, totalAmount, items, ...(dated ? { date } : {}) });
           }
         } else if (/^INSERT INTO document_lifecycle/.test(s)) {
           assert.match(s, /VALUES \(\?, \?, \?, 'DELETED', \?, \?, \?\) ON CONFLICT \(orgId, sourceType, sourceId\) DO UPDATE SET state = 'DELETED'/);
@@ -272,7 +275,7 @@ for (const [file, kind, Type] of [["src/pages/invoices/credit-notes.tsx", "credi
     assert.match(src, new RegExp(`<NotePopup\\n\\s+kind="${kind}"\\n\\s+note=\\{viewNote\\}`));
     // Edit → PUT /:id/edit; New and Duplicate → POST.
     assert.match(src, new RegExp(`\\? await fetchJson\\(\`/api/${kind}-notes/\\$\\{encodeURIComponent\\(editingNote\\.id\\)\\}/edit\`, [CD]NMutationSchema, \\{ method: "PUT", body \\}\\)`));
-    assert.match(src, /const openDuplicate = \([a-z]+: [A-Za-z]+\) => \{ setEditingNote\(null\); setCopyOf\([a-z]+\.noteNumber\); fillFromNote\([a-z]+\); \};/);
+    assert.match(src, /const openDuplicate = \([a-z]+: [A-Za-z]+\) => \{ setEditingNote\(null\); setCopyOf\([a-z]+\.noteNumber\); (setNoteDate\(todayYmdMY\(\)\); )?fillFromNote\([a-z]+\); \};/);
     // Delete goes through a danger confirm, then DELETE /:id.
     assert.match(src, /confirmLabel: "Delete",\n\s+danger: true,/);
     assert.match(src, new RegExp(`await sendNote\\(\`/api/${kind}-notes/\\$\\{encodeURIComponent\\([a-z]+\\.id\\)\\}\`, \\{ method: "DELETE" \\},`));

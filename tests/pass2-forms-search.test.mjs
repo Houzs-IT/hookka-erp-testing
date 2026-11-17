@@ -131,7 +131,7 @@ test("form popups route Esc and backdrop through the discard guard; Cancel close
   assert.match(guard, /useEscapeClose\(\(\) => void requestClose\(\), opts\.open\);/);
   for (const f of ["src/pages/invoices/credit-notes.tsx", "src/pages/invoices/debit-notes.tsx"]) {
     const src = read(f);
-    assert.match(src, /useFormDirty\(\s*\{ selectedCustomerId, selectedInvoiceId, reason, reasonDetail, items:/, `${f}: dropdowns in the snapshot`);
+    assert.match(src, /useFormDirty\(\s*\{ selectedCustomerId, selectedInvoiceId, (noteDate, )?reason, reasonDetail, items:/, `${f}: dropdowns in the snapshot`);
     assert.match(src, /useDiscardGuard\(\{ open: showCreateModal, dirty: formDirty, onClose: closeForm, busy: creating \}\)/);
     assert.match(src, /z-50" onMouseDown=\{formGuard\.onBackdrop\}>/);
     assert.match(src, /<Button variant="ghost" onClick=\{closeForm\}>Cancel<\/Button>/, `${f}: Cancel still closes at once`);

@@ -31,6 +31,7 @@ import {
   noteIsDeleted,
   notDeletedSql,
   parseNoteItems,
+  resolveNoteDate,
 } from "../lib/note-edit";
 import { priceReturnLines, type InvoiceLineOfReturn, type InvoiceOfReturn, type ReturnLine } from "../../lib/cn-from-return";
 import { todayYmdMY } from "../../lib/utils";
@@ -346,13 +347,15 @@ app.post("/", idempotent(), async (c) => {
     // populated at invoice-create time.
     const invoice = await c.var.DB.prepare(
       `SELECT id, invoiceNo, customerId, customerName, customerState,
-              customerAddress, attention, customerPhone, totalSen, paidAmount, status
+              customerAddress, attention, customerPhone, totalSen, paidAmount, status, invoiceDate
          FROM invoices WHERE id = ?`,
     )
       .bind(invoiceId)
       .first<{
         id: string;
         invoiceNo: string;
+        invoiceDate?: string | null;
+        invoice_date?: string | null;
         customerId: string;
         customerName: string;
         customerState: string | null;
@@ -421,7 +424,10 @@ app.post("/", idempotent(), async (c) => {
 
     const id = genId();
     const noteNumber = await nextCNNo(c.var.DB);
-    const date = todayYmdMY();
+    // The note's own date (owner 2026-11-17): blank = today.
+    const dated = resolveNoteDate(body.date, invoice.invoiceDate ?? invoice.invoice_date, todayYmdMY(), "Credit note");
+    if ("error" in dated) return c.json({ success: false, error: dated.error }, 400);
+    const date = dated.date;
     const now = new Date().toISOString();
 
     // Allow the client to create a CN already in APPROVED/POSTED (e.g. from
@@ -904,7 +910,7 @@ app.post("/:id/unpost", async (c) => {
 // lines, checked as on create (the customer block re-read from the invoice,
 // the total within what the invoice still has uncollected). A draft has
 // touched nothing, so nothing else moves; a posted note goes Back to Draft
-// first. Its number, date and delivery return stay.
+// first. Its number and delivery return stay; its date changes only when one is sent (owner 2026-11-17).
 app.put("/:id/edit", async (c) => {
   const denied = await requirePermission(c, "credit-notes", "update");
   if (denied) return denied;
@@ -935,16 +941,25 @@ app.put("/:id/edit", async (c) => {
   const invoice = await db
     .prepare(
       `SELECT id, invoiceNo, customerId, customerName, customerState,
-              customerAddress, attention, customerPhone, totalSen, paidAmount
+              customerAddress, attention, customerPhone, totalSen, paidAmount, invoiceDate
          FROM invoices WHERE id = ? AND orgId = ?`,
     )
     .bind(invoiceId, orgId)
     .first<{
       id: string; invoiceNo: string; customerId: string; customerName: string;
+      invoiceDate?: string | null; invoice_date?: string | null;
       customerState: string | null; customerAddress: string | null; attention: string | null; customerPhone: string | null;
       totalSen: number; paidAmount: number;
     }>();
   if (!invoice) return c.json({ success: false, error: "Invoice not found" }, 404);
+  // The date: sent = checked as on create; not sent = the draft keeps its own.
+  const dated = resolveNoteDate(
+    body.date === undefined ? existing.date : body.date,
+    invoice.invoiceDate ?? invoice.invoice_date,
+    todayYmdMY(),
+    "Credit note",
+  );
+  if ("error" in dated) return c.json({ success: false, error: dated.error }, 400);
   const uncollectedSen = Math.max(0, (Number(invoice.totalSen) || 0) - (Number(invoice.paidAmount) || 0));
   if (parsed.totalSen > uncollectedSen) {
     return c.json(
@@ -960,13 +975,13 @@ app.put("/:id/edit", async (c) => {
       `UPDATE credit_notes
           SET invoiceId = ?, invoiceNumber = ?, customerId = ?, customerName = ?, customerState = ?,
               customerAddress = ?, attention = ?, customerPhone = ?,
-              reason = ?, reasonDetail = ?, totalAmount = ?, items = ?
+              reason = ?, reasonDetail = ?, totalAmount = ?, items = ?, date = ?
         WHERE id = ? AND orgId = ? AND status = 'DRAFT'`,
     )
     .bind(
       invoice.id, invoice.invoiceNo, invoice.customerId, invoice.customerName, invoice.customerState,
       invoice.customerAddress, invoice.attention, invoice.customerPhone,
-      reason, typeof body.reasonDetail === "string" ? body.reasonDetail : "", parsed.totalSen, JSON.stringify(parsed.items),
+      reason, typeof body.reasonDetail === "string" ? body.reasonDetail : "", parsed.totalSen, JSON.stringify(parsed.items), dated.date,
       id, orgId,
     )
     .run();
