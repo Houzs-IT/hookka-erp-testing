@@ -18,16 +18,11 @@
 //   3. Tap the big "Stock In (N)" button (two-tap arm→confirm, like DO-scan) to
 //      POST the list. On success the list clears; on error it's kept for retry.
 //
-// The camera loop is a trimmed copy of /worker/scan's: getUserMedia → a RAF
-// tick that feeds frames to the phone's native BarcodeDetector when present,
-// else jsQR (QR) + a lazily dynamic-imported ZXing decoder (QR + Code 128).
-// No auto-zoom (kept simple); an optional torch toggle where the lens supports
-// it. BOTH modes decode the FULL frame — QR reads a Code 128 fine precisely
-// because it is full-frame, so barcode mode matches it (no cropped ROI). A
-// short ~80ms WebAudio blip confirms every successful add ("滴"); a lower
-// double tone signals not-recognised / wrong-rack. The scanner stays open and
-// keeps decoding after each hit so items are scanned continuously, with a
-// per-value de-dup so one held sticker adds exactly once.
+// The camera loop lives in src/components/qr-camera-scanner.tsx. A short ~80ms
+// WebAudio blip confirms every successful add; a lower double tone signals
+// not-recognised / wrong-rack. The scanner stays open and keeps decoding after
+// each hit so items are scanned continuously, with a per-value de-dup so one
+// held sticker adds exactly once.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -38,12 +33,10 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Flashlight,
   PackageCheck,
   Trash2,
-  X,
 } from "lucide-react";
-import jsQR from "jsqr";
+import { QrCameraScanner } from "@/components/qr-camera-scanner";
 import { csrfHeaders } from "@/lib/csrf";
 
 // ── Backend shapes (API contract — see routes/public-rack-qr.ts) ──────────
@@ -118,14 +111,6 @@ type PendingMove = {
   currentRackLabel: string;
 };
 
-// ── Camera scanner (trimmed copy of /worker/scan) ─────────────────────────
-// Decode-mode toggle: "qr" reads a square sticker, "barcode" a Code 128. BOTH
-// decode the FULL video frame — QR mode reads a Code 128 today only because it
-// is full-frame, and a cropped ROI was what stopped barcode mode decoding, so
-// barcode mode matches QR exactly. The toggle now only swaps the reticle shape
-// + the native-detector format hint; the captured pixels are identical.
-type ScanMode = "qr" | "barcode";
-
 export default function RackScanPage() {
   const { rackId } = useParams();
 
@@ -152,19 +137,8 @@ export default function RackScanPage() {
 
   // ── Camera state ─────────────────────────────────────────────────────────
   const [scanning, setScanning] = useState(false);
-  const [scanMode, setScanMode] = useState<ScanMode>("qr");
-  const [torchOn, setTorchOn] = useState(false);
-  const [torchSupported, setTorchSupported] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const scanCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  // ZXing decoder (QR + Code 128) for the no-BarcodeDetector path (iOS Safari).
-  // Lazily dynamic-imported on first scan; null until ready (jsQR carries QR).
-  const zxingRef = useRef<((img: ImageData) => string | null) | null>(null);
-  const zxingLoadingRef = useRef<Promise<void> | null>(null);
   // De-dupe the decode→lookup pipeline: a single sticker held in frame fires
   // many frames; remember the last raw value + when, so we don't spam the
   // backend or double-count. A different value, or the same value after a short
@@ -179,14 +153,6 @@ export default function RackScanPage() {
   // user gesture (Start / tapping the video) so autoplay policy lets it sound;
   // null until then. Reused for every beep thereafter.
   const audioCtxRef = useRef<AudioContext | null>(null);
-  // scanMode mirrored to a ref so the long-lived tick loop reads the current
-  // mode without being torn down on every toggle. The loop effect deliberately
-  // omits scanMode from its deps; this ref keeps the running closure in sync so
-  // QR/Barcode switches take effect on the very next frame, camera uninterrupted.
-  const scanModeRef = useRef<ScanMode>(scanMode);
-  useEffect(() => {
-    scanModeRef.current = scanMode;
-  }, [scanMode]);
 
   // Ignore the SAME decoded string for this long so one barcode held in frame
   // adds exactly once; a DIFFERENT item passes immediately.
@@ -248,47 +214,6 @@ export default function RackScanPage() {
     },
     [ensureAudio],
   );
-
-  const ensureZxing = useCallback((): Promise<void> => {
-    if (zxingRef.current) return Promise.resolve();
-    if (zxingLoadingRef.current) return zxingLoadingRef.current;
-    zxingLoadingRef.current = import("@zxing/library")
-      .then((zx) => {
-        const reader = new zx.MultiFormatReader();
-        const hints = new Map<number, unknown>();
-        hints.set(zx.DecodeHintType.POSSIBLE_FORMATS, [
-          zx.BarcodeFormat.QR_CODE,
-          zx.BarcodeFormat.CODE_128,
-        ]);
-        hints.set(zx.DecodeHintType.TRY_HARDER, true);
-        reader.setHints(hints);
-        zxingRef.current = (img: ImageData) => {
-          // RGBA → BT.601 luma (RGBLuminanceSource wants precomputed luminance).
-          const { data, width, height } = img;
-          const gray = new Uint8ClampedArray(width * height);
-          for (let i = 0, j = 0; j < gray.length; i += 4, j++) {
-            gray[j] = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
-          }
-          try {
-            const res = reader.decodeWithState(
-              new zx.BinaryBitmap(
-                new zx.HybridBinarizer(
-                  new zx.RGBLuminanceSource(gray, width, height),
-                ),
-              ),
-            );
-            return res ? res.getText() : null;
-          } catch {
-            return null; // NotFoundException — no code in this frame
-          }
-        };
-      })
-      .catch(() => {
-        // Load failed — leave jsQR (QR-only) as the fallback; retry next call.
-        zxingLoadingRef.current = null;
-      });
-    return zxingLoadingRef.current;
-  }, []);
 
   // ── Mount: load the rack summary ─────────────────────────────────────────
   // No synchronous setState before the first await — `loading` starts true and
@@ -471,304 +396,25 @@ export default function RackScanPage() {
     [rackId, addPiece, beep],
   );
 
-  // ── Camera control ───────────────────────────────────────────────────────
   const stopScan = useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      try {
-        videoRef.current.srcObject = null;
-      } catch {
-        /* */
-      }
-    }
     setScanning(false);
-    setTorchOn(false);
-    setTorchSupported(false);
   }, []);
 
-  // Torch / flashlight — best-effort (Android Chrome exposes `torch` via
-  // applyConstraints; iOS Safari doesn't, so the button only shows when the lens
-  // reports it). A dim warehouse is a top cause of a Code 128 "won't scan".
-  const toggleTorch = useCallback(async () => {
-    const track = streamRef.current?.getVideoTracks?.()[0];
-    if (!track) return;
-    const next = !torchOn;
-    try {
-      await track.applyConstraints({
-        advanced: [{ torch: next } as unknown as MediaTrackConstraintSet],
-      });
-      setTorchOn(next);
-    } catch {
-      /* torch is best-effort — never break the scan over it */
-    }
-  }, [torchOn]);
+  const primeAudio = useCallback(() => {
+    const ac = ensureAudio();
+    if (ac && ac.state === "suspended") void ac.resume();
+  }, [ensureAudio]);
 
-  // Tap-to-focus — a close packing sticker often sits inside the lens's
-  // continuous-AF hunt range and reads blurry. Tapping the camera view fires a
-  // single-shot refocus that snaps THIS sticker sharp at the current distance
-  // (all rack stickers are scanned at roughly one arm's length, so the lock
-  // stays useful for the next few too). Best-effort: Android Chrome exposes it,
-  // iOS Safari ignores focusMode and continuous AF carries on — never blocks.
-  const refocus = useCallback(async () => {
-    const track = streamRef.current?.getVideoTracks?.()[0];
-    if (!track) return;
-    const caps = track.getCapabilities?.() as
-      | (MediaTrackCapabilities & { focusMode?: string[] })
-      | undefined;
-    const modes = caps?.focusMode ?? [];
-    try {
-      if (modes.includes("single-shot")) {
-        await track.applyConstraints({
-          advanced: [{ focusMode: "single-shot" } as unknown as MediaTrackConstraintSet],
-        });
-      } else if (modes.includes("continuous")) {
-        // Re-assert continuous to kick a fresh AF sweep on lenses without
-        // single-shot.
-        await track.applyConstraints({
-          advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
-        });
-      }
-    } catch {
-      /* focus is best-effort — never break the scan over it */
-    }
-  }, []);
-
-  const startScan = useCallback(async () => {
+  const startScan = useCallback(() => {
     if (scanning) return;
     setCameraError(null);
     setScanMsg(null);
-    // Prime the AudioContext on this user gesture so the scan "滴" can sound
-    // (browser autoplay policy blocks audio created outside a gesture).
-    const ac = ensureAudio();
-    if (ac && ac.state === "suspended") void ac.resume();
-    try {
-      // Rear camera, sharp feed — small / arm's-length stickers need the detail.
-      // Ask for 1440p (soft "ideal" → the browser gives the closest the lens
-      // supports, falling back to 1080p on older phones, never failing). The
-      // extra pixels let BOTH decode paths (Android's native detector on the
-      // full frame AND the iOS canvas path) resolve a QR that's small, far, or
-      // at an angle instead of missing it (owner 2026-07-03: "上下左右斜角不敏感").
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 2560 },
-          height: { ideal: 1440 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-      // Best-effort continuous autofocus — a fixed-focus lens leaves the sticker
-      // blurry; surface the torch button only when this lens supports it.
-      try {
-        const track = stream.getVideoTracks()[0];
-        const caps = track?.getCapabilities?.() as
-          | (MediaTrackCapabilities & { focusMode?: string[]; torch?: boolean })
-          | undefined;
-        if (caps?.focusMode && caps.focusMode.includes("continuous")) {
-          await track.applyConstraints({
-            advanced: [
-              { focusMode: "continuous" } as unknown as MediaTrackConstraintSet,
-            ],
-          });
-        }
-        setTorchSupported(!!caps?.torch);
-      } catch {
-        /* focus tuning is a nicety, never block the scan on it */
-      }
-      setScanning(true);
-      // Video attach + RAF loop happens in the effect below.
-    } catch (e) {
-      // Distinguish a hard permission Block (browser remembers, re-prompt won't
-      // show — only the user can unblock at the address bar) from no-camera/HTTPS.
-      const name = e instanceof DOMException ? e.name : "";
-      setCameraError(
-        name === "NotAllowedError" || name === "SecurityError"
-          ? "Camera blocked. Allow camera access for this site (tap the lock icon in the address bar), then tap Scan again."
-          : "Could not open the camera. Make sure no other app is using it and that this page is on https.",
-      );
-    }
-  }, [scanning, ensureAudio]);
+    primeAudio();
+    setScanning(true);
+  }, [scanning, primeAudio]);
 
-  // Wire the stream into <video> and run the per-frame decode loop while
-  // scanning. Deliberately does NOT depend on scanMode — the loop reads the
-  // live mode via scanModeRef, so toggling QR/Barcode never tears down the
-  // camera (a teardown would drop the in-flight scan and re-prompt).
-  useEffect(() => {
-    if (!scanning) return;
-    const video = videoRef.current;
-    const stream = streamRef.current;
-    if (!video || !stream) return;
-    video.srcObject = stream;
-    video.setAttribute("playsinline", "true"); // iOS: no fullscreen hijack
-    video.muted = true;
-    video.play().catch(() => {});
-
-    if (!scanCanvasRef.current) {
-      scanCanvasRef.current = document.createElement("canvas");
-    }
-    const canvas = scanCanvasRef.current;
-
-    // Native, hardware-accelerated detector (Android Chrome) reads small /
-    // angled / blurred stickers off the live <video>. Absent on iOS Safari →
-    // jsQR (QR) + ZXing (QR + Code 128) fallback.
-    let nativeDetector: BarcodeDetectorLike | null = null;
-    if (typeof window !== "undefined" && window.BarcodeDetector) {
-      try {
-        nativeDetector = new window.BarcodeDetector({
-          formats: ["qr_code", "code_128"],
-        });
-      } catch {
-        try {
-          nativeDetector = new window.BarcodeDetector({ formats: ["qr_code"] });
-        } catch {
-          nativeDetector = null;
-        }
-      }
-    }
-    void ensureZxing();
-
-    let stopped = false;
-    let lastDecode = 0;
-    const THROTTLE_MS = nativeDetector ? 60 : 90;
-
-    // Feed a decoded value to the lookup. The scanner stays OPEN — each hit
-    // adds an item and the loop keeps decoding so the next item scans straight
-    // away (PROBLEM 1: continuous scan). handleDecoded de-dupes a held sticker
-    // so one physical scan adds exactly once (PROBLEM 3).
-    const onHit = (data: string) => {
-      if (stopped || !data) return;
-      void handleDecoded(data);
-    };
-
-    const tick = async () => {
-      if (stopped) return;
-      const now = performance.now();
-      const mode = scanModeRef.current;
-      // The decoded value for THIS frame, if any. We set it then fall through
-      // to the single RAF reschedule at the bottom — crucially we never early-
-      // `return` on a hit, which is exactly what used to kill the loop after
-      // the first item (PROBLEM 1). onHit + the de-dup window make a repeat of
-      // the same frame's value a no-op, so falling through is safe.
-      let hit: string | null = null;
-      if (
-        now - lastDecode >= THROTTLE_MS &&
-        video.videoWidth > 0 &&
-        video.readyState >= 2
-      ) {
-        lastDecode = now;
-        if (nativeDetector) {
-          try {
-            const codes = await nativeDetector.detect(video);
-            if (stopped) return;
-            if (mode === "barcode") {
-              // FULL FRAME, like QR mode — QR mode reads this very Code 128 fine
-              // (it never rejects on position), so barcode mode must too. Among
-              // code_128 anywhere in frame pick the one NEAREST centre so a
-              // multi-code sheet still resolves to the aimed one, but NEVER
-              // reject on position — the band-reject made barcode mode "scan
-              // 不到" while QR worked (owner 2026-06-17, the recurring bug).
-              const cx = video.videoWidth / 2;
-              const cy = video.videoHeight / 2;
-              let best: { v: string; d: number } | null = null;
-              for (const c of codes) {
-                if (!c.rawValue) continue;
-                const fmt = (c as { format?: string }).format;
-                if (fmt && fmt !== "code_128") continue;
-                const bb = (
-                  c as {
-                    boundingBox?: {
-                      x: number;
-                      y: number;
-                      width: number;
-                      height: number;
-                    };
-                  }
-                ).boundingBox;
-                const d = bb
-                  ? Math.hypot(bb.x + bb.width / 2 - cx, bb.y + bb.height / 2 - cy)
-                  : 0;
-                if (!best || d < best.d) best = { v: c.rawValue, d };
-              }
-              if (best) hit = best.v;
-            } else if (codes.length > 0 && codes[0].rawValue) {
-              hit = codes[0].rawValue;
-            }
-          } catch {
-            // Exposed but flaky — drop to the canvas path for the rest of the session.
-            nativeDetector = null;
-          }
-        } else {
-          const vw = video.videoWidth;
-          const vh = video.videoHeight;
-          const ctx = canvas.getContext("2d", { willReadFrequently: true });
-          if (ctx) {
-            // Both modes capture the SAME full frame — QR mode reads a Code 128
-            // fine precisely because it's full-frame, so barcode mode matches it
-            // (no cropped ROI; the crop is what broke barcode scanning). Barcode
-            // keeps a wider working width (~1280px) so Code 128 bars stay sharp;
-            // QR is fine smaller. jsQR (QR only) runs first in QR mode, then
-            // ZXing (QR + Code 128) for both.
-            const targetW = mode === "barcode" ? 1280 : 1440;
-            const scale = Math.min(1, targetW / Math.max(vw, vh));
-            const cw = Math.max(1, Math.round(vw * scale));
-            const ch = Math.max(1, Math.round(vh * scale));
-            canvas.width = cw;
-            canvas.height = ch;
-            ctx.drawImage(video, 0, 0, cw, ch);
-            let imageData: ImageData | null = null;
-            try {
-              imageData = ctx.getImageData(0, 0, cw, ch);
-            } catch {
-              imageData = null;
-            }
-            if (imageData) {
-              if (mode !== "barcode") {
-                const code = jsQR(imageData.data, cw, ch, {
-                  inversionAttempts: "attemptBoth",
-                });
-                if (code && code.data) hit = code.data;
-              }
-              if (!hit) {
-                const zxDecode = zxingRef.current;
-                if (!zxDecode) {
-                  void ensureZxing(); // self-heal if the chunk hasn't loaded yet
-                } else {
-                  const zxText = zxDecode(imageData);
-                  if (zxText) hit = zxText;
-                }
-              }
-            }
-          }
-        }
-      }
-      if (hit) onHit(hit);
-      // ALWAYS reschedule — the loop must keep running after a hit so the next
-      // item scans immediately (PROBLEM 1).
-      rafRef.current = requestAnimationFrame(() => void tick());
-    };
-    rafRef.current = requestAnimationFrame(() => void tick());
-
-    return () => {
-      stopped = true;
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [scanning, handleDecoded, ensureZxing]);
-
-  // Tear down the stream if the page unmounts mid-scan.
   useEffect(() => {
     return () => {
-      stopScan();
-      // Release the WebAudio context on unmount (browsers cap how many exist).
       const ac = audioCtxRef.current;
       if (ac) {
         audioCtxRef.current = null;
@@ -779,7 +425,7 @@ export default function RackScanPage() {
         }
       }
     };
-  }, [stopScan]);
+  }, []);
 
   // ── Move / Skip resolution for a cross-rack item ─────────────────────────
   const resolveMove = useCallback(
@@ -969,86 +615,20 @@ export default function RackScanPage() {
 
             {/* ── Camera scanner ──────────────────────────────────────────── */}
             {scanning ? (
-              <div className="rounded-xl overflow-hidden bg-black shadow-sm border border-[#E6E0D9]">
-                <div className="relative">
-                  <video
-                    ref={videoRef}
-                    className="w-full h-[58vh] object-cover bg-black"
-                    playsInline
-                    muted
-                  />
-                  {/* Aim reticle — a visual guide only; BOTH modes decode the
-                      full frame, so the worker just needs the code roughly in
-                      view. A wide box for a barcode, a square for a QR. Tapping
-                      the overlay also (re)primes the beep audio on iOS. */}
-                  <div
-                    onClick={() => {
-                      const ac = ensureAudio();
-                      if (ac && ac.state === "suspended") void ac.resume();
-                      void refocus();
-                    }}
-                    className="absolute inset-0 flex items-center justify-center"
-                  >
-                    {scanMode === "barcode" ? (
-                      <div className="pointer-events-none w-[86vw] max-w-[440px] h-[88px] rounded-lg border-2 border-white/90 shadow-[0_0_0_2000px_rgba(0,0,0,0.35)]" />
-                    ) : (
-                      <div className="pointer-events-none w-[66vw] max-w-[300px] aspect-square rounded-lg border-2 border-white/90 shadow-[0_0_0_2000px_rgba(0,0,0,0.35)]" />
-                    )}
-                  </div>
-                  {/* Top controls: close + torch. */}
-                  <div className="absolute top-2 right-2 flex gap-2">
-                    {torchSupported && (
-                      <button
-                        type="button"
-                        onClick={() => void toggleTorch()}
-                        className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                          torchOn ? "bg-[#9C6F1E] text-white" : "bg-black/55 text-white"
-                        }`}
-                        aria-label="Toggle flashlight"
-                      >
-                        <Flashlight className="h-5 w-5" />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={stopScan}
-                      className="h-10 w-10 rounded-full bg-black/55 text-white flex items-center justify-center"
-                      aria-label="Close camera"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
-                  </div>
-                  {/* Mode toggle. */}
-                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex rounded-full bg-black/55 p-1 text-xs font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => setScanMode("qr")}
-                      className={`px-4 py-1.5 rounded-full ${
-                        scanMode === "qr" ? "bg-white text-[#1F1D1B]" : "text-white"
-                      }`}
-                    >
-                      QR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScanMode("barcode")}
-                      className={`px-4 py-1.5 rounded-full ${
-                        scanMode === "barcode" ? "bg-white text-[#1F1D1B]" : "text-white"
-                      }`}
-                    >
-                      Barcode
-                    </button>
-                  </div>
-                </div>
-                {/* Live scan feedback strip. */}
-                <div className="bg-[#1F1D1B] px-4 py-2.5 text-center text-sm text-white min-h-[40px] flex items-center justify-center">
-                  {scanMsg || "Point at an item QR…"}
-                </div>
-              </div>
+              <QrCameraScanner
+                onDecode={(text) => void handleDecoded(text)}
+                onClose={stopScan}
+                onError={(message) => {
+                  setCameraError(message);
+                  setScanning(false);
+                }}
+                onUserGesture={primeAudio}
+                statusText={scanMsg ?? undefined}
+              />
             ) : (
               <button
                 type="button"
-                onClick={() => void startScan()}
+                onClick={startScan}
                 className="w-full rounded-xl bg-[#6B5C32] active:bg-[#5a4d2a] text-white py-4 text-lg font-bold shadow-sm flex items-center justify-center gap-2"
               >
                 <Camera className="h-5 w-5" />
