@@ -144,6 +144,7 @@ const CONSUMERS = [
   ["src/pages/m/screens/invoices/InvoiceDetailScreen.tsx", "failure", '"Invoice not found." ("not found" only on failure.kind === "notFound")'],
   ["src/pages/m/screens/customers/CustomerDetailScreen.tsx", "failure", '"Customer not found." ("not found" only on failure.kind === "notFound")'],
   ["src/pages/m/screens/SalesOrderDetail.tsx", "hook-error-gate", "Order not found."],
+  ["src/pages/m/screens/finance/VoucherScreens.tsx", "failure", "\"This voucher was not found\" (reads the voucher LIST; \"not found\" only after a read that did not fail)"],
 ];
 
 for (const [file, guard, symptom] of CONSUMERS) {

@@ -3065,6 +3065,59 @@ app.put("/:id", async (c) => {
 // runs in the SAME batch as the row delete (atomic) and is computed BEFORE
 // the delete, since the FK cascade is about to remove the lines it reads.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// POST /api/purchase-invoices/:id/source-document — link a file as this invoice's SOURCE document AFTER it was created.
+// `sourceDocumentFileId` used to be settable only by the create, so an invoice made without its scan (or whose upload failed)
+// could never show it on the desktop's "View source document". The file is uploaded first through the generic file API
+// (resourceType "PI", resourceId = this invoice); this call links it.
+//   · permission purchase-invoices:update; allowed on any status except CANCELLED (evidence, not a money edit);
+//   · the file must exist IN THIS ORGANISATION and be attached to THIS invoice (resourceType PI, resourceId = :id);
+//   · linking the file that is already the source is a no-op (safe to retry); replacing a DIFFERENT source needs
+//     `replace: true` (an explicit action), otherwise 409.
+// ---------------------------------------------------------------------------
+app.post("/:id/source-document", async (c) => {
+  const denied = await requirePermission(c, "purchase-invoices", "update");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const id = c.req.param("id");
+  await ensurePiMigrations(db);
+  const body = (await c.req.json().catch(() => ({}))) as { fileId?: unknown; replace?: unknown };
+  const fileId = String(body.fileId ?? "").trim();
+  if (!fileId) return c.json({ success: false, error: "fileId is required" }, 400);
+  const pi = await db.prepare("SELECT * FROM purchase_invoices WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  if (!pi) return c.json({ success: false, error: "PI not found" }, 404);
+  if (String(pi.status ?? "").toUpperCase() === "CANCELLED") {
+    return c.json({ success: false, error: "A cancelled invoice takes no new source document." }, 409);
+  }
+  const file = await db
+    .prepare("SELECT id, resourceType, resourceId FROM file_assets WHERE id = ? AND orgId = ?")
+    .bind(fileId, getOrgId(c))
+    .first<Record<string, unknown>>();
+  if (!file) return c.json({ success: false, error: "File not found" }, 404);
+  const fileType = String(file.resourceType ?? file.resource_type ?? "");
+  const fileOwner = String(file.resourceId ?? file.resource_id ?? "");
+  if (fileType !== "PI" || fileOwner !== id) {
+    return c.json({ success: false, error: "That file is not attached to this invoice." }, 400);
+  }
+  const current = String(pi.sourceDocumentFileId ?? pi.source_document_file_id ?? "").trim();
+  if (current === fileId) return c.json({ success: true, data: { sourceDocumentFileId: fileId, unchanged: true } });
+  if (current && body.replace !== true) {
+    return c.json({ success: false, error: "This invoice already has a source document. Replacing it needs an explicit confirmation." }, 409);
+  }
+  await db
+    .prepare("UPDATE purchase_invoices SET source_document_file_id = ?, updated_at = ? WHERE id = ?")
+    .bind(fileId, new Date().toISOString(), id)
+    .run();
+  await emitAudit(c, {
+    resource: "purchase-invoices",
+    resourceId: id,
+    action: current ? "replace-source-document" : "link-source-document",
+    before: { sourceDocumentFileId: current || null },
+    after: { sourceDocumentFileId: fileId },
+  });
+  return c.json({ success: true, data: { sourceDocumentFileId: fileId, unchanged: false } });
+});
+
 app.delete("/:id", async (c) => {
   const denied = await requirePermission(c, "purchase-invoices", "delete");
   if (denied) return denied;

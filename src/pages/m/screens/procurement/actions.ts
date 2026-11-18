@@ -38,6 +38,8 @@ export async function send(
 
 export const putPo = (id: string, body: unknown) => send(`/api/purchase-orders/${encodeURIComponent(id)}`, "PUT", body);
 export const putGrn = (id: string, body: unknown) => send(`/api/grn/${encodeURIComponent(id)}`, "PUT", body);
+/** One step along the arrival pipeline (the server refuses a skipped step). */
+export const putGrnArrival = (id: string, arrivalState: string) => send(`/api/grn/${encodeURIComponent(id)}/arrival`, "PUT", { arrival_state: arrivalState });
 export const putPi = (id: string, body: unknown) => send(`/api/purchase-invoices/${encodeURIComponent(id)}`, "PUT", body);
 
 /**
