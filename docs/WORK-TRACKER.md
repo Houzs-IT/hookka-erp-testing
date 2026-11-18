@@ -319,6 +319,14 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Board report to investment-bank standard + ONE house chart standard (2026-11-19)
+Owner asks (2026-11-18/19): 「有点丑 … 美国大型公司 financial reporting 怎么弄到那么漂亮」, 「整个 board report 的颜色方面呢？」, 「字体 字体大小等等」, 「你也知道不好 跟大公司和投行有差距 那就去弄」, 「全部数据有了？」, 「各大种类的 reporting 有尽量 standardise？」 → standard = the new Board Report look ("用我刚做的 Board Report 新版").
+- [ ] Batch 1 (feat/board-report-chart-polish): IBM Plex Sans type scale; validated CAT palette; green/red = status only; forecast = hatched bars / dashed ink; selective labels; axis dropped when every value is printed. House tokens in `src/lib/chart-standard.ts`.
+- [ ] Batch 2: action titles (the chart's conclusion as its title), cash-flow waterfall, actual-vs-forecast variance bars.
+- [ ] Batch 3: layout density (two charts side by side, no half-empty pages), executive-summary box on the cover.
+- [ ] Standardise: Finance dashboard (`src/lib/finance-chart-look.ts`, the owner's Oct "Finance v2" colours) → chart-standard; then the other dashboards (18 recharts files, warm brown palette). Preview each before ship.
+- Data check (live Oct report, 2026-11-19): no section unavailable; dashes are genuine (future months, categories with no forecast keyed, a customer with no bedframe/sofa split). Flag: cash-flow forecast "Docs" vs "P&L" columns diverge by up to RM 406k (May 27) — Docs only counts known documents.
+
 ## ✅ Board report charts print their amounts (feat/board-report-chart-labels, 2026-11-18)
 Owner 「bar chart 等等 数字都没有给 … 看起来好看点」; prototype PNG approved 「ok 可以 上线吧」.
 - `ComboChart` (`src/pages/board-report/charts.tsx`): amounts ON by default — single bar inside its top (else above), stack segments inside + total above, line points above the dot (below it when it would sit on a bar's amount; skipped when equal to the bar, e.g. forecast months). Rounded bar tops, dashed light grid, legend spaced by text width.

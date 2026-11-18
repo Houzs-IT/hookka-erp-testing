@@ -35,21 +35,26 @@
   background: var(--brp-paper); color: var(--brp-ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 6px 18px rgba(0, 0, 0, 0.06);
   display: flex; flex-direction: column; overflow: hidden;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 9pt; line-height: 1.35;
+  /* Typography (owner 2026-11-18 「字体 字体大小」): ONE sans, IBM Plex Sans — already
+     bundled by finance-v2.css, so every machine and the PDF render the same face
+     (the old Inter / Source Serif 4 were never loaded and fell back per machine).
+     Tabular lining figures so columns of money align digit for digit. */
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 8.5pt; line-height: 1.4;
+  font-variant-numeric: tabular-nums lining-nums; -webkit-font-smoothing: antialiased;
 }
 .brp-head { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid var(--brp-navy); padding-bottom: 5px; margin-bottom: 8px; flex: 0 0 auto; }
-.brp-head h2 { margin: 0; font-family: "Source Serif 4", Georgia, "Times New Roman", serif; font-size: 18pt; font-weight: 700; color: var(--brp-navy); }
-.brp-kicker { color: var(--brp-gold); font-size: 8pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.brp-head h2 { margin: 0; font-size: 17pt; font-weight: 600; letter-spacing: -0.01em; color: var(--brp-navy); }
+.brp-kicker { color: var(--brp-gold); font-size: 7pt; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .brp-head-month { color: var(--brp-muted); font-size: 9pt; }
 .brp-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
 .brp-foot { flex: 0 0 auto; display: flex; justify-content: space-between; border-top: 1px solid var(--brp-rule); margin-top: 6px; padding-top: 4px; color: var(--brp-muted); font-size: 7pt; }
 .brp-pageno::after { content: "Page " counter(brpage); }
-.brp-body h3 { margin: 4px 0 0; font-size: 9.5pt; font-weight: 700; color: var(--brp-navy); flex: 0 0 auto; }
+.brp-body h3 { margin: 6px 0 0; font-size: 9pt; font-weight: 600; color: var(--brp-ink); flex: 0 0 auto; }
 .brp-lead { margin: 0; font-size: 9pt; flex: 0 0 auto; }
-.brp-small { margin: 0; font-size: 7.5pt; color: var(--brp-muted); flex: 0 0 auto; }
+.brp-small { margin: 0; font-size: 6.75pt; line-height: 1.35; color: var(--brp-muted); flex: 0 0 auto; }
 .brp-muted { color: var(--brp-muted); }
 .brp-bullets { margin: 0; padding-left: 16px; flex: 0 0 auto; }
-.brp-bullets li { margin: 2px 0; font-size: 10pt; }
+.brp-bullets li { margin: 2px 0; font-size: 9pt; }
 
 .brp-elastic { flex: 1 1 0; min-height: 120px; position: relative; overflow: hidden; }
 .brp-elastic > svg { position: absolute; inset: 0; }
@@ -62,21 +67,22 @@
 .brp-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; flex: 0 0 auto; }
 .brp-tiles.three { grid-template-columns: repeat(3, 1fr); }
 .brp-tiles.five { grid-template-columns: repeat(5, 1fr); }
-.brp-tile { border: 1px solid var(--brp-rule); border-top: 3px solid var(--brp-navy); border-radius: 4px; padding: 5px 7px; }
+.brp-tile { border: 0; border-top: 2px solid var(--brp-navy); border-radius: 0; padding: 5px 2px 4px; background: #fafbfc; }
 .brp-tile.tone-gold { border-top-color: var(--brp-gold); }
 .brp-tile.tone-green { border-top-color: var(--brp-green); }
 .brp-tile.tone-red { border-top-color: var(--brp-red); }
-.brp-tile .lb { font-size: 7.5pt; color: var(--brp-muted); text-transform: uppercase; letter-spacing: 0.03em; }
-.brp-tile .vl { font-size: 13pt; font-weight: 700; color: var(--brp-navy); white-space: nowrap; }
-.brp-cover .brp-tile .vl { font-size: 15pt; }
-.brp-tile .sb { font-size: 7.5pt; color: var(--brp-muted); }
+.brp-tile .lb { font-size: 6.5pt; font-weight: 500; color: var(--brp-muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 5px; }
+.brp-tile .vl { font-size: 14pt; font-weight: 600; letter-spacing: -0.01em; color: var(--brp-ink); white-space: nowrap; padding: 0 5px; }
+.brp-cover .brp-tile .vl { font-size: 16pt; }
+.brp-tile .sb { font-size: 7pt; color: var(--brp-muted); padding: 0 5px; }
 
 .brp-table { width: 100%; border-collapse: collapse; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
-.brp-table th { text-align: right; font-size: 7.5pt; font-weight: 700; color: var(--brp-muted); border-bottom: 1px solid var(--brp-navy); padding: 2px 4px; white-space: nowrap; }
+.brp-table { font-size: 8pt; }
+.brp-table th { text-align: right; font-size: 6.5pt; font-weight: 600; color: var(--brp-muted); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--brp-ink); padding: 2px 4px 3px; white-space: nowrap; }
 .brp-table th:first-child, .brp-table td:first-child { text-align: left; }
 .brp-table td { text-align: right; padding: 2px 4px; border-bottom: 1px solid #f0f1f4; white-space: nowrap; }
 .brp-table td:first-child { white-space: normal; }
-.brp-table tr.strong td { font-weight: 700; border-top: 1px solid var(--brp-rule); }
+.brp-table tr.strong td { font-weight: 600; border-top: 1px solid var(--brp-ink); border-bottom: 0; }
 .brp-table tr.depth-1 td:first-child { padding-left: 14px; color: #4b5563; }
 .brp-table tr.muted td { color: var(--brp-muted); }
 .brp-table.compact td, .brp-table.compact th { padding: 1.5px 4px; }
@@ -138,7 +144,7 @@
 /* Cover letterhead + ranked lists (owner review 2026-11-10) */
 .brp-letterhead { display: flex; align-items: center; gap: 14px; padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid #E6E8EC; }
 .brp-letterhead img { height: 40px; width: auto; }
-.brp-letterhead .co { font-family: "Source Serif 4", Georgia, serif; font-size: 18px; font-weight: 700; color: #13294B; }
+.brp-letterhead .co { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: #13294B; }
 .brp-letterhead .sub { font-size: 10.5px; color: #6B7280; letter-spacing: 0.02em; }
 .brp-rank { list-style: decimal; margin: 4px 0 0; padding-left: 18px; font-size: 11px; }
 .brp-rank li { display: list-item; }

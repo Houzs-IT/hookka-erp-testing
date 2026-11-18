@@ -1,5 +1,8 @@
 // Board Report — colours and number formats shared by the pages and charts.
-// The artifact's look: navy / gold / green / red. Money in sen.
+// Brand (navy / gold) dresses the page; charts take the CAT series palette;
+// green / red mean good / bad ONLY. Money in sen.
+
+import { CAT as HOUSE_CAT, FORECAST } from "../../lib/chart-standard";
 
 export const C = {
   navy: "#13294B",
@@ -12,7 +15,11 @@ export const C = {
   ink: "#1F2430",
   muted: "#6B7280",
 };
-export const PALETTE = [C.navy, C.gold, C.green, "#4E79A7", "#9C755F", "#76B7B2", C.grey, "#B07AA1"];
+// Chart colours come from the house standard (src/lib/chart-standard.ts).
+export const CAT: readonly string[] = HOUSE_CAT;
+export const PALETTE = CAT;
+/** A forecast line: neutral ink, dashed — never a series colour. */
+export const FC = FORECAST;
 
 /** RM, no decimals, negatives in brackets. */
 export const rm = (sen: number | null | undefined): string => {

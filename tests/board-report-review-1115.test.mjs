@@ -241,10 +241,10 @@ test("13. appendix keeps group rows and drops the stock detail lines under purch
 test("outlook chart: GP and NP as labelled bars, no month-to-date bar (owner 2026-11-17)", () => {
   const b = readFileSync("src/pages/board-report/pages-business.tsx", "utf8");
   assert.match(b, /<ComboChart w=\{w\} h=\{h\} labels/);
-  assert.match(b, /\{ key: "g", label: "Gross profit forecast", color: C\.green, type: "bar" \}/);
-  assert.match(b, /\{ key: "n", label: "Net profit forecast", color: C\.gold, type: "bar" \}/);
+  assert.match(b, /\{ key: "g", label: "Gross profit forecast", color: CAT\[2\], type: "bar" \}/);
+  assert.match(b, /\{ key: "n", label: "Net profit forecast", color: CAT\[1\], type: "bar" \}/);
   assert.doesNotMatch(b, /label: "Revenue to date"/);
   assert.doesNotMatch(b, /<td>Revenue to date \(running month\)<\/td>/, "the table row goes too");
   const c = readFileSync("src/pages/board-report/charts.tsx", "utf8");
-  assert.match(c, /labels = true/, "amounts are on by default since 2026-11-18");
+  assert.match(c, /const barLabels = labels \?\? stacks\.length === 1/, "explicit labels forces grouped bar amounts on");
 });

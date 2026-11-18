@@ -20,7 +20,7 @@ test("one window for every chart: six closed months from BOARD_DATA_FROM", () =>
 
 test("labour and income charts gain their forecast line", () => {
   assert.match(lib, /const forecast = fcs\.some\(\(x\) => x !== 0\) \? sum\(fcs\) : row\.forecast\?\.labour \?\? null;/);
-  assert.match(fin, /\{ key: "__fc", label: "Forecast \(all labour\)", color: C\.ink, type: "line" as const, dashed: true \}/);
+  assert.match(fin, /\{ key: "__fc", label: "Forecast \(all labour\)", color: FC, type: "line" as const, dashed: true \}/);
   assert.match(fin, /values: \{ s: p\.sales, g: p\.gross, n: p\.net, f: p\.forecastSales \}/);
   assert.match(fin, /label: deptName\(s\)/, "department names, not codes, in the labour legend");
 });
