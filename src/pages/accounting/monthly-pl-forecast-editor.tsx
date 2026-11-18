@@ -369,8 +369,14 @@ export function MonthlyPlForecastEditor({
   const [sel, setSel] = useState<GridSel | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const dragFrom = useRef<GridPos | null>(null);
-  // The rows move under it when the view changes, so it goes.
-  useEffect(() => setSel(null), [open, showDetail, hideUnused, hidePast, anchor]);
+  // The rows move under it when the view changes, so it goes (reset while
+  // rendering, React's way to adjust state when inputs change — not an effect).
+  const selView = JSON.stringify([open, showDetail, hideUnused, hidePast, anchor]);
+  const [selViewSeen, setSelViewSeen] = useState(selView);
+  if (selViewSeen !== selView) {
+    setSelViewSeen(selView);
+    setSel(null);
+  }
   // Highlight the selected boxes (after every render: typing re-draws the rows).
   useEffect(() => {
     const table = tableRef.current;
