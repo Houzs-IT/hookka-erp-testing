@@ -59,3 +59,15 @@ test("no non-production departments, or no hours → unchanged", () => {
   assert.deepEqual(reallocateNonProdGross(base, [{ workerId: "a", dept: "FAB_SEW", grossSen: 1000 }], [{ workerId: "a", dept: "R_AND_D", hours: 1 }], new Set()), base);
   assert.deepEqual(reallocateNonProdGross(base, [{ workerId: "a", dept: "FAB_SEW", grossSen: 1000 }], [], NP), base);
 });
+
+test("pay never moves to a department on another salary account", () => {
+  const acct = { FAB_SEW: "750-0010", R_AND_D: "750-0010", WAREHOUSING: "900-S002" };
+  const out = reallocateNonProdGross(
+    { FAB_SEW: 100000 },
+    [{ workerId: "a", dept: "FAB_SEW", grossSen: 100000 }],
+    [{ workerId: "a", dept: "FAB_SEW", hours: 60 }, { workerId: "a", dept: "R_AND_D", hours: 20 }, { workerId: "a", dept: "WAREHOUSING", hours: 20 }],
+    new Set(["R_AND_D", "WAREHOUSING"]),
+    (h, d) => acct[h] === acct[d],
+  );
+  assert.deepEqual(out, { FAB_SEW: 80000, R_AND_D: 20000 });
+});
