@@ -34,7 +34,7 @@ is enforced by hand in the handler, not by the middleware.
   - QC cron/pending generation → `src/api/routes/qc-pending.ts` (2494 lines)
   - QC inspections CRUD → `src/api/routes/qc-inspections.ts` · templates → `qc-templates.ts`
   - Warehouse racks + movements → `src/api/routes/warehouse.ts` (801)
-  - PUBLIC rack stock-in (`/r/`) → `src/api/routes/public-rack-qr.ts` (980)
+  - PUBLIC rack stock-in (`/r/`) → `src/api/routes/public-rack-qr.ts` (838)
   - PUBLIC piece-sticker → rack (`/p/`) → `src/api/routes/public-rack-write.ts` (283)
   - PUBLIC DO dispatch/deliver → `src/api/routes/public-do-qr.ts` (1013)
   - Session auth → `src/api/routes/auth.ts` (1201) · gate + CSRF → `src/api/lib/auth-middleware.ts` (517)
@@ -62,9 +62,9 @@ is enforced by hand in the handler, not by the middleware.
    template per slot; the `scheduledSlotAt` dedupe set (`:1710`) makes re-triggers idempotent.
 2. **QC inspect → complete** — `POST /:id/start` (`qc-pending.ts:1969`) → `POST /:id/complete` (`:2409`)
    records PASS/FAIL/NA per item and writes one `qc_tags` row per FAIL — those tags stay hidden.
-3. **Rack stock-in (public `/r/`)** — `POST /api/public/rack-qr/:rackId/stock-in` (`public-rack-qr.ts:787`)
-   → `findRack` (`:211`) → PER-PIECE: each scanned sticker = one `rack_items` row, qty forced to 1 →
-   `buildRackStockInStatements` (`:131`) is move-aware + idempotent (also touches `fg_units`/`job_cards`).
+3. **Rack stock-in (public `/r/`)** — `POST /api/public/rack-qr/:rackId/stock-in` (`public-rack-qr.ts:633`)
+   → `findRack` (`:208`) → PER-PIECE: each scanned sticker = one `rack_items` row, qty forced to 1 →
+   `buildRackStockInStatements` (`:128`) is move-aware + idempotent (also touches `fg_units`/`job_cards`).
 4. **Piece-sticker → rack (public `/p/`)** — `POST /api/public/rack-write/:token/rack` (`public-rack-write.ts:228`)
    → `resolveCard` (`:80`, archive-aware) → `applyPackingRack` (`packing-rack-write.ts:71`) sets/clears the
    rackingNumber AND mirrors `rack_items`. Both `/r/` and `/p/` (plus office + worker) build the move-match
@@ -87,8 +87,8 @@ is enforced by hand in the handler, not by the middleware.
 | `GET /` (racks list) | `src/api/routes/warehouse.ts:248` | Rack grid + occupancy read |
 | `replaceRackItems` | `src/api/routes/warehouse.ts:204` | Rewrite a rack's `rack_items` set |
 | `POST /movements` | `src/api/routes/warehouse.ts:497` | Stock in/out movement ledger write |
-| `buildRackStockInStatements` | `src/api/routes/public-rack-qr.ts:131` | Move-aware idempotent per-piece stock-in |
-| `POST /:rackId/stock-in` | `src/api/routes/public-rack-qr.ts:787` | Public rack QR stock-in handler |
+| `buildRackStockInStatements` | `src/api/routes/public-rack-qr.ts:128` | Move-aware idempotent per-piece stock-in |
+| `POST /:rackId/stock-in` | `src/api/routes/public-rack-qr.ts:633` | Public rack QR stock-in handler |
 | `resolveCard` | `src/api/routes/public-rack-write.ts:80` | Archive-aware token → packing card |
 | `POST /:token/rack` | `src/api/routes/public-rack-write.ts:228` | Public `/p/` set/clear rackingNumber |
 | `POST /:token/advance` | `src/api/routes/public-do-qr.ts:707` | Public DO forward transition (dispatch/deliver) |
@@ -136,7 +136,7 @@ is enforced by hand in the handler, not by the middleware.
 - **Change the QC cron slot logic** → edit `currentSlotIso` (`qc-pending.ts:310`) and keep `generatePendingForSlot`
   (`:1699`) dedupe on `scheduledSlotAt`; verify the trigger in `worker.ts:757` still does its CRON_SECRET check.
 - **Touch a rack stock-in path** → change the shared `applyPackingRack` (`packing-rack-write.ts:71`) /
-  `buildRackStockInStatements` (`public-rack-qr.ts:131`); NEVER re-implement `packingPieceIdentity`. Verify with
+  `buildRackStockInStatements` (`public-rack-qr.ts:128`); NEVER re-implement `packingPieceIdentity`. Verify with
   `tests/rack-qr-per-piece.test.mjs` / `tests/packing-piece-identity.test.mjs`.
 - **Add a public (no-login) scan endpoint** → add it under an existing `PUBLIC_PREFIXES` entry ONLY with a manual
   token/secret gate + idempotency; add a case to `tests/security-public-endpoints.test.mjs`.
