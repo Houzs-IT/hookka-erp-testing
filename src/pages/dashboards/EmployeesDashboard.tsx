@@ -54,7 +54,11 @@ const eff = (prod: number, work: number) => (work > 0 ? (prod / work) * 100 : nu
 // Helpers / 杂工 (owner 2026-11-11): production efficiency leaves their minutes
 // out; a helper's own row shows "—" (no personal efficiency).
 const peff = (prod: number, work: number, hp = 0, hw = 0) => eff(prod - hp, work - hw);
-const weff = (r: { prod: number; work: number; isHelper?: boolean }) => (r.isHelper ? null : eff(r.prod, r.work));
+// A helper's efficiency comes from the days he scanned (owner 2026-11-18 「当他们
+// scan了 就代表那天不是helper了」): `ew` / `ep` are the minutes of the days he
+// was a worker; a row that has them uses them.
+const weff = (r: { prod: number; work: number; isHelper?: boolean; ew?: number; ep?: number }) =>
+  r.isHelper ? null : r.ew !== undefined ? eff(r.ep ?? 0, r.ew) : eff(r.prod, r.work);
 const ratio = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
 const effColor = (v: number | null, target: number) => (v == null ? MUTED : v >= target ? GREEN : v >= target * 0.85 ? "#9C6F1E" : RED);
 // Non-production cost centres in the hour log, shown in words.
@@ -236,7 +240,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   }, [employee, anchor, roster]);
 
   // ---- Worker rows ------------------------------------------------------------
-  type Row = { id: string; name: string; dept: string; isHelper?: boolean; work: number; prod: number; cost: number; daysWorked: number; byDay: { date: string; work: number; prod: number; cost: number }[] };
+  type Row = { id: string; name: string; dept: string; isHelper?: boolean; work: number; prod: number; ew: number; ep: number; cost: number; daysWorked: number; byDay: { date: string; work: number; prod: number; cost: number; helper?: boolean }[] };
   const rows = useMemo<Row[]>(() => {
     const m = new Map<string, Row>();
     for (const d of days) {
@@ -247,15 +251,19 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         const wDept = w?.dept ?? "—";
         if (dept !== "ALL" && wDept !== dept) continue;
         const cost = costByWorkerDay.get(`${x.workerId}|${d.date}`) ?? 0;
-        const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, isHelper: !!(x.isHelper || w?.isHelper), work: 0, prod: 0, cost: 0, daysWorked: 0, byDay: [] };
+        const r = m.get(x.workerId) ?? { id: x.workerId, name: w?.name ?? x.workerId, dept: wDept, work: 0, prod: 0, ew: 0, ep: 0, cost: 0, daysWorked: 0, byDay: [] };
         r.work += x.workingMinutes;
         r.prod += earnedMinutes;
+        // The day's own helper flag (a helper who scanned that day is a worker).
+        if (!x.isHelper) { r.ew += x.workingMinutes; r.ep += earnedMinutes; }
         r.cost += cost;
         if (x.workingMinutes > 0) r.daysWorked += 1;
-        r.byDay.push({ date: d.date, work: x.workingMinutes, prod: earnedMinutes, cost });
+        r.byDay.push({ date: d.date, work: x.workingMinutes, prod: earnedMinutes, cost, ...(x.isHelper ? { helper: true } : {}) });
         m.set(x.workerId, r);
       }
     }
+    // A helper only when he never scanned in the window.
+    for (const r of m.values()) r.isHelper = r.work > 0 && r.ew <= 0 && r.byDay.some((d) => d.helper);
     return [...m.values()].filter((r) => r.work > 0).sort((a, b) => (weff(b) ?? -1) - (weff(a) ?? -1));
   }, [days, winDates, workerById, dept, costByWorkerDay]);
   // One ranking, split in halves (owner 2026-10-17: top 10 / bottom 10 /
@@ -667,7 +675,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
               </tr></thead>
               <tbody>
                 {openWorker.byDay.filter((d) => d.work > 0).map((d) => {
-                  const dv = openWorker.isHelper ? null : eff(d.prod, d.work);
+                  const dv = d.helper ? null : eff(d.prod, d.work);
                   return (
                     <tr key={d.date} className="border-b border-[#F0ECE6]">
                       <td className="py-1.5 text-[#1F1D1B]">{d.date}</td>

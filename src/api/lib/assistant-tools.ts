@@ -4049,8 +4049,11 @@ const getEmployeeEfficiency: ToolDefinition = {
       jobsCompleted: b.jobs,
       plannedMinutes: Math.round(b.plannedMin),
       actualMinutes: Math.round(b.actualMin),
-      efficiencyPct: !helpers.has(b.id) && b.actualMin > 0 ? Math.round((b.plannedMin / b.actualMin) * 1000) / 10 : null,
-      ...(helpers.has(b.id) ? { isHelper: true, note: "Helper — assists others; no personal efficiency" } : {}),
+      // Everyone listed here completed cards in the range, so a helper scanned
+      // and counts as a worker for it (owner 2026-11-18); only a helper with no
+      // planned minutes stays "no personal efficiency".
+      efficiencyPct: !(helpers.has(b.id) && b.plannedMin <= 0) && b.actualMin > 0 ? Math.round((b.plannedMin / b.actualMin) * 1000) / 10 : null,
+      ...(helpers.has(b.id) && b.plannedMin <= 0 ? { isHelper: true, note: "Helper — assists others; no personal efficiency" } : {}),
     })).sort((a, b) => b.jobsCompleted - a.jobsCompleted);
     await emitAudit(c, { resource: "assistant-tool", resourceId: "get_employee_efficiency", action: "get_employee_efficiency", after: filterArgsForAudit(args), source: "ui" });
     return { periodFrom: from, periodTo: to, count: list.length, results: list.slice(0, 100) };
