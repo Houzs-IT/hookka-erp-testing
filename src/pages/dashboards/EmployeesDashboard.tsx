@@ -6,7 +6,7 @@ import { usePermissions } from "@/lib/use-permission";
 import { formatCurrency } from "@/lib/utils";
 import { useLabourCost } from "./use-labour-cost";
 import { LabourSplitCard } from "./LabourSplitCard";
-import { labourMonthsWithin } from "@/lib/labour-to-payroll";
+import { keepDaysWithin, labourMonthsWithin } from "@/lib/labour-to-payroll";
 import { monthsOf, useProductionRevenue } from "./use-production-revenue";
 import { dropIdleSundays } from "@/lib/idle-sundays";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,7 @@ import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
   BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, MUTED, RED, TEAL,
-  fmtN, hasKeyedHours, inPeriod, isOutsourced, periodLabel, prodEffOfDay, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  fmtN, hasKeyedHours, inFocus, inPeriod, isOutsourced, periodLabel, prodEffOfDay, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { HelperOverallLine } from "./HelperOverallLine";
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,8 @@ export function EmployeesDashboard({ period }: { period: Period }) {
 
   // ---- Salary + production revenue -------------------------------------------
   const { byWorkerDay: costByWorkerDay, byWorkerDayDept: costByDept, entries: hourEntries, months: labourMonths, ready: salaryReady } = useLabourCost(range.from, range.to, canSalary);
-  const periodLabourMonths = useMemo(() => labourMonthsWithin(labourMonths, costByWorkerDay), [labourMonths, costByWorkerDay]);
+  const focus = useMemo(() => (period.day ? { from: period.day, to: period.day } : range), [period.day, range]);
+  const periodLabourMonths = useMemo(() => labourMonthsWithin(labourMonths, keepDaysWithin(costByWorkerDay, focus.from, focus.to)), [labourMonths, costByWorkerDay, focus]);
   const prevYm = anchor ? shiftMonth(anchor.slice(0, 7), -1) : "";
   const prevTo = prevYm ? ymd(new Date(Number(prevYm.slice(0, 4)), Number(prevYm.slice(5, 7)), 0)) : "";
   const { byWorkerDay: prevCost } = useLabourCost(prevYm ? `${prevYm}-01` : "", prevTo, canSalary);
@@ -216,9 +217,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const labourPct = ratio(winSalary, totals.revenue);
   const prevSalary = useMemo(() => [...prevCost.values()].reduce((a, v) => a + v, 0), [prevCost]);
   const prevLabourPct = prev && prevSalary > 0 ? ratio(prevSalary, prev.revenue) : null;
-  // The Labour cost card covers the whole period, whatever day window the tiles
-  // are on, so its per-person and % figures use the whole period too.
-  const periodTotals = useMemo(() => sumWindow((d) => inPeriod(period, d), costByWorkerDay), [allDays, period, costByWorkerDay, prodRev]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The Labour cost card covers the whole period (or the picked day), whatever
+  // day window the tiles are on, so its per-person and % figures do too.
+  const periodTotals = useMemo(() => sumWindow((d) => inFocus(period, d), costByWorkerDay), [allDays, period, costByWorkerDay, prodRev]); // eslint-disable-line react-hooks/exhaustive-deps
   const revPerFte = prodRev && totals.fte ? totals.revenue / totals.fte : null;
   // Compared per WORKER-DAY: a month to date against a whole last month is
   // only fair per day worked (half a month is half the revenue per person).

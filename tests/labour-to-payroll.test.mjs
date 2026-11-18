@@ -81,3 +81,18 @@ test("a whole month comes back unchanged", async () => {
   assert.equal(cut.totalSen, 1000);
   assert.equal(cut.split.directSen, 900);
 });
+
+test("Day view: the card's months are cut to the picked day even though the hook loaded the whole month", async () => {
+  const { labourMonthsWithin } = await import("../src/lib/labour-to-payroll.ts");
+  const october = month([w("a", 800), w("b", 200)], 1000);
+  const wholeMonthLoaded = new Map([["a|2026-10-30", 400], ["a|2026-10-31", 400], ["b|2026-10-30", 150], ["b|2026-10-31", 50]]);
+  const [cut] = labourMonthsWithin([october], keepDaysWithin(wholeMonthLoaded, "2026-10-31", "2026-10-31"));
+  assert.equal(cut.totalSen, 450);
+  assert.deepEqual(cut.workers.map((x) => x.costSen), [400, 50]);
+});
+
+test("the dashboard's Labour cost card follows the picked day, not the month around it (BUG-2026-11-18-533)", () => {
+  const source = readFileSync("src/pages/dashboards/EmployeesDashboard.tsx", "utf8");
+  assert.match(source, /labourMonthsWithin\(labourMonths, keepDaysWithin\(costByWorkerDay, focus\.from, focus\.to\)\)/);
+  assert.match(source, /periodTotals = useMemo\(\(\) => sumWindow\(\(d\) => inFocus\(period, d\), costByWorkerDay\)/);
+});

@@ -1,5 +1,7 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-11-18**: branch `fix/labour-card-day-view`, to `main`, updates **C33 row 6** (Labour cost card on the Day view, BUG-2026-11-18-533). Nothing else re-checked.
+
 > **Last verified: 2026-11-17**: branch `fix/labor-cost-outsource-direct`, to `main`, adds **C33 row 9** (Labor Cost Reconciliation counts outsource as direct, BUG-2026-11-17-526). Nothing else re-checked.
 
 > **Last verified: 2026-11-17**: branch `fix/in-house-efficiency`, to `main`, adds **C33 row 8** (in-house efficiency, BUG-2026-11-17-525). Nothing else re-checked.
@@ -1890,7 +1892,7 @@ Tests: `tests/official-receipt-edit-flow.test.mjs` (the renamed-code case), `tes
 | 3 | Efficiency: the AI assistant tools divide estimate by "actual" card minutes, not keyed hours (`assistant-tools.ts`) | ⬜ open |
 | 4 | Efficiency: worker phone daily rows (piece split, no extra time) vs its period tile (PIC split, extra time) (`worker.ts`) | ✅ on branch (BUG-2026-11-17-521) |
 | 5 | Production revenue: the same recognition SQL in nine places and the price lookup in six; the Daily panel on main joined the order line on `line_no` only, and the shared module counts a 0 quantity as 1 while the dashboard copies do not | ✅ structure 2026-11-11: one copy of the rule, price and joins in `production-revenue.ts` (guard `tests/one-production-revenue-sql.test.mjs`); line join fixed in BUG-2026-11-11-502. ⬜ still open: the quantity rule and the shared loader's missing company filter |
-| 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ✅ tile #1345; live check 17 Nov found the Labour cost card still summed whole months, on branch (BUG-2026-11-17-524, `labourMonthsWithin`) |
+| 6 | Labour: the dashboard scales a short date range up to the whole month's payroll (`labour-to-payroll.ts`) | ✅ tile #1345; card cut to the period #1423 (BUG-2026-11-17-524, `labourMonthsWithin`); on the Day view it still got the whole month, on branch (BUG-2026-11-18-533, cut to `period.day`) |
 | 7 | Efficiency: Department Performance rounded to a whole % and pages printed it as "84.0%"; the printed Efficiency Overview averaged each worker's % instead of total ÷ total (`department-performance.ts`, `employees.tsx`) | ✅ #1417 (BUG-2026-11-17-518) |
 | 8 | Efficiency: factory totals added every finished card (outsource, today's cards before punch-out, no-PIC cards) over in-house hours, while per-person figures did not; Employees header 124.1% vs print 114.0% for Nov (`workforce-perf.ts`, `department-performance.ts`, `employees.tsx`) | ✅ on branch (BUG-2026-11-17-525): earned minutes count only for people with logged production hours that day |
 | 9 | Labour: the dashboard split counts outsource as direct wherever it was keyed (owner 2026-11-06); the Labor Cost Payroll Reconciliation filed it by the keyed department, so Production Labor was RM 140.15 (Aug) and RM 55.44 (Sep) under the dashboard (`labour-to-date.ts` vs `employees.tsx`) | ✅ on branch (BUG-2026-11-17-526): one outsource test (`isOutsourceWorker`) shared by both; the move itself is still two copies (server step 5, page `sumOutsourceOffProduction`) |
