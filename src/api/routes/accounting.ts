@@ -13797,6 +13797,10 @@ app.get("/payment-vouchers", async (c) => {
 app.post("/payment-vouchers", async (c) => {
   const denied = await requirePermission(c, "accounting", "create");
   if (denied) return denied;
+  // A retried create (a dropped response, a double tap) must not make the voucher twice. Opt-in: no
+  // Idempotency-Key header = the handler runs as before. The phone scan sends one (2026-11-04).
+  const idemKey = readIdempotencyKey(c);
+  return withIdempotency(c, "payment-vouchers", idemKey, async () => {
   try {
     const body = await c.req.json();
     const date = String(body.date || "");
@@ -13936,11 +13940,14 @@ app.post("/payment-vouchers", async (c) => {
     // Surface the database's own words — a swallowed cause cost a prod
     // debugging round (2026-09-22, four-tier rollout).
     const cause = e instanceof Error ? e.message : String(e);
+    // 500, not 400: withIdempotency caches a 4xx for 24 h, and a transient database failure must not be
+    // replayed to a retry carrying the same key. Clients read `success` / `error`, never this status.
     return c.json(
       { success: false, error: `Failed to save the payment: ${cause.slice(0, 300)}` },
-      400,
+      500,
     );
   }
+  });
 });
 
 // Edit a voucher that has NOT been checked yet (Draft / Prepared) — header

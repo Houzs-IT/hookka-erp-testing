@@ -13,13 +13,14 @@ const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 // The app's gate drops the query string and hides by path (use-permission.ts).
 const gate = (hidden) => (href) => !hidden.includes(href.split("?")[0]);
 
-test("the menu: three sections, eight screens, each with the desktop page's gate", () => {
-  assert.deepEqual(FINANCE_MENU.map((s) => s.title), ["Finance", "Reports", "Debtors & Creditors"]);
+test("the menu: four sections, nine screens, each with the desktop page's gate", () => {
+  assert.deepEqual(FINANCE_MENU.map((s) => s.title), ["Finance", "Reports", "Debtors & Creditors", "Payments"]);
   const rows = FINANCE_MENU.flatMap((s) => s.rows);
-  assert.deepEqual(rows.map((r) => r.screen), ["dashboard", "cash", "overview", "pl", "cashflow", "bs", "debtors", "creditors"]);
+  assert.deepEqual(rows.map((r) => r.screen), ["dashboard", "cash", "overview", "pl", "cashflow", "bs", "debtors", "creditors", "vouchers"]);
   assert.equal(rows.find((r) => r.screen === "dashboard").navGate, "/finance-dashboard");
+  assert.equal(rows.find((r) => r.screen === "vouchers").navGate, "/accounting?tab=payments");
   assert.equal(rows.find((r) => r.screen === "debtors").navGate, "/accounting?tab=ar");
-  assert.equal(FINANCE_NAV_GATES.length, 8);
+  assert.equal(FINANCE_NAV_GATES.length, 9);
 });
 
 test("no permission, no row: a role without accounting sees only the dashboard row", () => {

@@ -236,11 +236,10 @@ test("success is shown only after the API says the order exists, and it links to
   assert.match(src, /step === "done" && result/, "the success card needs a real result from the API");
 });
 
-test("Home shows the Sales Order scan tile (PI / GRN / PV scans ship in a separate PR); a not-live tile is labelled Coming soon", () => {
+test("Home shows the four tiles; Sales Order, Purchase Invoice and Goods Receipt open flows, Payment Voucher is labelled Coming soon", () => {
   const sec = read("screens/dashboard/ScanToCreate.tsx");
-  for (const t of ["Sales Order"]) assert.match(sec, new RegExp(t));
-  for (const t of ["Purchase Invoice", "Goods Receipt", "Payment Voucher"]) assert.doesNotMatch(sec, new RegExp(t), "PI / GRN / PV scans are not in this PR");
-  for (const s of ["Scan customer PO"]) assert.match(sec, new RegExp(s));
+  for (const t of ["Sales Order", "Purchase Invoice", "Goods Receipt", "Payment Voucher"]) assert.match(sec, new RegExp(t));
+  for (const s of ["Scan customer PO", "Scan supplier invoice", "Scan supplier document", "Scan bill / receipt"]) assert.match(sec, new RegExp(s));
   assert.match(sec, /Coming soon/);
   assert.match(sec, /hasPermission\("sales-orders", "create"\)/);
   assert.match(sec, /hasPermission\("purchase-orders", "create"\)/, "the scan route itself needs purchase-orders:create");

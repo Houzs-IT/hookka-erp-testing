@@ -1086,6 +1086,19 @@ export type PiEditLine = {
   discountSen: number;
   lineType: string;
   grnItemId: string | null;
+  /** Line notes round-trip untouched: a PUT replaces every line, so an omitted field would erase it. */
+  notes?: string | null;
+  /**
+   * The PO this line is billed against, echoed back untouched (the GET returns it). The PUT stores a line's own `poId`, and
+   * otherwise falls back to the line's OLD `poId`, then the HEADER PO; sending it keeps every line of a multi-PO invoice where it was.
+   */
+  poId?: string | null;
+  /**
+   * The stored line this is. main's PUT mints new line ids on every save, but uses this id to hand the new line its OLD line's
+   * `poItemId`, `uom` and `poQty` (HK-0107, T-006 R8, HK-0149) when the request omits them; without it those are stored empty
+   * (pinned in tests/pi-source-document.test.mjs). Null on a line added in the sheet.
+   */
+  id?: string | null;
 };
 export function piEditLines(p: RawRow): PiEditLine[] {
   return rows(p.items).map((it) => ({
@@ -1099,6 +1112,9 @@ export function piEditLines(p: RawRow): PiEditLine[] {
     discountSen: n(it, "discountSen"),
     lineType: s(it, "lineType") || "STOCKED",
     grnItemId: it.grnItemId == null ? null : String(it.grnItemId),
+    notes: it.notes == null ? null : String(it.notes),
+    poId: it.poId == null || String(it.poId).trim() === "" ? null : String(it.poId).trim(),
+    id: it.id == null || String(it.id).trim() === "" ? null : String(it.id).trim(),
   }));
 }
 /** PurchaseInvoiceDetail.tsx handleSaveEdit checks. */
@@ -1142,6 +1158,11 @@ export function piEditBody(
       discountSen: discounts[i],
       lineType: l.lineType,
       grnItemId: l.grnItemId,
+      notes: l.notes ?? null,
+      // only when the GET told us: an invented null would be read as "the header PO" and move the line
+      ...(l.poId ? { poId: l.poId } : {}),
+      // the line's own id: main hands the new line its old line's PO line and unit through it; a new line has none
+      ...(l.id ? { id: l.id } : {}),
     })),
   };
 }
