@@ -65,6 +65,7 @@ export default defineConfig([
       'src/components/ui/confirm-dialog.tsx',
       'src/components/ui/status-badge.tsx',
       'src/pages/m/lib/responsive-layout.tsx',
+      'src/pages/worker/pay-card.tsx',
     ],
     rules: {
       'react-refresh/only-export-components': 'off',

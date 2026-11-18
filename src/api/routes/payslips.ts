@@ -79,6 +79,7 @@ import {
 import {
   ensureOutsourcePieceTables,
   loadPeriodPieceSen,
+  syncScannedPieceRecords,
   linkPieceRecordsToPayslip,
   findPieceDrift,
 } from "../lib/outsource-piece";
@@ -874,6 +875,7 @@ app.get("/projected", async (c) => {
   const advancesByWorker = await loadPeriodAdvances(c.var.DB, period);
   // Approved penalties for the month — same helper as generation.
   const penaltySenByWorker = await loadPeriodPenaltySen(c.var.DB, period);
+  await syncScannedPieceRecords(c.var.DB, period);
   const pieceSenByWorker = await loadPeriodPieceSen(c.var.DB, period);
 
   // Month-cumulative efficiency per worker (job_cards production minutes ÷
@@ -1272,6 +1274,7 @@ app.post("/", async (c) => {
     // estimate the screen was showing a moment earlier.
     const advancesByWorker = await loadPeriodAdvances(c.var.DB, period);
     const penaltySenByWorker = await loadPeriodPenaltySen(c.var.DB, period);
+    await syncScannedPieceRecords(c.var.DB, period);
     const pieceSenByWorker = await loadPeriodPieceSen(c.var.DB, period);
 
     // Month-cumulative efficiency per worker — the basis for the efficiency
@@ -1608,6 +1611,7 @@ app.put("/", async (c) => {
       // Same guard for piece wages, plus a worker with wages and no payslip:
       // that money has no later month to roll into.
       await ensureOutsourcePieceTables(c.var.DB);
+      await syncScannedPieceRecords(c.var.DB, period);
       const pieceDrift = await findPieceDrift(c.var.DB, period);
       if (pieceDrift.length > 0) {
         const names = pieceDrift.slice(0, 5).map((d) => d.employeeName || d.workerId).join(", ");

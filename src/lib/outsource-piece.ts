@@ -41,9 +41,28 @@ export function orderRate(
   return { rateSen: items.reduce((sum, item) => sum + (rates.get(item) as number), 0), missing };
 }
 
-/** Both integers, so no rounding can happen here. */
-export function pieceAmountSen(quantity: number, rateSen: number): number {
-  return quantity * rateSen;
+/** Whole sen. A full share is two integers, so it never rounds; a half share can. */
+export function pieceAmountSen(quantity: number, rateSen: number, shareBp = 10000): number {
+  return Math.round((quantity * rateSen * shareBp) / 10000);
+}
+
+export type SewPicPair = { pic1Id?: string | null; pic2Id?: string | null };
+export type SewCard = SewPicPair & { pieces?: readonly SewPicPair[] };
+
+const FULL_SHARE_BP = 10000;
+
+function isPic(pair: SewPicPair, workerId: string): boolean {
+  return pair.pic1Id === workerId || pair.pic2Id === workerId;
+}
+
+function scannedPairs(card: SewCard): readonly SewPicPair[] {
+  const scanned = (card.pieces ?? []).filter((piece) => piece.pic1Id || piece.pic2Id);
+  return scanned.length > 0 ? scanned : [card];
+}
+
+export function workerShareBp(cards: readonly SewCard[], workerId: string): number {
+  const isOnOrder = cards.some((card) => scannedPairs(card).some((pair) => isPic(pair, workerId)));
+  return isOnOrder ? FULL_SHARE_BP : 0;
 }
 
 /**

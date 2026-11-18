@@ -62,7 +62,32 @@ type PieceRecord = {
   quantity: number;
   rateSen: number;
   amountSen: number;
+  source: "SCAN" | "IMPORT";
+  shareBp: number;
 };
+
+type PendingPiece = {
+  kind: "NO_RATE" | "TWO_OUTSOURCE";
+  poNo: string;
+  workerIds: string[];
+  missing: string[];
+};
+
+const shareText = (shareBp: number): string => (shareBp === 5000 ? "½" : `${shareBp / 100}%`);
+
+function pendingText(pending: PendingPiece[], locked: boolean): string[] {
+  const noRate = pending.filter((p) => p.kind === "NO_RATE");
+  const shared = pending.filter((p) => p.kind === "TWO_OUTSOURCE");
+  const lines: string[] = [];
+  if (noRate.length > 0) {
+    const items = [...new Set(noRate.flatMap((p) => p.missing))].join(", ");
+    lines.push(`${noRate.length} scanned order${noRate.length === 1 ? " has" : "s have"} no rate: ${items}. ${locked ? `They finished in an approved month: import them into an open month.` : "Set the rate and it is paid automatically."}`);
+  }
+  if (shared.length > 0) {
+    lines.push(`${shared.length} scanned order${shared.length === 1 ? " is" : "s are"} shared by 2 outsource workers (${shared.map((p) => p.poNo).join(", ")}). Import ${shared.length === 1 ? "it" : "them"} manually.`);
+  }
+  return lines;
+}
 
 type Drift = { workerId: string; employeeName: string; expectedSen: number; onPayslipSen: number };
 
@@ -440,12 +465,13 @@ function csvCell(v: string | number): string {
 function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {
   const { toast } = useToast();
   const { confirm, confirmDialog } = useConfirm();
-  const { data: resp, refresh } = useCachedJson<{ data?: PieceRecord[]; locked?: boolean; drift?: Drift[] }>(
+  const { data: resp, refresh } = useCachedJson<{ data?: PieceRecord[]; locked?: boolean; drift?: Drift[]; pending?: PendingPiece[] }>(
     `/api/outsource-piece/records?period=${period}`,
   );
   const records = useMemo(() => resp?.data ?? [], [resp]);
   const locked = Boolean(resp?.locked);
   const drift = resp?.drift ?? [];
+  const pendingLines = pendingText(resp?.pending ?? [], locked);
 
   const byWorker = useMemo(() => {
     const map = new Map<string, { name: string; empNo: string; rows: PieceRecord[]; totalSen: number }>();
@@ -468,9 +494,9 @@ function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {
   };
 
   const exportCsv = () => {
-    const head = ["Worker", "Payroll Period", "Production Order", "Customer PO", "Model / Item", "Completed Qty", "Piece Rate (RM)", "Total Wages (RM)"];
+    const head = ["Worker", "Payroll Period", "Production Order", "Customer PO", "Model / Item", "Completed Qty", "Piece Rate (RM)", "Share", "Total Wages (RM)", "Source"];
     const lines = records.map((r) =>
-      [r.workerName, period, r.poNo, r.customerPoId, r.productCode, r.quantity, (r.rateSen / 100).toFixed(2), (r.amountSen / 100).toFixed(2)]
+      [r.workerName, period, r.poNo, r.customerPoId, r.productCode, r.quantity, (r.rateSen / 100).toFixed(2), shareText(r.shareBp), (r.amountSen / 100).toFixed(2), r.source === "SCAN" ? "Scan" : "Import"]
         .map(csvCell)
         .join(","),
     );
@@ -490,6 +516,12 @@ function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {
           Payslips for {period} do not match these wages. Regenerate them on the Payroll tab before approving.
         </p>
       )}
+      {pendingLines.map((line) => (
+        <p key={line} className="flex items-start gap-2 rounded-md bg-[#FBF1DC] px-3 py-2 text-sm text-[#9C6F1E]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {line}
+        </p>
+      ))}
       <div className="flex justify-end">
         <Button variant="outline" disabled={records.length === 0} onClick={exportCsv}>
           <Download className="mr-1 h-4 w-4" />
@@ -510,7 +542,9 @@ function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {
                 <th className={TH}>Model / Item</th>
                 <th className={`${TH} text-right`}>Qty</th>
                 <th className={`${TH} text-right`}>Rate</th>
+                <th className={`${TH} text-right`}>Share</th>
                 <th className={`${TH} text-right`}>Amount</th>
+                <th className={TH}>Source</th>
                 <th className={TH} />
               </tr>
             </thead>
@@ -527,9 +561,11 @@ function WagesPanel({ period, canEdit }: { period: string; canEdit: boolean }) {
                   </td>
                   <td className={`${TD} text-right`}>{r.quantity}</td>
                   <td className={`${TD} text-right`}>{formatCurrency(r.rateSen)}</td>
+                  <td className={`${TD} text-right`}>{r.shareBp < 10000 ? shareText(r.shareBp) : "-"}</td>
                   <td className={`${TD} text-right`}>{formatCurrency(r.amountSen)}</td>
+                  <td className={TD}>{r.source === "SCAN" ? "Scan" : "Import"}</td>
                   <td className={`${TD} text-right`}>
-                    {canEdit && !locked && (
+                    {canEdit && !locked && r.source === "IMPORT" && (
                       <button type="button" aria-label={`Remove ${r.poNo}`} onClick={() => remove(r)}>
                         <Trash2 className="h-4 w-4 text-[#9A3A2D]" />
                       </button>
