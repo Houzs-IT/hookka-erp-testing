@@ -319,6 +319,11 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## ✅ Board report charts print their amounts (feat/board-report-chart-labels, 2026-11-18)
+Owner 「bar chart 等等 数字都没有给 … 看起来好看点」; prototype PNG approved 「ok 可以 上线吧」.
+- `ComboChart` (`src/pages/board-report/charts.tsx`): amounts ON by default — single bar inside its top (else above), stack segments inside + total above, line points above the dot (below it when it would sit on a bar's amount; skipped when equal to the bar, e.g. forecast months). Rounded bar tops, dashed light grid, legend spaced by text width.
+- Tests: `tests/board-report-chart-labels.test.mjs` (render-based).
+
 ## ✅ Helper who scanned = a worker that day (fix/helper-efficiency, 2026-11-18)
 
 Ask (owner, 18 Nov, Floor Live Packing: THET NAING WIN tagged HELPER, 13 done, efficiency "—"): 「helper也有scan的话 为什么不show 效率？」. Offered three options; owner rejected "treat as an ordinary worker" in favour of 「一样remain可是当他们scan了 就代表那天不是helper了 … 有效率show 没有的话show -」.

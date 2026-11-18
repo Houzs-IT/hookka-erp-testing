@@ -42,10 +42,16 @@ export type Series = { key: string; label: string; color: string; type: "bar" | 
 export type Datum = { label: string; values: Record<string, number | null | undefined>; faded?: boolean; note?: string };
 
 /** Bars (grouped or stacked by `stack`) with lines over them, a zero line and a legend. */
-/** `labels` writes each bar's value above it (owner 2026-11-17, page 12). */
-export function ComboChart({ data, series, w, h, legend = true, labels = false }: { data: Datum[]; series: Series[]; w: number; h: number; legend?: boolean; labels?: boolean }) {
+/** Every bar and line point carries its amount (owner 2026-11-18 「bar chart 数字都没有给」):
+ *  a single bar's amount sits inside its top when the bar is tall enough (so it
+ *  does not collide with a line point's label above it), else just above it; a
+ *  stack writes each tall-enough segment inside and its total above; a line point
+ *  writes its amount above the dot (below it when the dot sits in a bar's top, on that bar's amount) in the line's colour on a white halo (skipped
+ *  where it equals the bar's amount, e.g. a forecast month drawn from the forecast).
+ *  `labels={false}` turns all of it off. */
+export function ComboChart({ data, series, w, h, legend = true, labels = true }: { data: Datum[]; series: Series[]; w: number; h: number; legend?: boolean; labels?: boolean }) {
   const legendH = legend ? 18 : 0;
-  const pad = { l: 44, r: 8, t: 8 + legendH + (labels ? 12 : 0), b: 20 };
+  const pad = { l: 44, r: 8, t: 8 + legendH + (labels ? 14 : 0), b: 20 };
   const iw = Math.max(10, w - pad.l - pad.r);
   const ih = Math.max(10, h - pad.t - pad.b);
   const bars = series.filter((s) => s.type === "bar");
@@ -75,13 +81,20 @@ export function ComboChart({ data, series, w, h, legend = true, labels = false }
   const barW = groupW / Math.max(1, stacks.length);
   const ticks: number[] = [];
   for (let v = yMin; v <= yMax + step / 2; v += step) ticks.push(v);
+  // Label font follows the bar width so a 12-month grouped chart stays legible.
+  const fs = barW >= 34 ? 9.5 : barW >= 22 ? 8.5 : 7.5;
+  const showBarLabels = labels && barW >= 14;
+  const halo = { stroke: "#fff", strokeWidth: 3, paintOrder: "stroke" as const, strokeLinejoin: "round" as const };
+  // Legend: each entry as wide as its text, not a fixed slot.
+  const legendW = series.map((s) => 15 + s.label.length * 5.2 + 16);
+  const legendPos = legendW.map((_, i) => pad.l + legendW.slice(0, i).reduce((t, x) => t + x, 0));
   return (
-    <svg width={w} height={h} role="img">
+    <svg width={w} height={h} role="img" fontFamily="inherit">
       {legend && (
         <g fontSize={9} fill={C.muted}>
           {series.map((s, i) => (
-            <g key={s.key} transform={`translate(${pad.l + i * Math.min(120, iw / series.length)},6)`}>
-              {s.type === "bar" ? <rect width={9} height={9} fill={s.color} /> : <line x1={0} x2={12} y1={5} y2={5} stroke={s.color} strokeWidth={2} strokeDasharray={s.dashed ? "4 3" : undefined} />}
+            <g key={s.key} transform={`translate(${legendPos[i]},6)`}>
+              {s.type === "bar" ? <rect width={9} height={9} rx={2} fill={s.color} /> : <line x1={0} x2={12} y1={5} y2={5} stroke={s.color} strokeWidth={2} strokeDasharray={s.dashed ? "4 3" : undefined} />}
               <text x={15} y={8.5}>{s.label}</text>
             </g>
           ))}
@@ -89,42 +102,74 @@ export function ComboChart({ data, series, w, h, legend = true, labels = false }
       )}
       {ticks.map((t) => (
         <g key={t}>
-          <line x1={pad.l} x2={pad.l + iw} y1={y(t)} y2={y(t)} stroke={t === 0 ? C.light : C.grid} />
+          <line x1={pad.l} x2={pad.l + iw} y1={y(t)} y2={y(t)} stroke={t === 0 ? C.light : C.grid} strokeDasharray={t === 0 ? undefined : "2 3"} />
           <text x={pad.l - 4} y={y(t) + 3} fontSize={9} textAnchor="end" fill={C.muted}>{rmShort(t)}</text>
         </g>
       ))}
       {data.map((d, i) => {
         const x0 = pad.l + i * band + (band - groupW) / 2;
         return (
-          <g key={d.label} opacity={d.faded ? 0.45 : 1}>
+          <g key={d.label} opacity={d.faded ? 0.5 : 1}>
             {stacks.map((st, si) => {
+              const members = bars.filter((b) => (b.stack ?? b.key) === st);
+              const stacked = members.length > 1;
+              const bx = x0 + si * barW + 1, bw = Math.max(1, barW - 2), cx = x0 + si * barW + barW / 2;
               let pos = 0, neg = 0;
-              return bars.filter((b) => (b.stack ?? b.key) === st).map((s) => {
+              const segs = members.map((s) => {
                 const v = d.values[s.key];
                 if (typeof v !== "number" || v === 0) return null;
                 const base = v >= 0 ? pos : neg;
                 const top = base + v;
                 if (v >= 0) pos = top; else neg = top;
                 const ya = y(Math.max(base, top)), yb = y(Math.min(base, top));
+                const hgt = Math.max(0.5, yb - ya);
+                // Single bar: amount inside the top when there is room, else outside.
+                const inside = hgt >= fs + 8;
+
+                const label = !showBarLabels ? null
+                  : stacked
+                    ? (hgt >= fs + 6 && bw >= 26 ? <text x={cx} y={(ya + yb) / 2 + fs / 3} fontSize={fs - 0.5} textAnchor="middle" fill="#fff">{rmShort(v)}</text> : null)
+                    : inside
+                      ? <text x={cx} y={v >= 0 ? ya + fs + 3 : yb - 5} fontSize={fs} fontWeight={600} textAnchor="middle" fill="#fff">{rmShort(v)}</text>
+                      : <text x={cx} y={v >= 0 ? ya - 3 : yb + fs + 2} fontSize={fs} fontWeight={600} textAnchor="middle" fill={C.ink}>{rmShort(v)}</text>;
                 return (
                   <g key={s.key}>
-                    <rect x={x0 + si * barW + 1} y={ya} width={Math.max(1, barW - 2)} height={Math.max(0.5, yb - ya)} fill={s.color} />
-                    {labels && <text x={x0 + si * barW + barW / 2} y={v >= 0 ? ya - 3 : yb + 10} fontSize={9} textAnchor="middle" fill={C.ink}>{rmShort(v)}</text>}
+                    <rect x={bx} y={ya} width={bw} height={hgt} rx={stacked ? 0 : Math.min(2.5, bw / 4)} fill={s.color} />
+                    {label}
                   </g>
                 );
               });
+              const total = pos + neg;
+              return (
+                <g key={st}>
+                  {segs}
+                  {showBarLabels && stacked && total !== 0 && (
+                    <text x={cx} y={pos > 0 ? y(pos) - 3 : y(neg) + fs + 2} fontSize={fs} fontWeight={700} textAnchor="middle" fill={C.ink}>{rmShort(total)}</text>
+                  )}
+                </g>
+              );
             })}
-            <text x={pad.l + i * band + band / 2} y={h - 6} fontSize={9} textAnchor="middle" fill={C.muted}>{d.label}</text>
+            <text x={pad.l + i * band + band / 2} y={h - 6} fontSize={9} textAnchor="middle" fill={d.faded ? C.muted : C.ink}>{d.label}</text>
           </g>
         );
       })}
       {lines.map((s) => {
-        const pts = data.map((d, i) => ({ x: pad.l + i * band + band / 2, v: d.values[s.key] })).filter((p): p is { x: number; v: number } => typeof p.v === "number");
+        // A point just inside a bar's top would sit on the bar's own amount: label it below the dot.
+        const underTop = (d: Datum, v: number) => bars.some((b) => {
+          const bv = d.values[b.key];
+          if (typeof bv !== "number" || bv <= 0) return false;
+          const ya = y(bv), ly = y(v);
+          return ly >= ya + 8 && ly <= ya + 2 * fs + 12;
+        });
+        const pts = data.map((d, i) => ({ x: pad.l + i * band + band / 2, v: d.values[s.key], same: bars.some((b) => d.values[b.key] === d.values[s.key]), d })).filter((p): p is { x: number; v: number; same: boolean; d: Datum } => typeof p.v === "number");
         if (!pts.length) return null;
         return (
           <g key={s.key}>
-            <polyline points={pts.map((p) => `${p.x},${y(p.v)}`).join(" ")} fill="none" stroke={s.color} strokeWidth={2} strokeDasharray={s.dashed ? "5 4" : undefined} />
-            {pts.map((p) => <circle key={p.x} cx={p.x} cy={y(p.v)} r={2.5} fill="#fff" stroke={s.color} strokeWidth={1.5} />)}
+            <polyline points={pts.map((p) => `${p.x},${y(p.v)}`).join(" ")} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeDasharray={s.dashed ? "5 4" : undefined} />
+            {pts.map((p) => <circle key={p.x} cx={p.x} cy={y(p.v)} r={2.8} fill="#fff" stroke={s.color} strokeWidth={1.6} />)}
+            {labels && pts.filter((p) => !p.same).map((p) => (
+              <text key={`l${p.x}`} x={p.x} y={showBarLabels && underTop(p.d, p.v) ? y(p.v) + 13 : y(p.v) - 6} fontSize={8.5} fontWeight={600} textAnchor="middle" fill={s.color} {...halo}>{rmShort(p.v)}</text>
+            ))}
           </g>
         );
       })}
