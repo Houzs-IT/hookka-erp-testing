@@ -91,7 +91,7 @@ import { labourInjectMonths } from "../../lib/labour-inject";
 import { labourCreditLines as splitLabourCredits } from "../../lib/labour-credit";
 import { recordedSalaryAccounts, salaryDocKey, type SalaryLegIn } from "../../lib/recorded-salary";
 import { SYSTEM_JOURNAL_FAMILIES, buildSystemJournals, type SystemLeg } from "../../lib/system-journals";
-import { projectedLabourByDept } from "../lib/labour-projection";
+import { projectedLabourByDept, projectedPayslipsForMonth } from "../lib/labour-projection";
 import { loadLabourToDate, runningMonthYm } from "../lib/labour-to-date";
 import { loadPreparedProduction, mytDay } from "../lib/production-stock";
 import { productionStockDetailAt, costedWipRows, completedPriceSen, costRatio, type PreparedProduction, type PsWipRow } from "../../lib/production-stock";
@@ -99,7 +99,7 @@ import { stockAccounts, stockByAccount, sheetStockMonth, stockOverride, stockDri
 import { recurringEstimates, previousMonths, windowCoversYm, ESTIMATE_LOOKBACK } from "../../lib/expense-estimates";
 import { bankInOutByMonth, cashFlowCardMonth, freeCashFlow } from "../../lib/cashflow-card";
 import { loadProductionRevenue, productionRevenueByMonth, sumProductionRevenue, type ProductionRevenueSplit } from "../lib/production-revenue";
-import { groupPayslipsByMonthDept, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
+import { groupPayslipsByMonthDept, reallocateNonProdGross, forecastEntryKind, monthHasDeptForecast, labourMappedAccounts } from "../../lib/salary-dept";
 import { ensureTfTables, getTfSources, saveTfSources, loadTfDraws, loadTfDrawsAt, parseTfLimitSen } from "../lib/trade-finance";
 import { apForeignPay, confirmBankPlan, foreignAvailableSen } from "../../lib/ap-fx";
 import { parseFxRate } from "../../lib/fx";
@@ -17766,6 +17766,10 @@ app.get("/forecast/customer-actuals", async (c) => {
 // not in it. Months outside the P&L's injection window (before the opening,
 // after today) have none. What these do not explain of an account (an amount
 // the owner recorded by hand) is left to the page's remainder row. Read only.
+// Non-production departments (owner 2026-11-18 「non production 没有看到？」):
+// each worker's pay moves out of his home department by the share of hours he
+// clocked in R&D / repair / maintenance (reallocateNonProdGross) — moved, not
+// added, so the departments still add up to the salary account.
 app.get("/forecast/dept-actuals", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -17784,11 +17788,56 @@ app.get("/forecast/dept-actuals", async (c) => {
     nowYm: new Date().toISOString().slice(0, 7),
     recordedYms: new Set(),
   });
+  const nonProd = new Set<string>();
+  try {
+    const flags = await db.prepare("SELECT code, is_production FROM departments")
+      .all<{ code: string | null; isProduction: number | null; is_production: number | null }>();
+    for (const r of flags.results ?? []) {
+      const t = String(r.code ?? "").trim();
+      if (t && Number(r.isProduction ?? r.is_production ?? 1) === 0) nonProd.add(t);
+    }
+  } catch { /* master predates the flag → no non-production split */ }
+  const slipsByYm = new Map<string, { workerId: string; dept: string; grossSen: number }[]>();
+  const hoursByYm = new Map<string, { workerId: string; dept: string; hours: number }[]>();
+  if (nonProd.size && yms.length) {
+    try {
+      const ps = await db
+        .prepare("SELECT period, employeeId, departmentCode, grossPaySen FROM payslips WHERE orgId = ? AND status != 'CANCELLED' AND period >= ? AND period <= ?")
+        .bind(orgId, yms[0], `${yms[yms.length - 1]}~`)
+        .all<Record<string, unknown>>();
+      for (const r of ps.results ?? []) {
+        const ym = String(r.period ?? "").slice(0, 7);
+        const a = slipsByYm.get(ym) ?? [];
+        a.push({ workerId: String(r.employeeId ?? r.employee_id ?? ""), dept: String(r.departmentCode ?? r.department_code ?? "").trim(), grossSen: Number(r.grossPaySen ?? r.gross_pay_sen) || 0 });
+        slipsByYm.set(ym, a);
+      }
+      const wh = await db
+        .prepare("SELECT workerId, departmentCode, date, hours FROM working_hour_entries WHERE date >= ? AND date < ?")
+        .bind(`${yms[0]}-01`, `${yms[yms.length - 1]}-32`)
+        .all<Record<string, unknown>>();
+      for (const r of wh.results ?? []) {
+        const ym = String(r.date ?? "").slice(0, 7);
+        const a = hoursByYm.get(ym) ?? [];
+        a.push({ workerId: String(r.workerId ?? r.worker_id ?? ""), dept: String(r.departmentCode ?? r.department_code ?? "").trim(), hours: Number(r.hours) || 0 });
+        hoursByYm.set(ym, a);
+      }
+    } catch { /* payslips / hours unreadable → home departments only */ }
+  }
   const months: Record<string, Record<string, number>> = {};
   for (const ym of yms) {
     const { byDept } = await labourDeptAggFor(db, orgId, ym);
-    const m: Record<string, number> = {};
+    let m: Record<string, number> = {};
     for (const d of byDept) if (d.grossSen) m[d.departmentCode] = (m[d.departmentCode] ?? 0) + d.grossSen;
+    if (nonProd.size && hoursByYm.has(ym)) {
+      let slips = slipsByYm.get(ym) ?? [];
+      if (!slips.length) {
+        try {
+          slips = (await projectedPayslipsForMonth(db, ym)).map((p) => ({ workerId: p.employeeId, dept: String(p.departmentCode ?? "").trim(), grossSen: Number(p.grossPaySen) || 0 }));
+        } catch { slips = []; }
+      }
+      m = reallocateNonProdGross(m, slips, hoursByYm.get(ym) ?? [], nonProd);
+    }
+    for (const k of Object.keys(m)) if (!m[k]) delete m[k];
     if (Object.keys(m).length) months[ym] = m;
   }
   return c.json({ success: true, data: { months } });
