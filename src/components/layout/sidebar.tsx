@@ -19,6 +19,7 @@ import {
   BarChart3,
   Presentation,
   Wrench,
+  PackageOpen,
   Bell,
   Mail,
   Megaphone,
@@ -130,6 +131,7 @@ export const navigationGroups: NavGroup[] = [
         { name: "Packing", href: "/production/packing", icon: Package },
       ]},
       { name: "Planning", href: "/planning", icon: Calendar },
+      { name: "Outsource Fabric", href: "/production/outsource-issue", icon: PackageOpen },
       // "Scanner" (/production/scan) removed from the menu 2026-06-21 (owner) —
       // the route + page stay live because printed job-card sticker QRs land there.
       // Those stickers are rendered by src/pages/production/index.tsx off
