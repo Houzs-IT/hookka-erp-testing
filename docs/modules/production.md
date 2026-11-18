@@ -92,10 +92,9 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `ProductionPage` | `src/pages/production/index.tsx:634` | WIP board; every column/row branches on `activeTab` |
+| `ProductionPage` | `src/pages/production/index.tsx:632` | WIP board; every column/row branches on `activeTab` |
 | `filteredOrders` (memo) | `src/pages/production/index.tsx:2979` | Dept-narrow + overdue-set grid filter |
-| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5734 / 5693` | FG sticker set (immediate paint → /p/ token upgrade) |
-| `PACKING_PREPRINT_DEPTS` / `loadFoamPackingStickers` | `src/pages/production/index.tsx:184 / 5836` | Pre-print the full-PO packing sticker set from a dept tab (Foam Bonding + Fibre, HK-0159); add a dept to the set to give it the Show / Print Packing Stickers buttons |
+| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5732 / 5691` | FG sticker set (immediate paint → /p/ token upgrade) |
 | `BOMManagementPage` | `src/pages/bom.tsx:6029` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:3023 / 3913` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |

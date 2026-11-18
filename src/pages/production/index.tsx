@@ -181,7 +181,6 @@ const CATEGORY_OPTIONS = [
 const NO_VALUES: string[] = [];
 const asOptions = (vals: string[]) => vals.map((v) => ({ value: v, label: v }));
 const categoryLabel = (v: string) => CATEGORY_OPTIONS.find((o) => o.value === v)?.label ?? v;
-const PACKING_PREPRINT_DEPTS = new Set<string>(["FOAM", "FIBRE"]);
 const OverviewResizeCtx = createContext<{ start: (e: React.MouseEvent, key: string) => void; reset: (key: string) => void } | null>(null);
 
 // ----- Filter popover anchored under a trigger button -----
@@ -4420,8 +4419,6 @@ export default function ProductionPage({
   ], [activeTab, upstreamDepts, isTablet]);
 
   const activeDept = DEPARTMENTS.find((d) => d.code === activeTab);
-  const canPrePrintPacking = PACKING_PREPRINT_DEPTS.has(activeTab);
-  const activeDeptName = activeDept?.name ?? activeTab;
 
   // Derive a WIP/component name for a job-card sticker. Most departments
   // produce the Divan / HB component; Packing produces the FG itself.
@@ -5861,7 +5858,7 @@ export default function ProductionPage({
     const hasSelectionScope = selSoIds.size > 0;
     const hasGridScope = visibleRows.length > 0;
     if (!q && !hasSelectionScope && !hasGridScope) {
-      toast.info(`No ${activeDeptName} rows are visible to pack. Type an SO in the top Search box or adjust the filter.`);
+      toast.info("No Foam rows are visible to pack. Type an SO in the top Search box or adjust the filter.");
       return [];
     }
     setLoadingFoamPrint(true);
@@ -5933,7 +5930,7 @@ export default function ProductionPage({
             ? "Could not match the ticked rows to any production orders."
             : q
               ? `No production orders matched "${fltSearch}".`
-              : `Could not match the visible ${activeDeptName} rows to any production orders.`,
+              : "Could not match the visible Foam rows to any production orders.",
         );
         return [];
       }
@@ -5954,7 +5951,7 @@ export default function ProductionPage({
     } finally {
       setLoadingFoamPrint(false);
     }
-  }, [fltSearch, toast, fetchFgStickersForOrders, enrichWithPackingTokens, gridFilteredDeptRows, deptRows, selectedDeptRows, activeDeptName]);
+  }, [fltSearch, toast, fetchFgStickersForOrders, enrichWithPackingTokens, gridFilteredDeptRows, deptRows, selectedDeptRows]);
 
   // Preview toggle — loads (fresh, so a changed grid filter is honoured)
   // and reveals the on-screen tile strip under the QR Stickers panel.
@@ -8753,14 +8750,14 @@ export default function ProductionPage({
                 {printingJobCards ? "Generating…" : "Print All"}
               </Button>
             )}
-            {/* Foam / Fibre Packing-sticker controls. Scope mirrors Show QR:
-                the buttons act on whatever the dept grid is currently
+            {/* Foam-only Packing-sticker controls. Scope mirrors Show QR:
+                the buttons act on whatever the Foam grid is currently
                 SHOWING (its column filters / search applied) — no row-
                 ticking and no SO-count cap. Filter the sheet, then Show
                 (on-screen WYSIWYG check) or Print (same payload to the
                 hidden print container). A top-bar Search or ticked rows
                 still work as optional narrower scopes. */}
-            {canPrePrintPacking && (() => {
+            {activeTab === "FOAM" && (() => {
               const hasTopSearch = !!fltSearch.trim();
               // Whatever the grid is showing right now, falling back to all
               // rows until the DataGrid reports its filtered set.
@@ -8784,8 +8781,8 @@ export default function ProductionPage({
                 : hasTopSearch
                   ? `Packing stickers (HB / Divan / Sofa pieces) for every piece of the SO in the Search box`
                   : hasVisibleRows
-                    ? `Packing stickers for the ${distinctSoIds.size} SO${distinctSoIds.size === 1 ? "" : "s"} shown in the ${activeDeptName} grid — filter the grid to narrow`
-                    : `Filter the ${activeDeptName} grid, tick rows, or type an SO in the top Search box`;
+                    ? `Packing stickers for the ${distinctSoIds.size} SO${distinctSoIds.size === 1 ? "" : "s"} shown in the Foam grid — filter the grid to narrow`
+                    : "Filter the Foam grid, tick rows, or type an SO in the top Search box";
               return (
                 <>
                   <Button
@@ -8977,14 +8974,14 @@ export default function ProductionPage({
             No Fab Sew job cards for the orders in the current Fab Cut filter.
           </div>
         )}
-        {/* Foam / Fibre Packing-sticker on-screen preview. Lives INSIDE
+        {/* Foam-only Packing-sticker on-screen preview. Lives INSIDE
             the QR Stickers panel so the operator's mental model stays
             "this panel = stickers from this dept", but the panel header
             counter still shows the dept JC count (not packing count).
             Each tile mirrors the 100×150mm print layout 1:1 at ~50%
             scale so what they see = what prints, including the WIP
             distinction between HB ("…-HB20\"") and Divan ("8\" Divan-SS"). */}
-        {canPrePrintPacking && showFoamPackingPreview && foamPrintStickers.length > 0 && (
+        {activeTab === "FOAM" && showFoamPackingPreview && foamPrintStickers.length > 0 && (
           <div className="border-t border-[#F0F0F0]">
             <div className="px-4 py-2 bg-[#FAF8F4] border-b border-[#F0F0F0] text-xs text-[#6B5C32] font-semibold flex items-center justify-between">
               <span>
