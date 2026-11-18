@@ -322,10 +322,10 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 ## 🔵 Board report to investment-bank standard + ONE house chart standard (2026-11-19)
 Owner asks (2026-11-18/19): 「有点丑 … 美国大型公司 financial reporting 怎么弄到那么漂亮」, 「整个 board report 的颜色方面呢？」, 「字体 字体大小等等」, 「你也知道不好 跟大公司和投行有差距 那就去弄」, 「全部数据有了？」, 「各大种类的 reporting 有尽量 standardise？」 → standard = the new Board Report look ("用我刚做的 Board Report 新版").
 - [x] Batch 1 (#1457, feat/board-report-chart-polish): IBM Plex Sans type scale; validated CAT palette; green/red = status only; forecast = hatched bars / dashed ink; selective labels; axis dropped when every value is printed. House tokens in `src/lib/chart-standard.ts`.
-- [ ] Batch 2: action titles (the chart's conclusion as its title), cash-flow waterfall, actual-vs-forecast variance bars.
+- [x] Batch 2 (feat/board-report-batch2; owner OK on real-data preview 2026-11-19): action titles (the chart's conclusion as its title), cash-flow waterfall, actual-vs-forecast variance strip.
 - [ ] Batch 3: layout density (two charts side by side, no half-empty pages), executive-summary box on the cover.
-- [x] Finance dashboard → chart-standard (feat/finance-dashboard-house-standard; owner OK on the real-data preview 2026-11-19: forecast red → dashed grey, tables' forecast text grey, red/green only for vs-forecast).
-- [ ] Standardise rest: Finance dashboard (`src/lib/finance-chart-look.ts`, the owner's Oct "Finance v2" colours) → chart-standard; then the other dashboards (18 recharts files, warm brown palette). Preview each before ship.
+- [x] Finance dashboard → house standard (#1458, live-verified 2026-11-19: forecast red → dashed grey, tables' forecast text grey, red/green only for vs-forecast).
+- [ ] Standardise rest: the other dashboards (18 recharts files, warm brown palette) → chart-standard. Preview each before ship.
 - Data check (live Oct report, 2026-11-19): no section unavailable; dashes are genuine (future months, categories with no forecast keyed, a customer with no bedframe/sofa split). Flag: cash-flow forecast "Docs" vs "P&L" columns diverge by up to RM 406k (May 27) — Docs only counts known documents.
 
 ## ✅ Board report charts print their amounts (feat/board-report-chart-labels, 2026-11-18)

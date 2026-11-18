@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { C, CAT, pctText, rmShort } from "./format";
+import { waterfallBars } from "./chart-math";
 
 function niceStep(range: number, target = 5): number {
   if (range <= 0) return 1;
@@ -41,6 +42,45 @@ export function Elastic({ children, min = 120 }: { children: (w: number, h: numb
 export type Series = { key: string; label: string; color: string; type: "bar" | "line"; stack?: string; dashed?: boolean };
 export type Datum = { label: string; values: Record<string, number | null | undefined>; faded?: boolean; note?: string };
 
+const STATUS_GOOD = C.green, STATUS_BAD = C.red;
+
+/** A waterfall: an opening total, the steps that move it, a closing total
+ *  (owner 2026-11-19: cash flow as opening bank -> operating -> investing ->
+ *  financing -> closing bank). Totals in ink grey, rises green, falls red; each
+ *  step labelled at its end; thin connectors carry the running level across. */
+export function Waterfall({ steps, w, h }: { steps: { label: string; value: number; total?: boolean }[]; w: number; h: number }) {
+  const pad = { l: 8, r: 8, t: 18, b: 34 };
+  const iw = Math.max(10, w - pad.l - pad.r), ih = Math.max(10, h - pad.t - pad.b);
+  const bars = waterfallBars(steps);
+  const lo = Math.min(0, ...bars.flatMap((b) => [b.from, b.to])), hi = Math.max(0, ...bars.flatMap((b) => [b.from, b.to]));
+  const span = hi - lo || 1;
+  const y = (v: number) => pad.t + ih - ((v - lo) / span) * ih;
+  const band = iw / Math.max(1, bars.length);
+  const bw = Math.min(34, band * 0.56);
+  return (
+    <svg width={w} height={h} role="img" fontFamily="inherit">
+      <line x1={pad.l} x2={pad.l + iw} y1={y(0)} y2={y(0)} stroke={C.light} />
+      {bars.map((b, i) => {
+        const x = pad.l + i * band + (band - bw) / 2;
+        const ya = y(Math.max(b.from, b.to)), yb = y(Math.min(b.from, b.to));
+        const fill = b.total ? "#5B6270" : b.value >= 0 ? STATUS_GOOD : STATUS_BAD;
+        const next = bars[i + 1];
+        const up = b.to >= b.from;
+        return (
+          <g key={b.label}>
+            <rect x={x} y={ya} width={bw} height={Math.max(1, yb - ya)} rx={2} fill={fill} />
+            {next && <line x1={x + bw} x2={x + band} y1={y(b.to)} y2={y(b.to)} stroke={C.light} strokeDasharray="2 2" />}
+            <text x={x + bw / 2} y={b.total ? (b.to >= 0 ? ya - 4 : yb + 11) : up ? ya - 4 : yb + 11} fontSize={9} fontWeight={600} textAnchor="middle" fill={C.ink}>
+              {b.total ? rmShort(b.value) : `${b.value >= 0 ? "+" : "−"}${rmShort(Math.abs(b.value))}`}
+            </text>
+            <text x={x + bw / 2} y={h - 5} fontSize={8.5} textAnchor="middle" fill={b.total ? C.ink : C.muted} fontWeight={b.total ? 600 : 400}>{b.label}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 const hatchId = (c: string) => `brp-hatch-${c.replace(/[^0-9a-z]/gi, "")}`;
 
 /** A column with a 4px rounded data end and a square foot on the baseline. */
@@ -62,7 +102,11 @@ function barPath(x: number, w: number, yA: number, yB: number, end: "top" | "bot
  *   - a solid line (an actual: Net profit, Net cash, Equity) labels its points;
  *   - `labels` forces bar amounts on (owner asked for them on the outlook chart),
  *     `labels={false}` turns every amount off. Dashed forecast lines are never labelled. */
-export function ComboChart({ data, series, w, h, legend = true, labels }: { data: Datum[]; series: Series[]; w: number; h: number; legend?: boolean; labels?: boolean }) {
+/** `variance` adds an actual-vs-forecast strip under the plot (owner 2026-11-19):
+ *  a small green bar = better than forecast, red = worse (`invert` for costs,
+ *  where above forecast is worse), with the % beside it. Actual months only. */
+export type Variance = { a: string; f: string; invert?: boolean };
+export function ComboChart({ data, series, w, h, legend = true, labels, variance }: { data: Datum[]; series: Series[]; w: number; h: number; legend?: boolean; labels?: boolean; variance?: Variance }) {
   const bars = series.filter((s) => s.type === "bar");
   const lines = series.filter((s) => s.type === "line");
   const stacks = [...new Set(bars.map((s) => s.stack ?? s.key))];
@@ -75,7 +119,8 @@ export function ComboChart({ data, series, w, h, legend = true, labels }: { data
   const lineLabelKeys = new Set(labels === false ? [] : (barLabels ? solid.slice(-1) : solid).map((s) => s.key));
   const anyLabels = barLabels || lineLabelKeys.size > 0;
   const legendH = legend ? 20 : 0;
-  const pad = { l: 40, r: 8, t: 6 + legendH + (anyLabels ? 12 : 0), b: 18 + (anyLabels ? 12 : 0) };
+  const varH = variance ? 26 : 0;
+  const pad = { l: 40, r: 8, t: 6 + legendH + (anyLabels ? 12 : 0), b: 18 + (anyLabels ? 12 : 0) + varH };
   if (labels !== false && barLabels && lines.length === 0) pad.l = 8;
   const iw = Math.max(10, w - pad.l - pad.r);
   const ih = Math.max(10, h - pad.t - pad.b);
@@ -198,6 +243,34 @@ export function ComboChart({ data, series, w, h, legend = true, labels }: { data
           </g>
         );
       })}
+      {variance && (() => {
+        const rows = data.map((d, i) => {
+          const a = d.values[variance.a], f = d.values[variance.f];
+          if (d.faded || typeof a !== "number" || typeof f !== "number" || f === 0) return null;
+          const p = ((a - f) / Math.abs(f)) * 100;
+          return { i, p, good: variance.invert ? p <= 0 : p >= 0 };
+        }).filter((x): x is { i: number; p: number; good: boolean } => x !== null);
+        if (!rows.length) return null;
+        const mid = h - 18 - varH / 2;
+        const maxAbs = Math.max(...rows.map((r) => Math.min(100, Math.abs(r.p))), 1);
+        return (
+          <g>
+            <text x={pad.l - 6} y={mid + 3} fontSize={7} textAnchor="end" fill={C.muted}>vs fc</text>
+            <line x1={pad.l} x2={pad.l + iw} y1={mid} y2={mid} stroke={C.grid} strokeWidth={0.75} />
+            {rows.map((r) => {
+              const cx = pad.l + r.i * band + band / 2;
+              const hh = Math.max(1.5, (Math.min(100, Math.abs(r.p)) / maxAbs) * (varH / 2 - 3));
+              const bw2 = Math.min(10, barW * 0.5);
+              return (
+                <g key={r.i}>
+                  <rect x={cx - bw2 - 1} y={r.p >= 0 ? mid - hh : mid} width={bw2} height={hh} rx={1} fill={r.good ? STATUS_GOOD : STATUS_BAD} />
+                  <text x={cx + 2} y={mid + 3} fontSize={7.5} fontWeight={600} fill={C.ink}>{`${r.p >= 0 ? "+" : "−"}${Math.abs(r.p).toFixed(1)}%`}</text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      })()}
       {capLabels.map((l) => (
         <text key={l.key} x={l.x} y={l.y} fontSize={l.size} fontWeight={600} textAnchor="middle" fill={l.faded ? C.muted : C.ink} {...halo}>{l.text}</text>
       ))}

@@ -4,9 +4,10 @@
 // beyond picking colours and labels.
 import type { BoardReport } from "@/lib/board-report";
 import { BOARD_DATA_FROM, changePct, pct, shortMonth } from "@/lib/board-report";
-import { ComboChart, Donut, Elastic, type Datum } from "./charts";
+import { ComboChart, Donut, Elastic, Waterfall, type Datum } from "./charts";
+import { cashHeadline, equityHeadline, trendHeadline } from "./headlines";
 import { C, CAT, FC, deptName, pctText, rm } from "./format";
-import { BrPage, Delta, Money, Tile } from "./page-kit";
+import { BrPage, ChartTitle, Delta, Money, Tile } from "./page-kit";
 import { withSection } from "./with-section";
 
 type P = { r: BoardReport };
@@ -45,7 +46,8 @@ export function CoverPage({ r }: P) {
           <ul className="brp-bullets">
             {d.highlights.map((h) => <li key={h}>{h}</li>)}
           </ul>
-          <h3>Revenue and net profit by month</h3>
+          <ChartTitle label="Revenue and net profit by month"
+            action={trendHeadline("Revenue", d.trend.map((t) => ({ label: t.label, value: t.sales, forecast: t.forecastSales, actual: t.kind === "actual" })))} />
           <Elastic>
             {(w, h) => (
               <ComboChart
@@ -58,6 +60,7 @@ export function CoverPage({ r }: P) {
                   faded: t.kind !== "actual",
                   values: { sales: t.kind === "actual" ? t.sales : t.forecastSales, net: t.kind === "actual" ? t.net : t.forecastNet, fc: t.forecastSales },
                 }))}
+                variance={{ a: "sales", f: "fc" }}
                 series={[
                   { key: "sales", label: "Revenue", color: CAT[0], type: "bar" },
                   { key: "net", label: "Net profit", color: CAT[1], type: "line" },
@@ -136,7 +139,12 @@ export function IncomePage({ r }: P) {
               the month-by-month picture fills it (elastic, like the other pages). */}
           {incomeTrend.length > 0 && (
             <>
-              <h3>Revenue, gross profit and net profit by month</h3>
+              {(() => {
+                const last = [...incomeTrend].reverse().find((p) => p.kind === "actual" && p.sales);
+                const m = (v: number | null | undefined) => (last && last.sales && typeof v === "number" ? `${((v / last.sales) * 100).toFixed(1)}%` : null);
+                const g = last ? m(last.gross) : null, n = last ? m(last.net) : null;
+                return <ChartTitle label="Revenue, gross profit and net profit by month" action={last && g && n ? `Gross margin ${g} and net margin ${n} in ${last.label}` : null} />;
+              })()}
               <Elastic>
                 {(w, h) => (
                   <ComboChart
@@ -234,13 +242,15 @@ export function LabourPage({ r }: P) {
               <tr className="strong"><td>All labour (payroll)</td><td><Money v={payroll} /></td><td>100.0%</td><td>{pctText(pct(payroll, d.productionRevenue))}</td><td /><td><Money v={d.prevTotal} /></td><td><Money v={fcAll} /></td><td><Delta p={changePct(payroll, fcAll)} invert /></td></tr>
             </tbody>
           </table>
-          <h3>Production salary by month</h3>
+          <ChartTitle label="Production salary by month"
+            action={trendHeadline("Production salary", d.trend.map((t) => ({ label: t.label, value: t.total, forecast: t.forecast ?? null, actual: true })))} />
           <Elastic>
             {(w, h) => (
               <ComboChart
                 w={w}
                 h={h}
-                data={d.trend.map((t) => ({ label: t.label, values: { ...t.byDept, __fc: t.forecast ?? null } }))}
+                data={d.trend.map((t) => ({ label: t.label, values: { ...t.byDept, __fc: t.forecast ?? null, __tot: t.total } }))}
+                variance={{ a: "__tot", f: "__fc", invert: true }}
                 series={[
                   ...d.series.map((s, i) => ({ key: s, label: deptName(s), color: s === "Other" ? C.grey : CAT[i % CAT.length], type: "bar" as const, stack: "a" })),
                   // Owner 2026-11-17: every chart carries its forecast — the
@@ -305,13 +315,15 @@ export function MaterialsPage({ r }: P) {
               })()}
             </tbody>
           </table>
-          <h3>Raw materials used by month</h3>
+          <ChartTitle label="Raw materials used by month"
+            action={trendHeadline("Raw materials used", d.trend.map((t) => ({ label: t.label, value: t.actual, forecast: t.forecast, actual: true })))} />
           <Elastic>
             {(w, h) => (
               <ComboChart
                 w={w}
                 h={h}
                 data={d.trend.map((t) => ({ label: t.label, values: { a: t.actual, f: t.forecast } }))}
+                variance={{ a: "a", f: "f", invert: true }}
                 series={[{ key: "a", label: "Used", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]}
               />
             )}
@@ -352,21 +364,25 @@ export function TrendPage({ r }: P) {
           </table>
           <div className="brp-charts2">
             <div className="brp-chartcol">
-              <h3>Revenue (bars) with forecast</h3>
+              <ChartTitle label="Revenue by month, with forecast"
+                action={trendHeadline("Revenue", d.points.map((p) => ({ label: p.label, value: p.sales, forecast: p.forecastSales, actual: p.kind === "actual" })))} />
               <Elastic>
                 {(w, h) => (
                   <ComboChart w={w} h={h}
                     data={d.points.map((p) => ({ label: p.kind === "actual" ? p.label : `${p.label} F`, faded: p.kind !== "actual", values: { s: p.kind === "actual" ? p.sales : p.forecastSales, f: p.forecastSales } }))}
+                    variance={{ a: "s", f: "f" }}
                     series={[{ key: "s", label: "Revenue", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]} />
                 )}
               </Elastic>
             </div>
             <div className="brp-chartcol">
-              <h3>Net profit</h3>
+              <ChartTitle label="Net profit by month, with forecast"
+                action={trendHeadline("Net profit", d.points.map((p) => ({ label: p.label, value: p.net, forecast: p.forecastNet, actual: p.kind === "actual" })), { lossName: "Net loss" })} />
               <Elastic>
                 {(w, h) => (
                   <ComboChart w={w} h={h}
                     data={d.points.map((p) => ({ label: p.kind === "actual" ? p.label : `${p.label} F`, faded: p.kind !== "actual", values: { n: p.kind === "actual" ? p.net : p.forecastNet, f: p.forecastNet } }))}
+                    variance={{ a: "n", f: "f" }}
                     series={[{ key: "n", label: "Net profit", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]} />
                 )}
               </Elastic>
@@ -409,7 +425,7 @@ export function BalancePage({ r }: P) {
               <tr className="strong"><td>Equity at the end of the month</td><td><Money v={d.equity.closing} /></td></tr>
             </tbody>
           </table>
-          <h3>Assets, liabilities and equity by month</h3>
+          <ChartTitle label="Assets, liabilities and equity by month" action={equityHeadline(d.trend)} />
           <Elastic>
             {(w, h) => (
               <ComboChart w={w} h={h}
@@ -459,19 +475,40 @@ export function CashFlowPage({ r }: P) {
                 ))}
               </tbody>
             </table>
-            <h3>Cash flow by month</h3>
-            <Elastic>
-              {(w, h) => (
-                <ComboChart w={w} h={h}
-                  data={[...shown, ...fc].map((x) => ({ label: head(x), faded: x.kind !== "actual", values: { o: x.operating, i: x.investing, f: x.financing, n: x.net } }))}
-                  series={[
-                    { key: "o", label: "Operating", color: CAT[0], type: "bar" },
-                    { key: "i", label: "Investing", color: CAT[1], type: "bar" },
-                    { key: "f", label: "Financing", color: CAT[2], type: "bar" },
-                    { key: "n", label: "Net", color: C.ink, type: "line" },
-                  ]} />
-              )}
-            </Elastic>
+            {/* Owner 2026-11-19 (batch 2): the month as a waterfall — opening
+                bank, the three activities, closing bank — beside the monthly net
+                cash flow, instead of three bar series and a line in one chart. */}
+            {(() => {
+              const known = m.operating + m.investing + m.financing;
+              const other = m.net - known;
+              const opening = d.bankClose === null ? null : d.bankClose - m.net;
+              const steps = [
+                ...(opening === null ? [] : [{ label: "Opening bank", value: opening, total: true }]),
+                { label: "Operating", value: m.operating },
+                { label: "Investing", value: m.investing },
+                { label: "Financing", value: m.financing },
+                ...(Math.abs(other) >= 100 ? [{ label: "Other", value: other }] : []),
+                d.bankClose === null ? { label: "Net cash", value: m.net, total: true } : { label: "Closing bank", value: d.bankClose, total: true },
+              ];
+              return (
+                <div className="brp-charts2 cols">
+                  <div className="brp-chartcol">
+                    <ChartTitle label={`Bank balance bridge, ${m.label}`} action={cashHeadline(m.label, m)} />
+                    <Elastic>{(w, h) => <Waterfall w={w} h={h} steps={steps} />}</Elastic>
+                  </div>
+                  <div className="brp-chartcol">
+                    <ChartTitle label="Net cash flow by month" action={null} />
+                    <Elastic>
+                      {(w, h) => (
+                        <ComboChart w={w} h={h} legend={false}
+                          data={[...shown.slice(-6), ...fc].map((x) => ({ label: head(x), faded: x.kind !== "actual", values: { n: x.net } }))}
+                          series={[{ key: "n", label: "Net cash flow", color: CAT[0], type: "bar" }]} />
+                      )}
+                    </Elastic>
+                  </div>
+                </div>
+              );
+            })()}
             <p className="brp-small">
               F = forecast, from Finance › Cash Flow with Forecast on: {fc.length === 0 ? "no forecast months are available after this one." : fc.map((x) => `${x.label} ${x.basis === "pnl" ? "P&L forecast" : "Docs forecast"}`).join(", ") + " (the P&L forecast where the month has one, else the Docs forecast)."}
               {" "}Free cash flow = operating − capex. Source: Forecasting › Dashboard cash flow (Finance › Cash Flow statement).

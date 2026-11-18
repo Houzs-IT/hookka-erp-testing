@@ -56,3 +56,16 @@ export function Tile({ label, value, sub, tone }: { label: string; value: ReactN
   );
 }
 
+
+/** A chart's title: its conclusion as the headline, what is plotted as the small
+ *  label under it (owner 2026-11-19, investment-bank standard). Falls back to the
+ *  plain label when there is nothing to conclude (no actual month yet). */
+export function ChartTitle({ action, label }: { action: string | null | undefined; label: string }) {
+  if (!action) return <h3>{label}</h3>;
+  return (
+    <div className="brp-ctitle">
+      <h3 className="brp-action">{action}</h3>
+      <div className="brp-clabel">{label}</div>
+    </div>
+  );
+}
