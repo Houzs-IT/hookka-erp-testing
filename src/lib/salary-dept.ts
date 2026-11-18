@@ -43,6 +43,62 @@ export function groupPayslipsByMonthDept(rows: PayslipDeptRow[]): Map<string, De
   return out;
 }
 
+/**
+ * Non-production departments' share of a month's gross pay (owner 2026-11-18
+ * 「non production 没有看到？」). A payslip files the worker's whole month under
+ * his home (production) department, so R&D / repair / maintenance have no pay
+ * of their own. Each worker's pay is split by the hours he CLOCKED: the hours
+ * in a non-production department move that share out of his home department
+ * into it. Money only moves — the total stays to the sen — so the Forecast
+ * P&L's department rows still add up to the salary account.
+ *
+ * `base` = gross per home department (what the P&L posts). `slips` say who
+ * belongs where and how the department's gross divides between its people
+ * (for the month still running, the base is labour to date, so each worker's
+ * part is his share of the department's slips, scaled to the base).
+ */
+export function reallocateNonProdGross(
+  base: Readonly<Record<string, number>>,
+  slips: readonly { workerId: string; dept: string; grossSen: number }[],
+  hours: readonly { workerId: string; dept: string; hours: number }[],
+  nonProd: ReadonlySet<string>,
+): Record<string, number> {
+  const out: Record<string, number> = { ...base };
+  if (!nonProd.size) return out;
+  const deptSlips = new Map<string, number>();
+  const worker = new Map<string, { dept: string; grossSen: number }>();
+  for (const s of slips) {
+    if (!s.workerId || !s.dept || !(s.grossSen > 0)) continue;
+    deptSlips.set(s.dept, (deptSlips.get(s.dept) ?? 0) + s.grossSen);
+    const w = worker.get(s.workerId);
+    worker.set(s.workerId, { dept: w?.dept ?? s.dept, grossSen: (w?.grossSen ?? 0) + s.grossSen });
+  }
+  const clocked = new Map<string, Map<string, number>>();
+  for (const h of hours) {
+    if (!h.workerId || !h.dept || !(h.hours > 0)) continue;
+    const m = clocked.get(h.workerId) ?? new Map<string, number>();
+    m.set(h.dept, (m.get(h.dept) ?? 0) + h.hours);
+    clocked.set(h.workerId, m);
+  }
+  for (const [wid, w] of worker) {
+    if (nonProd.has(w.dept)) continue;
+    const by = clocked.get(wid);
+    const home = out[w.dept] ?? 0;
+    const den = deptSlips.get(w.dept) ?? 0;
+    if (!by || home <= 0 || den <= 0) continue;
+    const total = [...by.values()].reduce((a, v) => a + v, 0);
+    const pay = Math.round((base[w.dept] ?? 0) * (w.grossSen / den));
+    for (const [dept, h] of by) {
+      if (dept === w.dept || !nonProd.has(dept)) continue;
+      const move = Math.min(out[w.dept] ?? 0, Math.round((pay * h) / total));
+      if (move <= 0) continue;
+      out[w.dept] = (out[w.dept] ?? 0) - move;
+      out[dept] = (out[dept] ?? 0) + move;
+    }
+  }
+  return out;
+}
+
 // --- Forecast supersede rule ------------------------------------------------
 // A month that carries ANY `dept:` entry forecasts labour AT DEPARTMENT LEVEL;
 // its DIRECT_LABOUR account entries (750-x) are display-only leftovers and

@@ -27,3 +27,35 @@ test("department rows show their actual and a remainder row makes them add up", 
   assert.match(ed, /"Other \(no department payroll\)"/);
   assert.match(ed, /acctRow\?\.values\[j\] \?\? 0\) - depts\.reduce/);
 });
+
+// Owner 2026-11-18 「non production 没有看到？」: the clocked share of each
+// worker's pay moves from his home department to R&D / repair / maintenance.
+import { reallocateNonProdGross } from "../src/lib/salary-dept.ts";
+const NP = new Set(["R_AND_D", "REPAIR"]);
+
+test("a worker's non-production hours move that share of his pay — the total stays", () => {
+  const out = reallocateNonProdGross(
+    { FAB_SEW: 300000, FRAMING: 200000 },
+    [{ workerId: "a", dept: "FAB_SEW", grossSen: 200000 }, { workerId: "b", dept: "FAB_SEW", grossSen: 100000 }, { workerId: "c", dept: "FRAMING", grossSen: 200000 }],
+    [{ workerId: "a", dept: "FAB_SEW", hours: 150 }, { workerId: "a", dept: "R_AND_D", hours: 50 }, { workerId: "c", dept: "REPAIR", hours: 10 }, { workerId: "c", dept: "FRAMING", hours: 190 }],
+    NP,
+  );
+  assert.deepEqual(out, { FAB_SEW: 250000, FRAMING: 190000, R_AND_D: 50000, REPAIR: 10000 });
+  assert.equal(Object.values(out).reduce((a, v) => a + v, 0), 500000);
+});
+
+test("the month still running: the share scales to the department's labour to date", () => {
+  const out = reallocateNonProdGross(
+    { FAB_SEW: 150000 },
+    [{ workerId: "a", dept: "FAB_SEW", grossSen: 200000 }, { workerId: "b", dept: "FAB_SEW", grossSen: 100000 }],
+    [{ workerId: "a", dept: "FAB_SEW", hours: 30 }, { workerId: "a", dept: "R_AND_D", hours: 10 }],
+    NP,
+  );
+  assert.deepEqual(out, { FAB_SEW: 125000, R_AND_D: 25000 });
+});
+
+test("no non-production departments, or no hours → unchanged", () => {
+  const base = { FAB_SEW: 1000 };
+  assert.deepEqual(reallocateNonProdGross(base, [{ workerId: "a", dept: "FAB_SEW", grossSen: 1000 }], [{ workerId: "a", dept: "R_AND_D", hours: 1 }], new Set()), base);
+  assert.deepEqual(reallocateNonProdGross(base, [{ workerId: "a", dept: "FAB_SEW", grossSen: 1000 }], [], NP), base);
+});
