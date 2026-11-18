@@ -79,6 +79,15 @@ import { WorkOrderCard } from "./components/OverviewCards";
 import { CheckboxMultiSelect } from "@/components/checkbox-multi-select";
 import { ProductDetailLine } from "./components/ProductDetailLine";
 import { CreateStockPODialog } from "./components/CreateStockPODialog";
+import { FibreStickerPage } from "./components/FibreStickerPage";
+import {
+  buildFallbackPackingHeader,
+  isOrderInFibreStickerScope,
+  numberWithinSalesOrder,
+  pickPackingHeaderForPo,
+  type FibreStickerSetPosition,
+  type PackingStickerHeader,
+} from "./fibre-sticker-set";
 import { SendOrderNotificationDialog } from "./components/SendOrderNotificationDialog";
 import {
   BatchActionToolbar,
@@ -1676,6 +1685,11 @@ export default function ProductionPage({
     // separate from qrPayload so the preview path doesn't await a batch
     // QR generation just to show the thumbnails.
     qrDataUrl?: string;
+    fibre?: {
+      header: PackingStickerHeader;
+      componentLabel: string | null;
+      setPosition: FibreStickerSetPosition;
+    };
   };
   // Each FgSticker now = one FG unit (one physical box), NOT one PO.
   // A PO with qty=3 and 3 pieces/set produces 9 FgSticker rows.
@@ -5618,6 +5632,71 @@ export default function ProductionPage({
     return aggregated;
   }, []);
 
+  const loadPackingHeadersForFibre = useCallback(
+    async (stickers: JobCardSticker[]): Promise<PackingStickerHeader[]> => {
+      const fibrePoNos = new Set(stickers.map((sticker) => sticker.poNo));
+      const fibreSalesOrderNos = new Set(
+        stickers.map((sticker) => sticker.salesOrderNo || "").filter(Boolean),
+      );
+      const scopeTokens = [...fibrePoNos, ...fibreSalesOrderNos];
+      const response = await fetch(
+        `/api/production-orders?fields=minimal&include=jobCards&scope=${encodeURIComponent(scopeTokens.join(","))}`,
+        { credentials: "include" },
+      );
+      const body = (await response.json().catch(() => null)) as
+        | { success?: boolean; data?: ProductionOrder[] }
+        | null;
+      if (!response.ok || !body?.success || !Array.isArray(body.data)) {
+        throw new Error(`Loading production orders for Fibre stickers failed (HTTP ${response.status})`);
+      }
+      const ordersInScope = body.data.filter((order) =>
+        isOrderInFibreStickerScope(order, fibrePoNos, fibreSalesOrderNos),
+      );
+      return fetchFgStickersForOrders(ordersInScope);
+    },
+    [fetchFgStickersForOrders],
+  );
+
+  const handlePrintFibreStickers = useCallback(async () => {
+    if (onScreenStickers.length === 0) {
+      toast.info("No job cards in the current filter.");
+      return;
+    }
+    setPrintingJobCards(true);
+    try {
+      const packingHeaders = await loadPackingHeadersForFibre(onScreenStickers);
+      const setPositions = numberWithinSalesOrder(onScreenStickers);
+      const posWithoutPackingData = new Set<string>();
+      const batch: JobCardSticker[] = await Promise.all(
+        onScreenStickers.map(async (sticker, index) => {
+          const packingHeader = pickPackingHeaderForPo(packingHeaders, sticker.poNo);
+          if (!packingHeader) posWithoutPackingData.add(sticker.poNo);
+          return {
+            ...sticker,
+            qrDataUrl: await getQRCodeSvgDataURL(sticker.qrPayload),
+            fibre: {
+              header: packingHeader ?? buildFallbackPackingHeader(sticker),
+              componentLabel: componentBadgeLabel(sticker),
+              setPosition: setPositions[index],
+            },
+          };
+        }),
+      );
+      if (posWithoutPackingData.size > 0) {
+        toast.warning(
+          `No packing data for ${[...posWithoutPackingData].join(", ")}. Those stickers use the Fibre job card details.`,
+        );
+      }
+      setFgStickers([]);
+      setJobCardStickers(batch);
+    } catch (error) {
+      console.error("[handlePrintFibreStickers] failed", error);
+      toast.error("Failed to build Fibre stickers.");
+    } finally {
+      setPrintingJobCards(false);
+    }
+  }, [onScreenStickers, toast, loadPackingHeadersForFibre]);
+
   // Enrich a built FG sticker set with the PUBLIC packing-rack tokens so the
   // printed QR can deep-link to /p/<token> (the no-login rack-assignment page)
   // instead of /worker/scan. One batched, authed call to
@@ -8744,7 +8823,7 @@ export default function ProductionPage({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handlePrintJobCardStickers}
+                onClick={activeTab === "FIBRE" ? handlePrintFibreStickers : handlePrintJobCardStickers}
                 disabled={printingJobCards}
               >
                 {printingJobCards ? "Generating…" : "Print All"}
@@ -9400,7 +9479,7 @@ export default function ProductionPage({
           lines should print at both Fab Cut AND Fab Sew). Every other
           dept stays on the existing 50×75mm thermal layout. */}
       {jobCardStickers.length > 0 && (() => {
-        const useLargeSticker = activeTab === "FAB_CUT" || activeTab === "FAB_SEW";
+        const useLargeSticker = activeTab === "FAB_CUT" || activeTab === "FAB_SEW" || activeTab === "FIBRE";
         return (
         <>
           <style>{`
@@ -9441,7 +9520,15 @@ export default function ProductionPage({
             }
           `}</style>
           <div id="batch-jobcard-print" className="hidden print:block">
-            {jobCardStickers.map((s) => useLargeSticker ? (
+            {jobCardStickers.map((s) => s.fibre ? (
+              <FibreStickerPage
+                key={s.key}
+                header={s.fibre.header}
+                qrDataUrl={s.qrDataUrl}
+                componentLabel={s.fibre.componentLabel}
+                setPosition={s.fibre.setPosition}
+              />
+            ) : useLargeSticker ? (
               // ----- FAB_CUT 100×150mm sticker (mockup #3) -----
               <div
                 key={s.key}
