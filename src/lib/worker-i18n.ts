@@ -1532,6 +1532,102 @@ const dict: Dict = {
     zh: '重试',
     my: 'ထပ်စမ်းပါ',
   },
+  'tasks.title': {
+    en: 'My task',
+    ms: 'Tugas saya',
+    zh: '我的任务',
+    my: 'My task',
+  },
+  'tasks.toFinish': {
+    en: 'to finish',
+    ms: 'untuk disiapkan',
+    zh: '项待完成',
+    my: 'to finish',
+  },
+  'tasks.empty': {
+    en: 'You have nothing to finish. Ask the office to issue fabric to you.',
+    ms: 'Tiada apa-apa untuk disiapkan. Minta pejabat mengeluarkan fabrik kepada anda.',
+    zh: '没有待完成的任务。请让办公室把布料发给你。',
+    my: 'You have nothing to finish. Ask the office to issue fabric to you.',
+  },
+  'tasks.incomplete': {
+    en: 'Incomplete',
+    ms: 'Belum siap',
+    zh: '未完成',
+    my: 'Incomplete',
+  },
+  'tasks.piece': {
+    en: 'Piece',
+    ms: 'Keping',
+    zh: '件',
+    my: 'Piece',
+  },
+  'tasks.issued': {
+    en: 'Issued',
+    ms: 'Dikeluarkan',
+    zh: '发出',
+    my: 'Issued',
+  },
+  'tasks.daysHeld': {
+    en: '{n} days held',
+    ms: '{n} hari ditahan',
+    zh: '已持有 {n} 天',
+    my: '{n} days held',
+  },
+  'tasks.dayHeld': {
+    en: '1 day held',
+    ms: '1 hari ditahan',
+    zh: '已持有 1 天',
+    my: '1 day held',
+  },
+  'tasks.heldToday': {
+    en: 'Issued today',
+    ms: 'Dikeluarkan hari ini',
+    zh: '今天发出',
+    my: 'Issued today',
+  },
+  'tasks.done': {
+    en: 'Done (last 30 days)',
+    ms: 'Siap (30 hari lepas)',
+    zh: '已完成（最近 30 天）',
+    my: 'Done (last 30 days)',
+  },
+  'tasks.completed': {
+    en: 'Completed',
+    ms: 'Disiapkan',
+    zh: '完成于',
+    my: 'Completed',
+  },
+  'tasks.scanFinished': {
+    en: 'Scan finished item',
+    ms: 'Imbas item yang siap',
+    zh: '扫描已完成的物品',
+    my: 'Scan finished item',
+  },
+  'tasks.loadError': {
+    en: 'Could not load your tasks.',
+    ms: 'Tidak dapat memuatkan tugas anda.',
+    zh: '无法加载你的任务。',
+    my: 'Could not load your tasks.',
+  },
+  'tasks.notAvailable': {
+    en: 'My task is only for outsourced workers.',
+    ms: 'Tugas saya hanya untuk pekerja luar.',
+    zh: '“我的任务”仅供外包工人使用。',
+    my: 'My task is only for outsourced workers.',
+  },
+  'tasks.retry': {
+    en: 'Try again',
+    ms: 'Cuba lagi',
+    zh: '重试',
+    my: 'Try again',
+  },
+  'tasks.oldest': {
+    en: 'Oldest',
+    ms: 'Tertua',
+    zh: '最久',
+    my: 'Oldest',
+  },
 };
 
 /**

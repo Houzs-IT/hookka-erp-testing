@@ -52,6 +52,7 @@ const MobileLayout = lazy(() => import('./pages/m/MobileLayout'))
 const WorkerLogin = lazy(() => import('./pages/worker/login'))
 const WorkerHome = lazy(() => import('./pages/worker'))
 const WorkerScan = lazy(() => import('./pages/worker/scan'))
+const WorkerTasks = lazy(() => import('./pages/worker/tasks'))
 const WorkerIssue = lazy(() => import('./pages/worker/issue'))
 const WorkerQc = lazy(() => import('./pages/worker/qc'))
 const WorkerHistory = lazy(() => import('./pages/worker/history'))
@@ -165,6 +166,7 @@ export const router = createBrowserRouter([
       { path: '/worker', element: <S><WorkerHome /></S> },
       { path: '/worker/login', element: <S><WorkerLogin /></S> },
       { path: '/worker/scan', element: <S><WorkerScan /></S> },
+      { path: '/worker/tasks', element: <S><WorkerTasks /></S> },
       { path: '/worker/issue', element: <S><WorkerIssue /></S> },
       { path: '/worker/qc', element: <S><WorkerQc /></S> },
       { path: '/worker/history', element: <S><WorkerHistory /></S> },
