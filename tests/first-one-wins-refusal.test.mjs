@@ -51,7 +51,7 @@ const read = (p) => readFileSync(resolve(process.cwd(), p), "utf8");
 const TWM = read("src/api/routes/three-way-match.ts");
 const SCAN = read("src/pages/worker/scan.tsx");
 const WORKER = read("src/api/routes/worker.ts");
-const RACKQR = read("src/api/routes/public-rack-qr.ts");
+const RACKQR = read("src/api/lib/sticker-resolve.ts");
 const PROD = read("src/api/routes/production-orders.ts");
 
 // Two orders, deliberately with the SAME NUMBER OF LINES so a positional read
@@ -273,7 +273,7 @@ test("-145 the whole-card completion still hangs off that single hit", () => {
 
 for (const [label, src] of [
   ["worker.ts scan-lookup", WORKER],
-  ["public-rack-qr.ts", RACKQR],
+  ["sticker-resolve.ts (resolvePo, moved out of public-rack-qr.ts)", RACKQR],
 ]) {
   test(`-146 ${label} counts the claimants on a barcode token instead of taking the first`, () => {
     // `deriveBarcodeToken` folds the job-card id to 8 digits (`% 100_000_000`).
