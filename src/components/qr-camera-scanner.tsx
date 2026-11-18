@@ -287,7 +287,7 @@ export function QrCameraScanner({
   }, []);
 
   const frameClass = isFullScreen
-    ? "fixed inset-0 z-50 flex flex-col bg-black"
+    ? "fixed inset-0 z-[80] flex flex-col bg-black"
     : "rounded-xl overflow-hidden bg-black shadow-sm border border-[#E6E0D9]";
   const videoClass = isFullScreen
     ? "w-full flex-1 min-h-0 object-cover bg-black"
