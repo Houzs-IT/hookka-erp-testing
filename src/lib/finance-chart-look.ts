@@ -5,38 +5,41 @@
 // 动画，颜色，曲线等等，电脑版和手机版的」). One place for the desktop page and
 // the phone screen, so the two cannot drift apart again.
 // ---------------------------------------------------------------------------
+import { CAT, FORECAST, FORECAST_DASH as HOUSE_DASH, INK } from "./chart-standard";
 
-/** Series colours. Multi-series charts use the categorical palette; a single
- *  series is teal; the forecast line stays red. */
+/** Series colours — from the house chart standard (src/lib/chart-standard.ts;
+ *  owner 2026-11-19 made the Board Report look the company standard, replacing
+ *  the Oct "Finance v2" teal / red set). The forecast is neutral dashed ink, not
+ *  red: red / green mean bad / good only. */
 export const CH = {
-  actual: "#5FA8A0",
-  fc: "#D9534F",
-  teal: "#2F6E7C",
-  green: "#2F7A3B",
-  out: "#E07A5F",
-  in: "#7FB7BE",
-  liab: "#BDB6AA",
-  net: "#1F2A44",
-  single: "#5FA8A0",
-  assets: "#5FA8A0",
+  actual: CAT[0],
+  fc: FORECAST,
+  teal: CAT[2],
+  green: CAT[3],
+  out: CAT[1],
+  in: CAT[0],
+  liab: CAT[1],
+  net: INK.text,
+  single: CAT[0],
+  assets: CAT[0],
 } as const;
 
-/** Stacked bands (departments, materials), by position. */
+/** Stacked bands (departments, materials), by position: the six house colours,
+ *  then neutral steps of grey for the tail (never a generated hue). */
 export const CS_COLOURS = [
-  "#5B7BA6", "#8E7DBE", "#7FB7BE", "#F2B880", "#81B29A", "#B5838D",
-  "#98C1D9", "#F4D35E", "#9A8C98", "#D4A373", "#C9ADA7", "#5FA8D3",
+  ...CAT, "#8A8F98", "#A6ABB3", "#C0C4CA", "#737882", "#5E636C", "#D3D6DB",
 ] as const;
 
 /** Axis, grid and tick colours. */
-export const AXIS = { line: "#CFC8BF", grid: "#EEF1F5", tick: "#374151", label: "#1F1D1B" } as const;
+export const AXIS = { line: INK.axis, grid: "#EEF0F3", tick: "#374151", label: INK.text } as const;
 
 /** A chart change (a tab, the period, a series shown or hidden) eases over
  *  half a second; hover effects take a fifth. */
 export const CHART_MS = 500;
 export const HOVER_MS = 200;
 
-/** Forecast lines are dashed 6 / 4. */
-export const FORECAST_DASH = "6 4";
+/** Forecast lines are dashed (house standard). */
+export const FORECAST_DASH = HOUSE_DASH;
 
 /** The width a value axis needs for its widest label (BUG-2026-10-24-391: at
  *  recharts' fixed 60 a seven-digit label such as 1,400,000 lost its first
