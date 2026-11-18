@@ -341,6 +341,37 @@ function IssuePane({
         <ChevronDown size={20} color={M.muted} aria-hidden />
       </button>
 
+      {isTyping ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitTypedCode();
+          }}
+          style={{ display: "flex", gap: 8 }}
+        >
+          <input
+            value={typedCode}
+            onChange={(event) => setTypedCode(event.target.value)}
+            placeholder="Type or paste the sticker code"
+            aria-label="Sticker code"
+            inputMode="text"
+            enterKeyHint="go"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            disabled={isScanDisabled}
+            autoFocus
+            style={{ ...INPUT_STYLE, flex: 1, minWidth: 0 }}
+          />
+          <button
+            type="submit"
+            disabled={isScanDisabled || issue.isIssuing || !typedCode.trim()}
+            style={{ ...PRIMARY_BUTTON, height: 48, padding: "0 16px", opacity: typedCode.trim() ? 1 : 0.5 }}
+          >
+            Issue
+          </button>
+        </form>
+      ) : null}
       {issue.isWorkersLoading ? <div style={{ ...MESSAGE_STYLE, padding: 8 }}>Loading workers…</div> : null}
       {issue.workersError ? (
         <FeedbackBanner tone="danger" message={`Could not load workers: ${issue.workersError}`} />
@@ -385,36 +416,6 @@ function IssuePane({
             gap: 8,
           }}
         >
-          {isTyping ? (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                submitTypedCode();
-              }}
-              style={{ display: "flex", gap: 8 }}
-            >
-              <input
-                value={typedCode}
-                onChange={(event) => setTypedCode(event.target.value)}
-                placeholder="Type or paste the sticker code"
-                aria-label="Sticker code"
-                inputMode="text"
-                enterKeyHint="go"
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                disabled={isScanDisabled}
-                style={{ ...INPUT_STYLE, flex: 1, minWidth: 0 }}
-              />
-              <button
-                type="submit"
-                disabled={isScanDisabled || issue.isIssuing || !typedCode.trim()}
-                style={{ ...PRIMARY_BUTTON, height: 48, padding: "0 16px", opacity: typedCode.trim() ? 1 : 0.5 }}
-              >
-                Issue
-              </button>
-            </form>
-          ) : null}
           <button
             type="button"
             disabled={isScanDisabled}
