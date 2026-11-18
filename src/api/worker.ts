@@ -1322,6 +1322,7 @@ import payrollHourDeductions from "./routes/payroll-hour-deductions";
 import employeeAdvances from "./routes/employee-advances";
 import workerPenalties from "./routes/worker-penalties";
 import outsourcePiece from "./routes/outsource-piece";
+import { outsourceIssuesAdmin, outsourceIssuesWorker } from "./routes/outsource-issues";
 import cashFlow from "./routes/cash-flow";
 import consignments from "./routes/consignments";
 import consignmentNotes from "./routes/consignment-notes";
@@ -1412,6 +1413,8 @@ app.route("/api/worker-auth", workerAuth);
 // wins matching (same reasoning as the /api/worker-auth ordering note).
 app.route("/api/announcements", announcementsAdmin);
 app.route("/api/worker/announcements", announcementsWorker);
+app.route("/api/worker/outsource-issues", outsourceIssuesWorker);
+app.route("/api/outsource-issues", outsourceIssuesAdmin);
 // Worker portal (mobile /worker pages). MUST mount AFTER /api/worker-auth so
 // the more-specific prefix wins matching — `/api/worker-auth/login` would
 // otherwise be a prefix-match for `/api/worker` if order flipped.

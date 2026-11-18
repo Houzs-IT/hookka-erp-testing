@@ -90,7 +90,7 @@ export const ALL_RESOURCES = [
   "supplier-scorecards", "grn", "goods-in-transit", "three-way-match", "mrp",
   // Production
   "production-orders", "job-cards", "scheduling", "bom", "bom-master-templates",
-  "production-leadtimes",
+  "production-leadtimes", "outsource-issues",
   // Quality
   "qc-inspections", "service-cases", "service-orders",
   // Warehouse
