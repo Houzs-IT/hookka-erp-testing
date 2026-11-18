@@ -1,4 +1,5 @@
 import { parseStickerData } from "../../lib/qr-utils";
+import { freshAll, freshFirst } from "./worker-penalties";
 import { resolvePo } from "./sticker-resolve";
 import type { PoMatch } from "./sticker-resolve";
 
@@ -48,12 +49,14 @@ export async function resolveSewingScope(
   // Bedframe pieces (DIVAN / HEADBOARD) are NOT SOFA_* — they keep per-piece
   // scoping and stay separately scannable.
   if (wipKey) {
-    const wkProbe = await db
-      .prepare(
-        "SELECT wipType FROM job_cards WHERE productionOrderId = ? AND wipKey = ? LIMIT 1",
-      )
-      .bind(request.productionOrderId, wipKey)
-      .first<{ wipType: string | null }>();
+    const wkProbe = await freshFirst<{ wipType: string | null }>(
+      db,
+      db
+        .prepare(
+          "SELECT wipType FROM job_cards WHERE productionOrderId = ? AND wipKey = ? LIMIT 1",
+        )
+        .bind(request.productionOrderId, wipKey),
+    );
     if ((wkProbe?.wipType || "").toUpperCase().startsWith("SOFA_")) {
       wipKey = undefined;
       pieceNo = undefined;
@@ -70,13 +73,14 @@ async function loadSewingCards(
   db: D1Database,
   productionOrderId: string,
 ): Promise<SewingCardRow[]> {
-  const result = await db
-    .prepare(
-      "SELECT id, wipKey, wipLabel, status FROM job_cards WHERE productionOrderId = ? AND departmentCode = 'FAB_SEW'",
-    )
-    .bind(productionOrderId)
-    .all<SewingCardRow>();
-  return result.results ?? [];
+  return freshAll<SewingCardRow>(
+    db,
+    db
+      .prepare(
+        "SELECT id, wipKey, wipLabel, status FROM job_cards WHERE productionOrderId = ? AND departmentCode = 'FAB_SEW'",
+      )
+      .bind(productionOrderId),
+  );
 }
 
 export type SewingCardState = {
@@ -132,13 +136,14 @@ export async function isSewingDone(
   const open = openCardsInScope(scope, cards);
   let slots: PieceSlotState[] = [];
   if (open.length > 0 && scope.pieceNo !== null) {
-    const result = await db
-      .prepare(
-        `SELECT jobCardId, pieceNo, pic1Id FROM piece_pics WHERE jobCardId IN (${open.map(() => "?").join(",")}) AND pieceNo = ?`,
-      )
-      .bind(...open.map((card) => card.id), scope.pieceNo)
-      .all<PieceSlotState>();
-    slots = result.results ?? [];
+    slots = await freshAll<PieceSlotState>(
+      db,
+      db
+        .prepare(
+          `SELECT jobCardId, pieceNo, pic1Id FROM piece_pics WHERE jobCardId IN (${open.map(() => "?").join(",")}) AND pieceNo = ?`,
+        )
+        .bind(...open.map((card) => card.id), scope.pieceNo),
+    );
   }
   return isScopeSewn(scope, cards, slots);
 }
