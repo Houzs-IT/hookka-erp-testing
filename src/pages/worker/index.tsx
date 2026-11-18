@@ -1397,7 +1397,7 @@ export default function WorkerHomePage() {
                 itemCategory: c.itemCategory,
                 sizeLabel: c.sizeLabel,
               });
-              // Two-line row: top has Date | Dept badge | Mins; bottom is the
+              // Two-line row: top has Date | Dept badge | Order no. | Mins; bottom is the
               // product label, allowed to wrap so long WIP names don't get
               // clipped on narrow mobile viewports.
               return (
@@ -1412,8 +1412,10 @@ export default function WorkerHomePage() {
                     <span className="text-[11px] px-1.5 py-0.5 rounded bg-[#F0ECE9] text-[#5A5550] font-semibold whitespace-nowrap">
                       {c.departmentCode}
                     </span>
-                    <span className="flex-1" />
-                    <span className="tabular-nums text-right font-semibold">
+                    <span className="flex-1 min-w-0 truncate tabular-nums text-xs text-[#5A5550]">
+                      {c.orderPoNo}
+                    </span>
+                    <span className="tabular-nums text-right font-semibold whitespace-nowrap">
                       {c.myMinutes} min
                     </span>
                   </div>
