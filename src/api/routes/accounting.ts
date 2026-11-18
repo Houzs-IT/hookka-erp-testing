@@ -7804,6 +7804,20 @@ async function labourInjectionLines(
 ): Promise<{ account: string; sen: number }[]> {
   const hit = memo?.get(ym);
   if (hit) return hit;
+  const { byDept, map } = await labourDeptAggFor(db, orgId, ym);
+  const lines = byDept.length && map ? labourDebitLines(byDept, map) : [];
+  memo?.set(ym, lines);
+  return lines;
+}
+
+// A month's labour per home department, as the P&L injects it (one source for
+// labourInjectionLines and GET /forecast/dept-actuals, so a department's
+// Actual on the Forecast P&L is exactly the gross the P&L puts on its account).
+async function labourDeptAggFor(
+  db: Env["Variables"]["DB"],
+  orgId: string,
+  ym: string,
+): Promise<{ byDept: LabourDeptAgg[]; map: LabourMap | null }> {
   // The month still running (owner 2026-10-12 「任何的 payroll 还没 confirm 都拿
   // 这个新卡显示的数据」): labour TO DATE — the Labor Cost page's "Labor Cost
   // incl. EPF & Allowances" card, split by home department and EPF / SOCSO /
@@ -7829,9 +7843,7 @@ async function labourInjectionLines(
         socsoEmployeeSen: 0,
         eisEmployeeSen: 0,
       }));
-      const tdLines = tdByDept.length ? labourDebitLines(tdByDept, tdMap) : [];
-      memo?.set(ym, tdLines);
-      return tdLines;
+      return { byDept: tdByDept, map: tdMap };
     } catch { /* unreadable → the whole-month figures below, as before */ }
   }
   let byDept: LabourDeptAgg[] = [];
@@ -7863,9 +7875,7 @@ async function labourInjectionLines(
       }));
     } catch { byDept = []; }
   }
-  const lines = byDept.length && map ? labourDebitLines(byDept, map) : [];
-  memo?.set(ym, lines);
-  return lines;
+  return { byDept, map };
 }
 
 // Prior-cumulative P&L balances (the old accountant's TB as at the month-end
@@ -17743,6 +17753,45 @@ app.get("/forecast/customer-actuals", async (c) => {
     });
   }
   return c.json({ success: true, data: { months: customerActualsFromLegs(legs, isRevenue) } });
+});
+
+// GET /api/accounting/forecast/dept-actuals?from=YYYY-MM&to=YYYY-MM — each
+// month's actual labour BY DEPARTMENT (owner 2026-11-18 「我的这个labor也要像
+// rawmaterial这样show出来exact的」): the department rows under a salary account
+// on the Forecast P&L show what each department cost. Source = the very figures
+// the P&L injects for that month (labourDeptAggFor: labour to date for the
+// month still running, else the payslips, else the payroll dry run) and the
+// SAME split labourDebitLines posts — a department's GROSS pay on its mapped
+// account; employer EPF / SOCSO / EIS sit on their own accounts, so they are
+// not in it. Months outside the P&L's injection window (before the opening,
+// after today) have none. What these do not explain of an account (an amount
+// the owner recorded by hand) is left to the page's remainder row. Read only.
+app.get("/forecast/dept-actuals", async (c) => {
+  const denied = await requirePermission(c, "accounting", "read");
+  if (denied) return denied;
+  const from = String(c.req.query("from") ?? "");
+  const to = String(c.req.query("to") ?? "");
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || from > to) {
+    return c.json({ success: false, error: "from and to are months (YYYY-MM), from not after to" }, 400);
+  }
+  const db = c.var.DB;
+  const orgId = getOrgId(c);
+  const obDate = await getOpeningDate(db);
+  const yms = labourInjectMonths({
+    startYm: from,
+    endYm: to,
+    openingYm: obDate ? String(obDate).slice(0, 7) : null,
+    nowYm: new Date().toISOString().slice(0, 7),
+    recordedYms: new Set(),
+  });
+  const months: Record<string, Record<string, number>> = {};
+  for (const ym of yms) {
+    const { byDept } = await labourDeptAggFor(db, orgId, ym);
+    const m: Record<string, number> = {};
+    for (const d of byDept) if (d.grossSen) m[d.departmentCode] = (m[d.departmentCode] ?? 0) + d.grossSen;
+    if (Object.keys(m).length) months[ym] = m;
+  }
+  return c.json({ success: true, data: { months } });
 });
 
 app.put("/forecast", async (c) => {

@@ -120,7 +120,10 @@ test("the P&L's report-layer labour carries labour to date for the running month
   assert.match(fn, /if \(ym === runningMonthYm\(\)\) \{/);
   assert.match(fn, /const td = await loadLabourToDate\(db, orgId, ym\);/);
   assert.match(fn, /grossSen: d\.nonStatutorySen,/);
-  assert.match(fn, /labourDebitLines\(tdByDept, tdMap\)/);
+  // The per-department part lives in labourDeptAggFor (shared with
+  // GET /forecast/dept-actuals); labourInjectionLines posts its result.
+  assert.match(fn, /return \{ byDept: tdByDept, map: tdMap \};/);
+  assert.match(fn, /labourDebitLines\(byDept, map\)/);
   // Unreadable → the whole-month figures, as before.
   assert.match(fn, /catch \{ \/\* unreadable → the whole-month figures below, as before \*\/ \}/);
 });

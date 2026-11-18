@@ -319,6 +319,11 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Forecast P&L: actual labour per department (feat/forecast-labour-dept-actuals, 2026-11-18)
+
+Ask (owner, 18 Nov, Forecast P&L with PRODUCTION - SALARIES opened): 「我的这个labor也要像rawmaterial这样show出来exact的」 — the department rows (FAB_CUT, FAB_SEW, …) showed only Forecast boxes; their Actual columns were blank.
+1. 🔵 New `GET /api/accounting/forecast/dept-actuals?from&to` (accounting read): each month's GROSS pay per home department from the same source the P&L injects (`labourDeptAggFor`, split out of `labourInjectionLines`: labour to date for the running month, else payslips, else the payroll dry run). Gross only, because employer EPF / SOCSO / EIS post to their own accounts (`labourDebitLines`). Edit forecast shows each department's Actual + % of sales under its salary account, and adds "Other (no department payroll)" = account row − departments so the rows add up exactly (same as suppliers / customers). Test: `tests/forecast-dept-actuals.test.mjs`.
+
 ## 🔵 HK-0160..0163 Worker portal: order no. on completed products, outsource piece pay (fix/hk0160-completed-so-no, 2026-11-18)
 
 Violet (management), four tickets on the worker portal, 18 Nov.
