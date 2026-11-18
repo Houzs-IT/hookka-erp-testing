@@ -388,7 +388,7 @@ function SalaryDeptCard({
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#374151" }}>Actual</th>
-                    <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#B4452F" }}>Forecast</th>
+                    <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#5B6270" }}>Forecast</th>
                   </Fragment>
                 ))}
               </tr>
@@ -399,7 +399,7 @@ function SalaryDeptCard({
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__sales__ as number | null)}</td>
-                    <td className={`${tdc} font-semibold text-[#B4452F]`}>{rm(d.__fcsales__ as number | null)}</td>
+                    <td className={`${tdc} font-semibold text-[#5B6270]`}>{rm(d.__fcsales__ as number | null)}</td>
                   </Fragment>
                 ))}
               </tr>
@@ -410,7 +410,7 @@ function SalaryDeptCard({
                 {rowsData.map((d) => (
                   <Fragment key={String(d.label)}>
                     <td className={`${tdc} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__prod__ as number | null)}</td>
-                    <td className={`${tdc} font-semibold text-[#B4452F]`}>-</td>
+                    <td className={`${tdc} font-semibold text-[#5B6270]`}>-</td>
                   </Fragment>
                 ))}
               </tr>
@@ -434,7 +434,7 @@ function SalaryDeptCard({
                             </>
                           )}
                         </td>
-                        <td className={`${tdc} text-[#B4452F]`}>
+                        <td className={`${tdc} text-[#5B6270]`}>
                           {fc === null ? "-" : (
                             <>
                               {rm(fc)}
@@ -455,7 +455,7 @@ function SalaryDeptCard({
                       {rm(d.__cardamt__ as number | null)}
                       <PctPair p={d.__cardpct__ as number | null} pp={d.__cardppct__ as number | null} className="text-[#374151]" />
                     </td>
-                    <td className={`${tdc} text-[#B4452F]`}>
+                    <td className={`${tdc} text-[#5B6270]`}>
                       {rm(d.__cardfc__ as number | null)}
                       {d.__cardfcpct__ !== null && <span className="ml-1.5 text-[10px]">{(d.__cardfcpct__ as number).toFixed(2)}%</span>}
                     </td>
@@ -465,15 +465,15 @@ function SalaryDeptCard({
               {showDenominators && (
                 <>
                   <tr className="border-b border-[#F0ECE9]">
-                    <td className={`${tdc} text-left font-medium text-[#2F6E7C]`}>Headcount</td>
+                    <td className={`${tdc} text-left font-medium text-[#1F9E89]`}>Headcount</td>
                     {base.map((d) => (
-                      <td key={d.label} colSpan={2} className={`${tdc} text-[#2F6E7C] border-l border-[#E2DDD8]`}>{d.headcount ?? "-"}</td>
+                      <td key={d.label} colSpan={2} className={`${tdc} text-[#1F9E89] border-l border-[#E2DDD8]`}>{d.headcount ?? "-"}</td>
                     ))}
                   </tr>
                   <tr className="border-b border-[#F0ECE9]">
-                    <td className={`${tdc} text-left font-medium text-[#2F6E7C]`}>RM / head</td>
+                    <td className={`${tdc} text-left font-medium text-[#1F9E89]`}>RM / head</td>
                     {base.map((d) => (
-                      <td key={d.label} colSpan={2} className={`${tdc} text-[#2F6E7C] border-l border-[#E2DDD8]`}>{rm(d.perHead)}</td>
+                      <td key={d.label} colSpan={2} className={`${tdc} text-[#1F9E89] border-l border-[#E2DDD8]`}>{rm(d.perHead)}</td>
                     ))}
                   </tr>
                   <tr className="border-b border-[#F0ECE9]">
@@ -988,7 +988,7 @@ export default function FinanceDashboardPage() {
         {labels.map((l) => (
           <Fragment key={l}>
             <th className="px-2 py-1 text-right text-[10px] font-semibold border-l border-[#E2DDD8]" style={{ color: "#374151" }}>Actual</th>
-            <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#B4452F" }}>Forecast</th>
+            <th className="px-2 py-1 text-right text-[10px] font-semibold" style={{ color: "#5B6270" }}>Forecast</th>
           </Fragment>
         ))}
       </tr>
@@ -1091,9 +1091,9 @@ export default function FinanceDashboardPage() {
                     ))}
                   </tr>
                   <tr>
-                    <td className={`${td} text-left font-medium text-[#B4452F]`}>Forecast</td>
+                    <td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast</td>
                     {plData.map((d) => (
-                      <td key={d.label} className={`${td} text-[#B4452F]`}>
+                      <td key={d.label} className={`${td} text-[#5B6270]`}>
                         {rm(d.forecast as number)}
                         {d.forecastPctOfRevenue !== null && <span className="ml-1.5 text-[10px]">{d.forecastPctOfRevenue.toFixed(2)}%</span>}
                       </td>
@@ -1223,7 +1223,7 @@ export default function FinanceDashboardPage() {
                         {csData.map((d, i) => (
                           <Fragment key={String(d.label)}>
                             <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__sales__ as number)}</td>
-                            <td className={`${td} font-semibold text-[#B4452F]`}>
+                            <td className={`${td} font-semibold text-[#5B6270]`}>
                               {shownRows[i]?.forecast?.sales != null ? rm(shownRows[i]!.forecast!.sales!) : "-"}
                             </td>
                           </Fragment>
@@ -1237,7 +1237,7 @@ export default function FinanceDashboardPage() {
                         {csData.map((d) => (
                           <Fragment key={String(d.label)}>
                             <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.__prod__ as number | null)}</td>
-                            <td className={`${td} font-semibold text-[#B4452F]`}>-</td>
+                            <td className={`${td} font-semibold text-[#5B6270]`}>-</td>
                           </Fragment>
                         ))}
                       </tr>
@@ -1266,7 +1266,7 @@ export default function FinanceDashboardPage() {
                                     </>
                                   )}
                                 </td>
-                                <td className={`${td} text-[#B4452F]`}>
+                                <td className={`${td} text-[#5B6270]`}>
                                   {fc === null ? "-" : (
                                     <>
                                       {rm(fc)}
@@ -1297,7 +1297,7 @@ export default function FinanceDashboardPage() {
                                   </>
                                 )}
                               </td>
-                              <td className={`${td} text-[#B4452F]`}>
+                              <td className={`${td} text-[#5B6270]`}>
                                 {fcSum === null ? "-" : (
                                   <>
                                     {rm(fcSum)}
@@ -1339,7 +1339,7 @@ export default function FinanceDashboardPage() {
                       {csTrend.map((d) => (
                         <Fragment key={d.label}>
                           <td className={`${td} font-semibold border-l border-[#E2DDD8]`}>{rm(d.sales)}</td>
-                          <td className={`${td} font-semibold text-[#B4452F]`}>{d.forecastSales === null ? "-" : rm(d.forecastSales)}</td>
+                          <td className={`${td} font-semibold text-[#5B6270]`}>{d.forecastSales === null ? "-" : rm(d.forecastSales)}</td>
                         </Fragment>
                       ))}
                     </tr>
@@ -1348,7 +1348,7 @@ export default function FinanceDashboardPage() {
                       {csTrend.map((d) => (
                         <Fragment key={d.label}>
                           <td className={`${td} border-l border-[#E2DDD8]`}>{rm(d.amount)}</td>
-                          <td className={`${td} text-[#B4452F]`}>{d.forecast === null ? "-" : rm(d.forecast)}</td>
+                          <td className={`${td} text-[#5B6270]`}>{d.forecast === null ? "-" : rm(d.forecast)}</td>
                         </Fragment>
                       ))}
                     </tr>
@@ -1364,7 +1364,7 @@ export default function FinanceDashboardPage() {
                             <td className={`${td} border-l border-[#E2DDD8] ${d.forecastPct === null ? "text-[#374151]" : over ? "text-[#B4452F]" : "text-[#2F7A3B]"}`}>
                               {d.pct === null ? "-" : `${d.pct.toFixed(2)}%`}
                             </td>
-                            <td className={`${td} text-[#B4452F]`}>{d.forecastPct === null ? "-" : `${d.forecastPct.toFixed(2)}%`}</td>
+                            <td className={`${td} text-[#5B6270]`}>{d.forecastPct === null ? "-" : `${d.forecastPct.toFixed(2)}%`}</td>
                           </Fragment>
                         );
                       })}
@@ -1399,7 +1399,7 @@ export default function FinanceDashboardPage() {
                   <thead>{periodHead(cfData.map((d) => d.label))}</thead>
                   <tbody>
                     <tr><td className={`${td} text-left font-medium text-[#2F7A3B]`}>Money in</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#2F7A3B]`}>{rm(d.inflow as number)}</td>)}</tr>
-                    <tr><td className={`${td} text-left font-medium text-[#B4452F]`}>Money out</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#B4452F]`}>{rm(d.outflow as number)}</td>)}</tr>
+                    <tr><td className={`${td} text-left font-medium`}>Money out</td>{cfData.map((d) => <td key={d.label} className={td}>{rm(d.outflow as number)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>{cfTab === "freeCashFlow" ? "Free cash flow" : cfTab[0].toUpperCase() + cfTab.slice(1)}</td>{cfData.map((d) => <td key={d.label} className={`${td} ${(d.value as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.value as number)}</td>)}</tr>
                     <tr className="bg-[#FBF9F6]"><td className={`${td} text-left font-semibold`}>Net change</td>{cfData.map((d) => <td key={d.label} className={`${td} font-semibold ${(d.net as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.net as number)}</td>)}</tr>
                     {cfView === "detail" &&
@@ -1460,7 +1460,7 @@ export default function FinanceDashboardPage() {
                   <tbody>
                     <tr><td className={`${td} text-left font-medium`}>Total assets</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.assets)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>Total liabilities</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.liabilities)}</td>)}</tr>
-                    <tr><td className={`${td} text-left font-medium text-[#B4452F]`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#B4452F]`}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
+                    <tr><td className={`${td} text-left font-medium`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={td}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
                   </tbody>
                 </table>
               )

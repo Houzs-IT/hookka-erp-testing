@@ -20,16 +20,15 @@ const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const page = read("src/pages/finance-dashboard.tsx");
 const chart = read("src/components/finance/chart-look.tsx");
 
-test("the design's palette (Categorical)", () => {
+test("the house chart standard (owner 2026-11-19 replaced the Oct Finance v2 colours)", async () => {
+  const std = await import("../src/lib/chart-standard.ts");
   assert.deepEqual({ ...look.CH }, {
-    actual: "#5FA8A0", fc: "#D9534F", teal: "#2F6E7C", green: "#2F7A3B", out: "#E07A5F",
-    in: "#7FB7BE", liab: "#BDB6AA", net: "#1F2A44", single: "#5FA8A0", assets: "#5FA8A0",
+    actual: std.CAT[0], fc: std.FORECAST, teal: std.CAT[2], green: std.CAT[3], out: std.CAT[1],
+    in: std.CAT[0], liab: std.CAT[1], net: std.INK.text, single: std.CAT[0], assets: std.CAT[0],
   });
-  assert.deepEqual([...look.CS_COLOURS], [
-    "#5B7BA6", "#8E7DBE", "#7FB7BE", "#F2B880", "#81B29A", "#B5838D",
-    "#98C1D9", "#F4D35E", "#9A8C98", "#D4A373", "#C9ADA7", "#5FA8D3",
-  ]);
-  assert.equal(look.FORECAST_DASH, "6 4");
+  assert.deepEqual([...look.CS_COLOURS].slice(0, 6), [...std.CAT], "the six house colours first");
+  assert.ok(!Object.values(look.CH).some((c) => c === std.STATUS.good || c === std.STATUS.bad), "no status colour as a series");
+  assert.equal(look.FORECAST_DASH, std.FORECAST_DASH);
   assert.equal(look.CHART_MS, 500);
 });
 

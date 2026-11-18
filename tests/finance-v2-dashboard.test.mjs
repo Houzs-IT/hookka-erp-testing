@@ -67,7 +67,7 @@ test("the tables: v2 list look, the period header in the head, the first column 
   assert.doesNotMatch(src, /<tbody>\s*\{periodHead/);
   const heads = src.slice(src.indexOf("const periodHead = "), src.indexOf("\n  return (", src.indexOf("const periodHead = ")));
   assert.doesNotMatch(heads, /<td /, "the period header is header cells");
-  assert.match(heads, /style=\{\{ color: "#B4452F" \}\}>Forecast<\/th>/, "the forecast column keeps its red cue (the design's #B4452F since 2026-10-20)");
+  assert.match(heads, /style=\{\{ color: "#5B6270" \}\}>Forecast<\/th>/, "the forecast column is the house forecast grey (owner 2026-11-19: red means worse-than-forecast only)");
   assert.match(css, /\[data-fin-ui\] table\[data-fin-list\]\[data-fin-stick\] > tbody > tr > td:first-child \{\n  position: sticky;\n  left: 0;/);
   assert.match(css, /tr:not\(\[class\*="bg-"\]\) > td:first-child \{\n  background-color: #FFFFFF;/);
 });
