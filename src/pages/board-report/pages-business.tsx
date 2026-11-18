@@ -4,8 +4,9 @@ import { useState } from "react";
 import type { BoardReport } from "@/lib/board-report";
 import { changePct, pct, NOTES_MAX } from "@/lib/board-report";
 import { ComboChart, Donut, Elastic, ShareBars } from "./charts";
-import { CAT, FC, pctText, rm } from "./format";
-import { BrPage, Delta, Money, Tile, Unavailable } from "./page-kit";
+import { CAT, FC, pctText, rm, rmShort } from "./format";
+import { BrPage, ChartTitle, Delta, Money, Tile, Unavailable } from "./page-kit";
+import { outlookHeadline, trendHeadline } from "./headlines";
 import { withSection } from "./with-section";
 
 type P = { r: BoardReport };
@@ -49,7 +50,17 @@ export function CashForecastPage({ r }: P) {
               </table>
             </>
           )}
-          <h3>Month-end bank balance</h3>
+          {(() => {
+            const act = d.months.filter((m) => typeof m.actual === "number" && m.ym <= r.month);
+            const cur = act[act.length - 1];
+            const fut = d.months.filter((m) => typeof m.pnl === "number" && (!cur || m.ym > cur.ym));
+            const end = fut[fut.length - 1];
+            const rmK = (v: number) => `${v < 0 ? "−" : ""}RM ${rmShort(Math.abs(v))}`;
+            const action = cur && typeof cur.actual === "number"
+              ? `Bank ${rmK(cur.actual)} at ${cur.label} end` + (end && typeof end.pnl === "number" ? `; P&L forecast ${rmK(end.pnl)} by ${end.label}` : "")
+              : null;
+            return <ChartTitle label="Month-end bank balance" action={action} />;
+          })()}
           <Elastic>
             {(w, h) => (
               <ComboChart w={w} h={h}
@@ -88,7 +99,10 @@ export function CustomersPage({ r }: P) {
               <tr className="strong"><td>All customers</td><td><Money v={d.concentration?.totalSen ?? d.company?.total ?? null} /></td><td>100.0%</td><td><Money v={d.company && d.company.bedframeAvg !== null ? Math.round(d.company.bedframeAvg * d.company.bedframeUnits) : null} /></td><td /><td /><td><Money v={d.company && d.company.sofaAvg !== null ? Math.round(d.company.sofaAvg * d.company.sofaSets) : null} /></td><td /><td /></tr>
             </tbody>
           </table>
-          <h3>Share of confirmed orders</h3>
+          <ChartTitle label="Share of confirmed orders"
+            action={d.concentration && d.concentration.largestName && d.concentration.largestPct !== null
+              ? `Largest customer ${d.concentration.largestName} is ${pctText(d.concentration.largestPct)} of orders` + (d.concentration.top10Pct !== null ? `; the top ten ${pctText(d.concentration.top10Pct)}` : "")
+              : null} />
           {/* Owner review 2026-11-10: half the page was empty — a donut next to the bars. */}
           <div className="brp-grid2">
             <Donut items={d.rows.slice(0, 6).map((x) => ({ label: x.name, value: x.total ?? 0 }))} centre={pctText(d.concentration?.largestPct ?? null)} />
@@ -209,7 +223,8 @@ export function OperationsPage({ r }: P) {
             ) : (
               <p className="brp-small">Worker efficiency left out: {d.workforceNote}</p>
             )}
-            <h3>Production value by month</h3>
+            <ChartTitle label="Production value by month"
+              action={trendHeadline("Production value", d.trend.map((t) => ({ label: t.label, value: t.bedframe + t.sofa + t.accessory, actual: true })))} />
             <Elastic>
               {(w, h) => (
                 <ComboChart w={w} h={h}
@@ -277,7 +292,8 @@ export function OutlookPage({ r }: P) {
             </>
           )}
           {/* Owner review 2026-11-15: gross profit beside net profit on the chart. */}
-          <h3>Forecast revenue, gross profit and net profit</h3>
+          <ChartTitle label="Forecast revenue, gross profit and net profit"
+            action={outlookHeadline(d.months.map((m) => ({ label: m.label, sales: m.forecast?.sales ?? null })))} />
           <Elastic>
             {(w, h) => (
               // Owner 2026-11-17 「没有NP？GP？不需要revenue to date」: gross and net
