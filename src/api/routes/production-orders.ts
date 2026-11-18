@@ -112,7 +112,10 @@ import type {
   PiecePicRow,
   ProductionOrderRow,
 } from "./production-orders/_helpers";
-import { resolveSewingScope } from "../lib/sewing-scope";
+import { isSewingDone, resolveSewingScope } from "../lib/sewing-scope";
+import type { SewingScope } from "../lib/sewing-scope";
+import { checkSewingHandover, finishSewingHandover } from "../lib/outsource-issue";
+import type { SewingHandover } from "../lib/outsource-issue";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -2278,6 +2281,27 @@ app.post("/:id/scan-complete", async (c) => {
     );
   }
 
+  let sewingHandover: SewingHandover = { kind: "none" };
+  let cardSewingScope: SewingScope | null = null;
+  if (target.jc.departmentCode === "FAB_SEW") {
+    cardSewingScope = await resolveSewingScope(db, {
+      productionOrderId: target.po.id,
+      wipKey: target.jc.wipKey || undefined,
+      pieceNo: wholeCard ? undefined : target.slot.pieceNo,
+    });
+    sewingHandover = await checkSewingHandover(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      scope: cardSewingScope,
+    });
+    if (sewingHandover.kind === "refused") {
+      return c.json(
+        { success: false, code: sewingHandover.code, error: sewingHandover.message },
+        409,
+      );
+    }
+  }
+
   // Fill the piece slot(s).
   if (wholeCard) {
     // Whole-WIP completion: PIC1 of every still-open piece → the scanning
@@ -2539,6 +2563,13 @@ app.post("/:id/scan-complete", async (c) => {
 
   await invalidateProductionCachesAfterScan(c);
 
+  if (cardSewingScope && (await isSewingDone(db, cardSewingScope))) {
+    await finishSewingHandover(db, sewingHandover, {
+      productionOrderId: target.po.id,
+      workerId: worker.id,
+    });
+  }
+
   const freshPo = await fetchPO(db, target.po.id);
   const jcOut = freshPo?.jobCards.find((j) => j.id === target.jc.id);
   const redirected =
@@ -2791,6 +2822,21 @@ app.post("/:id/scan-complete-dept", async (c) => {
     if (gate) return gate;
   }
 
+  let sewingHandover: SewingHandover = { kind: "none" };
+  if (deptCode === "FAB_SEW") {
+    sewingHandover = await checkSewingHandover(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      scope: { productionOrderId: poId, wipKey: null, pieceNo: null },
+    });
+    if (sewingHandover.kind === "refused") {
+      return c.json(
+        { success: false, code: sewingHandover.code, error: sewingHandover.message },
+        409,
+      );
+    }
+  }
+
   const nowIso = new Date().toISOString();
   const today = nowIso.split("T")[0];
   const completedJcIds: string[] = [];
@@ -2951,6 +2997,11 @@ app.post("/:id/scan-complete-dept", async (c) => {
   await cascadeUpholsteryToCO(db, poId);
 
   await invalidateProductionCachesAfterScan(c);
+
+  await finishSewingHandover(db, sewingHandover, {
+    productionOrderId: poId,
+    workerId: worker.id,
+  });
 
   const freshPo = await fetchPO(db, poId);
   return c.json({
@@ -3221,6 +3272,21 @@ app.post("/:id/scan-complete-shared", async (c) => {
     }
   }
 
+  let sewingHandover: SewingHandover = { kind: "none" };
+  if (targetDept === "FAB_SEW") {
+    sewingHandover = await checkSewingHandover(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      scope: sewingScope,
+    });
+    if (sewingHandover.kind === "refused") {
+      return c.json(
+        { success: false, code: sewingHandover.code, error: sewingHandover.message },
+        409,
+      );
+    }
+  }
+
   // The sequence lock is applied above, on the resolved card set (owner
   // 2026-09-06). The 2026-06-08 note that used to sit here — workers may
   // complete any dept directly — described the permission this change
@@ -3455,6 +3521,11 @@ app.post("/:id/scan-complete-shared", async (c) => {
   await cascadeUpholsteryToCO(db, poId);
 
   await invalidateProductionCachesAfterScan(c);
+
+  await finishSewingHandover(db, sewingHandover, {
+    productionOrderId: poId,
+    workerId: worker.id,
+  });
 
   const freshPo = await fetchPO(db, poId);
   return c.json({
