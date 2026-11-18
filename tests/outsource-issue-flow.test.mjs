@@ -191,3 +191,93 @@ test("every handler that can complete a FAB_SEW card for a worker checks before 
     assert.ok(body.indexOf("checkSewingHandover(") < body.indexOf("finishSewingHandover("), route);
   }
 });
+
+test("handover, enforce on: a whole-card scan by one holder is refused while another worker holds a piece", async () => {
+  const { db, state } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
+  await issue(db, ALI, divanQr(1));
+  await issue(db, BALA, divanQr(2));
+  const wholeCard = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: null };
+  const refused = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope: wholeCard });
+  assert.equal(refused.kind, "refused");
+  assert.equal(refused.code, "ISSUED_TO_OTHER");
+  assert.match(refused.message, /Bala/);
+  assert.deepEqual(state.issues.map((i) => i.status), ["INCOMPLETE", "INCOMPLETE"]);
+});
+
+test("issue: an overlapping scope on the same order is refused whatever the status", async () => {
+  const { db, state } = makeFakeDb();
+  const piece1 = await issue(db, ALI, divanQr(1));
+  await issue(db, ALI, divanQr(2));
+  const sentinel = await issue(db, BALA, stickerUrl(`op=FG-FAB_SEW&po=${BED_PO.poNo}`));
+  assert.equal(sentinel.kind, "already-issued");
+  const wholeDivan = await issue(db, BALA, stickerUrl(`po=${BED_PO.poNo}&c=DIVAN`));
+  assert.equal(wholeDivan.kind, "already-issued");
+  assert.equal(state.issues.length, 2);
+  const headboard = await issue(db, BALA, stickerUrl(`po=${BED_PO.poNo}&c=HEADBOARD`));
+  assert.equal(headboard.kind, "issued");
+  state.issues[0].status = "COMPLETED";
+  assert.equal((await issue(db, BALA, divanQr(1))).issue.id, piece1.issue.id);
+});
+
+test("handover, enforce off: a failing issue lookup logs and never blocks the scan", async () => {
+  const { db } = makeFakeDb();
+  const broken = {
+    prepare(sql) {
+      if (/outsource_issues/i.test(sql)) throw new Error("table unavailable");
+      return db.prepare(sql);
+    },
+  };
+  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
+  const original = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const result = await Issue.checkSewingHandover(broken, { orgId: ORG, workerId: "osc", scope });
+    assert.equal(result.kind, "none");
+  } finally {
+    console.error = original;
+  }
+  assert.equal(logged.length, 1);
+});
+
+test("handover, enforce on: a failing issue lookup propagates", async () => {
+  const { db } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
+  const broken = {
+    prepare(sql) {
+      if (/outsource_issues/i.test(sql)) throw new Error("table unavailable");
+      return db.prepare(sql);
+    },
+  };
+  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
+  await assert.rejects(() => Issue.checkSewingHandover(broken, { orgId: ORG, workerId: "osc", scope }), /table unavailable/);
+});
+
+test("finish: a failing sewn check is logged, never thrown", async () => {
+  const { db, state } = makeFakeDb();
+  await issue(db, ALI, divanQr(1));
+  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
+  const holder = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope });
+  const original = console.error;
+  console.error = () => {};
+  try {
+    await Issue.finishSewingHandover(db, holder, { productionOrderId: BED_PO.id, workerId: "osc" }, async () => {
+      throw new Error("read failed");
+    });
+  } finally {
+    console.error = original;
+  }
+  assert.equal(state.issues[0].status, "INCOMPLETE");
+  await Issue.finishSewingHandover(db, holder, { productionOrderId: BED_PO.id, workerId: "osc" }, async () => true);
+  assert.equal(state.issues[0].status, "COMPLETED");
+});
+
+test("already-done sewing: the holder's scan still closes the issue, someone else's scan does not", async () => {
+  const { db, state } = makeFakeDb();
+  await issue(db, ALI, divanQr(1));
+  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
+  await Issue.closeIssuesHeldOnFinishedSewing(db, { orgId: ORG, workerId: "osc2", scope });
+  assert.equal(state.issues[0].status, "INCOMPLETE");
+  await Issue.closeIssuesHeldOnFinishedSewing(db, { orgId: ORG, workerId: "osc", scope });
+  assert.equal(state.issues[0].status, "COMPLETED");
+  assert.ok(state.issues[0].completed_at instanceof Date);
+});

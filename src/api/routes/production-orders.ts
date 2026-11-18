@@ -114,7 +114,11 @@ import type {
 } from "./production-orders/_helpers";
 import { isSewingDone, resolveSewingScope } from "../lib/sewing-scope";
 import type { SewingScope } from "../lib/sewing-scope";
-import { checkSewingHandover, finishSewingHandover } from "../lib/outsource-issue";
+import {
+  checkSewingHandover,
+  closeIssuesHeldOnFinishedSewing,
+  finishSewingHandover,
+} from "../lib/outsource-issue";
 import type { SewingHandover } from "../lib/outsource-issue";
 
 // ---------------------------------------------------------------------------
@@ -2563,11 +2567,14 @@ app.post("/:id/scan-complete", async (c) => {
 
   await invalidateProductionCachesAfterScan(c);
 
-  if (cardSewingScope && (await isSewingDone(db, cardSewingScope))) {
-    await finishSewingHandover(db, sewingHandover, {
-      productionOrderId: target.po.id,
-      workerId: worker.id,
-    });
+  if (cardSewingScope) {
+    const sewnScope = cardSewingScope;
+    await finishSewingHandover(
+      db,
+      sewingHandover,
+      { productionOrderId: target.po.id, workerId: worker.id },
+      () => isSewingDone(db, sewnScope),
+    );
   }
 
   const freshPo = await fetchPO(db, target.po.id);
@@ -3230,6 +3237,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
         if (t && !doneBy.includes(t)) doneBy.push(t);
       }
     }
+    if (targetDept === "FAB_SEW") {
+      await closeIssuesHeldOnFinishedSewing(db, {
+        orgId: scanOrgId(c),
+        workerId: worker.id,
+        scope: sewingScope,
+      });
+    }
     const freshEmpty = await fetchPO(db, poId);
     return c.json({
       success: true,
@@ -3461,6 +3475,10 @@ app.post("/:id/scan-complete-shared", async (c) => {
         409,
       );
     }
+    await finishSewingHandover(db, sewingHandover, {
+      productionOrderId: poId,
+      workerId: worker.id,
+    });
     const freshEmpty = await fetchPO(db, poId);
     return c.json({
       success: true,

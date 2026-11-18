@@ -52,7 +52,6 @@ const DDL: string[] = [
 
 let _applied = false;
 
-/** Memoised as a BOOLEAN: a cached rejected promise would disable this for the isolate. */
 export async function ensureOutsourceIssueTable(db: Runner): Promise<void> {
   if (_applied) return;
   for (const sql of DDL) await db.prepare(sql).run();
@@ -166,6 +165,20 @@ async function findByItemKey(
   return row ? toIssue(row) : null;
 }
 
+async function loadOrderIssues(
+  db: Runner,
+  orgId: string,
+  productionOrderId: string,
+): Promise<OutsourceIssue[]> {
+  const rows = await freshAll<Row>(
+    db,
+    db
+      .prepare("SELECT * FROM outsource_issues WHERE org_id = ? AND production_order_id = ?")
+      .bind(orgId, productionOrderId),
+  );
+  return rows.map(toIssue);
+}
+
 export type IssueOutcome =
   | { kind: "issued"; issue: OutsourceIssue }
   | { kind: "already-issued"; issue: OutsourceIssue }
@@ -185,7 +198,9 @@ export async function issueItem(
   const { orgId, worker, lookup, qrRaw, issuedBy } = request;
   const itemKey = itemKeyOf(lookup.scope);
 
-  const existing = await findByItemKey(db, orgId, itemKey);
+  const onOrder = await loadOrderIssues(db, orgId, lookup.scope.productionOrderId);
+  const overlapping = onOrder.filter((issue) => scopesOverlap(issue, lookup.scope));
+  const existing = overlapping.find((issue) => issue.itemKey === itemKey) ?? overlapping[0];
   if (existing) return { kind: "already-issued", issue: existing };
   if (lookup.isSewn) return { kind: "already-sewn" };
 
@@ -470,38 +485,61 @@ export type SewingHandover =
   | { kind: "holder"; issueIds: string[] }
   | { kind: "refused"; code: "NOT_ISSUED_TO_YOU" | "ISSUED_TO_OTHER"; message: string };
 
-export async function checkSewingHandover(
+async function findHeldIssues(
   db: Runner,
   request: { orgId: string; workerId: string; scope: SewingScope },
 ): Promise<SewingHandover> {
   await ensureOutsourceIssueTable(db);
+  const onOrder = await loadOrderIssues(db, request.orgId, request.scope.productionOrderId);
+  const mine = onOrder.filter(
+    (issue) =>
+      issue.workerId === request.workerId &&
+      issue.status === "INCOMPLETE" &&
+      scopesOverlap(issue, request.scope),
+  );
+  return mine.length > 0 ? { kind: "holder", issueIds: mine.map((issue) => issue.id) } : { kind: "none" };
+}
+
+export async function checkSewingHandover(
+  db: Runner,
+  request: { orgId: string; workerId: string; scope: SewingScope },
+): Promise<SewingHandover> {
   const { orgId, workerId, scope } = request;
-  const rows = await freshAll<Row>(
-    db,
-    db
-      .prepare("SELECT * FROM outsource_issues WHERE org_id = ? AND production_order_id = ?")
-      .bind(orgId, scope.productionOrderId),
-  );
-  const overlapping = rows.map(toIssue).filter((issue) => scopesOverlap(issue, scope));
-  const mine = overlapping.filter(
-    (issue) => issue.workerId === workerId && issue.status === "INCOMPLETE",
-  );
-  if (mine.length > 0) return { kind: "holder", issueIds: mine.map((issue) => issue.id) };
+  let enforced: boolean;
+  try {
+    enforced = await isEnforced(db);
+  } catch (error) {
+    console.error("[outsource-issue] enforce switch unreadable, not blocking the scan", error);
+    return { kind: "none" };
+  }
+  if (!enforced) {
+    try {
+      return await findHeldIssues(db, request);
+    } catch (error) {
+      console.error("[outsource-issue] holder lookup failed, not blocking the scan", error);
+      return { kind: "none" };
+    }
+  }
 
-  if (!(await isEnforced(db))) return { kind: "none" };
-
-  const alreadyMineAndDone = overlapping.some(
-    (issue) => issue.workerId === workerId && issue.status === "COMPLETED",
+  await ensureOutsourceIssueTable(db);
+  const onOrder = await loadOrderIssues(db, orgId, scope.productionOrderId);
+  const overlapping = onOrder.filter((issue) => scopesOverlap(issue, scope));
+  const heldByOther = overlapping.find(
+    (issue) => issue.status === "INCOMPLETE" && issue.workerId !== workerId,
   );
-  if (alreadyMineAndDone) return { kind: "none" };
-
-  const heldByOther = overlapping.find((issue) => issue.status === "INCOMPLETE");
   if (heldByOther) {
     return {
       kind: "refused",
       code: "ISSUED_TO_OTHER",
       message: `This item was issued to ${heldByOther.workerName || "another worker"}. Only that person can complete it.`,
     };
+  }
+  const mine = overlapping.filter(
+    (issue) => issue.workerId === workerId && issue.status === "INCOMPLETE",
+  );
+  if (mine.length > 0) return { kind: "holder", issueIds: mine.map((issue) => issue.id) };
+  if (overlapping.some((issue) => issue.workerId === workerId && issue.status === "COMPLETED")) {
+    return { kind: "none" };
   }
   const worker = await loadOutsourceWorker(db, workerId);
   if (worker) {
@@ -536,13 +574,29 @@ export async function finishSewingHandover(
   db: Runner,
   handover: SewingHandover,
   context: { productionOrderId: string; workerId: string },
+  shouldClose?: () => Promise<boolean>,
 ): Promise<void> {
   try {
+    if (shouldClose && !(await shouldClose())) return;
     await closeSewingHandover(db, handover);
   } catch (error) {
     console.error(
       "[outsource-issue] Fabric Sewing completed but the issue could not be closed; it still shows INCOMPLETE",
       { ...context, handover, error },
+    );
+  }
+}
+
+export async function closeIssuesHeldOnFinishedSewing(
+  db: Runner,
+  request: { orgId: string; workerId: string; scope: SewingScope },
+): Promise<void> {
+  try {
+    await closeSewingHandover(db, await findHeldIssues(db, request));
+  } catch (error) {
+    console.error(
+      "[outsource-issue] sewing was already done and the holder's issue could not be closed",
+      { workerId: request.workerId, scope: request.scope, error },
     );
   }
 }
