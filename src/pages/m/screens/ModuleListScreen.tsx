@@ -45,7 +45,18 @@ type Sort = { key: string; dir: "asc" | "desc" } | null;
 // the filtered/sorted set are untouched (counts, search, etc. still see all).
 const PAGE_SIZE = 40;
 
-export function ModuleListScreen({ config }: { config: ModuleConfig }) {
+// `embedded` (Employees shell, HK-0125): the parent screen draws its own MobileHeader and section bar, so skip this
+// screen's header and its (then redundant) single-tab pill. Omitted/false = the list exactly as before.
+export function ModuleListScreen({
+  config,
+  embedded = false,
+  subTabsStickyOffset = 0,
+}: {
+  config: ModuleConfig;
+  embedded?: boolean;
+  /** Extra px to pin the sub-tab row lower, under a parent's own sticky bar. 0 = as before. */
+  subTabsStickyOffset?: number;
+}) {
   const navigate = useNavigate();
   const { mode } = useResponsiveLayout();
 
@@ -379,6 +390,7 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
         <SourceSubscriber key={s.url} source={s} onRows={handleCrossRows} />
       ))}
 
+      {embedded ? null : (
       <MobileHeader
         title={config.title}
         onBack={() => navigate(-1)}
@@ -407,13 +419,15 @@ export function ModuleListScreen({ config }: { config: ModuleConfig }) {
           ) : undefined
         }
       />
+      )}
 
-      {salesTop ? null : (
+      {salesTop || (embedded && allTabs.length <= 1) ? null : (
         <SubTabs
           tabs={allTabs}
           active={activeTab}
           onChange={setActiveTab}
           counts={tabCounts}
+          stickyOffset={subTabsStickyOffset}
         />
       )}
 

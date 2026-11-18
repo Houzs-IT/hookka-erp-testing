@@ -137,8 +137,21 @@ test("screens keep no more fixed-position layers than the known full-screen ones
   // desk-handoff sheet onto the shared Sheet. Service Cases adds one file, case-overlay.tsx, for the
   // approved full-screen dialogs ("Report an issue", the section editors, the order / issue-part / Files overlays),
   // the dark issue-photo viewer and the centred discard confirm.
+  // Employees (HK-0125 Phase 2) adds two: the full-page "Approved / Rejected adjustments" list (AdjustmentRequests.tsx)
+  // the dark full-screen punch-photo viewer (PunchPhotoViewer.tsx) the "View all" Daily working hours page (HoursPage.tsx), the "View all" Employee Performance Daily Breakdown page (BreakdownPage.tsx) and the Department Performance day page (DeptPerfDayPage.tsx) and the Labor Cost "View all N units" Revenue Raw Data page (RevenueUnitsPage.tsx) and the Payroll payslip detail page (PayslipPage.tsx);
+  // none is a toast, bar or banner.
   // A new toast, bar or banner must use ResponsiveActionDock, not a fixed offset.
-  assert.deepEqual(found, ["cases/case-overlay.tsx", "procurement/parts.tsx"]);
+  assert.deepEqual(found, [
+    "cases/case-overlay.tsx",
+    "employees/AdjustmentRequests.tsx",
+    "employees/BreakdownPage.tsx",
+    "employees/DeptPerfDayPage.tsx",
+    "employees/HoursPage.tsx",
+    "employees/PayslipPage.tsx",
+    "employees/PunchPhotoViewer.tsx",
+    "employees/RevenueUnitsPage.tsx",
+    "procurement/parts.tsx",
+  ]);
 });
 
 test("screens do not size floating content from the viewport", () => {

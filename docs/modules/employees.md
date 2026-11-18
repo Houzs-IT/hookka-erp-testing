@@ -69,15 +69,15 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:12068` | 9-tab admin host (default export, at file tail) |
-| `WorkingHoursTab` | `src/pages/employees.tsx:1029` | Tab 1 — flat working-hours grid |
-| `EmployeeMasterTab` | `src/pages/employees.tsx:2477` | Tab 2 — worker master + salary |
-| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3972` | Tab 3 — efficiency overview |
-| `DepartmentLaborTab` | `src/pages/employees.tsx:4560` | Dept labor cost breakdown |
-| `EmployeeDetailTab` | `src/pages/employees.tsx:5539` | Tab 4 — guard-unmounted detail |
-| `PayrollTab` | `src/pages/employees.tsx:6940` | Tab 5 — payroll drafts |
-| `LaborCostTab` | `src/pages/employees.tsx:8934` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10687 / 11832` | Leave + attendance tabs |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11889` | 9-tab admin host (default export, at file tail) |
+| `WorkingHoursTab` | `src/pages/employees.tsx:1028` | Tab 1 — flat working-hours grid |
+| `EmployeeMasterTab` | `src/pages/employees.tsx:2476` | Tab 2 — worker master + salary |
+| `EfficiencyOverviewTab` | `src/pages/employees.tsx:3971` | Tab 3 — efficiency overview |
+| `DepartmentLaborTab` | `src/pages/employees.tsx:4559` | Dept labor cost breakdown |
+| `EmployeeDetailTab` | `src/pages/employees.tsx:5464` | Tab 4 — guard-unmounted detail |
+| `PayrollTab` | `src/pages/employees.tsx:6865` | Tab 5 — payroll drafts |
+| `LaborCostTab` | `src/pages/employees.tsx:8753` | Tab 5b — labor cost + DepartmentsManager |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10508 / 11653` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |
@@ -112,7 +112,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 - **PINs are SHA-256, unsalted by design** (10^4–10^6 space; brute-force is throttled instead). A resigned/inactive worker is locked out of the ENTIRE app mid-session via `getWorker` (`worker.ts:163`), not just at login.
 - **Two "home department" sources (DEV-31).** The Today's departments card (`buildDeptDay`) and the punch-out autofill treat `workers.departmentCode` as home before the first scan; the wrong-department sticker check (`getCurrentDeptForWorker`) prefers the attendance row's `departmentCode` first. If those ever differ for a worker, the card and the popup can disagree on a day with no scan. Change them together.
 - **camelCase DB columns fold to lowercase** and can silently return undefined (`clockinphoto ↛ clockInPhoto`); read at-risk cols dual-keyed `r.camelCase ?? r.snake_case`. New columns snake_case; a write to a camelCase col needs a `column-rename-map.json` entry.
-- **Employee Detail tab is intentionally guard-unmounted** (`{activeTab === "detail" && …}` inside `EmployeesPage`, `employees.tsx:11615`) — don't refactor to always-mounted.
+- **Employee Detail tab is intentionally guard-unmounted** (`{activeTab === "detail" && …}` inside `EmployeesPage`, `employees.tsx:12171`) — don't refactor to always-mounted.
 - **UI is 100% English** — no Chinese strings/comments. Add a new tab to BOTH the tab array and the `activeTab` switch inside `EmployeesPage`.
 
 ## Common tasks (mini-playbook)
