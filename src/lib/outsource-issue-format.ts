@@ -74,6 +74,5 @@ export function daysOut(issue: { issuedAt: string; completedAt: string | null })
 
 export function formatDays(days: number | null): string {
   if (days === null) return "—";
-  if (days === 0) return "Today";
   return days === 1 ? "1 day" : `${days} days`;
 }

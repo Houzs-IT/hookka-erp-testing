@@ -46,6 +46,7 @@ import { SalesDetailGate } from "./screens/orders/SalesDetailGate";
 import { CaseDetailScreen } from "./screens/cases/CaseDetailScreen";
 import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
 import { UpdatesScreen } from "./screens/UpdatesScreen";
+import { OutsourceIssueScreen } from "./screens/OutsourceIssueScreen";
 import { MailCenterScreen, MailThreadScreen } from "./screens/MailCenterScreen";
 import { MODULE_CONFIGS } from "./config/modules";
 import { preloadMobileCritical } from "./lib/preload";
@@ -452,6 +453,7 @@ export default function MobileLayout() {
           {/* Updates: Notifications | Announcements (?view=). Not a module
               config, so it sits beside the module routes, not inside them. */}
           <Route path="updates" element={<UpdatesScreen />} />
+          <Route path="outsource-issue" element={<OutsourceIssueScreen />} />
           {/* Finance (finance v2 mobile): the menu and its read-only screens,
               each gated like its desktop page. */}
           <Route path="finance" element={<FinanceRouteShell />} />
