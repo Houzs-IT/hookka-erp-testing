@@ -17823,10 +17823,11 @@ app.get("/forecast/dept-actuals", async (c) => {
       }
     } catch { /* payslips / hours unreadable → home departments only */ }
   }
-  // Only between departments on the same salary account (the labour map).
+  // Pay to a department on another salary account (the labour map) stays on
+  // the home account as `<DEPT>@<account>` — the page lists it there.
   const lmap = await getLabourMap(db);
   const acctOf = (d: string) => lmap.byDept[d] ?? lmap.fallback;
-  const sameAcct = (a: string, b: string) => acctOf(a) === acctOf(b);
+  const targetOf = (home: string, dept: string) => (acctOf(home) === acctOf(dept) ? dept : `${dept}@${acctOf(home)}`);
   const months: Record<string, Record<string, number>> = {};
   for (const ym of yms) {
     const { byDept } = await labourDeptAggFor(db, orgId, ym);
@@ -17839,7 +17840,7 @@ app.get("/forecast/dept-actuals", async (c) => {
           slips = (await projectedPayslipsForMonth(db, ym)).map((p) => ({ workerId: p.employeeId, dept: String(p.departmentCode ?? "").trim(), grossSen: Number(p.grossPaySen) || 0 }));
         } catch { slips = []; }
       }
-      m = reallocateNonProdGross(m, slips, hoursByYm.get(ym) ?? [], nonProd, sameAcct);
+      m = reallocateNonProdGross(m, slips, hoursByYm.get(ym) ?? [], nonProd, targetOf);
     }
     for (const k of Object.keys(m)) if (!m[k]) delete m[k];
     if (Object.keys(m).length) months[ym] = m;

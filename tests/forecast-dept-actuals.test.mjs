@@ -25,7 +25,10 @@ test("department rows show their actual and a remainder row makes them add up", 
   assert.match(ed, /\/api\/accounting\/forecast\/dept-actuals\?from=/);
   assert.match(ed, /\}, deptActualCell\(d\.name\)\),/);
   assert.match(ed, /"Other \(no department payroll\)"/);
-  assert.match(ed, /acctRow\?\.values\[j\] \?\? 0\) - depts\.reduce/);
+  assert.match(ed, /acctRow\?\.values\[j\] \?\? 0\) - names\.reduce/);
+  // Warehouse hours of production workers show under the account the pay is on.
+  assert.match(ed, /n\.endsWith\(`@\$\{k\}`\)/);
+  assert.match(ed, /\(production workers\)/);
 });
 
 // Owner 2026-11-18 「non production 没有看到？」: the clocked share of each
@@ -60,14 +63,14 @@ test("no non-production departments, or no hours → unchanged", () => {
   assert.deepEqual(reallocateNonProdGross(base, [{ workerId: "a", dept: "FAB_SEW", grossSen: 1000 }], [], NP), base);
 });
 
-test("pay never moves to a department on another salary account", () => {
+test("pay to a department on another salary account stays on the home account", () => {
   const acct = { FAB_SEW: "750-0010", R_AND_D: "750-0010", WAREHOUSING: "900-S002" };
   const out = reallocateNonProdGross(
     { FAB_SEW: 100000 },
     [{ workerId: "a", dept: "FAB_SEW", grossSen: 100000 }],
     [{ workerId: "a", dept: "FAB_SEW", hours: 60 }, { workerId: "a", dept: "R_AND_D", hours: 20 }, { workerId: "a", dept: "WAREHOUSING", hours: 20 }],
     new Set(["R_AND_D", "WAREHOUSING"]),
-    (h, d) => acct[h] === acct[d],
+    (h, d) => (acct[h] === acct[d] ? d : `${d}@${acct[h]}`),
   );
-  assert.deepEqual(out, { FAB_SEW: 80000, R_AND_D: 20000 });
+  assert.deepEqual(out, { FAB_SEW: 60000, R_AND_D: 20000, "WAREHOUSING@750-0010": 20000 });
 });
