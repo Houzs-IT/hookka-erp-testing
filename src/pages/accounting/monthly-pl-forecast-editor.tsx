@@ -45,6 +45,7 @@ import {
   supplierActualIds,
   customerActualIds,
   FC_OTHER_CUSTOMER,
+  type FcAccount,
   type FcCustomerActuals,
   type FcMonthFigures,
   type FcSupplierActuals,
@@ -171,6 +172,10 @@ export function MonthlyPlForecastEditor({
   // 没有show by customer？」): month → customer → sen, for the customer rows'
   // Actual cells (GET /forecast/customer-actuals).
   const [customerActs, setCustomerActs] = useState<FcCustomerActuals>({});
+  // What each department actually cost (owner 2026-11-18 「我的这个labor也要像
+  // rawmaterial这样show出来exact的」): month → department → gross sen, for the
+  // department rows' Actual cells under a salary account (GET /forecast/dept-actuals).
+  const [deptActs, setDeptActs] = useState<Record<string, Record<string, number>>>({});
 
   useEffect(() => {
     let live = true;
@@ -225,6 +230,10 @@ export function MonthlyPlForecastEditor({
     fetch(`/api/accounting/forecast/customer-actuals?from=${sorted[0]}&to=${sorted[sorted.length - 1]}`, { cache: "no-store" })
       .then((r) => r.json() as Promise<{ success?: boolean; data?: { months?: FcCustomerActuals } }>)
       .then((j) => { if (live && j?.success) setCustomerActs(j.data?.months ?? {}); })
+      .catch(() => {});
+    fetch(`/api/accounting/forecast/dept-actuals?from=${sorted[0]}&to=${sorted[sorted.length - 1]}`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { months?: Record<string, Record<string, number>> } }>)
+      .then((j) => { if (live && j?.success) setDeptActs(j.data?.months ?? {}); })
       .catch(() => {});
     return () => { live = false; };
   }, [base]);
@@ -369,8 +378,14 @@ export function MonthlyPlForecastEditor({
   const [sel, setSel] = useState<GridSel | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const dragFrom = useRef<GridPos | null>(null);
-  // The rows move under it when the view changes, so it goes.
-  useEffect(() => setSel(null), [open, showDetail, hideUnused, hidePast, anchor]);
+  // The rows move under it when the view changes, so it goes (reset while
+  // rendering, React's way to adjust state when inputs change — not an effect).
+  const selView = JSON.stringify([open, showDetail, hideUnused, hidePast, anchor]);
+  const [selViewSeen, setSelViewSeen] = useState(selView);
+  if (selViewSeen !== selView) {
+    setSelViewSeen(selView);
+    setSel(null);
+  }
   // Highlight the selected boxes (after every render: typing re-draws the rows).
   useEffect(() => {
     const table = tableRef.current;
@@ -636,6 +651,22 @@ export function MonthlyPlForecastEditor({
     return (salesRow?.values[j] ?? 0) - allCustomersActualSen(c);
   };
   const customerHasActual = new Set(customerActualIds(customerActs));
+  // A department's actual gross pay on its salary account: an Actual column's
+  // month, or the year's months added up in Accumulated.
+  const deptActualSen = (dept: string, c: PlForecastColumn) =>
+    actualMonths(c).reduce((s, ym) => s + (deptActs[ym]?.[dept] ?? 0), 0);
+  const deptActualCell = (dept: string) => (c: PlForecastColumn) => {
+    if (c.forecast) return blankPair(c);
+    const sen = deptActualSen(dept, c);
+    return figure(c, sen, pctOfSales(sen, c), true);
+  };
+  const deptHasActual = new Set(Object.values(deptActs).flatMap((m) => Object.keys(m).filter((d) => m[d] !== 0)));
+  // What the departments do not explain of a salary account (an amount keyed
+  // by hand, pay with no home department): its row less the departments'.
+  const deptRemainder = (k: string, depts: readonly FcAccount[], c: PlForecastColumn, j: number) => {
+    const acctRow = matrix.rows.find((r) => plEditKey(r, groups) === k);
+    return (acctRow?.values[j] ?? 0) - depts.reduce((s, d) => s + deptActualSen(d.name, c), 0);
+  };
   // A customer, supplier or department row with something keyed in some
   // month — Hide unused keeps only these.
   const detailUsed = (kind: "cu" | "su" | "de", type: string, id: string) =>
@@ -688,12 +719,22 @@ export function MonthlyPlForecastEditor({
       }
       return rows;
     }
-    return deptsPostingTo(k, groups, deptAccount).filter((d) => !hideUnused || detailUsed("de", "", d.code)).map((d) =>
+    const posting = deptsPostingTo(k, groups, deptAccount);
+    const rows = posting.filter((d) => !hideUnused || detailUsed("de", "", d.code) || deptHasActual.has(d.name)).map((d) =>
       detailRow(`de-${k}-${d.code}`, depth, d.name, (ym, c) => {
         const f = figures.get(ym);
         return boxes(c, `${labelOfYm(ym)} ${d.name}`, sheet[ym].pct[d.code] ?? {}, f?.amt(d.code) ?? 0, f?.salesSen ?? 0, (v) => setLine(ym, d.code, side(v, "a")), (v) => setLine(ym, d.code, side(v, "p")));
-      }),
+      }, deptActualCell(d.name)),
     );
+    // The rest of the account's actual, so the department rows add up to it.
+    if (vis.some(([c, j]) => !c.forecast && deptRemainder(k, posting, c, j) !== 0)) {
+      rows.push(detailRow(`de-${k}-rest`, depth, "Other (no department payroll)", null, (c, j) => {
+        if (c.forecast) return blankPair(c);
+        const sen = deptRemainder(k, posting, c, j);
+        return figure(c, sen, pctOfSales(sen, c), true, true);
+      }));
+    }
+    return rows;
   };
   const hasDetail = (k: string) => k === "sales" || k.startsWith("cat:") || deptsPostingTo(k, groups, deptAccount).length > 0;
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
