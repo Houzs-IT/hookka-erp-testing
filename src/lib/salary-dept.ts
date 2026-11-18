@@ -57,16 +57,18 @@ export function groupPayslipsByMonthDept(rows: PayslipDeptRow[]): Map<string, De
  * (for the month still running, the base is labour to date, so each worker's
  * part is his share of the department's slips, scaled to the base).
  *
- * `sameAccount(home, dept)`: pay moves only between departments that post to
- * the SAME salary account — moving it to a department on another account
- * (warehousing → staff salaries) would leave both accounts unexplained.
+ * `target(home, dept)`: the key the moved pay lands on. Departments on the
+ * SAME salary account take it as themselves. A department on another account
+ * (warehousing → staff salaries) gets `<DEPT>@<home account>` instead (owner
+ * 2026-11-18: warehouse shows under PRODUCTION - SALARIES, where the money is)
+ * — moving it onto the other account would leave both accounts unexplained.
  */
 export function reallocateNonProdGross(
   base: Readonly<Record<string, number>>,
   slips: readonly { workerId: string; dept: string; grossSen: number }[],
   hours: readonly { workerId: string; dept: string; hours: number }[],
   nonProd: ReadonlySet<string>,
-  sameAccount: (home: string, dept: string) => boolean = () => true,
+  target: (home: string, dept: string) => string = (_h, d) => d,
 ): Record<string, number> {
   const out: Record<string, number> = { ...base };
   if (!nonProd.size) return out;
@@ -94,11 +96,12 @@ export function reallocateNonProdGross(
     const total = [...by.values()].reduce((a, v) => a + v, 0);
     const pay = Math.round((base[w.dept] ?? 0) * (w.grossSen / den));
     for (const [dept, h] of by) {
-      if (dept === w.dept || !nonProd.has(dept) || !sameAccount(w.dept, dept)) continue;
+      if (dept === w.dept || !nonProd.has(dept)) continue;
       const move = Math.min(out[w.dept] ?? 0, Math.round((pay * h) / total));
       if (move <= 0) continue;
       out[w.dept] = (out[w.dept] ?? 0) - move;
-      out[dept] = (out[dept] ?? 0) + move;
+      const to = target(w.dept, dept);
+      out[to] = (out[to] ?? 0) + move;
     }
   }
   return out;

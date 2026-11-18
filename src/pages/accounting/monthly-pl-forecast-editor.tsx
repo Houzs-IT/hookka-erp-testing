@@ -45,7 +45,6 @@ import {
   supplierActualIds,
   customerActualIds,
   FC_OTHER_CUSTOMER,
-  type FcAccount,
   type FcCustomerActuals,
   type FcMonthFigures,
   type FcSupplierActuals,
@@ -663,10 +662,14 @@ export function MonthlyPlForecastEditor({
   const deptHasActual = new Set(Object.values(deptActs).flatMap((m) => Object.keys(m).filter((d) => m[d] !== 0)));
   // What the departments do not explain of a salary account (an amount keyed
   // by hand, pay with no home department): its row less the departments'.
-  const deptRemainder = (k: string, depts: readonly FcAccount[], c: PlForecastColumn, j: number) => {
+  const deptRemainder = (k: string, names: readonly string[], c: PlForecastColumn, j: number) => {
     const acctRow = matrix.rows.find((r) => plEditKey(r, groups) === k);
-    return (acctRow?.values[j] ?? 0) - depts.reduce((s, d) => s + deptActualSen(d.name, c), 0);
+    return (acctRow?.values[j] ?? 0) - names.reduce((s, n) => s + deptActualSen(n, c), 0);
   };
+  // Hours production workers clocked in a department filed on ANOTHER salary
+  // account (owner 2026-11-18 「warehouse没有？」 → shown under the account the
+  // pay is on): the endpoint keys them `<DEPT>@<account>`.
+  const borrowedOn = (k: string) => [...new Set(Object.values(deptActs).flatMap((m) => Object.keys(m).filter((n) => n.endsWith(`@${k}`) && m[n] !== 0)))].sort();
   // A customer, supplier or department row with something keyed in some
   // month — Hide unused keeps only these.
   const detailUsed = (kind: "cu" | "su" | "de", type: string, id: string) =>
@@ -726,11 +729,14 @@ export function MonthlyPlForecastEditor({
         return boxes(c, `${labelOfYm(ym)} ${d.name}`, sheet[ym].pct[d.code] ?? {}, f?.amt(d.code) ?? 0, f?.salesSen ?? 0, (v) => setLine(ym, d.code, side(v, "a")), (v) => setLine(ym, d.code, side(v, "p")));
       }, deptActualCell(d.name)),
     );
+    const borrowed = borrowedOn(k);
+    for (const n of borrowed) rows.push(detailRow(`de-${k}-${n}`, depth, `${n.slice(0, n.lastIndexOf("@"))} (production workers)`, null, deptActualCell(n)));
     // The rest of the account's actual, so the department rows add up to it.
-    if (vis.some(([c, j]) => !c.forecast && deptRemainder(k, posting, c, j) !== 0)) {
+    const names = [...posting.map((d) => d.name), ...borrowed];
+    if (vis.some(([c, j]) => !c.forecast && deptRemainder(k, names, c, j) !== 0)) {
       rows.push(detailRow(`de-${k}-rest`, depth, "Other (no department payroll)", null, (c, j) => {
         if (c.forecast) return blankPair(c);
-        const sen = deptRemainder(k, posting, c, j);
+        const sen = deptRemainder(k, names, c, j);
         return figure(c, sen, pctOfSales(sen, c), true, true);
       }));
     }
