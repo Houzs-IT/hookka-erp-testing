@@ -246,5 +246,5 @@ test("outlook chart: GP and NP as labelled bars, no month-to-date bar (owner 202
   assert.doesNotMatch(b, /label: "Revenue to date"/);
   assert.doesNotMatch(b, /<td>Revenue to date \(running month\)<\/td>/, "the table row goes too");
   const c = readFileSync("src/pages/board-report/charts.tsx", "utf8");
-  assert.match(c, /\{labels && <text /);
+  assert.match(c, /labels = true/, "amounts are on by default since 2026-11-18");
 });
