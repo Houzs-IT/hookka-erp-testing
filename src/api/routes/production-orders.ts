@@ -108,6 +108,7 @@ import type {
 } from "./production-orders/_helpers";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
 import { checkWorkerScanGate } from "../lib/scan-gate";
+import { resolveSewingScope } from "../lib/sewing-scope";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -3000,28 +3001,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
     if (gateFail) return c.json({ success: false, ...gateFail }, 409);
   }
 
-  // SOFA exception: a sofa BASE compartment represents the WHOLE variant — its
-  // base, cushions and armrests are sewn together by one worker (Wei Siang
-  // 2026-06-07: scan 1A → 1A's base + armrest + back-cushion complete together).
-  // The base sticker carries the base's own wipKey so the PHONE resolves it to a
-  // single card (no Divan-vs-HB-style chooser), but COMPLETION must fan out to
-  // every FAB_SEW / UPHOLSTERY card of the variant. Detect a sofa compartment by
-  // its wipType (SOFA_BASE / SOFA_CUSHION / SOFA_ARMREST / SOFA_HEADREST) and drop
-  // the per-compartment + per-piece scoping so the whole-dept fan-out runs.
-  // Bedframe pieces (DIVAN / HEADBOARD) are NOT SOFA_* — they keep per-piece
-  // scoping and stay separately scannable.
-  if (wipKey) {
-    const wkProbe = await db
-      .prepare(
-        "SELECT wipType FROM job_cards WHERE productionOrderId = ? AND wipKey = ? LIMIT 1",
-      )
-      .bind(poId, wipKey)
-      .first<{ wipType: string | null }>();
-    if ((wkProbe?.wipType || "").toUpperCase().startsWith("SOFA_")) {
-      wipKey = undefined;
-      pieceNo = undefined;
-    }
-  }
+  const sewingScope = await resolveSewingScope(db, {
+    productionOrderId: poId,
+    wipKey,
+    pieceNo,
+  });
+  wipKey = sewingScope.wipKey ?? undefined;
+  pieceNo = sewingScope.pieceNo ?? undefined;
 
   // Resolve the scanning SECTION → target department. Cut+Sew workers (女部)
   // cross within their section, so anyone covering FAB_SEW or FAB_CUT (and NOT
