@@ -5,7 +5,7 @@
 import type { BoardReport } from "@/lib/board-report";
 import { BOARD_DATA_FROM, changePct, pct, shortMonth } from "@/lib/board-report";
 import { ComboChart, Donut, Elastic, type Datum } from "./charts";
-import { C, PALETTE, deptName, pctText, rm } from "./format";
+import { C, CAT, FC, deptName, pctText, rm } from "./format";
 import { BrPage, Delta, Money, Tile } from "./page-kit";
 import { withSection } from "./with-section";
 
@@ -59,14 +59,14 @@ export function CoverPage({ r }: P) {
                   values: { sales: t.kind === "actual" ? t.sales : t.forecastSales, net: t.kind === "actual" ? t.net : t.forecastNet, fc: t.forecastSales },
                 }))}
                 series={[
-                  { key: "sales", label: "Revenue", color: C.navy, type: "bar" },
-                  { key: "net", label: "Net profit", color: C.gold, type: "line" },
-                  { key: "fc", label: "Revenue forecast", color: C.grey, type: "line", dashed: true },
+                  { key: "sales", label: "Revenue", color: CAT[0], type: "bar" },
+                  { key: "net", label: "Net profit", color: CAT[1], type: "line" },
+                  { key: "fc", label: "Revenue forecast", color: FC, type: "line", dashed: true },
                 ]}
               />
             )}
           </Elastic>
-          <p className="brp-small">F = forecast (Forecasting › Forecast P&amp;L), drawn faded. From {shortMonth(BOARD_DATA_FROM)}; earlier months are incomplete. Source: Forecasting › Dashboard (the Monthly P&amp;L engine); cash from the Cash Flow statement.</p>
+          <p className="brp-small">F = forecast (Forecasting › Forecast P&amp;L), drawn hatched. From {shortMonth(BOARD_DATA_FROM)}; earlier months are incomplete. Source: Forecasting › Dashboard (the Monthly P&amp;L engine); cash from the Cash Flow statement.</p>
         </>
       ))}
     </BrPage>
@@ -145,10 +145,10 @@ export function IncomePage({ r }: P) {
                     data={incomeTrend
                       .map<Datum>((p) => ({ label: p.label, faded: p.kind !== "actual", values: { s: p.sales, g: p.gross, n: p.net, f: p.forecastSales } }))}
                     series={[
-                      { key: "s", label: "Revenue", color: C.navy, type: "bar" },
-                      { key: "f", label: "Revenue forecast", color: C.grey, type: "line", dashed: true },
-                      { key: "g", label: "Gross profit", color: C.gold, type: "line" },
-                      { key: "n", label: "Net profit", color: C.green, type: "line" },
+                      { key: "s", label: "Revenue", color: CAT[0], type: "bar" },
+                      { key: "f", label: "Revenue forecast", color: FC, type: "line", dashed: true },
+                      { key: "g", label: "Gross profit", color: CAT[2], type: "line" },
+                      { key: "n", label: "Net profit", color: CAT[1], type: "line" },
                     ]}
                   />
                 )}
@@ -242,10 +242,10 @@ export function LabourPage({ r }: P) {
                 h={h}
                 data={d.trend.map((t) => ({ label: t.label, values: { ...t.byDept, __fc: t.forecast ?? null } }))}
                 series={[
-                  ...d.series.map((s, i) => ({ key: s, label: deptName(s), color: PALETTE[i % PALETTE.length], type: "bar" as const, stack: "a" })),
+                  ...d.series.map((s, i) => ({ key: s, label: deptName(s), color: s === "Other" ? C.grey : CAT[i % CAT.length], type: "bar" as const, stack: "a" })),
                   // Owner 2026-11-17: every chart carries its forecast — the
                   // month's All labour forecast (production + non-production).
-                  { key: "__fc", label: "Forecast (all labour)", color: C.ink, type: "line" as const, dashed: true },
+                  { key: "__fc", label: "Forecast (all labour)", color: FC, type: "line" as const, dashed: true },
                 ]}
               />
             )}
@@ -312,7 +312,7 @@ export function MaterialsPage({ r }: P) {
                 w={w}
                 h={h}
                 data={d.trend.map((t) => ({ label: t.label, values: { a: t.actual, f: t.forecast } }))}
-                series={[{ key: "a", label: "Used", color: C.gold, type: "bar" }, { key: "f", label: "Forecast", color: C.navy, type: "line", dashed: true }]}
+                series={[{ key: "a", label: "Used", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]}
               />
             )}
           </Elastic>
@@ -357,7 +357,7 @@ export function TrendPage({ r }: P) {
                 {(w, h) => (
                   <ComboChart w={w} h={h}
                     data={d.points.map((p) => ({ label: p.kind === "actual" ? p.label : `${p.label} F`, faded: p.kind !== "actual", values: { s: p.kind === "actual" ? p.sales : p.forecastSales, f: p.forecastSales } }))}
-                    series={[{ key: "s", label: "Revenue", color: C.navy, type: "bar" }, { key: "f", label: "Forecast", color: C.gold, type: "line", dashed: true }]} />
+                    series={[{ key: "s", label: "Revenue", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]} />
                 )}
               </Elastic>
             </div>
@@ -367,12 +367,12 @@ export function TrendPage({ r }: P) {
                 {(w, h) => (
                   <ComboChart w={w} h={h}
                     data={d.points.map((p) => ({ label: p.kind === "actual" ? p.label : `${p.label} F`, faded: p.kind !== "actual", values: { n: p.kind === "actual" ? p.net : p.forecastNet, f: p.forecastNet } }))}
-                    series={[{ key: "n", label: "Net profit", color: C.green, type: "bar" }, { key: "f", label: "Forecast", color: C.gold, type: "line", dashed: true }]} />
+                    series={[{ key: "n", label: "Net profit", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]} />
                 )}
               </Elastic>
             </div>
           </div>
-          <p className="brp-small">F / (forecast) = Forecasting › Forecast P&amp;L for the months after this one — the month still running included (owner review 2026-11-15), drawn faded. Source: Forecasting › Dashboard.</p>
+          <p className="brp-small">F / (forecast) = Forecasting › Forecast P&amp;L for the months after this one — the month still running included (owner review 2026-11-15), drawn hatched. Source: Forecasting › Dashboard.</p>
         </>
         );
       })}
@@ -414,7 +414,7 @@ export function BalancePage({ r }: P) {
             {(w, h) => (
               <ComboChart w={w} h={h}
                 data={d.trend.filter((t) => t.assets !== 0 || t.liabilities !== 0 || t.equity !== 0).map((t) => ({ label: t.label, values: { a: t.assets, l: t.liabilities, e: t.equity } }))}
-                series={[{ key: "a", label: "Total assets", color: C.navy, type: "bar" }, { key: "l", label: "Total liabilities", color: C.gold, type: "bar" }, { key: "e", label: "Equity", color: C.green, type: "line" }]} />
+                series={[{ key: "a", label: "Total assets", color: CAT[0], type: "bar" }, { key: "l", label: "Total liabilities", color: CAT[1], type: "bar" }, { key: "e", label: "Equity", color: C.ink, type: "line" }]} />
             )}
           </Elastic>
           <p className="brp-small">Stock is the P&L&apos;s closing stock; equity includes this year&apos;s un-closed earnings. Months before the books opened (no balance sheet) are left off the chart. No balance-sheet forecast is kept in the ERP, so none is drawn. Source: Forecasting › Dashboard balance sheet (Finance › Balance Sheet).</p>
@@ -465,10 +465,10 @@ export function CashFlowPage({ r }: P) {
                 <ComboChart w={w} h={h}
                   data={[...shown, ...fc].map((x) => ({ label: head(x), faded: x.kind !== "actual", values: { o: x.operating, i: x.investing, f: x.financing, n: x.net } }))}
                   series={[
-                    { key: "o", label: "Operating", color: C.navy, type: "bar" },
-                    { key: "i", label: "Investing", color: C.gold, type: "bar" },
-                    { key: "f", label: "Financing", color: C.grey, type: "bar" },
-                    { key: "n", label: "Net", color: C.green, type: "line" },
+                    { key: "o", label: "Operating", color: CAT[0], type: "bar" },
+                    { key: "i", label: "Investing", color: CAT[1], type: "bar" },
+                    { key: "f", label: "Financing", color: CAT[2], type: "bar" },
+                    { key: "n", label: "Net", color: C.ink, type: "line" },
                   ]} />
               )}
             </Elastic>

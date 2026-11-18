@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { BoardReport } from "@/lib/board-report";
 import { changePct, pct, NOTES_MAX } from "@/lib/board-report";
 import { ComboChart, Donut, Elastic, ShareBars } from "./charts";
-import { C, pctText, rm } from "./format";
+import { CAT, FC, pctText, rm } from "./format";
 import { BrPage, Delta, Money, Tile, Unavailable } from "./page-kit";
 import { withSection } from "./with-section";
 
@@ -55,9 +55,9 @@ export function CashForecastPage({ r }: P) {
               <ComboChart w={w} h={h}
                 data={d.months.map((m) => ({ label: m.label, values: { a: m.actual, d: m.docs, p: m.pnl } }))}
                 series={[
-                  { key: "a", label: "Actual", color: C.navy, type: "bar" },
-                  { key: "d", label: "Forecast (Docs)", color: C.gold, type: "line" },
-                  { key: "p", label: "Forecast (P&L)", color: C.green, type: "line", dashed: true },
+                  { key: "a", label: "Actual", color: CAT[0], type: "bar" },
+                  { key: "d", label: "Forecast (Docs)", color: CAT[1], type: "line" },
+                  { key: "p", label: "Forecast (P&L)", color: FC, type: "line", dashed: true },
                 ]} />
             )}
           </Elastic>
@@ -105,8 +105,8 @@ export function CustomersPage({ r }: P) {
                   .slice(0, 10)
                   .map((x) => ({ label: x.name.length > 12 ? `${x.name.slice(0, 11)}…` : x.name, values: { b: x.bedframeTotal ?? 0, s: x.sofaTotal ?? 0 } }))}
                 series={[
-                  { key: "b", label: "Bedframe", color: C.navy, type: "bar" },
-                  { key: "s", label: "Sofa", color: C.gold, type: "bar" },
+                  { key: "b", label: "Bedframe", color: CAT[0], type: "bar" },
+                  { key: "s", label: "Sofa", color: CAT[1], type: "bar" },
                 ]} />
             )}
           </Elastic>
@@ -215,9 +215,9 @@ export function OperationsPage({ r }: P) {
                 <ComboChart w={w} h={h}
                   data={d.trend.map((t) => ({ label: t.label, values: { b: t.bedframe, s: t.sofa, a: t.accessory } }))}
                   series={[
-                    { key: "b", label: "Bedframe", color: C.navy, type: "bar", stack: "p" },
-                    { key: "s", label: "Sofa", color: C.gold, type: "bar", stack: "p" },
-                    { key: "a", label: "Accessory", color: C.green, type: "bar", stack: "p" },
+                    { key: "b", label: "Bedframe", color: CAT[0], type: "bar", stack: "p" },
+                    { key: "s", label: "Sofa", color: CAT[1], type: "bar", stack: "p" },
+                    { key: "a", label: "Accessory", color: CAT[2], type: "bar", stack: "p" },
                   ]} />
               )}
             </Elastic>
@@ -285,9 +285,9 @@ export function OutlookPage({ r }: P) {
               <ComboChart w={w} h={h} labels
                 data={d.months.map((m) => ({ label: m.label, values: { s: m.forecast?.sales ?? null, g: m.forecast?.gross ?? null, n: m.forecast?.net ?? null } }))}
                 series={[
-                  { key: "s", label: "Revenue forecast", color: C.navy, type: "bar" },
-                  { key: "g", label: "Gross profit forecast", color: C.green, type: "bar" },
-                  { key: "n", label: "Net profit forecast", color: C.gold, type: "bar" },
+                  { key: "s", label: "Revenue forecast", color: CAT[0], type: "bar" },
+                  { key: "g", label: "Gross profit forecast", color: CAT[2], type: "bar" },
+                  { key: "n", label: "Net profit forecast", color: CAT[1], type: "bar" },
                 ]} />
             )}
           </Elastic>
