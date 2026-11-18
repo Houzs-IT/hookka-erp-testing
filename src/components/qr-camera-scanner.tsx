@@ -340,14 +340,14 @@ export function QrCameraScanner({
           <button
             type="button"
             onClick={() => setScanMode("qr")}
-            className={`px-4 py-1.5 rounded-full ${scanMode === "qr" ? "bg-white text-[#1F1D1B]" : "text-white"}`}
+            className={`px-4 py-1.5 min-h-[44px] rounded-full ${scanMode === "qr" ? "bg-white text-[#1F1D1B]" : "text-white"}`}
           >
             QR
           </button>
           <button
             type="button"
             onClick={() => setScanMode("barcode")}
-            className={`px-4 py-1.5 rounded-full ${scanMode === "barcode" ? "bg-white text-[#1F1D1B]" : "text-white"}`}
+            className={`px-4 py-1.5 min-h-[44px] rounded-full ${scanMode === "barcode" ? "bg-white text-[#1F1D1B]" : "text-white"}`}
           >
             Barcode
           </button>

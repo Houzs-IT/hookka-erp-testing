@@ -539,6 +539,18 @@ const dict: Dict = {
     zh: '请先打卡上班，再扫部门码。',
     my: 'ကျေးဇူးပြု၍ အရင် punch in လုပ်ပြီးမှ ဌာနကုဒ်ကို စကင်န်ပါ။',
   },
+  'scan.notIssuedToYou': {
+    en: 'This item was not issued to you. Ask the office to issue it first.',
+    ms: 'Item ini tidak dikeluarkan kepada anda. Minta pejabat mengeluarkannya dahulu.',
+    zh: '这件物品没有发给你。请先让办公室发出。',
+    my: 'This item was not issued to you. Ask the office to issue it first.',
+  },
+  'scan.issuedToOther': {
+    en: 'This item is issued to another worker.',
+    ms: 'Item ini dikeluarkan kepada pekerja lain.',
+    zh: '这件物品已发给其他工人。',
+    my: 'This item is issued to another worker.',
+  },
   'scan.batchProgress': {
     en: 'Photo {i} of {n}',
     ms: 'Gambar {i} dari {n}',

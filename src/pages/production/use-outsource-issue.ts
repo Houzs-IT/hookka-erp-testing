@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   IssueStatus,
   OutsourceIssue,
@@ -54,6 +54,13 @@ export const DEFAULT_FILTERS: TrackingFilters = {
   query: "",
 };
 
+interface ListResult {
+  key: string;
+  issues: OutsourceIssueWithSewing[];
+  isTruncated: boolean;
+  error: string | null;
+}
+
 const NETWORK_MESSAGE = "Network problem. Check the connection and try again.";
 
 async function readEnvelope<T>(response: Response): Promise<ApiEnvelope<T> | null> {
@@ -97,6 +104,9 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
   const [undoingId, setUndoingId] = useState("");
   const lastScanRef = useRef({ value: "", at: 0 });
   const isBusyRef = useRef(false);
+  const pendingScanRef = useRef<string | null>(null);
+  const [listReloadTick, setListReloadTick] = useState(0);
+  const [listResult, setListResult] = useState<ListResult | null>(null);
 
   const workers = useMemo(() => workersResult.data?.data ?? [], [workersResult.data]);
   const selectedWorker = workers.find((worker) => worker.id === selectedWorkerId) ?? null;
@@ -112,62 +122,122 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     const query = params.toString();
     return query ? `${ISSUES_URL}?${query}` : ISSUES_URL;
   }, [filters.status, filters.workerId, filters.from, filters.to, debouncedQuery]);
-  const listResult = useCachedJson<ApiEnvelope<OutsourceIssueWithSewing[]>>(listUrl, 15);
-  const issues = useMemo(() => listResult.data?.data ?? [], [listResult.data]);
+  const listKey = `${listReloadTick}|${listUrl}`;
+
+  useEffect(() => {
+    let isCancelled = false;
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch(listUrl);
+        const envelope = await readEnvelope<OutsourceIssueWithSewing[]>(response);
+        if (isCancelled) return;
+        if (!response.ok || !envelope?.data) {
+          setListResult({ key: listKey, issues: [], isTruncated: false, error: failureMessage(envelope, response.status) });
+          return;
+        }
+        setListResult({
+          key: listKey,
+          issues: envelope.data,
+          isTruncated: response.headers.has("X-List-Truncated"),
+          error: null,
+        });
+      } catch {
+        if (!isCancelled) {
+          setListResult({ key: listKey, issues: [], isTruncated: false, error: NETWORK_MESSAGE });
+        }
+      }
+    };
+    void load();
+    return () => {
+      isCancelled = true;
+    };
+  }, [listUrl, listKey]);
+
+  const refreshList = useCallback((): void => {
+    setListReloadTick((current) => current + 1);
+  }, []);
+
+  const currentList = listResult?.key === listKey ? listResult : null;
+  const issues = useMemo(
+    () => (currentList ?? listResult)?.issues ?? [],
+    [currentList, listResult],
+  );
 
   const setFilters = useCallback((patch: Partial<TrackingFilters>): void => {
     setFiltersState((current) => ({ ...current, ...patch }));
   }, []);
 
+  const submitIssue = useCallback(async (workerId: string, qr: string): Promise<void> => {
+    try {
+      const response = await fetch(ISSUES_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId, qr }),
+      });
+      const envelope = await readEnvelope<OutsourceIssue>(response);
+      if (response.status === 201 && envelope?.data) {
+        const issued = envelope.data;
+        setSessionIssues((current) => [issued, ...current.filter((item) => item.id !== issued.id)]);
+        setFeedback({
+          tone: "success",
+          message: `Issued to ${issued.workerName}: ${describeIssue(issued)}`,
+        });
+        invalidateCachePrefix(ISSUES_URL);
+        setListReloadTick((current) => current + 1);
+        return;
+      }
+      setFeedback({
+        tone: envelope?.code && WARNING_CODES.has(envelope.code) ? "warning" : "danger",
+        message: failureMessage(envelope, response.status),
+      });
+    } catch {
+      lastScanRef.current = { value: "", at: 0 };
+      setFeedback({ tone: "danger", message: NETWORK_MESSAGE });
+    }
+  }, []);
+
   const issueByScan = useCallback(
     async (rawText: string): Promise<void> => {
-      const qr = rawText.trim();
-      if (!qr) return;
+      const firstCode = rawText.trim();
+      if (!firstCode) return;
       if (!selectedWorker) {
         setFeedback({ tone: "danger", message: "Pick a worker before scanning." });
         return;
       }
-      const now = performance.now();
-      const last = lastScanRef.current;
-      if (qr === last.value && now - last.at < SAME_CODE_COOLDOWN_MS) {
-        last.at = now;
+      if (isBusyRef.current) {
+        pendingScanRef.current = firstCode;
         return;
       }
-      lastScanRef.current = { value: qr, at: now };
-      if (isBusyRef.current) return;
       isBusyRef.current = true;
       setIsIssuing(true);
+      let nextCode: string | null = firstCode;
       try {
-        const response = await fetch(ISSUES_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workerId: selectedWorker.id, qr }),
-        });
-        const envelope = await readEnvelope<OutsourceIssue>(response);
-        if (response.status === 201 && envelope?.data) {
-          const issued = envelope.data;
-          setSessionIssues((current) => [issued, ...current.filter((item) => item.id !== issued.id)]);
-          setFeedback({
-            tone: "success",
-            message: `Issued to ${issued.workerName}: ${describeIssue(issued)}`,
-          });
-          invalidateCachePrefix(ISSUES_URL);
-          return;
+        while (nextCode) {
+          const qr: string = nextCode;
+          nextCode = null;
+          const now = performance.now();
+          const last = lastScanRef.current;
+          if (qr === last.value && now - last.at < SAME_CODE_COOLDOWN_MS) {
+            last.at = now;
+          } else {
+            lastScanRef.current = { value: qr, at: now };
+            await submitIssue(selectedWorker.id, qr);
+          }
+          nextCode = pendingScanRef.current;
+          pendingScanRef.current = null;
         }
-        setFeedback({
-          tone: envelope?.code && WARNING_CODES.has(envelope.code) ? "warning" : "danger",
-          message: failureMessage(envelope, response.status),
-        });
-      } catch {
-        lastScanRef.current = { value: "", at: 0 };
-        setFeedback({ tone: "danger", message: NETWORK_MESSAGE });
       } finally {
         isBusyRef.current = false;
         setIsIssuing(false);
       }
     },
-    [selectedWorker],
+    [selectedWorker, submitIssue],
   );
+
+  const selectWorker = useCallback((workerId: string): void => {
+    pendingScanRef.current = null;
+    setSelectedWorkerId(workerId);
+  }, []);
 
   const undoIssue = useCallback(async (issue: OutsourceIssue): Promise<void> => {
     setUndoingId(issue.id);
@@ -181,6 +251,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
         setFeedback({ tone: "success", message: `Undone: ${describeIssue(issue)}` });
         lastScanRef.current = { value: "", at: 0 };
         invalidateCachePrefix(ISSUES_URL);
+        setListReloadTick((current) => current + 1);
         return;
       }
       setFeedback({ tone: "danger", message: failureMessage(envelope, response.status) });
@@ -197,7 +268,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     workersError: workersResult.error,
     selectedWorkerId,
     selectedWorker,
-    selectWorker: setSelectedWorkerId,
+    selectWorker,
     isIssuing,
     issueByScan,
     feedback,
@@ -208,10 +279,10 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     filters,
     setFilters,
     issues,
-    isListLoading: listResult.loading,
-    listError: listResult.error,
-    isListTruncated: issues.length >= LIST_CAP,
-    refreshList: listResult.refresh,
+    isListLoading: currentList === null,
+    listError: currentList?.error ?? null,
+    isListTruncated: currentList?.isTruncated ?? false,
+    refreshList,
   };
 }
 
