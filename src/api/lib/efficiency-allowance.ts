@@ -314,7 +314,34 @@ export async function computeMonthlyEfficiencyByWorker(
       date: string;
       hours: number | string | null;
     }>();
+  // Helpers (owner 2026-11-18 「当他们scan了 就代表那天不是helper了」): a helper
+  // is a worker on a day he scanned — those days' hours are his efficiency's
+  // denominator; a day with no scan is a helper day and stays out.
+  const helpers = await helperWorkerIds(db);
+  const helperScanDays = new Set<string>();
+  if (helpers.size) {
+    const ids = [...helpers];
+    const ph = ids.map(() => "?").join(",");
+    const scans = await db
+      .prepare(
+        `SELECT pic1Id, pic2Id, completedDate FROM job_cards
+          WHERE status IN ('COMPLETED','TRANSFERRED') AND completedDate >= ? AND completedDate <= ?
+            AND (pic1Id IN (${ph}) OR pic2Id IN (${ph}))`,
+      )
+      .bind(periodStart, periodEnd, ...ids, ...ids)
+      .all<{ pic1Id: string | null; pic2Id: string | null; completedDate: string | null }>();
+    for (const r of scans.results ?? []) {
+      const d = String(r.completedDate ?? "").slice(0, 10);
+      for (const id of [r.pic1Id, r.pic2Id]) if (id && helpers.has(id)) helperScanDays.add(`${id}|${d}`);
+    }
+    for (const x of await loadApprovedExtraTime(db, periodStart, periodEnd)) {
+      if (x.workerId && helpers.has(x.workerId)) helperScanDays.add(`${x.workerId}|${String(x.date ?? "").slice(0, 10)}`);
+    }
+  }
   const prodHoursByWorker = new Map<string, number>();
+  // A helper's production hours on the days he scanned: his efficiency's
+  // denominator (prodHours keeps every hour — Production Hours are unchanged).
+  const helperScanHours = new Map<string, number>();
   const entryDaysByWorker = new Map<string, Set<string>>();
   for (const r of wheRes.results ?? []) {
     let days = entryDaysByWorker.get(r.workerId);
@@ -325,6 +352,9 @@ export async function computeMonthlyEfficiencyByWorker(
     days.add(r.date);
     if (productionDeptCodes.has(r.departmentCode)) {
       const h = typeof r.hours === "number" ? r.hours : Number(r.hours) || 0;
+      if (helpers.has(r.workerId) && helperScanDays.has(`${r.workerId}|${String(r.date).slice(0, 10)}`)) {
+        helperScanHours.set(r.workerId, (helperScanHours.get(r.workerId) ?? 0) + h);
+      }
       prodHoursByWorker.set(
         r.workerId,
         (prodHoursByWorker.get(r.workerId) ?? 0) + h,
@@ -333,7 +363,6 @@ export async function computeMonthlyEfficiencyByWorker(
   }
 
   // 4. Assemble per-worker efficiency over the UNION of both sources.
-  const helpers = await helperWorkerIds(db);
   const out = new Map<string, WorkerMonthlyEfficiency>();
   const allWorkerIds = new Set<string>([
     ...prodMinByWorker.keys(),
@@ -346,11 +375,13 @@ export async function computeMonthlyEfficiencyByWorker(
     // Same "—" rule as the Efficiency Overview: a zero denominator (no
     // production-dept hours) OR no working-hour rows at all ⇒ efficiency is
     // not defined for this worker this month.
-    // A helper has no personal efficiency ("—"), hence no allowance.
-    const isHelper = helpers.has(wid);
+    // A helper with no scan in the period has no personal efficiency ("—"),
+    // hence no allowance; with scans, his scan days count (above).
+    const isHelper = helpers.has(wid) && prodMinutes <= 0;
+    const effHours = helpers.has(wid) ? helperScanHours.get(wid) ?? 0 : prodHours;
     const pct =
-      !isHelper && prodHours > 0 && daysWithEntries > 0
-        ? (prodMinutes / (prodHours * 60)) * 100
+      !isHelper && effHours > 0 && daysWithEntries > 0
+        ? (prodMinutes / (effHours * 60)) * 100
         : null;
     out.set(wid, { prodMinutes, prodHours, daysWithEntries, pct, isHelper });
   }

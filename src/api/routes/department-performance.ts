@@ -694,10 +694,11 @@ app.get("/", async (c) => {
           workingMinutes: w.workingMinutes,
           productionMinutes: w.productionMinutes,
           efficiencyPct:
-            !helperIds.has(w.workerId) && w.workingMinutes > 0
+            !(helperIds.has(w.workerId) && w.productionMinutes <= 0) && w.workingMinutes > 0
               ? Math.round((w.productionMinutes / w.workingMinutes) * 1000) / 10
               : 0,
-          ...(helperIds.has(w.workerId) ? { isHelper: true } : {}),
+          // A helper who scanned that day is a worker that day (owner 2026-11-18).
+          ...(helperIds.has(w.workerId) && w.productionMinutes <= 0 ? { isHelper: true } : {}),
           jobs: w.jobs
             .slice()
             .sort((a, b) => b.productionMinutes - a.productionMinutes),

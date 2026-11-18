@@ -144,7 +144,9 @@ export function buildPerfDays(input: {
   const perfDays = [...perfByDay.values()]
     .map((e) => {
       const workers: PerfWorker[] = [...(perfByDayWorker.get(e.date) ?? new Map<string, Minutes>()).entries()]
-        .map(([workerId, v]) => (helperIds.has(workerId) ? { workerId, isHelper: true, ...v } : { workerId, ...v }));
+        // A helper only on a day he earned nothing (owner 2026-11-18 「当他们scan了
+        // 就代表那天不是helper了」): a day he scanned, he is a worker that day.
+        .map(([workerId, v]) => (helperIds.has(workerId) && v.productionMinutes <= 0 ? { workerId, isHelper: true, ...v } : { workerId, ...v }));
       // Earned minutes count only for people who logged production hours that
       // day: outsource (paid by piece), cards with no PIC and work whose hours
       // land at punch-out stay out (owner 2026-11-17).

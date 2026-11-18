@@ -3814,6 +3814,11 @@ app.get("/team-stats", async (c) => {
   };
   const cells = new Map<CellKey, Cell>();
   const teamHelpers = await helperWorkerIds(c.var.DB);
+  // A helper is a helper only on a day he scanned nothing (owner 2026-11-18
+  // 「当他们scan了 就代表那天不是helper了」): his hours wait until the cards
+  // say which days he scanned.
+  const helperHours: { cell: Cell; key: string; m: number }[] = [];
+  const helperScanDays = new Set<string>();
   for (const dc of leaderDepts) {
     for (const cat of CATEGORIES) {
       cells.set(cellKey(dc, cat), {
@@ -3835,7 +3840,7 @@ app.get("/team-stats", async (c) => {
     const idPh = idArr.map(() => "?").join(",");
     const deptPh = leaderDepts.map(() => "?").join(",");
     const wheRes = await c.var.DB.prepare(
-      `SELECT workerId, departmentCode, category, hours
+      `SELECT workerId, departmentCode, category, hours, date
          FROM working_hour_entries
         WHERE workerId IN (${idPh})
           AND departmentCode IN (${deptPh})
@@ -3855,7 +3860,7 @@ app.get("/team-stats", async (c) => {
       if (!cell) continue;
       const m = Math.round((Number(r.hours) || 0) * 60);
       cell.workingMinutes += m;
-      if (teamHelpers.has(r.workerId)) cell.helperWorkingMinutes += m;
+      if (teamHelpers.has(r.workerId)) helperHours.push({ cell, key: `${r.workerId}|${String((r as { date?: unknown }).date ?? "").slice(0, 10)}`, m });
       cell.workerIds.add(r.workerId);
     }
   }
@@ -3956,11 +3961,12 @@ app.get("/team-stats", async (c) => {
       // estMinutes is ALREADY the per-SET total — ×wipQty would 3× it).
       const mins = jcMinutesTotal(jc.actualMinutes ?? jc.estMinutes ?? 0, jc);
       cell.productionMinutes += mins;
-      // A card only helpers worked on is helper output, out of production efficiency.
-      if ([...onJc].every((id) => teamHelpers.has(id))) cell.helperProductionMinutes += mins;
+      // A helper on a card scanned that day: a worker that day, his output counts.
+      for (const id of onJc) if (teamHelpers.has(id)) helperScanDays.add(`${id}|${String(jc.completedDate ?? "").slice(0, 10)}`);
       for (const id of onJc) cell.workerIds.add(id);
     }
   }
+  for (const h of helperHours) if (!helperScanDays.has(h.key)) h.cell.helperWorkingMinutes += h.m;
 
   const rows = Array.from(cells.values()).map((cell) => ({
     departmentCode: cell.departmentCode,
@@ -4415,10 +4421,11 @@ app.get("/department-performance", async (c) => {
           workingMinutes: w.workingMinutes,
           productionMinutes: w.productionMinutes,
           efficiencyPct:
-            !leaderHelpers.has(w.workerId) && w.workingMinutes > 0
+            !(leaderHelpers.has(w.workerId) && w.productionMinutes <= 0) && w.workingMinutes > 0
               ? Math.round((w.productionMinutes / w.workingMinutes) * 100)
               : 0,
-          ...(leaderHelpers.has(w.workerId) ? { isHelper: true } : {}),
+          // A helper who scanned that day is a worker that day (owner 2026-11-18).
+          ...(leaderHelpers.has(w.workerId) && w.productionMinutes <= 0 ? { isHelper: true } : {}),
           jobs: w.jobs
             .slice()
             .sort((a, b) => b.productionMinutes - a.productionMinutes),

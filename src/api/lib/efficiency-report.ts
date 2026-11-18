@@ -307,7 +307,8 @@ export async function collectEfficiencyData(
           (productionMinsByWorker.get(w.id) ?? 0) +
             (extraTimeMinsByWorker.get(w.id) ?? 0),
         );
-    const isHelper = helpers.has(w.id);
+    // A helper who scanned today is a worker today (owner 2026-11-18).
+    const isHelper = helpers.has(w.id) && productionMinutes <= 0;
     const efficiencyPct =
       !isHelper && productionWorkingMinutes > 0
         ? Math.round((productionMinutes / productionWorkingMinutes) * 100)

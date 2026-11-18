@@ -319,6 +319,13 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Helper who scanned = a worker that day (fix/helper-efficiency, 2026-11-18)
+
+Ask (owner, 18 Nov, Floor Live Packing: THET NAING WIN tagged HELPER, 13 done, efficiency "—"): 「helper也有scan的话 为什么不show 效率？」. Offered three options; owner rejected "treat as an ordinary worker" in favour of 「一样remain可是当他们scan了 就代表那天不是helper了 … 有效率show 没有的话show -」.
+1. 🔵 Rule: the Helper tick stays; a helper is a helper only on a day he earned nothing (no completed card / approved extra time). A day he scanned, he is a worker: personal efficiency shown, counted in production efficiency, ranking and the efficiency allowance. Applied in `buildPerfDays` (Floor Live, closed days, Employees dashboard, KPI), `summarizeFloorLive` (period: efficiency from his scan days only), `efficiency-report.ts` (daily report), Department Performance + leader daily (`worker.ts`), the leader team cells (helper hours out only on days without a scan), `computeMonthlyEfficiencyByWorker` (allowance: a helper's denominator = production hours on his scan days; Production Hours keep every hour), assistant tool, `EmployeesDashboard` / `EmployeesInsights` (ranking / per-day). Test: `tests/helper-scan-day.test.mjs`.
+2. KNOWN LEFTOVER: the old Employees page table (`src/pages/employees.tsx`, efficiency column / avg KPI) still shows "—" for every flagged helper; it has no per-day data to apply the rule. Change only if the owner uses that page.
+3. Same message: 「查看今天是不是有人调整production hours，总体效率掉下来了」 / 「我记得之前效率是120%的」 — checked prod 18 Nov 19:23: no working-hour entry edited today (8 rows, none updated; no non-production requests; audit log has no hours change — only two outsource accounts' pay settings). Today's drop is live data: FOAM 25% (THAR TIN and FOAM_CUTTING's MIN KO KO clocked 615 min with no completed card; ZAW LIN 15%), FRAMING 75%. Earlier days in November ran ~100–110%, 7 Nov ~120%.
+
 ## 🔵 Forecast P&L: actual labour per department (feat/forecast-labour-dept-actuals, 2026-11-18)
 
 Ask (owner, 18 Nov, Forecast P&L with PRODUCTION - SALARIES opened): 「我的这个labor也要像rawmaterial这样show出来exact的」 — the department rows (FAB_CUT, FAB_SEW, …) showed only Forecast boxes; their Actual columns were blank.

@@ -190,7 +190,7 @@ export type FloorLiveSummaryRow = {
   workingMinutes: number;
   earnedMinutes: number;
   effPct: number | null;
-  /** A helper on the latest saved day (owner 2026-11-11): effPct null. */
+  /** A helper on every saved day of the range — never scanned (owner 2026-11-18): effPct null. */
   isHelper?: boolean;
   nonProdMinutes: number;
   /** Days on which they stayed in a non-production department over an hour. */
@@ -201,30 +201,33 @@ export type FloorLiveSummaryRow = {
 export function summarizeFloorLive(
   days: readonly { date: string; workers: readonly FloorLiveWorker[] }[],
 ): FloorLiveSummaryRow[] {
-  const by = new Map<string, FloorLiveSummaryRow & { lastDate: string }>();
+  const by = new Map<string, FloorLiveSummaryRow & { lastDate: string; effW: number; effE: number; workerDays: number }>();
   for (const day of [...days].sort((a, b) => (a.date < b.date ? -1 : 1))) {
     for (const w of day.workers) {
       const r = by.get(w.id) ?? {
         id: w.id, name: w.name, homeDept: w.homeDept, days: 0, done: 0, workingMinutes: 0,
-        earnedMinutes: 0, effPct: null, nonProdMinutes: 0, overHourDays: 0, lastDate: "",
+        earnedMinutes: 0, effPct: null, nonProdMinutes: 0, overHourDays: 0, lastDate: "", effW: 0, effE: 0, workerDays: 0,
       };
       r.days += 1;
       r.done += w.done || 0;
       r.workingMinutes += w.workingMinutes || 0;
       r.earnedMinutes += w.earnedMinutes || 0;
+      // Efficiency from the days he was a worker (a helper's day with a scan counts).
+      if (!w.isHelper) { r.effW += w.workingMinutes || 0; r.effE += w.earnedMinutes || 0; r.workerDays += 1; }
       r.nonProdMinutes += w.nonProdMinutes || 0;
       if (w.overHourNonProd) r.overHourDays += 1;
       r.name = w.name;
-      r.isHelper = !!w.isHelper;
       r.homeDept = w.homeDept || r.homeDept;
       r.lastDate = day.date;
       by.set(w.id, r);
     }
   }
   return [...by.values()]
-    .map(({ lastDate: _lastDate, ...r }) => ({
+    .map(({ lastDate: _lastDate, effW, effE, workerDays, ...r }) => ({
       ...r,
-      effPct: !r.isHelper && r.workingMinutes > 0 ? Math.round((r.earnedMinutes / r.workingMinutes) * 100) : null,
+      // A helper on every day of the range (never scanned) has no efficiency.
+      ...(workerDays === 0 && r.days > 0 ? { isHelper: true } : {}),
+      effPct: effW > 0 ? Math.round((effE / effW) * 100) : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

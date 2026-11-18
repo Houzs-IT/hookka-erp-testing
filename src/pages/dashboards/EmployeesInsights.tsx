@@ -173,8 +173,9 @@ export function DailyEfficiencyCard({ employee, period, target, onPeriodChange, 
     if (workerId) {
       return workerDays(employee.performance.byDay, workerId, period).map((d) => ({
         iso: d.date, date: d.date.slice(5),
-        // A helper has no personal efficiency (owner 2026-11-11): hours only.
-        Efficiency: d.eff == null || worker?.isHelper ? null : r1(d.eff),
+        // A helper has no efficiency on a day he scanned nothing; a day he
+        // scanned, he is a worker (owner 2026-11-11 → 2026-11-18).
+        Efficiency: d.eff == null || (worker?.isHelper && d.productionMinutes <= 0) ? null : r1(d.eff),
         "Working hours": r1(d.workingMinutes / 60),
         "Production hours": r1(d.productionMinutes / 60),
       }));
@@ -316,7 +317,8 @@ function useRankedPeople(employee: EmployeeSlice, period: Period) {
     for (const d of employee.performance.byDay) {
       if (!inFocus(period, d.date)) continue;
       for (const x of d.workers ?? []) {
-        // Helpers are not ranked — no personal efficiency (owner 2026-11-11).
+        // A helper's day with no scan is not ranked (owner 2026-11-11); a day
+        // he scanned counts like anyone's (owner 2026-11-18).
         if (x.isHelper) continue;
         const cur = m.get(x.workerId) ?? { w: 0, p: 0, days: [] };
         cur.w += x.workingMinutes;
@@ -328,7 +330,7 @@ function useRankedPeople(employee: EmployeeSlice, period: Period) {
     return [...m.entries()]
       .flatMap(([id, v]) => {
         const w = byId.get(id);
-        if (!w || !w.countsToHeadcount || w.isHelper || v.w < MIN_RANK_MINUTES) return [];
+        if (!w || !w.countsToHeadcount || v.w < MIN_RANK_MINUTES) return [];
         return [{ key: id, name: w.name ?? "—", sub: [w.role, w.dept].filter(Boolean).join(" · "), avg: (v.p / v.w) * 100, days: v.days }];
       })
       .sort((a, b) => b.avg - a.avg);
@@ -348,8 +350,9 @@ export function EfficiencyPanels({ employee, period, target, onPeriodChange, onP
       if (!inFocus(period, d.date)) continue;
       for (const x of d.workers ?? []) if (x.isHelper && x.workingMinutes > 0) on.add(x.workerId);
     }
-    return employee.workers.filter((w) => on.has(w.id) && w.countsToHeadcount).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  }, [employee, period]);
+    const ranked = new Set(people.map((x) => x.key));
+    return employee.workers.filter((w) => on.has(w.id) && !ranked.has(w.id) && w.countsToHeadcount).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  }, [employee, period, people]);
 
   return (
     <div className="space-y-4 max-md:space-y-3">
@@ -484,7 +487,7 @@ export function DailyWarningAudit({ employee, period, target, onPickEmployee, se
       if (!inFocus(period, d.date)) continue;
       for (const x of d.workers ?? []) {
         const wk = byId.get(x.workerId);
-        if (!wk?.countsToHeadcount || wk.isHelper || x.isHelper || x.workingMinutes <= 0) continue;
+        if (!wk?.countsToHeadcount || x.isHelper || x.workingMinutes <= 0) continue;
         const eff = (x.productionMinutes / x.workingMinutes) * 100;
         const tier = auditTier(eff, WARN_LOW);
         if (!tier) continue;

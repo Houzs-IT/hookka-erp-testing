@@ -22,7 +22,7 @@ test("Department Performance route: production efficiency + Overall, helper rows
   const s = read("src/api/routes/department-performance.ts");
   assert.match(s, /const helperIds = await helperWorkerIds\(c\.var\.DB\);/);
   assert.match(s, /efficiencyPct: work - hw > 0 \? Math\.round\(\(\(prod - hp\) \/ \(work - hw\)\) \* 1000\) \/ 10 : 0,/);
-  assert.match(s, /\.\.\.\(helperIds\.has\(w\.workerId\) \? \{ isHelper: true \} : \{\}\),/);
+  assert.match(s, /\.\.\.\(helperIds\.has\(w\.workerId\) && w\.productionMinutes <= 0 \? \{ isHelper: true \} : \{\}\),/);
   assert.match(s, /avgEfficiencyPct: totalPair\.efficiencyPct,/);
 });
 
