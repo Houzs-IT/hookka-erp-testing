@@ -6,7 +6,7 @@
 //   DELETE /api/outsource-piece/rates/:id                  — remove one rate
 //   GET    /api/outsource-piece/importable?workerId=&from=&to=&department=&q=
 //   POST   /api/outsource-piece/import                     — orders -> records
-//   GET    /api/outsource-piece/records?period=            — records + payslip drift
+//   GET    /api/outsource-piece/records?period=            — records (scans synced first) + pending + drift
 //   DELETE /api/outsource-piece/records/:id                — undo an import
 //
 // Gated on `payroll`: this is payroll data, and HR already holds that right.
@@ -20,7 +20,7 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { freshAll, freshFirst, loadLockedPayrollPeriods } from "../lib/worker-penalties";
-import { ensureOutsourcePieceTables, findPieceDrift } from "../lib/outsource-piece";
+import { ensureOutsourcePieceTables, findPieceDrift, syncScannedPieceRecords } from "../lib/outsource-piece";
 import { orderRate, pieceAmountSen, pieceItemCode, pieceItemsForOrder } from "../../lib/outsource-piece";
 import { capList } from "../lib/list-cap";
 
@@ -298,11 +298,13 @@ app.get("/records", async (c) => {
   await ensureOutsourcePieceTables(c.var.DB);
   const period = c.req.query("period") ?? "";
   if (!PERIOD_RE.test(period)) return c.json({ success: false, error: "Payroll month is required" }, 400);
+  const { pending } = await syncScannedPieceRecords(c.var.DB, period);
   const rows = await freshAll<Record<string, unknown>>(
     c.var.DB,
     c.var.DB.prepare(
       `SELECT id, worker_id, emp_no, worker_name, po_no, sales_order_no, customer_po_id, product_code,
-              item_code, quantity, rate_sen, amount_sen, payroll_period, payslip_id
+              item_code, quantity, rate_sen, amount_sen, payroll_period, payslip_id,
+              source, share_bp, completed_date
          FROM outsource_piece_records WHERE payroll_period = ?
         ORDER BY worker_name, po_no`,
     ).bind(period),
@@ -321,10 +323,13 @@ app.get("/records", async (c) => {
     rateSen: Number(r.rateSen ?? r.rate_sen) || 0,
     amountSen: Number(r.amountSen ?? r.amount_sen) || 0,
     payslipId: s(r.payslipId, r.payslip_id),
+    source: s(r.source) === "SCAN" ? "SCAN" : "IMPORT",
+    shareBp: Number(r.shareBp ?? r.share_bp) || 10000,
+    completedDate: s(r.completedDate, r.completed_date),
   }));
   const locked = (await loadLockedPayrollPeriods(c.var.DB)).has(period);
   const drift = await findPieceDrift(c.var.DB, period);
-  return c.json({ success: true, data, locked, drift });
+  return c.json({ success: true, data, locked, drift, pending });
 });
 
 app.delete("/records/:id", async (c) => {

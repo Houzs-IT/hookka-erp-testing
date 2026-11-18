@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useT } from "@/lib/worker-i18n";
 import { workerFetch } from "@/layouts/WorkerLayout";
-import PayCard, { liveMonthCard, payslipCard } from "./pay-card";
+import PayCard, { liveMonthCard, payslipCard, type PieceLine, type PiecePending } from "./pay-card";
 
 // ---------- helpers ----------
 function rm(sen: number | undefined): string {
@@ -68,6 +68,9 @@ type PayData = {
     dailyRateSen?: number;
     advanceSen?: number;
     advanceDays?: Array<{ date: string; amountSen: number; note: string }>;
+    pieceWagesSen?: number;
+    pieceLines?: PieceLine[];
+    piecePending?: PiecePending[];
   };
   history: Array<{
     absentDays?: number;
@@ -88,6 +91,7 @@ type PayData = {
     taxSen?: number;
     advanceDeductionSen?: number;
     advanceDays?: Array<{ date: string; amountSen: number; note: string }>;
+    pieceWagesSen?: number;
     status?: string;
   }>;
 };
@@ -146,6 +150,7 @@ function asPayslipRow(v: unknown): PayslipRow | null {
           }))
           .filter((d) => d.date)
       : [],
+    pieceWagesSen: asNumber(v.pieceWagesSen) ?? 0,
     status: asString(v.status) ?? undefined,
   };
 }
@@ -217,6 +222,26 @@ function asPayData(v: unknown): PayData | null {
       payMode: v.current.payMode === "DAILY" ? "DAILY" : "MONTHLY",
       dailyRateSen: asNumber(v.current.dailyRateSen) ?? 0,
       advanceSen: asNumber(v.current.advanceSen) ?? 0,
+      pieceWagesSen: asNumber(v.current.pieceWagesSen) ?? 0,
+      pieceLines: Array.isArray(v.current.pieceLines)
+        ? v.current.pieceLines.filter(isRecord).map((l) => ({
+            completedDate: asString(l.completedDate) ?? "",
+            poNo: asString(l.poNo) ?? "",
+            itemCode: asString(l.itemCode) ?? "",
+            quantity: asNumber(l.quantity) ?? 0,
+            rateSen: asNumber(l.rateSen) ?? 0,
+            shareBp: asNumber(l.shareBp) ?? 10000,
+            amountSen: asNumber(l.amountSen) ?? 0,
+          }))
+        : [],
+      piecePending: Array.isArray(v.current.piecePending)
+        ? v.current.piecePending.filter(isRecord).map((l) => ({
+            completedDate: asString(l.completedDate) ?? "",
+            poNo: asString(l.poNo) ?? "",
+            itemCode: asString(l.itemCode) ?? "",
+            quantity: asNumber(l.quantity) ?? 0,
+          }))
+        : [],
       advanceDays: Array.isArray(v.current.advanceDays)
         ? v.current.advanceDays
             .filter(isRecord)
@@ -562,7 +587,9 @@ function CurrentMonthBreakdown({
       {finalised && <SavePayslipButton period={c.period} />}
 
       <div className="mt-4 pt-4 border-t border-white/10 space-y-2 text-sm">
-        <Row label={t("pay.fullSalary")} value={rm(c.fullSalarySen)} />
+        {!(c.fullSalarySen === 0 && (c.pieceWagesSen ?? 0) > 0) && (
+          <Row label={t("pay.fullSalary")} value={rm(c.fullSalarySen)} />
+        )}
         {c.absentDays > 0 && (
           <DetailRow
             label={t("pay.absentDeduction").replace("{n}", String(c.absentDays))}
@@ -585,6 +612,17 @@ function CurrentMonthBreakdown({
           />
         )}
         <Row label={t("pay.basicEarned")} value={rm(c.basicEarnedSen)} />
+        {(c.pieceWagesSen ?? 0) > 0 && (
+          <DetailRow
+            label={t("pay.pieceWages")}
+            value={rm(c.pieceWagesSen ?? 0)}
+            chips={(c.pieceLines ?? []).map((l, i) => ({
+              key: `${l.poNo}-${i}`,
+              text: `${l.poNo} · ${l.itemCode} · ${l.quantity} × ${rm(l.rateSen)}${l.shareBp < 10000 ? ` · ${l.shareBp === 5000 ? "½" : `${l.shareBp / 100}%`}` : ""} · ${rm(l.amountSen)}`,
+            }))}
+            tone="amber"
+          />
+        )}
         <DetailRow
           label={`${t("pay.ot")} · ${otHours}h`}
           value={rm(c.otSen)}

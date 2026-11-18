@@ -28,7 +28,7 @@ const i18n = await import(pathToFileURL(resolve(process.cwd(), "src/lib/worker-i
 const payslipsHandler = ROUTE.slice(ROUTE.indexOf('app.get("/payslips"'), ROUTE.indexOf("// Live current-month estimate"));
 
 test("the worker payslips history carries the stored advance and its dates", () => {
-  assert.match(payslipsHandler, /otPhHours, advance_deduction_sen\s+FROM payslips/);
+  assert.match(payslipsHandler, /otPhHours, advance_deduction_sen(, piece_wages_sen)?\s+FROM payslips/);
   assert.match(payslipsHandler, /advanceDeductionSen: Number\(r\.advanceDeductionSen \?\? r\.advance_deduction_sen/);
   assert.match(payslipsHandler, /advanceDays: advancesByPeriod\.get\(r\.period\)/);
   // The column only exists after the self-apply has run.

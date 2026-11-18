@@ -41,7 +41,20 @@ export type PayCardData = {
   plus: PayLine[];
   /** Taken off Gross: statutory, salary advance, penalties. */
   deductions: PayLine[];
+  hideBase?: boolean;
+  notes?: string[];
 };
+
+export type PieceLine = {
+  completedDate: string;
+  poNo: string;
+  itemCode: string;
+  quantity: number;
+  rateSen: number;
+  shareBp: number;
+  amountSen: number;
+};
+export type PiecePending = { completedDate: string; poNo: string; itemCode: string; quantity: number };
 
 const sum = (lines: PayLine[]) => lines.reduce((s, l) => s + l.amountSen, 0);
 
@@ -73,6 +86,19 @@ const lateChips = (days: LateDay[] | undefined) =>
   (days ?? []).map((d) => `${fmtDay(d.date)} · ${fmtDuration(d.hours)}`);
 const advanceChips = (days: Array<{ date: string; amountSen: number; note?: string }> | undefined) =>
   (days ?? []).map((d) => `${fmtDay(d.date)} · ${rm(d.amountSen)}${d.note ? ` · ${d.note}` : ""}`);
+const shareLabel = (shareBp: number) => (shareBp === 5000 ? "½" : `${shareBp / 100}%`);
+const pieceChips = (lines: PieceLine[] | undefined) =>
+  (lines ?? []).map(
+    (l) =>
+      `${l.poNo} · ${l.itemCode} · ${l.quantity} × ${rm(l.rateSen)}${l.shareBp < 10000 ? ` · ${shareLabel(l.shareBp)}` : ""} · ${rm(l.amountSen)}`,
+  );
+const pieceLine = (t: Translate, amountSen: number, lines?: PieceLine[]): PayLine => ({
+  label: `${t("pay.pieceWages")}${lines && lines.length > 0 ? ` (${lines.length})` : ""}`,
+  amountSen,
+  chips: pieceChips(lines),
+});
+const pendingNotes = (t: Translate, pending: PiecePending[] | undefined) =>
+  (pending ?? []).map((p) => `${t("pay.rateNotSet")}: ${p.poNo} · ${p.itemCode} · ${p.quantity}`);
 const isDone = (status: string | undefined) => status === "APPROVED" || status === "PAID";
 
 function dailyBase(t: Translate, days: number, rateSen: number): PayLine {
@@ -102,6 +128,9 @@ export type LiveMonth = {
   estimatedGrossSen: number;
   advanceSen?: number;
   advanceDays?: Array<{ date: string; amountSen: number; note?: string }>;
+  pieceWagesSen?: number;
+  pieceLines?: PieceLine[];
+  piecePending?: PiecePending[];
   payslipStatus?: string;
 };
 
@@ -122,7 +151,10 @@ export function liveMonthCard(c: LiveMonth, t: Translate): PayCardData | null {
       },
       { label: t("pay.lateShortDeduction"), amountSen: c.shortHourDeductionSen, chips: lateChips(c.lateDays) },
     ],
+    hideBase: c.fullSalarySen === 0 && (c.pieceWagesSen ?? 0) > 0,
+    notes: pendingNotes(t, c.piecePending),
     plus: [
+      pieceLine(t, c.pieceWagesSen ?? 0, c.pieceLines),
       {
         label: `${t("pay.ot")} · ${(c.otMinutes / 60).toFixed(1)}h`,
         amountSen: c.otSen,
@@ -149,6 +181,7 @@ export type StoredPayslip = {
   overtimeSen?: number;
   otHours?: number;
   allowancesSen?: number;
+  pieceWagesSen?: number;
   absentDays?: number;
   absenceDeductionSen?: number;
   shortHourDeductionSen?: number;
@@ -177,12 +210,14 @@ export function payslipCard(
 ): PayCardData | null {
   if (slip.grossSen == null || slip.netSen == null) return null;
   const absentSen = slip.absenceDeductionSen ?? 0;
+  const pieceSen = (slip.pieceWagesSen ?? 0) <= (slip.allowancesSen ?? 0) ? (slip.pieceWagesSen ?? 0) : 0;
   const plus: PayLine[] = [
     {
       label: `${t("pay.ot")}${slip.otHours ? ` · ${slip.otHours.toFixed(1)}h` : ""}`,
       amountSen: slip.overtimeSen ?? 0,
     },
-    { label: t("pay.allowance"), amountSen: slip.allowancesSen ?? 0 },
+    pieceLine(t, pieceSen),
+    { label: t("pay.allowance"), amountSen: (slip.allowancesSen ?? 0) - pieceSen },
   ];
   const deductions: PayLine[] = [
     { label: "EPF", amountSen: slip.epfEeSen ?? 0 },
@@ -226,6 +261,7 @@ export function payslipCard(
     isEstimate: !isDone(slip.status),
     note,
     base,
+    hideBase: base.amountSen === 0 && pieceSen > 0,
     less: [
       {
         label: t("pay.absentDeduction").replace("{n}", String(slip.absentDays ?? 0)),
@@ -291,12 +327,17 @@ export default function PayCard({
 
       {/* ---- 1. Earnings ---- */}
       <Section title={t("pay.earnings")}>
-        <Line line={card.base} value={rm(card.base.amountSen)} tone="plus" />
+        {!card.hideBase && <Line line={card.base} value={rm(card.base.amountSen)} tone="plus" />}
         {less.map((l) => (
           <Line key={l.label} line={l} value={`− ${rm(l.amountSen)}`} tone="minus" />
         ))}
         {plus.map((l) => (
           <Line key={l.label} line={l} value={rm(l.amountSen)} tone="plus" />
+        ))}
+        {(card.notes ?? []).map((n) => (
+          <p key={n} className="break-words text-xs text-[#E5BE80]">
+            {n}
+          </p>
         ))}
         <Subtotal label={t("pay.gross")} value={rm(grossSen)} />
       </Section>

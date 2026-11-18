@@ -980,6 +980,14 @@ const dict: Dict = {
   // (efficiency + leadership summed into one allowancesSen figure) — see
   // generate-payslip-pdf.ts's matching generic "Allowance" fallback.
   'pay.allowance': { en: 'Allowance', ms: 'Elaun', zh: '津贴', my: 'ကြေး' },
+  // Outsource workers paid per finished order (HK-0162).
+  'pay.pieceWages': { en: 'Piece wages', ms: 'Upah kerja sepotong', zh: '计件工资', my: 'အပိုင်းလိုက်လုပ်ခ' },
+  'pay.rateNotSet': {
+    en: 'Rate not set, not paid yet',
+    ms: 'Kadar belum ditetapkan, belum dibayar',
+    zh: '未设定单价，暂未计入',
+    my: 'နှုန်းထား မသတ်မှတ်ရသေးပါ',
+  },
   // Late clock-in (>10 min) + owner-flagged short/under-recorded hours docked
   // this month. Shown as a deduction line so the worker sees why Basic dropped.
   'pay.lateShortDeduction': {

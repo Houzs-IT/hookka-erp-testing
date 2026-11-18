@@ -78,6 +78,7 @@ import { normalizeStoredPcbStatus } from "../../lib/pcb";
 import { ensurePayrollTaxColumns } from "../lib/payroll-tax-columns";
 import { ensureWorkerPenaltyTables, freshAll } from "../lib/worker-penalties";
 import { ensureAdvanceTables, rowToAdvance, type AdvanceRow } from "../lib/employee-advances";
+import { ensureOutsourcePieceTables, loadWorkerPieceLines, syncScannedPieceRecords } from "../lib/outsource-piece";
 // One shared completion core with the desktop QC page — see the QC-on-the-
 // phone block below for why the phone must not own a second copy.
 import { completeInspection } from "./qc-pending";
@@ -2170,6 +2171,8 @@ type PayslipRow = {
   otPhHours?: number | null;
   advanceDeductionSen?: number | null;
   advance_deduction_sen?: number | null;
+  pieceWagesSen?: number | null;
+  piece_wages_sen?: number | null;
   status?: string | null;
 };
 
@@ -2188,12 +2191,31 @@ app.get("/payslips", async (c) => {
   await ensurePayrollTaxColumns(c.var.DB);
   // Same for payslips.advance_deduction_sen and the employee_advances table.
   await ensureAdvanceTables(c.var.DB);
+  await ensureOutsourcePieceTables(c.var.DB);
 
   // Current-month key for the snapshot. Computed up front so the cache_key is
   // stable for the whole request; the live compute below re-derives the same
   // period from `now`.
   const snapNow = new Date();
   const snapPeriod = `${snapNow.getFullYear()}-${String(snapNow.getMonth() + 1).padStart(2, "0")}`;
+
+  let pieceLines: Awaited<ReturnType<typeof loadWorkerPieceLines>> = [];
+  let piecePending: { completedDate: string; poNo: string; itemCode: string; quantity: number }[] = [];
+  const outsourceRow = await c.var.DB.prepare("SELECT is_outsource FROM workers WHERE id = ?")
+    .bind(workerId)
+    .first<{ is_outsource?: unknown; isOutsource?: unknown }>();
+  if (outsourceRow?.is_outsource ?? outsourceRow?.isOutsource) {
+    try {
+      const synced = await syncScannedPieceRecords(c.var.DB, snapPeriod);
+      piecePending = synced.pending
+        .filter((p) => p.kind === "NO_RATE" && p.workerIds.includes(workerId))
+        .map((p) => ({ completedDate: p.completedDate, poNo: p.poNo, itemCode: p.missing.join(", "), quantity: p.quantity }));
+    } catch (e) {
+      console.error(`[worker/payslips] piece sync failed for ${workerId} ${snapPeriod}, showing saved piece wages only:`, e);
+    }
+    pieceLines = await loadWorkerPieceLines(c.var.DB, workerId, snapPeriod);
+  }
+  const pieceWagesSen = pieceLines.reduce((sum, line) => sum + line.amountSen, 0);
 
   // Cache-aside snapshot (lazy recompute-on-READ). Freshness = MAX across the
   // labor + efficiency inputs (working_hour_entries, payroll_hour_deductions,
@@ -2225,9 +2247,9 @@ app.get("/payslips", async (c) => {
       // The suffix retires snapshots built before a fix to what history
       // carries (":adv" the salary advance, ":late" the late charge priced
       // from a per-day worker's day rate, ":daily" the per-day fields on the
-      // current month, ":past" each past month's status), so no cached month
-      // hides one.
-      cacheKey: `${workerId}:${snapPeriod}:adv:late:daily:past`,
+      // current month, ":past" each past month's status, ":piece" each month's
+      // piece wages), so no cached month hides one.
+      cacheKey: `${workerId}:${snapPeriod}:adv:late:daily:past:piece`,
     },
     async (db) => {
 
@@ -2241,7 +2263,7 @@ app.get("/payslips", async (c) => {
     `SELECT id, employeeId, period, status, basicSalarySen, totalOtSen, allowancesSen,
             grossPaySen, netPaySen, epfEmployeeSen, socsoEmployeeSen,
             eisEmployeeSen, pcbSen, pcb_status, absentDays, absenceDeductionSen,
-            otWeekdayHours, otSundayHours, otPhHours, advance_deduction_sen
+            otWeekdayHours, otSundayHours, otPhHours, advance_deduction_sen, piece_wages_sen
        FROM payslips
       WHERE employeeId = ?
       ORDER BY period DESC`,
@@ -2357,6 +2379,7 @@ app.get("/payslips", async (c) => {
     // showed Net below Gross with nothing in between to explain the gap.
     advanceDeductionSen: Number(r.advanceDeductionSen ?? r.advance_deduction_sen ?? 0) || 0,
     advanceDays: advancesByPeriod.get(r.period) ?? [],
+    pieceWagesSen: Number(r.pieceWagesSen ?? r.piece_wages_sen ?? 0) || 0,
     // DRAFT until the office approves it; the per-day card tags it Estimate.
     status: r.status ?? null,
   }));
@@ -2604,7 +2627,19 @@ app.get("/payslips", async (c) => {
     },
   );
 
-  return c.json({ success: true, data: payslipsData });
+  return c.json({
+    success: true,
+    data: {
+      ...payslipsData,
+      current: {
+        ...payslipsData.current,
+        estimatedGrossSen: payslipsData.current.estimatedGrossSen + pieceWagesSen,
+        pieceWagesSen,
+        pieceLines,
+        piecePending,
+      },
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
