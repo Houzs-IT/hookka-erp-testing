@@ -44,6 +44,7 @@ function makeDb({ announcements = [], workers = [], acks = [] } = {}) {
   const annTable = new Map(); // id -> row
   const workerTable = new Map(); // id -> row
   const ackTable = new Map(); // `${annId}::${workerId}` -> { announcement_id, worker_id, acked_at }
+  const notifTable = new Map(); // id -> bell row (HK-0154 ack alert)
 
   for (const a of announcements) annTable.set(a.id, { ...a });
   for (const w of workers) workerTable.set(w.id, { ...w });
@@ -66,6 +67,10 @@ function makeDb({ announcements = [], workers = [], acks = [] } = {}) {
           // org filter when present
           if (/org_id = \?/i.test(s) && row.org_id !== bound[1]) return null;
           return { ...row };
+        }
+        if (/FROM workers WHERE id = \?/i.test(s)) {
+          const w = workerTable.get(bound[0]);
+          return w ? { ...w } : null;
         }
         return null;
       },
@@ -100,18 +105,26 @@ function makeDb({ announcements = [], workers = [], acks = [] } = {}) {
           );
           return { results: out.map((r) => ({ ...r })) };
         }
+        if (/FROM notifications WHERE id IN/i.test(s)) {
+          return { results: bound.filter((id) => notifTable.has(id)).map((id) => ({ id })) };
+        }
         return { results: [] };
       },
       async run() {
+        if (/INSERT INTO notifications/i.test(s)) {
+          const [id, title, message, severity, link, created_at, org_id, user_id] = bound;
+          if (notifTable.has(id)) return { success: true, meta: { changes: 0 } };
+          notifTable.set(id, { id, title, message, severity, link, created_at, org_id, user_id });
+          return { success: true, meta: { changes: 1 } };
+        }
         // ack upsert
         if (/INSERT INTO announcement_acks/i.test(s)) {
           const [announcement_id, worker_id, acked_at] = bound;
           const key = `${announcement_id}::${worker_id}`;
           // ON CONFLICT DO NOTHING — keep the first row's acked_at.
-          if (!ackTable.has(key)) {
-            ackTable.set(key, { announcement_id, worker_id, acked_at });
-          }
-          return { success: true };
+          if (ackTable.has(key)) return { success: true, meta: { changes: 0 } };
+          ackTable.set(key, { announcement_id, worker_id, acked_at });
+          return { success: true, meta: { changes: 1 } };
         }
         // remind: UPDATE announcements SET reminded_at = ?
         if (/UPDATE announcements SET reminded_at = \?/i.test(s)) {
@@ -138,10 +151,15 @@ function makeDb({ announcements = [], workers = [], acks = [] } = {}) {
     };
     return obj;
   }
+  async function batch(stmts) {
+    const out = [];
+    for (const st of stmts) out.push(await st.run());
+    return out;
+  }
 
   return {
-    db: { prepare },
-    _state: { annTable, workerTable, ackTable },
+    db: { prepare, batch },
+    _state: { annTable, workerTable, ackTable, notifTable },
   };
 }
 
@@ -284,6 +302,40 @@ test("worker ack: a double-tap writes exactly one row (idempotent)", async () =>
     (r) => r.announcement_id === "ann-1" && r.worker_id === "w1",
   );
   assert.equal(rows.length, 1, "three taps → one ack row");
+});
+
+// ---- 1b. HK-0154: the sender gets one bell row per worker who acks ---------
+
+test("worker ack: bells the ERP user who posted it, once per worker (double-tap safe)", async () => {
+  const base = makeDb({
+    announcements: [activeAnnouncement("ann-1", { created_by: "user-violet" })],
+    workers: WORKERS,
+  });
+  const withTok = withTokens(base, new Map([["tok-w1", "w1"], ["tok-w2", "w2"]]));
+  const app = wrapWorker(await importWorkerApp("ack-notify"), { ...withTok.db, batch: base.db.batch });
+
+  for (const tok of ["tok-w1", "tok-w1", "tok-w2"]) {
+    const res = await call(app, { method: "POST", path: "/ann-1/ack", headers: { "x-worker-token": tok } });
+    assert.equal(res.status, 200);
+  }
+  const rows = [...base._state.notifTable.values()];
+  assert.equal(rows.length, 2, "w1 double-tap + w2 → two bell rows, not three");
+  assert.ok(rows.every((r) => r.user_id === "user-violet" && r.link === "/announcements"));
+  assert.equal(rows[0].title, "Acknowledged: Notice ann-1");
+  assert.deepEqual(rows.map((r) => r.message).sort(), [
+    'Alice (E001) tapped "Got it".',
+    'Bob (E002) tapped "Got it".',
+  ]);
+});
+
+test("worker ack: a notice with no sender (created_by null) bells nobody", async () => {
+  const base = makeDb({ announcements: [activeAnnouncement("ann-1")], workers: WORKERS });
+  const withTok = withTokens(base, new Map([["tok-w1", "w1"]]));
+  const app = wrapWorker(await importWorkerApp("ack-nosender"), { ...withTok.db, batch: base.db.batch });
+  const res = await call(app, { method: "POST", path: "/ann-1/ack", headers: { "x-worker-token": "tok-w1" } });
+  assert.equal(res.status, 200);
+  assert.equal(base._state.ackTable.size, 1);
+  assert.equal(base._state.notifTable.size, 0);
 });
 
 // ---- 2. Ack against a non-active / unknown id is a no-op -------------------
