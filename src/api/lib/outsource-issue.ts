@@ -50,12 +50,28 @@ const DDL: string[] = [
      ON outsource_issues (issued_at DESC)`,
 ];
 
+const CONCURRENT_CREATE_ERROR_CODES = new Set(["23505", "42P07", "42710"]);
+
 let _applied = false;
 
 export async function ensureOutsourceIssueTable(db: Runner): Promise<void> {
   if (_applied) return;
-  for (const sql of DDL) await db.prepare(sql).run();
+  for (const statement of DDL) await runCreateStatement(db, statement);
   _applied = true;
+}
+
+async function runCreateStatement(db: Runner, statement: string): Promise<void> {
+  try {
+    await db.prepare(statement).run();
+  } catch (error) {
+    if (!isConcurrentCreateError(error)) throw error;
+    await db.prepare(statement).run();
+  }
+}
+
+function isConcurrentCreateError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return CONCURRENT_CREATE_ERROR_CODES.has(String(error.code));
 }
 
 export const OUTSOURCE_ISSUE_ENFORCE_KEY = "outsource_issue.enforce";
