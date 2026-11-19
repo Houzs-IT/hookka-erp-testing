@@ -54,6 +54,7 @@ interface ParsedSticker {
   ref: StickerRef;
   pieceNo: number | null;
   totalPieces: number | null;
+  namedDepartment: string | null;
 }
 
 const SENTINEL_PREFIX = "FG-";
@@ -88,7 +89,7 @@ async function parsePackingToken(
   } catch {
     pieceNo = null;
   }
-  return { order, ref: { kind: "card", cardId }, pieceNo, totalPieces: null };
+  return { order, ref: { kind: "card", cardId }, pieceNo, totalPieces: null, namedDepartment: null };
 }
 
 async function parseSticker(db: D1Database, rawQr: string): Promise<ParsedSticker | null | "order-not-found"> {
@@ -97,7 +98,13 @@ async function parseSticker(db: D1Database, rawQr: string): Promise<ParsedSticke
   if (scheduleToken) {
     const order = await resolvePo(db, scheduleToken);
     if (!order?.jobCardId) return "order-not-found";
-    return { order, ref: { kind: "card", cardId: order.jobCardId }, pieceNo: null, totalPieces: null };
+    return {
+      order,
+      ref: { kind: "card", cardId: order.jobCardId },
+      pieceNo: null,
+      totalPieces: null,
+      namedDepartment: null,
+    };
   }
   const packingToken = PACKING_TOKEN_PATTERN.exec(raw);
   if (packingToken) return parsePackingToken(db, raw, packingToken[1]);
@@ -128,7 +135,29 @@ async function parseSticker(db: D1Database, rawQr: string): Promise<ParsedSticke
     ref,
     pieceNo: parsed.pieceNo ?? null,
     totalPieces: parsed.totalPieces ?? null,
+    namedDepartment: departmentNamedBy(parsed.opId, parsed.deptCode),
   };
+}
+
+function departmentNamedBy(opId: string | undefined, deptCode: string | undefined): string | null {
+  if (opId?.startsWith(SENTINEL_PREFIX)) return opId.slice(SENTINEL_PREFIX.length) || null;
+  return deptCode || null;
+}
+
+function stickerDepartment(parsed: ParsedSticker, cards: readonly TargetCard[]): string | null {
+  if (parsed.namedDepartment) return parsed.namedDepartment;
+  if (parsed.ref.kind !== "card") return null;
+  const cardId = parsed.ref.cardId;
+  return cards.find((card) => card.id === cardId)?.departmentCode || null;
+}
+
+function departmentsToTry(
+  departmentCodesOfWorker: readonly string[],
+  namedDepartment: string | null,
+): readonly string[] {
+  return namedDepartment && departmentCodesOfWorker.includes(namedDepartment)
+    ? [namedDepartment]
+    : departmentCodesOfWorker;
 }
 
 export function targetCardsFor(
@@ -214,7 +243,7 @@ export async function resolveIssueTarget(
 
   const cards = await loadOrderCards(db, parsed.order.productionOrderId);
   const candidates = [];
-  for (const departmentCode of request.departmentCodes) {
+  for (const departmentCode of departmentsToTry(request.departmentCodes, stickerDepartment(parsed, cards))) {
     const { cards: chosen, pieceNo, labelCard } = targetCardsFor(cards, parsed.ref, parsed.pieceNo, departmentCode);
     if (chosen.length === 0) continue;
     const slots = chosen.map((card) => ({ cardId: card.id, pieceNo }));
