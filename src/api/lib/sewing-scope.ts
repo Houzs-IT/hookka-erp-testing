@@ -1,7 +1,4 @@
-import { parseStickerData } from "../../lib/qr-utils";
-import { freshAll, freshFirst } from "./worker-penalties";
-import { resolvePo } from "./sticker-resolve";
-import type { PoMatch } from "./sticker-resolve";
+import { freshFirst } from "./worker-penalties";
 
 export interface SewingScope {
   productionOrderId: string;
@@ -9,28 +6,9 @@ export interface SewingScope {
   pieceNo: number | null;
 }
 
-export type SewingScopeLookup =
-  | {
-      kind: "found";
-      scope: SewingScope;
-      order: PoMatch;
-      itemLabel: string;
-      totalPieces: number | null;
-      isSewn: boolean;
-    }
-  | { kind: "not-a-sewing-sticker" }
-  | { kind: "order-not-found" }
-  | { kind: "compartment-not-found" };
-
-type SewingCardRow = {
-  id: string;
-  wipKey: string | null;
-  wipLabel: string | null;
-  status: string | null;
-};
-
-const FINISHED_STATUSES: readonly string[] = ["COMPLETED", "TRANSFERRED"];
-const FAB_SEW_SENTINEL = "FG-FAB_SEW";
+export function isSofaWipType(wipType: string | null | undefined): boolean {
+  return (wipType || "").toUpperCase().startsWith("SOFA_");
+}
 
 export async function resolveSewingScope(
   db: D1Database,
@@ -57,7 +35,7 @@ export async function resolveSewingScope(
         )
         .bind(request.productionOrderId, wipKey),
     );
-    if ((wkProbe?.wipType || "").toUpperCase().startsWith("SOFA_")) {
+    if (isSofaWipType(wkProbe?.wipType)) {
       wipKey = undefined;
       pieceNo = undefined;
     }
@@ -66,140 +44,5 @@ export async function resolveSewingScope(
     productionOrderId: request.productionOrderId,
     wipKey: wipKey ?? null,
     pieceNo: pieceNo ?? null,
-  };
-}
-
-async function loadSewingCards(
-  db: D1Database,
-  productionOrderId: string,
-): Promise<SewingCardRow[]> {
-  return freshAll<SewingCardRow>(
-    db,
-    db
-      .prepare(
-        "SELECT id, wipKey, wipLabel, status FROM job_cards WHERE productionOrderId = ? AND departmentCode = 'FAB_SEW'",
-      )
-      .bind(productionOrderId),
-  );
-}
-
-export type SewingCardState = {
-  id: string;
-  wipKey: string | null;
-  status: string | null;
-};
-
-export type PieceSlotState = {
-  jobCardId: string;
-  pieceNo: number;
-  pic1Id: string | null;
-};
-
-export function openCardsInScope(
-  scope: SewingScope,
-  cards: readonly SewingCardState[],
-): SewingCardState[] {
-  return cards.filter(
-    (card) =>
-      (!scope.wipKey || card.wipKey === scope.wipKey) &&
-      !FINISHED_STATUSES.includes(card.status ?? ""),
-  );
-}
-
-export function isScopeSewn(
-  scope: SewingScope,
-  cards: readonly SewingCardState[],
-  slots: readonly PieceSlotState[],
-): boolean {
-  const inScope = cards.filter(
-    (card) => !scope.wipKey || card.wipKey === scope.wipKey,
-  );
-  if (inScope.length === 0) return false;
-  const open = openCardsInScope(scope, cards);
-  if (open.length === 0) return true;
-  if (scope.pieceNo === null) return false;
-  return open.every((card) =>
-    slots.some(
-      (slot) =>
-        slot.jobCardId === card.id &&
-        slot.pieceNo === scope.pieceNo &&
-        !!slot.pic1Id,
-    ),
-  );
-}
-
-export async function isSewingDone(
-  db: D1Database,
-  scope: SewingScope,
-): Promise<boolean> {
-  const cards = await loadSewingCards(db, scope.productionOrderId);
-  const open = openCardsInScope(scope, cards);
-  let slots: PieceSlotState[] = [];
-  if (open.length > 0 && scope.pieceNo !== null) {
-    slots = await freshAll<PieceSlotState>(
-      db,
-      db
-        .prepare(
-          `SELECT jobCardId, pieceNo, pic1Id FROM piece_pics WHERE jobCardId IN (${open.map(() => "?").join(",")}) AND pieceNo = ?`,
-        )
-        .bind(...open.map((card) => card.id), scope.pieceNo),
-    );
-  }
-  return isScopeSewn(scope, cards, slots);
-}
-
-function compartmentOf(wipKey: string | null): string {
-  return (wipKey || "").split("::")[2] ?? "";
-}
-
-export async function sewingScopeFromSticker(
-  db: D1Database,
-  rawQr: string,
-): Promise<SewingScopeLookup> {
-  const parsed = parseStickerData(rawQr.trim());
-  if (!parsed) return { kind: "not-a-sewing-sticker" };
-  const isCompartmentSticker = !!(parsed.compartment || parsed.wipKey);
-  const isSewingSentinel =
-    parsed.opId === FAB_SEW_SENTINEL && parsed.deptCode === "FAB_SEW";
-  if (!isCompartmentSticker && !isSewingSentinel) {
-    return { kind: "not-a-sewing-sticker" };
-  }
-
-  const order =
-    (parsed.jobCardId ? await resolvePo(db, parsed.jobCardId) : null) ??
-    (await resolvePo(db, parsed.poNo));
-  if (!order) return { kind: "order-not-found" };
-
-  const cards = await loadSewingCards(db, order.productionOrderId);
-  let requestedWipKey: string | undefined;
-  let itemLabel = order.description;
-  if (isCompartmentSticker) {
-    const matching = cards.filter((card) =>
-      parsed.wipKey
-        ? card.wipKey === parsed.wipKey
-        : compartmentOf(card.wipKey) === parsed.compartment,
-    );
-    const distinctWipKeys = [...new Set(matching.map((card) => card.wipKey))];
-    if (distinctWipKeys.length !== 1 || !distinctWipKeys[0]) {
-      return { kind: "compartment-not-found" };
-    }
-    requestedWipKey = distinctWipKeys[0];
-    itemLabel = (matching[0]?.wipLabel || "").trim() || order.description;
-  } else if (cards.length === 0) {
-    return { kind: "compartment-not-found" };
-  }
-
-  const scope = await resolveSewingScope(db, {
-    productionOrderId: order.productionOrderId,
-    wipKey: requestedWipKey,
-    pieceNo: parsed.pieceNo,
-  });
-  return {
-    kind: "found",
-    scope,
-    order,
-    itemLabel,
-    totalPieces: scope.pieceNo === null ? null : (parsed.totalPieces ?? null),
-    isSewn: await isSewingDone(db, scope),
   };
 }

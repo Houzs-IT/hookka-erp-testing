@@ -5,13 +5,14 @@ import { requirePermission } from "../lib/rbac";
 import { DEFAULT_ORG_ID, getOrgId, tryGetOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { resolveWorkerToken } from "./worker-auth";
-import { sewingScopeFromSticker } from "../lib/sewing-scope";
+import { resolveIssueTarget } from "../lib/outsource-targets";
 import {
   ISSUE_LIST_CAP,
   issueItem,
   listIssues,
   listOutsourceWorkers,
   listWorkerIssues,
+  loadDepartmentNames,
   loadOutsourceWorker,
   undoIssue,
 } from "../lib/outsource-issue";
@@ -34,6 +35,11 @@ async function issuerName(c: Context<Env>): Promise<string> {
     .bind(userId)
     .first<{ displayName: string | null }>();
   return user?.displayName || userId;
+}
+
+async function departmentLabels(c: Context<Env>, codes: readonly string[], joiner: string): Promise<string> {
+  const names = await loadDepartmentNames(c.var.DB);
+  return codes.map((code) => names.get(code) || code).join(joiner);
 }
 
 admin.get("/workers", async (c) => {
@@ -89,14 +95,20 @@ admin.post("/", async (c) => {
     );
   }
 
-  const lookup = await sewingScopeFromSticker(c.var.DB, qr);
-  if (lookup.kind === "not-a-sewing-sticker") {
+  const lookup = await resolveIssueTarget(c.var.DB, { qr, departmentCodes: worker.departmentCodes });
+  if (lookup.kind === "no-worker-department") {
     return c.json(
       {
         success: false,
-        code: "NOT_A_SEWING_STICKER",
-        error: "This is not a Fabric Sewing sticker.",
+        code: "NO_WORKER_DEPARTMENT",
+        error: "This worker has no department. Set it in HR first.",
       },
+      400,
+    );
+  }
+  if (lookup.kind === "not-a-sticker") {
+    return c.json(
+      { success: false, code: "NOT_A_STICKER", error: "This is not a production item sticker." },
       400,
     );
   }
@@ -106,14 +118,24 @@ admin.post("/", async (c) => {
       404,
     );
   }
-  if (lookup.kind === "compartment-not-found") {
+  if (lookup.kind === "no-card-for-department") {
     return c.json(
       {
         success: false,
-        code: "COMPARTMENT_NOT_FOUND",
-        error: "This order has no Fabric Sewing item for this sticker.",
+        code: "NO_CARD_FOR_DEPARTMENT",
+        error: `This order has no ${await departmentLabels(c, lookup.departmentCodes, " or ")} job card for this sticker.`,
       },
       404,
+    );
+  }
+  if (lookup.kind === "ambiguous-department") {
+    return c.json(
+      {
+        success: false,
+        code: "AMBIGUOUS_DEPARTMENT",
+        error: `This worker is in ${await departmentLabels(c, lookup.departments, " and ")} and more than one can take this item. Fix the worker's departments in HR.`,
+      },
+      409,
     );
   }
 
@@ -124,12 +146,12 @@ admin.post("/", async (c) => {
     qrRaw: qr,
     issuedBy: await issuerName(c),
   });
-  if (outcome.kind === "already-sewn") {
+  if (outcome.kind === "already-done") {
     return c.json(
       {
         success: false,
-        code: "ALREADY_SEWN",
-        error: "Fabric Sewing is already done for this item.",
+        code: "ALREADY_DONE",
+        error: "This department's work is already done for this item.",
       },
       409,
     );
