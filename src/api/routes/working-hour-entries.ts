@@ -19,6 +19,7 @@
 // the existing per-attendance rows and inserts the new ones in one shot, so
 // the UI doesn't have to track which rows changed.
 // ---------------------------------------------------------------------------
+import { getOrgId } from "../lib/tenant";
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -222,7 +223,7 @@ app.get("/production-revenue", async (c) => {
     return c.json({ success: false, error: "Provide from + to (YYYY-MM-DD)" }, 400);
   }
 
-  const recognized = await loadProductionRevenue(c.var.DB, from, to);
+  const recognized = await loadProductionRevenue(c.var.DB, from, to, getOrgId(c));
 
   const totals: Record<"SOFA" | "BEDFRAME" | "ACCESSORY", number> = {
     SOFA: 0,
