@@ -6,6 +6,10 @@ export interface SewingScope {
   pieceNo: number | null;
 }
 
+export function isSofaWipType(wipType: string | null | undefined): boolean {
+  return (wipType || "").toUpperCase().startsWith("SOFA_");
+}
+
 export async function resolveSewingScope(
   db: D1Database,
   request: { productionOrderId: string; wipKey?: string; pieceNo?: number },
@@ -31,7 +35,7 @@ export async function resolveSewingScope(
         )
         .bind(request.productionOrderId, wipKey),
     );
-    if ((wkProbe?.wipType || "").toUpperCase().startsWith("SOFA_")) {
+    if (isSofaWipType(wkProbe?.wipType)) {
       wipKey = undefined;
       pieceNo = undefined;
     }

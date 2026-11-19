@@ -1,12 +1,22 @@
 import { parseJobCardBarcode, parseStickerData } from "../../lib/qr-utils";
-import { freshAll } from "./worker-penalties";
+import { freshAll, freshFirst } from "./worker-penalties";
 import { resolvePo } from "./sticker-resolve";
 import type { PoMatch } from "./sticker-resolve";
+import { ensureJobCardQrTokenColumn } from "./jobcard-qr-token";
+import { isSofaWipType } from "./sewing-scope";
 import { loadDoneSlots, slotKey } from "./outsource-issue";
 
 export interface IssueTarget {
   cardIds: string[];
   pieceNo: number | null;
+}
+
+export function singleCardTarget(cardId: string, pieceNo: number | null): IssueTarget {
+  return { cardIds: [cardId], pieceNo };
+}
+
+export function fanOutTarget(cards: ReadonlyArray<{ id: string }>, pieceNo: number | null): IssueTarget {
+  return { cardIds: cards.map((card) => card.id), pieceNo };
 }
 
 export interface TargetCard {
@@ -31,11 +41,11 @@ export type TargetLookup =
   | { kind: "not-a-sticker" }
   | { kind: "order-not-found" }
   | { kind: "no-worker-department" }
-  | { kind: "no-card-for-department"; departmentCode: string }
+  | { kind: "no-card-for-department"; departmentCodes: string[] }
   | { kind: "ambiguous-department"; departments: string[] };
 
 export type StickerRef =
-  | { kind: "order" }
+  | { kind: "order"; pieceLabel: string | null }
   | { kind: "card"; cardId: string }
   | { kind: "compartment"; compartment: string | null; wipKey: string | null };
 
@@ -46,40 +56,39 @@ interface ParsedSticker {
   totalPieces: number | null;
 }
 
-const SOFA_DEPARTMENTS: readonly string[] = ["FAB_SEW", "UPHOLSTERY"];
 const SENTINEL_PREFIX = "FG-";
-
-export function workerDepartments(worker: {
-  departmentCode?: unknown;
-  departmentCodes?: unknown;
-}): string[] {
-  const listed = parseCodeList(worker.departmentCodes);
-  if (listed.length > 0) return listed;
-  return typeof worker.departmentCode === "string" && worker.departmentCode
-    ? [worker.departmentCode]
-    : [];
-}
-
-function parseCodeList(raw: unknown): string[] {
-  let value: unknown = raw;
-  if (typeof raw === "string" && raw) {
-    try {
-      value = JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  }
-  return Array.isArray(value)
-    ? value.filter((code): code is string => typeof code === "string" && code.length > 0)
-    : [];
-}
+const PACKING_TOKEN_PATTERN = /\/p\/([0-9a-f]{64})(?:[/?#]|$)/i;
 
 function compartmentOf(wipKey: string | null): string {
   return (wipKey || "").split("::")[2] ?? "";
 }
 
-function isSofaCard(card: TargetCard): boolean {
-  return (card.wipType || "").toUpperCase().startsWith("SOFA_");
+function isSofaVariant(cards: readonly TargetCard[], wipKey: string | null): boolean {
+  return cards.some((card) => card.wipKey === wipKey && isSofaWipType(card.wipType));
+}
+
+async function parsePackingToken(
+  db: D1Database,
+  raw: string,
+  token: string,
+): Promise<ParsedSticker | null | "order-not-found"> {
+  await ensureJobCardQrTokenColumn(db);
+  const card = await freshFirst<Record<string, unknown>>(
+    db,
+    db.prepare("SELECT id FROM job_cards WHERE qr_token = ? LIMIT 1").bind(token),
+  );
+  if (!card) return "order-not-found";
+  const cardId = String(card.id);
+  const order = await resolvePo(db, cardId);
+  if (!order) return "order-not-found";
+  let pieceNo: number | null = null;
+  try {
+    const rawPiece = Number(new URL(raw).searchParams.get("p"));
+    if (Number.isInteger(rawPiece) && rawPiece > 0) pieceNo = rawPiece;
+  } catch {
+    pieceNo = null;
+  }
+  return { order, ref: { kind: "card", cardId }, pieceNo, totalPieces: null };
 }
 
 async function parseSticker(db: D1Database, rawQr: string): Promise<ParsedSticker | null | "order-not-found"> {
@@ -90,6 +99,8 @@ async function parseSticker(db: D1Database, rawQr: string): Promise<ParsedSticke
     if (!order?.jobCardId) return "order-not-found";
     return { order, ref: { kind: "card", cardId: order.jobCardId }, pieceNo: null, totalPieces: null };
   }
+  const packingToken = PACKING_TOKEN_PATTERN.exec(raw);
+  if (packingToken) return parsePackingToken(db, raw, packingToken[1]);
   const parsed = parseStickerData(raw);
   if (!parsed) return null;
   let ref: StickerRef;
@@ -100,7 +111,9 @@ async function parseSticker(db: D1Database, rawQr: string): Promise<ParsedSticke
       wipKey: parsed.wipKey ?? null,
     };
   } else if (parsed.opId?.startsWith(SENTINEL_PREFIX)) {
-    ref = parsed.jobCardId ? { kind: "card", cardId: parsed.jobCardId } : { kind: "order" };
+    ref = parsed.jobCardId
+      ? { kind: "card", cardId: parsed.jobCardId }
+      : { kind: "order", pieceLabel: parsed.pieceLabel ?? null };
   } else if (parsed.opId) {
     ref = { kind: "card", cardId: parsed.opId };
   } else {
@@ -123,36 +136,52 @@ export function targetCardsFor(
   ref: StickerRef,
   pieceNo: number | null,
   departmentCode: string,
-): { cards: TargetCard[]; pieceNo: number | null } {
+): { cards: TargetCard[]; pieceNo: number | null; labelCard: TargetCard | null } {
   const ofDepartment = cards.filter((card) => card.departmentCode === departmentCode);
-  let chosen: TargetCard[] = [];
   if (ref.kind === "order") {
-    chosen = ofDepartment;
-  } else if (ref.kind === "card") {
-    const referenced = cards.find((card) => card.id === ref.cardId);
-    if (referenced) {
-      chosen =
-        referenced.departmentCode === departmentCode
-          ? [referenced]
-          : ofDepartment.filter((card) => card.wipKey === referenced.wipKey);
-      if (isSofaCard(referenced) && SOFA_DEPARTMENTS.includes(departmentCode)) {
-        chosen = ofDepartment;
-        return { cards: chosen, pieceNo: null };
-      }
+    let chosen = ofDepartment;
+    if (ref.pieceLabel && chosen.length > 1) {
+      const wanted = ref.pieceLabel.trim().toUpperCase();
+      const narrowed = chosen.filter((card) => (card.wipLabel ?? "").toUpperCase().includes(wanted));
+      if (narrowed.length === 1) chosen = narrowed;
     }
-  } else {
-    const matching = ofDepartment.filter((card) =>
-      ref.wipKey ? card.wipKey === ref.wipKey : compartmentOf(card.wipKey) === ref.compartment,
-    );
-    const distinctWipKeys = new Set(matching.map((card) => card.wipKey));
-    if (distinctWipKeys.size === 1) {
-      chosen = matching;
-      if (matching.some(isSofaCard) && SOFA_DEPARTMENTS.includes(departmentCode)) {
-        return { cards: ofDepartment, pieceNo: null };
-      }
-    }
+    return { cards: chosen, pieceNo, labelCard: null };
   }
-  return { cards: chosen, pieceNo };
+  if (ref.kind === "card") {
+    const referenced = cards.find((card) => card.id === ref.cardId);
+    if (!referenced) return { cards: [], pieceNo, labelCard: null };
+    if (isSofaVariant(cards, referenced.wipKey)) {
+      return { cards: ofDepartment, pieceNo: null, labelCard: referenced };
+    }
+    const chosen =
+      referenced.departmentCode === departmentCode
+        ? [referenced]
+        : ofDepartment.filter((card) => card.wipKey === referenced.wipKey);
+    return { cards: chosen, pieceNo, labelCard: chosen[0] ?? null };
+  }
+  const matching = ofDepartment.filter((card) =>
+    ref.wipKey ? card.wipKey === ref.wipKey : compartmentOf(card.wipKey) === ref.compartment,
+  );
+  if (new Set(matching.map((card) => card.wipKey)).size !== 1) {
+    return { cards: [], pieceNo, labelCard: null };
+  }
+  if (isSofaVariant(cards, matching[0].wipKey)) {
+    return { cards: ofDepartment, pieceNo: null, labelCard: matching[0] };
+  }
+  return { cards: matching, pieceNo, labelCard: matching[0] };
+}
+
+export function itemLabelFor(
+  chosen: readonly TargetCard[],
+  labelCard: TargetCard | null,
+  fallback: string,
+): string {
+  const fromCard = (labelCard?.wipLabel || "").trim();
+  if (fromCard) return fromCard;
+  if (labelCard === null && new Set(chosen.map((card) => card.wipKey)).size === 1) {
+    return (chosen[0]?.wipLabel || "").trim() || fallback;
+  }
+  return fallback;
 }
 
 async function loadOrderCards(db: D1Database, productionOrderId: string): Promise<TargetCard[]> {
@@ -160,7 +189,7 @@ async function loadOrderCards(db: D1Database, productionOrderId: string): Promis
     db,
     db
       .prepare(
-        "SELECT id, departmentCode, wipKey, wipLabel, wipType, status FROM job_cards WHERE productionOrderId = ?",
+        "SELECT id, departmentCode, wipKey, wipLabel, wipType, status FROM job_cards WHERE productionOrderId = ? ORDER BY sequence, id",
       )
       .bind(productionOrderId),
   );
@@ -186,7 +215,7 @@ export async function resolveIssueTarget(
   const cards = await loadOrderCards(db, parsed.order.productionOrderId);
   const candidates = [];
   for (const departmentCode of request.departmentCodes) {
-    const { cards: chosen, pieceNo } = targetCardsFor(cards, parsed.ref, parsed.pieceNo, departmentCode);
+    const { cards: chosen, pieceNo, labelCard } = targetCardsFor(cards, parsed.ref, parsed.pieceNo, departmentCode);
     if (chosen.length === 0) continue;
     const slots = chosen.map((card) => ({ cardId: card.id, pieceNo }));
     const done = await loadDoneSlots(db, slots);
@@ -194,11 +223,12 @@ export async function resolveIssueTarget(
       departmentCode,
       cards: chosen,
       pieceNo,
+      labelCard,
       isDone: slots.every((slot) => done.has(slotKey(slot))),
     });
   }
   if (candidates.length === 0) {
-    return { kind: "no-card-for-department", departmentCode: request.departmentCodes[0] };
+    return { kind: "no-card-for-department", departmentCodes: [...request.departmentCodes] };
   }
   const open = candidates.filter((candidate) => !candidate.isDone);
   if (open.length > 1) {
@@ -209,7 +239,7 @@ export async function resolveIssueTarget(
     kind: "found",
     departmentCode: picked.departmentCode,
     order: parsed.order,
-    itemLabel: (picked.cards[0].wipLabel || "").trim() || parsed.order.description,
+    itemLabel: itemLabelFor(picked.cards, picked.labelCard, parsed.order.description),
     totalPieces: picked.pieceNo === null ? null : parsed.totalPieces,
     target: { cardIds: picked.cards.map((card) => card.id), pieceNo: picked.pieceNo },
     isDone: picked.isDone,
