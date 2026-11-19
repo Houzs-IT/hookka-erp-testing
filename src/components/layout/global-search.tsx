@@ -151,6 +151,7 @@ const PAGE_RESULTS: SearchResult[] = [
   { id: "p-credit-notes", label: "Credit Notes", href: "/invoices/credit-notes", icon: FileX, category: "pages" },
   { id: "p-payments", label: "Payments", href: "/invoices/payments", icon: CreditCard, category: "pages" },
   { id: "p-e-invoice", label: "e-Invoice", href: "/invoices/e-invoice", icon: FileText, category: "pages" },
+  { id: "p-invoice-price-summary", label: "Invoice Price Summary", href: "/invoices/price-summary", icon: FileText, category: "pages" },
   { id: "p-reports", label: "Reports", href: "/reports", icon: BarChart3, category: "pages" },
   { id: "p-employees", label: "Employees", href: "/employees", icon: Users, category: "pages" },
   // Removed in chore/dead-code-sweep: "Approvals" (/approvals), "Documents"

@@ -99,6 +99,7 @@ export const navigationGroups: NavGroup[] = [
       { name: "Delivery Order", href: "/delivery", icon: Truck },
       { name: "Delivery Return", href: "/delivery-returns", icon: Truck },
       { name: "Invoices", href: "/invoices", icon: Receipt },
+      { name: "Invoice Price Summary", href: "/invoices/price-summary", icon: Receipt },
       { name: "Consignment", href: "/consignment", icon: Package, children: [
         { name: "Consignment Order", href: "/consignment", icon: Package },
         { name: "Consignment Note", href: "/consignment/note", icon: ClipboardList },
@@ -748,7 +749,7 @@ export function Sidebar({
       return pathname === "/invoices/e-invoice" || pathname.startsWith("/invoices/e-invoice/");
     }
     if (href === "/invoices") {
-      return pathname === "/invoices" || (pathname.startsWith("/invoices/") && !pathname.startsWith("/invoices/credit-notes") && !pathname.startsWith("/invoices/debit-notes") && !pathname.startsWith("/invoices/payments") && !pathname.startsWith("/invoices/e-invoice"));
+      return pathname === "/invoices" || (pathname.startsWith("/invoices/") && !pathname.startsWith("/invoices/credit-notes") && !pathname.startsWith("/invoices/debit-notes") && !pathname.startsWith("/invoices/payments") && !pathname.startsWith("/invoices/e-invoice") && !pathname.startsWith("/invoices/price-summary"));
     }
     if (href === "/settings/organisations") {
       return pathname === "/settings/organisations" || pathname.startsWith("/settings/organisations/");
