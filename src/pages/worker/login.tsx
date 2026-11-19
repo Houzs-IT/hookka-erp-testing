@@ -362,11 +362,11 @@ export default function WorkerLoginPage() {
         return;
       }
 
-      // Server says "no PIN on file yet" → swap to setup screen
+      // No PIN on file → the office sets it (security audit A1, 2026-11-19);
+      // the worker can no longer create their own first PIN.
       if (data.needsSetup) {
-        setMode("setup");
         setPin("");
-        setError(null);
+        setError(t("login.pinNotSet"));
         return;
       }
       if (!data.success) {

@@ -136,6 +136,12 @@ const dict: Dict = {
     zh: '设置新 PIN',
     my: 'PIN အသစ်ထည့်ပါ',
   },
+  'login.pinNotSet': {
+    en: 'Your PIN has not been set yet. Please ask the office to set it for you.',
+    ms: 'PIN anda belum ditetapkan. Sila minta pejabat menetapkannya untuk anda.',
+    zh: '你的 PIN 还没设置，请找办公室帮你设置。',
+    my: 'သင့် PIN ကို မသတ်မှတ်ရသေးပါ။ ရုံးမှ သတ်မှတ်ပေးရန် ပြောပါ။',
+  },
   'login.pinMismatch': {
     en: 'PINs do not match',
     ms: 'PIN tidak sepadan',

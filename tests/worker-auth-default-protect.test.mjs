@@ -41,9 +41,11 @@ void loaderRegistered;
 // surface needed by routes/worker-auth.ts and routes/worker.ts. Routes the
 // SQL through a small pattern-match dispatch table; not a real engine.
 
-function makeDb({ workers: workerSeed = [] } = {}) {
+function makeDb({ workers: workerSeed = [], pins: pinSeed = [] } = {}) {
   const workers = new Map();
   const pins = new Map();
+  // A PIN is set by the office now (security audit A1, 2026-11-19) — tests seed it.
+  for (const p of pinSeed) pins.set(p.workerId, { must_reset: false, updatedAt: '2026-01-01T00:00:00Z', ...p });
   const sessions = new Map();
 
   for (const w of workerSeed) workers.set(w.id, { ...w });
@@ -208,7 +210,7 @@ test('worker-auth sub-app: /me without token rejects (registered handler still g
 });
 
 test('worker-auth sub-app: /login still works without auth', async () => {
-  const { db } = makeDb({ workers: [WORKER] });
+  const { db } = makeDb({ workers: [WORKER], pins: [{ workerId: WORKER.id, pin: '123456' }] });
   const mod = await import(
     pathToFileURL(
       resolve(process.cwd(), 'src/api/routes/worker-auth.ts'),
@@ -221,7 +223,7 @@ test('worker-auth sub-app: /login still works without auth', async () => {
     {
       method: 'POST',
       path: '/login',
-      body: { empNo: 'EMP001', firstTimePin: '123456' },
+      body: { empNo: 'EMP001', pin: '123456' },
     },
     db,
   );
@@ -262,7 +264,7 @@ test('worker-auth sub-app: /reset-pin still works without auth', async () => {
 });
 
 test('worker-auth sub-app: /logout NOW requires auth (was previously public)', async () => {
-  const { db } = makeDb({ workers: [WORKER] });
+  const { db } = makeDb({ workers: [WORKER], pins: [{ workerId: WORKER.id, pin: '000000' }] });
   const mod = await import(
     pathToFileURL(
       resolve(process.cwd(), 'src/api/routes/worker-auth.ts'),
@@ -284,7 +286,7 @@ test('worker-auth sub-app: /logout NOW requires auth (was previously public)', a
     {
       method: 'POST',
       path: '/login',
-      body: { empNo: 'EMP001', firstTimePin: '000000' },
+      body: { empNo: 'EMP001', pin: '000000' },
     },
     db,
   );

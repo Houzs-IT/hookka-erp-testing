@@ -42,10 +42,12 @@ try {
 // SQL engine. Keeps the test's assertions on observable behavior, not on
 // query string formatting.
 
-function makeDb({ workers: workerSeed = [] } = {}) {
+function makeDb({ workers: workerSeed = [], pins: pinSeed = [] } = {}) {
   // Tables.
   const workers = new Map();   // id -> row
   const pins = new Map();      // workerId -> { workerId, pin, updatedAt }
+  // A PIN is set by the office now (security audit A1, 2026-11-19) — tests seed it.
+  for (const p of pinSeed) pins.set(p.workerId, { must_reset: false, updatedAt: '2026-01-01T00:00:00Z', ...p });
   const sessions = new Map();  // token -> { token, workerId, createdAt, expiresAt, lastSeenAt }
 
   for (const w of workerSeed) {
@@ -208,7 +210,7 @@ test('module loads', async () => {
 });
 
 test('login + token survives a fresh Worker process (D1 stub shared across imports)', async () => {
-  const { db } = makeDb({ workers: [WORKER] });
+  const { db } = makeDb({ workers: [WORKER], pins: [{ workerId: WORKER.id, pin: '123456' }] });
 
   // Process A — import the module, register PIN, log in, get a token.
   const modA = await import(
@@ -223,11 +225,11 @@ test('login + token survives a fresh Worker process (D1 stub shared across impor
   // First-time PIN registration.
   let res = await callRoute(
     appA,
-    { method: 'POST', path: '/login', body: { empNo: 'EMP001', firstTimePin: '123456' } },
+    { method: 'POST', path: '/login', body: { empNo: 'EMP001', pin: '123456' } },
     db,
   );
   let json = await res.json();
-  assert.equal(json.success, true, 'first-time login should succeed');
+  assert.equal(json.success, true, 'login with the office-set PIN should succeed');
   assert.ok(json.token, 'token should be returned');
   const tokenA = json.token;
 
@@ -257,7 +259,7 @@ test('login + token survives a fresh Worker process (D1 stub shared across impor
 });
 
 test('logout invalidates the token', async () => {
-  const { db } = makeDb({ workers: [WORKER] });
+  const { db } = makeDb({ workers: [WORKER], pins: [{ workerId: WORKER.id, pin: '654321' }] });
   const mod = await import(
     pathToFileURL(
       resolve(process.cwd(), 'src/api/routes/worker-auth.ts'),
@@ -268,7 +270,7 @@ test('logout invalidates the token', async () => {
   // Register + login.
   let res = await callRoute(
     app,
-    { method: 'POST', path: '/login', body: { empNo: 'EMP001', firstTimePin: '654321' } },
+    { method: 'POST', path: '/login', body: { empNo: 'EMP001', pin: '654321' } },
     db,
   );
   const { token } = await res.json();
@@ -305,7 +307,7 @@ test('logout invalidates the token', async () => {
 });
 
 test('reset-pin invalidates ALL of the workers tokens', async () => {
-  const { db, _state } = makeDb({ workers: [WORKER] });
+  const { db, _state } = makeDb({ workers: [WORKER], pins: [{ workerId: WORKER.id, pin: '000000' }] });
   const mod = await import(
     pathToFileURL(
       resolve(process.cwd(), 'src/api/routes/worker-auth.ts'),
@@ -316,7 +318,7 @@ test('reset-pin invalidates ALL of the workers tokens', async () => {
   // First-time login.
   let res = await callRoute(
     app,
-    { method: 'POST', path: '/login', body: { empNo: 'EMP001', firstTimePin: '000000' } },
+    { method: 'POST', path: '/login', body: { empNo: 'EMP001', pin: '000000' } },
     db,
   );
   const tokenA = (await res.json()).token;
@@ -377,4 +379,19 @@ test('reset-pin invalidates ALL of the workers tokens', async () => {
     (s) => s.workerId === WORKER.id,
   );
   assert.equal(afterReset.length, 0);
+});
+
+// Security audit A1 (owner go-ahead 2026-11-19): knowing an employee number
+// must not let anyone create the first PIN and sign in as that worker.
+test('no PIN on file: firstTimePin is ignored, nothing is written, no token', async () => {
+  const { db, _state } = makeDb({ workers: [WORKER] });
+  const mod = await import(pathToFileURL(resolve(process.cwd(), 'src/api/routes/worker-auth.ts')).href + '?t=a1');
+  const app = wrap(mod.default);
+  const res = await callRoute(app, { method: 'POST', path: '/login', body: { empNo: 'EMP001', firstTimePin: '123456' } }, db);
+  const json = await res.json();
+  assert.equal(json.success, false);
+  assert.equal(json.error, 'PIN_NOT_SET');
+  assert.equal(json.needsAdmin, true);
+  assert.equal(json.token, undefined, 'no session for a self-chosen PIN');
+  if (_state?.pins) assert.equal(_state.pins.size, 0, 'no PIN row written');
 });

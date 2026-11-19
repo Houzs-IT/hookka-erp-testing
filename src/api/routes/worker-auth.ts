@@ -156,21 +156,18 @@ app.post("/login", async (c) => {
     .bind(worker.id)
     .first<PinRow>();
 
-  // First-time registration path.
+  // No PIN on file. Security audit A1 (owner-approved 2026-07-23, go-ahead
+  // 2026-11-19): this used to let ANYONE who knew an employee number set the
+  // first PIN and sign in as that worker. A PIN is now set only by the office
+  // (Employees › Set PIN / Generate PINs, POST /api/workers/:id/set-pin or
+  // /bulk-generate-pins); `firstTimePin` is ignored. 200 so the portal shows
+  // the "ask the office" message rather than a failure.
   if (!existing) {
-    if (!firstTimePin || !/^\d{6}$/.test(firstTimePin)) {
-      // 200 so the client treats it as info, not a failure, and shows the setup screen.
-      return c.json(
-        { success: false, error: "PIN_NOT_SET", needsSetup: true },
-        200,
-      );
-    }
-    const hashed = await hashPin(firstTimePin);
-    await c.var.DB.prepare(
-      "INSERT INTO worker_pins (workerId, pin, updatedAt, must_reset) VALUES (?, ?, ?, false)",
-    )
-      .bind(worker.id, hashed, new Date().toISOString())
-      .run();
+    void firstTimePin;
+    return c.json(
+      { success: false, error: "PIN_NOT_SET", needsSetup: true, needsAdmin: true },
+      200,
+    );
   } else {
     // Sprint 2 — force-reset gate. Workers whose stored PIN is from the old
     // 4-digit era (must_reset=1, set by migration 0079) must run the reset
