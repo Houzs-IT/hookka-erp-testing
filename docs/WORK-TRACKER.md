@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-19**: HK-0165 supplier on Add Raw Material entry added (branch `fix/outsource-issue-labels`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-19**: HK-0164 item 5 added (issue time on phone tracking and My task, branch `feat/hk0164-outsource-work-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-19**: HK-0164 Outsource Work entry added (branch `feat/hk0164-outsource-work-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: credit note date picker (branch `feat/cn-date-picker`, to `main`); nothing else re-checked.
@@ -320,6 +321,11 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 HK-0165 Supplier on Add Raw Material (fix/outsource-issue-labels, 2026-11-19)
+Ask (Violet, ticket HK-0165): "when create raw material code, add on assign to which supplier". Owner: supplier only, no price at creation.
+1. DONE (branch, tests only): optional Supplier field on Inventory > Raw Materials > Add Raw Material (Single mode). On save it writes a `supplier_material_bindings` row (supplier code = item code, price 0, main supplier) through `POST /api/supplier-materials`, so the supplier's Pricing & SKUs tab shows it. Test: `tests/rm-create-supplier-link.test.mjs`.
+2. OPEN: verify in a browser at 360px, 390px and desktop.
 
 ## 🔵 HK-0164 Outsource fabric issuance and completion (feat/hk0164-outsource-work-main, 2026-11-19)
 Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to an outsourced worker (Incomplete); it shows in the worker's portal; the worker's scan of the finished item checks it is theirs, marks it Completed and records the time. Owner: Fabric Sewing only; the worker's scan also completes Fabric Sewing; no re-issue; access granted per account.

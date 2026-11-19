@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { CSSProperties, JSX } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Camera, CheckCircle2, ChevronDown, Search, Undo2, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ScanLine, Search, Undo2, X, XCircle } from "lucide-react";
 import { QrCameraScanner } from "@/components/qr-camera-scanner";
 import { usePermissions } from "@/lib/use-permission";
 import {
@@ -351,7 +351,7 @@ function IssuePane({
           <input
             value={typedCode}
             onChange={(event) => setTypedCode(event.target.value)}
-            placeholder="Type or paste the sticker code"
+            placeholder="Type the code or tap Scan QR"
             aria-label="Sticker code"
             inputMode="text"
             enterKeyHint="go"
@@ -386,7 +386,7 @@ function IssuePane({
       </div>
       {issue.sessionIssues.length === 0 ? (
         <div style={{ ...MESSAGE_STYLE, padding: "16px 8px" }}>
-          Nothing issued yet. Pick a worker, then tap Scan.
+          Nothing issued yet. Pick a worker, then tap Scan QR.
         </div>
       ) : (
         issue.sessionIssues.map((item) => (
@@ -424,8 +424,8 @@ function IssuePane({
             }}
             style={{ ...PRIMARY_BUTTON, opacity: isScanDisabled ? 0.45 : 1 }}
           >
-            <Camera size={20} aria-hidden />
-            {issue.selectedWorker ? "Scan" : "Pick a worker to scan"}
+            <ScanLine size={20} aria-hidden />
+            {issue.selectedWorker ? "Scan QR" : "Pick a worker to scan"}
           </button>
           <button
             type="button"

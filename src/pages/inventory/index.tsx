@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, startTransition } from "react";
-import { cachedFetchJson, invalidateCachePrefix } from "@/lib/cached-fetch";
+import { cachedFetchJson, invalidateCachePrefix, useCachedJson } from "@/lib/cached-fetch";
 import { type FGItem, type FgDeltas, mergeFgDeltas } from "@/lib/fg-stock";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useToast } from "@/components/ui/toast";
@@ -20,7 +20,8 @@ import { exportImportRows } from "@/components/ui/batch-import-dialog";
 // source. They are retained only for TYPE imports; all runtime data is now
 // fetched live from D1 via the API. After a D1 clear the UI now correctly
 // renders zero balances instead of baked-in seed values.
-import type { Product, RawMaterial, FGBatch } from "@/types";
+import type { Product, RawMaterial, FGBatch, Supplier } from "@/types";
+import { linkSupplierToRawMaterial, toActiveSupplierOptions } from "./rm-supplier-link";
 import {
   SUCCESS, NEUTRAL,
   INVENTORY_TYPE_COLOR,
@@ -269,7 +270,10 @@ type CreateRMForm = {
   baseUOM: string;
   itemGroup: string;
   balanceQty: number;
+  supplierId: string;
 };
+
+const EMPTY_RM_FORM: CreateRMForm = { itemCode: "", description: "", baseUOM: "PCS", itemGroup: "PLYWOOD", balanceQty: 0, supplierId: "" };
 
 // ============================================================
 // Mock data generation
@@ -1253,7 +1257,7 @@ export default function InventoryPage() {
   // Create RM modal state (declared here so the bulk-generate helpers below can
   // read rmForm / drive showCreateRM).
   const [showCreateRM, setShowCreateRM] = useState(false);
-  const [rmForm, setRmForm] = useState<CreateRMForm>({ itemCode: "", description: "", baseUOM: "PCS", itemGroup: "PLYWOOD", balanceQty: 0 });
+  const [rmForm, setRmForm] = useState<CreateRMForm>(EMPTY_RM_FORM);
   const [rmSaving, setRmSaving] = useState(false);
 
   // ---- Add RM bulk-generate (owner 2026-07-11) -----------------------------
@@ -1322,6 +1326,8 @@ export default function InventoryPage() {
   const rmUnits = useMemo(() => rmUnitsFrom(variantsCfg), [variantsCfg]);
   const rmFormUomChoices = rmUnits;
   const rmFormUom = rmFormUomChoices.includes(rmForm.baseUOM) ? rmForm.baseUOM : rmFormUomChoices[0];
+  const { data: suppliersResponse } = useCachedJson<{ success?: boolean; data?: Supplier[] }>(showCreateRM ? "/api/suppliers" : null);
+  const rmSupplierOptions = useMemo(() => toActiveSupplierOptions(suppliersResponse?.data ?? []), [suppliersResponse]);
   // Units whose balance cannot be typed as a fraction here (all categories).
   const rmWholeUoms = useMemo(() => wholeUomsFrom(variantsCfg?.wholeUoms), [variantsCfg]);
   function toggleWholeUom(uom: string) {
@@ -2750,6 +2756,16 @@ export default function InventoryPage() {
                     <label className="block text-xs text-[#6B7280] mb-1">Balance Qty</label>
                     <input type="number" onFocus={(e) => e.currentTarget.select()} value={rmForm.balanceQty || ""} onChange={e => setRmForm(f => ({ ...f, balanceQty: Number(e.target.value) }))} className="w-full border border-[#E2DDD8] rounded px-3 py-1.5 text-sm focus:border-[#6B5C32] focus:outline-none" placeholder="0" />
                   </div>
+                  <div>
+                    <label className="block text-xs text-[#6B7280] mb-1">Supplier (optional)</label>
+                    <SearchableSelect
+                      value={rmForm.supplierId}
+                      onChange={(supplierId) => setRmForm(f => ({ ...f, supplierId }))}
+                      options={rmSupplierOptions}
+                      placeholder="Select supplier"
+                      allowClear
+                    />
+                  </div>
                 </div>
                 )}
                 <div className="flex justify-end gap-2 pt-4">
@@ -2800,8 +2816,17 @@ export default function InventoryPage() {
                         invalidateCachePrefix("/api/fabric-tracking");
                         invalidateCachePrefix("/api/fabrics");
                         toast.success(`Raw material created: ${rmForm.itemCode}`);
+                        if (rmForm.supplierId && json.data) {
+                          try {
+                            await linkSupplierToRawMaterial({ supplierId: rmForm.supplierId, itemCode: json.data.itemCode, description: json.data.description });
+                            invalidateCachePrefix("/api/supplier-materials");
+                          } catch (linkError) {
+                            const reason = linkError instanceof Error ? linkError.message : String(linkError);
+                            toast.error(`${json.data.itemCode} was created, but the supplier was not linked (${reason}). Add it on the supplier's Pricing & SKUs tab.`);
+                          }
+                        }
                         setShowCreateRM(false);
-                        setRmForm({ itemCode: "", description: "", baseUOM: "PCS", itemGroup: "PLYWOOD", balanceQty: 0 });
+                        setRmForm(EMPTY_RM_FORM);
                       } catch (err) {
                         toast.error(err instanceof Error ? err.message : "Failed to create raw material");
                       } finally {

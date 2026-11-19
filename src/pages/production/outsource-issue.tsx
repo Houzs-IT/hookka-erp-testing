@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
-import { AlertTriangle, Camera, CheckCircle2, RefreshCw, ScanLine, Undo2, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, RefreshCw, ScanLine, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/ui/data-grid";
@@ -225,7 +225,7 @@ export default function OutsourceIssuePage(): JSX.Element {
               }}
             >
               <label htmlFor="outsource-scan" className="mb-1 block text-xs font-medium text-[#6B7280]">
-                Scan sticker
+                Sticker code
               </label>
               <div className="flex gap-2">
                 <Input
@@ -233,14 +233,14 @@ export default function OutsourceIssuePage(): JSX.Element {
                   ref={scanInputRef}
                   value={scanText}
                   onChange={(event) => setScanText(event.target.value)}
-                  placeholder={issue.selectedWorker ? "Scan or paste the sticker code" : "Pick a worker first"}
+                  placeholder={issue.selectedWorker ? "Type the code or tap Scan QR" : "Pick a worker first"}
                   disabled={isScanDisabled}
                   autoComplete="off"
                   autoCapitalize="off"
                   spellCheck={false}
                 />
                 <Button type="submit" variant="primary" disabled={isScanDisabled || issue.isIssuing || !scanText.trim()}>
-                  <ScanLine className="h-4 w-4" aria-hidden />
+                  <ArrowRight className="h-4 w-4" aria-hidden />
                   Issue
                 </Button>
               </div>
@@ -256,8 +256,8 @@ export default function OutsourceIssuePage(): JSX.Element {
                 setIsCameraOpen(true);
               }}
             >
-              <Camera className="h-4 w-4" aria-hidden />
-              Camera
+              <ScanLine className="h-4 w-4" aria-hidden />
+              Scan QR
             </Button>
             {cameraError ? <p className="text-xs text-[#9A3A2D]">{cameraError}</p> : null}
 
