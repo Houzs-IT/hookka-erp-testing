@@ -319,6 +319,12 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## CONNECT-0003: Hookka accounts sign in to Houzs Connect (feat/connect-login-main, to main, 2026-11-19)
+From CONNECT-0003 (Lim Wei Siang, Houzs Connect). Same change as the staging PR (feat/connect-login, PR 1153), cut from `main`; `docs/API.md` is left to the post-merge bot.
+1. DONE: `POST /api/connect/verify-login` (`src/api/routes/connect-login.ts`, mounted at `/api/connect`, public path in `auth-middleware.ts`, allowlisted in `tests/security-public-endpoints.test.mjs`). Server to server only: Connect sends `Authorization: Bearer <CONNECT_LOGIN_KEY>`; unset key answers 503, a wrong one 401. TOTP users get a challenge carrying the pending-2FA token. No Hookka session is issued.
+2. DONE on staging: the route answered "Not allowed" (401) without the key once `CONNECT_LOGIN_KEY` was set on Preview; Connect staging signed in `zaim@hookka.com` through it.
+3. DONE: production secret `CONNECT_LOGIN_KEY` set on the Pages project (same value as `HOOKKA_LOGIN_KEY` on the houzs-connect Worker).
+
 ## 🔵 Board report to investment-bank standard + ONE house chart standard (2026-11-19)
 Owner asks (2026-11-18/19): 「有点丑 … 美国大型公司 financial reporting 怎么弄到那么漂亮」, 「整个 board report 的颜色方面呢？」, 「字体 字体大小等等」, 「你也知道不好 跟大公司和投行有差距 那就去弄」, 「全部数据有了？」, 「各大种类的 reporting 有尽量 standardise？」 → standard = the new Board Report look ("用我刚做的 Board Report 新版").
 - [x] Batch 1 (#1457, feat/board-report-chart-polish): IBM Plex Sans type scale; validated CAT palette; green/red = status only; forecast = hatched bars / dashed ink; selective labels; axis dropped when every value is printed. House tokens in `src/lib/chart-standard.ts`.
