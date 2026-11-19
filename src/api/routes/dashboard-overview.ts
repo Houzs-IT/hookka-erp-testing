@@ -10,6 +10,7 @@
 //
 // Mounted at /api/dashboard/overview. Auth-gated globally; tenant-scoped.
 // ---------------------------------------------------------------------------
+import { todayYmdMY } from "../../lib/utils";
 import { Hono } from "hono";
 import { parseDashPeriod } from "../lib/dash-period";
 import type { Env } from "../worker";
@@ -85,6 +86,13 @@ function fmtISO(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
+/** Today in Malaysia (UTC+8), YYYY-MM-DD. Workers run on UTC, so a bare
+ *  `new Date()` left 00:00–08:00 MYT's completions out of "today" while Floor
+ *  Live (Malaysia time) already showed them (owner 2026-11-20: one rule). */
+function myTodayISO(): string {
+  return todayYmdMY();
+}
+
 app.get("/", async (c) => {
   // getOrgId is tenancy, not access: this feed is company revenue, top sellers
   // and plant load, which the owner opened to dashboard viewers only (2026-08-05).
@@ -111,7 +119,7 @@ app.get("/", async (c) => {
   // as "live (no history)". The current month and All-time view always serve
   // live — the current value IS truthful for "now". `period` for past months
   // is lexically < the current month prefix (ISO YYYY-MM sorts chronologically).
-  const todayISOTop = fmtISO(new Date());
+  const todayISOTop = myTodayISO();
   const currentMonthPrefix = todayISOTop.slice(0, 7);
   const isPastMonth = dp.kind !== "all" && dp.lastYm < currentMonthPrefix;
 
@@ -193,8 +201,8 @@ app.get("/", async (c) => {
   const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}`;
   const computeOverview = async () => {
     const db = c.var.DB;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Malaysia's date at 00:00 (Workers' local clock is UTC) — owner 2026-11-20.
+    const today = new Date(`${myTodayISO()}T00:00:00`);
     // The two flow KPIs (Sales + Delivered) reflect the SELECTED period:
     //   - a specific month  → that month's total (reconstructible from the
     //     SO date / DO delivered date; all source rows load unfiltered),
@@ -2241,8 +2249,8 @@ app.get("/revenue-split", async (c) => {
   const period = parseDashPeriod(c.req.query("period") ?? "all").key;
   const data = await cached(c, `dashboard:revenue-split:${orgId}:v3:${period}`, 60, async () => {
     const db = c.var.DB;
-    // Same "today" as the main overview (server clock, UTC on Workers).
-    const todayISO = fmtISO(new Date());
+    // Same "today" as the main overview: Malaysia time (owner 2026-11-20).
+    const todayISO = myTodayISO();
     const { from, to, buckets, bucketOf } = revenueBuckets(period, todayISO);
     const [deptRows, soLines, invLines] = await Promise.all([
       loadDeptRevenue(db, orgId, from, to),

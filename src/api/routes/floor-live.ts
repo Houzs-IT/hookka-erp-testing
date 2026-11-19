@@ -128,10 +128,10 @@ app.get("/completed", async (c) => {
       from,
       to,
       month,
-      departments: shapeDeptCompleted(range, days, today).map((d) => ({ ...d, ...(value.get(d.dept) ?? { bedframeSen: 0, sofaSen: 0 }) })),
+      departments: shapeDeptCompleted(range, days, today).map((d) => ({ ...d, ...(value.get(d.dept) ?? { bedframeSen: 0, sofaSen: 0, accessorySen: 0 }) })),
       days: days
         .filter((d) => d.date.startsWith(month) && d.date <= today)
-        .map((d) => ({ ...d, ...(dayValue.get(`${d.dept}|${d.date}`) ?? { bedframeSen: 0, sofaSen: 0 }) })),
+        .map((d) => ({ ...d, ...(dayValue.get(`${d.dept}|${d.date}`) ?? { bedframeSen: 0, sofaSen: 0, accessorySen: 0 }) })),
     });
   } catch (e) {
     console.error("[floor-live completed]", e);

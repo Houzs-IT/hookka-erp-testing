@@ -137,11 +137,6 @@
       "reason": "money: finance dashboard current month (UTC) — same batch as accounting.ts"
     },
     {
-      "file": "src/api/routes/dashboard-overview.ts",
-      "src": "const mon = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));",
-      "reason": "UTC week grid built from an injected today; follow-up: pass the Malaysia day in"
-    },
-    {
       "file": "src/api/routes/delivery-orders.ts",
       "src": "due.setDate(due.getDate() + 30);",
       "reason": "money: invoice due date (+30 days from the UTC day) — needs the owner yes (money)"

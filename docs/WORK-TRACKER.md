@@ -322,6 +322,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 One production-revenue rule + one completed-sets rule across the system (2026-11-20)
+Owner 「为什么这三遍的revenue都不一样？算法不一样？帮我统一全套系统的 这类型算法 查看全系统哪里有 然后再辐射过去全部部门 还有我的completed set是对的吧」 (screenshots: Floor Live, Department Revenue, Revenue chart). Findings: one shared rule (a department books an order's full value when its last card closes); Floor Live dropped accessory (FAB_CUT 19 Nov 30,276.25 vs 30,976.25 = RM 700 accessory); the chart's Production line is the Upholstery row; Finance / Board / Labour Cost / Lim daily / chart "All" use the older Upholstery-only CTE (no combined cards, qty floored to 1, no orgId); Labour Cost "Category Revenue" is a minutes split (accessory folded into sofa); dashboard "today" was UTC. Owner decisions (2026-11-20):
+- [ ] 1. Floor Live counts accessory value; dashboard "today" = Malaysia time.
+- [ ] 2. Finance dashboard, Board Report, Labour Cost, Lim daily, chart "All" → the shared rule (Upholstery rows of loadDeptRevenue).
+- [ ] 3. Labour Cost "Category Revenue" kept, renamed (minutes-share), accessory its own column.
+- [ ] 4. Completed sets: bedframe = 1 SKU counts 1 (× qty; owner 2026-11-20 「床架就是1个sku算一个 … jager queen，jager king」 — no HB+divan pairing); sofa = 1 set when the order's LAST sofa piece is done (owner 11-12) — Floor Live already does this; Department Revenue "Sets" follows.
+
+## ✅ Sep/Oct invoices: zero-amount + uncharged special-order lines (2026-11-20)
+Owner 「帮我查看 这两个月 9/10月份的invoice 有那个item是amount 0的 或者special order没有charge到钱的 全部拉给我」. Read-only pull, 1,984 lines → 138 flagged in 5 groups (A amount 0: 53; B SO special priced 0: 3 ≈ RM 150; C invoice below SO on a special line: 48 ≈ RM 6,670; D OTHER special no surcharge: 14; E special not matched to an SO: 20). File sent to the owner: `Invoice-Zero-and-Uncharged-Special-2026-09-10.xlsx` (main-repo root, not committed). No data changed.
+
 ## ✅ Overdue sets: days stuck in the current department (#1482, 2026-11-19)
 Owner 「这个overdue的 还需要看到 在这个部门stuck着多少天了」 (screenshot of the Customer overdue sets drill). Each line shows "N d here" beside "At <department>": days since the last completed job card of another department; a first department counts from the PO start date (`src/pages/dashboards/days-at-dept.ts`, linkedPOs gains `startDate`). Amber ≥3 d, red ≥7 d. Live-checked on prod (SO-2610-194: ARMREST 01 at Fabric Sewing 16 d, SOFA 8211 at Packing 1 d). Same day: #1478 / #1479 reverted (#1481) and #1480 closed — owner had not assigned them.
 

@@ -32,7 +32,8 @@ export function DeptCompletedStrip({ code, name, data, label, showUsual, live, t
   if (!c) return null;
   const hasBed = c.bedframeUnits > 0 || c.usualBedframe > 0;
   const hasSofa = c.sofaSets > 0 || c.usualSofa > 0;
-  if (!hasBed && !hasSofa) return null;
+  const accSen = c.accessorySen ?? 0;
+  if (!hasBed && !hasSofa && accSen <= 0) return null;
   const reached = (v: number, usual: number) => showUsual && usual > 0 && v >= usual;
   const nowMin = myNowMin();
   const tone = (v: number, usual: number) =>
@@ -67,6 +68,8 @@ export function DeptCompletedStrip({ code, name, data, label, showUsual, live, t
               </span>
             )}
           </span>
+          {/* Accessory has no count (it makes no sets) — its value only (owner 2026-11-20). */}
+          {accSen > 0 && <span className="text-[11px] tabular-nums text-[#6B7280]">Accessory <b className="font-semibold text-[#6B5C32]">{rm(accSen)}</b></span>}
         </span>
         <ChevronRight className="h-4 w-4 shrink-0 text-[#6B5C32]" aria-hidden="true" />
       </button>
@@ -97,9 +100,10 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
   const shown = month === baseMonth ? data : other.data;
   const c = deptCompletedFor(data, code);
   const { days, bedTotal, sofaTotal, bedAvg, sofaAvg } = deptCompletedDays(shown, code, today);
-  const max = Math.max(1, ...days.map((d) => (d.bedframeSen ?? 0) + (d.sofaSen ?? 0)));
+  const max = Math.max(1, ...days.map((d) => (d.bedframeSen ?? 0) + (d.sofaSen ?? 0) + (d.accessorySen ?? 0)));
   const bedValue = days.reduce((s, d) => s + (d.bedframeSen ?? 0), 0);
   const sofaValue = days.reduce((s, d) => s + (d.sofaSen ?? 0), 0);
+  const accValue = days.reduce((s, d) => s + (d.accessorySen ?? 0), 0);
   const step = (by: number) => {
     const [y, m] = month.split("-").map(Number);
     setMonth(new Date(Date.UTC(y, m - 1 + by, 1)).toISOString().slice(0, 7));
@@ -126,12 +130,13 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             {[
               [`Bedframe units · ${month}`, bedTotal.toLocaleString(), `12-day avg ${c?.usualBedframe ?? 0} / day · this month ${bedAvg.toFixed(1)}`],
               [`Bedframe value · ${month}`, rm(bedValue), null],
               [`Sofa sets · ${month}`, sofaTotal.toLocaleString(), `12-day avg ${c?.usualSofa ?? 0} / day · this month ${sofaAvg.toFixed(1)}`],
               [`Sofa value · ${month}`, rm(sofaValue), null],
+              [`Accessory value · ${month}`, rm(accValue), null],
             ].map(([k, v, sub]) => (
               <div key={k} className="rounded-lg bg-[#F7F4EF] px-3 py-2">
                 <div className="text-[10px] font-semibold uppercase text-[#6B7280]">{k}</div>
@@ -153,6 +158,7 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
                     <th className="py-1.5 text-right font-medium">Bedframe RM</th>
                     <th className="py-1.5 text-right font-medium">Sofa</th>
                     <th className="py-1.5 text-right font-medium">Sofa RM</th>
+                    <th className="py-1.5 text-right font-medium">Accessory RM</th>
                     <th className="py-1.5 text-right font-medium">Total RM</th>
                   </tr>
                 </thead>
@@ -164,20 +170,22 @@ function DeptCompletedModal({ code, name, data, today, onClose }: {
                         <span className="flex h-2 overflow-hidden rounded bg-[#F0ECE9]">
                           <span className="bg-[#6B5C32]" style={{ width: `${((d.bedframeSen ?? 0) / max) * 100}%` }} />
                           <span className="bg-[#CDBE98]" style={{ width: `${((d.sofaSen ?? 0) / max) * 100}%` }} />
+                          <span className="bg-[#A8A29A]" style={{ width: `${((d.accessorySen ?? 0) / max) * 100}%` }} />
                         </span>
                       </td>
                       <td className="py-1.5 text-right font-semibold tabular-nums">{d.bedframeUnits || "—"}</td>
                       <td className="py-1.5 text-right tabular-nums text-[#6B5C32]">{d.bedframeSen ? rm(d.bedframeSen) : "—"}</td>
                       <td className="py-1.5 text-right font-semibold tabular-nums">{d.sofaSets || "—"}</td>
                       <td className="py-1.5 text-right tabular-nums text-[#6B5C32]">{d.sofaSen ? rm(d.sofaSen) : "—"}</td>
-                      <td className="py-1.5 text-right font-bold tabular-nums">{rm((d.bedframeSen ?? 0) + (d.sofaSen ?? 0))}</td>
+                      <td className="py-1.5 text-right tabular-nums text-[#6B5C32]">{d.accessorySen ? rm(d.accessorySen) : "—"}</td>
+                      <td className="py-1.5 text-right font-bold tabular-nums">{rm((d.bedframeSen ?? 0) + (d.sofaSen ?? 0) + (d.accessorySen ?? 0))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-          <p className="text-[11px] text-[#6B7280]">Average = the last 12 working days (same window as capacity). Bedframe counts every piece (headboard, divan); sofa counts 1 order as 1 set — same as Active Jobs and Completed. Value = Department Revenue&apos;s figure (the order&apos;s full value when this department&apos;s last card for it closes). Bar = value (dark bedframe, light sofa).</p>
+          <p className="text-[11px] text-[#6B7280]">Average = the last 12 working days (same window as capacity). Bedframe counts every piece (headboard, divan); sofa counts 1 order as 1 set — same as Active Jobs and Completed. Value = Department Revenue&apos;s figure (the order&apos;s full value when this department&apos;s last card for it closes). Accessory makes no units or sets; its value is shown so the total equals Department Revenue. Bar = value (dark bedframe, light sofa, grey accessory).</p>
         </div>
       </div>
     </div>

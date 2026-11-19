@@ -206,15 +206,18 @@ export function shapeDeptCompleted(
 // Department Revenue's own rows and rule (dept-revenue.ts loadDeptRevenue):
 // an order's full value when this department's last card for it closes.
 // Outsourced work counted, like the piece counts above.
-export type CatSen = { bedframeSen: number; sofaSen: number };
+// Accessory value too (owner 2026-11-20 「要算配件」): with it Floor Live's value
+// equals Department Revenue for the same department and day.
+export type CatSen = { bedframeSen: number; sofaSen: number; accessorySen: number };
 
 export function valueByDept(rows: DeptRevenueRow[], from: string, to: string): Map<string, CatSen> {
   const out = new Map<string, CatSen>();
   for (const r of rows) {
     if (r.date < from || r.date > to) continue;
-    const v = out.get(r.deptCode) ?? { bedframeSen: 0, sofaSen: 0 };
+    const v = out.get(r.deptCode) ?? { bedframeSen: 0, sofaSen: 0, accessorySen: 0 };
     if (r.category === "BEDFRAME") v.bedframeSen += r.totalSen;
     else if (r.category === "SOFA") v.sofaSen += r.totalSen;
+    else if (r.category === "ACCESSORY") v.accessorySen += r.totalSen;
     out.set(r.deptCode, v);
   }
   return out;
@@ -225,9 +228,10 @@ export function valueByDay(rows: DeptRevenueRow[]): Map<string, CatSen> {
   const out = new Map<string, CatSen>();
   for (const r of rows) {
     const k = `${r.deptCode}|${r.date}`;
-    const v = out.get(k) ?? { bedframeSen: 0, sofaSen: 0 };
+    const v = out.get(k) ?? { bedframeSen: 0, sofaSen: 0, accessorySen: 0 };
     if (r.category === "BEDFRAME") v.bedframeSen += r.totalSen;
     else if (r.category === "SOFA") v.sofaSen += r.totalSen;
+    else if (r.category === "ACCESSORY") v.accessorySen += r.totalSen;
     out.set(k, v);
   }
   return out;

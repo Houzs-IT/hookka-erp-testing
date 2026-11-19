@@ -99,8 +99,9 @@ test("production value per department and per day, by category", async () => {
     { deptCode: "FAB_SEW", date: "2026-11-11", category: "SOFA", totalSen: 740_500 },
     { deptCode: "FAB_SEW", date: "2026-11-12", category: "ACCESSORY", totalSen: 999 },
   ];
-  assert.deepEqual(valueByDept(rows, "2026-11-12", "2026-11-12").get("FAB_SEW"), { bedframeSen: 1_916_500, sofaSen: 2_382_700 });
-  assert.deepEqual(valueByDay(rows).get("FAB_SEW|2026-11-11"), { bedframeSen: 0, sofaSen: 740_500 });
+  // Accessory counted since 2026-11-20 (owner 「要算配件」).
+  assert.deepEqual(valueByDept(rows, "2026-11-12", "2026-11-12").get("FAB_SEW"), { bedframeSen: 1_916_500, sofaSen: 2_382_700, accessorySen: 999 });
+  assert.deepEqual(valueByDay(rows).get("FAB_SEW|2026-11-11"), { bedframeSen: 0, sofaSen: 740_500, accessorySen: 0 });
   const r = read("src/api/routes/floor-live.ts");
   assert.match(r, /loadDeptRevenue\(db, orgId, lo, hi\)/, "Department Revenue's own rows");
   const strip = read("src/pages/dashboards/DeptCompletedStrip.tsx");
