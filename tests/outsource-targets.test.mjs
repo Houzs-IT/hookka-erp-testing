@@ -114,6 +114,30 @@ test("a worker in two departments: both open is ambiguous, one open picks that o
   assert.equal(none.isDone, true);
 });
 
+test("a worker in two departments: a sticker that names one of them picks it, both open", async () => {
+  const { db } = makeFakeDb({ cards: allCards() });
+
+  const sewSentinel = await resolveFor(db, stickerUrl(`op=FG-FAB_SEW&po=${BED_PO.poNo}`), "FAB_SEW", "FAB_CUT");
+  assert.equal(sewSentinel.kind, "found");
+  assert.equal(sewSentinel.departmentCode, "FAB_SEW");
+  assert.deepEqual(sewSentinel.target, { cardIds: ["jc-divan", "jc-headboard"], pieceNo: null });
+
+  const cutSentinel = await resolveFor(db, stickerUrl(`op=FG-FAB_CUT&po=${BED_PO.poNo}`), "FAB_SEW", "FAB_CUT");
+  assert.equal(cutSentinel.departmentCode, "FAB_CUT");
+  assert.deepEqual(cutSentinel.target, { cardIds: ["jc-divan-cut", "jc-headboard-cut"], pieceNo: null });
+
+  const cutCard = await resolveFor(db, stickerUrl(`op=jc-divan-cut&dept=FAB_CUT&po=${BED_PO.poNo}&p=1&t=2`), "FAB_SEW", "FAB_CUT");
+  assert.equal(cutCard.departmentCode, "FAB_CUT");
+  assert.deepEqual(cutCard.target, { cardIds: ["jc-divan-cut"], pieceNo: 1 });
+});
+
+test("a sticker naming a department the worker is not in falls back to the worker's own departments", async () => {
+  const { db } = makeFakeDb({ cards: allCards() });
+  const result = await resolveFor(db, stickerUrl(`op=FG-FAB_SEW&po=${BED_PO.poNo}`), "FAB_CUT");
+  assert.equal(result.kind, "found");
+  assert.equal(result.departmentCode, "FAB_CUT");
+});
+
 
 const packingToken = (id) => (id === "jc-divan-pack" ? "a" : "b").repeat(64);
 const withPackingTokens = () => {
