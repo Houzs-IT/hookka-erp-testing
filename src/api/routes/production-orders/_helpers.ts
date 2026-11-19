@@ -43,8 +43,8 @@ import {
 // before we narrate what changed; a write failure here does NOT roll the
 // UPDATE back (events are audit-only, not the transactional source).
 import {
-  buildJobCardEventStatement,
   diffJobCardEvents,
+  recordJobCardEvents,
 } from "../../lib/job-card-events";
 // Google Sheets sync (fire-and-forget). Helper silently no-ops when
 // GOOGLE_SHEETS_SA_KEY is missing — see docs/SHEETS-SYNC.md.
@@ -4902,60 +4902,16 @@ export async function applyPoUpdate(
     // stashed on the Hono ctx by authMiddleware; for worker-portal calls
     // it's absent (the PIN flow mounts under /api/worker/* which bypasses
     // the dashboard auth gate), so actorUserId may legitimately be null.
-    // Source is 'ui' here — the shop-floor scan path lives in its own
-    // handler (scan-complete) and will wire its own 'scan' source later.
-    const actorUserId = (c.get as unknown as (k: string) => string | undefined)(
-      "userId",
-    ) ?? null;
-    const events = diffJobCardEvents(jcRow, updated, {
-      actorUserId,
-      actorName: null,
-      source: "ui",
-    });
-    if (events.length > 0) {
-      // Batch the event INSERTs so we pay one round-trip regardless of
-      // how many fields changed. Event-write failures do NOT roll back the
-      // JC UPDATE (already run()), so a batch reject here just means we
-      // lose audit rows for this one mutation — acceptable for a v1
-      // parallel write path. Any failure will surface in wrangler tail.
-      const stmts = events.map((e) => buildJobCardEventStatement(db, e));
-      try {
-        await db.batch(stmts);
-      } catch (err) {
-        // Sprint 2 task 6 — instead of silently losing the audit batch,
-        // dead-letter the original payload so a replay sweeper can pick
-        // it up once the underlying issue is fixed (schema drift, D1
-        // transient, etc.). console.error is kept so wrangler tail still
-        // surfaces the issue in real time.
-        console.error("[jc-events] append failed — DLQ-ing", err);
-        try {
-          const dlqId = `dlq_${crypto.randomUUID().slice(0, 12)}`;
-          const errMsg =
-            (err instanceof Error ? err.message : String(err)).slice(0, 1024);
-          await db
-            .prepare(
-              `INSERT INTO audit_dlq
-                 (id, original_payload, error_message, error_kind, attempted_at)
-               VALUES (?, ?, ?, ?, ?)`,
-            )
-            .bind(
-              dlqId,
-              JSON.stringify(events),
-              errMsg,
-              "job_card_events.batch_failed",
-              new Date().toISOString(),
-            )
-            .run();
-        } catch (dlqErr) {
-          // If even the DLQ write fails, we've exhausted graceful options.
-          // Log loudly so ops can pull the values out of wrangler tail.
-          console.error(
-            "[jc-events] DLQ write also failed — events dropped on the floor",
-            { events, originalErr: err, dlqErr },
-          );
-        }
-      }
-    }
+    // Source is 'ui' here; the shop-floor scan handlers write 'scan'.
+    await recordJobCardEvents(
+      db,
+      diffJobCardEvents(jcRow, updated, {
+        actorUserId:
+          (c.get as unknown as (k: string) => string | undefined)("userId") ?? null,
+        actorName: null,
+        source: "ui",
+      }),
+    );
 
     // Update WIP inventory if status changed.
     //

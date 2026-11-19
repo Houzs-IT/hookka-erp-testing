@@ -108,6 +108,69 @@ export async function appendJobCardEvent(
   await buildJobCardEventStatement(db, evt).run();
 }
 
+// Writes a mutation's events in one batch, after the job_cards UPDATE has
+// already run. A failed batch never voids that UPDATE: the events are
+// dead-lettered to audit_dlq for lib/audit-replay.ts to replay.
+export async function recordJobCardEvents(
+  db: D1Database,
+  events: JobCardEventInput[],
+): Promise<void> {
+  if (events.length === 0) return;
+  try {
+    await db.batch(events.map((event) => buildJobCardEventStatement(db, event)));
+  } catch (batchError) {
+    console.error("[jc-events] append failed — DLQ-ing", batchError);
+    await deadLetterJobCardEvents(db, events, batchError);
+  }
+}
+
+export function recordScanEvents(
+  db: D1Database,
+  before: JcBeforeAfter,
+  after: JcBeforeAfter,
+  scan: { workerName: string; sessionUserId: unknown },
+): Promise<void> {
+  return recordJobCardEvents(
+    db,
+    diffJobCardEvents(before, after, {
+      actorUserId: typeof scan.sessionUserId === "string" ? scan.sessionUserId : null,
+      actorName: scan.workerName,
+      source: "scan",
+    }),
+  );
+}
+
+async function deadLetterJobCardEvents(
+  db: D1Database,
+  events: JobCardEventInput[],
+  batchError: unknown,
+): Promise<void> {
+  const errorMessage = (
+    batchError instanceof Error ? batchError.message : String(batchError)
+  ).slice(0, 1024);
+  try {
+    await db
+      .prepare(
+        `INSERT INTO audit_dlq
+           (id, original_payload, error_message, error_kind, attempted_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        `dlq_${crypto.randomUUID().slice(0, 12)}`,
+        JSON.stringify(events),
+        errorMessage,
+        "job_card_events.batch_failed",
+        new Date().toISOString(),
+      )
+      .run();
+  } catch (deadLetterError) {
+    console.error(
+      "[jc-events] DLQ write also failed — events dropped on the floor",
+      { events, batchError, deadLetterError },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Diff helper — derives the event rows to write for a JC mutation by
 // comparing the pre- and post-UPDATE JobCardRow snapshots. Keeps the

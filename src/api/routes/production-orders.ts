@@ -53,6 +53,7 @@ import {
   observedCompletionAt,
   readCompletedAt,
 } from "../lib/job-card-completed-at";
+import { recordScanEvents } from "../lib/job-card-events";
 import { getOrgId } from "../lib/tenant";
 import {
   poListCacheVersion,
@@ -2405,6 +2406,10 @@ app.post("/:id/scan-complete", async (c) => {
       mergedJc.id,
     )
     .run();
+  await recordScanEvents(db, target.jc, mergedJc, {
+    workerName: worker.name,
+    sessionUserId: ctxUserId,
+  });
 
   // Google Sheets sync — fire-and-forget. Mirror the scan-complete JC row
   // to its dept tab. Helper silently no-ops when the SA key is missing.
@@ -2804,6 +2809,10 @@ app.post("/:id/scan-complete-dept", async (c) => {
         mergedJc.id,
       )
       .run();
+    await recordScanEvents(db, jc, mergedJc, {
+      workerName: worker.name,
+      sessionUserId: ctxUserId,
+    });
 
     scheduleFireAndForget(c, fireAndForgetSyncJc(c, mergedJc, po));
 
@@ -3283,6 +3292,10 @@ app.post("/:id/scan-complete-shared", async (c) => {
           mergedJc.id,
         )
         .run();
+      await recordScanEvents(db, card, mergedJc, {
+        workerName: worker.name,
+        sessionUserId: ctxUserId,
+      });
       scheduleFireAndForget(c, fireAndForgetSyncJc(c, mergedJc, po));
     }
 
