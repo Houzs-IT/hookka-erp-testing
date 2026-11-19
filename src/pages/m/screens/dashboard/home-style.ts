@@ -4,16 +4,19 @@
 // colours (series, status), like M_ACCENT / M_DELTA, and are the desktop's own.
 import { useRef, type CSSProperties } from "react";
 import { M } from "../../theme";
+import { CAT, NEUTRAL, STATUS } from "@/lib/chart-standard";
 
 export const SHADOW_CARD = "0 1px 2px rgba(31,29,27,.05),0 12px 28px -16px rgba(31,29,27,.22)";
 export const SHADOW_SMALL = "0 1px 2px rgba(31,29,27,.06),0 4px 10px -6px rgba(31,29,27,.16)";
 export const SHADOW_CHIP_ON = "0 6px 14px -6px rgba(107,92,50,.6)";
 
 /** Data colours. Series colours are the desktop Command Center's (dashboard-b C_SO / C_PROD / C_INV). */
+/** House chart standard (owner 2026-11-19, src/lib/chart-standard.ts) — the same
+ *  series colours as the desktop dashboards; green / red stay good / bad. */
 export const DATA = {
-  so: "#6B5C32", prod: "#C9A24B", inv: "#A8A29A",
-  green: "#15803D", moss: "#4F7C3A", amber: "#9C6F1E", red: "#9A3A2D", teal: "#3E6570",
-  gold: "#C9A961", noTarget: "#A39E93", future: "#E3DED5",
+  so: CAT[0], prod: CAT[1], inv: NEUTRAL,
+  green: STATUS.good, moss: STATUS.good, amber: "#9C6F1E", red: STATUS.bad, teal: CAT[2],
+  gold: CAT[1], noTarget: NEUTRAL, future: "#E6E8EC",
 } as const;
 
 /** Unselected chip text: Home v10 uses #3A352C (a warm dark between the raisin and body tones); the mix keeps it readable in dark mode. */

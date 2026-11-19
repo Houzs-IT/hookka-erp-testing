@@ -7,6 +7,7 @@
 // src/api/lib/dept-revenue.ts). So a RM 2,000 sofa through 9 departments
 // shows RM 2,000 on each row; balanced output = equal rows.
 // ===========================================================================
+import { CS_COLOURS } from "@/lib/finance-chart-look";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
@@ -47,19 +48,9 @@ export function CatToggle({ value, onChange, withAccessory = false }: { value: R
   );
 }
 
-// Ten distinguishable, muted colours in the dashboard's palette family.
-const DEPT_COLORS = [
-  "#6B5C32",
-  "#C9A24B",
-  "#8C6D4F",
-  "#4B7A52",
-  "#3E6570",
-  "#9A3A2D",
-  "#6B4A6D",
-  "#B8601A",
-  "#1F1D1B",
-  "#A8A29A",
-];
+// Department colours — the house standard: six house colours, then grey steps
+// (owner 2026-11-19; never a generated hue).
+const DEPT_COLORS = [...CS_COLOURS];
 
 const rm = (sen: number) => formatCurrency(sen);
 const NONE: CatSplit = { bedframe: 0, sofa: 0, accessory: 0, unclassified: 0, total: 0 };
