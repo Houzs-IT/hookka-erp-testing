@@ -162,27 +162,21 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   const { byWorkerDay: prevCost } = useLabourCost(prevYm ? `${prevYm}-01` : "", prevTo, canSalary);
   const revMonths = useMemo(() => [...new Set([...(prevYm ? [prevYm] : []), ...monthsOf(period, today)])].sort(), [prevYm, period, today]);
   const prodRev = useProductionRevenue(revMonths);
-  // Department PROGRESSIVE revenue (owner 2026-10-17): each department earns
-  // its minute-weighted slice of an order's price when its own job card
-  // completes — the Labor Cost report's Category Revenue
-  // (GET /api/working-hour-entries/production-revenue). Slices add up to the
-  // order, so salary ÷ slice is that department's real labour share.
-  // (Department Revenue — every department booking the full order — stays the
-  // supply / demand balance view on Operations.)
+  // Department output = DEPARTMENT REVENUE (owner 2026-11-20 「全部部门都跟
+  // upholstery 一样 … employee那边 全部都要一样」): a department books an
+  // order's full value when its last card for that order closes — the same
+  // figure as Department Revenue and Floor Live (served by the Floor Live
+  // completed feed, which reads loadDeptRevenue). Accessory has its own column.
+  // It replaced the minute-weighted "progressive" slice that used to sit here.
   const winFrom = useMemo(() => [...winDates].sort()[0] ?? "", [winDates]);
   const winTo = useMemo(() => [...winDates].sort().pop() ?? "", [winDates]);
-  const { data: progResp } = useCachedJson<{ data?: { byDeptCategory?: Record<string, number> } }>(
-    winFrom ? `/api/working-hour-entries/production-revenue?from=${winFrom}&to=${winTo}` : null,
+  const { data: progResp } = useCachedJson<{ departments?: { dept: string; bedframeSen?: number; sofaSen?: number; accessorySen?: number }[] }>(
+    winFrom ? `/api/dashboard/floor-live/completed?from=${winFrom}&to=${winTo}&month=${winTo.slice(0, 7)}` : null,
   );
   const progByDept = useMemo(() => {
     const m = new Map<string, { bf: number; sofa: number; other: number }>();
-    for (const [k, v] of Object.entries(progResp?.data?.byDeptCategory ?? {})) {
-      const [dept, cat] = k.split("|");
-      const r = m.get(dept) ?? { bf: 0, sofa: 0, other: 0 };
-      if (cat === "BEDFRAME") r.bf += v;
-      else if (cat === "SOFA") r.sofa += v;
-      else r.other += v;
-      m.set(dept, r);
+    for (const d of progResp?.departments ?? []) {
+      m.set(d.dept, { bf: d.bedframeSen ?? 0, sofa: d.sofaSen ?? 0, other: d.accessorySen ?? 0 });
     }
     return m;
   }, [progResp]);
@@ -290,11 +284,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   // Without payroll access there are no entries to split by, so the home
   // department is used throughout.
   const floorSet = useMemo(() => new Set<string>(DEPT_FLOOR.map(([c]) => c as string)), []);
-  type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; hw: number; hp: number; cost: number; bf: number; sofa: number };
+  type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; hw: number; hp: number; cost: number; bf: number; sofa: number; acc: number };
   const deptRows = useMemo(() => {
     const m = new Map<string, DeptRow>();
     const row = (k: string) => {
-      const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0 };
+      const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, acc: 0 };
       m.set(k, r);
       return r;
     };
@@ -342,18 +336,26 @@ export function EmployeesDashboard({ period }: { period: Period }) {
     for (const [dep, pr] of progByDept) {
       const r = row(dep);
       r.bf = pr.bf;
-      r.sofa = pr.sofa + pr.other;
+      r.sofa = pr.sofa;
+      r.acc = pr.other;
     }
     return [...m.values()]
-      .filter((r) => r.work > 0 || r.prod > 0 || r.cost > 0 || r.bf + r.sofa > 0)
+      .filter((r) => r.work > 0 || r.prod > 0 || r.cost > 0 || r.bf + r.sofa + r.acc > 0)
       // Production departments by efficiency first; non-production cost
       // centres (warehousing, R&D, repair …) after them.
       .sort((a, b) => Number(!floorSet.has(a.dept)) - Number(!floorSet.has(b.dept)) || (peff(b.prod, b.work, b.hp, b.hw) ?? -1) - (peff(a.prod, a.work, a.hp, a.hw) ?? -1));
   }, [days, winDates, workerById, costByWorkerDay, costByDept, hourEntries, progByDept, outsourced, floorSet]);
-  const deptTotal = useMemo(() => deptRows.reduce(
-    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
-    { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
-  ), [deptRows]);
+  // Total output = the company's production revenue = the Upholstery row (each
+  // department books the full order, so adding departments would count an
+  // order once per department).
+  const deptTotal = useMemo(() => {
+    const t = deptRows.reduce(
+      (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: 0, sofa: 0, acc: 0, people: new Set([...t.people, ...r.people]) }),
+      { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, acc: 0, people: new Set<string>() },
+    );
+    const up = progByDept.get("UPHOLSTERY");
+    return { ...t, bf: up?.bf ?? 0, sofa: up?.sofa ?? 0, acc: up?.other ?? 0 };
+  }, [deptRows, progByDept]);
 
   const chart = useMemo(
     () =>
@@ -521,20 +523,20 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle>Department efficiency · {winLabel}</CardTitle>
-          <p className="mt-0.5 text-xs text-[#9CA3AF]">Output = the department's progressive revenue: its minute-weighted share of each order's price, earned when its own job card completes (Labor Cost report's Category Revenue){canSalary ? " · labour % = labour ÷ that share" : ""}</p>
+          <p className="mt-0.5 text-xs text-[#9CA3AF]">Output = Department Revenue: an order's full value when this department's last card for it closes (same as Floor Live and Department Revenue). Total = production revenue (the Upholstery row){canSalary ? " · labour % = labour ÷ output" : ""}</p>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
               <thead><tr className="border-b border-[#E2DDD8] text-left text-[10.5px] uppercase tracking-wide text-[#6B7280]">
                 <th className="px-3 py-1.5">Department</th><th className="px-3 py-1.5 text-right">People</th><th className="px-3 py-1.5 text-right">Working</th><th className="px-3 py-1.5 text-right">Production</th><th className="px-3 py-1.5 text-right">Efficiency</th>
-                <th className="px-3 py-1.5 text-right">Output · Bedframe</th><th className="px-3 py-1.5 text-right">Output · Sofa</th>
+                <th className="px-3 py-1.5 text-right">Output · Bedframe</th><th className="px-3 py-1.5 text-right">Output · Sofa</th><th className="px-3 py-1.5 text-right">Output · Accessory</th>
                 {canSalary && <><th className="px-3 py-1.5 text-right">Labour</th><th className="px-3 py-1.5 text-right">Labour %</th></>}
               </tr></thead>
               <tbody>
                 {deptRows.map((r) => {
                   const v = peff(r.prod, r.work, r.hp, r.hw);
-                  const lp = ratio(r.cost, r.bf + r.sofa);
+                  const lp = ratio(r.cost, r.bf + r.sofa + r.acc);
                   return (
                     <tr key={r.dept} className="cursor-pointer border-b border-[#F0ECE6] hover:bg-[#FAF8F4]" onClick={() => setDeptDrill(r.dept)} title="Click for the workers">
                       <td className={`px-3 py-1.5 ${floorSet.has(r.dept) ? "text-[#1F1D1B]" : "text-[#9CA3AF]"}`}>{costCentreName(r.dept)}</td>
@@ -544,6 +546,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                       <td className="px-3 py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}<HelperOverallLine overallPct={eff(r.prod, r.work)} helperMinutes={r.hw} className="font-normal" /></td>
                       <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(r.bf / 100) * 100) : "…"}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(r.sofa / 100) * 100) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{progResp ? formatCurrency(Math.round(r.acc / 100) * 100) : "…"}</td>
                       {canSalary && <>
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.cost)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && progResp ? pct(lp) : "…"}</td>
@@ -551,7 +554,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     </tr>
                   );
                 })}
-                {deptRows.length === 0 && <tr><td colSpan={canSalary ? 9 : 7} className="px-3 py-5 text-center text-[#6B7280]">No hours in this window.</td></tr>}
+                {deptRows.length === 0 && <tr><td colSpan={canSalary ? 10 : 8} className="px-3 py-5 text-center text-[#6B7280]">No hours in this window.</td></tr>}
               </tbody>
               {deptRows.length > 0 && (
                 <tfoot>
@@ -563,9 +566,10 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: effColor(peff(deptTotal.prod, deptTotal.work, deptTotal.hp, deptTotal.hw), target) }}>{pct(peff(deptTotal.prod, deptTotal.work, deptTotal.hp, deptTotal.hw))}<HelperOverallLine overallPct={eff(deptTotal.prod, deptTotal.work)} helperMinutes={deptTotal.hw} className="font-normal" /></td>
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(deptTotal.bf / 100) * 100) : "…"}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(deptTotal.sofa / 100) * 100) : "…"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{progResp ? formatCurrency(Math.round(deptTotal.acc / 100) * 100) : "…"}</td>
                     {canSalary && <>
                       <td className="px-3 py-1.5 text-right tabular-nums">{money(deptTotal.cost)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && progResp ? pct(ratio(deptTotal.cost, deptTotal.bf + deptTotal.sofa)) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && progResp ? pct(ratio(deptTotal.cost, deptTotal.bf + deptTotal.sofa + deptTotal.acc)) : "…"}</td>
                     </>}
                   </tr>
                 </tfoot>

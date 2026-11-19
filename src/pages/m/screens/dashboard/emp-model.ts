@@ -66,7 +66,7 @@ export function useEmpModel({ access, period, today, logSignal }: { access: EmpA
   const split = useMemo(() => rankSplit(rows, outsourced), [rows, outsourced]);
   const progByDept = useMemo(() => foldProgressive(money.prog.byDeptCategory), [money.prog.byDeptCategory]);
   const deptRows = useMemo(() => deptRowsOf({ days, winDates: W.winDates, workerById, costByWorkerDay, costByDept, hourEntries, progByDept, outsourced }), [days, W.winDates, workerById, costByWorkerDay, costByDept, hourEntries, progByDept, outsourced]);
-  const deptTotal = useMemo(() => deptTotalOf(deptRows), [deptRows]);
+  const deptTotal = useMemo(() => deptTotalOf(deptRows, progByDept), [deptRows, progByDept]);
   const chart = useMemo(() => mainChartPoints(days, costByWorkerDay), [days, costByWorkerDay]);
   const npPoints = useMemo(() => npChartPoints(days), [days]);
   const np = useMemo(() => npData(days, W.winDates, workerById), [days, W.winDates, workerById]);

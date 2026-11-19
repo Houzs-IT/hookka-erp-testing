@@ -324,9 +324,9 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 
 ## 🔵 One production-revenue rule + one completed-sets rule across the system (2026-11-20)
 Owner 「为什么这三遍的revenue都不一样？算法不一样？帮我统一全套系统的 这类型算法 查看全系统哪里有 然后再辐射过去全部部门 还有我的completed set是对的吧」 (screenshots: Floor Live, Department Revenue, Revenue chart). Findings: one shared rule (a department books an order's full value when its last card closes); Floor Live dropped accessory (FAB_CUT 19 Nov 30,276.25 vs 30,976.25 = RM 700 accessory); the chart's Production line is the Upholstery row; Finance / Board / Labour Cost / Lim daily / chart "All" use the older Upholstery-only CTE (no combined cards, qty floored to 1, no orgId); Labour Cost "Category Revenue" is a minutes split (accessory folded into sofa); dashboard "today" was UTC. Owner decisions (2026-11-20):
-- [ ] 1. Floor Live counts accessory value; dashboard "today" = Malaysia time.
-- [ ] 2. Finance dashboard, Board Report, Labour Cost, Lim daily, chart "All" → the shared rule (Upholstery rows of loadDeptRevenue).
-- [ ] 3. Labour Cost "Category Revenue" kept, renamed (minutes-share), accessory its own column.
+- [x] 1. Floor Live counts accessory value; dashboard "today" = Malaysia time (#1489, live-verified: FAB_CUT 19 Nov 30,976.25).
+- [x] 2. Finance dashboard, Board Report, Labour Cost, Lim daily, chart "All" → the shared rule (#1490; live: Nov chart All = Upholstery row = 358,013.09).
+- [x] 3. Owner then 「employee那边 全部都要一样」: Labour Cost per-department revenue AND the Employees dashboard (desktop + phone) output now = Department Revenue (full value per department; accessory its own column; totals = the Upholstery row). "Category Revenue" renamed "Department Revenue". The minutes split is retired.
 - [ ] 4. Completed sets: bedframe = 1 SKU counts 1 (× qty; owner 2026-11-20 「床架就是1个sku算一个 … jager queen，jager king」 — no HB+divan pairing); sofa = 1 set when the order's LAST sofa piece is done (owner 11-12) — Floor Live already does this; Department Revenue "Sets" follows.
 
 ## ✅ Sep/Oct invoices: zero-amount + uncharged special-order lines (2026-11-20)

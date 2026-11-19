@@ -9907,7 +9907,7 @@ function LaborCostTab({
         { header: "Hours", align: "right", value: (r) => `${(r as LaborCostRow).hours.toFixed(1)}h` },
         { header: "Labor Cost", align: "right", value: (r) => formatCurrency((r as LaborCostRow).laborCostSen) },
         ...(canSeeRevenue
-          ? [{ header: "Category Revenue", align: "right" as const, value: (r: unknown) => { const row = r as LaborCostRow; return row.category ? formatCurrency(row.revenueSen) : "n/a"; } }]
+          ? [{ header: "Department Revenue", align: "right" as const, value: (r: unknown) => { const row = r as LaborCostRow; return row.category ? formatCurrency(row.revenueSen) : "n/a"; } }]
           : []),
         {
           header: "Cost / Revenue",
@@ -10278,9 +10278,9 @@ function LaborCostTab({
           {" "}Total incl. overhead = {formatCurrency(totalLaborCostSen)}.
           {" · "}
           Revenue is recognized when items complete UPHOLSTERY (production-completion bucket); labor at the day work happens.
-          Per-row Category Revenue is each dept's minute-weighted slice of the PO selling price
-          (po_price × dept_minutes ÷ total_PO_minutes), summed across every PO recognized in the period —
-          dept slices add back up to the category total. Treat any single-month ratio as a leading indicator, not a closed P&amp;L.
+          Per-row Department Revenue is the order&apos;s full value on the day this department&apos;s last card for it
+          closes — the same figure as Dashboard › Department Revenue and Floor Live (each department books the full
+          order, so rows do not add up to the total). Treat any single-month ratio as a leading indicator, not a closed P&amp;L.
         </div>
 
         {loading ? (
@@ -10315,8 +10315,8 @@ function LaborCostTab({
                     <th className="h-10 px-3 text-left font-medium text-[#374151]">Category</th>
                     <th className="h-10 px-3 text-right font-medium text-[#374151]">Hours</th>
                     <th className="h-10 px-3 text-right font-medium text-[#374151]">Labor Cost</th>
-                    <th className="h-10 px-3 text-right font-medium text-[#374151]">Category Revenue</th>
-                    <th className="h-10 px-3 text-right font-medium text-[#374151]" title="Per-row ratio = this dept's Labor Cost ÷ this dept's Category Revenue slice. Different denominator from the top KPI's Cost/Revenue (which uses Total Revenue), so per-row ratios won't average up to the KPI.">Category Cost / Revenue</th>
+                    <th className="h-10 px-3 text-right font-medium text-[#374151]">Department Revenue</th>
+                    <th className="h-10 px-3 text-right font-medium text-[#374151]" title="Per-row ratio = this department's Labor Cost ÷ its Department Revenue (the order's full value when this department's last card closes — same as Dashboard and Floor Live). Each department books the full order, so per-row ratios do not add up to the top KPI.">Cost / Department Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
