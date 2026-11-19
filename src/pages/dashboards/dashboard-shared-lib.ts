@@ -3,14 +3,15 @@
 // constant/function exports breaks Vite Fast Refresh (react-refresh/only-
 // export-components).
 import { formatCurrency } from "../../lib/utils";
+import { CAT, NEUTRAL, STATUS } from "../../lib/chart-standard";
 
-export const TAUPE = "#6B5C32";
-export const TEAL = "#3E6570";
+export const TAUPE = CAT[0];   // chart series — house standard (was #6B5C32)
+export const TEAL = CAT[2];   // house standard (was #3E6570)
 export const MUTED = "#6B7280";
 export const BORDER = "#E2DDD8";
-export const GREEN = "#4F7C3A";
+export const GREEN = STATUS.good; // good / hit only
 export const AMBER = "#9C6F1E";
-export const RED = "#9A3A2D";
+export const RED = STATUS.bad;     // bad / missed only
 
 // Mirrors the route's own predicate (dashboard-prototype.ts) and the house
 // Command Center's `status NOT IN ('DRAFT','CANCELLED','ON_HOLD')`. A DRAFT is
@@ -131,23 +132,17 @@ export function widgetPeriodLabel(p: Period): string {
 // bars and the white card background, and a sand tone (#D9C79A) disappeared
 // completely against the white wherever it rose above the bars. Brass is the
 // lightest tone that stays legible on both grounds.
-export const CHART_INK = "#6B5C32";   // Revenue bars — deep taupe
-export const CHART_GOLD = "#C5A85C";  // Orders line — brass (legible on white AND on the bars)
-export const CHART_AXIS = "#A39E93";  // grid lines + tick labels — warm gray
-export const CARD_BORDER = "#E5E0D8"; // card / grid border
+// Owner 2026-11-19: every dashboard takes the house chart standard
+// (src/lib/chart-standard.ts — the Board Report look), replacing the warm
+// taupe / brass / teal set. Bars in house blue, the overlay line in house gold.
+export const CHART_INK = CAT[0];     // bars / solid series
+export const CHART_GOLD = CAT[1];    // overlay line / accent
+export const CHART_AXIS = NEUTRAL;   // grid lines + tick labels
+export const CARD_BORDER = "#E5E0D8"; // card / grid border (page chrome, not chart)
 export const CARD_BG = "#FFFFFF";
 
-// Donut + category series, warm-industrial ordered light-to-dark so adjacent
-// segments stay distinguishable without relying on hue alone.
-export const CHART_SERIES = [
-  "#1F4654",
-  "#2E7186",
-  "#3E9AAE",
-  "#8A6A3B",
-  "#C5A85C",
-  "#8A7F6B",
-  "#C4BCAE",
-];
+// Donut + category series: the six house colours in fixed order, then neutral grey.
+export const CHART_SERIES = [...CAT, NEUTRAL];
 
 // ---------------------------------------------------------------------------
 // Period — the dashboard's global Monthly/YTD selector. "YTD" is the toggle's

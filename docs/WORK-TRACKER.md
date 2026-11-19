@@ -348,7 +348,7 @@ Owner asks (2026-11-18/19): 「有点丑 … 美国大型公司 financial report
 - [x] Batch 3 (feat/board-report-batch3; owner OK 2026-11-19): executive-summary box on the cover (performance, cash, watch items: materials >5% over forecast, a customer >40%); materials page = monthly chart + category variance bars side by side.
 - [x] Page-4 table total now uses the P&L pair (owner 2026-11-19 「22.6% 统一成 9.5% 的算法」), with a "Forecast not split by category" row so the forecast column adds up. Owner: no preparer/reviewer block, no cause-analysis text for now.
 - [x] Finance dashboard → house standard (#1458, live-verified 2026-11-19: forecast red → dashed grey, tables' forecast text grey, red/green only for vs-forecast).
-- [ ] Standardise rest: the other dashboards (18 recharts files, warm brown palette) → chart-standard. Preview each before ship.
+- [x] Other dashboards → house standard (feat/dashboards-house-standard; owner OK 2026-11-19): /dashboard Sales / Operations / Employees / Service tabs (dashboard-shared-lib tokens, dashboard-b palette, DeptRevenueCard), phone Home (home-style DATA, HomePhone). Page chrome (buttons, icons, borders) deliberately unchanged — only chart colours were decided.
 - Data check (live Oct report, 2026-11-19): no section unavailable; dashes are genuine (future months, categories with no forecast keyed, a customer with no bedframe/sofa split). Flag: cash-flow forecast "Docs" vs "P&L" columns diverge by up to RM 406k (May 27) — Docs only counts known documents.
 
 ## ✅ Board report charts print their amounts (feat/board-report-chart-labels, 2026-11-18)

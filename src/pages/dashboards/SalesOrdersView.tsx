@@ -19,7 +19,7 @@ import { formatCurrency } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
   GREEN, AMBER, TEAL, fmtN, fmtRMAxis, ymd,
-  CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES,
+  CHART_AXIS, CARD_BORDER, CARD_BG, CHART_SERIES, CHART_INK,
   inPeriod, inFocus, periodLabel, monthLabel, quarterOfPeriod, quarterKeyOf, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { LiveBadge } from "./dashboard-shared";
 import { CommandCenterSections } from "./CommandCenterSections";
@@ -401,7 +401,7 @@ export function SalesOrdersView({
                       {forecast.map((r) => (
                         <Cell
                           key={r.iso}
-                          fill={r.inProgress ? (r.hit ? GREEN : "#6B5C32") : r.projected ? "#E3DED5" : r.hit === null ? "#A39E93" : r.hit ? GREEN : AMBER}
+                          fill={r.inProgress ? (r.hit ? GREEN : CHART_INK) : r.projected ? "#E6E8EC" : r.hit === null ? CHART_AXIS : r.hit ? GREEN : AMBER}
                           // the bar's top corners are rounded only when no estimate sits on it
                           radius={(r.inProgress && r["Still needed"] ? [0, 0, 0, 0] : [4, 4, 0, 0]) as unknown as number}
                         />

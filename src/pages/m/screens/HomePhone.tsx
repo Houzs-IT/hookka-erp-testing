@@ -33,6 +33,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { CAT } from "@/lib/chart-standard";
 import { SO_STATUS_COLOR, type SemanticStyle } from "@/lib/design-tokens";
 import { formatCurrency } from "@/lib/utils";
 import { MobileCard } from "../components";
@@ -56,7 +57,6 @@ const MOSS = "#4F7C3A";
 const OCHRE = "#9C6F1E";
 const RED = "#9A3A2D";
 const TEAL = "#3E6570";
-const PLUM = "#6B4A6D";
 // Status TEXT uses the Mobile UI Foundation roles: 4.5:1 in light AND dark.
 const TEXT_SUCCESS = "var(--m-text-status-success)";
 const TEXT_WARNING = "var(--m-text-status-warning)";
@@ -894,9 +894,9 @@ export function PhonePipeline({
   const deliveredW = confirmed > 0 ? Math.max(0, Math.min(100, (delivered / confirmed) * 100)) : 0;
   const pct = (sen: number) => (confirmed > 0 ? `${Math.round((sen / confirmed) * 100)}%` : "—");
   const legend = [
-    { label: "Confirmed", sen: confirmed, hex: TAUPE },
+    { label: "Confirmed", sen: confirmed, hex: CAT[0] },
     { label: "Delivered", sen: delivered, hex: MOSS },
-    { label: "Outstanding", sen: outstanding, hex: OCHRE },
+    { label: "Outstanding", sen: outstanding, hex: CAT[1] },
   ];
   return (
     <PCard style={{ marginTop: 12 }}>
@@ -972,7 +972,7 @@ export function PhonePipeline({
             }}
           >
             {deliveredW > 0 ? <span style={{ width: `${deliveredW}%`, background: MOSS }} /> : null}
-            {confirmed > 0 && outstanding > 0 ? <span style={{ flex: 1, background: OCHRE }} /> : null}
+            {confirmed > 0 && outstanding > 0 ? <span style={{ flex: 1, background: CAT[1] }} /> : null}
           </div>
           <div style={{ display: "grid", gap: 2, marginTop: 12 }}>
             {legend.map((p) => (
@@ -1642,7 +1642,8 @@ export function PhoneWorkerEfficiency({
 // ---------------------------------------------------------------------------
 // Sales by Customer — All / Bedframe / Sofa switch, donut, top rows.
 // ---------------------------------------------------------------------------
-const SBC_PHONE_COLORS = [TAUPE, TEAL, MOSS, PLUM, OCHRE, BRONZE];
+// Chart series — house chart standard (owner 2026-11-19).
+const SBC_PHONE_COLORS = [...CAT];
 
 export function PhoneSalesByCustomer({
   cat,

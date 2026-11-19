@@ -30,6 +30,7 @@ import {
 } from "recharts";
 import type { XAxisTickContentProps } from "recharts";
 import { formatCurrency } from "@/lib/utils";
+import { FORECAST } from "@/lib/chart-standard";
 
 const rm = (sen: number | undefined) => formatCurrency(sen ?? 0);
 
@@ -399,7 +400,7 @@ export function DeptDailyBarChart({
               labelFormatter={(m) => String(data.find((r) => r.m === m)?.d ?? m)}
               contentStyle={{ background: "#FFFFFF", border: "1px solid #E2DDD8", borderRadius: 8, fontSize: 12 }}
             />
-            {avgSen > 0 && <ReferenceLine y={avgSen / 100} stroke="#3E6570" strokeDasharray="5 4" />}
+            {avgSen > 0 && <ReferenceLine y={avgSen / 100} stroke={FORECAST} strokeDasharray="5 4" />}
             {markDay && <ReferenceLine x={markDay} stroke="#9C6F1E" strokeWidth={2} />}
             <Bar dataKey="v" name={label} fill={color} radius={[3, 3, 0, 0]} maxBarSize={22} isAnimationActive={false} />
           </BarChart>

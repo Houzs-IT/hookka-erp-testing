@@ -8,6 +8,7 @@
 // not a different skin. Self-contained & disposable: delete this folder,
 // the /dashboard-b route line, and the sidebar line to remove it.
 // ===========================================================================
+import { CAT, NEUTRAL, STATUS } from "@/lib/chart-standard";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { categoryDays } from "@/pages/dashboards/dashboard-widgets-lib";
 import { CompletedDrill } from "./CompletedDrill";
@@ -375,25 +376,16 @@ function toQuarterly(
     .reverse();
 }
 
-// Customer-mix donut palette — professional financial-report scheme
-// (deep navy → teal → steel, grey tail for "Others"). The blue/teal
-// family is the convention in audit decks, fintech & SaaS finance UIs.
-const PIE_COLORS = [
-  "#16425B", // deep navy
-  "#1F6E8C", // teal-navy
-  "#2E8FA3", // teal
-  "#4FA8B8", // light teal
-  "#7FB9C6", // steel
-  "#A9C7D0", // pale steel
-  "#C6CDD3", // neutral grey — Others
-];
-
-// Brand-consistent chart palette (warm, matches the app — no neon).
-const C_SO = "#6B5C32"; // brand brown
-const C_PROD = "#C9A24B"; // muted gold
-const C_INV = "#A8A29A"; // warm grey
-const C_GREEN = "#15803D";
-const C_RED = "#DC2626";
+// Chart colours — the house chart standard (owner 2026-11-19: every dashboard
+// takes the Board Report look, src/lib/chart-standard.ts). Series in the house
+// order; green / red for good / bad only. Page chrome (buttons, icons) keeps
+// the app's own theme.
+const PIE_COLORS = [...CAT, NEUTRAL];
+const C_SO = CAT[0];
+const C_PROD = CAT[1];
+const C_INV = NEUTRAL;
+const C_GREEN = STATUS.good;
+const C_RED = STATUS.bad;
 
 function Spark({ data, stroke }: { data: number[]; stroke: string }) {
   if (data.length < 2) return null;
