@@ -20,7 +20,14 @@ import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { freshAll, freshFirst, loadLockedPayrollPeriods } from "../lib/worker-penalties";
-import { ensureOutsourcePieceTables, findPieceDrift } from "../lib/outsource-piece";
+import {
+  ensureOutsourcePieceTables,
+  findPieceDrift,
+  insertPieceRecord,
+  loadPieceOrders,
+  loadRateMap,
+  loadSewLabels,
+} from "../lib/outsource-piece";
 import { orderRate, pieceAmountSen, pieceItemCode, pieceItemsForOrder } from "../../lib/outsource-piece";
 
 const app = new Hono<Env>();
@@ -41,33 +48,6 @@ async function loadOutsourceWorker(c: Context<Env>, workerId: string): Promise<W
     .first<Record<string, unknown>>();
   if (!w || !(w.isOutsource ?? w.is_outsource) || s(w.status) !== "ACTIVE") return null;
   return { id: s(w.id), empNo: s(w.empNo, w.emp_no), name: s(w.name) };
-}
-
-async function loadRateMap(c: Context<Env>, workerId: string): Promise<Map<string, number>> {
-  const rows = await freshAll<Record<string, unknown>>(
-    c.var.DB,
-    c.var.DB.prepare("SELECT item_code, rate_sen FROM outsource_piece_rates WHERE worker_id = ?").bind(workerId),
-  );
-  return new Map(rows.map((r) => [s(r.itemCode, r.item_code), Number(r.rateSen ?? r.rate_sen) || 0]));
-}
-
-/** Fab Sew WIP labels per order: the price list is a sewing list. */
-async function loadSewLabels(c: Context<Env>, orderIds: string[]): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
-  if (orderIds.length === 0) return out;
-  const placeholders = orderIds.map(() => "?").join(",");
-  const rows = await freshAll<Record<string, unknown>>(
-    c.var.DB,
-    c.var.DB.prepare(
-      `SELECT production_order_id, wip_label FROM job_cards
-        WHERE department_code = 'FAB_SEW' AND production_order_id IN (${placeholders})`,
-    ).bind(...orderIds),
-  );
-  for (const r of rows) {
-    const id = s(r.productionOrderId, r.production_order_id);
-    out.set(id, [...(out.get(id) ?? []), s(r.wipLabel, r.wip_label)]);
-  }
-  return out;
 }
 
 app.get("/rates", async (c) => {
@@ -188,8 +168,8 @@ app.get("/importable", async (c) => {
         LIMIT 300`,
     ).bind(...binds),
   );
-  const rateMap = await loadRateMap(c, workerId);
-  const sewLabels = await loadSewLabels(c, rows.map((o) => s(o.id)));
+  const rateMap = await loadRateMap(c.var.DB, workerId);
+  const sewLabels = await loadSewLabels(c.var.DB, rows.map((o) => s(o.id)));
   const data = rows.map((o) => {
     const productCode = s(o.productCode, o.product_code);
     const items = pieceItemsForOrder(productCode, sewLabels.get(s(o.id)) ?? []);
@@ -236,24 +216,17 @@ app.post("/import", async (c) => {
     return c.json({ success: false, error: `Payroll for ${period} is already approved` }, 409);
   }
 
-  const placeholders = ids.map(() => "?").join(",");
-  const orders = await freshAll<Record<string, unknown>>(
-    c.var.DB,
-    c.var.DB.prepare(
-      `SELECT id, po_no, sales_order_no, customer_po_id, product_code, quantity
-         FROM production_orders WHERE org_id = ? AND id IN (${placeholders})`,
-    ).bind(getOrgId(c), ...ids),
-  );
+  const orders = await loadPieceOrders(c.var.DB, getOrgId(c), ids);
   if (orders.length !== ids.length) {
     return c.json({ success: false, error: "A selected production order no longer exists" }, 400);
   }
   // All or nothing: a partial import would leave the office unable to tell
   // which orders in their selection were paid.
-  const rateMap = await loadRateMap(c, worker.id);
-  const sewLabels = await loadSewLabels(c, ids);
-  const priced = orders.map((o) => {
-    const items = pieceItemsForOrder(s(o.productCode, o.product_code), sewLabels.get(s(o.id)) ?? []);
-    return { order: o, items, ...orderRate(items, rateMap) };
+  const rateMap = await loadRateMap(c.var.DB, worker.id);
+  const sewLabels = await loadSewLabels(c.var.DB, ids);
+  const priced = orders.map((order) => {
+    const items = pieceItemsForOrder(order.productCode, sewLabels.get(order.id) ?? []);
+    return { order, items, ...orderRate(items, rateMap) };
   });
   const missing = [...new Set(priced.flatMap((p) => p.missing))];
   if (missing.length > 0) {
@@ -262,29 +235,18 @@ app.post("/import", async (c) => {
 
   const userId = ctxGet(c, "userId");
   let imported = 0;
-  for (const { order: o, items, rateSen: orderRateSen } of priced) {
-    const productCode = s(o.productCode, o.product_code);
-    const itemCode = items.join(" + ");
-    const quantity = Number(o.quantity) || 0;
-    const rateSen = orderRateSen as number;
-    const id = `opc-${crypto.randomUUID().slice(0, 8)}`;
-    await c.var.DB.prepare(
-      `INSERT INTO outsource_piece_records
-         (id, worker_id, emp_no, worker_name, production_order_id, po_no, sales_order_no, customer_po_id,
-          product_code, item_code, quantity, rate_sen, amount_sen, payroll_period, org_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (production_order_id) DO NOTHING`,
-    )
-      .bind(
-        id, worker.id, worker.empNo, worker.name, s(o.id), s(o.poNo, o.po_no), s(o.salesOrderNo, o.sales_order_no),
-        s(o.customerPoId ?? o.customerPOId, o.customer_po_id), productCode, itemCode, quantity, rateSen,
-        pieceAmountSen(quantity, rateSen), period, getOrgId(c), userId || null,
-      )
-      .run();
-    const landed = await freshFirst<{ id: string }>(
-      c.var.DB,
-      c.var.DB.prepare("SELECT id FROM outsource_piece_records WHERE id = ?").bind(id),
-    );
+  for (const { order, items, rateSen } of priced) {
+    const unitRateSen = rateSen as number;
+    const landed = await insertPieceRecord(c.var.DB, {
+      worker,
+      order,
+      itemCode: items.join(" + "),
+      rateSen: unitRateSen,
+      amountSen: pieceAmountSen(order.quantity, unitRateSen),
+      period,
+      orgId: getOrgId(c),
+      createdBy: userId || null,
+    });
     if (landed) imported++;
   }
   await emitAudit(c, { resource: RES, resourceId: worker.id, action: "update", after: { pieceImport: ids, period } });
