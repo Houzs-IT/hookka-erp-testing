@@ -13,6 +13,7 @@
 // role check server-side (defense-in-depth).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from "react";
+import { CAT, STATUS } from "@/lib/chart-standard";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { formatTimestampMY } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -87,7 +88,7 @@ function Sparkline({ data }: { data: number[] }) {
     >
       <polyline
         fill="none"
-        stroke="#6B5C32"
+        stroke={CAT[0]}
         strokeWidth={2}
         points={points}
       />
@@ -200,12 +201,12 @@ function DailyTrendChart({ data }: { data: DailyTrend }) {
       aria-label="Daily P50 + P95 latency trend"
     >
       {/* P50 line — lighter color, drawn under P95 */}
-      <polyline fill="none" stroke="#8B7A52" strokeWidth={1.5} points={line(p50)} />
+      <polyline fill="none" stroke={CAT[0]} strokeWidth={1.5} points={line(p50)} />
       {/* P95 line — darker / more prominent */}
-      <polyline fill="none" stroke="#9A3A2D" strokeWidth={1.5} points={line(p95)} />
+      <polyline fill="none" stroke={CAT[1]} strokeWidth={1.5} points={line(p95)} />
       {/* Inline legend at the top-right */}
-      <text x={w - 75} y={12} fontSize="9" fill="#8B7A52">— P50</text>
-      <text x={w - 35} y={12} fontSize="9" fill="#9A3A2D">— P95</text>
+      <text x={w - 75} y={12} fontSize="9" fill={CAT[0]}>— P50</text>
+      <text x={w - 35} y={12} fontSize="9" fill={CAT[1]}>— P95</text>
     </svg>
   );
 }
@@ -378,7 +379,7 @@ function HourlyErrorChart({ data }: { data: HourlyErrors }) {
                 y={h - fiveH}
                 width={Math.max(0, barW - 2)}
                 height={fiveH}
-                fill="#9A3A2D"
+                fill={STATUS.bad}
               />
             )}
             {fourH > 0 && (

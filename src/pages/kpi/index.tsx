@@ -17,6 +17,7 @@
 // An ordinary user has only the third, so they never see the strip.
 // ---------------------------------------------------------------------------
 import { useMemo, useState } from "react";
+import { CAT } from "@/lib/chart-standard";
 import { Link } from "react-router-dom";
 import { LineChart, Line as ChartLine, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1181,7 +1182,7 @@ export default function KpiPage() {
                             <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} width={38} unit="%" domain={[0, "auto"]} />
                             <Tooltip formatter={(v) => [`${v}%`, "Efficiency"]} contentStyle={{ fontSize: 11 }} />
                             <ReferenceLine y={l.target} stroke="#9CA3AF" strokeDasharray="4 3" label={{ value: `${l.target}% target`, fontSize: 10, fill: "#9CA3AF", position: "insideTopRight" }} />
-                            <ChartLine type="monotone" dataKey="pct" stroke="#6B5C32" strokeWidth={1.75} dot={{ r: 2.5 }} isAnimationActive={false} />
+                            <ChartLine type="monotone" dataKey="pct" stroke={CAT[0]} strokeWidth={1.75} dot={{ r: 2.5 }} isAnimationActive={false} />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
