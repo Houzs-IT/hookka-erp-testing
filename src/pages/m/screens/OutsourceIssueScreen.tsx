@@ -8,7 +8,6 @@ import {
   daysOut,
   describeIssue,
   formatDays,
-  formatIssueDate,
   formatIssueDateTime,
   formatPiece,
 } from "@/lib/outsource-issue-format";
@@ -488,7 +487,7 @@ function TrackingCard({ item }: { item: OutsourceIssueWithDone }): JSX.Element {
         </div>
       </div>
       <div style={{ fontSize: 12.5, color: M.muted }}>
-        {item.workerName} · {item.departmentName} · Issued {formatIssueDate(item.issuedAt)} · {daysText}
+        {item.workerName} · {item.departmentName} · Issued {formatIssueDateTime(item.issuedAt)} · {daysText}
       </div>
       {isCompleted ? (
         <div style={{ fontSize: 12.5, color: M.muted }}>Completed {formatIssueDateTime(item.completedAt)}</div>
