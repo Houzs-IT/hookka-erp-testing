@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   IssueStatus,
   OutsourceIssue,
-  OutsourceIssueWithSewing,
+  OutsourceIssueWithDone,
   OutsourceWorkerSummary,
 } from "@/api/lib/outsource-issue";
 import {
@@ -13,7 +13,7 @@ import {
 import { describeIssue } from "@/lib/outsource-issue-format";
 import { useDebounced } from "@/pages/m/lib/use-debounced";
 
-export type { OutsourceIssue, OutsourceIssueWithSewing, OutsourceWorkerSummary };
+export type { OutsourceIssue, OutsourceIssueWithDone, OutsourceWorkerSummary };
 
 export type StatusFilter = IssueStatus | "ALL";
 export type FeedbackTone = "success" | "warning" | "danger";
@@ -42,7 +42,7 @@ const ISSUES_URL = "/api/outsource-issues";
 const WORKERS_URL = `${ISSUES_URL}/workers`;
 const ENFORCE_URL = "/api/kv-config/outsource_issue.enforce";
 const SAME_CODE_COOLDOWN_MS = 1500;
-const WARNING_CODES = new Set(["ALREADY_ISSUED", "ALREADY_SEWN"]);
+const WARNING_CODES = new Set(["ALREADY_ISSUED", "ALREADY_DONE"]);
 
 export const LIST_CAP = 500;
 
@@ -56,7 +56,7 @@ export const DEFAULT_FILTERS: TrackingFilters = {
 
 interface ListResult {
   key: string;
-  issues: OutsourceIssueWithSewing[];
+  issues: OutsourceIssueWithDone[];
   isTruncated: boolean;
   error: string | null;
 }
@@ -87,7 +87,7 @@ export interface UseOutsourceIssueResult {
   undoingId: string;
   filters: TrackingFilters;
   setFilters: (patch: Partial<TrackingFilters>) => void;
-  issues: OutsourceIssueWithSewing[];
+  issues: OutsourceIssueWithDone[];
   isListLoading: boolean;
   listError: string | null;
   isListTruncated: boolean;
@@ -129,7 +129,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     const load = async (): Promise<void> => {
       try {
         const response = await fetch(listUrl);
-        const envelope = await readEnvelope<OutsourceIssueWithSewing[]>(response);
+        const envelope = await readEnvelope<OutsourceIssueWithDone[]>(response);
         if (isCancelled) return;
         if (!response.ok || !envelope?.data) {
           setListResult({ key: listKey, issues: [], isTruncated: false, error: failureMessage(envelope, response.status) });

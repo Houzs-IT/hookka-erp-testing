@@ -22,7 +22,7 @@ import {
 } from "./use-outsource-issue";
 import type {
   FeedbackTone,
-  OutsourceIssueWithSewing,
+  OutsourceIssueWithDone,
   StatusFilter,
 } from "./use-outsource-issue";
 
@@ -47,9 +47,9 @@ function FeedbackIcon({ tone }: { tone: FeedbackTone }): JSX.Element {
   return <XCircle className="h-5 w-5 shrink-0" aria-hidden />;
 }
 
-function StatusCell({ issue }: { issue: OutsourceIssueWithSewing }): JSX.Element {
+function StatusCell({ issue }: { issue: OutsourceIssueWithDone }): JSX.Element {
   const isCompleted = issue.status === "COMPLETED";
-  const needsCheck = issue.status === "INCOMPLETE" && issue.sewingDone;
+  const needsCheck = issue.status === "INCOMPLETE" && issue.workDone;
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
@@ -63,7 +63,7 @@ function StatusCell({ issue }: { issue: OutsourceIssueWithSewing }): JSX.Element
       </span>
       {needsCheck ? (
         <span
-          title="Fabric Sewing is already done but this issue is still open"
+          title="The work is already done but this issue is still open"
           className="rounded-full border border-[#E8B2A1] bg-[#F9E1DA] px-2 py-0.5 text-xs font-semibold text-[#9A3A2D]"
         >
           Check
@@ -73,7 +73,7 @@ function StatusCell({ issue }: { issue: OutsourceIssueWithSewing }): JSX.Element
   );
 }
 
-const COLUMNS: Column<OutsourceIssueWithSewing>[] = [
+const COLUMNS: Column<OutsourceIssueWithDone>[] = [
   {
     key: "issuedAt",
     label: "Issued at",
@@ -83,6 +83,7 @@ const COLUMNS: Column<OutsourceIssueWithSewing>[] = [
     exportValue: (row) => formatIssueDateTime(row.issuedAt),
   },
   { key: "workerName", label: "Worker", width: "150px", sortable: true },
+  { key: "departmentName", label: "Department", width: "140px", sortable: true },
   { key: "poNo", label: "PO no", width: "130px", sortable: true, type: "docno" },
   { key: "productName", label: "Product", width: "200px", sortable: true },
   { key: "itemLabel", label: "Item", width: "150px", sortable: true },
@@ -102,7 +103,7 @@ const COLUMNS: Column<OutsourceIssueWithSewing>[] = [
     sortable: true,
     noClip: true,
     render: (_value, row) => <StatusCell issue={row} />,
-    exportValue: (row) => (row.status === "INCOMPLETE" && row.sewingDone ? "Incomplete (check)" : row.status),
+    exportValue: (row) => (row.status === "INCOMPLETE" && row.workDone ? "Incomplete (check)" : row.status),
   },
   {
     key: "completedAt",
@@ -141,7 +142,7 @@ function EnforceToggle(): JSX.Element {
         <span className="text-sm text-[#1F1D1B]">
           <span className="font-semibold">Only allow issued items</span>
           <span className="block text-xs text-[#6B7280]">
-            When on, an outsourced worker can finish Fabric Sewing only on an item issued to them here.
+            When on, an outsourced worker can finish work in their department only on an item issued to them here.
             Turn on after every item they hold has been issued.
           </span>
         </span>
@@ -179,11 +180,11 @@ export default function OutsourceIssuePage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Outsource Fabric"
-        subtitle="Issue cut fabric to outsourced workers and track what they still have to finish."
+        title="Outsource Work"
+        subtitle="Issue work to outsourced workers and track what they still have to finish."
       />
       <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
-        <section className="space-y-3" aria-label="Issue fabric">
+        <section className="space-y-3" aria-label="Issue work">
           <div className="rounded-lg border border-[#E6E0D9] bg-white p-4 space-y-3">
             <div>
               <label htmlFor="outsource-worker" className="mb-1 block text-xs font-medium text-[#6B7280]">
@@ -201,7 +202,7 @@ export default function OutsourceIssuePage(): JSX.Element {
                 </option>
                 {issue.workers.map((worker) => (
                   <option key={worker.id} value={worker.id}>
-                    {worker.empNo} · {worker.name} ({worker.incompleteCount} open)
+                    {worker.empNo} · {worker.name} · {worker.departmentNames.join(" / ") || "No department"} ({worker.incompleteCount} open)
                   </option>
                 ))}
               </select>
@@ -214,7 +215,7 @@ export default function OutsourceIssuePage(): JSX.Element {
             </div>
 
             {!canIssue ? (
-              <p className="text-xs text-[#9A3A2D]">You do not have permission to issue fabric.</p>
+              <p className="text-xs text-[#9A3A2D]">You do not have permission to issue work.</p>
             ) : null}
 
             <form
@@ -413,7 +414,7 @@ export default function OutsourceIssuePage(): JSX.Element {
           ) : null}
 
           <div className="rounded-lg border border-[#E6E0D9] bg-white overflow-visible">
-            <DataGrid<OutsourceIssueWithSewing>
+            <DataGrid<OutsourceIssueWithDone>
               columns={COLUMNS}
               data={issue.issues}
               keyField="id"
@@ -422,7 +423,7 @@ export default function OutsourceIssuePage(): JSX.Element {
               loading={issue.isListLoading}
               emptyMessage="No issues match these filters."
               gridId="outsource-issue-tracking"
-              exportName="outsource-fabric"
+              exportName="outsource-work"
             />
           </div>
         </section>
