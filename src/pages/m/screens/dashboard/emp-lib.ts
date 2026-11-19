@@ -267,11 +267,17 @@ export function deptRowsOf(a: {
     .filter((r) => r.work > 0 || r.prod > 0 || r.cost > 0 || r.bf + r.sofa > 0)
     .sort((x, y) => Number(!floor.has(x.dept)) - Number(!floor.has(y.dept)) || (poolEff(y) ?? -1) - (poolEff(x) ?? -1));
 }
-export function deptTotalOf(rows: DeptRow[]) {
-  return rows.reduce(
+/** Output total = production revenue = the Upholstery row (owner 2026-11-20): each
+ *  department books an order's full value, so adding departments would count it
+ *  once per department. Without the map the rows are summed (old callers). */
+export function deptTotalOf(rows: DeptRow[], progByDept?: Map<string, { bf: number; sofa: number; other: number }>) {
+  const t = rows.reduce(
     (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
     { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
   );
+  if (!progByDept) return t;
+  const up = progByDept.get("UPHOLSTERY");
+  return { ...t, bf: up?.bf ?? 0, sofa: (up?.sofa ?? 0) + (up?.other ?? 0) };
 }
 /** Workers whose home department this is, or who logged hours there in the window (desktop deptDrill). */
 export function deptWorkers(rows: Row[], hourEntries: HourEntry[], winDates: Set<string>, dept: string) {

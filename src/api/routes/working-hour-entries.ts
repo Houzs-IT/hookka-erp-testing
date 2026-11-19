@@ -19,6 +19,7 @@
 // the existing per-attendance rows and inserts the new ones in one shot, so
 // the UI doesn't have to track which rows changed.
 // ---------------------------------------------------------------------------
+import { loadDeptRevenue } from "../lib/dept-revenue";
 import { getOrgId } from "../lib/tenant";
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
@@ -26,7 +27,7 @@ import { requirePermission } from "../lib/rbac";
 import { ensureDeptScanEvents, liveTimedSegments } from "../lib/punch-autofill";
 import { mytWallClock } from "../../lib/utils";
 import { ensureNonprodRequests } from "./worker";
-import { loadProductionRevenue, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
+import { loadProductionRevenue } from "../lib/production-revenue";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "../lib/production-order-line";
 
 const app = new Hono<Env>();
@@ -296,86 +297,16 @@ app.get("/production-revenue", async (c) => {
   //     for the specific JC that just completed.
   // Multiple JCs for the same dept on one PO each contribute independently;
   // their slices sum to that dept's full share once they all complete.
+  // ONE RULE (owner 2026-11-20 「全部部门都跟upholstery 一样 … employee那边 全部都要
+  // 一样」): byDeptCategory is now DEPARTMENT REVENUE — a department books an
+  // order's full value on the day its last card for that order closes
+  // (dept-revenue.ts loadDeptRevenue), the figure Dashboard, Floor Live and the
+  // Employees dashboard show. It replaced the minute-weighted slice that split
+  // one order across departments.
   const byDeptCategory: Record<string, number> = {};
-
-  // Pull every dept JC that completed in the window. Joined to the PO so
-  // we can carry itemCategory + price-coalesce candidates in a single
-  // round-trip and reuse the same products fallback as the Total Revenue
-  // query above (productCode-based to handle sofa variant ids).
-  await ensureProductionOrderSourceLine(c.var.DB);
-  const jcRes = await c.var.DB
-    .prepare(
-      // Double-quoted aliases so Postgres preserves camelCase. Unquoted
-      // aliases fold to all-lowercase ("poId" → "poid") and the d1-compat
-      // snake→camel transform can't resurrect them, so r.poId would land
-      // undefined and the loop below would skip every row — Category
-      // Revenue read as 0 in the breakdown table.
-      `SELECT jc.productionOrderId AS "poId",
-              jc.departmentCode    AS "deptCode",
-              po.itemCategory      AS "category",
-              po.quantity          AS "qty",
-              COALESCE(jc.productionTimeMinutes, jc.estMinutes, 0) AS "jcMinutes",
-              ${PRODUCTION_ORDER_UNIT_PRICE_SQL} AS "unitPriceSen"
-         FROM job_cards jc
-         JOIN production_orders po ON po.id = jc.productionOrderId
-         ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
-        WHERE jc.status IN ('COMPLETED','TRANSFERRED')
-          AND jc.completedDate IS NOT NULL
-          AND jc.completedDate >= ?
-          AND jc.completedDate <= ?
-          AND po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')`,
-    )
-    .bind(from, to)
-    .all<{
-      poId: string;
-      deptCode: string;
-      category: "SOFA" | "BEDFRAME" | "ACCESSORY";
-      qty: number | string | null;
-      jcMinutes: number | string | null;
-      unitPriceSen: number | string | null;
-    }>();
-
-  // PO total minutes = sum of every JC's minutes for the PO (regardless
-  // of completion state). Cached so we can attribute every JC slice
-  // against the same stable denominator, even as more JCs complete in
-  // future periods.
-  const touchedPoIds = Array.from(
-    new Set((jcRes.results ?? []).map((r) => r.poId)),
-  );
-  const totalMinutesByPo = new Map<string, number>();
-  if (touchedPoIds.length > 0) {
-    const placeholders = touchedPoIds.map(() => "?").join(",");
-    const totalsRes = await c.var.DB
-      .prepare(
-        // Same camelCase-preserving alias rule as the JC query above.
-        `SELECT productionOrderId AS "productionOrderId",
-                SUM(COALESCE(productionTimeMinutes, estMinutes, 0)) AS "totalMinutes"
-           FROM job_cards
-          WHERE productionOrderId IN (${placeholders})
-          GROUP BY productionOrderId`,
-      )
-      .bind(...touchedPoIds)
-      .all<{ productionOrderId: string; totalMinutes: number | string }>();
-    for (const r of totalsRes.results ?? []) {
-      totalMinutesByPo.set(r.productionOrderId, Number(r.totalMinutes) || 0);
-    }
-  }
-
-  for (const r of jcRes.results ?? []) {
-    if (r.category !== "SOFA" && r.category !== "BEDFRAME" && r.category !== "ACCESSORY") continue;
-    if (!r.deptCode) continue;
-    const totalMin = totalMinutesByPo.get(r.poId) ?? 0;
-    if (totalMin <= 0) continue;
-    const jcMin = Number(r.jcMinutes) || 0;
-    if (jcMin <= 0) continue;
-    const unitPriceSen = Math.round(
-      typeof r.unitPriceSen === "number" ? r.unitPriceSen : Number(r.unitPriceSen) || 0,
-    );
-    const qty = Math.max(1, Math.round(typeof r.qty === "number" ? r.qty : Number(r.qty) || 1));
-    const poTotalPriceSen = unitPriceSen * qty;
-    const share = Math.round((poTotalPriceSen * jcMin) / totalMin);
+  for (const r of await loadDeptRevenue(c.var.DB, getOrgId(c), from, to)) {
     const key = `${r.deptCode}|${r.category}`;
-    byDeptCategory[key] = (byDeptCategory[key] ?? 0) + share;
+    byDeptCategory[key] = (byDeptCategory[key] ?? 0) + r.totalSen;
   }
   // Silence the unused-variable warning — recognizedPOs is still kept
   // populated above for the legacy `rows` audit + Total Revenue totals.

@@ -72,7 +72,8 @@ const PRICE_LOOKUP_FILES = [
   "src/api/lib/production-revenue.ts",
   "src/api/lib/dept-revenue.ts",
   "src/api/routes/dashboard-overview.ts",
-  "src/api/routes/working-hour-entries.ts",
+  // working-hour-entries.ts no longer prices itself — its revenue comes from
+  // loadProductionRevenue / loadDeptRevenue (owner 2026-11-20, one rule).
   "src/api/routes/dashboard-prototype.ts",
 ];
 

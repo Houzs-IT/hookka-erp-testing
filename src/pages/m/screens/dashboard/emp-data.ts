@@ -139,10 +139,21 @@ export function useEmpMoney(a: { access: EmpAccess; from: string; to: string; an
 
   const revenue = useDailyRevenue(revMonths, revMonths.length > 0);
 
-  // Department output: each department's progressive revenue (Labor Cost report's Category Revenue).
-  const prog = useCachedJson<{ data?: { byDeptCategory?: Record<string, number> } }>(access.revenueFigures && winFrom ? `/api/working-hour-entries/production-revenue?from=${winFrom}&to=${winTo}` : null);
+  // Department output = Department Revenue (owner 2026-11-20 「employee那边 全部都要一样」):
+  // an order's full value when the department's last card for it closes — the
+  // Floor Live completed feed (loadDeptRevenue), same as the desktop. Folded to
+  // the `DEPT|CATEGORY` shape the model already reads.
+  const prog = useCachedJson<{ departments?: { dept: string; bedframeSen?: number; sofaSen?: number; accessorySen?: number }[] }>(access.revenueFigures && winFrom ? `/api/dashboard/floor-live/completed?from=${winFrom}&to=${winTo}&month=${winTo.slice(0, 7)}` : null);
   const progStatus = slotStatus(prog as Slot, access.revenueFigures);
-  const progByDeptRaw = useMemo(() => prog.data?.data?.byDeptCategory, [prog.data]);
+  const progByDeptRaw = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const d of prog.data?.departments ?? []) {
+      out[`${d.dept}|BEDFRAME`] = d.bedframeSen ?? 0;
+      out[`${d.dept}|SOFA`] = d.sofaSen ?? 0;
+      out[`${d.dept}|ACCESSORY`] = d.accessorySen ?? 0;
+    }
+    return prog.data ? out : undefined;
+  }, [prog.data]);
   return {
     canSalary, labour, prevLabour, labourState, labourWhy,
     revenue,

@@ -115,7 +115,7 @@ test("Labor Cost print: revenue columns print ONLY with revenue-figures:read (th
   const withRev = laborCostPrint({ result: lcResult(), range, category: "", canSeeRevenue: true });
   const noRev = laborCostPrint({ result: lcResult(), range, category: "", canSeeRevenue: false });
   assert.equal(withRev.title, "Labor Cost vs Revenue");
-  assert.deepEqual(headers(withRev), ["Department", "Category", "Hours", "Labor Cost", "Category Revenue", "Cost / Revenue"]);
+  assert.deepEqual(headers(withRev), ["Department", "Category", "Hours", "Labor Cost", "Department Revenue", "Cost / Revenue"]);
   assert.deepEqual(headers(noRev), ["Department", "Category", "Hours", "Labor Cost", "Cost / Revenue"]);
   assert.ok(!JSON.stringify(noRev).includes("10,000.00"), "no revenue figure anywhere in the document");
   assert.ok(JSON.stringify(withRev).includes("10,000.00"));

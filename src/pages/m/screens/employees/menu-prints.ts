@@ -241,7 +241,7 @@ export function laborCostPrint(input: { result: LcResult; range: { from: string;
     { header: "Hours", align: "right" },
     { header: "Labor Cost", align: "right" },
   ];
-  if (canSeeRevenue) columns.push({ header: "Category Revenue", align: "right" });
+  if (canSeeRevenue) columns.push({ header: "Department Revenue", align: "right" });
   columns.push({ header: "Cost / Revenue", align: "right" });
   return {
     title: "Labor Cost vs Revenue",
