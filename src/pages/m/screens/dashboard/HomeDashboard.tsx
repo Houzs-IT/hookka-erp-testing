@@ -35,7 +35,7 @@ import {
 } from "./home-lib";
 import { SalesView } from "./SalesView";
 import { OpsView, type OpsSubKey } from "./OpsView";
-import { FloorLiveView } from "../../../dashboards/FloorLiveView";
+import { FloorLivePhone } from "./FloorLivePhone";
 import { EmpView } from "./EmpView";
 import type { EmpAccess } from "./emp-data";
 import type { OpsAccess } from "./ops-data";
@@ -124,7 +124,7 @@ function FallbackHome() {
 const MODES = [["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]] as const;
 /** Operations adds Day (desktop: Operations is a day tab). */
 const OPS_MODES = [["day", "Day"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]] as const;
-// Floor Live (owner 2026-11-11: "我的floorlive也没有看到") is the desktop's third Operations sub-tab, the same FloorLiveView.
+// Floor Live (owner 2026-11-11: "我的floorlive也没有看到") is the desktop's third Operations sub-tab, FloorLivePhone (phone design; same data and rules as the desktop FloorLiveView).
 type HomeOpsSub = OpsSubKey | "floor";
 const OPS_SUB_OPTIONS: readonly (readonly [HomeOpsSub, string])[] = [["overview", "Overview"], ["production", "Output & Cost"], ["floor", "Floor Live"]];
 
@@ -450,7 +450,7 @@ function Dashboard() {
         ) : (
           opsSub === "floor" ? (
             <div style={{ padding: "14px 16px 120px" }} data-testid="ops-floor-live">
-              <FloorLiveView period={period} today={today} onPeriodChange={setPeriod} />
+              <FloorLivePhone period={period} today={today} onPeriodChange={setPeriod} />
             </div>
           ) : (
             <OpsView access={opsAccess} period={period} periodKey={periodKey} sub={opsSub} today={today} onPeriod={setPeriod} />
