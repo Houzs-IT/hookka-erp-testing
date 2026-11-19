@@ -4020,7 +4020,11 @@ function EfficiencyOverviewTab({
   // + Efficiency % columns alongside the existing working-hours pivot without
   // pulling every JC row to the client.
   const jcSummaryUrl = `/api/job-cards/summary?from=${dateFrom}&to=${dateTo}`;
-  const { data: perfSummaryResp } = useCachedJson<{ data?: { workers?: { workerId: string; workedDayProductionMinutes?: number }[] } }>(
+  // Helper rule (owner 2026-11-18): a flagged helper is a helper only on a day
+  // without a scan. On the days they scanned they are a worker, so they get an
+  // efficiency over THOSE days (from the performance summary); "—" only when
+  // they scanned on no day in the range.
+  const { data: perfSummaryResp } = useCachedJson<{ data?: { workers?: { workerId: string; workedDayProductionMinutes?: number; efficiencyPct?: number; isHelper?: boolean; workerDayWorkingMinutes?: number; workerDayProductionMinutes?: number }[] } }>(
     `/api/department-performance?view=summary&from=${dateFrom}&to=${dateTo}`,
   );
   const workedDayEarnedByWorker = useMemo(
@@ -4028,6 +4032,12 @@ function EfficiencyOverviewTab({
     [perfSummaryResp],
   );
   const { data: jcSummaryResp } = useCachedJson<{ data?: { workerId: string; productionMinutes: number; jcCount: number }[] }>(jcSummaryUrl);
+  const helperScanEff = useMemo(
+    () => new Map((perfSummaryResp?.data?.workers ?? [])
+      .filter((w) => (w.workerDayWorkingMinutes ?? 0) > 0)
+      .map((w) => [w.workerId, { pct: w.efficiencyPct ?? 0, working: w.workerDayWorkingMinutes ?? 0, earned: w.workerDayProductionMinutes ?? 0 }])),
+    [perfSummaryResp],
+  );
   const prodMinsByWorker = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of jcSummaryResp?.data ?? []) {
@@ -4261,8 +4271,8 @@ function EfficiencyOverviewTab({
             0,
           );
           if (prodHours <= 0 || row.daysWithEntries === 0) return -1;
-          // Helper / 杂工 (owner 2026-11-11): no personal efficiency.
-          if (workerById.get(row.workerId)?.isHelper) return -1;
+          // Helper: efficiency only over the days they scanned (owner 2026-11-18).
+          if (workerById.get(row.workerId)?.isHelper) return helperScanEff.get(row.workerId)?.pct ?? -1;
           const prodMins = prodMinsByWorker.get(row.workerId) ?? 0;
           return (prodMins / (prodHours * 60)) * 100;
         },
@@ -4287,8 +4297,17 @@ function EfficiencyOverviewTab({
             0,
           );
           const totalMins = prodHours * 60;
-          // Helper / 杂工 (owner 2026-11-11): assists others — no personal efficiency.
+          // Helper (owner 2026-11-18): a worker on the days they scanned — their
+          // efficiency over those days; "—" when they scanned on no day.
           if (workerById.get(row.workerId)?.isHelper) {
+            const he = helperScanEff.get(row.workerId);
+            if (he) {
+              return (
+                <span className="tabular-nums" title={`Helper — efficiency on the days they scanned: ${Math.round(he.earned)} min earned on ${Math.round(he.working)} min clocked`}>
+                  {he.pct.toFixed(1)}%
+                </span>
+              );
+            }
             return (
               <span className="text-[#9CA3AF] tabular-nums" title="Helper — assists others; no personal efficiency, no efficiency allowance">
                 —
@@ -4443,7 +4462,11 @@ function EfficiencyOverviewTab({
       (sum, r) => {
         const ph = prodHoursOf(r);
         if (ph <= 0 || r.daysWithEntries === 0) return sum;
-        if (workerById.get(r.workerId)?.isHelper) return sum; // no personal efficiency
+        if (workerById.get(r.workerId)?.isHelper) {
+          // Helper: only the days they scanned count (owner 2026-11-18).
+          const he = helperScanEff.get(r.workerId);
+          return he ? { earnedMinutes: sum.earnedMinutes + he.earned, hoursMinutes: sum.hoursMinutes + he.working } : sum;
+        }
         return {
           earnedMinutes: sum.earnedMinutes + (workedDayEarnedByWorker.get(r.workerId) ?? 0),
           hoursMinutes: sum.hoursMinutes + ph * 60,
@@ -4465,7 +4488,7 @@ function EfficiencyOverviewTab({
       cards,
       sections: [{ columns, rows: printableRows }],
     });
-  }, [rows, printRows, prodMinsByWorker, productionDeptCodes, dateFrom, dateTo, workerById, perfSummaryResp, workedDayEarnedByWorker]);
+  }, [rows, printRows, prodMinsByWorker, productionDeptCodes, dateFrom, dateTo, workerById, perfSummaryResp, workedDayEarnedByWorker, helperScanEff]);
 
   return (
     <Card>
@@ -5645,9 +5668,24 @@ function EmployeeDetailTab({
   // efficiency% = numerator minutes / (prod-dept hours × 60) × 100, and since
   // productionWorkMins is already (prod-dept hours × 60) the ratio is direct.
   // Helper / 杂工 (owner 2026-11-11): no personal efficiency → "—".
+  // Helper (owner 2026-11-18): a worker only on the days they scanned (a
+  // completed card or approved extra production time). Their efficiency is
+  // taken over those days' production-dept hours; "—" when there were none.
+  const helperScanDays = useMemo(() => {
+    const days = new Set<string>();
+    if (!selectedWorker?.isHelper) return days;
+    for (const r of workerJcs) if (r.completedDate) days.add(r.completedDate.slice(0, 10));
+    for (const r of addProdResp?.data ?? []) {
+      if (r.workerId === selectedEmployeeId && r.kind === "ADD_PROD" && r.status === "APPROVED" && r.date && r.date >= dateFrom && r.date <= dateTo) days.add(r.date.slice(0, 10));
+    }
+    return days;
+  }, [selectedWorker, workerJcs, addProdResp, selectedEmployeeId, dateFrom, dateTo]);
+  const effDenomMins = selectedWorker?.isHelper
+    ? Math.round(workerEntries.reduce((s, e) => (productionDeptCodes.has(e.departmentCode) && helperScanDays.has(e.date.slice(0, 10)) ? s + (e.hours || 0) : s), 0) * 60)
+    : productionWorkMins;
   const avgEff =
-    productionWorkMins > 0 && !selectedWorker?.isHelper
-      ? ((numeratorProdMins / productionWorkMins) * 100).toFixed(1)
+    effDenomMins > 0
+      ? ((numeratorProdMins / effDenomMins) * 100).toFixed(1)
       : null;
   // Non-production hours = total working hours - production-dept hours.
   // Surfaced as a subtitle on the Total Working Hrs card so the operator

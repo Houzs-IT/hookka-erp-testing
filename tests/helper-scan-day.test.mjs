@@ -67,3 +67,21 @@ test("the day rule is used by every per-day view", () => {
     ["src/pages/dashboards/EmployeesDashboard.tsx", /if \(!x\.isHelper\) \{ r\.ew \+= x\.workingMinutes; r\.ep \+= earnedMinutes; \}/],
   ]) assert.match(readFileSync(f, "utf8"), re, f);
 });
+
+// Old Employees page (owner 2026-11-19 checklist item 8): the performance
+// summary it reads still marked a flagged helper "—" for the whole range.
+test("performance summary: a helper's efficiency is over the days they scanned; '—' only without one", async () => {
+  const { projectPerformanceSummary } = await import("../src/api/routes/department-performance.ts");
+  const day = (date, w) => ({ date, workingMinutes: 0, productionMinutes: 0, efficiencyPct: 0, workers: [w] });
+  const scanned = projectPerformanceSummary({ daily: [
+    day("2026-11-17", { workerId: "h1", workerName: "H", workingMinutes: 600, productionMinutes: 342, jobs: [] }),
+    day("2026-11-18", { workerId: "h1", workerName: "H", workingMinutes: 600, productionMinutes: 0, isHelper: true, jobs: [] }),
+  ] });
+  const h = scanned.workers[0];
+  assert.equal(h.efficiencyPct, 57, "342 earned on the 600 clocked on the scan day");
+  assert.equal(h.isHelper, undefined);
+  assert.equal(h.workerDayWorkingMinutes, 600);
+  const none = projectPerformanceSummary({ daily: [day("2026-11-18", { workerId: "h2", workerName: "N", workingMinutes: 600, productionMinutes: 0, isHelper: true, jobs: [] })] });
+  assert.equal(none.workers[0].isHelper, true);
+  assert.equal(none.workers[0].efficiencyPct, 0);
+});
