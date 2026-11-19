@@ -341,7 +341,7 @@ From CONNECT-0003 (Lim Wei Siang, Houzs Connect). Same change as the staging PR 
 2. DONE on staging: the route answered "Not allowed" (401) without the key once `CONNECT_LOGIN_KEY` was set on Preview; Connect staging signed in `zaim@hookka.com` through it.
 3. DONE: production secret `CONNECT_LOGIN_KEY` set on the Pages project (same value as `HOOKKA_LOGIN_KEY` on the houzs-connect Worker).
 
-## 🔵 Board report to investment-bank standard + ONE house chart standard (2026-11-19)
+## ✅ Board report to investment-bank standard + ONE house chart standard (2026-11-19)
 Owner asks (2026-11-18/19): 「有点丑 … 美国大型公司 financial reporting 怎么弄到那么漂亮」, 「整个 board report 的颜色方面呢？」, 「字体 字体大小等等」, 「你也知道不好 跟大公司和投行有差距 那就去弄」, 「全部数据有了？」, 「各大种类的 reporting 有尽量 standardise？」 → standard = the new Board Report look ("用我刚做的 Board Report 新版").
 - [x] Batch 1 (#1457, feat/board-report-chart-polish): IBM Plex Sans type scale; validated CAT palette; green/red = status only; forecast = hatched bars / dashed ink; selective labels; axis dropped when every value is printed. House tokens in `src/lib/chart-standard.ts`.
 - [x] Batch 2 (#1459, live-verified; owner OK on real-data preview 2026-11-19): action titles (the chart's conclusion as its title), cash-flow waterfall, actual-vs-forecast variance strip.
@@ -350,6 +350,7 @@ Owner asks (2026-11-18/19): 「有点丑 … 美国大型公司 financial report
 - [x] Finance dashboard → house standard (#1458, live-verified 2026-11-19: forecast red → dashed grey, tables' forecast text grey, red/green only for vs-forecast).
 - [x] Other dashboards → house standard (feat/dashboards-house-standard; owner OK 2026-11-19): /dashboard Sales / Operations / Employees / Service tabs (dashboard-shared-lib tokens, dashboard-b palette, DeptRevenueCard), phone Home (home-style DATA, HomePhone). Page chrome (buttons, icons, borders) deliberately unchanged — only chart colours were decided.
 - [x] Admin health + KPI charts → house standard (feat/admin-kpi-house-standard; owner 「一起统一」 2026-11-19). 5xx = STATUS.bad, 4xx stays amber (warning).
+- Housekeeping 2026-11-19 (owner 「89 你直接做」): 39 clean worktrees removed (branches kept; manifest `../hookka-erp-testing-worktrees/removed-worktrees-2026-11-19.tsv`, sha<TAB>branch<TAB>path), 7 local branches of merged PRs deleted; 18 worktrees left (dirty, detached, or in use). KPI daily line not eyeballed on prod (needs a person drilled open) — code + tests only.
 - Data check (live Oct report, 2026-11-19): no section unavailable; dashes are genuine (future months, categories with no forecast keyed, a customer with no bedframe/sofa split). Flag: cash-flow forecast "Docs" vs "P&L" columns diverge by up to RM 406k (May 27) — Docs only counts known documents.
 
 ## ✅ Board report charts print their amounts (feat/board-report-chart-labels, 2026-11-18)
@@ -558,7 +559,7 @@ Compared live (read-only) for October 2026: the board's cached copy (built 2026-
 Cause of "Refresh does nothing": Refresh starts a rebuild in the background; the page then polls without `rebuild`, and the server answered the first poll with the PREVIOUS cached copy, so the page showed stale figures. A manual rebuild (2026-11-13 00:16 MYT) produced Net RM 93,618 — matching live.
 Fix: polls send `&poll=1`; while a build's lock is fresh the server answers "building" instead of the old copy.
 
-## 🟡 Floor Live: live completed sets per department + worker portal (design only, 2026-11-12)
+## ✅ Floor Live: live completed sets per department + worker portal (shipped #1384 / #1385, 2026-11-12)
 
 Owner asks (2026-11-12, with screenshots of the Completed drill and Department Revenue):
 - 「这个completed的是根据upholstery 的对吧？… 当初也是拿production revenue 直接split去给全部部门」 — answer: the Completed card counts an order on the day its last job card closes (its numbers equal Upholstery's own, e.g. 27 bedframe / 4 sofa on 12 Nov); Department Revenue already books each department when ITS last card for an order closes, with sets (HK-0148 rule).
