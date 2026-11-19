@@ -1772,6 +1772,8 @@ app.get("/line-summary", async (c) => {
       totalHeightPriceSen: num(r.totalHeightPriceSen ?? r.total_height_price_sen),
       editable: lockReason === null,
       lockReason,
+      // For the page's Payment filter (HK-0158 follow-up): paid in full, part, or not.
+      payment: status === "PAID" ? "Paid" : paid > 0 ? "Part paid" : "Unpaid",
     };
   });
   return c.json({ success: true, data });
