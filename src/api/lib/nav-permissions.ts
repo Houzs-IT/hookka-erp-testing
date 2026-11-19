@@ -63,6 +63,7 @@ export const NAV_RESOURCE: Record<string, string> = {
   "/leads": "sales-pipeline",
 
   // Production & planning.
+  "/production/outsource-issue": "outsource-issues",
   "/production": "production-orders",
   "/planning/mrp": "mrp",
   "/planning": "scheduling",

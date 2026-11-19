@@ -108,6 +108,15 @@ import type {
 } from "./production-orders/_helpers";
 import { todayYmdMY, mytWallClock } from "../../lib/utils";
 import { checkWorkerScanGate } from "../lib/scan-gate";
+import { resolveSewingScope } from "../lib/sewing-scope";
+import {
+  checkIssueHandover,
+  closeHeldIssuesWhenDone,
+  finishIssueHandover,
+  truthy as isTruthyFlag,
+} from "../lib/outsource-issue";
+import { fanOutTarget, singleCardTarget } from "../lib/outsource-targets";
+import type { IssueHandover } from "../lib/outsource-issue";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -2054,9 +2063,9 @@ app.post("/:id/scan-complete", async (c) => {
   // the JC BLOCKED/CANCELLED gates still apply. The per-piece QR flow for
   // Fab Cut/Sew/Uph keeps routing to scan-complete-dept / -shared.
   const worker = await db
-    .prepare("SELECT id, name FROM workers WHERE id = ?")
+    .prepare("SELECT id, name, isOutsource FROM workers WHERE id = ?")
     .bind(workerId)
-    .first<{ id: string; name: string }>();
+    .first<{ id: string; name: string; isOutsource: unknown }>();
   if (!worker) {
     return c.json({ success: false, error: "Worker not found" }, 400);
   }
@@ -2244,6 +2253,19 @@ app.post("/:id/scan-complete", async (c) => {
         data: { jobCard: jcOut, pieceNo: target.slot.pieceNo },
       },
       400,
+    );
+  }
+
+  const issueHandover: IssueHandover = await checkIssueHandover(db, {
+    orgId: scanOrgId(c),
+    workerId: worker.id,
+    scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    target: singleCardTarget(target.jc.id, wholeCard ? null : target.slot.pieceNo),
+  });
+  if (issueHandover.kind === "refused") {
+    return c.json(
+      { success: false, code: issueHandover.code, error: issueHandover.message },
+      409,
     );
   }
 
@@ -2512,6 +2534,11 @@ app.post("/:id/scan-complete", async (c) => {
 
   await invalidateProductionCachesAfterScan(c);
 
+  await finishIssueHandover(db, issueHandover, {
+    productionOrderId: target.po.id,
+    workerId: worker.id,
+  });
+
   const freshPo = await fetchPO(db, target.po.id);
   const jcOut = freshPo?.jobCards.find((j) => j.id === target.jc.id);
   const redirected =
@@ -2665,9 +2692,9 @@ app.post("/:id/scan-complete-dept", async (c) => {
     }
   }
   const worker = await db
-    .prepare("SELECT id, name FROM workers WHERE id = ?")
+    .prepare("SELECT id, name, isOutsource FROM workers WHERE id = ?")
     .bind(workerId)
-    .first<{ id: string; name: string }>();
+    .first<{ id: string; name: string; isOutsource: unknown }>();
   if (!worker) {
     return c.json({ success: false, error: "Worker not found" }, 400);
   }
@@ -2714,6 +2741,19 @@ app.post("/:id/scan-complete-dept", async (c) => {
   // with force:true. Mirrors /scan-complete's single-card gate.
   // prerequisiteMet warning REMOVED (Wei Siang 2026-06-08) — workers may
   // complete any dept directly; no "earlier dept hasn't completed" gate.
+
+  const issueHandover = await checkIssueHandover(db, {
+    orgId: scanOrgId(c),
+    workerId: worker.id,
+    scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    target: fanOutTarget(cards, null),
+  });
+  if (issueHandover.kind === "refused") {
+    return c.json(
+      { success: false, code: issueHandover.code, error: issueHandover.message },
+      409,
+    );
+  }
 
   const nowIso = new Date().toISOString();
   const today = todayYmdMY();
@@ -2880,6 +2920,11 @@ app.post("/:id/scan-complete-dept", async (c) => {
 
   await invalidateProductionCachesAfterScan(c);
 
+  await finishIssueHandover(db, issueHandover, {
+    productionOrderId: poId,
+    workerId: worker.id,
+  });
+
   const freshPo = await fetchPO(db, poId);
   return c.json({
     success: true,
@@ -2979,12 +3024,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
 
   const worker = await db
     .prepare(
-      "SELECT id, name, departmentCode, departmentCodes FROM workers WHERE id = ?",
+      "SELECT id, name, isOutsource, departmentCode, departmentCodes FROM workers WHERE id = ?",
     )
     .bind(workerId)
     .first<{
       id: string;
       name: string;
+      isOutsource: unknown;
       departmentCode: string | null;
       departmentCodes: string | null;
     }>();
@@ -3000,28 +3046,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
     if (gateFail) return c.json({ success: false, ...gateFail }, 409);
   }
 
-  // SOFA exception: a sofa BASE compartment represents the WHOLE variant — its
-  // base, cushions and armrests are sewn together by one worker (Wei Siang
-  // 2026-06-07: scan 1A → 1A's base + armrest + back-cushion complete together).
-  // The base sticker carries the base's own wipKey so the PHONE resolves it to a
-  // single card (no Divan-vs-HB-style chooser), but COMPLETION must fan out to
-  // every FAB_SEW / UPHOLSTERY card of the variant. Detect a sofa compartment by
-  // its wipType (SOFA_BASE / SOFA_CUSHION / SOFA_ARMREST / SOFA_HEADREST) and drop
-  // the per-compartment + per-piece scoping so the whole-dept fan-out runs.
-  // Bedframe pieces (DIVAN / HEADBOARD) are NOT SOFA_* — they keep per-piece
-  // scoping and stay separately scannable.
-  if (wipKey) {
-    const wkProbe = await db
-      .prepare(
-        "SELECT wipType FROM job_cards WHERE productionOrderId = ? AND wipKey = ? LIMIT 1",
-      )
-      .bind(poId, wipKey)
-      .first<{ wipType: string | null }>();
-    if ((wkProbe?.wipType || "").toUpperCase().startsWith("SOFA_")) {
-      wipKey = undefined;
-      pieceNo = undefined;
-    }
-  }
+  const sewingScope = await resolveSewingScope(db, {
+    productionOrderId: poId,
+    wipKey,
+    pieceNo,
+  });
+  wipKey = sewingScope.wipKey ?? undefined;
+  pieceNo = sewingScope.pieceNo ?? undefined;
 
   // Resolve the scanning SECTION → target department. Cut+Sew workers (女部)
   // cross within their section, so anyone covering FAB_SEW or FAB_CUT (and NOT
@@ -3123,6 +3154,21 @@ app.post("/:id/scan-complete-shared", async (c) => {
         if (t && !doneBy.includes(t)) doneBy.push(t);
       }
     }
+    await closeHeldIssuesWhenDone(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      loadTarget: async () => {
+        const doneCards = await db
+          .prepare(
+            wipKey
+              ? "SELECT id FROM job_cards WHERE productionOrderId = ? AND departmentCode = ? AND wipKey = ?"
+              : "SELECT id FROM job_cards WHERE productionOrderId = ? AND departmentCode = ?",
+          )
+          .bind(...(wipKey ? [poId, targetDept, wipKey] : [poId, targetDept]))
+          .all<{ id: string }>();
+        return fanOutTarget(doneCards.results ?? [], pieceNo ?? null);
+      },
+    });
     const freshEmpty = await fetchPO(db, poId);
     return c.json({
       success: true,
@@ -3163,6 +3209,19 @@ app.post("/:id/scan-complete-shared", async (c) => {
         409,
       );
     }
+  }
+
+  const issueHandover = await checkIssueHandover(db, {
+    orgId: scanOrgId(c),
+    workerId: worker.id,
+    scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    target: fanOutTarget(cards, pieceNo ?? null),
+  });
+  if (issueHandover.kind === "refused") {
+    return c.json(
+      { success: false, code: issueHandover.code, error: issueHandover.message },
+      409,
+    );
   }
 
   // prerequisiteMet warning REMOVED (Wei Siang 2026-06-08) — workers may
@@ -3341,6 +3400,10 @@ app.post("/:id/scan-complete-shared", async (c) => {
         409,
       );
     }
+    await finishIssueHandover(db, issueHandover, {
+      productionOrderId: poId,
+      workerId: worker.id,
+    });
     const freshEmpty = await fetchPO(db, poId);
     return c.json({
       success: true,
@@ -3401,6 +3464,11 @@ app.post("/:id/scan-complete-shared", async (c) => {
   await cascadeUpholsteryToCO(db, poId);
 
   await invalidateProductionCachesAfterScan(c);
+
+  await finishIssueHandover(db, issueHandover, {
+    productionOrderId: poId,
+    workerId: worker.id,
+  });
 
   const freshPo = await fetchPO(db, poId);
   return c.json({

@@ -61,7 +61,8 @@ test('completion still requires ALL pieces done (date only when both scanned)', 
 
 test('sofa BASE fans out to the whole variant (not per-piece)', () => {
   assert.ok(
-    PO.includes('.startsWith("SOFA_")'),
+    readFileSync('src/api/lib/sewing-scope.ts', 'utf8').includes('.startsWith("SOFA_")') &&
+      PO.includes('resolveSewingScope(db, {'),
     'a SOFA_* compartment clears wipKey/pieceNo so the scan completes the whole variant',
   );
 });

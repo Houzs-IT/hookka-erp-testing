@@ -46,6 +46,7 @@ const ServiceOrderEdit = lazy(() => import('./pages/service-order/edit'))
 const ProductionOverview = lazy(() => import('./pages/production/overview'))
 const ProductionDeptPage = lazy(() => import('./pages/production/dept'))
 const WipTimesPage = lazy(() => import('./pages/production/wip-times'))
+const OutsourceIssuePage = lazy(() => import('./pages/production/outsource-issue'))
 const ProductionFolders = lazy(() => import('./pages/production/folders'))
 const ProductionFolderDetail = lazy(() => import('./pages/production/folder-detail'))
 const ProductionScan = lazy(() => import('./pages/production/scan'))
@@ -275,6 +276,7 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
   { path: '/production', element: <S><ProductionOverview /></S> },
   { path: '/production/scan', element: <S><ProductionScan /></S> },
   { path: '/production/fg-scan', element: <S><FGScan /></S> },
+  { path: '/production/outsource-issue', element: <S><OutsourceIssuePage /></S> },
   // The Master Tracker page was retired into Planning's Master Tracker TAB;
   // the standalone src/pages/production/tracker.tsx is deleted. The redirect
   // STAYS — /production/tracker was a real page for months, so bookmarks and

@@ -2333,7 +2333,11 @@ export default function WorkerScanPage() {
             message:
               data.code === "PUNCH_IN_FIRST"
                 ? t("scan.deptNeedPunchIn")
-                : data.error || t("common.error"),
+                : data.code === "NOT_ISSUED_TO_YOU"
+                  ? t("scan.notIssuedToYou")
+                  : data.code === "ISSUED_TO_OTHER"
+                    ? t("scan.issuedToOther")
+                    : data.error || t("common.error"),
           });
         }
       }
