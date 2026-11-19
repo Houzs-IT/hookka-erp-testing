@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-19**: HK-0164 item 5 added (issue time on phone tracking and My task, branch `feat/hk0164-issue-time`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-19**: HK-0164 outsource fabric issuance entry added (branch `feat/hk0164-outsource-fabric-issue-staging`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-11**: revert of the Production Revenue line fix added (branch `fix/revert-1337-revenue-line-replay`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-11**: Production Revenue line fix entry added (branch `fix/production-revenue-line-replay`, to `staging`, committed locally, not pushed); nothing else re-checked.
@@ -20,6 +21,7 @@ Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to a
 2. OPEN: verify on staging at 360px, 390px and desktop; SQL never run on real Postgres (fake DB in tests).
 3. OPEN, go-live (prod): deploy with kv `outsource_issue.enforce` off → the office issues every bundle already out → grant `outsource-issues` → a Super Admin turns enforce on.
 4. Measured on prod 2026-11-18 (read-only): 4 outsourced workers, 3 active, all FAB_SEW, all flagged `isOutsource`; 449 FAB_SEW cards with them as PIC since 2026-10-01.
+5. DONE (branch `feat/hk0164-issue-time`, PR #1467): the phone Tracking card and the worker's My task card show the issue date AND time (Malaysia time), as the desktop table already did. Test: `tests/outsource-issue-format.test.mjs`.
 
 ## Revert the staging Production Revenue line fix (#1337, fix/revert-1337-revenue-line-replay, 2026-11-11)
 Ask: back #1337 out of staging; keep main's #1318 (BUG-2026-11-11-498) as the one fix.
