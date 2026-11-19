@@ -441,7 +441,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
           sub={`Upholstery output ÷ ${fteTxt} full-time people · ${revPerDay == null ? "…" : formatCurrency(Math.round(revPerDay))} per worker-day${prevRevPerDay ? ` (last month ${formatCurrency(Math.round(prevRevPerDay))})` : ""}`}
           color={GREEN}
         />
-        <Tile label="Production efficiency" value={pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} sub={`${hrs(totals.prod)} earned / ${hrs(totals.work)} worked${totals.hw > 0 ? ` Â· Overall ${pct(eff(totals.prod, totals.work))} (incl. helpers ${hrs(totals.hw)})` : ""} Â· click for each worker`} color={effColor(peff(totals.prod, totals.work, totals.hp, totals.hw), target)} onClick={() => setTileDrill("eff")} />
+        <Tile label="Production efficiency" value={pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} sub={`${hrs(totals.prod)} earned / ${hrs(totals.work)} worked${totals.hw > 0 ? ` · Overall ${pct(eff(totals.prod, totals.work))} (incl. helpers ${hrs(totals.hw)})` : ""} · click for each worker`} color={effColor(peff(totals.prod, totals.work, totals.hp, totals.hw), target)} onClick={() => setTileDrill("eff")} />
       </div>
       {canSalary && <LabourSplitCard months={periodLabourMonths} label={periodLabel(period)} people={workers} revenueSen={prodRev ? periodTotals.revenue : null} fullTimePeople={periodTotals.fte} />}
       <p className="-mt-1 text-[11px] text-[#9CA3AF]">
@@ -636,7 +636,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
         <DashModal
           wide
           title={tileDrill === "salary" ? `Labour by worker · ${winLabel}` : `Efficiency by worker · ${winLabel}`}
-          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} Â· from payroll` : `Production ${pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} Â· earned time Ã· hours worked${totals.hw > 0 ? ` Â· Overall ${pct(eff(totals.prod, totals.work))} incl. helpers` : ""}`}
+          subtitle={tileDrill === "salary" ? `Total ${money(winSalary)} · from payroll` : `Production ${pct(peff(totals.prod, totals.work, totals.hp, totals.hw))} · earned time Ã· hours worked${totals.hw > 0 ? ` · Overall ${pct(eff(totals.prod, totals.work))} incl. helpers` : ""}`}
           onClose={() => setTileDrill(null)}
         >
           <div className="max-h-[60vh] overflow-y-auto">
