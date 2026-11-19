@@ -142,12 +142,14 @@ async function loadProductionRevenueUntimed(
          JOIN production_orders po ON po.id = per_po.productionOrderId
          ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
         WHERE po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
-          AND (? IS NULL OR po.orgId = ?)
+          ${orgId ? "AND po.orgId = ?" : ""}
           AND per_po.unit_completed_at >= ?
           AND per_po.unit_completed_at <= ?
         ORDER BY per_po.unit_completed_at DESC`,
     )
-    .bind(orgId ?? null, orgId ?? null, from, to)
+    // No untyped-null tenant test — Postgres cannot type an untyped null parameter and the
+    // whole query fails (BUG-2026-11-20: Labour Cost / Finance 500 after #1490).
+    .bind(...(orgId ? [orgId] : []), from, to)
     .all<{
       poId: string;
       completedAt: string;
