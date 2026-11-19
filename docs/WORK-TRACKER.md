@@ -22,6 +22,7 @@ Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to a
 3. OPEN, go-live (prod): deploy with kv `outsource_issue.enforce` off → the office issues every bundle already out → grant `outsource-issues` → a Super Admin turns enforce on.
 4. Measured on prod 2026-11-18 (read-only): 4 outsourced workers, 3 active, all FAB_SEW, all flagged `isOutsource`; 449 FAB_SEW cards with them as PIC since 2026-10-01.
 5. DONE (branch `feat/hk0164-issue-time`, PR #1467): the phone Tracking card and the worker's My task card show the issue date AND time (Malaysia time), as the desktop table already did. Test: `tests/outsource-issue-format.test.mjs`.
+6. DONE (branch `feat/hk0164-approve-received`, tests only; staging and phone widths not checked), owner 2026-11-19: "when they scan done, pending for us for approve. when we received, we can click approve or received then only recorded in our erp fab sewing department as completed and record in payroll for the outsourced work tab". The worker's scan of an issued item no longer completes the job card; the issue waits as Pending approval. The office's Approve (or the office scanning it for that worker) completes the department step and writes the piece-rate record to Employees > Outsource.
 
 ## Revert the staging Production Revenue line fix (#1337, fix/revert-1337-revenue-line-replay, 2026-11-11)
 Ask: back #1337 out of staging; keep main's #1318 (BUG-2026-11-11-498) as the one fix.

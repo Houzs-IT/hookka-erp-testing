@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
-import { AlertTriangle, Camera, CheckCircle2, RefreshCw, ScanLine, Undo2, XCircle } from "lucide-react";
+import { AlertTriangle, Camera, Check, CheckCircle2, CornerUpLeft, RefreshCw, ScanLine, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/ui/data-grid";
@@ -14,6 +14,7 @@ import {
   formatDays,
   formatIssueDateTime,
   formatPiece,
+  issueStatusLabel,
 } from "@/lib/outsource-issue-format";
 import {
   LIST_CAP,
@@ -24,9 +25,11 @@ import type {
   FeedbackTone,
   OutsourceIssueWithDone,
   StatusFilter,
+  UseOutsourceIssueResult,
 } from "./use-outsource-issue";
 
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
+  { key: "PENDING_APPROVAL", label: "Pending approval" },
   { key: "INCOMPLETE", label: "Incomplete" },
   { key: "COMPLETED", label: "Completed" },
   { key: "ALL", label: "All" },
@@ -47,19 +50,18 @@ function FeedbackIcon({ tone }: { tone: FeedbackTone }): JSX.Element {
   return <XCircle className="h-5 w-5 shrink-0" aria-hidden />;
 }
 
+const STATUS_PILL_STYLES: Record<OutsourceIssueWithDone["status"], string> = {
+  INCOMPLETE: "border-[#E8D597] bg-[#FAEFCB] text-[#8A5F14]",
+  PENDING_APPROVAL: "border-[#B9D3DA] bg-[#E0EDF0] text-[#3E6570]",
+  COMPLETED: "border-[#C6DBA8] bg-[#EEF3E4] text-[#3F6430]",
+};
+
 function StatusCell({ issue }: { issue: OutsourceIssueWithDone }): JSX.Element {
-  const isCompleted = issue.status === "COMPLETED";
   const needsCheck = issue.status === "INCOMPLETE" && issue.workDone;
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span
-        className={
-          isCompleted
-            ? "rounded-full border border-[#C6DBA8] bg-[#EEF3E4] px-2 py-0.5 text-xs font-semibold text-[#3F6430]"
-            : "rounded-full border border-[#E8D597] bg-[#FAEFCB] px-2 py-0.5 text-xs font-semibold text-[#8A5F14]"
-        }
-      >
-        {isCompleted ? "Completed" : "Incomplete"}
+      <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${STATUS_PILL_STYLES[issue.status]}`}>
+        {issueStatusLabel(issue.status)}
       </span>
       {needsCheck ? (
         <span
@@ -73,59 +75,115 @@ function StatusCell({ issue }: { issue: OutsourceIssueWithDone }): JSX.Element {
   );
 }
 
-const COLUMNS: Column<OutsourceIssueWithDone>[] = [
-  {
-    key: "issuedAt",
-    label: "Issued at",
-    width: "150px",
-    sortable: true,
-    render: (_value, row) => formatIssueDateTime(row.issuedAt),
-    exportValue: (row) => formatIssueDateTime(row.issuedAt),
-  },
-  { key: "workerName", label: "Worker", width: "150px", sortable: true },
-  { key: "departmentName", label: "Department", width: "140px", sortable: true },
-  { key: "poNo", label: "PO no", width: "130px", sortable: true, type: "docno" },
-  { key: "productName", label: "Product", width: "200px", sortable: true },
-  { key: "itemLabel", label: "Item", width: "150px", sortable: true },
-  {
-    key: "piece",
-    label: "Piece",
-    width: "80px",
-    align: "right",
-    render: (_value, row) => formatPiece(row),
-    exportValue: (row) => formatPiece(row),
-    filterAccessor: (row) => formatPiece(row),
-  },
-  {
-    key: "status",
-    label: "Status",
-    width: "170px",
-    sortable: true,
-    noClip: true,
-    render: (_value, row) => <StatusCell issue={row} />,
-    exportValue: (row) => (row.status === "INCOMPLETE" && row.workDone ? "Incomplete (check)" : row.status),
-  },
-  {
-    key: "completedAt",
-    label: "Completed at",
-    width: "150px",
-    sortable: true,
-    render: (_value, row) => formatIssueDateTime(row.completedAt),
-    exportValue: (row) => formatIssueDateTime(row.completedAt),
-  },
-  { key: "issuedBy", label: "Issued by", width: "130px", sortable: true },
-  {
-    key: "daysOut",
-    label: "Days out",
-    width: "90px",
-    align: "right",
-    sortable: true,
-    sortAccessor: (row) => daysOut(row),
-    render: (_value, row) => formatDays(daysOut(row)),
-    exportValue: (row) => daysOut(row),
-    filterAccessor: (row) => daysOut(row),
-  },
-];
+interface ReviewPermissions {
+  issue: UseOutsourceIssueResult;
+  canApprove: boolean;
+  canSendBack: boolean;
+}
+
+function ReviewCell({ row, review }: { row: OutsourceIssueWithDone; review: ReviewPermissions }): JSX.Element | null {
+  const { issue, canApprove, canSendBack } = review;
+  if (row.status !== "PENDING_APPROVAL" || (!canApprove && !canSendBack)) return null;
+  const isBusy = issue.reviewingId === row.id;
+  return (
+    <span className="inline-flex items-center gap-2">
+      {canApprove ? (
+        <Button type="button" variant="primary" size="sm" disabled={isBusy} onClick={() => void issue.approveIssue(row)}>
+          <Check className="h-3.5 w-3.5" aria-hidden />
+          Approve
+        </Button>
+      ) : null}
+      {canSendBack ? (
+        <Button type="button" variant="outline" size="sm" disabled={isBusy} onClick={() => void issue.sendBackIssue(row)}>
+          <CornerUpLeft className="h-3.5 w-3.5" aria-hidden />
+          Send back
+        </Button>
+      ) : null}
+    </span>
+  );
+}
+
+function buildColumns(review: ReviewPermissions): Column<OutsourceIssueWithDone>[] {
+  return [
+    {
+      key: "issuedAt",
+      label: "Issued at",
+      width: "150px",
+      sortable: true,
+      render: (_value, row) => formatIssueDateTime(row.issuedAt),
+      exportValue: (row) => formatIssueDateTime(row.issuedAt),
+    },
+    { key: "workerName", label: "Worker", width: "150px", sortable: true },
+    { key: "departmentName", label: "Department", width: "140px", sortable: true },
+    { key: "poNo", label: "PO no", width: "130px", sortable: true, type: "docno" },
+    { key: "productName", label: "Product", width: "200px", sortable: true },
+    { key: "itemLabel", label: "Item", width: "150px", sortable: true },
+    {
+      key: "piece",
+      label: "Piece",
+      width: "80px",
+      align: "right",
+      render: (_value, row) => formatPiece(row),
+      exportValue: (row) => formatPiece(row),
+      filterAccessor: (row) => formatPiece(row),
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: "190px",
+      sortable: true,
+      noClip: true,
+      render: (_value, row) => <StatusCell issue={row} />,
+      exportValue: (row) =>
+        row.status === "INCOMPLETE" && row.workDone ? "Incomplete (check)" : issueStatusLabel(row.status),
+    },
+    {
+      key: "review",
+      label: "Approve",
+      width: "220px",
+      noClip: true,
+      render: (_value, row) => <ReviewCell row={row} review={review} />,
+      exportValue: () => "",
+    },
+    {
+      key: "submittedAt",
+      label: "Finished scan",
+      width: "150px",
+      sortable: true,
+      render: (_value, row) => formatIssueDateTime(row.submittedAt),
+      exportValue: (row) => formatIssueDateTime(row.submittedAt),
+    },
+    {
+      key: "completedAt",
+      label: "Approved at",
+      width: "150px",
+      sortable: true,
+      render: (_value, row) => formatIssueDateTime(row.completedAt),
+      exportValue: (row) => formatIssueDateTime(row.completedAt),
+    },
+    { key: "approvedBy", label: "Approved by", width: "130px", sortable: true },
+    {
+      key: "payrollPeriod",
+      label: "Payroll",
+      width: "100px",
+      sortable: true,
+      render: (_value, row) => row.payrollPeriod || "—",
+      exportValue: (row) => row.payrollPeriod,
+    },
+    { key: "issuedBy", label: "Issued by", width: "130px", sortable: true },
+    {
+      key: "daysOut",
+      label: "Days out",
+      width: "90px",
+      align: "right",
+      sortable: true,
+      sortAccessor: (row) => daysOut(row),
+      render: (_value, row) => formatDays(daysOut(row)),
+      exportValue: (row) => daysOut(row),
+      filterAccessor: (row) => daysOut(row),
+    },
+  ];
+}
 
 function EnforceToggle(): JSX.Element {
   const { isEnforced, isLoading, isSaving, error, setEnforced } = useEnforceSwitch();
@@ -158,6 +216,9 @@ export default function OutsourceIssuePage(): JSX.Element {
   const isSuperAdmin = permissions.has("*");
   const canIssue = isPermissionsLoading || hasPermission("outsource-issues", "create");
   const canUndo = isPermissionsLoading || hasPermission("outsource-issues", "delete");
+  const canApprove = !isPermissionsLoading && hasPermission("production-orders", "create");
+  const canSendBack = !isPermissionsLoading && hasPermission("outsource-issues", "update");
+  const columns = buildColumns({ issue, canApprove, canSendBack });
 
   const [scanText, setScanText] = useState("");
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -181,7 +242,7 @@ export default function OutsourceIssuePage(): JSX.Element {
     <div className="space-y-4">
       <PageHeader
         title="Outsource Work"
-        subtitle="Issue work to outsourced workers and track what they still have to finish."
+        subtitle="Issue work to outsourced workers, approve what they bring back, and track what is still out."
       />
       <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
         <section className="space-y-3" aria-label="Issue work">
@@ -415,7 +476,7 @@ export default function OutsourceIssuePage(): JSX.Element {
 
           <div className="rounded-lg border border-[#E6E0D9] bg-white overflow-visible">
             <DataGrid<OutsourceIssueWithDone>
-              columns={COLUMNS}
+              columns={columns}
               data={issue.issues}
               keyField="id"
               stickyHeader

@@ -18,7 +18,7 @@
 // Tables reach prod ONLY through `ensureOutsourcePieceTables` — migration files
 // are inert on deploy in this repo.
 // ---------------------------------------------------------------------------
-import { freshAll } from "./worker-penalties";
+import { freshAll, freshFirst } from "./worker-penalties";
 
 type Stmt = {
   run(): Promise<unknown>;
@@ -154,6 +154,123 @@ export async function findPieceDrift(db: Runner, period: string): Promise<PieceD
     pieceWagesSen: Number(r.pieceWagesSen ?? r.piece_wages_sen) || 0,
   }));
   return computePieceDrift(await loadPeriodPieceSen(db, period), slips);
+}
+
+const text = (camel: unknown, snake?: unknown): string => String(camel ?? snake ?? "");
+
+export async function loadRateMap(db: Runner, workerId: string): Promise<Map<string, number>> {
+  const rows = await freshAll<Record<string, unknown>>(
+    db,
+    db.prepare("SELECT item_code, rate_sen FROM outsource_piece_rates WHERE worker_id = ?").bind(workerId),
+  );
+  return new Map(rows.map((row) => [text(row.itemCode, row.item_code), Number(row.rateSen ?? row.rate_sen) || 0]));
+}
+
+/** Fab Sew WIP labels per order: the price list is a sewing list. */
+export async function loadSewLabels(db: Runner, orderIds: readonly string[]): Promise<Map<string, string[]>> {
+  const labelsByOrder = new Map<string, string[]>();
+  if (orderIds.length === 0) return labelsByOrder;
+  const placeholders = orderIds.map(() => "?").join(",");
+  const rows = await freshAll<Record<string, unknown>>(
+    db,
+    db
+      .prepare(
+        `SELECT production_order_id, wip_label FROM job_cards
+          WHERE department_code = 'FAB_SEW' AND production_order_id IN (${placeholders})`,
+      )
+      .bind(...orderIds),
+  );
+  for (const row of rows) {
+    const orderId = text(row.productionOrderId, row.production_order_id);
+    labelsByOrder.set(orderId, [...(labelsByOrder.get(orderId) ?? []), text(row.wipLabel, row.wip_label)]);
+  }
+  return labelsByOrder;
+}
+
+export async function loadRecordedPeriods(db: Runner, orderIds: readonly string[]): Promise<Map<string, string>> {
+  const periodByOrder = new Map<string, string>();
+  if (orderIds.length === 0) return periodByOrder;
+  await ensureOutsourcePieceTables(db);
+  const rows = await freshAll<Record<string, unknown>>(
+    db,
+    db
+      .prepare(
+        `SELECT production_order_id, payroll_period FROM outsource_piece_records
+          WHERE production_order_id IN (${orderIds.map(() => "?").join(",")})`,
+      )
+      .bind(...orderIds),
+  );
+  for (const row of rows) {
+    periodByOrder.set(text(row.productionOrderId, row.production_order_id), text(row.payrollPeriod, row.payroll_period));
+  }
+  return periodByOrder;
+}
+
+export interface PieceOrder {
+  id: string;
+  poNo: string;
+  salesOrderNo: string;
+  customerPoId: string;
+  productCode: string;
+  quantity: number;
+}
+
+export async function loadPieceOrders(db: Runner, orgId: string, orderIds: readonly string[]): Promise<PieceOrder[]> {
+  if (orderIds.length === 0) return [];
+  const placeholders = orderIds.map(() => "?").join(",");
+  const rows = await freshAll<Record<string, unknown>>(
+    db,
+    db
+      .prepare(
+        `SELECT id, po_no, sales_order_no, customer_po_id, product_code, quantity
+           FROM production_orders WHERE org_id = ? AND id IN (${placeholders})`,
+      )
+      .bind(orgId, ...orderIds),
+  );
+  return rows.map((row) => ({
+    id: text(row.id),
+    poNo: text(row.poNo, row.po_no),
+    salesOrderNo: text(row.salesOrderNo, row.sales_order_no),
+    customerPoId: text(row.customerPoId ?? row.customerPOId, row.customer_po_id),
+    productCode: text(row.productCode, row.product_code),
+    quantity: Number(row.quantity) || 0,
+  }));
+}
+
+export interface PieceRecordInput {
+  worker: { id: string; empNo: string; name: string };
+  order: PieceOrder;
+  itemCode: string;
+  rateSen: number;
+  amountSen: number;
+  period: string;
+  orgId: string;
+  createdBy: string | null;
+}
+
+/** True when the row landed; false when the order already had a record. */
+export async function insertPieceRecord(db: Runner, record: PieceRecordInput): Promise<boolean> {
+  const { worker, order } = record;
+  const id = `opc-${crypto.randomUUID().slice(0, 8)}`;
+  await db
+    .prepare(
+      `INSERT INTO outsource_piece_records
+         (id, worker_id, emp_no, worker_name, production_order_id, po_no, sales_order_no, customer_po_id,
+          product_code, item_code, quantity, rate_sen, amount_sen, payroll_period, org_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (production_order_id) DO NOTHING`,
+    )
+    .bind(
+      id, worker.id, worker.empNo, worker.name, order.id, order.poNo, order.salesOrderNo, order.customerPoId,
+      order.productCode, record.itemCode, order.quantity, record.rateSen, record.amountSen, record.period,
+      record.orgId, record.createdBy,
+    )
+    .run();
+  const landed = await freshFirst<{ id: string }>(
+    db,
+    db.prepare("SELECT id FROM outsource_piece_records WHERE id = ?").bind(id),
+  );
+  return landed !== null;
 }
 
 /** Stamp the generated payslip id on the worker's records for the month. */
