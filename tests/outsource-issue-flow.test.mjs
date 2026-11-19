@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import { BED_PO, SOFA_PO, WIP, defaultCards, defaultWorkers, extraDepartmentCards, makeFakeDb, stickerUrl } from "./_outsource-issue-fake.mjs";
+import { BED_PO, OFFICE_USER, SOFA_PO, WIP, defaultCards, defaultWorkers, extraDepartmentCards, makeFakeDb, stickerUrl } from "./_outsource-issue-fake.mjs";
 
 try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
 const Targets = await import(pathToFileURL(resolve(process.cwd(), "src/api/lib/outsource-targets.ts")).href);
@@ -17,7 +17,8 @@ const WOODY = { id: "oscWood", empNo: "OSC-4", name: "Woody", departmentCodes: [
 const divanQr = (piece) => stickerUrl(`po=${BED_PO.poNo}&c=DIVAN&p=${piece}&t=2`);
 const divan = (pieceNo) => ({ cardIds: ["jc-divan"], pieceNo });
 const sofaTarget = { cardIds: ["jc-sofa-base", "jc-sofa-cushion"], pieceNo: null };
-const context = { productionOrderId: BED_PO.id, workerId: "osc" };
+const context = { orgId: "hookka", productionOrderId: BED_PO.id, workerId: "osc", officeUserId: OFFICE_USER.id };
+const scan = { url: "/api/production-orders/po-bed/scan-complete-shared", body: { workerId: "osc", wipKey: WIP.divan, pieceNo: 1 } };
 
 async function issue(db, worker, qr) {
   const lookup = await Targets.resolveIssueTarget(db, { qr, departmentCodes: worker.departmentCodes });
@@ -28,8 +29,8 @@ async function issue(db, worker, qr) {
 const signPiece = (state, jobCardId, pieceNo) => state.slots.push({ jobCardId, pieceNo, pic1Id: "osc" });
 const finishCard = (state, id) => { state.cards.find((c) => c.id === id).status = "COMPLETED"; };
 const OUTSOURCED = new Set(["osc", "osc2", "oscWood"]);
-const check = (db, workerId, target) =>
-  Issue.checkIssueHandover(db, { orgId: ORG, workerId, target, scannerIsOutsource: OUTSOURCED.has(workerId) });
+const check = (db, workerId, target, { byOffice = true } = {}) =>
+  Issue.checkIssueHandover(db, { orgId: ORG, workerId, target, scannerIsOutsource: OUTSOURCED.has(workerId), scannedByOffice: byOffice });
 
 test("issue: first scan issues as INCOMPLETE with snapshots, the second says already issued", async () => {
   const { db, state } = makeFakeDb();
@@ -227,8 +228,19 @@ test("lists: tracking rows carry the live work status, the worker list splits In
   assert.equal(lists.completedRecent[0].status, "COMPLETED");
   assert.equal(lists.completedRecent[0].departmentName, "Fabric Sewing");
 
+  const counts = await Issue.countIssuesByStatus(db, { orgId: ORG, filter: {} });
+  assert.deepEqual(counts, { ALL: 2, PENDING_APPROVAL: 0, INCOMPLETE: 1, COMPLETED: 1 });
+  const otherWorker = await Issue.countIssuesByStatus(db, { orgId: ORG, filter: { workerId: "osc2" } });
+  assert.equal(otherWorker.ALL, 0);
+
   const workers = await Issue.listOutsourceWorkers(db, ORG);
   assert.deepEqual(workers.map((w) => [w.name, w.incompleteCount, w.departmentNames]), [["Ali", 1, ["Fabric Sewing"]], ["Bala", 0, ["Fabric Sewing"]]]);
+
+
+  const open = state.issues.find((i) => i.status === "INCOMPLETE");
+  await Issue.submitIssuesForApproval(db, { issueIds: [open.id], scan });
+  const afterSubmit = await Issue.countIssuesByStatus(db, { orgId: ORG, filter: {} });
+  assert.deepEqual(afterSubmit, { ALL: 2, PENDING_APPROVAL: 1, INCOMPLETE: 0, COMPLETED: 1 });
 });
 
 test("every handler that completes cards for a worker checks before the first write and closes after", () => {
@@ -245,6 +257,9 @@ test("every handler that completes cards for a worker checks before the first wr
     const check = body.indexOf("checkIssueHandover(");
     const firstWrite = route === "scan-complete" ? body.indexOf("// Fill the piece slot(s).") : body.search(/UPDATE piece_pics SET (pic1Id|pic2Id)/);
     assert.ok(check < firstWrite, `${route} checks before the first piece write`);
+    const pending = body.indexOf('issueHandover.kind === "awaiting-approval"');
+    assert.ok(pending > check && pending < firstWrite, `${route} parks a worker scan for approval before the first piece write`);
+    assert.match(body, /scannedByOffice: officeUserIdFrom[(]ctxUserId[)] !== null/, `${route} says who scanned`);
     if (route !== "scan-complete") {
       assert.ok(check > body.indexOf("gateFanOutSequence("), `${route} checks after the sequence lock`);
     }
@@ -337,9 +352,9 @@ test("already-done work: the holder's scan still closes the issue, someone else'
   await issue(db, ALI, divanQr(1));
   signPiece(state, "jc-divan", 1);
   const loadTarget = async () => divan(1);
-  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc2", loadTarget });
+  await Issue.closeHeldIssuesWhenDone(db, { ...context, workerId: "osc2", scan, loadTarget });
   assert.equal(state.issues[0].status, "INCOMPLETE");
-  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc", loadTarget });
+  await Issue.closeHeldIssuesWhenDone(db, { ...context, scan, loadTarget });
   assert.equal(state.issues[0].status, "COMPLETED");
   assert.ok(state.issues[0].completed_at instanceof Date);
 });
@@ -429,8 +444,8 @@ test("already-done lookup failing is logged and never thrown", async () => {
   console.error = (...args) => logged.push(args);
   try {
     await Issue.closeHeldIssuesWhenDone(db, {
-      orgId: ORG,
-      workerId: "osc",
+      ...context,
+      scan,
       loadTarget: async () => { throw new Error("select failed"); },
     });
   } finally {
@@ -463,4 +478,105 @@ test("the runtime setup SQL translates to snake_case columns and the migration q
   assert.match(migration, /jc\.production_order_id/);
   assert.match(migration, /jc\.department_code/);
   assert.match(migration, /jc\.wip_key/);
+});
+
+const headboardQr = stickerUrl(`po=${BED_PO.poNo}&c=HEADBOARD`);
+const bedTarget = { cardIds: ["jc-divan", "jc-headboard"], pieceNo: null };
+
+async function issueWholeBed(db, worker = ALI) {
+  return [await issue(db, worker, divanQr(1)), await issue(db, worker, divanQr(2)), await issue(db, ALI, headboardQr)];
+}
+
+async function approveBed(db, state) {
+  signPiece(state, "jc-divan", 1);
+  signPiece(state, "jc-divan", 2);
+  finishCard(state, "jc-divan");
+  finishCard(state, "jc-headboard");
+  await Issue.finishIssueHandover(db, await check(db, "osc", bedTarget), context);
+}
+
+test("approval: the holder's own scan waits as Pending approval and keeps the scan to replay", async () => {
+  const { db, state } = makeFakeDb();
+  const issued = await issue(db, ALI, divanQr(1));
+  const handover = await check(db, "osc", divan(1), { byOffice: false });
+  assert.deepEqual(handover, { kind: "awaiting-approval", issueIds: [issued.issue.id] });
+
+  await Issue.submitIssuesForApproval(db, { issueIds: handover.issueIds, scan });
+  const [row] = state.issues;
+  assert.equal(row.status, "INCOMPLETE");
+  const firstSubmit = row.submitted_at;
+  assert.ok(firstSubmit instanceof Date);
+
+  await Issue.submitIssuesForApproval(db, { issueIds: handover.issueIds, scan });
+  assert.equal(row.submitted_at, firstSubmit);
+
+  const [listed] = (await Issue.listWorkerIssues(db, { orgId: ORG, workerId: "osc" })).incomplete;
+  assert.equal(listed.status, "PENDING_APPROVAL");
+  assert.deepEqual(listed.submittedScan, scan);
+});
+
+test("approval: a pending item still refuses another worker and parks a second worker-token scan", async () => {
+  const { db } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
+  const issued = await issue(db, ALI, divanQr(1));
+  await Issue.submitIssuesForApproval(db, { issueIds: [issued.issue.id], scan });
+  assert.equal((await check(db, "osc2", divan(1))).code, "ISSUED_TO_OTHER");
+  assert.equal((await check(db, "osc", divan(1), { byOffice: false })).kind, "awaiting-approval");
+  assert.equal((await check(db, "osc", divan(1))).kind, "holder");
+});
+
+test("approval: the office's scan for the holder closes it with the approver's name", async () => {
+  const { db, state } = makeFakeDb();
+  const issued = await issue(db, ALI, divanQr(1));
+  await Issue.submitIssuesForApproval(db, { issueIds: [issued.issue.id], scan });
+  const holder = await check(db, "osc", divan(1));
+  assert.equal(holder.kind, "holder");
+  signPiece(state, "jc-divan", 1);
+  await Issue.finishIssueHandover(db, holder, context);
+  const [row] = await Issue.listIssues(db, { orgId: ORG, filter: {} });
+  assert.equal(row.status, "COMPLETED");
+  assert.equal(row.approvedBy, OFFICE_USER.displayName);
+});
+
+test("approval: an already-done item scanned by the worker waits; scanned by the office it closes", async () => {
+  const { db, state } = makeFakeDb();
+  await issue(db, ALI, divanQr(1));
+  signPiece(state, "jc-divan", 1);
+  const loadTarget = async () => divan(1);
+  await Issue.closeHeldIssuesWhenDone(db, { ...context, officeUserId: null, scan, loadTarget });
+  assert.equal(state.issues[0].status, "INCOMPLETE");
+  assert.ok(state.issues[0].submitted_at instanceof Date);
+  await Issue.closeHeldIssuesWhenDone(db, { ...context, scan, loadTarget });
+  assert.equal(state.issues[0].status, "COMPLETED");
+});
+
+test("send back: a pending item returns to Incomplete; anything else is refused", async () => {
+  const { db, state } = makeFakeDb();
+  const issued = await issue(db, ALI, divanQr(1));
+  assert.equal((await Issue.sendBackIssue(db, { orgId: ORG, id: issued.issue.id })).kind, "not-pending");
+  await Issue.submitIssuesForApproval(db, { issueIds: [issued.issue.id], scan });
+  const sent = await Issue.sendBackIssue(db, { orgId: ORG, id: issued.issue.id });
+  assert.equal(sent.kind, "sent-back");
+  assert.equal(sent.issue.status, "INCOMPLETE");
+  assert.equal(state.issues[0].submitted_scan, null);
+  assert.equal((await Issue.sendBackIssue(db, { orgId: ORG, id: "missing" })).kind, "not-found");
+});
+
+test("payroll on main: approval completes the order but writes no wage itself; the Payroll column shows the synced record", async () => {
+  const { db, state } = makeFakeDb({ rates: { osc: { "1013": 4550 } } });
+  await issueWholeBed(db);
+  await approveBed(db, state);
+  assert.ok(state.issues.every((row) => row.status === "COMPLETED"));
+  assert.equal(state.pieceRecords.length, 0);
+
+  state.pieceRecords.push({ id: "opc-sync", production_order_id: BED_PO.id, payroll_period: "2026-11" });
+  const rows = await Issue.listIssues(db, { orgId: ORG, filter: {} });
+  assert.ok(rows.every((row) => row.payrollPeriod === "2026-11"));
+});
+
+test("the approval migration matches the runtime setup", () => {
+  const migration = readFileSync("migrations-postgres/0259_outsource_issue_approval.sql", "utf8");
+  for (const column of ["submitted_at", "submitted_scan", "approved_by"]) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`));
+    assert.ok(Issue.OUTSOURCE_ISSUE_DDL.some((statement) => statement.includes(`ADD COLUMN IF NOT EXISTS ${column}`)), column);
+  }
 });

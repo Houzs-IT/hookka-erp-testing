@@ -113,6 +113,10 @@ import {
   checkIssueHandover,
   closeHeldIssuesWhenDone,
   finishIssueHandover,
+  officeUserIdFrom,
+  pendingApprovalReply,
+  submitIssuesForApproval,
+  toSubmittedScan,
   truthy as isTruthyFlag,
 } from "../lib/outsource-issue";
 import { fanOutTarget, singleCardTarget } from "../lib/outsource-targets";
@@ -2260,6 +2264,7 @@ app.post("/:id/scan-complete", async (c) => {
     orgId: scanOrgId(c),
     workerId: worker.id,
     scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    scannedByOffice: officeUserIdFrom(ctxUserId) !== null,
     target: singleCardTarget(target.jc.id, wholeCard ? null : target.slot.pieceNo),
   });
   if (issueHandover.kind === "refused") {
@@ -2267,6 +2272,13 @@ app.post("/:id/scan-complete", async (c) => {
       { success: false, code: issueHandover.code, error: issueHandover.message },
       409,
     );
+  }
+  if (issueHandover.kind === "awaiting-approval") {
+    await submitIssuesForApproval(db, {
+      issueIds: issueHandover.issueIds,
+      scan: toSubmittedScan(c.req.path, body),
+    });
+    return c.json(pendingApprovalReply(target.jc.departmentCode ?? "", worker.name), 202);
   }
 
   // Fill the piece slot(s).
@@ -2535,6 +2547,8 @@ app.post("/:id/scan-complete", async (c) => {
   await invalidateProductionCachesAfterScan(c);
 
   await finishIssueHandover(db, issueHandover, {
+    orgId: scanOrgId(c),
+    officeUserId: officeUserIdFrom(ctxUserId),
     productionOrderId: target.po.id,
     workerId: worker.id,
   });
@@ -2746,6 +2760,7 @@ app.post("/:id/scan-complete-dept", async (c) => {
     orgId: scanOrgId(c),
     workerId: worker.id,
     scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    scannedByOffice: officeUserIdFrom(ctxUserId) !== null,
     target: fanOutTarget(cards, null),
   });
   if (issueHandover.kind === "refused") {
@@ -2753,6 +2768,13 @@ app.post("/:id/scan-complete-dept", async (c) => {
       { success: false, code: issueHandover.code, error: issueHandover.message },
       409,
     );
+  }
+  if (issueHandover.kind === "awaiting-approval") {
+    await submitIssuesForApproval(db, {
+      issueIds: issueHandover.issueIds,
+      scan: toSubmittedScan(c.req.path, body),
+    });
+    return c.json(pendingApprovalReply(deptCode, worker.name), 202);
   }
 
   const nowIso = new Date().toISOString();
@@ -2921,6 +2943,8 @@ app.post("/:id/scan-complete-dept", async (c) => {
   await invalidateProductionCachesAfterScan(c);
 
   await finishIssueHandover(db, issueHandover, {
+    orgId: scanOrgId(c),
+    officeUserId: officeUserIdFrom(ctxUserId),
     productionOrderId: poId,
     workerId: worker.id,
   });
@@ -3156,7 +3180,10 @@ app.post("/:id/scan-complete-shared", async (c) => {
     }
     await closeHeldIssuesWhenDone(db, {
       orgId: scanOrgId(c),
+      productionOrderId: poId,
       workerId: worker.id,
+      officeUserId: officeUserIdFrom(ctxUserId),
+      scan: toSubmittedScan(c.req.path, body),
       loadTarget: async () => {
         const doneCards = await db
           .prepare(
@@ -3215,6 +3242,7 @@ app.post("/:id/scan-complete-shared", async (c) => {
     orgId: scanOrgId(c),
     workerId: worker.id,
     scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    scannedByOffice: officeUserIdFrom(ctxUserId) !== null,
     target: fanOutTarget(cards, pieceNo ?? null),
   });
   if (issueHandover.kind === "refused") {
@@ -3222,6 +3250,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
       { success: false, code: issueHandover.code, error: issueHandover.message },
       409,
     );
+  }
+  if (issueHandover.kind === "awaiting-approval") {
+    await submitIssuesForApproval(db, {
+      issueIds: issueHandover.issueIds,
+      scan: toSubmittedScan(c.req.path, body),
+    });
+    return c.json(pendingApprovalReply(targetDept, worker.name), 202);
   }
 
   // prerequisiteMet warning REMOVED (Wei Siang 2026-06-08) — workers may
@@ -3401,6 +3436,8 @@ app.post("/:id/scan-complete-shared", async (c) => {
       );
     }
     await finishIssueHandover(db, issueHandover, {
+      orgId: scanOrgId(c),
+      officeUserId: officeUserIdFrom(ctxUserId),
       productionOrderId: poId,
       workerId: worker.id,
     });
@@ -3466,6 +3503,8 @@ app.post("/:id/scan-complete-shared", async (c) => {
   await invalidateProductionCachesAfterScan(c);
 
   await finishIssueHandover(db, issueHandover, {
+    orgId: scanOrgId(c),
+    officeUserId: officeUserIdFrom(ctxUserId),
     productionOrderId: poId,
     workerId: worker.id,
   });

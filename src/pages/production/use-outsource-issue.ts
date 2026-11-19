@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   IssueStatus,
+  IssueStatusCounts,
   OutsourceIssue,
   OutsourceIssueWithDone,
   OutsourceWorkerSummary,
@@ -13,7 +14,7 @@ import {
 import { describeIssue } from "@/lib/outsource-issue-format";
 import { useDebounced } from "@/pages/m/lib/use-debounced";
 
-export type { OutsourceIssue, OutsourceIssueWithDone, OutsourceWorkerSummary };
+export type { IssueStatusCounts, OutsourceIssue, OutsourceIssueWithDone, OutsourceWorkerSummary };
 
 export type StatusFilter = IssueStatus | "ALL";
 export type FeedbackTone = "success" | "warning" | "danger";
@@ -36,6 +37,7 @@ interface ApiEnvelope<T> {
   code?: string;
   error?: string;
   data?: T;
+  counts?: IssueStatusCounts;
 }
 
 const ISSUES_URL = "/api/outsource-issues";
@@ -46,8 +48,10 @@ const WARNING_CODES = new Set(["ALREADY_ISSUED", "ALREADY_DONE"]);
 
 export const LIST_CAP = 500;
 
+const COMPLETION_URL_PREFIX = "/api/production-orders/";
+
 export const DEFAULT_FILTERS: TrackingFilters = {
-  status: "INCOMPLETE",
+  status: "PENDING_APPROVAL",
   workerId: "",
   from: "",
   to: "",
@@ -58,6 +62,7 @@ interface ListResult {
   key: string;
   issues: OutsourceIssueWithDone[];
   isTruncated: boolean;
+  counts: IssueStatusCounts | null;
   error: string | null;
 }
 
@@ -85,12 +90,16 @@ export interface UseOutsourceIssueResult {
   sessionIssues: OutsourceIssue[];
   undoIssue: (issue: OutsourceIssue) => Promise<void>;
   undoingId: string;
+  approveIssue: (issue: OutsourceIssue) => Promise<void>;
+  sendBackIssue: (issue: OutsourceIssue) => Promise<void>;
+  reviewingId: string;
   filters: TrackingFilters;
   setFilters: (patch: Partial<TrackingFilters>) => void;
   issues: OutsourceIssueWithDone[];
   isListLoading: boolean;
   listError: string | null;
   isListTruncated: boolean;
+  statusCounts: IssueStatusCounts | null;
   refreshList: () => void;
 }
 
@@ -102,6 +111,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
   const [sessionIssues, setSessionIssues] = useState<OutsourceIssue[]>([]);
   const [isIssuing, setIsIssuing] = useState(false);
   const [undoingId, setUndoingId] = useState("");
+  const [reviewingId, setReviewingId] = useState("");
   const lastScanRef = useRef({ value: "", at: 0 });
   const isBusyRef = useRef(false);
   const pendingScanRef = useRef<string | null>(null);
@@ -132,18 +142,19 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
         const envelope = await readEnvelope<OutsourceIssueWithDone[]>(response);
         if (isCancelled) return;
         if (!response.ok || !envelope?.data) {
-          setListResult({ key: listKey, issues: [], isTruncated: false, error: failureMessage(envelope, response.status) });
+          setListResult({ key: listKey, issues: [], isTruncated: false, counts: null, error: failureMessage(envelope, response.status) });
           return;
         }
         setListResult({
           key: listKey,
           issues: envelope.data,
           isTruncated: response.headers.has("X-List-Truncated"),
+          counts: envelope.counts ?? null,
           error: null,
         });
       } catch {
         if (!isCancelled) {
-          setListResult({ key: listKey, issues: [], isTruncated: false, error: NETWORK_MESSAGE });
+          setListResult({ key: listKey, issues: [], isTruncated: false, counts: null, error: NETWORK_MESSAGE });
         }
       }
     };
@@ -262,6 +273,63 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     }
   }, []);
 
+  const runReview = useCallback(
+    async (issue: OutsourceIssue, request: () => Promise<Response>, successMessage: string): Promise<void> => {
+      setReviewingId(issue.id);
+      try {
+        const response = await request();
+        const envelope = await readEnvelope<unknown>(response);
+        if (response.ok && envelope?.success !== false) {
+          setFeedback({ tone: "success", message: successMessage });
+          invalidateCachePrefix(ISSUES_URL);
+          setListReloadTick((current) => current + 1);
+          return;
+        }
+        setFeedback({ tone: "danger", message: failureMessage(envelope, response.status) });
+      } catch {
+        setFeedback({ tone: "danger", message: NETWORK_MESSAGE });
+      } finally {
+        setReviewingId("");
+      }
+    },
+    [],
+  );
+
+  const approveIssue = useCallback(
+    async (issue: OutsourceIssue): Promise<void> => {
+      const scan = issue.submittedScan;
+      if (!scan || !scan.url.startsWith(COMPLETION_URL_PREFIX)) {
+        setFeedback({
+          tone: "danger",
+          message: "This item has no finished scan to approve. Send it back and ask the worker to scan it again.",
+        });
+        return;
+      }
+      await runReview(
+        issue,
+        () =>
+          fetch(scan.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(scan.body),
+          }),
+        `Received from ${issue.workerName}: ${describeIssue(issue)}. ${issue.departmentName} is completed.`,
+      );
+    },
+    [runReview],
+  );
+
+  const sendBackIssue = useCallback(
+    async (issue: OutsourceIssue): Promise<void> => {
+      await runReview(
+        issue,
+        () => fetch(`${ISSUES_URL}/${encodeURIComponent(issue.id)}/send-back`, { method: "POST" }),
+        `Sent back to ${issue.workerName}: ${describeIssue(issue)}`,
+      );
+    },
+    [runReview],
+  );
+
   return {
     workers,
     isWorkersLoading: workersResult.loading,
@@ -276,12 +344,16 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     sessionIssues,
     undoIssue,
     undoingId,
+    approveIssue,
+    sendBackIssue,
+    reviewingId,
     filters,
     setFilters,
     issues,
     isListLoading: currentList === null,
     listError: currentList?.error ?? null,
     isListTruncated: currentList?.isTruncated ?? false,
+    statusCounts: (currentList ?? listResult)?.counts ?? null,
     refreshList,
   };
 }

@@ -5,22 +5,25 @@ import { requirePermission } from "../lib/rbac";
 import { DEFAULT_ORG_ID, getOrgId, tryGetOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
 import { resolveWorkerToken } from "./worker-auth";
-import { capList } from "../lib/list-cap";
 import { resolveIssueTarget } from "../lib/outsource-targets";
+import { capList } from "../lib/list-cap";
 import {
   ISSUE_LIST_CAP,
+  countIssuesByStatus,
   issueItem,
   listIssues,
   listOutsourceWorkers,
   listWorkerIssues,
   loadDepartmentNames,
   loadOutsourceWorker,
+  sendBackIssue,
   undoIssue,
 } from "../lib/outsource-issue";
 import type { IssueStatus } from "../lib/outsource-issue";
 
 const RESOURCE = "outsource-issues";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ISSUE_STATUSES: readonly IssueStatus[] = ["INCOMPLETE", "PENDING_APPROVAL", "COMPLETED"];
 
 const admin = new Hono<Env>();
 
@@ -54,24 +57,22 @@ admin.get("/", async (c) => {
   const denied = await requirePermission(c, RESOURCE, "read");
   if (denied) return denied;
   const statusParam = (c.req.query("status") ?? "").toUpperCase();
-  const status: IssueStatus | undefined =
-    statusParam === "INCOMPLETE" || statusParam === "COMPLETED" ? statusParam : undefined;
+  const status: IssueStatus | undefined = ISSUE_STATUSES.find((known) => known === statusParam);
   const fromDate = c.req.query("from") ?? "";
   const toDate = c.req.query("to") ?? "";
   if ((fromDate && !DATE_PATTERN.test(fromDate)) || (toDate && !DATE_PATTERN.test(toDate))) {
     return c.json({ success: false, error: "from and to must be YYYY-MM-DD" }, 400);
   }
-  const rows = await listIssues(c.var.DB, {
-    orgId: getOrgId(c),
-    filter: {
-      workerId: c.req.query("workerId") || undefined,
-      status,
-      fromDate: fromDate || undefined,
-      toDate: toDate || undefined,
-      search: c.req.query("q") || undefined,
-    },
-  });
-  return c.json({ success: true, data: capList(c, rows, ISSUE_LIST_CAP) });
+  const orgId = getOrgId(c);
+  const filter = {
+    workerId: c.req.query("workerId") || undefined,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+    search: c.req.query("q") || undefined,
+  };
+  const rows = await listIssues(c.var.DB, { orgId, filter: { ...filter, status } });
+  const counts = await countIssuesByStatus(c.var.DB, { orgId, filter });
+  return c.json({ success: true, data: capList(c, rows, ISSUE_LIST_CAP), counts });
 });
 
 admin.post("/", async (c) => {
@@ -199,6 +200,33 @@ admin.delete("/:id", async (c) => {
     resourceId: outcome.issue.id,
     action: "delete",
     before: outcome.issue,
+  });
+  return c.json({ success: true, data: outcome.issue });
+});
+
+admin.post("/:id/send-back", async (c) => {
+  const denied = await requirePermission(c, RESOURCE, "update");
+  if (denied) return denied;
+  const outcome = await sendBackIssue(c.var.DB, { orgId: getOrgId(c), id: c.req.param("id") });
+  if (outcome.kind === "not-found") {
+    return c.json({ success: false, error: "Issue not found" }, 404);
+  }
+  if (outcome.kind === "not-pending") {
+    return c.json(
+      {
+        success: false,
+        code: "NOT_PENDING",
+        error: "This item is not waiting for approval.",
+        data: outcome.issue,
+      },
+      409,
+    );
+  }
+  await emitAudit(c, {
+    resource: RESOURCE,
+    resourceId: outcome.issue.id,
+    action: "update",
+    after: { sentBack: true, issue: outcome.issue },
   });
   return c.json({ success: true, data: outcome.issue });
 });

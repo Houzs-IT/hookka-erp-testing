@@ -1,5 +1,6 @@
-export const SOFA_PO = { id: "po-sofa", poNo: "PO-SOFA", productName: "Sofa 1A", productCode: "5530-1A", sizeLabel: "", salesOrderNo: "SO-1" };
-export const BED_PO = { id: "po-bed", poNo: "PO-BED", productName: "Bedframe", productCode: "1013", sizeLabel: "King", salesOrderNo: "SO-2" };
+export const SOFA_PO = { id: "po-sofa", poNo: "PO-SOFA", productName: "Sofa 1A", productCode: "5530-1A", sizeLabel: "", salesOrderNo: "SO-1", quantity: 1 };
+export const BED_PO = { id: "po-bed", poNo: "PO-BED", productName: "Bedframe", productCode: "1013", sizeLabel: "King", salesOrderNo: "SO-2", quantity: 2 };
+export const OFFICE_USER = { id: "u-office", displayName: "Office Amy" };
 
 export const WIP = {
   sofaBase: "so::1::SOFA_BASE",
@@ -56,9 +57,10 @@ export const DEPARTMENTS = [
   { code: "PACKING", name: "Packing" },
 ];
 
-export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defaultWorkers(), kv = {} } = {}) {
+export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defaultWorkers(), kv = {}, rates = {}, lockedPeriods = [] } = {}) {
   const orders = [SOFA_PO, BED_PO];
-  const state = { issues: [], issueCards: [], kv: { ...kv }, cards, slots, creates: 0 };
+  const state = { issues: [], issueCards: [], kv: { ...kv }, cards, slots, creates: 0, pieceRecords: [], rates, lockedPeriods };
+  const issueById = (id) => state.issues.find((i) => i.id === id);
   const slotOf = (row) => `${row.job_card_id}|${row.piece_no ?? 0}`;
   const duplicate = (message) => Object.assign(new Error(message), { code: "23505" });
 
@@ -148,6 +150,7 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
         id, org_id, worker_id, emp_no, worker_name, department_code, item_key, qr_raw, production_order_id, wip_key: null, piece_no,
         total_pieces, po_no, product_code, product_name, item_label, status: "INCOMPLETE",
         issued_at: new Date("2026-11-18T01:00:00Z"), issued_by, completed_at: null,
+        submitted_at: null, submitted_scan: null, approved_by: null,
       };
       state.issues.push(row);
       return [row];
@@ -159,17 +162,90 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
       return state.issues.filter((i) => i.id === args[0] && i.org_id === args[1]);
     }
     if (/^UPDATE outsource_issues SET status = 'COMPLETED'/i.test(text)) {
-      const hit = state.issues.find((i) => i.id === args[0] && i.status === "INCOMPLETE");
+      const hit = state.issues.find((i) => i.id === args[1] && i.status === "INCOMPLETE");
       if (!hit) return [];
       hit.status = "COMPLETED";
       hit.completed_at = new Date("2026-11-19T02:00:00Z");
-      return [{ id: hit.id }];
+      hit.approved_by = args[0];
+      return [{ ...hit }];
+    }
+    if (/^UPDATE outsource_issues SET submitted_at = COALESCE/i.test(text)) {
+      for (const id of args.slice(1)) {
+        const hit = issueById(id);
+        if (!hit || hit.status !== "INCOMPLETE") continue;
+        hit.submitted_at = hit.submitted_at ?? new Date("2026-11-19T01:30:00Z");
+        hit.submitted_scan = args[0];
+      }
+      return [];
+    }
+    if (/^UPDATE outsource_issues SET submitted_at = NULL/i.test(text)) {
+      const hit = state.issues.find((i) => i.id === args[0] && i.org_id === args[1] && i.status === "INCOMPLETE" && i.submitted_at);
+      if (!hit) return [];
+      hit.submitted_at = null;
+      hit.submitted_scan = null;
+      return [{ ...hit }];
+    }
+    if (/^SELECT displayName FROM users WHERE id = [?]/i.test(text)) {
+      return args[0] === OFFICE_USER.id ? [{ displayName: OFFICE_USER.displayName }] : [];
+    }
+    if (/^SELECT production_order_id, payroll_period FROM outsource_piece_records WHERE production_order_id IN/i.test(text)) {
+      return state.pieceRecords.filter((r) => args.includes(r.production_order_id));
+    }
+    if (/^SELECT id FROM outsource_piece_records WHERE production_order_id = [?]/i.test(text)) {
+      return state.pieceRecords.filter((r) => r.production_order_id === args[0]);
+    }
+    if (/^SELECT id FROM outsource_piece_records WHERE id = [?]/i.test(text)) {
+      return state.pieceRecords.filter((r) => r.id === args[0]);
+    }
+    if (/^INSERT INTO outsource_piece_records/i.test(text)) {
+      const columns = ["id", "worker_id", "emp_no", "worker_name", "production_order_id", "po_no", "sales_order_no", "customer_po_id", "product_code", "item_code", "quantity", "rate_sen", "amount_sen", "payroll_period", "org_id", "created_by"];
+      const row = Object.fromEntries(columns.map((column, index) => [column, args[index]]));
+      if (!state.pieceRecords.some((r) => r.production_order_id === row.production_order_id)) state.pieceRecords.push(row);
+      return [];
+    }
+    if (/^SELECT DISTINCT period FROM payslips/i.test(text)) return state.lockedPeriods.map((period) => ({ period }));
+    if (/^SELECT item_code, rate_sen FROM outsource_piece_rates WHERE worker_id = [?]/i.test(text)) {
+      return Object.entries(state.rates[args[0]] ?? {}).map(([item_code, rate_sen]) => ({ item_code, rate_sen }));
+    }
+    if (/^SELECT production_order_id, wip_label FROM job_cards/i.test(text)) {
+      return state.cards
+        .filter((c) => c.departmentCode === "FAB_SEW" && args.includes(c.productionOrderId))
+        .map((c) => ({ production_order_id: c.productionOrderId, wip_label: c.wipLabel }));
+    }
+    if (/^SELECT id, po_no, sales_order_no, customer_po_id, product_code, quantity FROM production_orders WHERE org_id = [?] AND id IN/i.test(text)) {
+      return orders
+        .filter((o) => args.slice(1).includes(o.id))
+        .map((o) => ({ id: o.id, po_no: o.poNo, sales_order_no: o.salesOrderNo, customer_po_id: "", product_code: o.productCode, quantity: o.quantity }));
+    }
+    if (/^SELECT id, status FROM job_cards WHERE productionOrderId = [?] AND departmentCode = [?]/i.test(text)) {
+      return state.cards.filter((c) => c.productionOrderId === args[0] && c.departmentCode === args[1]);
+    }
+    if (/^SELECT oc[.]job_card_id, oc[.]piece_no, oi[.]worker_id, oi[.]status, oi[.]total_pieces FROM outsource_issue_cards oc JOIN outsource_issues oi/i.test(text)) {
+      return state.issueCards
+        .filter((c) => args.includes(c.job_card_id))
+        .map((c) => {
+          const owner = issueById(c.issue_id);
+          return { job_card_id: c.job_card_id, piece_no: c.piece_no, worker_id: owner.worker_id, status: owner.status, total_pieces: owner.total_pieces };
+        });
     }
     if (/^SELECT \* FROM outsource_issues WHERE org_id = \? AND worker_id = \? AND status = 'INCOMPLETE'/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0] && i.worker_id === args[1] && i.status === "INCOMPLETE");
     }
     if (/^SELECT \* FROM outsource_issues WHERE org_id = \? AND worker_id = \? AND status = 'COMPLETED'/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0] && i.worker_id === args[1] && i.status === "COMPLETED");
+    }
+    if (/^SELECT COUNT\(\*\) AS total,/i.test(text)) {
+      const rows = state.issues.filter((i) => i.org_id === args[0] && (!/worker_id = \?/.test(text) || i.worker_id === args[1]));
+      const open = rows.filter((i) => i.status === "INCOMPLETE");
+      const values = [
+        rows.length,
+        open.filter((i) => i.submitted_at).length,
+        open.filter((i) => !i.submitted_at).length,
+        rows.filter((i) => i.status === "COMPLETED").length,
+      ];
+      // Aliases come back camelCased, as the Postgres adapter (db-pg.ts toCamel) returns them.
+      const aliases = [...text.matchAll(/AS (\w+)/gi)].map((m) => m[1].replace(/_([a-z])/g, (_, c) => c.toUpperCase()));
+      return [Object.fromEntries(aliases.map((alias, i) => [alias, String(values[i])]))];
     }
     if (/^SELECT \* FROM outsource_issues WHERE/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0]);

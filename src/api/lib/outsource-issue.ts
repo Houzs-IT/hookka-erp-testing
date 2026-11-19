@@ -1,4 +1,5 @@
 import { freshAll, freshFirst } from "./worker-penalties";
+import { loadRecordedPeriods } from "./outsource-piece";
 import type { IssueTarget, TargetLookup } from "./outsource-targets";
 
 type Stmt = {
@@ -64,6 +65,9 @@ export const OUTSOURCE_ISSUE_DDL: string[] = [
         AND (oi.wip_key IS NULL OR jc.wipKey = oi.wip_key)
       WHERE NOT EXISTS (SELECT 1 FROM outsource_issue_cards oc WHERE oc.issue_id = oi.id)
      ON CONFLICT DO NOTHING`,
+  `ALTER TABLE outsource_issues ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ`,
+  `ALTER TABLE outsource_issues ADD COLUMN IF NOT EXISTS submitted_scan TEXT`,
+  `ALTER TABLE outsource_issues ADD COLUMN IF NOT EXISTS approved_by TEXT`,
 ];
 
 const CONCURRENT_CREATE_ERROR_CODES = new Set(["23505", "42P07", "42710"]);
@@ -117,7 +121,12 @@ const MALAYSIA_OFFSET = "+08:00";
 const FINISHED_STATUSES: readonly string[] = ["COMPLETED", "TRANSFERRED"];
 const DEFAULT_DEPARTMENT = "FAB_SEW";
 
-export type IssueStatus = "INCOMPLETE" | "COMPLETED";
+export type IssueStatus = "INCOMPLETE" | "PENDING_APPROVAL" | "COMPLETED";
+
+export interface SubmittedScan {
+  url: string;
+  body: Record<string, unknown>;
+}
 
 export interface OutsourceIssue {
   id: string;
@@ -137,10 +146,14 @@ export interface OutsourceIssue {
   issuedAt: string;
   issuedBy: string;
   completedAt: string | null;
+  submittedAt: string | null;
+  submittedScan: SubmittedScan | null;
+  approvedBy: string;
 }
 
 export interface OutsourceIssueWithDone extends OutsourceIssue {
   workDone: boolean;
+  payrollPeriod: string;
 }
 
 export interface IssueWorker {
@@ -170,8 +183,33 @@ function toIso(value: unknown): string | null {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseSubmittedScan(value: unknown): SubmittedScan | null {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (isRecord(parsed) && typeof parsed.url === "string" && isRecord(parsed.body)) {
+      return { url: parsed.url, body: parsed.body };
+    }
+  } catch (error) {
+    console.error("[outsource-issue] submitted_scan is not valid JSON", error);
+  }
+  return null;
+}
+
+function issueStatusOf(row: Row, submittedAt: string | null): IssueStatus {
+  if (text(row.status) === "COMPLETED") return "COMPLETED";
+  return submittedAt ? "PENDING_APPROVAL" : "INCOMPLETE";
+}
+
+const isOpen = (issue: OutsourceIssue): boolean => issue.status !== "COMPLETED";
+
 function toIssue(row: Row): OutsourceIssue {
   const departmentCode = text(row.departmentCode, row.department_code) || DEFAULT_DEPARTMENT;
+  const submittedAt = toIso(row.submittedAt ?? row.submitted_at);
   return {
     id: text(row.id),
     workerId: text(row.workerId, row.worker_id),
@@ -186,10 +224,13 @@ function toIssue(row: Row): OutsourceIssue {
     productCode: text(row.productCode, row.product_code),
     productName: text(row.productName, row.product_name),
     itemLabel: text(row.itemLabel, row.item_label),
-    status: text(row.status) === "COMPLETED" ? "COMPLETED" : "INCOMPLETE",
+    status: issueStatusOf(row, submittedAt),
     issuedAt: toIso(row.issuedAt ?? row.issued_at) ?? "",
     issuedBy: text(row.issuedBy, row.issued_by),
     completedAt: toIso(row.completedAt ?? row.completed_at),
+    submittedAt,
+    submittedScan: parseSubmittedScan(row.submittedScan ?? row.submitted_scan),
+    approvedBy: text(row.approvedBy, row.approved_by),
   };
 }
 
@@ -450,10 +491,49 @@ async function attachDone(db: Runner, issues: OutsourceIssue[]): Promise<Outsour
   if (issues.length === 0) return [];
   const slotsByIssue = await loadIssueSlots(db, issues.map((issue) => issue.id));
   const done = await loadDoneSlots(db, [...slotsByIssue.values()].flat());
+  const periods = await loadRecordedPeriods(db, [...new Set(issues.map((issue) => issue.productionOrderId))]);
   return issues.map((issue) => {
     const slots = slotsByIssue.get(issue.id) ?? [];
-    return { ...issue, workDone: slots.length > 0 && slots.every((slot) => done.has(slotKey(slot))) };
+    return {
+      ...issue,
+      workDone: slots.length > 0 && slots.every((slot) => done.has(slotKey(slot))),
+      payrollPeriod: periods.get(issue.productionOrderId) ?? "",
+    };
   });
+}
+
+const STATUS_CONDITIONS: Record<IssueStatus, string> = {
+  INCOMPLETE: "status = 'INCOMPLETE' AND submitted_at IS NULL",
+  PENDING_APPROVAL: "status = 'INCOMPLETE' AND submitted_at IS NOT NULL",
+  COMPLETED: "status = 'COMPLETED'",
+};
+
+export type IssueStatusCounts = Record<IssueStatus | "ALL", number>;
+
+export async function countIssuesByStatus(
+  db: Runner,
+  request: { orgId: string; filter: IssueFilter },
+): Promise<IssueStatusCounts> {
+  await ensureOutsourceIssueTable(db);
+  const { conditions, params } = issueWhere(request.orgId, request.filter);
+  const row = await freshFirst<Row>(
+    db,
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.PENDING_APPROVAL} THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.INCOMPLETE} THEN 1 ELSE 0 END) AS incomplete,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.COMPLETED} THEN 1 ELSE 0 END) AS completed
+           FROM outsource_issues WHERE ${conditions.join(" AND ")}`,
+      )
+      .bind(...params),
+  );
+  return {
+    ALL: Number(row?.total ?? 0),
+    PENDING_APPROVAL: Number(row?.pending ?? 0),
+    INCOMPLETE: Number(row?.incomplete ?? 0),
+    COMPLETED: Number(row?.completed ?? 0),
+  };
 }
 
 export async function listIssues(
@@ -461,16 +541,27 @@ export async function listIssues(
   request: { orgId: string; filter: IssueFilter },
 ): Promise<OutsourceIssueWithDone[]> {
   await ensureOutsourceIssueTable(db);
-  const { filter } = request;
+  const { conditions, params } = issueWhere(request.orgId, request.filter);
+  if (request.filter.status) conditions.push(STATUS_CONDITIONS[request.filter.status]);
+  const rows = await freshAll<Row>(
+    db,
+    db
+      .prepare(
+        `SELECT * FROM outsource_issues WHERE ${conditions.join(" AND ")}
+          ORDER BY issued_at DESC LIMIT ${ISSUE_LIST_CAP + 1}`,
+      )
+      .bind(...params),
+  );
+  return attachDone(db, await withDepartmentNames(db, rows.map(toIssue)));
+}
+
+/** Worker, date and search filters; the status filter is added by the caller. */
+function issueWhere(orgId: string, filter: IssueFilter): { conditions: string[]; params: unknown[] } {
   const conditions = ["org_id = ?"];
-  const params: unknown[] = [request.orgId];
+  const params: unknown[] = [orgId];
   if (filter.workerId) {
     conditions.push("worker_id = ?");
     params.push(filter.workerId);
-  }
-  if (filter.status) {
-    conditions.push("status = ?");
-    params.push(filter.status);
   }
   if (filter.fromDate) {
     conditions.push("issued_at >= ?");
@@ -488,16 +579,7 @@ export async function listIssues(
     );
     params.push(pattern, pattern, pattern, pattern, pattern);
   }
-  const rows = await freshAll<Row>(
-    db,
-    db
-      .prepare(
-        `SELECT * FROM outsource_issues WHERE ${conditions.join(" AND ")}
-          ORDER BY issued_at DESC LIMIT ${ISSUE_LIST_CAP + 1}`,
-      )
-      .bind(...params),
-  );
-  return attachDone(db, await withDepartmentNames(db, rows.map(toIssue)));
+  return { conditions, params };
 }
 
 export async function listWorkerIssues(
@@ -623,19 +705,19 @@ async function isEnforced(db: Runner): Promise<boolean> {
 export type IssueHandover =
   | { kind: "none" }
   | { kind: "holder"; issueIds: string[] }
+  | { kind: "awaiting-approval"; issueIds: string[] }
   | { kind: "refused"; code: "NOT_ISSUED_TO_YOU" | "ISSUED_TO_OTHER"; message: string };
 
-async function findHeldIssues(
+async function findHeldIssueIds(
   db: Runner,
   request: { orgId: string; workerId: string; target: IssueTarget },
-): Promise<IssueHandover> {
+): Promise<string[]> {
   const overlapping = await withTable(db, () =>
     findOverlappingIssues(db, request.orgId, request.target),
   );
-  const mine = overlapping.filter(
-    (issue) => issue.workerId === request.workerId && issue.status === "INCOMPLETE",
-  );
-  return mine.length > 0 ? { kind: "holder", issueIds: mine.map((issue) => issue.id) } : { kind: "none" };
+  return overlapping
+    .filter((issue) => issue.workerId === request.workerId && isOpen(issue))
+    .map((issue) => issue.id);
 }
 
 async function readEnforced(db: Runner): Promise<boolean> {
@@ -647,13 +729,18 @@ async function readEnforced(db: Runner): Promise<boolean> {
   }
 }
 
-async function decideHandover(
-  db: Runner,
-  request: { orgId: string; workerId: string; target: IssueTarget; scannerIsOutsource: boolean },
-): Promise<IssueHandover> {
-  const { orgId, workerId, target, scannerIsOutsource } = request;
+interface HandoverRequest {
+  orgId: string;
+  workerId: string;
+  target: IssueTarget;
+  scannerIsOutsource: boolean;
+  scannedByOffice: boolean;
+}
+
+async function decideHandover(db: Runner, request: HandoverRequest): Promise<IssueHandover> {
+  const { orgId, workerId, target, scannerIsOutsource, scannedByOffice } = request;
   const overlapping = await withTable(db, () => findOverlappingIssues(db, orgId, target));
-  const open = overlapping.filter((issue) => issue.status === "INCOMPLETE");
+  const open = overlapping.filter(isOpen);
   const heldByOther = open.find((issue) => issue.workerId !== workerId);
   if (heldByOther && (await readEnforced(db))) {
     return {
@@ -662,8 +749,10 @@ async function decideHandover(
       message: `This item was issued to ${heldByOther.workerName || "another worker"}. Only that person can complete it.`,
     };
   }
-  const mine = open.filter((issue) => issue.workerId === workerId);
-  if (mine.length > 0) return { kind: "holder", issueIds: mine.map((issue) => issue.id) };
+  const mine = open.filter((issue) => issue.workerId === workerId).map((issue) => issue.id);
+  if (mine.length > 0) {
+    return scannedByOffice ? { kind: "holder", issueIds: mine } : { kind: "awaiting-approval", issueIds: mine };
+  }
   const finishedMine = overlapping.some(
     (issue) => issue.workerId === workerId && issue.status === "COMPLETED",
   );
@@ -677,10 +766,7 @@ async function decideHandover(
   return { kind: "none" };
 }
 
-export async function checkIssueHandover(
-  db: Runner,
-  request: { orgId: string; workerId: string; target: IssueTarget; scannerIsOutsource: boolean },
-): Promise<IssueHandover> {
+export async function checkIssueHandover(db: Runner, request: HandoverRequest): Promise<IssueHandover> {
   try {
     return await decideHandover(db, request);
   } catch (error) {
@@ -690,35 +776,131 @@ export async function checkIssueHandover(
   }
 }
 
-async function closeDoneIssues(db: Runner, issueIds: readonly string[]): Promise<number> {
+export function toSubmittedScan(url: string, body: unknown): SubmittedScan {
+  return { url, body: isRecord(body) ? body : {} };
+}
+
+export function officeUserIdFrom(contextUserId: unknown): string | null {
+  return typeof contextUserId === "string" && contextUserId ? contextUserId : null;
+}
+
+export function pendingApprovalReply(deptCode: string, workerName: string): {
+  success: true;
+  code: "PENDING_APPROVAL";
+  data: { pendingApproval: true; deptCode: string; workerName: string; completedJcIds: string[] };
+} {
+  return {
+    success: true,
+    code: "PENDING_APPROVAL",
+    data: { pendingApproval: true, deptCode, workerName, completedJcIds: [] },
+  };
+}
+
+export async function submitIssuesForApproval(
+  db: Runner,
+  request: { issueIds: readonly string[]; scan: SubmittedScan },
+): Promise<void> {
+  const { issueIds, scan } = request;
+  if (issueIds.length === 0) return;
+  await withTable(db, () =>
+    db
+      .prepare(
+        `UPDATE outsource_issues SET submitted_at = COALESCE(submitted_at, now()), submitted_scan = ?
+          WHERE status = 'INCOMPLETE' AND id IN (${placeholders(issueIds.length)})`,
+      )
+      .bind(JSON.stringify(scan), ...issueIds)
+      .run(),
+  );
+}
+
+export type SendBackOutcome =
+  | { kind: "sent-back"; issue: OutsourceIssue }
+  | { kind: "not-found" }
+  | { kind: "not-pending"; issue: OutsourceIssue };
+
+export async function sendBackIssue(
+  db: Runner,
+  request: { orgId: string; id: string },
+): Promise<SendBackOutcome> {
+  await ensureOutsourceIssueTable(db);
+  const before = await findIssueById(db, request.orgId, request.id);
+  if (!before) return { kind: "not-found" };
+  if (before.status !== "PENDING_APPROVAL") return { kind: "not-pending", issue: before };
+  const row = await db
+    .prepare(
+      `UPDATE outsource_issues SET submitted_at = NULL, submitted_scan = NULL
+        WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE' AND submitted_at IS NOT NULL RETURNING *`,
+    )
+    .bind(request.id, request.orgId)
+    .first<Row>();
+  if (!row) {
+    const after = await findIssueById(db, request.orgId, request.id);
+    return after ? { kind: "not-pending", issue: after } : { kind: "not-found" };
+  }
+  const [named] = await withDepartmentNames(db, [toIssue(row)]);
+  return { kind: "sent-back", issue: named };
+}
+
+async function loadUserName(db: Runner, userId: string | null): Promise<string> {
+  if (!userId) return "";
+  const user = await freshFirst<Row>(
+    db,
+    db.prepare("SELECT displayName FROM users WHERE id = ? LIMIT 1").bind(userId),
+  );
+  return text(user?.displayName, user?.display_name) || userId;
+}
+
+async function closeDoneIssues(
+  db: Runner,
+  issueIds: readonly string[],
+  approvedBy: string,
+): Promise<OutsourceIssue[]> {
   const slotsByIssue = await loadIssueSlots(db, [...issueIds]);
   const done = await loadDoneSlots(db, [...slotsByIssue.values()].flat());
-  let closed = 0;
+  const closed: OutsourceIssue[] = [];
   for (const issueId of issueIds) {
     const slots = slotsByIssue.get(issueId) ?? [];
     if (slots.length === 0 || !slots.every((slot) => done.has(slotKey(slot)))) continue;
     const row = await db
       .prepare(
-        "UPDATE outsource_issues SET status = 'COMPLETED', completed_at = now() WHERE id = ? AND status = 'INCOMPLETE' RETURNING id",
+        `UPDATE outsource_issues SET status = 'COMPLETED', completed_at = now(), approved_by = ?
+          WHERE id = ? AND status = 'INCOMPLETE' RETURNING *`,
       )
-      .bind(issueId)
+      .bind(approvedBy, issueId)
       .first<Row>();
-    if (row) closed += 1;
+    if (row) closed.push(toIssue(row));
   }
   return closed;
+}
+
+export interface ApprovalContext {
+  orgId: string;
+  productionOrderId: string;
+  workerId: string;
+  officeUserId: string | null;
+}
+
+async function approveHeldIssues(
+  db: Runner,
+  issueIds: readonly string[],
+  context: ApprovalContext,
+): Promise<void> {
+  const approvedBy = await loadUserName(db, context.officeUserId);
+  // Wages come from the completed FAB_SEW cards via syncScannedPieceRecords (HK-0163), not from here.
+  await closeDoneIssues(db, issueIds, approvedBy);
 }
 
 export async function finishIssueHandover(
   db: Runner,
   handover: IssueHandover,
-  context: { productionOrderId: string; workerId: string },
+  context: ApprovalContext,
 ): Promise<void> {
   if (handover.kind !== "holder") return;
   try {
-    await closeDoneIssues(db, handover.issueIds);
+    await approveHeldIssues(db, handover.issueIds, context);
   } catch (error) {
     console.error(
-      "[outsource-issue] the work was completed but the issue could not be closed; it still shows INCOMPLETE",
+      "[outsource-issue] the work was completed but the issue could not be closed; it still shows open",
       { ...context, handover, error },
     );
   }
@@ -726,15 +908,20 @@ export async function finishIssueHandover(
 
 export async function closeHeldIssuesWhenDone(
   db: Runner,
-  request: { orgId: string; workerId: string; loadTarget: () => Promise<IssueTarget> },
+  request: ApprovalContext & { scan: SubmittedScan; loadTarget: () => Promise<IssueTarget> },
 ): Promise<void> {
   try {
     const target = await request.loadTarget();
-    const held = await findHeldIssues(db, { orgId: request.orgId, workerId: request.workerId, target });
-    if (held.kind === "holder") await closeDoneIssues(db, held.issueIds);
+    const issueIds = await findHeldIssueIds(db, { orgId: request.orgId, workerId: request.workerId, target });
+    if (issueIds.length === 0) return;
+    if (request.officeUserId === null) {
+      await submitIssuesForApproval(db, { issueIds, scan: request.scan });
+      return;
+    }
+    await approveHeldIssues(db, issueIds, request);
   } catch (error) {
     console.error(
-      "[outsource-issue] the work was already done and the holder's issue could not be closed",
+      "[outsource-issue] the work was already done and the holder's issue could not be settled",
       { workerId: request.workerId, error },
     );
   }
