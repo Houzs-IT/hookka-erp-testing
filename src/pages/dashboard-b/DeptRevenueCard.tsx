@@ -153,7 +153,7 @@ export function DeptRevenueCard({
                     <th className="text-right font-medium py-1.5 px-2">{di >= 0 && day ? dayLabel(day) : "Today"}</th>
                     <th className="text-right font-medium py-1.5 px-2" title={`Total ÷ ${workDays} working day${workDays === 1 ? "" : "s"}`}>Avg / day</th>
                     <th className="text-right font-medium py-1.5 px-2">Total</th>
-                    <th className="text-right font-medium py-1.5 pl-2" title="Sets in the period: bedframe 1 set = 1 headboard + 1 divan · sofa 1 set = 1 order">Sets</th>
+                    <th className="text-right font-medium py-1.5 pl-2" title="Sets in the period — same count as Floor Live: bedframe = every bedframe SKU × quantity · sofa = 1 set per order, on the day its last piece is done in this department">Sets</th>
                   </tr>
                 </thead>
                 <tbody>

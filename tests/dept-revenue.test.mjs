@@ -119,7 +119,7 @@ test("the department SQL keeps the Production Revenue gate (all cards done, full
   assert.match(src, /WHERE po\.orgId = \?/);
 });
 
-// ---- Sets (HK-0148, Violet 2026-11-12): bedframe 1 set = 1 HB + 1 divan, sofa 1 set = 1 order.
+// ---- Sets: bedframe = every SKU × qty (owner 2026-11-20, replacing HK-0148 pairing), sofa 1 set = 1 order.
 const bf = (bedPiece, qty, orderKey = "SO-1") => ({ deptCode: "UPHOLSTERY", date: "2026-10-01", category: "BEDFRAME", totalSen: 1, qty, orderKey, bedPiece });
 const sf = (orderKey, qty = 1) => ({ deptCode: "UPHOLSTERY", date: "2026-10-01", category: "SOFA", totalSen: 1, qty, orderKey });
 
@@ -131,9 +131,9 @@ test("sets: quantity above 1 counts every unit of a full bedframe", () => {
   assert.equal(countSets([bf("SET", 3)]).bedframe, 3);
 });
 
-test("sets: headboard-only / divan-only / unknown pieces are not sets, but are reported", () => {
+test("sets: every bedframe SKU counts × qty, headboard-only and divan-only too (owner 2026-11-20 「床架就是1个sku算一个」)", () => {
   const c = countSets([bf("HB", 2), bf("DIVAN", 1, "SO-2"), bf("UNKNOWN", 1, "SO-3")]);
-  assert.deepEqual([c.bedframe, c.total, c.hbOnly, c.divanOnly, c.unknown], [0, 0, 2, 1, 1]);
+  assert.deepEqual([c.bedframe, c.total, c.hbOnly, c.divanOnly, c.unknown], [4, 4, 0, 0, 0]);
 });
 
 test("sets: a sofa order with several lines / pieces is ONE set; two orders are two", () => {
