@@ -178,6 +178,13 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-11-20-001 — Labour Cost and Finance production revenue returned 500 after the one-rule change `dashboard` `sql` 🔴
+
+- **Symptom:** `/api/working-hour-entries/production-revenue` returned 500 right after #1490 shipped. Labour Cost department revenue showed nothing.
+- **Cause:** `loadProductionRevenue` gained a tenant filter written as `(? IS NULL OR po.orgId = ?)`. Postgres cannot type an untyped null parameter, so the whole query errored.
+- **Fix:** add `AND po.orgId = ?` and bind the tenant only when one exists.
+- **Regression test:** `tests/production-revenue-org-param.test.mjs`.
+
 ## BUG-2026-10-20-372 — A retried DO / GRN / PI create, CN convert or return create could make a second document `procurement` `delivery` `idempotency` 🟡
 
 🟡 **Fixed on branch** (`claude/t006-idempotency-main-0d4efa`, not merged). T-006 R10, ported from staging.
