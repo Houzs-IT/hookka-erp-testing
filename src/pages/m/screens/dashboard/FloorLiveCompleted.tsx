@@ -51,7 +51,8 @@ export function CategoryStrip({ code, name, data, showUsual, live, onOpen }: {
   if (!c) return null;
   const hasBed = c.bedframeUnits > 0 || c.usualBedframe > 0;
   const hasSofa = c.sofaSets > 0 || c.usualSofa > 0;
-  if (!hasBed && !hasSofa) return null;
+  const accSen = c.accessorySen ?? 0;
+  if (!hasBed && !hasSofa && accSen <= 0) return null;
   const nowMin = myNowMin();
   const tone = (v: number, usual: number) =>
     showUsual && usual > 0 && v >= usual ? "#2F6B3F" : live && behindPace(v, usual, nowMin) ? "#DC2626" : M.raisin;
@@ -76,6 +77,8 @@ export function CategoryStrip({ code, name, data, showUsual, live, onOpen }: {
             <span style={{ fontSize: 11.5, fontWeight: 600, color: M.taupe, ...TNUM }}>RM {rmN(x.sen)}</span>
           </span>
         ))}
+        {/* Accessory: value only, no count (owner 2026-11-20). */}
+        {accSen > 0 ? <span style={{ gridColumn: "1 / -1", fontSize: 11, color: M.body, ...TNUM }}>Accessory <b style={{ color: M.taupe }}>RM {rmN(accSen)}</b></span> : null}
       </span>
       <ChevronRight size={16} strokeWidth={2} color={M.taupe} aria-hidden="true" />
     </button>
@@ -121,10 +124,11 @@ export function CompletedDetail({ target, data, onClose }: { target: CompletedTa
   const shown = month === baseMonth ? data : other.data;
   const c = deptCompletedFor(data, target.code); // the 12-day baseline is the latest one, whichever month is shown
   const { days: all, bedTotal, sofaTotal, bedAvg, sofaAvg } = deptCompletedDays(shown, target.code, today);
-  const days = all.filter((d) => d.bedframeUnits > 0 || d.sofaSets > 0 || (d.bedframeSen ?? 0) > 0 || (d.sofaSen ?? 0) > 0);
+  const days = all.filter((d) => d.bedframeUnits > 0 || d.sofaSets > 0 || (d.bedframeSen ?? 0) > 0 || (d.sofaSen ?? 0) > 0 || (d.accessorySen ?? 0) > 0);
   const bedSen = days.reduce((s, d) => s + (d.bedframeSen ?? 0), 0);
   const sofaSen = days.reduce((s, d) => s + (d.sofaSen ?? 0), 0);
-  const max = Math.max(1, ...days.map((d) => (d.bedframeSen ?? 0) + (d.sofaSen ?? 0)));
+  const accSen = days.reduce((s, d) => s + (d.accessorySen ?? 0), 0);
+  const max = Math.max(1, ...days.map((d) => (d.bedframeSen ?? 0) + (d.sofaSen ?? 0) + (d.accessorySen ?? 0)));
 
   const [yy, mm] = month.split("-").map(Number);
   const monthLabel = `${MONTHS[mm - 1]} ${yy}`;
@@ -189,6 +193,7 @@ export function CompletedDetail({ target, data, onClose }: { target: CompletedTa
                 <Tile icon={Sofa} k="Sofa sets" v={sofaTotal.toLocaleString()} sub={`${base(c?.usualSofa)} · ${monthAvg(sofaAvg)}`} />
                 <Tile icon={Wallet} k="Bedframe value" v={rm(bedSen)} />
                 <Tile icon={Wallet} k="Sofa value" v={rm(sofaSen)} />
+                {accSen > 0 ? <Tile icon={Wallet} k="Accessory value" v={rm(accSen)} /> : null}
               </div>
 
               {days.length === 0 ? (
@@ -208,6 +213,7 @@ export function CompletedDetail({ target, data, onClose }: { target: CompletedTa
                   const wd = WEEKDAYS[new Date(`${d.date}T00:00:00Z`).getUTCDay()];
                   const bs = d.bedframeSen ?? 0;
                   const ss = d.sofaSen ?? 0;
+                  const as = d.accessorySen ?? 0;
                   return (
                     <div key={d.date} role="row" style={{ display: "grid", gridTemplateColumns: TABLE_GRID, gap: 4, alignItems: "center", minHeight: 44, padding: "6px 12px", borderTop: `1px solid ${M.divider}`, backgroundColor: isToday ? TODAY_ROW : M.card, ...TNUM }}>
                       <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
@@ -217,10 +223,11 @@ export function CompletedDetail({ target, data, onClose }: { target: CompletedTa
                       <span aria-hidden="true" style={{ display: "flex", height: 8, borderRadius: 999, backgroundColor: M.divider, overflow: "hidden" }}>
                         <span style={{ width: `${(bs / max) * 100}%`, backgroundColor: M.taupe }} />
                         <span style={{ width: `${(ss / max) * 100}%`, backgroundColor: SOFA_BAR }} />
+                        <span style={{ width: `${(as / max) * 100}%`, backgroundColor: "#A8A29A" }} />
                       </span>
                       <Cell qty={d.bedframeUnits ? String(d.bedframeUnits) : "—"} money={bs ? rm(bs) : "—"} />
                       <Cell qty={d.sofaSets ? String(d.sofaSets) : "—"} money={ss ? rm(ss) : "—"} />
-                      <span style={{ textAlign: "right", fontSize: 12.5, fontWeight: 700, color: M.raisin, whiteSpace: "nowrap" }}>{rm(bs + ss)}</span>
+                      <span style={{ textAlign: "right", fontSize: 12.5, fontWeight: 700, color: M.raisin, whiteSpace: "nowrap" }}>{rm(bs + ss + as)}</span>
                     </div>
                   );
                 })}
@@ -228,7 +235,7 @@ export function CompletedDetail({ target, data, onClose }: { target: CompletedTa
                   <span style={{ fontSize: 12, fontWeight: 700, color: M.taupe }}>Total</span><span />
                   <Cell qty={String(bedTotal)} money={rm(bedSen)} />
                   <Cell qty={String(sofaTotal)} money={rm(sofaSen)} />
-                  <span style={{ textAlign: "right", fontSize: 12.5, fontWeight: 700, color: M.taupe, whiteSpace: "nowrap" }}>{rm(bedSen + sofaSen)}</span>
+                  <span style={{ textAlign: "right", fontSize: 12.5, fontWeight: 700, color: M.taupe, whiteSpace: "nowrap" }}>{rm(bedSen + sofaSen + accSen)}</span>
                 </div>
               </div>
             </>

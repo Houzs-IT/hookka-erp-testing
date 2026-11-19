@@ -215,6 +215,7 @@ export type DeptCompletedRow = {
   /** Production value (Department Revenue's rule), sen. */
   bedframeSen?: number;
   sofaSen?: number;
+  accessorySen?: number;
 };
 export type DeptCompletedResponse = {
   success: boolean;
@@ -223,7 +224,7 @@ export type DeptCompletedResponse = {
   to: string;
   month?: string;
   departments: DeptCompletedRow[];
-  days: { dept: string; date: string; bedframeUnits: number; sofaSets: number; bedframeSen?: number; sofaSen?: number }[];
+  days: { dept: string; date: string; bedframeUnits: number; sofaSets: number; bedframeSen?: number; sofaSen?: number; accessorySen?: number }[];
 };
 
 export function deptCompletedFor(data: DeptCompletedResponse | null | undefined, code: string): DeptCompletedRow | null {
