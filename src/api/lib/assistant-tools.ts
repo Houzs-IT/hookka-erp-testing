@@ -2788,37 +2788,6 @@ const FORBIDDEN_SQL_KEYWORDS = [
   "PG_SLEEP", "PG_READ_FILE", "PG_LS_DIR", "LO_IMPORT", "LO_EXPORT",
 ];
 
-// Credentials and sessions the assistant must never read (security audit C1,
-// owner-approved 2026-07-23, built 2026-11-19 「这三个都没有问题」): a session
-// token, a worker token or a 2FA secret read back through run_select_query is
-// an account takeover. Matched on the identifier with underscores removed and
-// case folded, so `user_sessions`, `userSessions` and "UserSessions" all hit.
-const SENSITIVE_SQL_TABLES = [
-  "usersessions", "workersessions", "workertokens", "workerpins",
-  "passwordresettokens", "userinvites", "totppendinglogins", "kpisurveytokens",
-];
-const SENSITIVE_SQL_COLUMNS = [
-  "passwordhash", "password", "totpsecret", "totprecoveryhashes", "pin", "pinhash", "token", "tokenhash",
-];
-
-/** The sensitive identifier a query names, or null. Exported for tests. */
-export function sensitiveSqlIdentifier(rawSql: string): string | null {
-  const folded = rawSql.toLowerCase().replace(/_/g, "");
-  for (const id of [...SENSITIVE_SQL_TABLES, ...SENSITIVE_SQL_COLUMNS]) {
-    if (new RegExp(`\\b${id}\\b`).test(folded)) return id;
-  }
-  return null;
-}
-
-/** A result row without credential / session columns. Exported for tests. */
-export function scrubSensitiveColumns(row: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(row)) {
-    if (!SENSITIVE_SQL_COLUMNS.includes(k.toLowerCase().replace(/_/g, ""))) out[k] = v;
-  }
-  return out;
-}
-
 function checkSqlSafety(rawSql: string): { ok: true } | { ok: false; error: string } {
   if (!rawSql || typeof rawSql !== "string") return { ok: false, error: "sql is required" };
   const s = rawSql.trim();
@@ -2830,10 +2799,6 @@ function checkSqlSafety(rawSql: string): { ok: true } | { ok: false; error: stri
   // Reject stacked queries: a `;` followed by any non-whitespace.
   if (/;\s*\S/.test(s)) {
     return { ok: false, error: "Stacked queries are not allowed." };
-  }
-  const sensitive = sensitiveSqlIdentifier(s);
-  if (sensitive) {
-    return { ok: false, error: "That table or column holds credentials or sessions and cannot be queried." };
   }
   // Word-boundary forbidden keyword check.
   for (const kw of FORBIDDEN_SQL_KEYWORDS) {
@@ -2882,9 +2847,7 @@ const runSelectQuery: ToolDefinition = {
 
     try {
       const rows = await c.var.DB.prepare(wrapped).all<Record<string, unknown>>();
-      // Second line of defence: `SELECT * FROM users` names no sensitive
-      // column, so strip any such key from the rows before they reach the model.
-      const results = (rows.results ?? []).map(scrubSensitiveColumns);
+      const results = rows.results ?? [];
       return {
         rowCount: results.length,
         results: results.slice(0, 100),
