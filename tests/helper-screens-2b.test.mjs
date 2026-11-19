@@ -29,8 +29,9 @@ test("Department Performance route: production efficiency + Overall, helper rows
 test("Employees page: Overall line on the efficiency cards, helpers show — + tag", () => {
   const s = read("src/pages/employees.tsx");
   assert.ok((s.match(/<HelperOverallLine/g) ?? []).length >= 4, "Dept Perf card, day rows, month KPI, header");
-  assert.match(s, /if \(workerById\.get\(row\.workerId\)\?\.isHelper\) return -1;/);
-  assert.match(s, /productionWorkMins > 0 && !selectedWorker\?\.isHelper/);
+  // Owner 2026-11-18: a helper's efficiency over the days they scanned; "—" only without one.
+  assert.match(s, /if \(workerById\.get\(row\.workerId\)\?\.isHelper\) return helperScanEff\.get\(row\.workerId\)\?\.pct \?\? -1;/);
+  assert.match(s, /const effDenomMins = selectedWorker\?\.isHelper/);
   assert.match(s, /\{w\.workingMinutes <= 0 \|\| w\.isHelper \? "—"/);
 });
 

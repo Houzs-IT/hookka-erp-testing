@@ -247,7 +247,9 @@ test("the surviving efficiency metric keeps its clocked denominator", () => {
   assert.equal(
     (
       src.match(
-        /w\.workingMinutes > 0\s*\n?\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 1000\) \/ 10/g,
+        // The summary takes the helper rule (owner 2026-11-18): earned ÷ clocked
+        // over the days the person counted as a worker — still real clocked minutes.
+        /w\.(?:workingMinutes|workerDayWorking) > 0\s*\n?\s*\?\s*Math\.round\(\(w\.(?:productionMinutes|workerDayProduction) \/ w\.(?:workingMinutes|workerDayWorking)\) \* 1000\) \/ 10/g,
       ) ?? []
     ).length,
     2,

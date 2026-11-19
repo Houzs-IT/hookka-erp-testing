@@ -157,6 +157,10 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
       workingMinutes: number;
       productionMinutes: number;
       workedDayProductionMinutes: number;
+      /** Minutes on the days this person counted as a worker (helper rule
+       *  2026-11-18: a flagged helper who scanned that day is a worker). */
+      workerDayWorking: number;
+      workerDayProduction: number;
       isHelper: boolean;
       jobCardIds: Set<string>;
     }
@@ -171,6 +175,8 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
           workingMinutes: 0,
           productionMinutes: 0,
           workedDayProductionMinutes: 0,
+          workerDayWorking: 0,
+          workerDayProduction: 0,
           isHelper: false,
           jobCardIds: new Set(),
         };
@@ -180,6 +186,7 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
       cell.productionMinutes += w.productionMinutes;
       if (w.workingMinutes > 0) cell.workedDayProductionMinutes += w.productionMinutes;
       if (w.isHelper) cell.isHelper = true;
+      else { cell.workerDayWorking += w.workingMinutes; cell.workerDayProduction += w.productionMinutes; }
       for (const j of w.jobs ?? []) cell.jobCardIds.add(j.jobCardId);
       if (!cell.workerName && w.workerName) cell.workerName = w.workerName;
     }
@@ -209,13 +216,17 @@ export function projectPerformanceSummary(data: FullPerfPayload) {
         // Identical to the per-day expression, applied to the range sums. A
         // worker who clocked nothing gets 0 here and the CALLER must render
         // that as "—" rather than as zero efficiency.
-        // A helper has no personal efficiency (owner 2026-11-11): 0 here, and
-        // isHelper tells the caller to render "—".
+        // Helper rule (owner 2026-11-18): a flagged helper is a helper only on
+        // a day without a scan. Efficiency is earned ÷ clocked over the days
+        // the person counted as a worker; isHelper (render "—") only when
+        // there was no such day in the range.
         efficiencyPct:
-          !w.isHelper && w.workingMinutes > 0
-            ? Math.round((w.productionMinutes / w.workingMinutes) * 1000) / 10
+          w.workerDayWorking > 0
+            ? Math.round((w.workerDayProduction / w.workerDayWorking) * 1000) / 10
             : 0,
-        ...(w.isHelper ? { isHelper: true } : {}),
+        workerDayWorkingMinutes: w.workerDayWorking,
+        workerDayProductionMinutes: w.workerDayProduction,
+        ...(w.isHelper && w.workerDayWorking <= 0 ? { isHelper: true } : {}),
         jobCards: w.jobCardIds.size,
       }))
       .sort((a, b) => b.workingMinutes - a.workingMinutes),

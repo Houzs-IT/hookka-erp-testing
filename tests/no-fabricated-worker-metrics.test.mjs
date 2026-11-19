@@ -175,7 +175,7 @@ test("view=summary projects the trusted engine, it does not recompute it", () =>
   // Same expression as the daily rows, applied to the range sums.
   assert.match(
     body,
-    /w\.workingMinutes > 0\s*\?\s*Math\.round\(\(w\.productionMinutes \/ w\.workingMinutes\) \* 1000\) \/ 10/,
+    /w\.workerDayWorking > 0\s*\?\s*Math\.round\(\(w\.workerDayProduction \/ w\.workerDayWorking\) \* 1000\) \/ 10/,
     "department-performance.ts: the range efficiency must be the same " +
       "productionMinutes ÷ workingMinutes the daily rows use",
   );
