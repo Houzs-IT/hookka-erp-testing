@@ -138,7 +138,7 @@ offsets pointing past the end of their own file.
 | `/api/fe-rum` | `src/api/routes/fe-rum.ts` | `POST /event` <sub>:126</sub> | gated (some paths public) |
 | `/api/job-cards` | `src/api/routes/job-cards.ts` | `GET /` <sub>:100</sub><br>`GET /summary` <sub>:261</sub><br>`GET /:id/events` <sub>:430</sub><br>`GET /duedate-original-backup` <sub>:536</sub><br>`GET /completion-pic-original-backup` <sub>:688</sub> | gated |
 | `/api/audit-events` | `src/api/routes/audit-events.ts` | `GET /` <sub>:49</sub> | gated |
-| `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:96</sub><br>`GET /revenue-split` <sub>:2244</sub> | gated |
+| `/api/dashboard/overview` | `src/api/routes/dashboard-overview.ts` | `GET /` <sub>:98</sub><br>`GET /revenue-split` <sub>:2275</sub> | gated |
 | `/api/dashboard/prototype` | `src/api/routes/dashboard-prototype.ts` | `GET /labour` <sub>:326</sub><br>`GET /service-sla` <sub>:338</sub><br>`GET /` <sub>:345</sub> | gated |
 | `/api/dashboard/floor-live` | `src/api/routes/floor-live.ts` | `GET /` <sub>:35</sub><br>`GET /summary` <sub>:70</sub><br>`GET /completed` <sub>:98</sub> | gated |
 | `/api/dashboard/finance` | `src/api/routes/dashboard-finance.ts` | `GET /` <sub>:42</sub><br>`PUT /valuation` <sub>:110</sub> | gated |
