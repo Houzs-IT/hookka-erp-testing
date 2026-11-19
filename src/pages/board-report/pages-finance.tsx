@@ -323,14 +323,29 @@ export function MaterialsPage({ r }: P) {
                   const v = d.cats.map((x) => x[k]).filter((x): x is number => typeof x === "number");
                   return v.length ? v.reduce((a, b) => a + b, 0) : null;
                 };
-                const catSpend = tot("spend"), fc = tot("forecast");
+                const catSpend = tot("spend"), catFc = tot("forecast");
                 const spend = catSpend === null ? null : catSpend + (d.unsplit ?? 0);
+                // Owner 2026-11-19 「22.6% 统一成 9.5% 的算法」: the total compares the
+                // month's materials used with its Forecast P&L materials line — the
+                // pair the chart headline and the cover summary quote. The old total
+                // set every category's spend against only the categories that HAVE a
+                // forecast (+22.6% vs the true +9.5% for Oct 26). The part of the
+                // P&L forecast not keyed by category gets its own row, so the
+                // forecast column still adds up to the total.
+                const month = d.trend.find((t) => t.ym === r.month);
+                const fcTotal = month && typeof month.forecast === "number" ? month.forecast : catFc;
+                const fcUnsplit = fcTotal !== null && catFc !== null ? fcTotal - catFc : 0;
                 return (
-                  <tr className="strong">
-                    <td>Total</td><td><Money v={spend} /></td><td>{pctText(pct(spend, d.sales))}</td>
-                    <td><Money v={tot("purchase")} /></td><td><Money v={tot("closing")} /></td><td><Money v={tot("prev")} /></td>
-                    <td><Money v={fc} /></td><td><Delta p={changePct(catSpend, fc)} invert /></td>
-                  </tr>
+                  <>
+                    {fcUnsplit !== 0 && (
+                      <tr className="muted"><td>Forecast not split by category</td><td /><td /><td /><td /><td /><td><Money v={fcUnsplit} /></td><td /></tr>
+                    )}
+                    <tr className="strong">
+                      <td>Total</td><td><Money v={spend} /></td><td>{pctText(pct(spend, d.sales))}</td>
+                      <td><Money v={tot("purchase")} /></td><td><Money v={tot("closing")} /></td><td><Money v={tot("prev")} /></td>
+                      <td><Money v={fcTotal} /></td><td><Delta p={changePct(month && typeof month.actual === "number" ? month.actual : spend, fcTotal)} invert /></td>
+                    </tr>
+                  </>
                 );
               })()}
             </tbody>
