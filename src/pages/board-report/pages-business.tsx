@@ -20,6 +20,9 @@ export function CashForecastPage({ r }: P) {
             Two forecasts of the month-end bank balance: <strong>Docs</strong> — from open invoices, bills and planned payments by their terms;
             <strong> P&amp;L</strong> — the Forecast P&amp;L turned into cash. Actual is the bank balance carried forward.
           </p>
+          {/* Owner 2026-11-19: Docs only counts documents already raised, so it
+              falls further behind the further out the month — read P&L. */}
+          <p className="brp-small"><strong>Read the P&amp;L forecast.</strong> Docs counts only invoices, bills and payments already in the system, so it runs low — and lower the further ahead the month, as most of those documents are not raised yet.</p>
           <table className="brp-table">
             <thead><tr><th>Month end, RM</th><th>Actual</th><th>Forecast (Docs)</th><th>Forecast (P&amp;L)</th><th>Docs vs P&amp;L</th></tr></thead>
             <tbody>
