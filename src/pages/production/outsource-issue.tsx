@@ -2,12 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import {
   AlertTriangle,
-  Camera,
   Check,
   CheckCircle2,
   CornerUpLeft,
   RefreshCw,
-  ScanLine,
   Undo2,
   XCircle,
 } from "lucide-react";
@@ -16,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column } from "@/components/ui/data-grid";
 import { PageHeader } from "@/components/ui/page-header";
-import { QrCameraScanner } from "@/components/qr-camera-scanner";
 import { usePermissions } from "@/lib/use-permission";
 import {
   daysOut,
@@ -79,7 +76,7 @@ function ClippedText({ value }: { value: string }): JSX.Element {
 function StatusCell({ issue }: { issue: OutsourceIssueWithDone }): JSX.Element {
   const needsCheck = issue.status === "INCOMPLETE" && issue.workDone;
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
       <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${STATUS_PILL_STYLES[issue.status]}`}>
         {issueStatusLabel(issue.status)}
       </span>
@@ -106,7 +103,7 @@ function ReviewCell({ row, review }: { row: OutsourceIssueWithDone; review: Revi
   if (row.status !== "PENDING_APPROVAL" || (!canApprove && !canSendBack)) return null;
   const isBusy = issue.reviewingId === row.id;
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
       {canApprove ? (
         <Button type="button" variant="primary" size="sm" disabled={isBusy} onClick={() => void issue.approveIssue(row)}>
           <Check className="h-3.5 w-3.5" aria-hidden />
@@ -131,7 +128,7 @@ function dateTimeColumn(
   return {
     key,
     label,
-    width: "128px",
+    width: "112px",
     sortable: true,
     defaultHidden: isHiddenByDefault,
     render: (_value, row) => <NumericText value={formatIssueDateTime(row[key])} />,
@@ -142,33 +139,33 @@ function dateTimeColumn(
 function buildColumns(review: ReviewPermissions): Column<OutsourceIssueWithDone>[] {
   return [
     dateTimeColumn("issuedAt", "Issued at", false),
-    { key: "workerName", label: "Worker", width: "120px", sortable: true },
-    { key: "departmentName", label: "Department", width: "110px", sortable: true },
+    { key: "workerName", label: "Worker", width: "92px", sortable: true },
+    { key: "departmentName", label: "Department", width: "100px", sortable: true, defaultHidden: true },
     {
       key: "poNo",
       label: "PO no",
-      width: "124px",
+      width: "108px",
       sortable: true,
       render: (_value, row) => <NumericText value={row.poNo} />,
     },
     {
       key: "productName",
       label: "Product",
-      width: "200px",
+      width: "100px",
       sortable: true,
       render: (_value, row) => <ClippedText value={row.productName} />,
     },
     {
       key: "itemLabel",
       label: "Item",
-      width: "170px",
+      width: "92px",
       sortable: true,
       render: (_value, row) => <ClippedText value={row.itemLabel} />,
     },
     {
       key: "piece",
       label: "Piece",
-      width: "56px",
+      width: "44px",
       align: "right",
       render: (_value, row) => <NumericText value={formatPiece(row)} />,
       exportValue: (row) => formatPiece(row),
@@ -177,7 +174,7 @@ function buildColumns(review: ReviewPermissions): Column<OutsourceIssueWithDone>
     {
       key: "status",
       label: "Status",
-      width: "150px",
+      width: "130px",
       sortable: true,
       noClip: true,
       render: (_value, row) => <StatusCell issue={row} />,
@@ -212,7 +209,7 @@ function buildColumns(review: ReviewPermissions): Column<OutsourceIssueWithDone>
     {
       key: "review",
       label: "Actions",
-      width: "196px",
+      width: "220px",
       noClip: true,
       noFilter: true,
       stickyEnd: true,
@@ -237,14 +234,12 @@ function StepBadge({ step, label, isDone }: { step: number; label: string; isDon
 
 function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; canIssue: boolean }): JSX.Element {
   const [scanText, setScanText] = useState("");
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const { selectedWorkerId, isIssuing } = issue;
 
   useEffect(() => {
-    if (selectedWorkerId && !isIssuing && !isCameraOpen) scanInputRef.current?.focus();
-  }, [selectedWorkerId, isIssuing, isCameraOpen]);
+    if (selectedWorkerId && !isIssuing) scanInputRef.current?.focus();
+  }, [selectedWorkerId, isIssuing]);
 
   const isScanDisabled = !issue.selectedWorker || !canIssue;
   const submitScan = (): void => {
@@ -306,52 +301,23 @@ function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; c
         <label htmlFor="outsource-scan" className="mb-1 block text-xs font-medium text-[#6B7280]">
           Scan sticker
         </label>
-        <div className="flex gap-2">
-          <Input
-            id="outsource-scan"
-            ref={scanInputRef}
-            value={scanText}
-            onChange={(event) => setScanText(event.target.value)}
-            placeholder={issue.selectedWorker ? "Scan or paste the sticker code" : "Pick a worker first"}
-            disabled={isScanDisabled}
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            enterKeyHint="send"
-          />
-          <Button type="submit" variant="primary" disabled={isScanDisabled || issue.isIssuing || !scanText.trim()}>
-            <ScanLine className="h-4 w-4" aria-hidden />
-            Issue
-          </Button>
-        </div>
-      </form>
-
-      <Button
-        type="button"
-        variant="outline"
-        className="w-full"
-        disabled={isScanDisabled}
-        onClick={() => {
-          setCameraError(null);
-          setIsCameraOpen(true);
-        }}
-      >
-        <Camera className="h-4 w-4" aria-hidden />
-        Camera
-      </Button>
-      {cameraError ? <p className="text-xs text-[#9A3A2D]">{cameraError}</p> : null}
-
-      {isCameraOpen ? (
-        <QrCameraScanner
-          onDecode={(text) => void issue.issueByScan(text)}
-          onClose={() => setIsCameraOpen(false)}
-          onError={(message) => {
-            setCameraError(message);
-            setIsCameraOpen(false);
-          }}
-          statusText={issue.feedback?.message}
+        <Input
+          id="outsource-scan"
+          ref={scanInputRef}
+          value={scanText}
+          onChange={(event) => setScanText(event.target.value)}
+          placeholder={issue.selectedWorker ? "Scan a sticker. It issues on Enter." : "Pick a worker first"}
+          disabled={isScanDisabled}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          enterKeyHint="send"
+          aria-describedby="outsource-scan-hint"
         />
-      ) : null}
+        <p id="outsource-scan-hint" className="mt-1 text-xs text-[#6B7280]">
+          {issue.isIssuing ? "Issuing…" : "Keep scanning. Each sticker issues as soon as the scanner sends Enter."}
+        </p>
+      </form>
 
       {issue.feedback ? (
         <div
@@ -531,7 +497,8 @@ function TrackingLedger({ issue, review }: { issue: UseOutsourceIssueResult; rev
         maxHeight="calc(100dvh - 260px)"
         loading={issue.isListLoading}
         emptyMessage="No issues match these filters."
-        gridId="outsource-issue-tracking-v2"
+        gridId="outsource-issue-tracking-v3"
+        hideToolbarCount
         exportName="outsource-work"
         toolbarStart={<TrackingFilters issue={issue} />}
         searchPlaceholder="Search PO no, product, or item…"

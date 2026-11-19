@@ -366,6 +366,8 @@ export type DataGridProps<T> = {
   checkboxSelectOnly?: boolean;
   // The search box's hint (default "Search...").
   searchPlaceholder?: string;
+  // Hide the "X of Y records" text in the toolbar when the page already shows a count.
+  hideToolbarCount?: boolean;
 };
 
 type SavedView = {
@@ -1917,6 +1919,7 @@ export function DataGrid<T extends Record<string, any>>({
   reorderableHeaders,
   checkboxSelectOnly,
   searchPlaceholder,
+  hideToolbarCount = false,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -3092,7 +3095,7 @@ export function DataGrid<T extends Record<string, any>>({
         {toolbarStart}
         {toolbarStart && <div className="flex-1" />}
         {/* Search — h-9 / text-sm for finger-target on iPad Safari */}
-        <div className="relative flex-1 max-w-[280px] max-md:max-w-full">
+        <div className="relative flex-1 min-w-[180px] max-w-[280px] max-md:max-w-full">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#999]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
           </svg>
@@ -3426,9 +3429,11 @@ export function DataGrid<T extends Record<string, any>>({
         </div>
 
         {/* Row count */}
-        <span className="text-[10px] text-[#999] tabular-nums">
-          {sortedData.length} of {data.length} records
-        </span>
+        {!hideToolbarCount && (
+          <span className="text-[10px] text-[#999] tabular-nums">
+            {sortedData.length} of {data.length} records
+          </span>
+        )}
       </div>
 
       {/* Table — no own border/rounding: the grid is wrapped in a Card on every
