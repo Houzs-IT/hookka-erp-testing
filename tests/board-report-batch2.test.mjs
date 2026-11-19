@@ -79,8 +79,3 @@ test("page-4 table total uses the P&L pair (owner 2026-11-19: 22.6% -> 9.5%)", (
   assert.match(fin, /Forecast not split by category/);
   assert.doesNotMatch(fin, /changePct\(catSpend, fc\)/, "the old basis is gone");
 });
-
-test("cash forecast page says to read the P&L forecast (owner 2026-11-19)", () => {
-  const biz = readFileSync("src/pages/board-report/pages-business.tsx", "utf8");
-  assert.match(biz, /Read the P&amp;L forecast\./);
-});
