@@ -55,6 +55,16 @@ const SELECT_CLASS =
 
 const CARD_CLASS = "rounded-lg border border-[#E6E0D9] bg-white";
 
+const NEUTRAL_GRID_SURFACE = [
+  "rounded-lg border border-slate-200 bg-white",
+  "[&_thead_tr]:!border-b [&_thead_tr]:!border-slate-200 [&_thead_tr]:!bg-slate-50",
+  "[&_thead_th]:!bg-slate-50 [&_thead_th]:!text-slate-600",
+  "[&_[data-dg=row]]:!bg-white [&_[data-dg=row]:hover]:!bg-slate-50",
+  "[&_[data-dg=row]>td.sticky]:!bg-white [&_[data-dg=row]:hover>td.sticky]:!bg-slate-50",
+].join(" ");
+
+const APPROVE_BUTTON_CLASS = "bg-emerald-700 text-white hover:bg-emerald-800";
+
 function FeedbackIcon({ tone }: { tone: FeedbackTone }): JSX.Element {
   if (tone === "success") return <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden />;
   if (tone === "warning") return <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden />;
@@ -105,7 +115,14 @@ function ReviewCell({ row, review }: { row: OutsourceIssueWithDone; review: Revi
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
       {canApprove ? (
-        <Button type="button" variant="primary" size="sm" disabled={isBusy} onClick={() => void issue.approveIssue(row)}>
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          className={APPROVE_BUTTON_CLASS}
+          disabled={isBusy}
+          onClick={() => void issue.approveIssue(row)}
+        >
           <Check className="h-3.5 w-3.5" aria-hidden />
           Approve
         </Button>
@@ -411,15 +428,15 @@ function EnforceSwitch(): JSX.Element {
 
 function StatusTabs({ issue }: { issue: UseOutsourceIssueResult }): JSX.Element {
   return (
-    <div role="group" aria-label="Status" className="flex rounded-md border border-[#E2DDD8] bg-[#F0ECE9] p-0.5">
+    <div role="group" aria-label="Status" className="flex rounded-md bg-slate-100 p-1">
       {STATUS_FILTERS.map((option) => (
         <button
           key={option.key}
           type="button"
           aria-pressed={issue.filters.status === option.key}
           onClick={() => issue.setFilters({ status: option.key })}
-          className={`h-8 whitespace-nowrap rounded px-3 text-sm font-medium ${
-            issue.filters.status === option.key ? "bg-white text-[#1F1D1B] shadow-sm" : "text-[#6B7280]"
+          className={`h-8 whitespace-nowrap rounded px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+            issue.filters.status === option.key ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
           }`}
         >
           {option.label}
@@ -489,21 +506,23 @@ function TrackingLedger({ issue, review }: { issue: UseOutsourceIssueResult; rev
       {issue.isListTruncated ? (
         <p className="text-xs text-[#9C6F1E]">Showing the newest {LIST_CAP} issues. Narrow the filters to see older ones.</p>
       ) : null}
-      <DataGrid<OutsourceIssueWithDone>
-        columns={buildColumns(review)}
-        data={issue.issues}
-        keyField="id"
-        stickyHeader
-        maxHeight="calc(100dvh - 260px)"
-        loading={issue.isListLoading}
-        emptyMessage="No issues match these filters."
-        gridId="outsource-issue-tracking-v3"
-        hideToolbarCount
-        exportName="outsource-work"
-        toolbarStart={<TrackingFilters issue={issue} />}
-        searchPlaceholder="Search PO no, product, or item…"
-        onSearchChange={(query) => issue.setFilters({ query })}
-      />
+      <div className={NEUTRAL_GRID_SURFACE}>
+        <DataGrid<OutsourceIssueWithDone>
+          columns={buildColumns(review)}
+          data={issue.issues}
+          keyField="id"
+          stickyHeader
+          maxHeight="calc(100dvh - 260px)"
+          loading={issue.isListLoading}
+          emptyMessage="No issues match these filters."
+          gridId="outsource-issue-tracking-v3"
+          hideToolbarCount
+          exportName="outsource-work"
+          toolbarStart={<TrackingFilters issue={issue} />}
+          searchPlaceholder="Search PO no, product, or item…"
+          onSearchChange={(query) => issue.setFilters({ query })}
+        />
+      </div>
     </section>
   );
 }

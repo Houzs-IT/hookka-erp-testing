@@ -29,3 +29,18 @@ test("the grid can hide its toolbar record count; search never collapses", () =>
   assert.match(grid, /\{!hideToolbarCount && \(/);
   assert.match(grid, /relative flex-1 min-w-\[180px\] max-w-\[280px\]/);
 });
+
+test("the tracking table sits on its own white card with a neutral header and solid white rows", () => {
+  assert.match(page, /<div className=\{NEUTRAL_GRID_SURFACE\}>\s*<DataGrid<OutsourceIssueWithDone>/);
+  assert.match(page, /"rounded-lg border border-slate-200 bg-white"/);
+  assert.match(page, /\[&_thead_th\]:!bg-slate-50/);
+  assert.match(page, /\[&_\[data-dg=row\]\]:!bg-white \[&_\[data-dg=row\]:hover\]:!bg-slate-50/);
+  assert.doesNotMatch(page, /NEUTRAL_GRID_SURFACE = \[\s*"overflow-hidden/);
+});
+
+test("Approve is AA-contrast emerald and the status tabs are borderless slate", () => {
+  assert.match(page, /APPROVE_BUTTON_CLASS = "bg-emerald-700 text-white hover:bg-emerald-800"/);
+  assert.match(page, /className=\{APPROVE_BUTTON_CLASS\}/);
+  assert.match(page, /aria-label="Status" className="flex rounded-md bg-slate-100 p-1"/);
+  assert.match(page, /"bg-white text-slate-900 shadow-xs"/);
+});
