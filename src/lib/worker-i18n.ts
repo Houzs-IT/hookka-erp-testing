@@ -442,6 +442,18 @@ const dict: Dict = {
     zh: '这件物品已发给其他工人。',
     my: 'This item is issued to another worker.',
   },
+  'scan.sentForApproval': {
+    en: 'Sent to the office',
+    ms: 'Dihantar ke pejabat',
+    zh: '已提交给办公室',
+    my: 'Sent to the office',
+  },
+  'scan.waitingApproval': {
+    en: 'Bring the item back. It is completed once the office receives and approves it.',
+    ms: 'Bawa balik item ini. Ia siap selepas pejabat menerima dan meluluskannya.',
+    zh: '请把物品带回。办公室收到并批准后才算完成。',
+    my: 'Bring the item back. It is completed once the office receives and approves it.',
+  },
   'scan.batchProgress': {
     en: 'Photo {i} of {n}',
     ms: 'Gambar {i} dari {n}',
@@ -1567,6 +1579,18 @@ const dict: Dict = {
     ms: 'Belum siap',
     zh: '未完成',
     my: 'Incomplete',
+  },
+  'tasks.pendingApproval': {
+    en: 'Waiting for office',
+    ms: 'Menunggu pejabat',
+    zh: '等待办公室批准',
+    my: 'Waiting for office',
+  },
+  'tasks.finishedScan': {
+    en: 'Scanned finished',
+    ms: 'Diimbas siap',
+    zh: '扫描完成于',
+    my: 'Scanned finished',
   },
   'tasks.piece': {
     en: 'Piece',
