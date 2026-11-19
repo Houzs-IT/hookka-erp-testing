@@ -2,8 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const page = readFileSync("src/pages/production/outsource-issue.tsx", "utf8");
-const grid = readFileSync("src/components/ui/data-grid.tsx", "utf8");
+const page = readFileSync("src/pages/production/outsource-issue.tsx", "utf8").replace(/
+/g, "
+");
+const grid = readFileSync("src/components/ui/data-grid.tsx", "utf8").replace(/
+/g, "
+");
 
 test("issuing is scanner-only: no camera, no Issue button, Enter submits and clears", () => {
   assert.doesNotMatch(page, /QrCameraScanner|>\s*Camera\s*</);
