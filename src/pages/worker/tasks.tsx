@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { ChevronDown, ScanLine } from "lucide-react";
 import type { OutsourceIssue } from "@/api/lib/outsource-issue";
 import { useT } from "@/lib/worker-i18n";
-import { formatIssueDate, formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
+import { formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
 import { daysHeldText, useOutsourceTasks } from "./use-outsource-tasks";
 import type { Translate } from "./use-outsource-tasks";
 
@@ -31,7 +31,7 @@ function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.El
       <p className="mt-2 text-sm text-[#5A5550]">
         {isCompleted
           ? `${t("tasks.completed")} ${formatIssueDateTime(issue.completedAt)}`
-          : `${t("tasks.issued")} ${formatIssueDate(issue.issuedAt)} · ${daysHeldText(t, issue)}`}
+          : `${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)} ·${daysHeldText(t, issue)}`}
       </p>
     </li>
   );

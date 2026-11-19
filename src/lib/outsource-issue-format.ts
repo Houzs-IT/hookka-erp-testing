@@ -7,13 +7,6 @@ const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
-const dateFormatter = new Intl.DateTimeFormat("en-GB", {
-  timeZone: MALAYSIA_TIME_ZONE,
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-
 const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: MALAYSIA_TIME_ZONE,
   day: "numeric",
@@ -43,10 +36,6 @@ function isValidIso(iso: string | null | undefined): iso is string {
 function dayNumberOf(iso: string): number {
   const [year, month, day] = dayKeyFormatter.format(new Date(iso)).split("-").map(Number);
   return Date.UTC(year, month - 1, day) / MILLISECONDS_PER_DAY;
-}
-
-export function formatIssueDate(iso: string | null | undefined): string {
-  return isValidIso(iso) ? dateFormatter.format(new Date(iso)) : "—";
 }
 
 export function formatIssueDateTime(iso: string | null | undefined): string {
