@@ -112,6 +112,14 @@ import type {
   PiecePicRow,
   ProductionOrderRow,
 } from "./production-orders/_helpers";
+import { isSewingDone, resolveSewingScope } from "../lib/sewing-scope";
+import type { SewingScope } from "../lib/sewing-scope";
+import {
+  checkSewingHandover,
+  closeIssuesHeldOnFinishedSewing,
+  finishSewingHandover,
+} from "../lib/outsource-issue";
+import type { SewingHandover } from "../lib/outsource-issue";
 
 // ---------------------------------------------------------------------------
 // overdue-counts snapshot key — ONE definition, used by the route AND the warm
@@ -2277,6 +2285,27 @@ app.post("/:id/scan-complete", async (c) => {
     );
   }
 
+  let sewingHandover: SewingHandover = { kind: "none" };
+  let cardSewingScope: SewingScope | null = null;
+  if (target.jc.departmentCode === "FAB_SEW") {
+    cardSewingScope = await resolveSewingScope(db, {
+      productionOrderId: target.po.id,
+      wipKey: target.jc.wipKey || undefined,
+      pieceNo: wholeCard ? undefined : target.slot.pieceNo,
+    });
+    sewingHandover = await checkSewingHandover(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      scope: cardSewingScope,
+    });
+    if (sewingHandover.kind === "refused") {
+      return c.json(
+        { success: false, code: sewingHandover.code, error: sewingHandover.message },
+        409,
+      );
+    }
+  }
+
   // Fill the piece slot(s).
   if (wholeCard) {
     // Whole-WIP completion: PIC1 of every still-open piece → the scanning
@@ -2538,6 +2567,16 @@ app.post("/:id/scan-complete", async (c) => {
 
   await invalidateProductionCachesAfterScan(c);
 
+  if (cardSewingScope) {
+    const sewnScope = cardSewingScope;
+    await finishSewingHandover(
+      db,
+      sewingHandover,
+      { productionOrderId: target.po.id, workerId: worker.id },
+      () => isSewingDone(db, sewnScope),
+    );
+  }
+
   const freshPo = await fetchPO(db, target.po.id);
   const jcOut = freshPo?.jobCards.find((j) => j.id === target.jc.id);
   const redirected =
@@ -2790,6 +2829,21 @@ app.post("/:id/scan-complete-dept", async (c) => {
     if (gate) return gate;
   }
 
+  let sewingHandover: SewingHandover = { kind: "none" };
+  if (deptCode === "FAB_SEW") {
+    sewingHandover = await checkSewingHandover(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      scope: { productionOrderId: poId, wipKey: null, pieceNo: null },
+    });
+    if (sewingHandover.kind === "refused") {
+      return c.json(
+        { success: false, code: sewingHandover.code, error: sewingHandover.message },
+        409,
+      );
+    }
+  }
+
   const nowIso = new Date().toISOString();
   const today = nowIso.split("T")[0];
   const completedJcIds: string[] = [];
@@ -2951,6 +3005,11 @@ app.post("/:id/scan-complete-dept", async (c) => {
 
   await invalidateProductionCachesAfterScan(c);
 
+  await finishSewingHandover(db, sewingHandover, {
+    productionOrderId: poId,
+    workerId: worker.id,
+  });
+
   const freshPo = await fetchPO(db, poId);
   return c.json({
     success: true,
@@ -3063,28 +3122,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
     return c.json({ success: false, error: "Worker not found" }, 400);
   }
 
-  // SOFA exception: a sofa BASE compartment represents the WHOLE variant — its
-  // base, cushions and armrests are sewn together by one worker (Wei Siang
-  // 2026-06-07: scan 1A → 1A's base + armrest + back-cushion complete together).
-  // The base sticker carries the base's own wipKey so the PHONE resolves it to a
-  // single card (no Divan-vs-HB-style chooser), but COMPLETION must fan out to
-  // every FAB_SEW / UPHOLSTERY card of the variant. Detect a sofa compartment by
-  // its wipType (SOFA_BASE / SOFA_CUSHION / SOFA_ARMREST / SOFA_HEADREST) and drop
-  // the per-compartment + per-piece scoping so the whole-dept fan-out runs.
-  // Bedframe pieces (DIVAN / HEADBOARD) are NOT SOFA_* — they keep per-piece
-  // scoping and stay separately scannable.
-  if (wipKey) {
-    const wkProbe = await db
-      .prepare(
-        "SELECT wipType FROM job_cards WHERE productionOrderId = ? AND wipKey = ? LIMIT 1",
-      )
-      .bind(poId, wipKey)
-      .first<{ wipType: string | null }>();
-    if ((wkProbe?.wipType || "").toUpperCase().startsWith("SOFA_")) {
-      wipKey = undefined;
-      pieceNo = undefined;
-    }
-  }
+  const sewingScope = await resolveSewingScope(db, {
+    productionOrderId: poId,
+    wipKey,
+    pieceNo,
+  });
+  wipKey = sewingScope.wipKey ?? undefined;
+  pieceNo = sewingScope.pieceNo ?? undefined;
 
   // Resolve the scanning SECTION → target department. Cut+Sew workers (女部)
   // cross within their section, so anyone covering FAB_SEW or FAB_CUT (and NOT
@@ -3193,6 +3237,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
         if (t && !doneBy.includes(t)) doneBy.push(t);
       }
     }
+    if (targetDept === "FAB_SEW") {
+      await closeIssuesHeldOnFinishedSewing(db, {
+        orgId: scanOrgId(c),
+        workerId: worker.id,
+        scope: sewingScope,
+      });
+    }
     const freshEmpty = await fetchPO(db, poId);
     return c.json({
       success: true,
@@ -3230,6 +3281,21 @@ app.post("/:id/scan-complete-shared", async (c) => {
           code: "SEWING_NOT_DONE",
           error: "Fabric Sewing for this item is not completed yet.",
         },
+        409,
+      );
+    }
+  }
+
+  let sewingHandover: SewingHandover = { kind: "none" };
+  if (targetDept === "FAB_SEW") {
+    sewingHandover = await checkSewingHandover(db, {
+      orgId: scanOrgId(c),
+      workerId: worker.id,
+      scope: sewingScope,
+    });
+    if (sewingHandover.kind === "refused") {
+      return c.json(
+        { success: false, code: sewingHandover.code, error: sewingHandover.message },
         409,
       );
     }
@@ -3409,6 +3475,10 @@ app.post("/:id/scan-complete-shared", async (c) => {
         409,
       );
     }
+    await finishSewingHandover(db, sewingHandover, {
+      productionOrderId: poId,
+      workerId: worker.id,
+    });
     const freshEmpty = await fetchPO(db, poId);
     return c.json({
       success: true,
@@ -3469,6 +3539,11 @@ app.post("/:id/scan-complete-shared", async (c) => {
   await cascadeUpholsteryToCO(db, poId);
 
   await invalidateProductionCachesAfterScan(c);
+
+  await finishSewingHandover(db, sewingHandover, {
+    productionOrderId: poId,
+    workerId: worker.id,
+  });
 
   const freshPo = await fetchPO(db, poId);
   return c.json({

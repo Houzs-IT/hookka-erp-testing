@@ -38,6 +38,7 @@ import { deriveWipName } from "@/lib/wip-name";
 import { compressImage } from "@/lib/image-compress";
 import { z } from "zod";
 import { DeptDayCard, type DeptDay } from "./dept-day-card";
+import { OutsourceTaskTile } from "./outsource-task-tile";
 
 // workerFetch handles auth + 401 redirect, but we still want runtime-typed
 // JSON parsing on top — cast through a passthrough envelope schema.
@@ -1214,6 +1215,8 @@ export default function WorkerHomePage() {
         </span>
       </Link>
       )}
+
+      <OutsourceTaskTile />
 
       {/* Report problem secondary — Wei Siang 2026-05-10: not yet live. */}
       {SHOW_CLOCK_AND_SCAN && (

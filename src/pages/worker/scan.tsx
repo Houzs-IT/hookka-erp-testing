@@ -2369,7 +2369,12 @@ export default function WorkerScanPage() {
         } else {
           setResult({
             kind: "error",
-            message: data.error || t("common.error"),
+            message:
+              data.code === "NOT_ISSUED_TO_YOU"
+                ? t("scan.notIssuedToYou")
+                : data.code === "ISSUED_TO_OTHER"
+                  ? t("scan.issuedToOther")
+                  : data.error || t("common.error"),
           });
         }
       }

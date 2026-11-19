@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-19**: HK-0164 outsource fabric issuance entry added (branch `feat/hk0164-outsource-fabric-issue-staging`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-11**: revert of the Production Revenue line fix added (branch `fix/revert-1337-revenue-line-replay`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-11**: Production Revenue line fix entry added (branch `fix/production-revenue-line-replay`, to `staging`, committed locally, not pushed); nothing else re-checked.
 > **Last verified: 2026-11-10**: mobile Service Orders entry added (branch `mobile/design-service-order`, frontend only, uncommitted); nothing else re-checked.
@@ -12,6 +13,13 @@
 > **Last verified: 2026-11-04**: HK-0130 outsource piece-rate entry added (branch `feat/hk0130-outsource-piece-rate`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-02**: mobile Home v10 dashboard entry added (branch `design/mobile-dashboard-homeV10`, frontend only); nothing else re-checked.
 > **Last verified: 2026-10-30**: mobile Planning v2 entry added (branch `design/mobile-planning`, frontend only, merged with staging 9dc3d6fa7); nothing else re-checked.
+
+## HK-0164 Outsource fabric issuance and completion (feat/hk0164-outsource-fabric-issue-staging, 2026-11-19)
+Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to an outsourced worker (Incomplete); it shows in the worker's portal; the worker's scan of the finished item checks it is theirs, marks it Completed and records the time. Owner: Fabric Sewing only; the worker's scan also completes Fabric Sewing; no re-issue; access granted per account.
+1. DONE (branch, tests only): `outsource_issues` table (self-applied), admin page desktop `/production/outsource-issue` and phone `/m/outsource-issue`, worker "My task" `/worker/tasks` + home tile, check and close inside the three FAB_SEW scan-complete handlers, permission `outsource-issues`. Plan: `docs/pipeline/2026-11-18/hk0164-outsource-fabric-issue-plan.md` (local). Tests: `tests/outsource-issue-flow.test.mjs`, `tests/sewing-scope.test.mjs`.
+2. OPEN: verify on staging at 360px, 390px and desktop; SQL never run on real Postgres (fake DB in tests).
+3. OPEN, go-live (prod): deploy with kv `outsource_issue.enforce` off → the office issues every bundle already out → grant `outsource-issues` → a Super Admin turns enforce on.
+4. Measured on prod 2026-11-18 (read-only): 4 outsourced workers, 3 active, all FAB_SEW, all flagged `isOutsource`; 449 FAB_SEW cards with them as PIC since 2026-10-01.
 
 ## Revert the staging Production Revenue line fix (#1337, fix/revert-1337-revenue-line-replay, 2026-11-11)
 Ask: back #1337 out of staging; keep main's #1318 (BUG-2026-11-11-498) as the one fix.
