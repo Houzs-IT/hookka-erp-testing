@@ -4,22 +4,30 @@ import { readFileSync } from "node:fs";
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import { BED_PO, SOFA_PO, WIP, makeFakeDb, stickerUrl } from "./_outsource-issue-fake.mjs";
+import { BED_PO, SOFA_PO, WIP, defaultCards, defaultWorkers, extraDepartmentCards, makeFakeDb, stickerUrl } from "./_outsource-issue-fake.mjs";
 
 try { register("tsx/esm", pathToFileURL("./")); } catch { /* native strip */ }
-const Scope = await import(pathToFileURL(resolve(process.cwd(), "src/api/lib/sewing-scope.ts")).href);
+const Targets = await import(pathToFileURL(resolve(process.cwd(), "src/api/lib/outsource-targets.ts")).href);
 const Issue = await import(pathToFileURL(resolve(process.cwd(), "src/api/lib/outsource-issue.ts")).href);
 
 const ORG = "hookka";
-const ALI = { id: "osc", empNo: "OSC-1", name: "Ali" };
-const BALA = { id: "osc2", empNo: "OSC-2", name: "Bala" };
+const ALI = { id: "osc", empNo: "OSC-1", name: "Ali", departmentCodes: ["FAB_SEW"] };
+const BALA = { id: "osc2", empNo: "OSC-2", name: "Bala", departmentCodes: ["FAB_SEW"] };
+const WOODY = { id: "oscWood", empNo: "OSC-4", name: "Woody", departmentCodes: ["WOOD_CUT"] };
 const divanQr = (piece) => stickerUrl(`po=${BED_PO.poNo}&c=DIVAN&p=${piece}&t=2`);
+const divan = (pieceNo) => ({ cardIds: ["jc-divan"], pieceNo });
+const sofaTarget = { cardIds: ["jc-sofa-base", "jc-sofa-cushion"], pieceNo: null };
+const context = { productionOrderId: BED_PO.id, workerId: "osc" };
 
 async function issue(db, worker, qr) {
-  const lookup = await Scope.sewingScopeFromSticker(db, qr);
+  const lookup = await Targets.resolveIssueTarget(db, { qr, departmentCodes: worker.departmentCodes });
   assert.equal(lookup.kind, "found");
   return Issue.issueItem(db, { orgId: ORG, worker, lookup, qrRaw: qr, issuedBy: "Office" });
 }
+
+const signPiece = (state, jobCardId, pieceNo) => state.slots.push({ jobCardId, pieceNo, pic1Id: "osc" });
+const finishCard = (state, id) => { state.cards.find((c) => c.id === id).status = "COMPLETED"; };
+const check = (db, workerId, target) => Issue.checkIssueHandover(db, { orgId: ORG, workerId, target });
 
 test("issue: first scan issues as INCOMPLETE with snapshots, the second says already issued", async () => {
   const { db, state } = makeFakeDb();
@@ -27,6 +35,8 @@ test("issue: first scan issues as INCOMPLETE with snapshots, the second says alr
   assert.equal(first.kind, "issued");
   assert.equal(first.issue.status, "INCOMPLETE");
   assert.equal(first.issue.workerName, "Ali");
+  assert.equal(first.issue.departmentCode, "FAB_SEW");
+  assert.equal(first.issue.departmentName, "Fabric Sewing");
   assert.equal(first.issue.productCode, "1013");
   assert.equal(first.issue.poNo, "PO-BED");
   assert.equal(first.issue.pieceNo, 1);
@@ -39,24 +49,32 @@ test("issue: first scan issues as INCOMPLETE with snapshots, the second says alr
   assert.equal(toOther.kind, "already-issued");
   assert.equal(toOther.issue.workerName, "Ali");
   assert.equal(state.issues.length, 1);
+  assert.deepEqual(state.issueCards.map((c) => [c.job_card_id, c.piece_no]), [["jc-divan", 1]]);
 
   const secondPiece = await issue(db, ALI, divanQr(2));
   assert.equal(secondPiece.kind, "issued");
   assert.equal(state.issues.length, 2);
 });
 
-test("issue: an item whose Fabric Sewing is already done is refused", async () => {
+test("issue: an item whose department work is already done is refused", async () => {
   const { db, state } = makeFakeDb();
-  state.cards.find((c) => c.id === "jc-headboard").status = "COMPLETED";
+  finishCard(state, "jc-headboard");
   const outcome = await issue(db, ALI, stickerUrl(`po=${BED_PO.poNo}&c=HEADBOARD`));
-  assert.equal(outcome.kind, "already-sewn");
+  assert.equal(outcome.kind, "already-done");
   assert.equal(state.issues.length, 0);
+});
+
+test("issue: two offices racing on one piece end with one issue and one already issued", async () => {
+  const { db, state } = makeFakeDb();
+  const [a, b] = await Promise.all([issue(db, ALI, divanQr(1)), issue(db, BALA, divanQr(1))]);
+  assert.deepEqual([a.kind, b.kind].sort(), ["already-issued", "issued"]);
+  assert.equal(state.issues.length, 1);
+  assert.equal(state.issueCards.length, 1);
 });
 
 test("handover, enforce on: an outsourced worker with no issue is refused", async () => {
   const { db } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  const result = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope });
+  const result = await check(db, "osc", divan(1));
   assert.equal(result.kind, "refused");
   assert.equal(result.code, "NOT_ISSUED_TO_YOU");
 });
@@ -64,131 +82,170 @@ test("handover, enforce on: an outsourced worker with no issue is refused", asyn
 test("handover, enforce on: an in-house worker on an issued item is refused", async () => {
   const { db } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
   await issue(db, ALI, divanQr(1));
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  const inHouse = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "inhouse", scope });
+  const inHouse = await check(db, "inhouse", divan(1));
   assert.equal(inHouse.kind, "refused");
   assert.equal(inHouse.code, "ISSUED_TO_OTHER");
-  const otherOutsourced = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc2", scope });
-  assert.equal(otherOutsourced.code, "ISSUED_TO_OTHER");
-  const stillFree = await Issue.checkSewingHandover(db, {
-    orgId: ORG, workerId: "inhouse", scope: { ...scope, pieceNo: 2 },
-  });
-  assert.equal(stillFree.kind, "none");
+  assert.equal((await check(db, "osc2", divan(1))).code, "ISSUED_TO_OTHER");
+  assert.equal((await check(db, "inhouse", divan(2))).kind, "none");
 });
 
 test("handover, enforce on: an in-house worker on a never-issued item is untouched", async () => {
   const { db } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
-  const scope = { productionOrderId: SOFA_PO.id, wipKey: null, pieceNo: null };
-  const result = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "inhouse", scope });
-  assert.equal(result.kind, "none");
+  assert.equal((await check(db, "inhouse", sofaTarget)).kind, "none");
+});
+
+test("handover, enforce on: an in-house scan of a non-sewing card issued to an outsourced worker is refused", async () => {
+  const workers = [...defaultWorkers(), { id: "oscWood", empNo: "OSC-4", name: "Woody", status: "ACTIVE", isOutsource: true, departmentCode: "WOOD_CUT", departmentCodes: null }];
+  const { db } = makeFakeDb({ cards: [...defaultCards(), ...extraDepartmentCards()], workers, kv: { "outsource_issue.enforce": true } });
+  const issued = await issue(db, WOODY, stickerUrl(`op=jc-divan-cut&dept=FAB_CUT&po=${BED_PO.poNo}&p=1&t=2`));
+  assert.equal(issued.kind, "issued");
+  const target = { cardIds: ["jc-divan-wood"], pieceNo: 1 };
+  const refused = await check(db, "inhouse", target);
+  assert.equal(refused.code, "ISSUED_TO_OTHER");
+  assert.match(refused.message, /Woody/);
+  assert.equal((await check(db, "oscWood", target)).kind, "holder");
+  assert.equal((await check(db, "inhouse", { cardIds: ["jc-divan-wood"], pieceNo: 2 })).kind, "none");
 });
 
 test("handover: the holder completes, the issue closes once with a time, a second scan closes nothing", async () => {
   const { db, state } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
   const issued = await issue(db, ALI, divanQr(1));
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
 
-  const holder = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope });
+  const holder = await check(db, "osc", divan(1));
   assert.equal(holder.kind, "holder");
   assert.deepEqual(holder.issueIds, [issued.issue.id]);
 
-  assert.equal(await Issue.closeSewingHandover(db, holder), 1);
+  await Issue.finishIssueHandover(db, holder, context);
+  assert.equal(state.issues[0].status, "INCOMPLETE");
+
+  signPiece(state, "jc-divan", 1);
+  await Issue.finishIssueHandover(db, holder, context);
   const row = state.issues[0];
   assert.equal(row.status, "COMPLETED");
   assert.ok(row.completed_at instanceof Date);
 
-  assert.equal(await Issue.closeSewingHandover(db, holder), 0);
-  const rescan = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope });
+  const closedAt = row.completed_at;
+  await Issue.finishIssueHandover(db, holder, context);
+  assert.equal(row.completed_at, closedAt);
+  const rescan = await check(db, "osc", divan(1));
   assert.equal(rescan.kind, "none");
-  assert.equal(await Issue.closeSewingHandover(db, rescan), 0);
 });
 
-test("handover: a sofa scan closes the sofa issue, a Divan piece scan closes only that piece", async () => {
+test("handover: a sofa issue stays open until every card of the variant is done, a Divan piece closes alone", async () => {
   const { db, state } = makeFakeDb();
   const sofa = await issue(db, ALI, stickerUrl(`po=${SOFA_PO.poNo}&c=SOFA_BASE`));
   const piece1 = await issue(db, ALI, divanQr(1));
   await issue(db, ALI, divanQr(2));
+  assert.deepEqual(state.issueCards.filter((c) => c.issue_id === sofa.issue.id).map((c) => c.job_card_id), sofaTarget.cardIds);
 
-  const sofaScope = { productionOrderId: SOFA_PO.id, wipKey: null, pieceNo: null };
-  const sofaHandover = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope: sofaScope });
+  const sofaHandover = await check(db, "osc", { cardIds: ["jc-sofa-base"], pieceNo: null });
   assert.deepEqual(sofaHandover.issueIds, [sofa.issue.id]);
+  finishCard(state, "jc-sofa-base");
+  await Issue.finishIssueHandover(db, sofaHandover, context);
+  assert.equal(state.issues[0].status, "INCOMPLETE");
 
-  const pieceScope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  const pieceHandover = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope: pieceScope });
+  finishCard(state, "jc-sofa-cushion");
+  await Issue.finishIssueHandover(db, sofaHandover, context);
+  assert.equal(state.issues[0].status, "COMPLETED");
+
+  const pieceHandover = await check(db, "osc", divan(1));
   assert.deepEqual(pieceHandover.issueIds, [piece1.issue.id]);
-  await Issue.closeSewingHandover(db, pieceHandover);
-  assert.deepEqual(state.issues.map((i) => i.status), ["INCOMPLETE", "COMPLETED", "INCOMPLETE"]);
+  signPiece(state, "jc-divan", 1);
+  await Issue.finishIssueHandover(db, pieceHandover, context);
+  assert.deepEqual(state.issues.map((i) => i.status), ["COMPLETED", "COMPLETED", "INCOMPLETE"]);
 });
 
-test("handover, enforce off: no issue means sewing completes as it does today, an issue still closes", async () => {
-  const { db } = makeFakeDb();
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  assert.equal((await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope })).kind, "none");
-  assert.equal((await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "inhouse", scope })).kind, "none");
+test("close: a fan-out scan completing more than the issue covers closes it", async () => {
+  const { db, state } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
   await issue(db, ALI, divanQr(1));
-  assert.equal((await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "inhouse", scope })).kind, "none");
-  assert.equal((await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope })).kind, "holder");
+  const fanOut = { cardIds: ["jc-divan", "jc-headboard"], pieceNo: null };
+  const holder = await check(db, "osc", fanOut);
+  assert.equal(holder.kind, "holder");
+  finishCard(state, "jc-divan");
+  finishCard(state, "jc-headboard");
+  await Issue.finishIssueHandover(db, holder, context);
+  assert.equal(state.issues[0].status, "COMPLETED");
 });
 
-test("undo: removes an INCOMPLETE issue, refuses after complete, reports a missing id", async () => {
+test("handover, enforce off: no issue means the work completes as it does today, an issue still closes", async () => {
+  const { db } = makeFakeDb();
+  assert.equal((await check(db, "osc", divan(1))).kind, "none");
+  assert.equal((await check(db, "inhouse", divan(1))).kind, "none");
+  await issue(db, ALI, divanQr(1));
+  assert.equal((await check(db, "inhouse", divan(1))).kind, "none");
+  assert.equal((await check(db, "osc", divan(1))).kind, "holder");
+});
+
+test("undo: removes an INCOMPLETE issue and its cards, refuses after complete, reports a missing id", async () => {
   const { db, state } = makeFakeDb();
   const first = await issue(db, ALI, divanQr(1));
   const second = await issue(db, ALI, divanQr(2));
   const undone = await Issue.undoIssue(db, { orgId: ORG, id: first.issue.id });
   assert.equal(undone.kind, "undone");
   assert.equal(state.issues.length, 1);
+  assert.deepEqual(state.issueCards.map((c) => c.issue_id), [second.issue.id]);
+  assert.equal((await issue(db, BALA, divanQr(1))).kind, "issued");
 
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 2 };
-  await Issue.closeSewingHandover(db, await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope }));
+  signPiece(state, "jc-divan", 2);
+  await Issue.finishIssueHandover(db, await check(db, "osc", divan(2)), context);
   const refused = await Issue.undoIssue(db, { orgId: ORG, id: second.issue.id });
   assert.equal(refused.kind, "already-completed");
-  assert.equal(state.issues.length, 1);
+  assert.equal(state.issues.length, 2);
 
   assert.equal((await Issue.undoIssue(db, { orgId: ORG, id: "missing" })).kind, "not-found");
 });
 
 test("no re-issue after COMPLETED: the same item reports already issued", async () => {
-  const { db } = makeFakeDb();
+  const { db, state } = makeFakeDb();
   await issue(db, ALI, divanQr(1));
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  await Issue.closeSewingHandover(db, await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope }));
+  signPiece(state, "jc-divan", 1);
+  await Issue.finishIssueHandover(db, await check(db, "osc", divan(1)), context);
   const again = await issue(db, BALA, divanQr(1));
   assert.equal(again.kind, "already-issued");
   assert.equal(again.issue.status, "COMPLETED");
 });
 
-test("lists: tracking rows carry the live sewing status, the worker list splits Incomplete from Done", async () => {
+test("lists: tracking rows carry the live work status, the worker list splits Incomplete from Done", async () => {
   const { db, state } = makeFakeDb();
   await issue(db, ALI, divanQr(1));
   await issue(db, ALI, stickerUrl(`po=${BED_PO.poNo}&c=HEADBOARD`));
-  state.cards.find((c) => c.id === "jc-headboard").status = "COMPLETED";
+  finishCard(state, "jc-headboard");
 
   const rows = await Issue.listIssues(db, { orgId: ORG, filter: {} });
-  const byLabel = Object.fromEntries(rows.map((r) => [r.itemLabel, r.sewingDone]));
+  const byLabel = Object.fromEntries(rows.map((r) => [r.itemLabel, r.workDone]));
   assert.equal(byLabel.Headboard, true);
   assert.equal(byLabel['8" Divan'], false);
+  assert.ok(rows.every((r) => r.departmentName === "Fabric Sewing"));
 
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  await Issue.closeSewingHandover(db, await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope }));
+  signPiece(state, "jc-divan", 1);
+  await Issue.finishIssueHandover(db, await check(db, "osc", divan(1)), context);
   const lists = await Issue.listWorkerIssues(db, { orgId: ORG, workerId: "osc" });
   assert.equal(lists.incomplete.length, 1);
   assert.equal(lists.completedRecent.length, 1);
   assert.equal(lists.completedRecent[0].status, "COMPLETED");
+  assert.equal(lists.completedRecent[0].departmentName, "Fabric Sewing");
 
   const workers = await Issue.listOutsourceWorkers(db, ORG);
-  assert.deepEqual(workers.map((w) => [w.name, w.incompleteCount]), [["Ali", 1], ["Bala", 0]]);
+  assert.deepEqual(workers.map((w) => [w.name, w.incompleteCount, w.departmentNames]), [["Ali", 1, ["Fabric Sewing"]], ["Bala", 0, ["Fabric Sewing"]]]);
 });
 
-test("every handler that can complete a FAB_SEW card for a worker checks before writing and closes after", () => {
+test("every handler that completes cards for a worker checks before the first write and closes after", () => {
   const source = readFileSync("src/api/routes/production-orders.ts", "utf8");
   for (const route of ["scan-complete", "scan-complete-dept", "scan-complete-shared"]) {
     const start = source.indexOf(`app.post("/:id/${route}"`);
     assert.ok(start > 0, route);
     const next = source.indexOf("\napp.", start + 10);
     const body = source.slice(start, next === -1 ? undefined : next);
-    assert.match(body, /checkSewingHandover\(/, `${route} checks`);
-    assert.match(body, /finishSewingHandover\(/, `${route} closes`);
-    assert.ok(body.indexOf("checkSewingHandover(") < body.indexOf("finishSewingHandover("), route);
+    assert.match(body, /checkIssueHandover\(/, `${route} checks`);
+    assert.match(body, /finishIssueHandover\(/, `${route} closes`);
+    assert.ok(body.indexOf("checkIssueHandover(") < body.indexOf("finishIssueHandover("), route);
+    assert.doesNotMatch(body, /departmentCode === "FAB_SEW"\)\s*\{\s*(cardSewingScope|sewingHandover)/, route);
+    const check = body.indexOf("checkIssueHandover(");
+    const firstWrite = route === "scan-complete" ? body.indexOf("// Fill the piece slot(s).") : body.search(/UPDATE piece_pics SET (pic1Id|pic2Id)/);
+    assert.ok(check < firstWrite, `${route} checks before the first piece write`);
+    if (route !== "scan-complete") {
+      assert.ok(check > body.indexOf("gateFanOutSequence("), `${route} checks after the sequence lock`);
+    }
   }
 });
 
@@ -196,15 +253,14 @@ test("handover, enforce on: a whole-card scan by one holder is refused while ano
   const { db, state } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
   await issue(db, ALI, divanQr(1));
   await issue(db, BALA, divanQr(2));
-  const wholeCard = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: null };
-  const refused = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope: wholeCard });
+  const refused = await check(db, "osc", divan(null));
   assert.equal(refused.kind, "refused");
   assert.equal(refused.code, "ISSUED_TO_OTHER");
   assert.match(refused.message, /Bala/);
   assert.deepEqual(state.issues.map((i) => i.status), ["INCOMPLETE", "INCOMPLETE"]);
 });
 
-test("issue: an overlapping scope on the same order is refused whatever the status", async () => {
+test("issue: an overlapping card and piece is refused whatever the status", async () => {
   const { db, state } = makeFakeDb();
   const piece1 = await issue(db, ALI, divanQr(1));
   await issue(db, ALI, divanQr(2));
@@ -223,16 +279,15 @@ test("handover, enforce off: a failing issue lookup logs and never blocks the sc
   const { db } = makeFakeDb();
   const broken = {
     prepare(sql) {
-      if (/outsource_issues/i.test(sql)) throw new Error("table unavailable");
+      if (/outsource_issue/i.test(sql)) throw new Error("table unavailable");
       return db.prepare(sql);
     },
   };
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
   const original = console.error;
   const logged = [];
   console.error = (...args) => logged.push(args);
   try {
-    const result = await Issue.checkSewingHandover(broken, { orgId: ORG, workerId: "osc", scope });
+    const result = await check(broken, "osc", divan(1));
     assert.equal(result.kind, "none");
   } finally {
     console.error = original;
@@ -244,40 +299,65 @@ test("handover, enforce on: a failing issue lookup propagates", async () => {
   const { db } = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
   const broken = {
     prepare(sql) {
-      if (/outsource_issues/i.test(sql)) throw new Error("table unavailable");
+      if (/outsource_issue/i.test(sql)) throw new Error("table unavailable");
       return db.prepare(sql);
     },
   };
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  await assert.rejects(() => Issue.checkSewingHandover(broken, { orgId: ORG, workerId: "osc", scope }), /table unavailable/);
+  await assert.rejects(() => check(broken, "osc", divan(1)), /table unavailable/);
 });
 
-test("finish: a failing sewn check is logged, never thrown", async () => {
+test("finish: a failing done check is logged, never thrown, and the issue stays open", async () => {
   const { db, state } = makeFakeDb();
   await issue(db, ALI, divanQr(1));
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  const holder = await Issue.checkSewingHandover(db, { orgId: ORG, workerId: "osc", scope });
+  const holder = await check(db, "osc", divan(1));
+  signPiece(state, "jc-divan", 1);
+  const broken = {
+    prepare(sql) {
+      if (/FROM job_cards WHERE id IN/i.test(sql)) throw new Error("read failed");
+      return db.prepare(sql);
+    },
+    batch: (statements) => db.batch(statements),
+  };
   const original = console.error;
   console.error = () => {};
   try {
-    await Issue.finishSewingHandover(db, holder, { productionOrderId: BED_PO.id, workerId: "osc" }, async () => {
-      throw new Error("read failed");
-    });
+    await Issue.finishIssueHandover(broken, holder, context);
   } finally {
     console.error = original;
   }
   assert.equal(state.issues[0].status, "INCOMPLETE");
-  await Issue.finishSewingHandover(db, holder, { productionOrderId: BED_PO.id, workerId: "osc" }, async () => true);
+  await Issue.finishIssueHandover(db, holder, context);
   assert.equal(state.issues[0].status, "COMPLETED");
 });
 
-test("already-done sewing: the holder's scan still closes the issue, someone else's scan does not", async () => {
+test("already-done work: the holder's scan still closes the issue, someone else's scan does not", async () => {
   const { db, state } = makeFakeDb();
   await issue(db, ALI, divanQr(1));
-  const scope = { productionOrderId: BED_PO.id, wipKey: WIP.divan, pieceNo: 1 };
-  await Issue.closeIssuesHeldOnFinishedSewing(db, { orgId: ORG, workerId: "osc2", scope });
+  signPiece(state, "jc-divan", 1);
+  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc2", target: divan(1) });
   assert.equal(state.issues[0].status, "INCOMPLETE");
-  await Issue.closeIssuesHeldOnFinishedSewing(db, { orgId: ORG, workerId: "osc", scope });
+  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc", target: divan(1) });
   assert.equal(state.issues[0].status, "COMPLETED");
   assert.ok(state.issues[0].completed_at instanceof Date);
+});
+
+test("table setup: legacy issues without cards get their Fabric Sewing cards once, idempotently", async () => {
+  const library = pathToFileURL(resolve(process.cwd(), "src/api/lib/outsource-issue.ts")).href;
+  const fresh = await import(`${library}?backfill=1`);
+  const { db, state } = makeFakeDb();
+  state.issues.push(
+    { id: "oi-legacy", org_id: ORG, worker_id: "osc", production_order_id: BED_PO.id, wip_key: WIP.divan, piece_no: 1, status: "INCOMPLETE" },
+    { id: "oi-sofa", org_id: ORG, worker_id: "osc", production_order_id: SOFA_PO.id, wip_key: null, piece_no: null, status: "INCOMPLETE" },
+  );
+  await fresh.ensureOutsourceIssueTable(db);
+  const cards = () => state.issueCards.map((c) => [c.issue_id, c.job_card_id, c.piece_no]);
+  assert.deepEqual(cards(), [
+    ["oi-legacy", "jc-divan", 1],
+    ["oi-sofa", "jc-sofa-base", null],
+    ["oi-sofa", "jc-sofa-cushion", null],
+  ]);
+  const before = cards();
+  const again = await import(`${library}?backfill=2`);
+  await again.ensureOutsourceIssueTable(db);
+  assert.deepEqual(cards(), before);
 });
