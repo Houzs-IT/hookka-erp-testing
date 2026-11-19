@@ -141,8 +141,10 @@ test("screens keep no more fixed-position layers than the known full-screen ones
   // the dark full-screen punch-photo viewer (PunchPhotoViewer.tsx) the "View all" Daily working hours page (HoursPage.tsx), the "View all" Employee Performance Daily Breakdown page (BreakdownPage.tsx) and the Department Performance day page (DeptPerfDayPage.tsx) and the Labor Cost "View all N units" Revenue Raw Data page (RevenueUnitsPage.tsx) and the Payroll payslip detail page (PayslipPage.tsx);
   // none is a toast, bar or banner.
   // A new toast, bar or banner must use ResponsiveActionDock, not a fixed offset.
+  // Floor Live adds one: FloorLiveCompleted.tsx, the full-screen monthly "Completed" detail (Claude Design handoff).
   assert.deepEqual(found, [
     "cases/case-overlay.tsx",
+    "dashboard/FloorLiveCompleted.tsx",
     "employees/AdjustmentRequests.tsx",
     "employees/BreakdownPage.tsx",
     "employees/DeptPerfDayPage.tsx",

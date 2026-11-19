@@ -52,7 +52,7 @@ test("Operations sub-tabs are the desktop's three, in the URL's ?sub=", () => {
   assert.deepEqual(TAB_SUBS.operations.map((s) => s.key), ["overview", "production", "floor"]);
   const home = read("HomeDashboard.tsx");
   assert.match(home, /\["floor", "Floor Live"\]/);
-  assert.match(home, /<FloorLiveView period=\{period\} today=\{today\} onPeriodChange=\{setPeriod\} \/>/);
+  assert.match(home, /<FloorLivePhone period=\{period\} today=\{today\} onPeriodChange=\{setPeriod\} \/>/);
   assert.match(home, /if \(k === "floor" && !period\.day\) setPeriod\(/);
   assert.deepEqual(TAB_SUBS.operations.slice(0, 2).map((s) => s.key), ["overview", "production"]);
   assert.deepEqual(TAB_SUBS.operations.slice(0, 2).map((s) => s.label), ["Overview", "Output & Cost"]);
