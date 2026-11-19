@@ -328,3 +328,28 @@ export function ShareBars({ rows, color = CAT[0] }: { rows: { label: string; val
     </div>
   );
 }
+
+/** Horizontal variance bars around a centre line (owner 2026-11-19, batch 3):
+ *  each row's amount above (right) or below (left) its forecast, green when
+ *  better, red when worse (`invert` for costs), amount and % at the bar end. */
+export function VarianceBars({ rows, invert }: { rows: { label: string; value: number; pct: number | null }[]; invert?: boolean }) {
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.value)));
+  return (
+    <div className="brp-varbars">
+      {rows.map((r) => {
+        const good = invert ? r.value <= 0 : r.value >= 0;
+        const w = (Math.abs(r.value) / max) * 50;
+        return (
+          <div key={r.label} className="row">
+            <span className="lb">{r.label}</span>
+            <span className="track">
+              <span className="mid" />
+              <span className="bar" style={{ width: `${w}%`, left: r.value >= 0 ? "50%" : `${50 - w}%`, background: good ? C.green : C.red }} />
+            </span>
+            <span className="vl">{r.value >= 0 ? "+" : "−"}{rmShort(Math.abs(r.value))}{r.pct !== null ? <em> {r.pct >= 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(0)}%</em> : null}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

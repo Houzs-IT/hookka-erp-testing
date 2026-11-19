@@ -3,10 +3,10 @@
 // GET /api/reports/board (src/lib/board-report.ts); nothing is computed here
 // beyond picking colours and labels.
 import type { BoardReport } from "@/lib/board-report";
-import { BOARD_DATA_FROM, changePct, pct, shortMonth } from "@/lib/board-report";
-import { ComboChart, Donut, Elastic, Waterfall, type Datum } from "./charts";
-import { cashHeadline, equityHeadline, trendHeadline } from "./headlines";
-import { C, CAT, FC, deptName, pctText, rm } from "./format";
+import { BOARD_DATA_FROM, addMonths, changePct, pct, shortMonth } from "@/lib/board-report";
+import { ComboChart, Donut, Elastic, VarianceBars, Waterfall, type Datum } from "./charts";
+import { cashHeadline, equityHeadline, execSummary, trendHeadline } from "./headlines";
+import { C, CAT, FC, deptName, pctText, rm, rmShort } from "./format";
 import { BrPage, ChartTitle, Delta, Money, Tile } from "./page-kit";
 import { withSection } from "./with-section";
 
@@ -42,10 +42,30 @@ export function CoverPage({ r }: P) {
               />
             ))}
           </div>
-          <h3>Highlights</h3>
-          <ul className="brp-bullets">
-            {d.highlights.map((h) => <li key={h}>{h}</li>)}
-          </ul>
+          {/* Owner 2026-11-19 (batch 3): an executive summary a director can stop
+              after — performance, cash, what to watch — from figures printed
+              elsewhere in this report. The automatic highlights stay as a fallback. */}
+          {(() => {
+            const summary = execSummary({
+              month: shortMonth(r.month),
+              prevMonth: shortMonth(addMonths(r.month, -1)),
+              tiles: d.tiles,
+              materials: r.materials.ok ? r.materials.data.cats : [],
+              materialsMonth: r.materials.ok ? (r.materials.data.trend.find((t) => t.ym === r.month) ?? null) : null,
+              largest: r.customers.ok && r.customers.data.concentration ? { name: r.customers.data.concentration.largestName, pct: r.customers.data.concentration.largestPct } : null,
+            });
+            return summary.length ? (
+              <div className="brp-summary">
+                <div className="brp-summary-h">Executive summary</div>
+                <ul>{summary.map((s) => <li key={s} className={s.startsWith("Watch:") ? "watch" : undefined}>{s}</li>)}</ul>
+              </div>
+            ) : (
+              <>
+                <h3>Highlights</h3>
+                <ul className="brp-bullets">{d.highlights.map((h) => <li key={h}>{h}</li>)}</ul>
+              </>
+            );
+          })()}
           <ChartTitle label="Revenue and net profit by month"
             action={trendHeadline("Revenue", d.trend.map((t) => ({ label: t.label, value: t.sales, forecast: t.forecastSales, actual: t.kind === "actual" })))} />
           <Elastic>
@@ -315,19 +335,42 @@ export function MaterialsPage({ r }: P) {
               })()}
             </tbody>
           </table>
-          <ChartTitle label="Raw materials used by month"
-            action={trendHeadline("Raw materials used", d.trend.map((t) => ({ label: t.label, value: t.actual, forecast: t.forecast, actual: true })))} />
-          <Elastic>
-            {(w, h) => (
-              <ComboChart
-                w={w}
-                h={h}
-                data={d.trend.map((t) => ({ label: t.label, values: { a: t.actual, f: t.forecast } }))}
-                variance={{ a: "a", f: "f", invert: true }}
-                series={[{ key: "a", label: "Used", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]}
-              />
-            )}
-          </Elastic>
+          {/* Owner 2026-11-19 (batch 3): the month-by-month chart no longer fills
+              the page alone — the category variance to forecast sits beside it. */}
+          <div className="brp-charts2 cols">
+            <div className="brp-chartcol">
+                <ChartTitle label="Raw materials used by month"
+                  action={trendHeadline("Raw materials used", d.trend.map((t) => ({ label: t.label, value: t.actual, forecast: t.forecast, actual: true })))} />
+                <Elastic>
+                  {(w, h) => (
+                    <ComboChart
+                      w={w}
+                      h={h}
+                      data={d.trend.map((t) => ({ label: t.label, values: { a: t.actual, f: t.forecast } }))}
+                      variance={{ a: "a", f: "f", invert: true }}
+                      series={[{ key: "a", label: "Used", color: CAT[0], type: "bar" }, { key: "f", label: "Forecast", color: FC, type: "line", dashed: true }]}
+                    />
+                  )}
+                </Elastic>
+            </div>
+            <div className="brp-chartcol">
+              {(() => {
+                const rows = d.cats
+                  .filter((x): x is typeof x & { forecast: number } => typeof x.forecast === "number" && x.forecast > 0)
+                  .map((x) => ({ label: x.name, value: x.spend - x.forecast, pct: changePct(x.spend, x.forecast) }))
+                  .sort((p, q) => q.value - p.value);
+                const over = rows.filter((x) => x.value > 0);
+                const top = over[0];
+                return (
+                  <>
+                    <ChartTitle label="Used vs forecast by category, RM"
+                      action={top ? `${over.length} of ${rows.length} categories over forecast; ${top.label.toLowerCase()} the most (+RM ${rmShort(top.value)})` : rows.length ? "Every category at or under forecast" : null} />
+                    <div className="brp-fill"><VarianceBars rows={rows} invert /></div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
           <p className="brp-small">Used = opening stock + purchases − closing stock per category (Stock Take basis) — the closing stock is deducted. The P&amp;L raw-materials line adds carriage inwards (700-1015) and SST charges (706-0000), shown on their own row. Source: Forecasting › Dashboard cost structure.</p>
         </>
       ))}

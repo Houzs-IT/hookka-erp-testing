@@ -160,3 +160,19 @@
 .brp-clabel { font-size: 6.5pt; font-weight: 500; color: var(--brp-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 1px; }
 /* Two charts side by side (waterfall + monthly trend). */
 .brp-charts2.cols { grid-template-rows: none; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+/* Executive summary on the cover (owner 2026-11-19, batch 3). */
+.brp-summary { flex: 0 0 auto; border-left: 3px solid var(--brp-navy); background: #f6f7f9; padding: 7px 12px 8px; margin-top: 4px; }
+.brp-summary-h { font-size: 6.5pt; font-weight: 600; color: var(--brp-gold); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 3px; }
+.brp-summary ul { margin: 0; padding-left: 14px; }
+.brp-summary li { font-size: 9pt; line-height: 1.45; margin: 1px 0; }
+.brp-summary li.watch { color: #7a2232; }
+/* Variance bars (used vs forecast by category). */
+.brp-varbars { display: flex; flex-direction: column; gap: 3px; padding-top: 6px; }
+.brp-varbars .row { display: grid; grid-template-columns: 30% 1fr 62px; align-items: center; gap: 6px; font-size: 7.5pt; }
+.brp-varbars .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brp-varbars .track { position: relative; height: 10px; }
+.brp-varbars .mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--brp-rule); }
+.brp-varbars .bar { position: absolute; top: 1px; height: 8px; border-radius: 2px; }
+.brp-varbars .vl { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.brp-varbars .vl em { font-style: normal; font-weight: 400; color: var(--brp-muted); }

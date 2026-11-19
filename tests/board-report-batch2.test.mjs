@@ -53,3 +53,22 @@ test("pages carry action titles and the cash-flow waterfall", () => {
   assert.match(fin, /<Waterfall w=\{w\} h=\{h\} steps=\{steps\} \/>/);
   assert.match(biz, /m\.ym <= r\.month/, "the bank headline speaks of the report month, not the running one");
 });
+
+test("batch 3: the executive summary quotes the same materials % as page 4, and flags concentration", async () => {
+  const { execSummary } = await import("../src/pages/board-report/headlines.ts");
+  const s = execSummary({
+    month: "Oct 26", prevMonth: "Sep 26",
+    tiles: [
+      { label: "Revenue", value: 46_332_400, prev: 37_143_000, forecast: 46_500_000 },
+      { label: "Net profit", value: 9_343_600, prev: 5_205_700, forecast: 6_290_000 },
+      { label: "Cash at bank, month end", value: 3_270_800, prev: 3_474_400, forecast: null },
+    ],
+    materials: [{ name: "PLYWOOD", spend: 3_291_100, forecast: 1_395_000 }, { name: "FABRIC", spend: 6_820_200, forecast: 5_580_000 }],
+    materialsMonth: { actual: 23_913_400, forecast: 21_830_000 },
+    largest: { name: "Houzs Century", pct: 71 },
+  });
+  assert.equal(s[0], "Revenue RM 463k (+24.7% on Sep 26, 0.4% below forecast); net profit RM 93k — 20.2% margin, +79.5% on Sep 26, 48.5% above forecast.");
+  assert.equal(s[1], "Cash at bank RM 33k at Oct 26 end, −5.9% on Sep 26.");
+  assert.match(s[2], /^Watch: raw materials 9\.5% above forecast, led by plywood \(\+RM 19k, \+135\.9%\)\.$/);
+  assert.match(s[3], /Houzs Century is 71% of confirmed orders/);
+});
