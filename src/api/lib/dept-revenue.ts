@@ -122,10 +122,9 @@ export function countSets(rows: DeptRevenueRow[]): SetCount {
   for (const r of rows) {
     const qty = r.qty ?? 0;
     if (r.category === "BEDFRAME") {
-      if (r.bedPiece === "SET") out.bedframe += qty;
-      else if (r.bedPiece === "HB") out.hbOnly += qty;
-      else if (r.bedPiece === "DIVAN") out.divanOnly += qty;
-      else out.unknown += qty;
+      // Owner 2026-11-20 「床架就是1个sku算一个」: every bedframe SKU counts,
+      // × quantity — no headboard + divan pairing (HK-0148's rule retired).
+      out.bedframe += qty;
     } else if (r.category === "SOFA" && r.orderKey) sofaOrders.add(r.orderKey);
   }
   out.sofa = sofaOrders.size;

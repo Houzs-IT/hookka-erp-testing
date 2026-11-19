@@ -10,6 +10,8 @@
 //
 // Mounted at /api/dashboard/overview. Auth-gated globally; tenant-scoped.
 // ---------------------------------------------------------------------------
+import { loadDeptCompletedByDay, type DeptDayCount } from "../lib/dept-completed";
+import type { SetCount } from "../lib/dept-revenue";
 import { todayYmdMY } from "../../lib/utils";
 import { Hono } from "hono";
 import { parseDashPeriod } from "../lib/dash-period";
@@ -2241,13 +2243,42 @@ app.get("/", async (c) => {
 // from every month already frozen. Same mount, so the same access rule as the
 // Revenue chart.
 // ---------------------------------------------------------------------------
+/** Replace Department Revenue's set counts with Floor Live's (one rule). Each
+ *  sofa set has a single completion day per department, so per-day counts add
+ *  up correctly over a week or a month. */
+function withFloorLiveSets<T extends { code: string; sets: SetCount; setsByBucket: SetCount[] }>(
+  depts: T[],
+  days: DeptDayCount[],
+  from: string,
+  to: string,
+  buckets: string[],
+  bucketOf: (day: string) => string,
+): T[] {
+  const idx = new Map(buckets.map((b, i) => [b, i]));
+  const blank = (): SetCount => ({ bedframe: 0, sofa: 0, total: 0, hbOnly: 0, divanOnly: 0, unknown: 0 });
+  return depts.map((d) => {
+    const sets = blank();
+    const byB = buckets.map(blank);
+    for (const x of days) {
+      if (x.dept !== d.code || x.date < from || x.date > to) continue;
+      sets.bedframe += x.bedframeUnits;
+      sets.sofa += x.sofaSets;
+      const i = idx.get(bucketOf(x.date));
+      if (i !== undefined) { byB[i].bedframe += x.bedframeUnits; byB[i].sofa += x.sofaSets; }
+    }
+    sets.total = sets.bedframe + sets.sofa;
+    for (const s of byB) s.total = s.bedframe + s.sofa;
+    return { ...d, sets, setsByBucket: byB };
+  });
+}
+
 app.get("/revenue-split", async (c) => {
   const denied = await requireReadOrDashboardTab(c, "dashboard", "operations");
   if (denied) return denied;
   const orgId = getOrgId(c);
   const { cached } = await import("../lib/kv-cache");
   const period = parseDashPeriod(c.req.query("period") ?? "all").key;
-  const data = await cached(c, `dashboard:revenue-split:${orgId}:v3:${period}`, 60, async () => {
+  const data = await cached(c, `dashboard:revenue-split:${orgId}:v4:${period}`, 60, async () => {
     const db = c.var.DB;
     // Same "today" as the main overview: Malaysia time (owner 2026-11-20).
     const todayISO = myTodayISO();
@@ -2257,6 +2288,10 @@ app.get("/revenue-split", async (c) => {
       loadSoLines(db, orgId, from, to),
       loadInvoiceLines(db, orgId, from, to),
     ]);
+    // Sets = Floor Live's count (owner 2026-11-20 「active 和 completed set 全套系统
+    // 都一样」 + 「床架就是1个sku算一个」): bedframe = every bedframe SKU × qty, sofa
+    // = 1 set on the day the order's LAST sofa piece is done in that department.
+    const setDays = await cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId));
     const so = allocateDocsByCategory(soLines, buckets, bucketOf);
     const inv = allocateDocsByCategory(invLines, buckets, bucketOf);
     const prod = productionByCategory(deptRows, buckets, bucketOf);
@@ -2271,7 +2306,7 @@ app.get("/revenue-split", async (c) => {
         invoice: inv[i],
         production: prod[i],
       })),
-      departments: summarizeDeptRevenue(deptRows, buckets, bucketOf),
+      departments: withFloorLiveSets(summarizeDeptRevenue(deptRows, buckets, bucketOf), setDays, from, to, buckets, bucketOf),
     };
   });
   return c.json({ success: true, ...data });
