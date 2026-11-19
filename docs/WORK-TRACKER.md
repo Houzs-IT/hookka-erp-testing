@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-19**: HK-0164 Outsource Work entry added (branch `feat/hk0164-outsource-work-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: credit note date picker (branch `feat/cn-date-picker`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 in-house efficiency (branch `fix/in-house-efficiency`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-17**: HK-0124 live check, Labour cost card follows the period (branch `fix/labour-card-follows-period`, to `main`); nothing else re-checked.
@@ -318,6 +319,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 HK-0164 Outsource fabric issuance and completion (feat/hk0164-outsource-work-main, 2026-11-19)
+Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to an outsourced worker (Incomplete); it shows in the worker's portal; the worker's scan of the finished item checks it is theirs, marks it Completed and records the time. Owner: Fabric Sewing only; the worker's scan also completes Fabric Sewing; no re-issue; access granted per account.
+1. DONE (branch, tests only): `outsource_issues` table (self-applied), admin page desktop `/production/outsource-issue` and phone `/m/outsource-issue`, worker "My task" `/worker/tasks` + home tile, check and close inside the three scan-complete handlers, permission `outsource-issues`. Ported from the `staging` line onto `main`. Plan: `docs/pipeline/2026-11-18/hk0164-outsource-fabric-issue-plan.md` (local). Tests: `tests/outsource-issue-flow.test.mjs`, `tests/sewing-scope.test.mjs`.
+2. OPEN: verify on staging at 360px, 390px and desktop; SQL never run on real Postgres (fake DB in tests).
+3. OPEN, go-live (prod): deploy with kv `outsource_issue.enforce` off → the office issues every bundle already out → grant `outsource-issues` → a Super Admin turns enforce on.
+4. Measured on prod 2026-11-18 (read-only): 4 outsourced workers, 3 active, all FAB_SEW, all flagged `isOutsource`; 449 FAB_SEW cards with them as PIC since 2026-10-01.
 
 ## CONNECT-0003: Hookka accounts sign in to Houzs Connect (feat/connect-login-main, to main, 2026-11-19)
 From CONNECT-0003 (Lim Wei Siang, Houzs Connect). Same change as the staging PR (feat/connect-login, PR 1153), cut from `main`; `docs/API.md` is left to the post-merge bot.
