@@ -1685,6 +1685,98 @@ function rowToNoteLink(r: NoteLinkRow) {
 // (HK-0002): it now writes through PUT /:id priceEdits, which — unlike the old
 // direct UPDATE — restates the GL for a SENT invoice.
 
+// GET /api/invoices/line-summary?from=YYYY-MM-DD&to=YYYY-MM-DD — Invoice Price
+// Summary (HK-0158): every line of every non-cancelled invoice dated in the
+// range, one row per line, with the variant read off the line's production
+// order. Read-only; the page saves through PUT /:id { priceEdits }, so the
+// edit, recalculation, GL restatement and lock rules stay in ONE place.
+// `editable` mirrors that PUT's refusals (status, payment, issued notes) so the
+// page can grey a locked line out instead of failing on Save.
+app.get("/line-summary", async (c) => {
+  const denied = await requirePermission(c, "invoices", "read");
+  if (denied) return denied;
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ymd.test(from) || !ymd.test(to)) {
+    return c.json({ success: false, error: "from and to are required (YYYY-MM-DD)." }, 400);
+  }
+  const db = c.var.DB;
+  await Promise.all([ensureDiscountColumn(db), ensureInvoicePoLinkColumn(db)]);
+  const where = ["i.orgId = ?", "i.invoiceDate >= ?", "i.invoiceDate <= ?", "i.status <> 'CANCELLED'"];
+  const params: unknown[] = [getOrgId(c), from, to];
+  const scope = await customerScopeSql(c, "i.customerId");
+  if (scope.clause) {
+    where.push(scope.clause);
+    params.push(...scope.binds);
+  }
+  const res = await db
+    .prepare(
+      `SELECT ii.id, ii.invoiceId, i.invoiceNo, i.invoiceDate, i.status, i.paidAmount,
+              i.customerName, i.doNo,
+              ii.productCode, ii.productName, ii.sizeLabel, ii.fabricCode,
+              ii.quantity, ii.unitPriceSen, ii.discountSen, ii.totalSen,
+              ii.basePriceSen, ii.divanPriceSen, ii.legPriceSen,
+              ii.specialOrderPriceSen, ii.totalHeightPriceSen,
+              po.itemCategory, po.gapInches, po.divanHeightInches,
+              po.legHeightInches, po.specialOrder,
+              EXISTS (SELECT 1 FROM credit_notes cn WHERE cn.invoiceId = i.id AND cn.status IN ('APPROVED','POSTED'))
+                OR EXISTS (SELECT 1 FROM debit_notes dn WHERE dn.invoiceId = i.id AND dn.status = 'POSTED') AS has_notes
+         FROM invoice_items ii
+         JOIN invoices i ON i.id = ii.invoiceId
+         LEFT JOIN production_orders po ON po.id = ii.production_order_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY i.invoiceDate, i.invoiceNo, ii.id`,
+    )
+    .bind(...params)
+    .all<Record<string, unknown>>();
+  const num = (v: unknown) => Number(v) || 0;
+  const data = (res.results ?? []).map((r) => {
+    const status = String(r.status ?? "");
+    const paid = num(r.paidAmount ?? r.paid_amount);
+    const hasNotes = r.has_notes === true || r.has_notes === 1 || r.has_notes === "t";
+    // Same three refusals as PUT /:id priceEdits (checkInvoiceLocked + its status guard).
+    const lockReason =
+      status === "PAID" || paid > 0
+        ? "Payment recorded"
+        : hasNotes
+          ? "Credit/debit note issued"
+          : status !== "DRAFT" && status !== "SENT"
+            ? `Status ${status}`
+            : null;
+    return {
+      id: r.id,
+      invoiceId: r.invoiceId ?? r.invoice_id,
+      invoiceNo: r.invoiceNo ?? r.invoice_no,
+      invoiceDate: r.invoiceDate ?? r.invoice_date,
+      status,
+      customerName: r.customerName ?? r.customer_name ?? "",
+      doNo: r.doNo ?? r.do_no ?? "",
+      productCode: r.productCode ?? r.product_code ?? "",
+      productName: r.productName ?? r.product_name ?? "",
+      sizeLabel: r.sizeLabel ?? r.size_label ?? "",
+      fabricCode: r.fabricCode ?? r.fabric_code ?? "",
+      itemCategory: r.itemCategory ?? r.item_category ?? null,
+      gapInches: r.gapInches ?? r.gap_inches ?? null,
+      divanHeightInches: r.divanHeightInches ?? r.divan_height_inches ?? null,
+      legHeightInches: r.legHeightInches ?? r.leg_height_inches ?? null,
+      specialOrder: r.specialOrder ?? r.special_order ?? null,
+      quantity: num(r.quantity),
+      unitPriceSen: num(r.unitPriceSen ?? r.unit_price_sen),
+      discountSen: num(r.discountSen ?? r.discount_sen),
+      totalSen: num(r.totalSen ?? r.total_sen),
+      basePriceSen: num(r.basePriceSen ?? r.base_price_sen),
+      divanPriceSen: num(r.divanPriceSen ?? r.divan_price_sen),
+      legPriceSen: num(r.legPriceSen ?? r.leg_price_sen),
+      specialOrderPriceSen: num(r.specialOrderPriceSen ?? r.special_order_price_sen),
+      totalHeightPriceSen: num(r.totalHeightPriceSen ?? r.total_height_price_sen),
+      editable: lockReason === null,
+      lockReason,
+    };
+  });
+  return c.json({ success: true, data });
+});
+
 app.post("/", async (c) => {
   // RBAC gate (P3.3-followup) — invoices:create.
   const denied = await requirePermission(c, "invoices", "create");
