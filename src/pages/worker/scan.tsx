@@ -29,7 +29,7 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Camera,
   Search,
@@ -375,6 +375,7 @@ async function probeCameraState(): Promise<CameraPermState> {
 
 export default function WorkerScanPage() {
   const t = useT();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const [input, setInput] = useState("");
   const [result, setResult] = useState<Result>({ kind: "idle" });
@@ -2318,6 +2319,11 @@ export default function WorkerScanPage() {
           setTimeout(() => {
             processNextInQueue(rest);
           }, 700);
+        } else if (data.data.pendingApproval) {
+          navigate("/worker/tasks", {
+            replace: true,
+            state: { sentForApproval: `${ctx.order.poNo} · ${wipNameFor(ctx.jobCard, ctx.order)}` },
+          });
         }
       } else {
         // C (BUG-2026-06-08): a PACKING "already done / full" response must

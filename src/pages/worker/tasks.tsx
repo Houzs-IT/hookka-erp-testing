@@ -1,12 +1,17 @@
 import { useState } from "react";
 import type { JSX } from "react";
-import { Link } from "react-router-dom";
-import { ChevronDown, ScanLine } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { CheckCircle2, ChevronDown, ScanLine } from "lucide-react";
 import type { OutsourceIssue } from "@/api/lib/outsource-issue";
 import { useT } from "@/lib/worker-i18n";
-import { formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
-import { daysHeldText, useOutsourceTasks } from "./use-outsource-tasks";
-import type { Translate } from "./use-outsource-tasks";
+import { countTasks, daysHeldText, formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
+import type { Translate } from "@/lib/outsource-issue-format";
+import { useOutsourceTasks } from "./use-outsource-tasks";
+
+function sentItemFrom(state: unknown): string {
+  if (typeof state !== "object" || state === null || !("sentForApproval" in state)) return "";
+  return typeof state.sentForApproval === "string" ? state.sentForApproval : "";
+}
 
 const STATUS_CHIP: Record<OutsourceIssue["status"], { className: string; key: string }> = {
   INCOMPLETE: { className: "bg-[#FAEFCB] text-[#8A5F14]", key: "tasks.incomplete" },
@@ -44,6 +49,7 @@ function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.El
 export default function WorkerTasksPage(): JSX.Element {
   const t = useT();
   const { state, reload } = useOutsourceTasks();
+  const sentItem = sentItemFrom(useLocation().state);
   const [isDoneOpen, setIsDoneOpen] = useState(false);
 
   if (state.kind === "loading") {
@@ -73,10 +79,20 @@ export default function WorkerTasksPage(): JSX.Element {
     <div className="space-y-4 pb-24">
       <div>
         <h1 className="text-xl font-bold text-[#1F1D1B]">{t("tasks.title")}</h1>
-        <p className="text-sm text-[#5A5550]">
-          {incomplete.length} {t("tasks.toFinish")}
-        </p>
+        <p className="text-sm text-[#5A5550]">{countTasks(t, incomplete)}</p>
       </div>
+
+      {sentItem ? (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-xl border border-[#B9D3DA] bg-[#E0EDF0] p-3 text-sm font-semibold text-[#3E6570]"
+        >
+          <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden />
+          <span className="min-w-0 break-words">
+            {t("tasks.sentToOffice")} {sentItem}
+          </span>
+        </div>
+      ) : null}
 
       {incomplete.length === 0 ? (
         <div className="rounded-xl border border-[#D8D2CC] bg-white p-6 text-center text-sm text-[#5A5550]">

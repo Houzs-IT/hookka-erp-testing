@@ -77,3 +77,30 @@ export function formatDays(days: number | null): string {
   if (days === null) return "—";
   return days === 1 ? "1 day" : `${days} days`;
 }
+
+export type Translate = (key: string) => string;
+
+interface OpenTask {
+  status: IssueStatusName;
+  issuedAt: string;
+  completedAt: string | null;
+}
+
+export function daysHeldText(t: Translate, issue: OpenTask): string {
+  const days = daysOut(issue);
+  if (days === null) return "";
+  if (days === 0) return t("tasks.heldToday");
+  return t(days === 1 ? "tasks.dayHeld" : "tasks.daysHeld").replace("{n}", String(days));
+}
+
+export function countTasks(t: Translate, open: OpenTask[]): string {
+  const waiting = open.filter((issue) => issue.status === "PENDING_APPROVAL").length;
+  const toFinish = `${open.length - waiting} ${t("tasks.toFinish")}`;
+  return waiting > 0 ? `${toFinish} · ${waiting} ${t("tasks.waitingForOffice")}` : toFinish;
+}
+
+export function summarizeTasks(t: Translate, open: OpenTask[]): string {
+  const base = countTasks(t, open);
+  const oldest = open.find((issue) => issue.status === "INCOMPLETE");
+  return oldest ? `${base} · ${t("tasks.oldest")}: ${daysHeldText(t, oldest)}` : base;
+}
