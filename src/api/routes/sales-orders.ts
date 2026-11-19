@@ -3030,7 +3030,7 @@ app.get("/:id", async (c) => {
     // (BF/ACC) or the parent companySOId without the -NN suffix (SOFA).
     c.var.DB.prepare(
       `SELECT id, poNo, productName, productCode, itemCategory, quantity,
-              status, progress, currentDepartment, completedDate,
+              status, progress, currentDepartment, completedDate, startDate,
               salesOrderId, companySOId, fabricCode, targetEndDate
          FROM production_orders
         WHERE salesOrderId = ?
@@ -3048,6 +3048,7 @@ app.get("/:id", async (c) => {
         progress: number | null;
         currentDepartment: string | null;
         completedDate: string | null;
+        startDate: string | null;
         salesOrderId: string | null;
         companySOId: string | null;
         fabricCode: string | null;
@@ -3302,6 +3303,9 @@ app.get("/:id", async (c) => {
       progress: p.progress ?? 0,
       currentDepartment: p.currentDepartment ?? "",
       completedDate: p.completedDate ?? null,
+      // Owner 2026-11-19: the overdue list shows how long a line has sat in
+      // its current department — a first department counts from the start.
+      startDate: p.startDate ?? null,
       completedBy: completedByMap.get(p.id) ?? null,
       deliveryDoNo: poDeliveryMap.get(p.id)?.doNo ?? "",
       deliveryStatus: poDeliveryMap.get(p.id)?.status ?? "",

@@ -3,6 +3,8 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { Badge } from "@/components/ui/badge";
 import { deptName } from "./ops-floor-lib";
 import { productionOverviewHref } from "@/pages/production/utils";
+import { todayYmdMY } from "@/lib/utils";
+import { daysAtDept } from "./days-at-dept";
 
 export interface OrderLineProgress {
   id: string;
@@ -15,6 +17,8 @@ export interface OrderLineProgress {
   currentDepartment: string;
   deliveryDoNo?: string;
   deliveryStatus?: string;
+  startDate?: string | null;
+  jobCards?: { departmentCode: string; status: string; completedDate: string | null }[];
 }
 
 interface SalesOrderDetailResponse {
@@ -45,7 +49,18 @@ function describeDelivery(line: OrderLineProgress): string {
   return `${line.deliveryDoNo}${statusLabel ? ` · ${statusLabel}` : ""}`;
 }
 
-function LineRow({ line }: { line: OrderLineProgress }) {
+/** "6 d here" — red from a week, amber from 3 days (owner 2026-11-19). */
+function DaysHere({ days }: { days: number | null }) {
+  if (days === null) return null;
+  const tone = days >= 7 ? "bg-[#FBE7E3] text-[#9A3A2D]" : days >= 3 ? "bg-[#FAEFCB] text-[#9C6F1E]" : "bg-[#F0ECE9] text-[#6B5C32]";
+  return (
+    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${tone}`} title="Days in this department since the previous department finished">
+      {days === 0 ? "today" : `${days} d here`}
+    </span>
+  );
+}
+
+function LineRow({ line, today }: { line: OrderLineProgress; today: string }) {
   const progressPercent = Math.max(0, Math.min(100, Math.round(line.progress || 0)));
   return (
     <li className="grid gap-x-4 gap-y-1.5 py-2 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_auto_minmax(0,1fr)] sm:items-center">
@@ -57,6 +72,7 @@ function LineRow({ line }: { line: OrderLineProgress }) {
       </div>
       <div className="flex min-w-0 items-center gap-2">
         <span className="w-28 shrink-0 truncate text-[#4B5563] sm:w-auto sm:max-w-[9rem]">{describeWhere(line)}</span>
+        <DaysHere days={daysAtDept(line, today)} />
         <div
           className="h-2 min-w-[3rem] flex-1 rounded-full bg-[#E2DDD8]"
           role="progressbar"
@@ -86,7 +102,7 @@ export function OverdueOrderProgress({ soId, soNo }: { soId: string; soNo: strin
     if (data?.success) {
       return lines.length === 0
         ? <p className="py-2 text-[#6B7280]">{allLines.length === 0 ? "No production orders yet for this sales order." : "Every production order here is dispatched or cancelled."}</p>
-        : <ul className="divide-y divide-[#EFEBE5]">{lines.map((line) => <LineRow key={line.id} line={line} />)}</ul>;
+        : <ul className="divide-y divide-[#EFEBE5]">{lines.map((line) => <LineRow key={line.id} line={line} today={todayYmdMY()} />)}</ul>;
     }
     if (loading) return <p className="py-2 text-[#6B7280]">Loading progress…</p>;
     return <p className="py-2 text-[#9A3A2D]">Progress could not be loaded.{error ? ` ${error}` : ""}</p>;
