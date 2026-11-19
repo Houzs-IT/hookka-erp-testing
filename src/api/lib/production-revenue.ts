@@ -21,6 +21,14 @@ import type { Env } from "../worker";
 import { timedFn } from "./step-timing";
 import { ensureProductionOrderSourceLine, PRODUCTION_ORDER_LINE_SQL } from "./production-order-line";
 
+// ONE RULE (owner 2026-11-20 「帮我统一全套系统的 这类型算法」): this is
+// Department Revenue's rule (dept-revenue.ts loadDeptRevenue) for UPHOLSTERY,
+// including its COMBINED-card step — a PO with no Upholstery card of its own is
+// finished when the combined Upholstery card(s) of the same order + category
+// are all done (label joins pieces with '+', or the card's qty is above its own
+// PO's). Before, this CTE skipped that step, so the chart's "All" line, Labour
+// Cost, Finance, Board Report and Lim's daily page could read below the
+// Department Revenue Upholstery row.
 export const FINISHED_PRODUCTION_ORDERS_CTE = `per_po AS (
          SELECT productionOrderId,
                 MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
@@ -33,6 +41,29 @@ export const FINISHED_PRODUCTION_ORDERS_CTE = `per_po AS (
             AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
                               AND completedDate IS NOT NULL
                          THEN 1 ELSE 0 END) = COUNT(*)
+         UNION ALL
+         SELECT spo.id AS productionOrderId, od.done_at AS unit_completed_at
+           FROM production_orders spo
+           JOIN (
+             SELECT COALESCE(cpo.salesOrderId, cpo.consignmentOrderId) AS order_id,
+                    cpo.itemCategory AS category,
+                    MAX(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
+                                  AND cj.completedDate IS NOT NULL
+                             THEN cj.completedDate END) AS done_at
+               FROM job_cards cj
+               JOIN production_orders cpo ON cpo.id = cj.productionOrderId
+              WHERE cj.departmentCode = 'UPHOLSTERY'
+                AND COALESCE(cpo.salesOrderId, cpo.consignmentOrderId) IS NOT NULL
+              GROUP BY COALESCE(cpo.salesOrderId, cpo.consignmentOrderId), cpo.itemCategory
+             HAVING SUM(CASE WHEN cj.wipLabel LIKE '%+%' OR cj.wipQty > cpo.quantity THEN 1 ELSE 0 END) > 0
+                AND SUM(CASE WHEN cj.status IN ('COMPLETED','TRANSFERRED')
+                                  AND cj.completedDate IS NOT NULL
+                             THEN 1 ELSE 0 END) = COUNT(*)
+           ) od ON od.order_id = COALESCE(spo.salesOrderId, spo.consignmentOrderId)
+               AND od.category = spo.itemCategory
+          WHERE spo.status <> 'CANCELLED'
+            AND NOT EXISTS (SELECT 1 FROM job_cards sj
+                             WHERE sj.productionOrderId = spo.id AND sj.departmentCode = 'UPHOLSTERY')
        )`;
 
 // CO-aware unit price: SO line item OR CO line item OR product master
@@ -76,6 +107,8 @@ async function loadProductionRevenueUntimed(
   db: Env["Variables"]["DB"],
   from: string,
   to: string,
+  /** Tenant filter, like every other production-revenue read (owner 2026-11-20). */
+  orgId?: string,
 ): Promise<RecognizedProductionOrder[]> {
   // Single SQL: per_po CTE collapses UPHOLSTERY job_cards to one row per PO
   // (recognition date = MAX completedDate of done JCs), then we join out to
@@ -109,11 +142,12 @@ async function loadProductionRevenueUntimed(
          JOIN production_orders po ON po.id = per_po.productionOrderId
          ${PRODUCTION_ORDER_PRICE_JOINS_SQL}
         WHERE po.itemCategory IN ('SOFA','BEDFRAME','ACCESSORY')
+          AND (? IS NULL OR po.orgId = ?)
           AND per_po.unit_completed_at >= ?
           AND per_po.unit_completed_at <= ?
         ORDER BY per_po.unit_completed_at DESC`,
     )
-    .bind(from, to)
+    .bind(orgId ?? null, orgId ?? null, from, to)
     .all<{
       poId: string;
       completedAt: string;
@@ -131,7 +165,9 @@ async function loadProductionRevenueUntimed(
     if (r.category !== "SOFA" && r.category !== "BEDFRAME" && r.category !== "ACCESSORY") continue;
     const unitPriceSen = Math.round(typeof r.unitPriceSen === "number" ? r.unitPriceSen : Number(r.unitPriceSen) || 0);
     // One row per PO: qty = production_orders.quantity, total = unit × qty.
-    const qty = Math.max(1, Math.round(typeof r.qty === "number" ? r.qty : Number(r.qty) || 1));
+    // Quantity as stored — a 0-quantity order books 0, as Department Revenue
+    // does (it used to be floored to 1, booking one unit's price).
+    const qty = Math.max(0, Math.round(typeof r.qty === "number" ? r.qty : Number(r.qty) || 0));
     out.push({
       poId: r.poId,
       // completedAt may include time-of-day; the date is all anyone reads.

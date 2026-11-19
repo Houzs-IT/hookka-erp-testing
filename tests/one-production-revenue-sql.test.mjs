@@ -25,8 +25,8 @@ test("the order-finished rule is written only in the shared module, apart from t
   assert.deepEqual(countIn(/WITH per_po AS/g), [join("src", "api", "routes", "working-hour-entries.ts")]);
 });
 
-test("the shared rule reaches Postgres as the snake_case query the daily panel used to carry", () => {
-  const dailyPanelBefore = `per_po AS (
+test("the shared rule reaches Postgres as snake_case, with Department Revenue's combined-card step (owner 2026-11-20)", () => {
+  const ownCards = `per_po AS (
          SELECT production_order_id,
                 MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
                               AND completed_date IS NOT NULL
@@ -37,8 +37,11 @@ test("the shared rule reaches Postgres as the snake_case query the daily panel u
          HAVING COUNT(*) > 0
             AND SUM(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
                               AND completed_date IS NOT NULL
-                         THEN 1 ELSE 0 END) = COUNT(*)
-       )`;
+                         THEN 1 ELSE 0 END) = COUNT(*)`;
   const squash = (sql) => translateSql(sql).replace(/\s+/g, " ").trim();
-  assert.equal(squash(FINISHED_PRODUCTION_ORDERS_CTE), squash(dailyPanelBefore));
+  const cte = squash(FINISHED_PRODUCTION_ORDERS_CTE);
+  assert.ok(cte.startsWith(squash(ownCards)), "the PO's own Upholstery cards, as before");
+  assert.match(cte, /UNION ALL SELECT spo\.id AS production_order_id, od\.done_at AS unit_completed_at/);
+  assert.match(cte, /cj\.wip_label LIKE '%\+%' OR cj\.wip_qty > cpo\.quantity/, "the same combined-card test as dept-revenue.ts");
+  assert.match(cte, /NOT EXISTS \(SELECT 1 FROM job_cards sj WHERE sj\.production_order_id = spo\.id AND sj\.department_code = 'UPHOLSTERY'\)/);
 });

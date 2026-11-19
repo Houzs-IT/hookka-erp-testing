@@ -17412,7 +17412,7 @@ app.get("/dashboard", async (c) => {
     const [ly, lm] = lastYm.split("-").map((n) => parseInt(n, 10));
     const lastDay = String(new Date(Date.UTC(ly, lm, 0)).getUTCDate()).padStart(2, "0");
     try {
-      prodRevByMonth = productionRevenueByMonth(await loadProductionRevenue(db, `${prodRevMonths[0]}-01`, `${lastYm}-${lastDay}`));
+      prodRevByMonth = productionRevenueByMonth(await loadProductionRevenue(db, `${prodRevMonths[0]}-01`, `${lastYm}-${lastDay}`, getOrgId(c)));
     } catch {
       /* job cards unreadable → Production Revenue reads "-" */
     }
