@@ -142,7 +142,7 @@ export const MORE_GROUPS: ModuleGroup[] = [
     items: [
       { label: "Production Orders", icon: Factory, path: "/m/production" },
       { label: "Planning", icon: CalendarRange, path: "/m/planning" },
-      { label: "Outsource Fabric", icon: PackageOpen, path: "/m/outsource-issue", navGate: "/production/outsource-issue" },
+      { label: "Outsource Work", icon: PackageOpen, path: "/m/outsource-issue", navGate: "/production/outsource-issue" },
       { label: "Products", icon: Shapes, path: "/m/products" },
       { label: "Warehouse", icon: Warehouse, path: "/m/warehouse" },
       { label: "R&D Projects", icon: FlaskConical, path: "/m/rd" },

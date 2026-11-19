@@ -1681,10 +1681,10 @@ const dict: Dict = {
     my: 'to finish',
   },
   'tasks.empty': {
-    en: 'You have nothing to finish. Ask the office to issue fabric to you.',
-    ms: 'Tiada apa-apa untuk disiapkan. Minta pejabat mengeluarkan fabrik kepada anda.',
-    zh: '没有待完成的任务。请让办公室把布料发给你。',
-    my: 'You have nothing to finish. Ask the office to issue fabric to you.',
+    en: 'You have nothing to finish. Ask the office to issue work to you.',
+    ms: 'Tiada apa-apa untuk disiapkan. Minta pejabat mengeluarkan kerja kepada anda.',
+    zh: '没有待完成的任务。请让办公室把工作发给你。',
+    my: 'You have nothing to finish. Ask the office to issue work to you.',
   },
   'tasks.incomplete': {
     en: 'Incomplete',

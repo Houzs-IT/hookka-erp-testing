@@ -18,7 +18,7 @@ import {
 import type {
   FeedbackTone,
   OutsourceIssue,
-  OutsourceIssueWithSewing,
+  OutsourceIssueWithDone,
   OutsourceWorkerSummary,
   StatusFilter,
   UseOutsourceIssueResult,
@@ -131,7 +131,7 @@ function WorkerList({ workers, selectedId, allLabel, onSelect }: WorkerListProps
     ...visible.map((worker) => ({
       id: worker.id,
       title: worker.name,
-      detail: `${worker.empNo} · ${worker.incompleteCount} open`,
+      detail: `${worker.empNo} · ${worker.departmentNames.join(" / ") || "No department"} · ${worker.incompleteCount} open`,
     })),
   ];
   return (
@@ -334,7 +334,7 @@ function IssuePane({
           </div>
           {issue.selectedWorker ? (
             <div style={{ fontSize: 12.5, color: M.muted }}>
-              {issue.selectedWorker.empNo} · {issue.selectedWorker.incompleteCount} open
+              {issue.selectedWorker.empNo} · {issue.selectedWorker.departmentNames.join(" / ") || "No department"} · {issue.selectedWorker.incompleteCount} open
             </div>
           ) : null}
         </div>
@@ -377,7 +377,7 @@ function IssuePane({
         <FeedbackBanner tone="danger" message={`Could not load workers: ${issue.workersError}`} />
       ) : null}
       {!canIssue ? (
-        <FeedbackBanner tone="danger" message="You do not have permission to issue fabric." />
+        <FeedbackBanner tone="danger" message="You do not have permission to issue work." />
       ) : null}
       {cameraError ? <FeedbackBanner tone="danger" message={cameraError} /> : null}
       {issue.feedback ? <FeedbackBanner tone={issue.feedback.tone} message={issue.feedback.message} /> : null}
@@ -463,9 +463,9 @@ function IssuePane({
   );
 }
 
-function TrackingCard({ item }: { item: OutsourceIssueWithSewing }): JSX.Element {
+function TrackingCard({ item }: { item: OutsourceIssueWithDone }): JSX.Element {
   const isCompleted = item.status === "COMPLETED";
-  const needsCheck = !isCompleted && item.sewingDone;
+  const needsCheck = !isCompleted && item.workDone;
   const days = daysOut(item);
   const daysText = days === null ? "" : isCompleted ? `took ${formatDays(days)}` : `${formatDays(days)} out`;
   return (
@@ -488,7 +488,7 @@ function TrackingCard({ item }: { item: OutsourceIssueWithSewing }): JSX.Element
         </div>
       </div>
       <div style={{ fontSize: 12.5, color: M.muted }}>
-        {item.workerName} · Issued {formatIssueDate(item.issuedAt)} · {daysText}
+        {item.workerName} · {item.departmentName} · Issued {formatIssueDate(item.issuedAt)} · {daysText}
       </div>
       {isCompleted ? (
         <div style={{ fontSize: 12.5, color: M.muted }}>Completed {formatIssueDateTime(item.completedAt)}</div>
@@ -595,9 +595,9 @@ export function OutsourceIssueScreen(): JSX.Element {
 
   return (
     <>
-      <MobileHeader title="Outsource Fabric" onBack={() => navigate(-1)} menu />
+      <MobileHeader title="Outsource Work" onBack={() => navigate(-1)} menu />
       <div style={{ padding: "10px 16px 0" }}>
-        <SegmentedSwitch options={SCREEN_TABS} value={tab} onChange={setTab} ariaLabel="Outsource Fabric view" />
+        <SegmentedSwitch options={SCREEN_TABS} value={tab} onChange={setTab} ariaLabel="Outsource Work view" />
       </div>
       {tab === "issue" ? (
         <div style={{ paddingBottom: 200 }}>

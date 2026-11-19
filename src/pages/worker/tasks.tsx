@@ -16,7 +16,7 @@ function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.El
         <div className="min-w-0">
           <p className="break-words text-base font-bold text-[#1F1D1B]">{issue.itemLabel}</p>
           <p className="break-words text-sm text-[#5A5550]">
-            {issue.poNo}
+            {issue.poNo} · {issue.departmentName}
             {issue.pieceNo === null ? "" : ` · ${t("tasks.piece")} ${formatPiece(issue)}`}
           </p>
         </div>
