@@ -322,6 +322,9 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## ✅ Overdue sets: days stuck in the current department (#1482, 2026-11-19)
+Owner 「这个overdue的 还需要看到 在这个部门stuck着多少天了」 (screenshot of the Customer overdue sets drill). Each line shows "N d here" beside "At <department>": days since the last completed job card of another department; a first department counts from the PO start date (`src/pages/dashboards/days-at-dept.ts`, linkedPOs gains `startDate`). Amber ≥3 d, red ≥7 d. Live-checked on prod (SO-2610-194: ARMREST 01 at Fabric Sewing 16 d, SOFA 8211 at Packing 1 d). Same day: #1478 / #1479 reverted (#1481) and #1480 closed — owner had not assigned them.
+
 ## 🔵 HK-0165 Supplier on Add Raw Material (fix/outsource-issue-labels, 2026-11-19)
 Ask (Violet, ticket HK-0165): "when create raw material code, add on assign to which supplier". Owner: supplier only, no price at creation.
 1. DONE (branch, tests only): optional Supplier field on Inventory > Raw Materials > Add Raw Material (Single mode). On save it writes a `supplier_material_bindings` row (supplier code = item code, price 0, main supplier) through `POST /api/supplier-materials`, so the supplier's Pricing & SKUs tab shows it. Test: `tests/rm-create-supplier-link.test.mjs`.
