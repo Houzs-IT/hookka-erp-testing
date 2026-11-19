@@ -3,14 +3,21 @@
 // fix wrong ones in place. Saves go through PUT /api/invoices/:id { priceEdits }
 // (the invoice editor's own path: totals, tax, customer balance and GL restate
 // there). Rules: src/lib/invoice-price-summary.ts.
-import { useMemo, useState } from "react";
+//
+// The list is the shared DataGrid: its header ▼ filters on every column
+// (Payment and Editable included), search, and 15 invoices a page (`pageBy`).
+// Typed prices live in `draft` here, outside the grid, so changing page or
+// filter never drops them; Save writes every changed line on every page.
+import { createContext, useContext, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
+import { DataGrid, type Column } from "@/components/ui/data-grid";
 import { useToast } from "@/components/ui/toast";
-import { formatCurrency, formatDateDMY } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { formatCurrency } from "@/lib/utils";
 import { invalidateCachePrefix } from "@/lib/cached-fetch";
 import { usePermissions } from "@/lib/use-permission";
 import { uomFor } from "@/lib/doc-columns";
@@ -36,6 +43,7 @@ type Line = SummaryLine & {
   totalSen: number;
   editable: boolean;
   lockReason: string | null;
+  payment: string;
 };
 
 const inch = (v: number | null) => (v === null || v === undefined || v === 0 ? "" : `${v}"`);
@@ -56,8 +64,117 @@ function variantText(l: Line): string {
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
+// The typed prices reach the cells through context, so the grid's `columns`
+// stay the same object while typing (DataGrid re-sorts, and resets its page,
+// whenever `columns` changes).
+type DraftCtx = {
+  draft: Record<string, number | undefined>;
+  setPrice: (id: string, sen: number | undefined) => void;
+  lineErrors: Record<string, string>;
+  canEdit: boolean;
+};
+const Draft = createContext<DraftCtx>({ draft: {}, setPrice: () => {}, lineErrors: {}, canEdit: false });
+
+const isDirty = (l: Line, draft: DraftCtx["draft"]) =>
+  draft[l.id] !== undefined && draft[l.id] !== l.unitPriceSen;
+
+function PriceCell({ line }: { line: Line }) {
+  const { draft, setPrice, lineErrors, canEdit } = useContext(Draft);
+  const price = draft[line.id] ?? line.unitPriceSen;
+  return (
+    // Keep clicks inside the box from selecting the row / starting a cell range.
+    <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+      {canEdit && line.editable ? (
+        <div className={`ml-auto w-28 ${isDirty(line, draft) ? "rounded ring-2 ring-[#E8B04B]" : ""}`}>
+          <MoneyInput
+            value={price / 100}
+            onChange={(v) => setPrice(line.id, v === null ? undefined : Math.round(v * 100))}
+          />
+        </div>
+      ) : (
+        <span title={line.lockReason ?? undefined}>{formatCurrency(line.unitPriceSen)}</span>
+      )}
+      {lineErrors[line.id] && <div className="whitespace-normal text-xs text-red-600">{lineErrors[line.id]}</div>}
+    </div>
+  );
+}
+
+function TotalCell({ line }: { line: Line }) {
+  const { draft } = useContext(Draft);
+  if (!isDirty(line, draft)) return <>{formatCurrency(line.totalSen)}</>;
+  return <>{formatCurrency(Math.max(0, draft[line.id]! * line.quantity - line.discountSen))}</>;
+}
+
+const COLUMNS: Column<Line>[] = [
+  { key: "invoiceDate", label: "Doc Date", type: "date", width: "100px" },
+  {
+    key: "invoiceNo",
+    label: "Invoice",
+    type: "docno",
+    width: "120px",
+    render: (_v, l) => (
+      <Link className="text-[#6B5C32] hover:underline" to={`/invoices/${l.invoiceId}`} onClick={(e) => e.stopPropagation()}>
+        {l.invoiceNo}
+      </Link>
+    ),
+  },
+  { key: "customerName", label: "Customer", width: "160px" },
+  { key: "productCode", label: "Item Code", width: "110px" },
+  { key: "productName", label: "Description", width: "200px" },
+  {
+    key: "variant",
+    label: "Variant",
+    width: "240px",
+    filterAccessor: variantText,
+    sortAccessor: variantText,
+    exportValue: variantText,
+    render: (_v, l, _i, hl) => hl(variantText(l)),
+  },
+  {
+    key: "uom",
+    label: "UOM",
+    width: "70px",
+    filterAccessor: (l) => uomFor(l.itemCategory),
+    exportValue: (l) => uomFor(l.itemCategory),
+    render: (_v, l) => uomFor(l.itemCategory),
+  },
+  { key: "quantity", label: "Qty", type: "number", align: "right", width: "60px" },
+  {
+    key: "unitPriceSen",
+    label: "Unit Price",
+    type: "currency",
+    align: "right",
+    width: "140px",
+    noClip: true,
+    render: (_v, l) => <PriceCell line={l} />,
+  },
+  { key: "discountSen", label: "Discount", type: "currency", align: "right", width: "100px" },
+  {
+    key: "totalSen",
+    label: "Total",
+    type: "currency",
+    align: "right",
+    width: "120px",
+    total: "sum",
+    render: (_v, l) => <TotalCell line={l} />,
+  },
+  { key: "status", label: "Invoice Status", type: "status", width: "110px" },
+  { key: "payment", label: "Payment", width: "100px" },
+  {
+    key: "editable",
+    label: "Editable",
+    width: "200px",
+    filterAccessor: (l) => (l.editable ? "Editable" : `Locked: ${l.lockReason ?? ""}`),
+    sortAccessor: (l) => (l.editable ? "Editable" : `Locked: ${l.lockReason ?? ""}`),
+    exportValue: (l) => (l.editable ? "Editable" : `Locked: ${l.lockReason ?? ""}`),
+    render: (_v, l) =>
+      l.editable ? "Editable" : <span className="text-[#9CA3AF]">Locked: {l.lockReason}</span>,
+  },
+];
+
 export default function InvoicePriceSummary() {
   const { toast } = useToast();
+  const { confirm } = useConfirm();
   const { hasPermission } = usePermissions();
   const canEdit = hasPermission("invoices", "update");
 
@@ -65,22 +182,35 @@ export default function InvoicePriceSummary() {
   const [month, setMonth] = useState(thisMonth());
   const [from, setFrom] = useState(monthRange(thisMonth()).from);
   const [to, setTo] = useState(monthRange(thisMonth()).to);
-  const [search, setSearch] = useState("");
   const [lines, setLines] = useState<Line[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   // Typed prices in sen, by line id. A line with no entry is never written.
   const [draft, setDraft] = useState<Record<string, number | undefined>>({});
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Line[]>([]);
+  const [clearSel, setClearSel] = useState(0);
   const [batchPrice, setBatchPrice] = useState<number | null>(null);
 
-  const load = async () => {
+  const changed = useMemo(() => (lines ?? []).filter((l) => isDirty(l, draft)), [lines, draft]);
+
+  const load = async (force = false) => {
     const range = mode === "month" ? monthRange(month) : { from, to };
     if (!range.from || !range.to || range.from > range.to) {
       toast.error("Pick a valid period.");
-      return;
+      return false;
     }
+    if (
+      !force &&
+      changed.length &&
+      !(await confirm({
+        title: "Discard unsaved prices?",
+        message: `${changed.length} price change(s) are not saved yet. Showing a new period drops them.`,
+        confirmLabel: "Discard",
+        danger: true,
+      }))
+    )
+      return false;
     setLoading(true);
     try {
       const r = await fetch(
@@ -92,39 +222,28 @@ export default function InvoicePriceSummary() {
       setLines(j.data ?? []);
       setDraft({});
       setLineErrors({});
-      setSelected(new Set());
+      setSelected([]);
+      setClearSel((n) => n + 1);
+      return true;
     } catch (e) {
       toast.error(`Could not load invoice lines: ${(e as Error).message}`);
+      return false;
     } finally {
       setLoading(false);
     }
   };
 
-  const shown = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!lines || !q) return lines ?? [];
-    return lines.filter((l) =>
-      [l.invoiceNo, l.customerName, l.productCode, l.productName, variantText(l)]
-        .join(" ")
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [lines, search]);
-
-  const changed = useMemo(
-    () => (lines ?? []).filter((l) => draft[l.id] !== undefined && draft[l.id] !== l.unitPriceSen),
-    [lines, draft],
-  );
-  const editableShown = shown.filter((l) => l.editable);
-
   const applyBatch = () => {
     if (batchPrice === null) return;
     const sen = Math.round(batchPrice * 100);
+    const open = selected.filter((l) => l.editable);
     setDraft((d) => {
       const next = { ...d };
-      for (const id of selected) next[id] = sen;
+      for (const l of open) next[l.id] = sen;
       return next;
     });
+    const skipped = selected.length - open.length;
+    if (skipped) toast.error(`${skipped} locked line(s) skipped.`);
   };
 
   const save = async () => {
@@ -160,12 +279,19 @@ export default function InvoicePriceSummary() {
     if (failed.length) toast.error(`Not saved — ${failed.join("; ")}`);
     if (errors.length) toast.error(`${errors.length} line(s) not saved — see the red notes.`);
     // Reload so every row shows what is now stored, then keep only the errors.
-    await load();
+    await load(true);
     setLineErrors(errs);
   };
 
-  const totalSen = shown.reduce((s, l) => s + l.totalSen, 0);
-  const allTicked = editableShown.length > 0 && editableShown.every((l) => selected.has(l.id));
+  const ctx = useMemo<DraftCtx>(
+    () => ({
+      draft,
+      lineErrors,
+      canEdit,
+      setPrice: (id, sen) => setDraft((d) => ({ ...d, [id]: sen })),
+    }),
+    [draft, lineErrors, canEdit],
+  );
 
   return (
     <div className="space-y-4">
@@ -204,33 +330,24 @@ export default function InvoicePriceSummary() {
               </label>
             </>
           )}
-          <Button onClick={load} disabled={loading}>
+          <Button onClick={() => load()} disabled={loading}>
             {loading ? "Loading…" : "Show"}
           </Button>
-          {lines && (
-            <label className="ml-auto text-sm">
-              <span className="block text-xs text-[#6B7280]">Search</span>
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Invoice, customer, item, colour…"
-              />
-            </label>
-          )}
         </CardContent>
       </Card>
 
       {lines && canEdit && (
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span className="text-[#6B7280]">{selected.size} selected</span>
+          <span className="text-[#6B7280]">{selected.length} selected</span>
           <span>Set unit price</span>
           <div className="w-32">
             <MoneyInput value={batchPrice} onChange={setBatchPrice} />
           </div>
-          <Button size="sm" variant="outline" onClick={applyBatch} disabled={!selected.size || batchPrice === null}>
+          <Button size="sm" variant="outline" onClick={applyBatch} disabled={!selected.length || batchPrice === null}>
             Apply to selected
           </Button>
-          <Button size="sm" onClick={save} disabled={saving || changed.length === 0} className="ml-auto">
+          <span className="ml-auto text-xs text-[#6B7280]">Unsaved changes stay when you change page or filter.</span>
+          <Button size="sm" onClick={save} disabled={saving || changed.length === 0}>
             {saving ? "Saving…" : `Save ${changed.length} change${changed.length === 1 ? "" : "s"}`}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setDraft({})} disabled={saving || changed.length === 0}>
@@ -240,117 +357,26 @@ export default function InvoicePriceSummary() {
       )}
 
       {lines && (
-        <Card>
-          <CardContent className="overflow-x-auto p-0">
-            <table className="w-full text-sm">
-              <thead className="bg-[#F5F3EF] text-left text-xs text-[#6B7280]">
-                <tr>
-                  {canEdit && (
-                    <th className="px-2 py-2">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all editable lines"
-                        checked={allTicked}
-                        onChange={() =>
-                          setSelected(allTicked ? new Set() : new Set(editableShown.map((l) => l.id)))
-                        }
-                      />
-                    </th>
-                  )}
-                  <th className="px-2 py-2">Doc Date</th>
-                  <th className="px-2 py-2">Invoice</th>
-                  <th className="px-2 py-2">Customer</th>
-                  <th className="px-2 py-2">Item Code</th>
-                  <th className="px-2 py-2">Description</th>
-                  <th className="px-2 py-2">Variant</th>
-                  <th className="px-2 py-2">UOM</th>
-                  <th className="px-2 py-2 text-right">Qty</th>
-                  <th className="px-2 py-2 text-right">Unit Price</th>
-                  <th className="px-2 py-2 text-right">Discount</th>
-                  <th className="px-2 py-2 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((l) => {
-                  const price = draft[l.id] ?? l.unitPriceSen;
-                  const dirty = draft[l.id] !== undefined && draft[l.id] !== l.unitPriceSen;
-                  const lineTotal = Math.max(0, price * l.quantity - l.discountSen);
-                  return (
-                    <tr key={l.id} className={`border-t ${dirty ? "bg-[#FFF7E6]" : ""}`}>
-                      {canEdit && (
-                        <td className="px-2 py-1">
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${l.invoiceNo} ${l.productCode}`}
-                            disabled={!l.editable}
-                            checked={selected.has(l.id)}
-                            onChange={() =>
-                              setSelected((s) => {
-                                const n = new Set(s);
-                                if (n.has(l.id)) n.delete(l.id);
-                                else n.add(l.id);
-                                return n;
-                              })
-                            }
-                          />
-                        </td>
-                      )}
-                      <td className="whitespace-nowrap px-2 py-1">{formatDateDMY(l.invoiceDate)}</td>
-                      <td className="whitespace-nowrap px-2 py-1">
-                        <Link className="text-[#6B5C32] hover:underline" to={`/invoices/${l.invoiceId}`}>
-                          {l.invoiceNo}
-                        </Link>
-                      </td>
-                      <td className="px-2 py-1">{l.customerName}</td>
-                      <td className="whitespace-nowrap px-2 py-1">{l.productCode}</td>
-                      <td className="px-2 py-1">{l.productName}</td>
-                      <td className="px-2 py-1">{variantText(l)}</td>
-                      <td className="px-2 py-1">{uomFor(l.itemCategory)}</td>
-                      <td className="px-2 py-1 text-right">{l.quantity}</td>
-                      <td className="px-2 py-1 text-right">
-                        {canEdit && l.editable ? (
-                          <div className="ml-auto w-28">
-                            <MoneyInput
-                              value={price / 100}
-                              onChange={(v) =>
-                                setDraft((d) => ({ ...d, [l.id]: v === null ? undefined : Math.round(v * 100) }))
-                              }
-                            />
-                          </div>
-                        ) : (
-                          <span title={l.lockReason ?? undefined}>{formatCurrency(l.unitPriceSen)}</span>
-                        )}
-                        {lineErrors[l.id] && <div className="text-xs text-red-600">{lineErrors[l.id]}</div>}
-                        {!l.editable && l.lockReason && (
-                          <div className="text-xs text-[#9CA3AF]">Locked: {l.lockReason}</div>
-                        )}
-                      </td>
-                      <td className="px-2 py-1 text-right">{l.discountSen ? formatCurrency(l.discountSen) : ""}</td>
-                      <td className="px-2 py-1 text-right">{formatCurrency(dirty ? lineTotal : l.totalSen)}</td>
-                    </tr>
-                  );
-                })}
-                {shown.length === 0 && (
-                  <tr>
-                    <td colSpan={12} className="px-2 py-6 text-center text-[#6B7280]">
-                      No invoice lines in this period.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-              {shown.length > 0 && (
-                <tfoot>
-                  <tr className="border-t font-medium">
-                    <td colSpan={canEdit ? 11 : 10} className="px-2 py-2 text-right">
-                      {shown.length} lines · Total
-                    </td>
-                    <td className="px-2 py-2 text-right">{formatCurrency(totalSen)}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </CardContent>
-        </Card>
+        <Draft.Provider value={ctx}>
+          <DataGrid<Line>
+            gridId="invoice-price-summary"
+            columns={COLUMNS}
+            data={lines}
+            keyField="id"
+            selectable={canEdit}
+            checkboxSelectOnly
+            cellCopy={false}
+            onSelectionChange={setSelected}
+            clearSelectionToken={clearSel}
+            rowClassName={(l) => (isDirty(l, draft) ? "bg-[#FFF7E6]" : "")}
+            pageBy={(l) => l.invoiceId}
+            pageSize={15}
+            pageNoun="invoices"
+            emptyMessage="No invoice lines in this period."
+            searchPlaceholder="Invoice, customer, item, colour…"
+            exportName="invoice-price-summary"
+          />
+        </Draft.Provider>
       )}
     </div>
   );

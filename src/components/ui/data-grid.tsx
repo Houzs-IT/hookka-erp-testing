@@ -34,6 +34,7 @@ import { gridReturnKey, recallGridRow, rememberGridRow, rowKeySelector, shouldRe
 import { browserOwnsCopy, rangeStats, rangeToTsv, rectCellCount, rectFrom, rowsToTsv, writeClipboardText, type CellPos, type CellRect } from "@/lib/grid-clipboard";
 import { readGridUrlState, sameParams, writeGridUrlState } from "@/lib/grid-url-state";
 import { GridSharedLayouts } from "@/components/ui/grid-shared-layouts";
+import { pageByGroup } from "@/lib/page-by-group";
 import {
   flattenGroupedRows,
   flatItemHeight,
@@ -362,6 +363,13 @@ export type DataGridProps<T> = {
   // cap is purely a rendering optimisation to keep DOM node count bounded on
   // grids with thousands of rows. Omit to disable (no cap, render everything).
   defaultRowCap?: number;
+  // Opt-in paging by GROUP: `pageSize` groups a page (rows of one group never
+  // split across pages), counted after filter / sort / search. The header
+  // select-all ticks only the current page. `pageNoun` names the group in the
+  // pager ("invoices"). Omit `pageBy` = no paging (every other grid).
+  pageBy?: (row: T) => string;
+  pageSize?: number;
+  pageNoun?: string;
   // The total row's first cell (shown only when a column has `total`).
   // Default: "Total · <shown> shown of <all>".
   footerLabel?: (shown: number, all: number) => React.ReactNode;
@@ -2009,6 +2017,9 @@ export function DataGrid<T extends Record<string, any>>({
   ensureColumns,
   forceShowKeys = EMPTY_FORCE_SHOW,
   defaultRowCap,
+  pageBy,
+  pageSize = 15,
+  pageNoun = "groups",
   footerLabel,
   headerMenu: headerMenuProp,
   reorderableHeaders: reorderableHeadersProp,
@@ -3062,10 +3073,21 @@ export function DataGrid<T extends Record<string, any>>({
   const [showAll, setShowAll] = useState(false);
   const rowCapActive =
     !!defaultRowCap && !showAll && sortedData.length > defaultRowCap;
+  // Group paging (opt-in `pageBy`). Back to page 1 whenever the filtered /
+  // sorted set changes, so a new filter never lands on an empty page.
+  const [pageNo, setPageNo] = useState(1);
+  useEffect(() => { setPageNo(1); }, [sortedData]);
+  const paged = useMemo(
+    () => (pageBy ? pageByGroup(sortedData, pageBy, pageSize, pageNo) : null),
+    [pageBy, sortedData, pageSize, pageNo],
+  );
   const displayedData = useMemo(() => {
+    if (paged) return paged.rows;
     if (!rowCapActive) return sortedData;
     return sortedData.slice(0, defaultRowCap!);
-  }, [sortedData, rowCapActive, defaultRowCap]);
+  }, [paged, sortedData, rowCapActive, defaultRowCap]);
+  // What the header select-all ticks: the page when paging, else every match.
+  const selectAllRows = paged ? paged.rows : sortedData;
 
   // ── Virtualization ──
   // Only enable when explicitly opted-in AND no group headers are interleaved
@@ -4017,12 +4039,12 @@ export function DataGrid<T extends Record<string, any>>({
                   <input
                     type="checkbox"
                     className="h-4 w-4 accent-[#6B5C32] cursor-pointer"
-                    checked={sortedData.length > 0 && sortedData.every(r => selectedKeys.has(String(getNestedValue(r, keyField))))}
+                    checked={selectAllRows.length > 0 && selectAllRows.every(r => selectedKeys.has(String(getNestedValue(r, keyField))))}
                     onChange={(e) => {
                       e.stopPropagation();
                       setSelectedKeys(prev => {
                         const next = new Set(prev);
-                        const allKeys = sortedData.map(r => String(getNestedValue(r, keyField)));
+                        const allKeys = selectAllRows.map(r => String(getNestedValue(r, keyField)));
                         const allSelected = allKeys.every(k => next.has(k));
                         if (allSelected) {
                           allKeys.forEach(k => next.delete(k));
@@ -4677,6 +4699,29 @@ export function DataGrid<T extends Record<string, any>>({
               Sum {rangeSummary.money ? formatRM(rangeSummary.sum) : formatNumber(rangeSummary.sum)}
               {" · "}Count {rangeSummary.count}
               {" · "}Avg {rangeSummary.money ? formatRM(rangeSummary.avg) : formatNumber(rangeSummary.avg)}
+            </span>
+          )}
+          {paged && (
+            <span data-dg="pager" className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setPageNo(paged.page - 1)}
+                disabled={paged.page <= 1}
+                className="rounded border border-[#D8D2CB] bg-white px-2 py-0.5 text-[#1F1D1B] disabled:opacity-40"
+              >
+                ‹ Prev
+              </button>
+              <span className="font-medium text-[#1F1D1B]">
+                Page {paged.page} of {paged.pageCount} · {pageNoun} {paged.firstGroup}–{paged.lastGroup} of {paged.groupCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPageNo(paged.page + 1)}
+                disabled={paged.page >= paged.pageCount}
+                className="rounded border border-[#D8D2CB] bg-white px-2 py-0.5 text-[#1F1D1B] disabled:opacity-40"
+              >
+                Next ›
+              </button>
             </span>
           )}
           {/* Row cap pill — filter / sort / search still act on the full
