@@ -32,6 +32,7 @@ export function extraDepartmentCards() {
     card("jc-headboard-cut", BED_PO.id, WIP.headboard, "HEADBOARD", "Headboard", "FAB_CUT"),
     card("jc-divan-wood", BED_PO.id, WIP.divan, "DIVAN", '8" Divan', "WOOD_CUT"),
     card("jc-headboard-wood", BED_PO.id, WIP.headboard, "HEADBOARD", "Headboard", "WOOD_CUT"),
+    card("jc-headboard-pack", BED_PO.id, WIP.headboard, "HEADBOARD", "Headboard", "PACKING", "WAITING"),
   ];
 }
 
@@ -129,9 +130,15 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
     if (/^SELECT issue_id, job_card_id, piece_no FROM outsource_issue_cards WHERE issue_id IN/i.test(text)) {
       return state.issueCards.filter((c) => args.includes(c.issue_id));
     }
-    if (/^DELETE FROM outsource_issue_cards/i.test(text)) {
+    if (/^SELECT id FROM job_cards WHERE qr_token = [?]/i.test(text)) {
+      return state.cards.filter((c) => c.qr_token === args[0]);
+    }
+    if (/^WITH gone AS [(] DELETE FROM outsource_issues/i.test(text)) {
       const hit = state.issues.find((i) => i.id === args[0] && i.org_id === args[1] && i.status === "INCOMPLETE");
-      if (hit) state.issueCards = state.issueCards.filter((c) => c.issue_id !== hit.id);
+      if (hit) {
+        state.issues = state.issues.filter((i) => i !== hit);
+        state.issueCards = state.issueCards.filter((c) => c.issue_id !== hit.id);
+      }
       return [];
     }
     if (/^INSERT INTO outsource_issues/i.test(text)) {
@@ -150,11 +157,6 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
     }
     if (/^SELECT \* FROM outsource_issues WHERE id = \? AND org_id = \?/i.test(text)) {
       return state.issues.filter((i) => i.id === args[0] && i.org_id === args[1]);
-    }
-    if (/^DELETE FROM outsource_issues/i.test(text)) {
-      const hit = state.issues.find((i) => i.id === args[0] && i.org_id === args[1] && i.status === "INCOMPLETE");
-      if (hit) state.issues = state.issues.filter((i) => i !== hit);
-      return [];
     }
     if (/^UPDATE outsource_issues SET status = 'COMPLETED'/i.test(text)) {
       const hit = state.issues.find((i) => i.id === args[0] && i.status === "INCOMPLETE");

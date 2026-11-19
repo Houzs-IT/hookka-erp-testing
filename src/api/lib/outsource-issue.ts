@@ -14,7 +14,7 @@ interface Runner {
   batch?(stmts: unknown[]): Promise<Array<{ results?: unknown[] }>>;
 }
 
-const DDL: string[] = [
+export const OUTSOURCE_ISSUE_DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS outsource_issues (
      id                  TEXT PRIMARY KEY,
      org_id              TEXT NOT NULL DEFAULT 'hookka',
@@ -68,12 +68,13 @@ const DDL: string[] = [
 
 const CONCURRENT_CREATE_ERROR_CODES = new Set(["23505", "42P07", "42710"]);
 const UNIQUE_VIOLATION = "23505";
+const MISSING_RELATION_CODES = new Set(["42P01", "42703"]);
 
 let _applied = false;
 
 export async function ensureOutsourceIssueTable(db: Runner): Promise<void> {
   if (_applied) return;
-  for (const statement of DDL) await runCreateStatement(db, statement);
+  for (const statement of OUTSOURCE_ISSUE_DDL) await runCreateStatement(db, statement);
   _applied = true;
 }
 
@@ -89,6 +90,17 @@ async function runCreateStatement(db: Runner, statement: string): Promise<void> 
 function errorCode(error: unknown): string {
   if (typeof error !== "object" || error === null || !("code" in error)) return "";
   return String(error.code);
+}
+
+async function withTable<T>(db: Runner, run: () => Promise<T>): Promise<T> {
+  if (_applied) return run();
+  try {
+    return await run();
+  } catch (error) {
+    if (!MISSING_RELATION_CODES.has(errorCode(error))) throw error;
+    await ensureOutsourceIssueTable(db);
+    return run();
+  }
 }
 
 async function runBatch(db: Runner, statements: Stmt[]): Promise<void> {
@@ -183,7 +195,7 @@ function toIssue(row: Row): OutsourceIssue {
 
 const placeholders = (count: number): string => Array.from({ length: count }, () => "?").join(",");
 
-async function loadDepartmentNames(db: Runner): Promise<Map<string, string>> {
+export async function loadDepartmentNames(db: Runner): Promise<Map<string, string>> {
   const rows = await freshAll<Row>(db, db.prepare("SELECT code, name FROM departments"));
   return new Map(rows.map((row) => [text(row.code), text(row.name)]));
 }
@@ -388,17 +400,15 @@ export async function undoIssue(
   const before = await findIssueById(db, request.orgId, request.id);
   if (!before) return { kind: "not-found" };
   if (before.status === "COMPLETED") return { kind: "already-completed", issue: before };
-  await runBatch(db, [
-    db
-      .prepare(
-        `DELETE FROM outsource_issue_cards WHERE issue_id IN
-           (SELECT id FROM outsource_issues WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE')`,
-      )
-      .bind(request.id, request.orgId),
-    db
-      .prepare("DELETE FROM outsource_issues WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE'")
-      .bind(request.id, request.orgId),
-  ]);
+  await db
+    .prepare(
+      `WITH gone AS (
+         DELETE FROM outsource_issues WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE' RETURNING id
+       )
+       DELETE FROM outsource_issue_cards WHERE issue_id IN (SELECT id FROM gone)`,
+    )
+    .bind(request.id, request.orgId)
+    .run();
   const remaining = await findIssueById(db, request.orgId, request.id);
   if (remaining) return { kind: "already-completed", issue: remaining };
   return { kind: "undone", issue: before };
@@ -520,10 +530,10 @@ export async function listWorkerIssues(
   };
 }
 
-const truthy = (value: unknown): boolean =>
+export const truthy = (value: unknown): boolean =>
   value === true || value === 1 || value === "1" || value === "t" || value === "true";
 
-function parseDepartmentCodes(row: Row): string[] {
+export function workerDepartmentCodes(row: Row): string[] {
   const listed: unknown = row.departmentCodes ?? row.department_codes;
   let value: unknown = listed;
   if (typeof listed === "string" && listed) {
@@ -558,7 +568,7 @@ export async function loadOutsourceWorker(
     id: text(row.id),
     empNo: text(row.empNo, row.emp_no),
     name: text(row.name),
-    departmentCodes: parseDepartmentCodes(row),
+    departmentCodes: workerDepartmentCodes(row),
   };
 }
 
@@ -583,7 +593,7 @@ export async function listOutsourceWorkers(
   return workers
     .filter((row) => truthy(row.isOutsource ?? row.is_outsource) && text(row.status) === "ACTIVE")
     .map((row) => {
-      const departmentCodes = parseDepartmentCodes(row);
+      const departmentCodes = workerDepartmentCodes(row);
       return {
         id: text(row.id),
         empNo: text(row.empNo, row.emp_no),
@@ -619,56 +629,45 @@ async function findHeldIssues(
   db: Runner,
   request: { orgId: string; workerId: string; target: IssueTarget },
 ): Promise<IssueHandover> {
-  await ensureOutsourceIssueTable(db);
-  const overlapping = await findOverlappingIssues(db, request.orgId, request.target);
+  const overlapping = await withTable(db, () =>
+    findOverlappingIssues(db, request.orgId, request.target),
+  );
   const mine = overlapping.filter(
     (issue) => issue.workerId === request.workerId && issue.status === "INCOMPLETE",
   );
   return mine.length > 0 ? { kind: "holder", issueIds: mine.map((issue) => issue.id) } : { kind: "none" };
 }
 
-export async function checkIssueHandover(
-  db: Runner,
-  request: { orgId: string; workerId: string; target: IssueTarget },
-): Promise<IssueHandover> {
-  const { orgId, workerId, target } = request;
-  let enforced: boolean;
+async function readEnforced(db: Runner): Promise<boolean> {
   try {
-    enforced = await isEnforced(db);
+    return await isEnforced(db);
   } catch (error) {
     console.error("[outsource-issue] enforce switch unreadable, not blocking the scan", error);
-    return { kind: "none" };
+    return false;
   }
-  if (!enforced) {
-    try {
-      return await findHeldIssues(db, request);
-    } catch (error) {
-      console.error("[outsource-issue] holder lookup failed, not blocking the scan", error);
-      return { kind: "none" };
-    }
-  }
+}
 
-  await ensureOutsourceIssueTable(db);
-  const overlapping = await findOverlappingIssues(db, orgId, target);
-  const heldByOther = overlapping.find(
-    (issue) => issue.status === "INCOMPLETE" && issue.workerId !== workerId,
-  );
-  if (heldByOther) {
+async function decideHandover(
+  db: Runner,
+  request: { orgId: string; workerId: string; target: IssueTarget; scannerIsOutsource: boolean },
+): Promise<IssueHandover> {
+  const { orgId, workerId, target, scannerIsOutsource } = request;
+  const overlapping = await withTable(db, () => findOverlappingIssues(db, orgId, target));
+  const open = overlapping.filter((issue) => issue.status === "INCOMPLETE");
+  const heldByOther = open.find((issue) => issue.workerId !== workerId);
+  if (heldByOther && (await readEnforced(db))) {
     return {
       kind: "refused",
       code: "ISSUED_TO_OTHER",
       message: `This item was issued to ${heldByOther.workerName || "another worker"}. Only that person can complete it.`,
     };
   }
-  const mine = overlapping.filter(
-    (issue) => issue.workerId === workerId && issue.status === "INCOMPLETE",
-  );
+  const mine = open.filter((issue) => issue.workerId === workerId);
   if (mine.length > 0) return { kind: "holder", issueIds: mine.map((issue) => issue.id) };
-  if (overlapping.some((issue) => issue.workerId === workerId && issue.status === "COMPLETED")) {
-    return { kind: "none" };
-  }
-  const worker = await loadOutsourceWorker(db, workerId);
-  if (worker) {
+  const finishedMine = overlapping.some(
+    (issue) => issue.workerId === workerId && issue.status === "COMPLETED",
+  );
+  if (scannerIsOutsource && !finishedMine && (await readEnforced(db))) {
     return {
       kind: "refused",
       code: "NOT_ISSUED_TO_YOU",
@@ -676,6 +675,19 @@ export async function checkIssueHandover(
     };
   }
   return { kind: "none" };
+}
+
+export async function checkIssueHandover(
+  db: Runner,
+  request: { orgId: string; workerId: string; target: IssueTarget; scannerIsOutsource: boolean },
+): Promise<IssueHandover> {
+  try {
+    return await decideHandover(db, request);
+  } catch (error) {
+    if (await readEnforced(db)) throw error;
+    console.error("[outsource-issue] holder lookup failed, not blocking the scan", error);
+    return { kind: "none" };
+  }
 }
 
 async function closeDoneIssues(db: Runner, issueIds: readonly string[]): Promise<number> {
@@ -714,15 +726,16 @@ export async function finishIssueHandover(
 
 export async function closeHeldIssuesWhenDone(
   db: Runner,
-  request: { orgId: string; workerId: string; target: IssueTarget },
+  request: { orgId: string; workerId: string; loadTarget: () => Promise<IssueTarget> },
 ): Promise<void> {
   try {
-    const held = await findHeldIssues(db, request);
+    const target = await request.loadTarget();
+    const held = await findHeldIssues(db, { orgId: request.orgId, workerId: request.workerId, target });
     if (held.kind === "holder") await closeDoneIssues(db, held.issueIds);
   } catch (error) {
     console.error(
       "[outsource-issue] the work was already done and the holder's issue could not be closed",
-      { workerId: request.workerId, target: request.target, error },
+      { workerId: request.workerId, error },
     );
   }
 }

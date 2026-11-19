@@ -13,6 +13,7 @@ import {
   listIssues,
   listOutsourceWorkers,
   listWorkerIssues,
+  loadDepartmentNames,
   loadOutsourceWorker,
   undoIssue,
 } from "../lib/outsource-issue";
@@ -35,6 +36,11 @@ async function issuerName(c: Context<Env>): Promise<string> {
     .bind(userId)
     .first<{ displayName: string | null }>();
   return user?.displayName || userId;
+}
+
+async function departmentLabels(c: Context<Env>, codes: readonly string[], joiner: string): Promise<string> {
+  const names = await loadDepartmentNames(c.var.DB);
+  return codes.map((code) => names.get(code) || code).join(joiner);
 }
 
 admin.get("/workers", async (c) => {
@@ -117,7 +123,7 @@ admin.post("/", async (c) => {
       {
         success: false,
         code: "NO_CARD_FOR_DEPARTMENT",
-        error: `This order has no ${lookup.departmentCode} job card for this sticker.`,
+        error: `This order has no ${await departmentLabels(c, lookup.departmentCodes, " or ")} job card for this sticker.`,
       },
       404,
     );
@@ -127,7 +133,7 @@ admin.post("/", async (c) => {
       {
         success: false,
         code: "AMBIGUOUS_DEPARTMENT",
-        error: `This worker is in ${lookup.departments.join(" and ")} and both can take this item. Fix the worker's departments in HR.`,
+        error: `This worker is in ${await departmentLabels(c, lookup.departments, " and ")} and more than one can take this item. Fix the worker's departments in HR.`,
       },
       409,
     );

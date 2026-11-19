@@ -113,7 +113,9 @@ import {
   checkIssueHandover,
   closeHeldIssuesWhenDone,
   finishIssueHandover,
+  truthy as isTruthyFlag,
 } from "../lib/outsource-issue";
+import { fanOutTarget, singleCardTarget } from "../lib/outsource-targets";
 import type { IssueHandover } from "../lib/outsource-issue";
 
 // ---------------------------------------------------------------------------
@@ -2061,9 +2063,9 @@ app.post("/:id/scan-complete", async (c) => {
   // the JC BLOCKED/CANCELLED gates still apply. The per-piece QR flow for
   // Fab Cut/Sew/Uph keeps routing to scan-complete-dept / -shared.
   const worker = await db
-    .prepare("SELECT id, name FROM workers WHERE id = ?")
+    .prepare("SELECT id, name, isOutsource FROM workers WHERE id = ?")
     .bind(workerId)
-    .first<{ id: string; name: string }>();
+    .first<{ id: string; name: string; isOutsource: unknown }>();
   if (!worker) {
     return c.json({ success: false, error: "Worker not found" }, 400);
   }
@@ -2257,10 +2259,8 @@ app.post("/:id/scan-complete", async (c) => {
   const issueHandover: IssueHandover = await checkIssueHandover(db, {
     orgId: scanOrgId(c),
     workerId: worker.id,
-    target: {
-      cardIds: [target.jc.id],
-      pieceNo: wholeCard ? null : target.slot.pieceNo,
-    },
+    scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    target: singleCardTarget(target.jc.id, wholeCard ? null : target.slot.pieceNo),
   });
   if (issueHandover.kind === "refused") {
     return c.json(
@@ -2692,9 +2692,9 @@ app.post("/:id/scan-complete-dept", async (c) => {
     }
   }
   const worker = await db
-    .prepare("SELECT id, name FROM workers WHERE id = ?")
+    .prepare("SELECT id, name, isOutsource FROM workers WHERE id = ?")
     .bind(workerId)
-    .first<{ id: string; name: string }>();
+    .first<{ id: string; name: string; isOutsource: unknown }>();
   if (!worker) {
     return c.json({ success: false, error: "Worker not found" }, 400);
   }
@@ -2745,7 +2745,8 @@ app.post("/:id/scan-complete-dept", async (c) => {
   const issueHandover = await checkIssueHandover(db, {
     orgId: scanOrgId(c),
     workerId: worker.id,
-    target: { cardIds: cards.map((card) => card.id), pieceNo: null },
+    scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    target: fanOutTarget(cards, null),
   });
   if (issueHandover.kind === "refused") {
     return c.json(
@@ -3023,12 +3024,13 @@ app.post("/:id/scan-complete-shared", async (c) => {
 
   const worker = await db
     .prepare(
-      "SELECT id, name, departmentCode, departmentCodes FROM workers WHERE id = ?",
+      "SELECT id, name, isOutsource, departmentCode, departmentCodes FROM workers WHERE id = ?",
     )
     .bind(workerId)
     .first<{
       id: string;
       name: string;
+      isOutsource: unknown;
       departmentCode: string | null;
       departmentCodes: string | null;
     }>();
@@ -3152,20 +3154,19 @@ app.post("/:id/scan-complete-shared", async (c) => {
         if (t && !doneBy.includes(t)) doneBy.push(t);
       }
     }
-    const dueRes = await db
-      .prepare(
-        wipKey
-          ? "SELECT id FROM job_cards WHERE productionOrderId = ? AND departmentCode = ? AND wipKey = ?"
-          : "SELECT id FROM job_cards WHERE productionOrderId = ? AND departmentCode = ?",
-      )
-      .bind(...(wipKey ? [poId, targetDept, wipKey] : [poId, targetDept]))
-      .all<{ id: string }>();
     await closeHeldIssuesWhenDone(db, {
       orgId: scanOrgId(c),
       workerId: worker.id,
-      target: {
-        cardIds: (dueRes.results ?? []).map((row) => row.id),
-        pieceNo: pieceNo ?? null,
+      loadTarget: async () => {
+        const doneCards = await db
+          .prepare(
+            wipKey
+              ? "SELECT id FROM job_cards WHERE productionOrderId = ? AND departmentCode = ? AND wipKey = ?"
+              : "SELECT id FROM job_cards WHERE productionOrderId = ? AND departmentCode = ?",
+          )
+          .bind(...(wipKey ? [poId, targetDept, wipKey] : [poId, targetDept]))
+          .all<{ id: string }>();
+        return fanOutTarget(doneCards.results ?? [], pieceNo ?? null);
       },
     });
     const freshEmpty = await fetchPO(db, poId);
@@ -3213,7 +3214,8 @@ app.post("/:id/scan-complete-shared", async (c) => {
   const issueHandover = await checkIssueHandover(db, {
     orgId: scanOrgId(c),
     workerId: worker.id,
-    target: { cardIds: cards.map((card) => card.id), pieceNo: pieceNo ?? null },
+    scannerIsOutsource: isTruthyFlag(worker.isOutsource),
+    target: fanOutTarget(cards, pieceNo ?? null),
   });
   if (issueHandover.kind === "refused") {
     return c.json(

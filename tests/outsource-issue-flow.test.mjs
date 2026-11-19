@@ -27,7 +27,9 @@ async function issue(db, worker, qr) {
 
 const signPiece = (state, jobCardId, pieceNo) => state.slots.push({ jobCardId, pieceNo, pic1Id: "osc" });
 const finishCard = (state, id) => { state.cards.find((c) => c.id === id).status = "COMPLETED"; };
-const check = (db, workerId, target) => Issue.checkIssueHandover(db, { orgId: ORG, workerId, target });
+const OUTSOURCED = new Set(["osc", "osc2", "oscWood"]);
+const check = (db, workerId, target) =>
+  Issue.checkIssueHandover(db, { orgId: ORG, workerId, target, scannerIsOutsource: OUTSOURCED.has(workerId) });
 
 test("issue: first scan issues as INCOMPLETE with snapshots, the second says already issued", async () => {
   const { db, state } = makeFakeDb();
@@ -334,9 +336,10 @@ test("already-done work: the holder's scan still closes the issue, someone else'
   const { db, state } = makeFakeDb();
   await issue(db, ALI, divanQr(1));
   signPiece(state, "jc-divan", 1);
-  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc2", target: divan(1) });
+  const loadTarget = async () => divan(1);
+  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc2", loadTarget });
   assert.equal(state.issues[0].status, "INCOMPLETE");
-  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc", target: divan(1) });
+  await Issue.closeHeldIssuesWhenDone(db, { orgId: ORG, workerId: "osc", loadTarget });
   assert.equal(state.issues[0].status, "COMPLETED");
   assert.ok(state.issues[0].completed_at instanceof Date);
 });
@@ -360,4 +363,104 @@ test("table setup: legacy issues without cards get their Fabric Sewing cards onc
   const again = await import(`${library}?backfill=2`);
   await again.ensureOutsourceIssueTable(db);
   assert.deepEqual(cards(), before);
+});
+
+const spyOn = (db, log) => ({
+  prepare(sql) {
+    log.push(sql);
+    return db.prepare(sql);
+  },
+  batch: (statements) => db.batch(statements),
+});
+
+test("hot path: an in-house scan with enforce off and no issue on the cards reads once and never touches kv", async () => {
+  const { db } = makeFakeDb();
+  const log = [];
+  const result = await check(spyOn(db, log), "inhouse", divan(1));
+  assert.equal(result.kind, "none");
+  assert.equal(log.filter((sql) => /kv_config/i.test(sql)).length, 0);
+  assert.equal(log.length, 1);
+});
+
+test("hot path: an in-house scan on an issued card reads kv, enforce on refuses, off lets it through", async () => {
+  const on = makeFakeDb({ kv: { "outsource_issue.enforce": true } });
+  await issue(on.db, ALI, divanQr(1));
+  assert.equal((await check(on.db, "inhouse", divan(1))).code, "ISSUED_TO_OTHER");
+  const off = makeFakeDb();
+  await issue(off.db, ALI, divanQr(1));
+  assert.equal((await check(off.db, "inhouse", divan(1))).kind, "none");
+});
+
+test("hot path: an outsourced scanner holding the issue does not need the enforce switch", async () => {
+  const { db } = makeFakeDb();
+  await issue(db, ALI, divanQr(1));
+  const log = [];
+  assert.equal((await check(spyOn(db, log), "osc", divan(1))).kind, "holder");
+  assert.equal(log.filter((sql) => /kv_config/i.test(sql)).length, 0);
+});
+
+test("hot path: the table setup only runs when the table is missing", async () => {
+  const library = pathToFileURL(resolve(process.cwd(), "src/api/lib/outsource-issue.ts")).href;
+  const fresh = await import(`${library}?hot=1`);
+  const { db, state } = makeFakeDb();
+  const request = { orgId: ORG, workerId: "inhouse", target: divan(1), scannerIsOutsource: false };
+  assert.equal((await fresh.checkIssueHandover(db, request)).kind, "none");
+  assert.equal(state.creates, 0);
+
+  let failed = false;
+  const missing = {
+    prepare(sql) {
+      if (!failed && /FROM outsource_issue_cards/i.test(sql)) {
+        failed = true;
+        throw Object.assign(new Error("relation does not exist"), { code: "42P01" });
+      }
+      return db.prepare(sql);
+    },
+    batch: (statements) => db.batch(statements),
+  };
+  assert.equal((await fresh.checkIssueHandover(missing, request)).kind, "none");
+  assert.ok(state.creates > 0);
+});
+
+test("already-done lookup failing is logged and never thrown", async () => {
+  const { db } = makeFakeDb();
+  const original = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    await Issue.closeHeldIssuesWhenDone(db, {
+      orgId: ORG,
+      workerId: "osc",
+      loadTarget: async () => { throw new Error("select failed"); },
+    });
+  } finally {
+    console.error = original;
+  }
+  assert.equal(logged.length, 1);
+});
+
+test("undo: a completed issue keeps its issue and its cards", async () => {
+  const { db, state } = makeFakeDb();
+  const kept = await issue(db, ALI, divanQr(1));
+  signPiece(state, "jc-divan", 1);
+  await Issue.finishIssueHandover(db, await check(db, "osc", divan(1)), context);
+  assert.equal((await Issue.undoIssue(db, { orgId: ORG, id: kept.issue.id })).kind, "already-completed");
+  assert.equal(state.issueCards.length, 1);
+  assert.equal(state.issues.length, 1);
+});
+
+test("the runtime setup SQL translates to snake_case columns and the migration quotes no camelCase", async () => {
+  const { translateSql } = await import(pathToFileURL(resolve(process.cwd(), "src/api/lib/supabase-compat.ts")).href);
+  const translated = Issue.OUTSOURCE_ISSUE_DDL.map((statement) => translateSql(statement));
+  for (const sql of translated) assert.doesNotMatch(sql, /[a-z][A-Z]/, sql);
+  const backfill = translated.find((sql) => /^INSERT INTO outsource_issue_cards/i.test(sql.trim()));
+  assert.match(backfill, /jc\.production_order_id/);
+  assert.match(backfill, /jc\.department_code/);
+  assert.match(backfill, /jc\.wip_key/);
+
+  const migration = readFileSync("migrations-postgres/0258_outsource_issue_cards.sql", "utf8");
+  assert.doesNotMatch(migration, /"[a-z]+[A-Z][A-Za-z]*"/);
+  assert.match(migration, /jc\.production_order_id/);
+  assert.match(migration, /jc\.department_code/);
+  assert.match(migration, /jc\.wip_key/);
 });
