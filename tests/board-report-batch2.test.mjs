@@ -72,3 +72,10 @@ test("batch 3: the executive summary quotes the same materials % as page 4, and 
   assert.match(s[2], /^Watch: raw materials 9\.5% above forecast, led by plywood \(\+RM 19k, \+135\.9%\)\.$/);
   assert.match(s[3], /Houzs Century is 71% of confirmed orders/);
 });
+
+test("page-4 table total uses the P&L pair (owner 2026-11-19: 22.6% -> 9.5%)", () => {
+  const fin = readFileSync("src/pages/board-report/pages-finance.tsx", "utf8");
+  assert.match(fin, /const fcTotal = month && typeof month\.forecast === "number" \? month\.forecast : catFc;/);
+  assert.match(fin, /Forecast not split by category/);
+  assert.doesNotMatch(fin, /changePct\(catSpend, fc\)/, "the old basis is gone");
+});
