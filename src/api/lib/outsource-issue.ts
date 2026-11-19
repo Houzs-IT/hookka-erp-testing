@@ -1,11 +1,5 @@
 import { freshAll, freshFirst } from "./worker-penalties";
-import { isScopeSewn } from "./sewing-scope";
-import type {
-  PieceSlotState,
-  SewingCardState,
-  SewingScope,
-  SewingScopeLookup,
-} from "./sewing-scope";
+import type { IssueTarget, TargetLookup } from "./outsource-targets";
 
 type Stmt = {
   run(): Promise<unknown>;
@@ -13,8 +7,10 @@ type Stmt = {
   first<T = unknown>(): Promise<T | null>;
 };
 
+type BoundStmt = Stmt & { bind(...args: unknown[]): Stmt };
+
 interface Runner {
-  prepare(sql: string): Stmt & { bind(...args: unknown[]): Stmt };
+  prepare(sql: string): BoundStmt;
   batch?(stmts: unknown[]): Promise<Array<{ results?: unknown[] }>>;
 }
 
@@ -48,9 +44,30 @@ const DDL: string[] = [
      ON outsource_issues (production_order_id) WHERE status = 'INCOMPLETE'`,
   `CREATE INDEX IF NOT EXISTS idx_outsource_issues_issued_at
      ON outsource_issues (issued_at DESC)`,
+  `ALTER TABLE outsource_issues ADD COLUMN IF NOT EXISTS department_code TEXT NOT NULL DEFAULT 'FAB_SEW'`,
+  `CREATE TABLE IF NOT EXISTS outsource_issue_cards (
+     issue_id    TEXT NOT NULL,
+     job_card_id TEXT NOT NULL,
+     piece_no    INTEGER,
+     org_id      TEXT NOT NULL DEFAULT 'hookka',
+     PRIMARY KEY (issue_id, job_card_id)
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_outsource_issue_cards_slot
+     ON outsource_issue_cards (job_card_id, COALESCE(piece_no, 0))`,
+  `CREATE INDEX IF NOT EXISTS idx_outsource_issue_cards_card
+     ON outsource_issue_cards (job_card_id)`,
+  `INSERT INTO outsource_issue_cards (issue_id, job_card_id, piece_no, org_id)
+     SELECT oi.id, jc.id, oi.piece_no, oi.org_id
+       FROM outsource_issues oi
+       JOIN job_cards jc ON jc.productionOrderId = oi.production_order_id
+        AND jc.departmentCode = 'FAB_SEW'
+        AND (oi.wip_key IS NULL OR jc.wipKey = oi.wip_key)
+      WHERE NOT EXISTS (SELECT 1 FROM outsource_issue_cards oc WHERE oc.issue_id = oi.id)
+     ON CONFLICT DO NOTHING`,
 ];
 
 const CONCURRENT_CREATE_ERROR_CODES = new Set(["23505", "42P07", "42710"]);
+const UNIQUE_VIOLATION = "23505";
 
 let _applied = false;
 
@@ -64,20 +81,29 @@ async function runCreateStatement(db: Runner, statement: string): Promise<void> 
   try {
     await db.prepare(statement).run();
   } catch (error) {
-    if (!isConcurrentCreateError(error)) throw error;
+    if (!CONCURRENT_CREATE_ERROR_CODES.has(errorCode(error))) throw error;
     await db.prepare(statement).run();
   }
 }
 
-function isConcurrentCreateError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false;
-  return CONCURRENT_CREATE_ERROR_CODES.has(String(error.code));
+function errorCode(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return "";
+  return String(error.code);
+}
+
+async function runBatch(db: Runner, statements: Stmt[]): Promise<void> {
+  if (typeof db.batch !== "function") {
+    throw new Error("outsource issue writes need a database that supports batch");
+  }
+  await db.batch(statements);
 }
 
 export const OUTSOURCE_ISSUE_ENFORCE_KEY = "outsource_issue.enforce";
 export const ISSUE_LIST_CAP = 500;
 const RECENT_COMPLETED_DAYS = 30;
 const MALAYSIA_OFFSET = "+08:00";
+const FINISHED_STATUSES: readonly string[] = ["COMPLETED", "TRANSFERRED"];
+const DEFAULT_DEPARTMENT = "FAB_SEW";
 
 export type IssueStatus = "INCOMPLETE" | "COMPLETED";
 
@@ -86,9 +112,9 @@ export interface OutsourceIssue {
   workerId: string;
   empNo: string;
   workerName: string;
-  itemKey: string;
+  departmentCode: string;
+  departmentName: string;
   productionOrderId: string;
-  wipKey: string | null;
   pieceNo: number | null;
   totalPieces: number | null;
   poNo: string;
@@ -101,17 +127,19 @@ export interface OutsourceIssue {
   completedAt: string | null;
 }
 
-export interface OutsourceIssueWithSewing extends OutsourceIssue {
-  sewingDone: boolean;
+export interface OutsourceIssueWithDone extends OutsourceIssue {
+  workDone: boolean;
 }
 
 export interface IssueWorker {
   id: string;
   empNo: string;
   name: string;
+  departmentCodes: string[];
 }
 
 export interface OutsourceWorkerSummary extends IssueWorker {
+  departmentNames: string[];
   incompleteCount: number;
 }
 
@@ -131,14 +159,15 @@ function toIso(value: unknown): string | null {
 }
 
 function toIssue(row: Row): OutsourceIssue {
+  const departmentCode = text(row.departmentCode, row.department_code) || DEFAULT_DEPARTMENT;
   return {
     id: text(row.id),
     workerId: text(row.workerId, row.worker_id),
     empNo: text(row.empNo, row.emp_no),
     workerName: text(row.workerName, row.worker_name),
-    itemKey: text(row.itemKey, row.item_key),
+    departmentCode,
+    departmentName: departmentCode,
     productionOrderId: text(row.productionOrderId, row.production_order_id),
-    wipKey: (row.wipKey ?? row.wip_key ?? null) as string | null,
     pieceNo: optionalNumber(row.pieceNo, row.piece_no),
     totalPieces: optionalNumber(row.totalPieces, row.total_pieces),
     poNo: text(row.poNo, row.po_no),
@@ -152,116 +181,198 @@ function toIssue(row: Row): OutsourceIssue {
   };
 }
 
-export function itemKeyOf(scope: SewingScope): string {
-  return `${scope.productionOrderId}|${scope.wipKey ?? "*"}|${scope.pieceNo ?? "*"}`;
+const placeholders = (count: number): string => Array.from({ length: count }, () => "?").join(",");
+
+async function loadDepartmentNames(db: Runner): Promise<Map<string, string>> {
+  const rows = await freshAll<Row>(db, db.prepare("SELECT code, name FROM departments"));
+  return new Map(rows.map((row) => [text(row.code), text(row.name)]));
 }
 
-export function scopesOverlap(
-  issue: { wipKey: string | null; pieceNo: number | null },
-  scope: SewingScope,
-): boolean {
-  const sameWip =
-    issue.wipKey === null || scope.wipKey === null || issue.wipKey === scope.wipKey;
-  const samePiece =
-    issue.pieceNo === null || scope.pieceNo === null || issue.pieceNo === scope.pieceNo;
-  return sameWip && samePiece;
+async function withDepartmentNames(db: Runner, issues: OutsourceIssue[]): Promise<OutsourceIssue[]> {
+  if (issues.length === 0) return issues;
+  const names = await loadDepartmentNames(db);
+  return issues.map((issue) => ({
+    ...issue,
+    departmentName: names.get(issue.departmentCode) || issue.departmentCode,
+  }));
 }
 
-async function findByItemKey(
+export interface SlotRef {
+  cardId: string;
+  pieceNo: number | null;
+}
+
+export function slotKey(slot: SlotRef): string {
+  return `${slot.cardId}|${slot.pieceNo ?? "*"}`;
+}
+
+export async function loadDoneSlots(db: Runner, slots: readonly SlotRef[]): Promise<Set<string>> {
+  const done = new Set<string>();
+  const cardIds = [...new Set(slots.map((slot) => slot.cardId))];
+  if (cardIds.length === 0) return done;
+  const cardRows = await freshAll<Row>(
+    db,
+    db
+      .prepare(`SELECT id, status FROM job_cards WHERE id IN (${placeholders(cardIds.length)})`)
+      .bind(...cardIds),
+  );
+  const finished = new Set(
+    cardRows.filter((card) => FINISHED_STATUSES.includes(text(card.status))).map((card) => text(card.id)),
+  );
+  const pieceCardIds = [
+    ...new Set(
+      slots
+        .filter((slot) => slot.pieceNo !== null && !finished.has(slot.cardId))
+        .map((slot) => slot.cardId),
+    ),
+  ];
+  const signed = new Set<string>();
+  if (pieceCardIds.length > 0) {
+    const slotRows = await freshAll<Row>(
+      db,
+      db
+        .prepare(
+          `SELECT jobCardId, pieceNo, pic1Id FROM piece_pics WHERE jobCardId IN (${placeholders(pieceCardIds.length)})`,
+        )
+        .bind(...pieceCardIds),
+    );
+    for (const row of slotRows) {
+      if (row.pic1Id ?? row.pic1_id) {
+        signed.add(
+          slotKey({
+            cardId: text(row.jobCardId, row.job_card_id),
+            pieceNo: Number(row.pieceNo ?? row.piece_no),
+          }),
+        );
+      }
+    }
+  }
+  for (const slot of slots) {
+    if (finished.has(slot.cardId) || signed.has(slotKey(slot))) done.add(slotKey(slot));
+  }
+  return done;
+}
+
+const piecesOverlap = (a: number | null, b: number | null): boolean => a === null || b === null || a === b;
+
+async function findOverlappingIssues(
   db: Runner,
   orgId: string,
-  itemKey: string,
-): Promise<OutsourceIssue | null> {
+  target: IssueTarget,
+): Promise<OutsourceIssue[]> {
+  if (target.cardIds.length === 0) return [];
+  const slotRows = await freshAll<Row>(
+    db,
+    db
+      .prepare(
+        `SELECT issue_id, job_card_id, piece_no FROM outsource_issue_cards
+          WHERE org_id = ? AND job_card_id IN (${placeholders(target.cardIds.length)})`,
+      )
+      .bind(orgId, ...target.cardIds),
+  );
+  const issueIds = [
+    ...new Set(
+      slotRows
+        .filter((row) => piecesOverlap(optionalNumber(row.pieceNo, row.piece_no), target.pieceNo))
+        .map((row) => text(row.issueId, row.issue_id)),
+    ),
+  ];
+  if (issueIds.length === 0) return [];
+  const issueRows = await freshAll<Row>(
+    db,
+    db
+      .prepare(
+        `SELECT * FROM outsource_issues WHERE org_id = ? AND id IN (${placeholders(issueIds.length)})
+          ORDER BY issued_at ASC`,
+      )
+      .bind(orgId, ...issueIds),
+  );
+  return issueRows.map(toIssue);
+}
+
+async function findIssueById(db: Runner, orgId: string, id: string): Promise<OutsourceIssue | null> {
   const row = await freshFirst<Row>(
     db,
-    db
-      .prepare("SELECT * FROM outsource_issues WHERE org_id = ? AND item_key = ?")
-      .bind(orgId, itemKey),
+    db.prepare("SELECT * FROM outsource_issues WHERE id = ? AND org_id = ?").bind(id, orgId),
   );
   return row ? toIssue(row) : null;
-}
-
-async function loadOrderIssues(
-  db: Runner,
-  orgId: string,
-  productionOrderId: string,
-): Promise<OutsourceIssue[]> {
-  const rows = await freshAll<Row>(
-    db,
-    db
-      .prepare("SELECT * FROM outsource_issues WHERE org_id = ? AND production_order_id = ?")
-      .bind(orgId, productionOrderId),
-  );
-  return rows.map(toIssue);
 }
 
 export type IssueOutcome =
   | { kind: "issued"; issue: OutsourceIssue }
   | { kind: "already-issued"; issue: OutsourceIssue }
-  | { kind: "already-sewn" };
+  | { kind: "already-done" };
 
 export async function issueItem(
   db: Runner,
   request: {
     orgId: string;
     worker: IssueWorker;
-    lookup: Extract<SewingScopeLookup, { kind: "found" }>;
+    lookup: Extract<TargetLookup, { kind: "found" }>;
     qrRaw: string;
     issuedBy: string;
   },
 ): Promise<IssueOutcome> {
   await ensureOutsourceIssueTable(db);
   const { orgId, worker, lookup, qrRaw, issuedBy } = request;
-  const itemKey = itemKeyOf(lookup.scope);
+  const { target } = lookup;
 
-  const onOrder = await loadOrderIssues(db, orgId, lookup.scope.productionOrderId);
-  const overlapping = onOrder.filter((issue) => scopesOverlap(issue, lookup.scope));
-  const existing = overlapping.find((issue) => issue.itemKey === itemKey) ?? overlapping[0];
+  const existing = (await findOverlappingIssues(db, orgId, target))[0];
   if (existing) return { kind: "already-issued", issue: existing };
-  if (lookup.isSewn) return { kind: "already-sewn" };
+  if (lookup.isDone) return { kind: "already-done" };
 
   const orderRow = await freshFirst<Row>(
     db,
     db
       .prepare("SELECT productCode FROM production_orders WHERE id = ?")
-      .bind(lookup.scope.productionOrderId),
+      .bind(lookup.order.productionOrderId),
   );
-  const inserted = await db
+  const id = `oi-${crypto.randomUUID()}`;
+  const insertIssue = db
     .prepare(
       `INSERT INTO outsource_issues
-         (id, org_id, worker_id, emp_no, worker_name, item_key, qr_raw, production_order_id,
-          wip_key, piece_no, total_pieces, po_no, product_code, product_name, item_label,
-          status, issued_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INCOMPLETE', ?)
-       ON CONFLICT (org_id, item_key) DO NOTHING
-       RETURNING *`,
+         (id, org_id, worker_id, emp_no, worker_name, department_code, item_key, qr_raw,
+          production_order_id, piece_no, total_pieces, po_no, product_code, product_name,
+          item_label, status, issued_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INCOMPLETE', ?)`,
     )
     .bind(
-      `oi-${crypto.randomUUID()}`,
+      id,
       orgId,
       worker.id,
       worker.empNo,
       worker.name,
-      itemKey,
+      lookup.departmentCode,
+      id,
       qrRaw,
-      lookup.scope.productionOrderId,
-      lookup.scope.wipKey,
-      lookup.scope.pieceNo,
+      lookup.order.productionOrderId,
+      target.pieceNo,
       lookup.totalPieces,
       lookup.order.poNo ?? "",
       text(orderRow?.productCode, orderRow?.product_code),
       lookup.order.productName,
       lookup.itemLabel,
       issuedBy,
-    )
-    .first<Row>();
-  if (inserted) return { kind: "issued", issue: toIssue(inserted) };
-
-  const winner = await findByItemKey(db, orgId, itemKey);
-  if (!winner) {
-    throw new Error(`outsource_issues insert hit a conflict but no row exists for ${itemKey}`);
+    );
+  const insertCards = target.cardIds.map((cardId) =>
+    db
+      .prepare(
+        "INSERT INTO outsource_issue_cards (issue_id, job_card_id, piece_no, org_id) VALUES (?, ?, ?, ?)",
+      )
+      .bind(id, cardId, target.pieceNo, orgId),
+  );
+  try {
+    await runBatch(db, [insertIssue, ...insertCards]);
+  } catch (error) {
+    if (errorCode(error) !== UNIQUE_VIOLATION) throw error;
+    const winner = (await findOverlappingIssues(db, orgId, target))[0];
+    if (!winner) throw error;
+    return { kind: "already-issued", issue: winner };
   }
-  return { kind: "already-issued", issue: winner };
+  const inserted = await findIssueById(db, orgId, id);
+  if (!inserted) throw new Error(`outsource_issues row ${id} is missing right after its insert`);
+  const [named] = await withDepartmentNames(db, [inserted]);
+  return { kind: "issued", issue: named };
 }
 
 export type UndoOutcome =
@@ -274,21 +385,23 @@ export async function undoIssue(
   request: { orgId: string; id: string },
 ): Promise<UndoOutcome> {
   await ensureOutsourceIssueTable(db);
-  const deleted = await db
-    .prepare(
-      "DELETE FROM outsource_issues WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE' RETURNING *",
-    )
-    .bind(request.id, request.orgId)
-    .first<Row>();
-  if (deleted) return { kind: "undone", issue: toIssue(deleted) };
-  const remaining = await freshFirst<Row>(
-    db,
+  const before = await findIssueById(db, request.orgId, request.id);
+  if (!before) return { kind: "not-found" };
+  if (before.status === "COMPLETED") return { kind: "already-completed", issue: before };
+  await runBatch(db, [
     db
-      .prepare("SELECT * FROM outsource_issues WHERE id = ? AND org_id = ?")
+      .prepare(
+        `DELETE FROM outsource_issue_cards WHERE issue_id IN
+           (SELECT id FROM outsource_issues WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE')`,
+      )
       .bind(request.id, request.orgId),
-  );
-  if (!remaining) return { kind: "not-found" };
-  return { kind: "already-completed", issue: toIssue(remaining) };
+    db
+      .prepare("DELETE FROM outsource_issues WHERE id = ? AND org_id = ? AND status = 'INCOMPLETE'")
+      .bind(request.id, request.orgId),
+  ]);
+  const remaining = await findIssueById(db, request.orgId, request.id);
+  if (remaining) return { kind: "already-completed", issue: remaining };
+  return { kind: "undone", issue: before };
 }
 
 export interface IssueFilter {
@@ -299,72 +412,44 @@ export interface IssueFilter {
   search?: string;
 }
 
-async function attachSewingStatus(
-  db: Runner,
-  issues: OutsourceIssue[],
-): Promise<OutsourceIssueWithSewing[]> {
-  if (issues.length === 0) return [];
-  const orderIds = [...new Set(issues.map((issue) => issue.productionOrderId))];
-  const cards = await freshAll<Row>(
+async function loadIssueSlots(db: Runner, issueIds: string[]): Promise<Map<string, SlotRef[]>> {
+  const byIssue = new Map<string, SlotRef[]>();
+  if (issueIds.length === 0) return byIssue;
+  const rows = await freshAll<Row>(
     db,
     db
       .prepare(
-        `SELECT id, productionOrderId, wipKey, status FROM job_cards
-          WHERE departmentCode = 'FAB_SEW' AND productionOrderId IN (${orderIds.map(() => "?").join(",")})`,
+        `SELECT issue_id, job_card_id, piece_no FROM outsource_issue_cards
+          WHERE issue_id IN (${placeholders(issueIds.length)})`,
       )
-      .bind(...orderIds),
+      .bind(...issueIds),
   );
-  const cardsByOrder = new Map<string, SewingCardState[]>();
-  for (const card of cards) {
-    const orderId = text(card.productionOrderId, card.production_order_id);
-    const list = cardsByOrder.get(orderId) ?? [];
+  for (const row of rows) {
+    const issueId = text(row.issueId, row.issue_id);
+    const list = byIssue.get(issueId) ?? [];
     list.push({
-      id: text(card.id),
-      wipKey: (card.wipKey ?? card.wip_key ?? null) as string | null,
-      status: (card.status ?? null) as string | null,
+      cardId: text(row.jobCardId, row.job_card_id),
+      pieceNo: optionalNumber(row.pieceNo, row.piece_no),
     });
-    cardsByOrder.set(orderId, list);
+    byIssue.set(issueId, list);
   }
-  const openCardIds = cards
-    .filter((card) => !["COMPLETED", "TRANSFERRED"].includes(text(card.status)))
-    .map((card) => text(card.id));
-  const slots: PieceSlotState[] = [];
-  if (openCardIds.length > 0) {
-    const slotRows = await freshAll<Row>(
-      db,
-      db
-        .prepare(
-          `SELECT jobCardId, pieceNo, pic1Id FROM piece_pics
-            WHERE jobCardId IN (${openCardIds.map(() => "?").join(",")})`,
-        )
-        .bind(...openCardIds),
-    );
-    for (const slot of slotRows) {
-      slots.push({
-        jobCardId: text(slot.jobCardId, slot.job_card_id),
-        pieceNo: Number(slot.pieceNo ?? slot.piece_no),
-        pic1Id: (slot.pic1Id ?? slot.pic1_id ?? null) as string | null,
-      });
-    }
-  }
-  return issues.map((issue) => ({
-    ...issue,
-    sewingDone: isScopeSewn(
-      {
-        productionOrderId: issue.productionOrderId,
-        wipKey: issue.wipKey,
-        pieceNo: issue.pieceNo,
-      },
-      cardsByOrder.get(issue.productionOrderId) ?? [],
-      slots,
-    ),
-  }));
+  return byIssue;
+}
+
+async function attachDone(db: Runner, issues: OutsourceIssue[]): Promise<OutsourceIssueWithDone[]> {
+  if (issues.length === 0) return [];
+  const slotsByIssue = await loadIssueSlots(db, issues.map((issue) => issue.id));
+  const done = await loadDoneSlots(db, [...slotsByIssue.values()].flat());
+  return issues.map((issue) => {
+    const slots = slotsByIssue.get(issue.id) ?? [];
+    return { ...issue, workDone: slots.length > 0 && slots.every((slot) => done.has(slotKey(slot))) };
+  });
 }
 
 export async function listIssues(
   db: Runner,
   request: { orgId: string; filter: IssueFilter },
-): Promise<OutsourceIssueWithSewing[]> {
+): Promise<OutsourceIssueWithDone[]> {
   await ensureOutsourceIssueTable(db);
   const { filter } = request;
   const conditions = ["org_id = ?"];
@@ -402,7 +487,7 @@ export async function listIssues(
       )
       .bind(...params),
   );
-  return attachSewingStatus(db, rows.map(toIssue));
+  return attachDone(db, await withDepartmentNames(db, rows.map(toIssue)));
 }
 
 export async function listWorkerIssues(
@@ -429,11 +514,34 @@ export async function listWorkerIssues(
       )
       .bind(request.orgId, request.workerId),
   );
-  return { incomplete: incomplete.map(toIssue), completedRecent: completedRecent.map(toIssue) };
+  return {
+    incomplete: await withDepartmentNames(db, incomplete.map(toIssue)),
+    completedRecent: await withDepartmentNames(db, completedRecent.map(toIssue)),
+  };
 }
 
 const truthy = (value: unknown): boolean =>
   value === true || value === 1 || value === "1" || value === "t" || value === "true";
+
+function parseDepartmentCodes(row: Row): string[] {
+  const listed: unknown = row.departmentCodes ?? row.department_codes;
+  let value: unknown = listed;
+  if (typeof listed === "string" && listed) {
+    try {
+      value = JSON.parse(listed);
+    } catch {
+      value = null;
+    }
+  }
+  const codes = Array.isArray(value)
+    ? value.filter((code): code is string => typeof code === "string" && code.length > 0)
+    : [];
+  if (codes.length > 0) return codes;
+  const single = text(row.departmentCode, row.department_code);
+  return single ? [single] : [];
+}
+
+const WORKER_COLUMNS = "id, empNo, name, status, isOutsource, departmentCode, departmentCodes";
 
 export async function loadOutsourceWorker(
   db: Runner,
@@ -441,14 +549,17 @@ export async function loadOutsourceWorker(
 ): Promise<IssueWorker | null> {
   const row = await freshFirst<Row>(
     db,
-    db
-      .prepare("SELECT id, empNo, name, status, isOutsource FROM workers WHERE id = ?")
-      .bind(workerId),
+    db.prepare(`SELECT ${WORKER_COLUMNS} FROM workers WHERE id = ?`).bind(workerId),
   );
   if (!row || !truthy(row.isOutsource ?? row.is_outsource) || text(row.status) !== "ACTIVE") {
     return null;
   }
-  return { id: text(row.id), empNo: text(row.empNo, row.emp_no), name: text(row.name) };
+  return {
+    id: text(row.id),
+    empNo: text(row.empNo, row.emp_no),
+    name: text(row.name),
+    departmentCodes: parseDepartmentCodes(row),
+  };
 }
 
 export async function listOutsourceWorkers(
@@ -456,10 +567,7 @@ export async function listOutsourceWorkers(
   orgId: string,
 ): Promise<OutsourceWorkerSummary[]> {
   await ensureOutsourceIssueTable(db);
-  const workers = await freshAll<Row>(
-    db,
-    db.prepare("SELECT id, empNo, name, status, isOutsource FROM workers"),
-  );
+  const workers = await freshAll<Row>(db, db.prepare(`SELECT ${WORKER_COLUMNS} FROM workers`));
   const counts = await freshAll<Row>(
     db,
     db
@@ -468,17 +576,23 @@ export async function listOutsourceWorkers(
       )
       .bind(orgId),
   );
+  const names = await loadDepartmentNames(db);
   const countByWorker = new Map(
     counts.map((row) => [text(row.workerId, row.worker_id), Number(row.n)]),
   );
   return workers
     .filter((row) => truthy(row.isOutsource ?? row.is_outsource) && text(row.status) === "ACTIVE")
-    .map((row) => ({
-      id: text(row.id),
-      empNo: text(row.empNo, row.emp_no),
-      name: text(row.name),
-      incompleteCount: countByWorker.get(text(row.id)) ?? 0,
-    }))
+    .map((row) => {
+      const departmentCodes = parseDepartmentCodes(row);
+      return {
+        id: text(row.id),
+        empNo: text(row.empNo, row.emp_no),
+        name: text(row.name),
+        departmentCodes,
+        departmentNames: departmentCodes.map((code) => names.get(code) || code),
+        incompleteCount: countByWorker.get(text(row.id)) ?? 0,
+      };
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -496,31 +610,28 @@ async function isEnforced(db: Runner): Promise<boolean> {
   }
 }
 
-export type SewingHandover =
+export type IssueHandover =
   | { kind: "none" }
   | { kind: "holder"; issueIds: string[] }
   | { kind: "refused"; code: "NOT_ISSUED_TO_YOU" | "ISSUED_TO_OTHER"; message: string };
 
 async function findHeldIssues(
   db: Runner,
-  request: { orgId: string; workerId: string; scope: SewingScope },
-): Promise<SewingHandover> {
+  request: { orgId: string; workerId: string; target: IssueTarget },
+): Promise<IssueHandover> {
   await ensureOutsourceIssueTable(db);
-  const onOrder = await loadOrderIssues(db, request.orgId, request.scope.productionOrderId);
-  const mine = onOrder.filter(
-    (issue) =>
-      issue.workerId === request.workerId &&
-      issue.status === "INCOMPLETE" &&
-      scopesOverlap(issue, request.scope),
+  const overlapping = await findOverlappingIssues(db, request.orgId, request.target);
+  const mine = overlapping.filter(
+    (issue) => issue.workerId === request.workerId && issue.status === "INCOMPLETE",
   );
   return mine.length > 0 ? { kind: "holder", issueIds: mine.map((issue) => issue.id) } : { kind: "none" };
 }
 
-export async function checkSewingHandover(
+export async function checkIssueHandover(
   db: Runner,
-  request: { orgId: string; workerId: string; scope: SewingScope },
-): Promise<SewingHandover> {
-  const { orgId, workerId, scope } = request;
+  request: { orgId: string; workerId: string; target: IssueTarget },
+): Promise<IssueHandover> {
+  const { orgId, workerId, target } = request;
   let enforced: boolean;
   try {
     enforced = await isEnforced(db);
@@ -538,8 +649,7 @@ export async function checkSewingHandover(
   }
 
   await ensureOutsourceIssueTable(db);
-  const onOrder = await loadOrderIssues(db, orgId, scope.productionOrderId);
-  const overlapping = onOrder.filter((issue) => scopesOverlap(issue, scope));
+  const overlapping = await findOverlappingIssues(db, orgId, target);
   const heldByOther = overlapping.find(
     (issue) => issue.status === "INCOMPLETE" && issue.workerId !== workerId,
   );
@@ -568,13 +678,13 @@ export async function checkSewingHandover(
   return { kind: "none" };
 }
 
-export async function closeSewingHandover(
-  db: Runner,
-  handover: SewingHandover,
-): Promise<number> {
-  if (handover.kind !== "holder") return 0;
+async function closeDoneIssues(db: Runner, issueIds: readonly string[]): Promise<number> {
+  const slotsByIssue = await loadIssueSlots(db, [...issueIds]);
+  const done = await loadDoneSlots(db, [...slotsByIssue.values()].flat());
   let closed = 0;
-  for (const issueId of handover.issueIds) {
+  for (const issueId of issueIds) {
+    const slots = slotsByIssue.get(issueId) ?? [];
+    if (slots.length === 0 || !slots.every((slot) => done.has(slotKey(slot)))) continue;
     const row = await db
       .prepare(
         "UPDATE outsource_issues SET status = 'COMPLETED', completed_at = now() WHERE id = ? AND status = 'INCOMPLETE' RETURNING id",
@@ -586,33 +696,33 @@ export async function closeSewingHandover(
   return closed;
 }
 
-export async function finishSewingHandover(
+export async function finishIssueHandover(
   db: Runner,
-  handover: SewingHandover,
+  handover: IssueHandover,
   context: { productionOrderId: string; workerId: string },
-  shouldClose?: () => Promise<boolean>,
 ): Promise<void> {
+  if (handover.kind !== "holder") return;
   try {
-    if (shouldClose && !(await shouldClose())) return;
-    await closeSewingHandover(db, handover);
+    await closeDoneIssues(db, handover.issueIds);
   } catch (error) {
     console.error(
-      "[outsource-issue] Fabric Sewing completed but the issue could not be closed; it still shows INCOMPLETE",
+      "[outsource-issue] the work was completed but the issue could not be closed; it still shows INCOMPLETE",
       { ...context, handover, error },
     );
   }
 }
 
-export async function closeIssuesHeldOnFinishedSewing(
+export async function closeHeldIssuesWhenDone(
   db: Runner,
-  request: { orgId: string; workerId: string; scope: SewingScope },
+  request: { orgId: string; workerId: string; target: IssueTarget },
 ): Promise<void> {
   try {
-    await closeSewingHandover(db, await findHeldIssues(db, request));
+    const held = await findHeldIssues(db, request);
+    if (held.kind === "holder") await closeDoneIssues(db, held.issueIds);
   } catch (error) {
     console.error(
-      "[outsource-issue] sewing was already done and the holder's issue could not be closed",
-      { workerId: request.workerId, scope: request.scope, error },
+      "[outsource-issue] the work was already done and the holder's issue could not be closed",
+      { workerId: request.workerId, target: request.target, error },
     );
   }
 }
