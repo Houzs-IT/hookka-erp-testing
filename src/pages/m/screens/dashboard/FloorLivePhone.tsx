@@ -5,7 +5,7 @@
 // business rule are the desktop's own and are imported, not copied —
 //   useCachedJson + /api/dashboard/floor-live[/summary|/completed],
 //   floorLiveLayout / summaryLayout / periodRange / isIssue (floor-live-lib),
-//   DeptCompletedStrip (completed pcs, 12-day usual, RM value, monthly popup).
+//   the completed numbers (pcs, 12-day usual, RM value, monthly days) behind CategoryStrip / CompletedDetail (FloorLiveCompleted.tsx).
 // The page chrome of the design (header, period bar, sub-tabs, bottom nav)
 // already exists on /m Home, so only the content below the sub-tabs is here.
 // The desktop FloorLiveView is untouched.
@@ -14,7 +14,8 @@ import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { CloudOff, Gauge, LogIn, Clock, Package, Search, TriangleAlert, UserCheck, type LucideIcon } from "lucide-react";
 import { useInterval } from "@/lib/scheduler";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { DeptCompletedStrip } from "../../../dashboards/DeptCompletedStrip";
+import { CategoryStrip, CompletedDetail } from "./FloorLiveCompleted";
+import { useCompletedDetail } from "./completed-detail-state";
 import {
   floorLiveLayout, periodRange, summaryLayout,
   type DeptCompletedResponse, type FloorLiveResponse, type FloorLiveRow, type FloorSummaryResponse, type FloorSummaryRow,
@@ -243,6 +244,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
 
   // Every 3 minutes, paused while the tab is hidden; a past day is a saved copy.
   useInterval(() => { refresh(); completed.refresh(); }, pastDay ? null : REFRESH_MS);
+  const detail = useCompletedDetail();
 
   const layout = useMemo(() => (data?.success ? floorLiveLayout(data, { q, issuesOnly }) : null), [data, q, issuesOnly]);
   // Badge: issue rows that match the search, counted before the 6-row limit.
@@ -320,7 +322,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
               effPct={d.effPct}
               overallPct={d.overallPct}
               helperMinutes={d.helperMinutes}
-              completed={<DeptCompletedStrip code={d.code} name={d.name} data={completed.data} showUsual live={!pastDay} today={today} />}
+              completed={<CategoryStrip code={d.code} name={d.name} data={completed.data} showUsual live={!pastDay} onOpen={detail.open} />}
             />
           ))}
         </div>
@@ -333,6 +335,7 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
           {layout.nonProduction.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production={false} effPct={null} />)}
         </div>
       </div>
+      {detail.target ? <CompletedDetail target={detail.target} data={completed.data} onClose={detail.close} /> : null}
     </div>
   );
 }
@@ -385,6 +388,7 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
   const { data, loading, error, refresh } = useCachedJson<FloorSummaryResponse>(`/api/dashboard/floor-live/summary?from=${from}&to=${to}`, 0);
   const completed = useCachedJson<DeptCompletedResponse>(`/api/dashboard/floor-live/completed?from=${from}&to=${to}`, 0);
   const [q, setQ] = useState("");
+  const detail = useCompletedDetail();
   const cards = useMemo(() => (data?.success ? summaryLayout(data, q) : []), [data, q]);
 
   if (loading && !data) return <LoadingState text="Loading the summary…" />;
@@ -420,7 +424,7 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
               key={c.code}
               name={c.name}
               rows={c.rows}
-              completed={<DeptCompletedStrip code={c.code} name={c.name} data={completed.data} showUsual={false} live={false} today={today} />}
+              completed={<CategoryStrip code={c.code} name={c.name} data={completed.data} showUsual={false} live={false} onOpen={detail.open} />}
             />
           ))}
         </div>
@@ -428,6 +432,7 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
       <div style={{ fontSize: 11.5, lineHeight: 1.5, color: M.ink, padding: "0 2px" }}>
         Grouped by home department. Days = days punched in · Done = pieces · Eff. = earned ÷ worked minutes over the period (red below 80%) · NP h = hours in non-production departments · 1h+ = days in a non-production department for over an hour (red row).
       </div>
+      {detail.target ? <CompletedDetail target={detail.target} data={completed.data} onClose={detail.close} /> : null}
     </div>
   );
 }

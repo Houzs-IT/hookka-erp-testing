@@ -28,9 +28,43 @@ test("owner rules kept: red <80%, red non-prod hour row, last check-in, helpers"
   assert.match(phone, /p\.isHelper \? <HelperPill \/>/);
 });
 
-test("completed pcs, 12-day usual, RM value and the monthly popup stay (DeptCompletedStrip)", () => {
-  assert.match(phone, /<DeptCompletedStrip code=\{d\.code\} name=\{d\.name\} data=\{completed\.data\} showUsual live=\{!pastDay\} today=\{today\} \/>/);
-  assert.match(phone, /showUsual=\{false\} live=\{false\}/);
+test("Category breakdown strip + completed detail use the desktop's numbers and rules", () => {
+  assert.match(phone, /<CategoryStrip code=\{d\.code\} name=\{d\.name\} data=\{completed\.data\} showUsual live=\{!pastDay\} onOpen=\{detail\.open\} \/>/);
+  assert.match(phone, /showUsual=\{false\} live=\{false\} onOpen=\{detail\.open\}/);
+  assert.match(phone, /<CompletedDetail target=\{detail\.target\} data=\{completed\.data\} onClose=\{detail\.close\} \/>/);
+  const c = read("src/pages/m/screens/dashboard/FloorLiveCompleted.tsx");
+  assert.match(c, /deptCompletedFor\(data, code\)/);
+  assert.match(c, /deptCompletedDays\(shown, target\.code, today\)/);
+  assert.match(c, /behindPace\(v, usual, nowMin\)/);
+  assert.match(c, /\/api\/dashboard\/floor-live\/completed\?from=\$\{data\.from\}&to=\$\{data\.to\}&month=\$\{month\}/);
+  assert.doesNotMatch(c, /Math\.random|const TODAY\s*=/, "no prototype sample data");
+});
+
+test("detail: Malaysia date for the month limit, opens on the viewed date's month, Sundays kept", () => {
+  const c = read("src/pages/m/screens/dashboard/FloorLiveCompleted.tsx");
+  assert.match(c, /const today = todayYmdMY\(\);/);
+  assert.match(c, /const baseMonth = \(data\?\.to \?\? today\)\.slice\(0, 7\);/);
+  assert.match(c, /if \(t <= curMonth\) setMonth\(t\);/);
+  assert.match(c, /disabled=\{isCurrent\}/);
+  assert.doesNotMatch(c, /getUTCDay\(\) === 0|=== 0\) continue/, "no Sunday filter: a Sunday with completions is shown");
+});
+
+test("detail captions: 'this month' only for the current month; the 12-day avg is the latest baseline", () => {
+  const c = read("src/pages/m/screens/dashboard/FloorLiveCompleted.tsx");
+  assert.match(c, /isCurrent \? "12-day avg" : "Latest 12-day avg"/);
+  assert.match(c, /isCurrent \? "this month" : `\$\{mon\} avg`/);
+  assert.match(c, /deptCompletedFor\(data, target\.code\); \/\/ the 12-day baseline is the latest one/);
+});
+
+test("detail closes on Back button, Escape and the phone/browser Back (one history entry)", () => {
+  const c = read("src/pages/m/screens/dashboard/FloorLiveCompleted.tsx");
+  const h = read("src/pages/m/screens/dashboard/completed-detail-state.ts");
+  assert.match(c, /e\.key === "Escape"\) onClose\(\)/);
+  assert.match(c, /aria-label="Back"/);
+  assert.match(h, /window\.history\.pushState\(/);
+  assert.match(h, /addEventListener\("popstate", onPop\)/);
+  assert.match(h, /window\.history\.back\(\)/);
+  assert.doesNotMatch(h, /useEffect\([^)]*pushState/, "pushed from the tap, not an effect (StrictMode)");
 });
 
 test("Issues badge = issue rows matching the search, counted before the 6-row limit", () => {
