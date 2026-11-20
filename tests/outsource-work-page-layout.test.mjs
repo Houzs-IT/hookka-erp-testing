@@ -15,14 +15,27 @@ test("issuing on PC: scanner Enter, an Issue button and Scan QR all issue; the f
   assert.match(page, /if \(selectedWorkerId && !isIssuing && !isCameraOpen\) scanInputRef\.current\?\.focus\(\);/);
 });
 
-test("default columns fit a 902px table (1366px screen) with Actions pinned last", () => {
-  const widthOf = (label) => Number(new RegExp(`label: "${label}",\\s*width: "(\\d+)px"`).exec(page)?.[1]);
-  const issuedAt = Number(/key,\s*label,\s*width: "(\d+)px"/.exec(page)?.[1]);
-  const visible = [issuedAt, widthOf("Worker"), widthOf("PO no"), widthOf("Product"), widthOf("Item"), widthOf("Piece"), widthOf("Status"), widthOf("Actions")];
-  assert.ok(visible.every(Number.isFinite), JSON.stringify(visible));
-  assert.ok(visible.reduce((sum, width) => sum + width, 0) <= 902);
-  assert.match(page, /label: "Department", width: "\d+px", sortable: true, defaultHidden: true/);
+test("full-width stacked layout: Issue Work bar on top, table below", () => {
+  assert.ok(!page.includes("lg:grid-cols-[340px_minmax(0,1fr)]"));
+  assert.match(page, /<IssueWorkBar [^>]*\/>\s*<TrackingLedger /);
+  assert.ok(page.includes("md:grid-cols-[260px_minmax(0,1fr)_auto]"));
+  assert.ok(page.includes("<SessionIssuesPopover issue={issue} canUndo={canUndo} />"));
+});
+
+test("toolbar: status tabs + search on row 1, filters + buttons on row 2", () => {
+  assert.ok(page.includes("toolbarStart={<StatusTabs issue={issue} />}"));
+  assert.ok(page.includes("toolbarSecondRow={<TrackingFilters issue={issue} />}"));
+  assert.match(grid, /\{toolbarSecondRow && \(\s*<>\s*<div className="basis-full h-0" aria-hidden \/>/);
+});
+
+test("columns: Product & Item merged, Piece hidden by default, Actions pinned last with a solid edge", () => {
+  assert.ok(page.includes('label: "Product & Item"'));
+  assert.ok(!page.includes('label: "Item"'));
+  assert.match(page, /label: "Piece",[^}]*defaultHidden: true/);
+  assert.ok(page.includes("shortWorkerName(row.workerName)"));
+  assert.ok(page.includes('gridId="outsource-issue-tracking-v4"'));
   assert.match(page, /label: "Actions",[\s\S]*?stickyEnd: true[\s\S]*?\n {4}\},\n {2}\];/);
+  assert.ok(page.includes("[&_td.sticky.right-0]:border-l"));
 });
 
 test("the grid can hide its toolbar record count; search never collapses", () => {
@@ -42,6 +55,6 @@ test("the tracking table sits on its own white card with a neutral header and so
 test("Approve is AA-contrast emerald and the status tabs are borderless slate", () => {
   assert.match(page, /APPROVE_BUTTON_CLASS = "bg-emerald-700 text-white hover:bg-emerald-800"/);
   assert.match(page, /className=\{APPROVE_BUTTON_CLASS\}/);
-  assert.match(page, /aria-label="Status" className="flex rounded-md bg-slate-100 p-1"/);
+  assert.match(page, /aria-label="Status" className="flex max-w-full overflow-x-auto rounded-md bg-slate-100 p-1"/);
   assert.match(page, /"bg-white text-slate-900 shadow-xs"/);
 });

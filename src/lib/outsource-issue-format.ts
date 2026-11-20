@@ -54,6 +54,11 @@ export function formatIssueDateTime(iso: string | null | undefined): string {
   return isValidIso(iso) ? dateTimeFormatter.format(new Date(iso)).replace(",", "") : "—";
 }
 
+// Every worker on this page is outsourced, so the "OUTSOURCE - " name prefix only eats column width.
+export function shortWorkerName(name: string): string {
+  return name.replace(/^\s*OUTSOURCE\s*[-–]\s*/i, "") || name;
+}
+
 export function formatPiece({ pieceNo, totalPieces }: PieceInfo): string {
   if (pieceNo === null) return "—";
   return totalPieces === null ? String(pieceNo) : `${pieceNo}/${totalPieces}`;

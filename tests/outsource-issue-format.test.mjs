@@ -13,6 +13,13 @@ test("issue date and time are shown in Malaysia time", () => {
   assert.equal(Format.formatIssueDateTime("2026-11-18T17:05:00Z"), "19 Nov 2026 01:05");
 });
 
+test("the OUTSOURCE - prefix is dropped from worker names", () => {
+  assert.equal(Format.shortWorkerName("OUTSOURCE - AH SENG"), "AH SENG");
+  assert.equal(Format.shortWorkerName("outsource– Lim"), "Lim");
+  assert.equal(Format.shortWorkerName("AH SENG"), "AH SENG");
+  assert.equal(Format.shortWorkerName("OUTSOURCE - "), "OUTSOURCE - ");
+});
+
 test("a missing or broken timestamp shows a dash", () => {
   assert.equal(Format.formatIssueDateTime(null), "—");
   assert.equal(Format.formatIssueDateTime("not a date"), "—");
