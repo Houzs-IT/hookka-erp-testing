@@ -280,6 +280,7 @@ function IssuePane({
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
   const [typedCode, setTypedCode] = useState("");
   const isScanDisabled = !issue.selectedWorker || !canIssue;
 
@@ -339,6 +340,37 @@ function IssuePane({
         <ChevronDown size={20} color={M.muted} aria-hidden />
       </button>
 
+      {isTyping ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitTypedCode();
+          }}
+          style={{ display: "flex", gap: 8 }}
+        >
+          <input
+            value={typedCode}
+            onChange={(event) => setTypedCode(event.target.value)}
+            placeholder="Type the code or tap Scan QR"
+            aria-label="Sticker code"
+            inputMode="text"
+            enterKeyHint="go"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            disabled={isScanDisabled}
+            autoFocus
+            style={{ ...INPUT_STYLE, flex: 1, minWidth: 0 }}
+          />
+          <button
+            type="submit"
+            disabled={isScanDisabled || issue.isIssuing || !typedCode.trim()}
+            style={{ ...PRIMARY_BUTTON, height: 48, padding: "0 16px", opacity: typedCode.trim() ? 1 : 0.5 }}
+          >
+            Issue
+          </button>
+        </form>
+      ) : null}
       {issue.isWorkersLoading ? <div style={{ ...MESSAGE_STYLE, padding: 8 }}>Loading workers…</div> : null}
       {issue.workersError ? (
         <FeedbackBanner tone="danger" message={`Could not load workers: ${issue.workersError}`} />
@@ -354,7 +386,7 @@ function IssuePane({
       </div>
       {issue.sessionIssues.length === 0 ? (
         <div style={{ ...MESSAGE_STYLE, padding: "16px 8px" }}>
-          Nothing issued yet. Pick a worker, then scan the QR on the item's production sticker or its job card.
+          Nothing issued yet. Pick a worker, then tap Scan QR.
         </div>
       ) : (
         issue.sessionIssues.map((item) => (
@@ -395,34 +427,22 @@ function IssuePane({
             <ScanLine size={20} aria-hidden />
             {issue.selectedWorker ? "Scan QR" : "Pick a worker to scan"}
           </button>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitTypedCode();
+          <button
+            type="button"
+            onClick={() => setIsTyping((current) => !current)}
+            style={{
+              height: 44,
+              border: "none",
+              background: "none",
+              color: M.taupe,
+              fontFamily: "inherit",
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: "pointer",
             }}
-            style={{ display: "flex", gap: 8 }}
           >
-            <input
-              value={typedCode}
-              onChange={(event) => setTypedCode(event.target.value)}
-              placeholder="Or type or paste the sticker code"
-              aria-label="Sticker code"
-              inputMode="text"
-              enterKeyHint="go"
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              disabled={isScanDisabled}
-              style={{ ...INPUT_STYLE, flex: 1, minWidth: 0 }}
-            />
-            <button
-              type="submit"
-              disabled={isScanDisabled || issue.isIssuing || !typedCode.trim()}
-              style={{ ...PRIMARY_BUTTON, height: 48, padding: "0 16px", opacity: typedCode.trim() ? 1 : 0.5 }}
-            >
-              Issue
-            </button>
-          </form>
+            {isTyping ? "Hide code field" : "Type code"}
+          </button>
         </div>
       </ResponsiveActionDock>
 
@@ -491,7 +511,6 @@ function TrackingPane({ issue }: { issue: UseOutsourceIssueResult }): JSX.Elemen
             style={chip(issue.filters.status === option.key)}
           >
             {option.label}
-            {issue.statusCounts ? ` · ${issue.statusCounts[option.key]}` : ""}
           </button>
         ))}
         <button

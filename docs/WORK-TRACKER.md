@@ -1,5 +1,4 @@
 # Hookka ERP — Work Tracker
-> **Last verified: 2026-11-20**: HK-0164 item 7 added (Outsource Work code field, sticker hint, tab counts on `main`; branch `fix/worker-task-days-held-space-main`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 6 added (worker My task days-held spacing; branch `fix/worker-task-days-held-space-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-19**: HK-0165 supplier on Add Raw Material entry added (branch `fix/outsource-issue-labels`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-19**: HK-0164 item 5 added (issue time on phone tracking and My task, branch `feat/hk0164-outsource-work-main`, to `main`); nothing else re-checked.
@@ -350,7 +349,6 @@ Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to a
 4. Measured on prod 2026-11-18 (read-only): 4 outsourced workers, 3 active, all FAB_SEW, all flagged `isOutsource`; 449 FAB_SEW cards with them as PIC since 2026-10-01.
 5. DONE (branch; on `staging` via `feat/hk0164-issue-time`, PR #1467): the phone Tracking card and the worker's My task card show the issue date AND time (Malaysia time), as the desktop table already did. Test: `tests/outsource-issue-format.test.mjs`.
 6. DONE (branch `fix/worker-task-days-held-space-main`, to `main`; on `staging` via PR #1496), 2026-11-20: worker My task card read "Issued 19 Nov 2026 11:21 ·1 day held" (no space after the dot). Now "Issued ... · 1 day held", and no trailing dot when the days are unknown.
-7. DONE (same branch, to `main`; on `staging` via PR #1494 and #1498), 2026-11-20: Outsource Work. Phone: the "Type code / Hide code field" toggle is gone, the type-or-paste field and Issue button always sit under Scan QR. The scan field says which sticker to scan (QR on the production sticker or its job card), PC and phone. Status tabs (Incomplete, Completed, All) show a count each, PC and phone; the list response carries `counts` for the same worker, date and search filters. PC keeps its Issue button and Scan QR.
 
 ## CONNECT-0003: Hookka accounts sign in to Houzs Connect (feat/connect-login-main, to main, 2026-11-19)
 From CONNECT-0003 (Lim Wei Siang, Houzs Connect). Same change as the staging PR (feat/connect-login, PR 1153), cut from `main`; `docs/API.md` is left to the post-merge bot.

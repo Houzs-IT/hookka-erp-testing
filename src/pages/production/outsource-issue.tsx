@@ -244,9 +244,6 @@ export default function OutsourceIssuePage(): JSX.Element {
                   Issue
                 </Button>
               </div>
-              <p className="mt-1 text-xs text-[#6B7280]">
-                Scan the QR on the item's production sticker or its job card. Each scan issues one item to this worker.
-              </p>
             </form>
 
             <Button
@@ -340,11 +337,6 @@ export default function OutsourceIssuePage(): JSX.Element {
                   }`}
                 >
                   {option.label}
-                  {issue.statusCounts ? (
-                    <span className="ml-1.5 text-xs font-semibold tabular-nums text-[#6B7280]">
-                      {issue.statusCounts[option.key]}
-                    </span>
-                  ) : null}
                 </button>
               ))}
             </div>

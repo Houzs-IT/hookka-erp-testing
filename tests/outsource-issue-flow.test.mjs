@@ -227,11 +227,6 @@ test("lists: tracking rows carry the live work status, the worker list splits In
   assert.equal(lists.completedRecent[0].status, "COMPLETED");
   assert.equal(lists.completedRecent[0].departmentName, "Fabric Sewing");
 
-  const counts = await Issue.countIssuesByStatus(db, { orgId: ORG, filter: {} });
-  assert.deepEqual(counts, { ALL: 2, INCOMPLETE: 1, COMPLETED: 1 });
-  const otherWorker = await Issue.countIssuesByStatus(db, { orgId: ORG, filter: { workerId: "osc2" } });
-  assert.equal(otherWorker.ALL, 0);
-
   const workers = await Issue.listOutsourceWorkers(db, ORG);
   assert.deepEqual(workers.map((w) => [w.name, w.incompleteCount, w.departmentNames]), [["Ali", 1, ["Fabric Sewing"]], ["Bala", 0, ["Fabric Sewing"]]]);
 });

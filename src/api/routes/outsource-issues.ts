@@ -9,7 +9,6 @@ import { capList } from "../lib/list-cap";
 import { resolveIssueTarget } from "../lib/outsource-targets";
 import {
   ISSUE_LIST_CAP,
-  countIssuesByStatus,
   issueItem,
   listIssues,
   listOutsourceWorkers,
@@ -62,16 +61,17 @@ admin.get("/", async (c) => {
   if ((fromDate && !DATE_PATTERN.test(fromDate)) || (toDate && !DATE_PATTERN.test(toDate))) {
     return c.json({ success: false, error: "from and to must be YYYY-MM-DD" }, 400);
   }
-  const orgId = getOrgId(c);
-  const filter = {
-    workerId: c.req.query("workerId") || undefined,
-    fromDate: fromDate || undefined,
-    toDate: toDate || undefined,
-    search: c.req.query("q") || undefined,
-  };
-  const rows = await listIssues(c.var.DB, { orgId, filter: { ...filter, status } });
-  const counts = await countIssuesByStatus(c.var.DB, { orgId, filter });
-  return c.json({ success: true, data: capList(c, rows, ISSUE_LIST_CAP), counts });
+  const rows = await listIssues(c.var.DB, {
+    orgId: getOrgId(c),
+    filter: {
+      workerId: c.req.query("workerId") || undefined,
+      status,
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined,
+      search: c.req.query("q") || undefined,
+    },
+  });
+  return c.json({ success: true, data: capList(c, rows, ISSUE_LIST_CAP) });
 });
 
 admin.post("/", async (c) => {
