@@ -101,7 +101,10 @@ export async function applyPackingRack(
         `SELECT jc.id AS "cardId", po.productName AS "productName", po.productCode AS "productCode"
            FROM production_orders po
            JOIN job_cards jc ON jc.productionOrderId = po.id AND jc.departmentCode = 'PACKING'
-          WHERE po.${orderCol} = ? AND po.id <> ? AND po.status <> 'CANCELLED'`,
+          WHERE po.${orderCol} = ? AND po.id <> ? AND po.status <> 'CANCELLED'
+            -- A pillow with its OWN printed sticker (token minted) is racked on
+            -- its own scan; only the carton's riders follow (owner 2026-11-20).
+            AND (jc.qr_token IS NULL OR jc.qr_token = '')`,
       )
       .bind(orderId, po.id)
       .all<{ cardId: string; productName: string | null; productCode: string | null }>();

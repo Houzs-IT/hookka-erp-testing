@@ -34,3 +34,12 @@ test("isPillow matches the carton's pillows, not other accessories", async () =>
   assert.equal(isPillow({ productCode: "LONG PILLOW", productName: 'SOFA LONG PILLOW (12"X28")' }), true);
   assert.equal(isPillow({ productCode: "A02", productName: "ARMREST 02" }), false);
 });
+
+test("stickers already printed are not affected: a pillow with its own sticker token is left to its own scan", () => {
+  const s = readFileSync("src/api/routes/production-orders.ts", "utf8");
+  const fn = s.slice(s.indexOf("async function completeCartonPillows("), s.indexOf('app.post("/:id/scan-complete"'));
+  assert.match(fn, /AND \(qr_token IS NULL OR qr_token = ''\)/);
+  assert.ok(fn.indexOf("ensureJobCardQrTokenColumn(db)") < fn.indexOf("qr_token IS NULL"));
+  const w = readFileSync("src/api/lib/packing-rack-write.ts", "utf8");
+  assert.match(w, /AND \(jc\.qr_token IS NULL OR jc\.qr_token = ''\)/);
+});
