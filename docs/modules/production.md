@@ -69,10 +69,10 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `ProductionPage` | `src/pages/production/index.tsx:610` | WIP board; every column/row branches on `activeTab` |
-| `filteredOrders` (memo) | `src/pages/production/index.tsx:2907` | Dept-narrow + overdue-set grid filter |
-| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5685 / 5644` | FG sticker set (immediate paint → /p/ token upgrade) |
-| `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5535 / 5510` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
+| `ProductionPage` | `src/pages/production/index.tsx:669` | WIP board; every column/row branches on `activeTab` |
+| `filteredOrders` (memo) | `src/pages/production/index.tsx:2974` | Dept-narrow + overdue-set grid filter |
+| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5761 / 5720` | Packing sticker set (pillow carton = one box per order, owner 2026-11-20; immediate paint → /p/ token upgrade) |
+| `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5611 / 5586` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
 | `BOMManagementPage` | `src/pages/bom.tsx:6054` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:3028 / 3934` | L1+WIP editor / master variants |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
