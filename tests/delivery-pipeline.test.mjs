@@ -52,6 +52,8 @@ function po(overrides = {}) {
     status: overrides.status ?? "IN_PROGRESS",
     consignmentOrderId: overrides.consignmentOrderId,
     itemCategory: overrides.itemCategory ?? "SOFA",
+    productCode: overrides.productCode,
+    productName: overrides.productName,
     specialOrder: overrides.specialOrder,
     // DEV-05 — built for stock (stays true for life), the stock order it was
     // born against, and who owns it now. Ownership has moved exactly when
@@ -199,10 +201,56 @@ test("poInPlanning: CO-sourced PO (consignmentOrderId set) -> false", () => {
   assert.equal(dp.poInPlanning(po({ consignmentOrderId: "co-99" })), false);
 });
 
-test("poInPlanning: no upholstery cards at all -> false", () => {
+test("poInPlanning: pillow with a card before PACKING in progress -> true", () => {
   assert.equal(
     dp.poInPlanning(
-      po({ jobCards: [{ departmentCode: "FAB_CUT", status: "IN_PROGRESS" }] }),
+      po({ productCode: "LONG PILLOW", jobCards: [{ departmentCode: "FAB_CUT", status: "IN_PROGRESS" }] }),
+    ),
+    true,
+  );
+});
+
+test("poInPlanning: no upholstery cards and not a pillow -> false (unchanged)", () => {
+  assert.equal(
+    dp.poInPlanning(
+      po({ productCode: "SEAT CUSHION", jobCards: [{ departmentCode: "FAB_CUT", status: "IN_PROGRESS" }] }),
+    ),
+    false,
+  );
+});
+
+test("isPillow: matches PILLOW in the product code or name, any case", () => {
+  assert.equal(dp.isPillow({ productCode: "SQUARE PILLOW RDM" }), true);
+  assert.equal(dp.isPillow({ productCode: "P-01", productName: "Long pillow" }), true);
+  assert.equal(dp.isPillow({ productCode: "SEAT CUSHION", productName: "Seat cushion" }), false);
+  assert.equal(dp.isPillow({}), false);
+});
+
+test("poReadyForDelivery: non-pillow accessory still waits for PACKING (PO COMPLETED)", () => {
+  const cushion = (status, pack) =>
+    po({
+      status,
+      itemCategory: "ACCESSORY",
+      productCode: "SEAT CUSHION",
+      jobCards: [
+        { departmentCode: "FAB_SEW", status: "COMPLETED" },
+        { departmentCode: "FOAM", status: "COMPLETED" },
+        { departmentCode: "PACKING", status: pack },
+      ],
+    });
+  assert.equal(dp.poReadyForDelivery(cushion("IN_PROGRESS", "PENDING"), EMPTY_LINKED), false);
+  assert.equal(dp.poReadyForDelivery(cushion("COMPLETED", "COMPLETED"), EMPTY_LINKED), true);
+});
+
+test("poInPlanning: no upholstery cards, only PACKING left -> false", () => {
+  assert.equal(
+    dp.poInPlanning(
+      po({
+        jobCards: [
+          { departmentCode: "FIBRE", status: "COMPLETED" },
+          { departmentCode: "PACKING", status: "PENDING" },
+        ],
+      }),
     ),
     false,
   );
@@ -359,6 +407,7 @@ test("poReadyForDelivery: COMPLETED accessory (no upholstery, all cards done) ->
       po({
         status: "COMPLETED",
         itemCategory: "ACCESSORY",
+        productCode: "SQUARE PILLOW",
         jobCards: [
           { departmentCode: "FAB_CUT", status: "COMPLETED" },
           { departmentCode: "FAB_SEW", status: "COMPLETED" },
@@ -371,15 +420,37 @@ test("poReadyForDelivery: COMPLETED accessory (no upholstery, all cards done) ->
   );
 });
 
-test("poReadyForDelivery: in-progress accessory (no upholstery, a card pending) -> false", () => {
-  // Not COMPLETED yet -> stays excluded so half-made accessories can't ship.
+test("poReadyForDelivery: pillow with every card before PACKING done, PACKING pending -> true", () => {
+  // PACKING only wraps finished goods, so it never gates delivery.
   assert.equal(
     dp.poReadyForDelivery(
       po({
         status: "IN_PROGRESS",
         itemCategory: "ACCESSORY",
+        productCode: "SQUARE PILLOW",
         jobCards: [
           { departmentCode: "FAB_CUT", status: "COMPLETED" },
+          { departmentCode: "FAB_SEW", status: "TRANSFERRED" },
+          { departmentCode: "FIBRE", status: "COMPLETED" },
+          { departmentCode: "PACKING", status: "PENDING" },
+        ],
+      }),
+      EMPTY_LINKED,
+    ),
+    true,
+  );
+});
+
+test("poReadyForDelivery: pillow still on FIBRE -> false", () => {
+  assert.equal(
+    dp.poReadyForDelivery(
+      po({
+        status: "IN_PROGRESS",
+        itemCategory: "ACCESSORY",
+        productCode: "SQUARE PILLOW",
+        jobCards: [
+          { departmentCode: "FAB_SEW", status: "COMPLETED" },
+          { departmentCode: "FIBRE", status: "IN_PROGRESS" },
           { departmentCode: "PACKING", status: "PENDING" },
         ],
       }),
@@ -387,6 +458,36 @@ test("poReadyForDelivery: in-progress accessory (no upholstery, a card pending) 
     ),
     false,
   );
+});
+
+test("poReadyForDelivery: sofa still waits on UPHOLSTERY, not on earlier cards or PACKING", () => {
+  const sofa = (uph) =>
+    po({
+      itemCategory: "SOFA",
+      jobCards: [
+        { departmentCode: "FAB_CUT", status: "PENDING" },
+        { departmentCode: "UPHOLSTERY", status: uph },
+        { departmentCode: "PACKING", status: "PENDING" },
+      ],
+    });
+  assert.equal(dp.poReadyForDelivery(sofa("COMPLETED"), EMPTY_LINKED), true);
+  assert.equal(dp.poReadyForDelivery(sofa("IN_PROGRESS"), EMPTY_LINKED), false);
+});
+
+test("poReadyForConsignment: CO pillow follows the same before-PACKING rule", () => {
+  const co = (fibre) =>
+    po({
+      consignmentOrderId: "co-1",
+      itemCategory: "ACCESSORY",
+      productCode: "SQUARE PILLOW",
+      jobCards: [
+        { departmentCode: "FIBRE", status: fibre },
+        { departmentCode: "PACKING", status: "PENDING" },
+      ],
+    });
+  assert.equal(dp.poReadyForConsignment(co("COMPLETED"), EMPTY_LINKED), true);
+  assert.equal(dp.poReadyForConsignment(co("IN_PROGRESS"), EMPTY_LINKED), false);
+  assert.equal(dp.poInPlanningConsignment(co("IN_PROGRESS")), true);
 });
 
 test("poReadyForDelivery: BEDFRAME HB-only — stranded DIVAN card ignored, HB done -> true", () => {
@@ -519,6 +620,7 @@ test("poReadyForConsignment: COMPLETED accessory pillow, no UPHOLSTERY card -> t
   const p = po({
     consignmentOrderId: "co-1",
     itemCategory: "ACCESSORY",
+    productCode: "SQUARE PILLOW",
     status: "COMPLETED",
     jobCards: [
       { departmentCode: "FAB_CUT", status: "COMPLETED" },
@@ -529,15 +631,31 @@ test("poReadyForConsignment: COMPLETED accessory pillow, no UPHOLSTERY card -> t
   assert.equal(dp.poReadyForConsignment(p, NONE), true);
 });
 
-test("poReadyForConsignment: accessory pillow NOT yet complete (packing pending) -> false", () => {
+test("poReadyForConsignment: accessory pillow done before PACKING (packing pending) -> true", () => {
   const p = po({
     consignmentOrderId: "co-1",
     itemCategory: "ACCESSORY",
+    productCode: "SQUARE PILLOW",
     status: "IN_PRODUCTION",
     jobCards: [
       { departmentCode: "FAB_CUT", status: "COMPLETED" },
       { departmentCode: "FAB_SEW", status: "COMPLETED" },
       { departmentCode: "PACKING", status: "IN_PROGRESS" },
+    ],
+  });
+  assert.equal(dp.poReadyForConsignment(p, NONE), true);
+});
+
+test("poReadyForConsignment: accessory pillow still on FAB_SEW -> false", () => {
+  const p = po({
+    consignmentOrderId: "co-1",
+    itemCategory: "ACCESSORY",
+    productCode: "SQUARE PILLOW",
+    status: "IN_PRODUCTION",
+    jobCards: [
+      { departmentCode: "FAB_CUT", status: "COMPLETED" },
+      { departmentCode: "FAB_SEW", status: "IN_PROGRESS" },
+      { departmentCode: "PACKING", status: "PENDING" },
     ],
   });
   assert.equal(dp.poReadyForConsignment(p, NONE), false);

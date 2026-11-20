@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
 import { canAdvanceToReadyToShip, READY_TO_SHIP_FROM_SQL } from "../../lib/ready-to-ship-guard";
+import { cardsBeforePackingDone, isPillow } from "../../../lib/delivery-pipeline";
 import { runSelfApply } from "../../lib/self-apply";
 import type { Env } from "../../worker";
 import { postProductionOrderCompletion } from "../../lib/fg-completion";
@@ -3646,19 +3647,21 @@ export async function applyWipInventoryChange(
 
 // The READY_TO_SHIP gate for one sibling PO, shared by the SO / CO forward
 // cascades and the SO rollback so the two directions can never disagree.
-// A PO with no UPHOLSTERY card (pillow / cushion: FAB_CUT → FAB_SEW → PACKING)
-// has no card here to prove it is made, so it counts only once the PO itself
-// is COMPLETED (or CANCELLED, which never ships). It used to count as done
-// outright, so a sofa's upholstery flipped the SO to READY_TO_SHIP while its
-// pillows were still on Fab Sew (DEV-08).
+// `cards` are the PO's cards before PACKING. With UPHOLSTERY cards, those
+// decide. A PO with none counts once it is COMPLETED / CANCELLED; a pillow
+// (FAB_CUT → FAB_SEW → FIBRE → PACKING) counts as soon as every card before
+// PACKING is done, since PACKING only wraps it. An empty set is never "done"
+// (DEV-08: pillows still on Fab Sew).
 export function siblingUphGateDone(
-  po: { status?: string | null } | undefined,
-  uphJcs: { status: string }[],
+  po: { status?: string | null; productCode?: string | null; productName?: string | null } | undefined,
+  cards: { status: string; departmentCode?: string | null }[],
 ): boolean {
-  if (uphJcs.length === 0) {
-    return po?.status === "COMPLETED" || po?.status === "CANCELLED";
+  const uph = cards.filter((j) => j.departmentCode === "UPHOLSTERY");
+  if (uph.length > 0) {
+    return uph.every((j) => j.status === "COMPLETED" || j.status === "TRANSFERRED");
   }
-  return uphJcs.every((j) => j.status === "COMPLETED" || j.status === "TRANSFERRED");
+  if (po?.status === "COMPLETED" || po?.status === "CANCELLED") return true;
+  return po !== undefined && isPillow(po) && cardsBeforePackingDone(cards);
 }
 
 // ---------------------------------------------------------------------------
@@ -3687,22 +3690,22 @@ export async function cascadeUpholsteryToSO(
   const siblingPOs = siblings.results ?? [];
   if (siblingPOs.length === 0) return;
 
-  // Load all upholstery job cards for siblings in one go.
+  // Load every sibling card before PACKING in one go (UPHOLSTERY ones also
+  // drive stockedIn below).
   const sibIds = siblingPOs.map((p) => p.id);
   const placeholders = sibIds.map(() => "?").join(",");
-  const uphRes = await db
+  const jcRes = await db
     .prepare(
-      `SELECT * FROM job_cards WHERE departmentCode = 'UPHOLSTERY' AND productionOrderId IN (${placeholders})`,
+      `SELECT * FROM job_cards WHERE departmentCode <> 'PACKING' AND productionOrderId IN (${placeholders})`,
     )
     .bind(...sibIds)
     .all<JobCardRow>();
-  const uphJcs = uphRes.results ?? [];
-  // HK-0118: an SO with no UPHOLSTERY card anywhere (service charge,
-  // accessories) reaches READY_TO_SHIP through cascadePoCompletionToSO, so the
-  // forward half is not needed here. The rollback half is: un-completing its
-  // cards must still drop the SO back, or it stays READY_TO_SHIP with nothing
-  // finished.
-  if (uphJcs.length === 0 && so.status !== "READY_TO_SHIP") return;
+  const preJcs = jcRes.results ?? [];
+  // HK-0118: an SO with no card before PACKING still runs the rollback half,
+  // or un-completing its cards leaves it READY_TO_SHIP with nothing finished.
+  // Pillow-only SOs reach READY_TO_SHIP here, before PACKING (isPillow).
+  if (preJcs.length === 0 && so.status !== "READY_TO_SHIP") return;
+  const uphJcs = preJcs.filter((j) => j.departmentCode === "UPHOLSTERY");
 
   // HB-only sibling POs: drop their DIVAN UPHOLSTERY JCs so the readiness
   // check doesn't wait for divan pieces the customer never ordered. See
@@ -3712,9 +3715,14 @@ export async function cascadeUpholsteryToSO(
     const mine = uphJcs.filter((j) => j.productionOrderId === poId);
     return filterJcsForCompletionGate(poById.get(poId), mine);
   };
+  const gateCardsFor = (poId: string): JobCardRow[] =>
+    filterJcsForCompletionGate(
+      poById.get(poId),
+      preJcs.filter((j) => j.productionOrderId === poId),
+    );
 
   const everyUphDone = siblingPOs.every((p) =>
-    siblingUphGateDone(p, filteredUphFor(p.id)),
+    siblingUphGateDone(p, gateCardsFor(p.id)),
   );
 
   const now = new Date().toISOString();
@@ -3794,18 +3802,20 @@ export async function cascadeUpholsteryToCO(
   const siblingPOs = siblings.results ?? [];
   if (siblingPOs.length === 0) return;
 
-  // Load all upholstery job cards for siblings in one go.
+  // Load every sibling card before PACKING in one go (UPHOLSTERY ones also
+  // drive stockedIn below).
   const sibIds = siblingPOs.map((p) => p.id);
   const placeholders = sibIds.map(() => "?").join(",");
-  const uphRes = await db
+  const jcRes = await db
     .prepare(
-      `SELECT * FROM job_cards WHERE departmentCode = 'UPHOLSTERY' AND productionOrderId IN (${placeholders})`,
+      `SELECT * FROM job_cards WHERE departmentCode <> 'PACKING' AND productionOrderId IN (${placeholders})`,
     )
     .bind(...sibIds)
     .all<JobCardRow>();
-  const uphJcs = uphRes.results ?? [];
+  const preJcs = jcRes.results ?? [];
   // HK-0118: see the SO twin.
-  if (uphJcs.length === 0 && co.status !== "READY_TO_SHIP") return;
+  if (preJcs.length === 0 && co.status !== "READY_TO_SHIP") return;
+  const uphJcs = preJcs.filter((j) => j.departmentCode === "UPHOLSTERY");
 
   // HB-only sibling POs: drop their DIVAN UPHOLSTERY JCs (see SO twin above
   // for full rationale).
@@ -3814,9 +3824,14 @@ export async function cascadeUpholsteryToCO(
     const mine = uphJcs.filter((j) => j.productionOrderId === poId);
     return filterJcsForCompletionGate(poById.get(poId), mine);
   };
+  const gateCardsFor = (poId: string): JobCardRow[] =>
+    filterJcsForCompletionGate(
+      poById.get(poId),
+      preJcs.filter((j) => j.productionOrderId === poId),
+    );
 
   const everyUphDone = siblingPOs.every((p) =>
-    siblingUphGateDone(p, filteredUphFor(p.id)),
+    siblingUphGateDone(p, gateCardsFor(p.id)),
   );
 
   const now = new Date().toISOString();
@@ -3966,7 +3981,7 @@ export async function cascadeUpholsteryRollbackToSO(
 
   const siblings = await db
     .prepare(
-      "SELECT id, status, itemCategory, specialOrder FROM production_orders WHERE salesOrderId = ?",
+      "SELECT id, status, itemCategory, specialOrder, productCode, productName FROM production_orders WHERE salesOrderId = ?",
     )
     .bind(so.id)
     .all<{
@@ -3974,6 +3989,8 @@ export async function cascadeUpholsteryRollbackToSO(
       status: string | null;
       itemCategory: string | null;
       specialOrder: string | null;
+      productCode: string | null;
+      productName: string | null;
     }>();
   const siblingPOs = siblings.results ?? [];
   if (siblingPOs.length === 0) return;
@@ -3982,22 +3999,22 @@ export async function cascadeUpholsteryRollbackToSO(
   const placeholders = sibIds.map(() => "?").join(",");
   const uphRes = await db
     .prepare(
-      `SELECT productionOrderId, status, wipType FROM job_cards
-        WHERE departmentCode = 'UPHOLSTERY' AND productionOrderId IN (${placeholders})`,
+      `SELECT productionOrderId, status, wipType, departmentCode FROM job_cards
+        WHERE departmentCode <> 'PACKING' AND productionOrderId IN (${placeholders})`,
     )
     .bind(...sibIds)
-    .all<{ productionOrderId: string; status: string; wipType: string | null }>();
-  const uphJcs = uphRes.results ?? [];
+    .all<{ productionOrderId: string; status: string; wipType: string | null; departmentCode: string }>();
+  const preJcs = uphRes.results ?? [];
 
   // Mirror the forward path: every sibling PO must have all its UPH JCs in
   // COMPLETED/TRANSFERRED for the SO to remain READY_TO_SHIP. POs with no
-  // UPH JCs at all need the PO itself COMPLETED (same siblingUphGateDone as
-  // the forward path).
+  // UPH JCs need the PO COMPLETED, or (pillows) every card before PACKING done
+  // (same siblingUphGateDone as the forward path).
   // HB-only sibling POs: drop their DIVAN UPH JCs so the rollback decision
   // stays in sync with the forward cascade (which also ignores them).
   const poById = new Map(siblingPOs.map((p) => [p.id, p]));
   const everyUphDone = siblingPOs.every((p) => {
-    const minePre = uphJcs.filter((j) => j.productionOrderId === p.id);
+    const minePre = preJcs.filter((j) => j.productionOrderId === p.id);
     return siblingUphGateDone(p, filterJcsForCompletionGate(poById.get(p.id), minePre));
   });
   if (everyUphDone) return; // Forward condition still holds — nothing to undo.

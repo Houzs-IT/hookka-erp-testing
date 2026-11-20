@@ -1,5 +1,6 @@
 # Recurring bug classes — the index that makes P5 executable
 
+> **Last verified: 2026-11-20**: branch `fix/pillow-ready-before-packing-main`, to `main`: C28 rule gains the pillow case, row 4 closed, row 6 added (BUG-2026-11-20-540). Nothing else re-checked.
 > **Last verified: 2026-11-18**: branch `fix/labour-card-day-view`, to `main`, updates **C33 row 6** (Labour cost card on the Day view, BUG-2026-11-18-533). Nothing else re-checked.
 
 > **Last verified: 2026-11-17**: branch `fix/labor-cost-outsource-direct`, to `main`, adds **C33 row 9** (Labor Cost Reconciliation counts outsource as direct, BUG-2026-11-17-526). Nothing else re-checked.
@@ -1784,8 +1785,10 @@ UPHOLSTERY cards, so the proxy is right for almost every row a tester looks at. 
 written separately and each fix repaired only the gate in front of its author.
 
 **The rule.** An empty UPHOLSTERY set never decides on its own. Fall back to the PO's own
-status (`COMPLETED`, which the backend only sets once every relevant dept is done). For the
-order-level cascades use `siblingUphGateDone` in `production-orders/_helpers.ts`.
+status (`COMPLETED`, which the backend only sets once every relevant dept is done). A pillow
+(`isPillow`) counts earlier, once every card before PACKING is done (`cardsBeforePackingDone`
+in `src/lib/delivery-pipeline.ts`; an empty set is never done), because PACKING only wraps it.
+For the order-level cascades use `siblingUphGateDone` in `production-orders/_helpers.ts`.
 
 **Instances**
 
@@ -1794,8 +1797,9 @@ order-level cascades use `siblingUphGateDone` in `production-orders/_helpers.ts`
 | 1 | `poReadyForDelivery` (`src/lib/delivery-pipeline.ts`) — completed pillows never reached Pending Delivery | ✅ 2026-06-20 (BUG-2026-06-20-001) |
 | 2 | Consignment "ready to ship" list — completed pillows missing | ✅ 2026-07-01 (BUG-2026-07-01-004) |
 | 3 | `cascadeUpholsteryToSO` / `ToCO` / `cascadeUpholsteryRollbackToSO` — SO flipped to READY_TO_SHIP on the sofa's upholstery while its pillows were on Fab Sew | ✅ 2026-10-01 on branch `fix/dev08-accessory-so-ready` (BUG-2026-10-01-241), not deployed |
-| 4 | `poInPlanning` (`src/lib/delivery-pipeline.ts`) — an in-production pillow does not preview in the Delivery Planning tab | ⬜ left by BUG-2026-06-20-001 as lower impact; changes what the Delivery page lists, so it needs the owner's call |
+| 4 | `poInPlanning` (`src/lib/delivery-pipeline.ts`) — an in-production pillow does not preview in the Delivery Planning tab | ✅ 2026-11-20 on branch `fix/pillow-ready-before-packing-main` (BUG-2026-11-20-540), owner asked for it |
 | 5 | `cascadeUpholsteryToSO` / `ToCO` returned early on an order with no UPHOLSTERY card at all, so un-completing a service / all-accessory order left it READY_TO_SHIP (SV-2610-036) | ✅ 2026-10-28 on branch `fix/hk0118-draft-do-delete-so-stamp` (BUG-2026-10-28-395), not deployed |
+| 6 | Rows 1 to 3 fell back to the PO's `COMPLETED` status, so a pillow waited for the PACKING scan before it could go on a DO | ✅ 2026-11-20 on branch `fix/pillow-ready-before-packing-main` (BUG-2026-11-20-540), pillows only, not deployed |
 
 Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return true` left in
 `_helpers.ts`; every cascade goes through `siblingUphGateDone`).

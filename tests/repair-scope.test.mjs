@@ -764,21 +764,22 @@ test("cascade: material filter runs before consumption, keyed off the PO's stamp
   assert.match(cascadeSrc, /ownerDeptCodes/);
 });
 
-test("delivery-pipeline: no-UPH fallback is gated on COMPLETED status / scope, not card absence", () => {
+test("delivery-pipeline: no-UPH fallback is gated on COMPLETED status / pillow / scope, not card absence", () => {
   assert.match(pipelineSrc, /function repairScopeExcludesUph\(/);
   // poInPlanning + poInPlanningConsignment (CO mirror, BUG-2026-07-01-005) both
-  // gate their no-UPH fallback on the repair scope.
+  // gate their non-pillow no-UPH fallback on the repair scope.
   assert.equal(
     (pipelineSrc.match(/if \(!repairScopeExcludesUph\(po\)\) return false;/g) ?? []).length,
     2,
     "poInPlanning + poInPlanningConsignment must still gate the no-UPH fallback on the scope",
   );
-  // poReadyForDelivery's no-UPH fallback (BUG-2026-06-20-001: ACCESSORY
-  // pillows have no upholstery card) is gated on the PO's own COMPLETED status
-  // OR the repair scope — never on card absence alone, so a half-made
-  // (IN_PROGRESS) non-upholstered PO can't slip through.
-  assert.match(pipelineSrc, /if \(po\.status === "COMPLETED"\) return allDone;/);
-  assert.match(pipelineSrc, /if \(repairScopeExcludesUph\(po\)\) return allDone;/);
+  // poReadyForDelivery / poReadyForConsignment: COMPLETED status, a pillow with
+  // every card before PACKING done (an empty set never qualifies), or the repair
+  // scope. Never card absence alone.
+  assert.match(pipelineSrc, /pre\.length > 0 && pre\.every\(/);
+  assert.equal((pipelineSrc.match(/if \(po\.status === "COMPLETED"\) return allDone;/g) ?? []).length, 2);
+  assert.equal((pipelineSrc.match(/if \(isPillow\(po\)\) return noUphRouteReady\(po\);/g) ?? []).length, 2);
+  assert.equal((pipelineSrc.match(/if \(repairScopeExcludesUph\(po\)\) return allDone;/g) ?? []).length, 2);
   // Zero job cards never qualifies (all four predicates: poInPlanning,
   // poReadyForDelivery, the CO mirror poReadyForConsignment (BUG-2026-07-01-004),
   // and the CO planning mirror poInPlanningConsignment (BUG-2026-07-01-005)).

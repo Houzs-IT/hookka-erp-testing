@@ -503,6 +503,8 @@ async function loadDoEditModel(
               (r.consignmentorderid as string) ??
               undefined,
             itemCategory: (r.itemCategory as string) ?? undefined,
+            productCode: (r.productCode as string) ?? undefined,
+            productName: (r.productName as string) ?? undefined,
             specialOrder: (r.specialOrder as string) ?? undefined,
             repairScope:
               (r.repairScope as string) ?? (r.repairscope as string) ?? null,
