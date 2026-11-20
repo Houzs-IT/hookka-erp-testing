@@ -7,20 +7,21 @@ import { shiftMonth, stepDay, type Period } from "../../../dashboards/dashboard-
 import { useEmpFeed, useEmpMoney, type EmpAccess } from "./emp-data";
 import {
   buildWindow, dayLog, departmentsOf, deptRowsOf, deptTotalOf, foldProgressive, headlineOf, latestDay, mainChartPoints, monthLog, npChartPoints, npData,
-  periodDays, presenceOn, rankSplit, rosterOf, sumWindow, workerRows, type EmpSlice, type EmpWorker, type Win,
+  lowEffOn, periodDays, presenceOn, rankSplit, rosterOf, sumWindow, workerRows, type EmpSlice, type EmpWorker, type Win,
 } from "./emp-lib";
 
 export type LogPick = "today" | "yday" | "month" | null;
 export type Sheet =
   | { type: "tile"; kind: "salary" | "eff" } | { type: "depts" } | { type: "dept"; dept: string } | { type: "worker"; id: string }
-  | { type: "rank"; half: "upper" | "lower" } | { type: "np" } | { type: "log" }
+  | { type: "rank"; half: "upper" | "lower" } | { type: "np" } | { type: "log" } | { type: "lowEff"; date: string }
   | { type: "logRow"; id: string | null; name: string; date: string } | { type: "logm"; id: string };
 
 const EMPTY: EmpSlice = { workers: [], attendance: [], performance: { byDay: [] } };
 /** empty = the question was answered and there is nothing to compute from (no hour entries): not a zero. */
 export type MoneyStatus = "denied" | "loading" | "error" | "ready" | "empty";
 
-export function useEmpModel({ access, period, today, logSignal }: { access: EmpAccess; period: Period; today: string; logSignal: number }) {
+export type EmpDrill = { logDate: string; effSignal: number; effDate: string };
+export function useEmpModel({ access, period, today, logSignal, drill }: { access: EmpAccess; period: Period; today: string; logSignal: number; drill?: EmpDrill }) {
   const feed = useEmpFeed(access);
   const employee = feed.employee ?? EMPTY;
   const target = feed.target;
@@ -74,7 +75,9 @@ export function useEmpModel({ access, period, today, logSignal }: { access: EmpA
   // Attendance log: opens on the anchor day; Today / Yesterday / This month chips (desktop AttendanceLogCard).
   const logDay = logPick === "today" ? today : logPick === "yday" ? stepDay(today, -1, today) : logPick === "month" ? null : W.anchor;
   const monthYm = (W.anchor || today).slice(0, 7);
-  const dayL = useMemo(() => (logDay ? dayLog(employee, logDay) : null), [employee, logDay]);
+  // The log opened from the "Not in" tile counts presence by the tile's own rule on that tile's day (other days keep the log's rule).
+  const tileRule = !!drill?.logDate && logDay === drill.logDate;
+  const dayL = useMemo(() => (logDay ? dayLog(employee, logDay, tileRule) : null), [employee, logDay, tileRule]);
   const monthL = useMemo(() => (logPick === "month" ? monthLog(employee, monthYm) : null), [employee, logPick, monthYm]);
 
   // Present box / Today's problems "Not in" ask for the log.
@@ -82,6 +85,15 @@ export function useEmpModel({ access, period, today, logSignal }: { access: EmpA
   useEffect(() => {
     if (logSignal !== seen.current) { seen.current = logSignal; setLp({ pick: null, key: periodKey }); setStack([{ type: "log" }]); }
   }, [logSignal, periodKey]);
+
+  // Efficiency tile -> workers under 75% on the tile's day (independent of the period in view).
+  const effSeen = useRef(drill?.effSignal ?? 0);
+  const effSignal = drill?.effSignal ?? 0;
+  const effDate = drill?.effDate ?? "";
+  useEffect(() => {
+    if (effSignal !== effSeen.current) { effSeen.current = effSignal; setStack([{ type: "lowEff", date: effDate }]); }
+  }, [effSignal, effDate]);
+  const lowEff = useMemo(() => lowEffOn(employee, effDate), [employee, effDate]);
 
   // ---- money text with its own denied / loading states ------------------------------------------------------------
   const labourState = money.labourState;
@@ -101,7 +113,7 @@ export function useEmpModel({ access, period, today, logSignal }: { access: EmpA
     feed, employee, target, access, today, period, latest: latestDay(days),
     win, setWin, dept, setDept, depts, W, workerById, roster, outsourced,
     money, totals, head, pres, rows, split, deptRows, deptTotal, chart, npPoints, np, hourEntries, costByWorkerDay,
-    logPick, setLogPick, logDay, monthYm, dayL, monthL,
+    logPick, setLogPick, logDay, monthYm, dayL, monthL, lowEff,
     stack, push: (s: Sheet) => setStack((x) => [...x, s]), open: (s: Sheet) => setStack([s]), back: () => setStack((x) => x.slice(0, -1)), replaceTop: (s: Sheet) => setStack((x) => [...x.slice(0, -1), s]), close: () => setStack([]),
     chSel, setChSel, npSel, setNpSel, hide, setHide, npHide, setNpHide, npView, setNpView, rkHalf, setRkHalf,
     canSalary: money.canSalary, salaryStatus, salaryText, salaryNote, revNote, revStatus, revText, outStatus, outText, rm,

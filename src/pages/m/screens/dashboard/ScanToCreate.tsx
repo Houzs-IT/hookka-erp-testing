@@ -11,8 +11,6 @@ import { useState, type ComponentType } from "react";
 import { FileInput, PackageCheck, Receipt, ReceiptText, ScanLine } from "lucide-react";
 import { usePermissions } from "@/lib/use-permission";
 import { M } from "../../theme";
-import { Label } from "./home-ui";
-import { SHADOW_SMALL } from "./home-style";
 import { ScanSoSheet } from "./ScanSoSheet";
 import { ScanPiSheet } from "../procurement/ScanPiSheet";
 import { ScanGrnSheet } from "../procurement/ScanGrnSheet";
@@ -21,7 +19,11 @@ import { ScanPvSheet } from "../finance/ScanPvSheet";
 type Icon = ComponentType<{ size?: number; strokeWidth?: number; color?: string; "aria-hidden"?: boolean | "true" | "false" }>;
 type Tile = { key: "so" | "pi" | "grn" | "pv"; title: string; sub: string; icon: Icon; ok: boolean; live: boolean };
 
-const tileBox = { display: "flex", alignItems: "flex-start", gap: 8, minWidth: 0, padding: 9, border: "none", borderRadius: 12, backgroundColor: M.card, boxShadow: SHADOW_SMALL, textAlign: "left", fontFamily: "inherit" } as const;
+// Home Sales v12: four icon buttons in one row (52px white tile over a two-line label).
+const tileBox = { minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "4px 2px", border: "none", background: "none", fontFamily: "inherit", textAlign: "center" } as const;
+const iconBox = { width: 52, height: 52, flex: "none", borderRadius: 18, backgroundColor: M.card, boxShadow: `0 0 0 1px ${M.divider}, 0 8px 18px -10px rgba(107,92,50,.45)`, display: "flex", alignItems: "center", justifyContent: "center" } as const;
+// "Purchase Invoice" -> "Purchase" / "Invoice" (the design's two-line label).
+const twoLines = (t: string): [string, string] => { const [a, ...r] = t.split(" "); return [a, r.join(" ")]; };
 
 export function ScanToCreate() {
   const { hasPermission } = usePermissions();
@@ -36,25 +38,23 @@ export function ScanToCreate() {
   const shown = tiles.filter((t) => t.ok);
   if (shown.length === 0) return null;
   return (
-    <section aria-label="Scan to create" style={{ marginTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, paddingBottom: 8 }}>
+    <section aria-label="Scan to create" style={{ marginTop: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 2px 8px" }}>
         <ScanLine size={13} strokeWidth={2} color={M.taupe} aria-hidden="true" />
-        <Label>SCAN TO CREATE</Label>
+        <span style={{ flex: 1, fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe }}>SCAN TO CREATE</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8 }}>
         {shown.map((t) => {
           const Icon = t.icon;
+          const [l1, l2] = twoLines(t.title);
           const body = (
             <>
-              <span aria-hidden="true" style={{ width: 30, height: 30, flex: "none", borderRadius: 9, backgroundColor: M.divider, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Icon size={16} strokeWidth={1.9} color={M.taupe} aria-hidden="true" />
+              <span aria-hidden="true" style={iconBox}>
+                <Icon size={21} strokeWidth={1.8} color={M.taupe} aria-hidden="true" />
               </span>
-              <span style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: M.raisin, lineHeight: 1.25, overflowWrap: "anywhere" }}>{t.title}</span>
-                <span style={{ display: "block", fontSize: 11, color: M.muted, lineHeight: 1.3, marginTop: 1, overflowWrap: "anywhere" }}>{t.sub}</span>
-                {t.live ? null : (
-                  <span style={{ display: "inline-block", marginTop: 4, height: 17, lineHeight: "17px", padding: "0 7px", borderRadius: 999, backgroundColor: M.divider, color: M.ink, fontSize: 10.5, fontWeight: 700 }}>Coming soon</span>
-                )}
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "center", fontSize: 11.5, fontWeight: 700, lineHeight: 1.3, color: M.raisin, whiteSpace: "nowrap" }}>
+                <span>{l1}</span><span>{l2 || " "}</span>
+                {t.live ? null : <span style={{ marginTop: 3, height: 16, lineHeight: "16px", padding: "0 6px", borderRadius: 999, backgroundColor: M.divider, color: M.ink, fontSize: 10, fontWeight: 700 }}>Soon</span>}
               </span>
             </>
           );

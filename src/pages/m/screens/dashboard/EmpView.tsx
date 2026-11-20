@@ -4,15 +4,15 @@
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import type { Period } from "../../../dashboards/dashboard-shared-lib";
 import type { EmpAccess } from "./emp-data";
-import { useEmpModel } from "./emp-model";
+import { useEmpModel, type EmpDrill } from "./emp-model";
 import { ChartCard, Headline } from "./HomeEmpA";
 import { AttendanceCard, DeptCard, NonProdCard, RankCard, WorkersControls } from "./HomeEmpB";
 import { EmpSheets } from "./HomeEmpSheets";
 import { SectionState } from "./home-ui";
 import { StatusBlock } from "./ops-ui";
 
-export function EmpView({ access, period, today, logSignal }: { access: EmpAccess; period: Period; today: string; logSignal: number }) {
-  const m = useEmpModel({ access, period, today, logSignal });
+export function EmpView({ access, period, today, logSignal, drill }: { access: EmpAccess; period: Period; today: string; logSignal: number; drill?: EmpDrill }) {
+  const m = useEmpModel({ access, period, today, logSignal, drill });
   const wide = useResponsiveLayout().mode !== "phone";
   const { status } = m.feed;
   if (status === "loading") return <div style={{ padding: "14px 16px 120px" }}><SectionState kind="loading" minHeight={240} /></div>;

@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  Bell, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Factory, Landmark, ScanText, Search, TrendingUp, Users, Wrench, Hourglass,
+  ArrowUpRight, Bell, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Factory, Landmark, Moon, ScanText, Search, Sun, Sunrise, TrendingUp, Users, Wrench, Hourglass,
   type LucideIcon,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
@@ -19,7 +19,9 @@ import { useCachedJson } from "@/lib/cached-fetch";
 import { MobileHeader } from "../../components/MobileHeader";
 import { GlobalSearchSheet } from "../../components/GlobalSearchSheet";
 import { ModuleGroupList } from "../../components/ModuleMenu";
+import { MenuButton } from "../../components/MenuButton";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
+import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { useNotificationFeed } from "../../lib/use-notification-feed";
 import { visibleModuleGroups } from "../../nav";
 import { M } from "../../theme";
@@ -29,9 +31,10 @@ import {
 import { DASHBOARD_NAV_HREF } from "./dashboard-m-lib";
 import { DASHBOARD_FEED_URL } from "./types";
 import { useDashboardPeriod, useDashboardSub } from "./hooks";
+import { writePeriod } from "./dashboard-m-lib";
 import { useSalesData, type ProtoFeed, type SalesAccess } from "./home-data";
 import {
-  DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, opsPeriodLabel, periodResolved, periodMode, resolveView, stepOps, stepSales, switchMode, switchOpsMode, type DashView, type PeriodMode4,
+  DASHBOARD_VIEWS, allowedViews, effectivePeriod, greetingWord, legacyDashboardTarget, problemDest, todayLabel, opsPeriodLabel, periodResolved, periodMode, resolveView, stepOps, stepSales, switchMode, switchOpsMode, type DashView, type PeriodMode4,
 } from "./home-lib";
 import { SalesView } from "./SalesView";
 import { OpsView, type OpsSubKey } from "./OpsView";
@@ -43,8 +46,9 @@ import { ScanToCreate } from "./ScanToCreate";
 import { Label, SectionState, SheetCard, SheetFrame, SheetNote } from "./home-ui";
 import { DATA, SHADOW_CARD, SHADOW_SMALL, TNUM } from "./home-style";
 
+import { TONE, useProblemTiles, type Tile } from "../../../dashboards/use-problem-tiles";
+
 const VIEW_ICON: Record<DashView, LucideIcon> = { sales: TrendingUp, operations: Factory, people: Users, service: Wrench, finance: Landmark, ocr: ScanText };
-const HEADER_BTN = "0 1px 2px rgba(31,29,27,.06),0 6px 16px -8px rgba(31,29,27,.22)";
 
 // ---------------------------------------------------------------------------
 // Old links
@@ -59,37 +63,72 @@ export function LegacyDashboardRedirect() {
 // ---------------------------------------------------------------------------
 // Header, greeting, quick actions, search (shared by the dashboard and the fallback)
 // ---------------------------------------------------------------------------
-function RoundBtn({ label, onClick, children, dot }: { label: string; onClick: () => void; children: ReactNode; dot?: boolean }) {
+// Home Sales v12 page chrome: warm page glow (over the theme's paper, so dark mode keeps working), one glass header
+// card (menu, title, search + bell, greeting banner, Scan to Create).
+const PAGE_BG = [
+  "radial-gradient(70% 45% at 0% 0%, rgba(201,169,97,.22) 0%, rgba(201,169,97,0) 70%)",
+  "radial-gradient(60% 40% at 100% 55%, rgba(139,122,78,.14) 0%, rgba(139,122,78,0) 70%)",
+  "radial-gradient(70% 40% at 10% 100%, rgba(201,169,97,.16) 0%, rgba(201,169,97,0) 70%)",
+].join(",");
+const GREETING_ICON = { morning: Sunrise, afternoon: Sun, evening: Moon } as const;
+
+function QuickTools({ unread, onSearch, onBell }: { unread: number; onSearch: () => void; onBell: () => void }) {
+  const btn = { width: 44, height: 44, border: "none", borderRadius: "50%", background: "none", display: "flex", alignItems: "center", justifyContent: "center", color: M.raisin, cursor: "pointer", padding: 0, position: "relative", WebkitTapHighlightColor: "transparent" } as const;
   return (
-    <button type="button" onClick={onClick} aria-label={label} style={{ position: "relative", width: 42, height: 42, flex: "none", borderRadius: "50%", border: "none", backgroundColor: M.card, boxShadow: HEADER_BTN, display: "flex", alignItems: "center", justifyContent: "center", color: M.taupe, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
-      {children}
-      {dot ? <span aria-hidden="true" style={{ position: "absolute", top: 8, right: 9, width: 7, height: 7, borderRadius: "50%", backgroundColor: DATA.red, boxShadow: `0 0 0 2px ${M.card}` }} /> : null}
-    </button>
+    <div role="group" aria-label="Quick tools" style={{ flex: "none", display: "flex", alignItems: "center", height: 44, padding: "0 2px", borderRadius: 999, backgroundColor: M.card, boxShadow: `0 0 0 1px ${M.divider}, 0 2px 4px rgba(31,29,27,.05), 0 8px 18px -10px rgba(31,29,27,.28)` }}>
+      <button type="button" onClick={onSearch} aria-label="Search" style={btn}><Search size={18} strokeWidth={1.9} aria-hidden="true" /></button>
+      <span aria-hidden="true" style={{ width: 1, height: 18, backgroundColor: M.divider }} />
+      <button type="button" onClick={onBell} aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"} style={btn}>
+        <Bell size={18} strokeWidth={1.9} aria-hidden="true" />
+        {unread > 0 ? <span aria-hidden="true" style={{ position: "absolute", top: 6, right: 5, minWidth: 15, height: 15, boxSizing: "border-box", padding: "0 4px", borderRadius: 999, backgroundColor: DATA.red, color: "#FFFFFF", fontSize: 9.5, fontWeight: 700, lineHeight: "15px", textAlign: "center", boxShadow: `0 0 0 2px ${M.card}` }}>{unread > 99 ? "99+" : unread}</span> : null}
+      </button>
+    </div>
   );
 }
 
 function HomeTop({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { unread } = useNotificationFeed();
+  const phone = useResponsiveLayout().mode === "phone";
   const [searchOpen, setSearchOpen] = useState(false);
   const first = (getCurrentUser()?.displayName || "there").split(" ")[0];
+  const word = greetingWord();
+  const GIcon = word.includes("morning") ? GREETING_ICON.morning : word.includes("afternoon") ? GREETING_ICON.afternoon : GREETING_ICON.evening;
   return (
     <>
-      <MobileHeader
-        title="Dashboard"
-        menu
-        trailing={
-          <>
-            <RoundBtn label="Search" onClick={() => setSearchOpen(true)}><Search size={18} strokeWidth={1.9} aria-hidden="true" /></RoundBtn>
-            <RoundBtn label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"} onClick={() => navigate("/m/updates")} dot={unread > 0}><Bell size={18} strokeWidth={1.9} aria-hidden="true" /></RoundBtn>
-          </>
-        }
-      />
-      <div style={{ padding: "10px 16px 0" }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: M.raisin, lineHeight: "26px", letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{greetingWord()}, {first}</div>
-        <ScanToCreate />
+      {/* Phones draw the bar inside the glass card; wider screens keep the standard sticky header. */}
+      {phone ? null : (
+        <MobileHeader title="Dashboard" menu trailing={<QuickTools unread={unread} onSearch={() => setSearchOpen(true)} onBell={() => navigate("/m/updates")} />} />
+      )}
+      <style>{"@keyframes hs12Glow{0%,100%{transform:translate(0,0) scale(1);opacity:.9}50%{transform:translate(-26px,14px) scale(1.18);opacity:1}}@keyframes hs12Orb{0%,100%{transform:translate(0,0)}50%{transform:translate(-22px,-12px)}}@keyframes hs12In{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes hs12Shine{0%{transform:translateX(-120%) skewX(-18deg)}55%,100%{transform:translateX(320%) skewX(-18deg)}}@media (prefers-reduced-motion:reduce){.hs12-anim{animation:none!important}}"}</style>
+      {/* The warm glow is one viewport-sized fixed layer (not the 414px column), so wide phones, tablets and a resized
+          window never show a seam where the column ends; content sits above it. */}
+      <div aria-hidden="true" style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", background: `${PAGE_BG}, ${M.paper}` }} />
+      <div style={{ position: "relative", paddingTop: phone ? "env(safe-area-inset-top)" : 0, paddingBottom: 8, minHeight: "100%" }}>
+        <header>
+          {/* Top bar sits directly on the page background (no card); only date + greeting are in the gold card. */}
+          {phone ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 52, padding: "2px 10px 0" }}>
+              <MenuButton />
+              <div style={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 700, color: M.raisin, lineHeight: "24px", letterSpacing: -0.2 }}>Dashboard</div>
+              <QuickTools unread={unread} onSearch={() => setSearchOpen(true)} onBell={() => navigate("/m/updates")} />
+            </div>
+          ) : null}
+          <div style={{ padding: "8px 10px 0" }}>
+            <div style={{ position: "relative", overflow: "hidden", borderRadius: 20, padding: "16px 16px 18px", background: "linear-gradient(160deg,#4A3F21 0%,#6B5C32 55%,#8B7A4E 100%)", boxShadow: "0 2px 4px rgba(74,63,33,.18),0 18px 34px -16px rgba(74,63,33,.60)" }}>
+              <span aria-hidden="true" className="hs12-anim" style={{ position: "absolute", right: -70, top: -90, width: 240, height: 220, borderRadius: "50%", background: "radial-gradient(circle,rgba(201,169,97,.70) 0%,rgba(201,169,97,0) 65%)", animation: "hs12Glow 9s ease-in-out infinite" }} />
+              <span aria-hidden="true" className="hs12-anim" style={{ position: "absolute", right: -30, bottom: -46, width: 140, height: 140, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,255,255,.16),rgba(255,255,255,0) 70%)", animation: "hs12Orb 12s ease-in-out infinite" }} />
+              <span aria-hidden="true" className="hs12-anim" style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: "38%", background: "linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.14),rgba(255,255,255,0))", animation: "hs12Shine 6s ease-in-out 1.2s infinite" }} />
+              <div className="hs12-anim" style={{ position: "relative", display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, letterSpacing: 0.3, color: "#E9D9A8", animation: "hs12In .5s ease-out both" }}>
+                <GIcon size={14} strokeWidth={2} color="#F1D58A" aria-hidden="true" /><span style={{ whiteSpace: "nowrap", ...TNUM }}>{todayLabel()}</span>
+              </div>
+              <div className="hs12-anim" style={{ position: "relative", marginTop: 6, fontSize: 22, fontWeight: 700, color: "#FFFFFF", lineHeight: "28px", letterSpacing: -0.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", animation: "hs12In .6s ease-out .12s both" }}>{word}, {first}</div>
+            </div>
+          </div>
+          <div style={{ padding: "0 10px" }}><ScanToCreate /></div>
+        </header>
+        {children}
       </div>
-      {children}
       <GlobalSearchSheet open={searchOpen} onClose={() => setSearchOpen(false)} />
     </>
   );
@@ -128,10 +167,12 @@ const OPS_MODES = [["day", "Day"], ["month", "Month"], ["quarter", "Quarter"], [
 type HomeOpsSub = OpsSubKey | "floor";
 const OPS_SUB_OPTIONS: readonly (readonly [HomeOpsSub, string])[] = [["overview", "Overview"], ["production", "Output & Cost"], ["floor", "Floor Live"]];
 
+const GLASS_PILL = { background: `linear-gradient(180deg, color-mix(in srgb, ${M.card} 95%, transparent), color-mix(in srgb, ${M.card} 72%, transparent))`, boxShadow: `inset 0 1px 0 ${M.card}, 0 0 0 1px rgba(201,169,97,.22), 0 6px 14px -8px rgba(107,92,50,.45)` } as const;
+const ON_GRADIENT = "linear-gradient(145deg,#8B7A4E,#6B5C32)";
+
 function PeriodCalendar({
-  period, months, today, onPick, onClose,
-}: { period: Period; months: string[]; today: string; onPick: (p: Period) => void; onClose: () => void }) {
-  const mode = periodMode(period);
+  period, months, today, onPick, onClose, modes, mode, onMode,
+}: { period: Period; months: string[]; today: string; onPick: (p: Period) => void; onClose: () => void; modes: readonly (readonly [PeriodMode4, string])[]; mode: PeriodMode4; onMode: (k: PeriodMode4) => void }) {
   const years = yearsWithData(months);
   const [viewYear, setViewYear] = useState(period.month.slice(0, 4));
   const yi = years.indexOf(viewYear);
@@ -150,11 +191,13 @@ function PeriodCalendar({
     return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("pointerdown", onDown); };
   }, [onClose]);
 
-  const cell = (label: string, sub: string | undefined, on: boolean, dis: boolean, aria: string, go: () => void, h: number) => (
+  // Selected = taupe gradient, the current period = a gold dot, unavailable = faded (same availability rule as before).
+  const cell = (label: string, sub: string | undefined, on: boolean, dis: boolean, aria: string, go: () => void, h: number, cur: boolean) => (
     <button key={aria} type="button" aria-pressed={on} aria-disabled={dis} aria-label={aria} onClick={() => { if (!dis) go(); }}
-      style={{ height: h, border: "none", borderRadius: 10, backgroundColor: on ? M.taupe : M.paper, color: on ? M.paper : dis ? M.faint : M.raisin, fontFamily: "inherit", cursor: dis ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, opacity: dis ? 0.55 : 1 }}>
-      <span style={{ fontSize: 13.5, fontWeight: on ? 700 : 500, ...TNUM }}>{label}</span>
-      {sub ? <span style={{ fontSize: 11, color: on ? M.paper : M.ink }}>{sub}</span> : null}
+      style={{ height: h, border: "none", borderRadius: 12, background: on ? ON_GRADIENT : `color-mix(in srgb, ${M.card} 80%, transparent)`, boxShadow: on ? "0 6px 14px -6px rgba(107,92,50,.6)" : "inset 0 0 0 1px rgba(201,169,97,.25)", color: on ? "#FFFFFF" : dis ? M.faint : M.raisin, fontFamily: "inherit", cursor: dis ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, opacity: dis ? 0.5 : 1 }}>
+      <span style={{ fontSize: 13.5, fontWeight: on ? 700 : 600, ...TNUM }}>{label}</span>
+      {sub ? <span style={{ fontSize: 11, color: on ? "rgba(255,255,255,.85)" : M.muted }}>{sub}</span> : null}
+      <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: "50%", backgroundColor: cur ? "#C9A961" : "transparent" }} />
     </button>
   );
   const monthOf = (y: string, m: number) => `${y}-${String(m).padStart(2, "0")}`;
@@ -164,14 +207,14 @@ function PeriodCalendar({
     body = (
       <input type="date" aria-label="Pick a day" value={period.day ?? ""} max={today} min="2020-01-01"
         onChange={(e) => { const v = e.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v <= today) onPick({ mode: "monthly", month: v.slice(0, 7), day: v }); }}
-        style={{ width: "100%", boxSizing: "border-box", height: 44, padding: "0 12px", borderRadius: 10, border: `1px solid ${M.hairline}`, backgroundColor: M.paper, color: M.raisin, fontFamily: "inherit", fontSize: 15 }} />
+        style={{ width: "100%", boxSizing: "border-box", height: 44, padding: "0 12px", borderRadius: 12, border: `1px solid ${M.hairline}`, backgroundColor: M.card, color: M.raisin, fontFamily: "inherit", fontSize: 15 }} />
     );
   } else if (mode === "month") {
     body = (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 6 }}>
         {Array.from({ length: 12 }, (_, i) => {
           const ym = monthOf(viewYear, i + 1);
-          return cell(monthLabel(ym).slice(0, 3), undefined, period.month === ym, !months.includes(ym), `${monthLabel(ym)}`, () => onPick({ mode: "monthly", month: ym }), 42);
+          return cell(monthLabel(ym).slice(0, 3), undefined, period.month === ym, !months.includes(ym), `${monthLabel(ym)}`, () => onPick({ mode: "monthly", month: ym }), 44, ym === curYm);
         })}
       </div>
     );
@@ -183,29 +226,45 @@ function PeriodCalendar({
           const first = monthOf(viewYear, (q - 1) * 3 + 1);
           const has = months.some((m) => quarterKeyOf(m) === key) || key === quarterKeyOf(curYm);
           const on = quarterKeyOf(period.month) === key && periodMode(period) === "quarter";
-          return cell(`Q${q}`, `${monthLabel(first).slice(0, 3)} – ${monthLabel(monthOf(viewYear, q * 3)).slice(0, 3)}`, on, !has, `Q${q} ${viewYear}`, () => onPick(quarterPeriod(key, today)), 54);
+          return cell(`Q${q}`, `${monthLabel(first).slice(0, 3)} – ${monthLabel(monthOf(viewYear, q * 3)).slice(0, 3)}`, on, !has, `Q${q} ${viewYear}`, () => onPick(quarterPeriod(key, today)), 56, key === quarterKeyOf(curYm));
         })}
       </div>
     );
   } else {
     body = (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 6 }}>
-        {years.map((y) => cell(y, y === today.slice(0, 4) ? "Jan – Present" : "Jan – Dec", period.month.startsWith(y), false, y, () => onPick({ mode: "ytd", month: months.filter((m) => m.startsWith(y)).pop() ?? `${y}-01` }), 54))}
+        {years.map((y) => cell(y, y === today.slice(0, 4) ? "Jan – Present" : "Jan – Dec", period.month.startsWith(y), false, y, () => onPick({ mode: "ytd", month: months.filter((m) => m.startsWith(y)).pop() ?? `${y}-01` }), 56, y === today.slice(0, 4)))}
       </div>
     );
   }
+  const yearNav = (dir: -1 | 1) => {
+    const t = years[yi + dir];
+    return (
+      <button type="button" aria-label={dir < 0 ? "Previous year" : "Next year"} onClick={() => t && setViewYear(t)} style={{ width: 36, height: 36, border: "none", background: "none", color: t ? M.raisin : M.faint, cursor: t ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {dir < 0 ? <ChevronLeft size={18} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={18} strokeWidth={2} aria-hidden="true" />}
+      </button>
+    );
+  };
   return (
     <>
-      <div ref={box} role="dialog" aria-label="Choose period" style={{ position: "absolute", top: "calc(100% + 4px)", right: 16, zIndex: 2, width: 300, maxWidth: "calc(100% - 32px)", boxSizing: "border-box", backgroundColor: M.card, borderRadius: 16, padding: 12, boxShadow: "0 2px 6px rgba(31,29,27,.08),0 24px 48px -18px rgba(31,29,27,.40)" }}>
-        {mode === "day" ? (
-          <div style={{ padding: "2px 4px 10px" }}><Label>DAY</Label></div>
-        ) : mode !== "year" ? (
+      <div ref={box} role="dialog" aria-label="Choose period" style={{ position: "absolute", top: "calc(100% + 4px)", right: 12, zIndex: 41, width: 300, maxWidth: "calc(100% - 24px)", boxSizing: "border-box", background: `linear-gradient(160deg, color-mix(in srgb, ${M.card} 98%, transparent), color-mix(in srgb, ${M.card} 96%, transparent) 60%, color-mix(in srgb, ${M.paper} 97%, transparent))`, backdropFilter: "blur(22px) saturate(170%)", WebkitBackdropFilter: "blur(22px) saturate(170%)", borderRadius: 20, padding: 14, boxShadow: `inset 0 1px 0 ${M.card}, inset 0 0 0 1px color-mix(in srgb, ${M.card} 60%, transparent), 0 0 0 1px rgba(201,169,97,.18), 0 28px 56px -20px rgba(31,29,27,.45)`, transformOrigin: "top right" }}>
+        <div role="tablist" aria-label="Period" style={{ display: "grid", gridTemplateColumns: `repeat(${modes.length},minmax(0,1fr))`, gap: 3, padding: 3, marginBottom: 12, borderRadius: 12, backgroundColor: M.divider }}>
+          {modes.map(([k, l]) => {
+            const on = mode === k;
+            return <button key={k} type="button" role="tab" aria-selected={on} onClick={() => { if (!on) onMode(k); }} style={{ height: 30, border: "none", borderRadius: 9, backgroundColor: on ? M.card : "transparent", boxShadow: on ? "0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)" : "none", color: on ? M.raisin : M.ink, fontFamily: "inherit", fontSize: 12.5, fontWeight: on ? 700 : 600, cursor: "pointer" }}>{l}</button>;
+          })}
+        </div>
+        {mode === "month" || mode === "quarter" ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <button type="button" aria-label="Previous year" onClick={() => years[yi - 1] && setViewYear(years[yi - 1])} style={{ width: 36, height: 36, border: "none", background: "none", color: years[yi - 1] ? M.raisin : M.faint, cursor: years[yi - 1] ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronLeft size={18} strokeWidth={2} aria-hidden="true" /></button>
-            <span style={{ fontSize: 14, fontWeight: 700, color: M.raisin, ...TNUM }}>{viewYear}</span>
-            <button type="button" aria-label="Next year" onClick={() => years[yi + 1] && setViewYear(years[yi + 1])} style={{ width: 36, height: 36, border: "none", background: "none", color: years[yi + 1] ? M.raisin : M.faint, cursor: years[yi + 1] ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}><ChevronRight size={18} strokeWidth={2} aria-hidden="true" /></button>
+            {yearNav(-1)}
+            <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin, ...TNUM }}>{viewYear}</span>
+            {yearNav(1)}
           </div>
-        ) : <div style={{ padding: "2px 4px 10px" }}><Label>YEAR</Label></div>}
+        ) : (
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px 10px" }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin }}>{mode === "day" ? "Day" : "Year"}</span>
+          </div>
+        )}
         {body}
       </div>
     </>
@@ -213,12 +272,14 @@ function PeriodCalendar({
 }
 
 function ViewBar({
-  view, canSwitch, onViews, period, months, today, onPeriod, sub, onSub,
-}: { view: DashView; canSwitch: boolean; onViews: () => void; period: Period | null; months: string[]; today: string; onPeriod: (p: Period) => void; sub?: HomeOpsSub; onSub?: (k: HomeOpsSub) => void }) {
+  view, canSwitch, onViews, period, months, today, onPeriod, sub, onSub, sticky,
+}: { view: DashView; canSwitch: boolean; onViews: () => void; period: Period | null; months: string[]; today: string; onPeriod: (p: Period) => void; sub?: HomeOpsSub; onSub?: (k: HomeOpsSub) => void; sticky: boolean }) {
   const top = useStickyBelowHeader();
+  const phone = useResponsiveLayout().mode === "phone";
   const [cal, setCal] = useState(false);
   const closeCal = useCallback(() => setCal(false), []);
   const label = DASHBOARD_VIEWS.find((v) => v.key === view)?.label ?? "Dashboard";
+  const ViewIcon = VIEW_ICON[view];
   const ops = view === "operations";
   // Operations and Employees are the two Day views: same four period modes, same day arrows.
   const dayView = ops || view === "people";
@@ -234,11 +295,13 @@ function ViewBar({
       {dir === "prev" ? <ChevronLeft size={18} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={18} strokeWidth={2} aria-hidden="true" />}
     </button>
   );
+  const stickyTop = phone ? "env(safe-area-inset-top, 0px)" : top;
   return (
-    <div style={{ position: "sticky", top, zIndex: 30, backgroundColor: "var(--m-header-glass, " + M.paper + ")", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", padding: "6px 16px 10px", boxShadow: `0 1px 0 ${M.border}` }}>
+    <div style={{ position: sticky ? "sticky" : "relative", ...(sticky ? { top: stickyTop } : null), zIndex: 30, margin: "6px 10px 0", padding: "12px 12px 6px", borderRadius: "22px 22px 0 0", background: `linear-gradient(180deg, color-mix(in srgb, ${M.card} 82%, transparent), color-mix(in srgb, ${M.card} 66%, transparent))`, backdropFilter: "blur(22px) saturate(170%)", WebkitBackdropFilter: "blur(22px) saturate(170%)", boxShadow: `inset 0 1px 0 ${M.card}, inset 1px 0 0 color-mix(in srgb, ${M.card} 55%, transparent), inset -1px 0 0 color-mix(in srgb, ${M.card} 55%, transparent)` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <button type="button" onClick={onViews} disabled={!canSwitch} aria-haspopup="dialog" aria-label={`Dashboard: ${label}${canSwitch ? " — switch" : ""}`}
-          style={{ flex: "none", height: 36, display: "inline-flex", alignItems: "center", gap: 6, padding: canSwitch ? "0 12px 0 14px" : "0 14px", borderRadius: 999, border: "none", backgroundColor: M.card, boxShadow: SHADOW_SMALL, fontFamily: "inherit", cursor: canSwitch ? "pointer" : "default", color: M.raisin, WebkitTapHighlightColor: "transparent" }}>
+          style={{ ...GLASS_PILL, flex: "none", height: 38, display: "inline-flex", alignItems: "center", gap: 8, padding: canSwitch ? "0 12px 0 6px" : "0 14px 0 6px", borderRadius: 999, border: "none", fontFamily: "inherit", cursor: canSwitch ? "pointer" : "default", color: M.raisin, WebkitTapHighlightColor: "transparent" }}>
+          <span aria-hidden="true" style={{ width: 28, height: 28, borderRadius: "50%", background: ON_GRADIENT, boxShadow: "inset 0 1px 0 rgba(255,255,255,.25)", display: "flex", alignItems: "center", justifyContent: "center" }}><ViewIcon size={14} strokeWidth={2.2} color="#FFFFFF" /></span>
           <span style={{ fontSize: 14, fontWeight: 700 }}>{label}</span>
           {canSwitch ? <ChevronDown size={16} strokeWidth={2.2} color={M.taupe} aria-hidden="true" /> : null}
         </button>
@@ -247,7 +310,7 @@ function ViewBar({
           <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
             {arrow("prev", prev)}
             <button type="button" onClick={() => setCal((v) => !v)} aria-haspopup="dialog" aria-expanded={cal} aria-label={`Choose period: ${dayView ? opsPeriodLabel(period) : widgetPeriodLabel(period)}`}
-              style={{ height: 36, display: "inline-flex", alignItems: "center", gap: 7, padding: "0 12px", borderRadius: 999, border: "none", backgroundColor: cal ? M.taupe : M.card, color: cal ? M.paper : M.raisin, boxShadow: SHADOW_SMALL, fontFamily: "inherit", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+              style={{ ...GLASS_PILL, height: 38, display: "inline-flex", alignItems: "center", gap: 7, padding: "0 13px", borderRadius: 999, border: "none", color: M.raisin, fontFamily: "inherit", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
               <CalendarDays size={15} strokeWidth={2} aria-hidden="true" />
               <span style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", ...TNUM }}>{dayView ? opsPeriodLabel(period) : widgetPeriodLabel(period)}</span>
             </button>
@@ -277,33 +340,98 @@ function ViewBar({
           })}
         </div>
       ) : null}
-      {cal && period ? <PeriodCalendar period={period} months={months} today={today} onPick={(p) => { onPeriod(p); setCal(false); }} onClose={closeCal} /> : null}
+      {cal && period ? <PeriodCalendar period={period} months={months} today={today} modes={modes} mode={mode} onMode={(k) => onPeriod(pickMode(period, k))} onPick={(p) => { onPeriod(p); setCal(false); }} onClose={closeCal} /> : null}
     </div>
   );
 }
 
+// Dashboard picker: 2-column tiles (Home Sales v12). The list is the repo's own (what the role may open); the repo's
+// unbuilt OCR entry is left out of the picker, as in the design, but its ?view=ocr link still resolves.
 function ViewsSheet({ open, allowed, current, onPick, onClose }: { open: boolean; allowed: DashView[]; current: DashView | null; onPick: (v: DashView) => void; onClose: () => void }) {
   if (!open) return null;
   return (
     <SheetFrame open title="Dashboard" sub="Choose which dashboard to view" onClose={onClose}>
-      <SheetCard pad="0">
-        <div role="radiogroup" aria-label="Dashboard">
-          {DASHBOARD_VIEWS.filter((v) => allowed.includes(v.key)).map((v, i) => {
-            const Icon = VIEW_ICON[v.key];
-            const on = v.key === current;
-            return (
-              <button key={v.key} type="button" role="radio" aria-checked={on} onClick={() => onPick(v.key)}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, minHeight: 52, padding: "0 16px", backgroundColor: M.card, border: "none", borderTop: i ? `1px solid ${M.divider}` : "none", fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}>
-                <Icon size={18} strokeWidth={1.9} color={on ? M.taupe : M.logoFrom} aria-hidden="true" />
-                <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: on ? 700 : 500, color: M.raisin }}>{v.label}</span>
-                {!v.built ? <span style={{ flex: "none", height: 20, display: "inline-flex", alignItems: "center", padding: "0 8px", borderRadius: 999, backgroundColor: M.divider, color: M.ink, fontSize: 10.5, fontWeight: 700 }}>Soon</span> : null}
-                {on ? <Check size={18} strokeWidth={2.4} color={M.taupe} aria-hidden="true" /> : null}
-              </button>
-            );
-          })}
+      <div role="radiogroup" aria-label="Dashboard" style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10, marginTop: 4 }}>
+        {DASHBOARD_VIEWS.filter((v) => v.key !== "ocr" && allowed.includes(v.key)).map((v) => {
+          const Icon = VIEW_ICON[v.key];
+          const on = v.key === current;
+          return (
+            <button key={v.key} type="button" role="radio" aria-checked={on} onClick={() => onPick(v.key)}
+              style={{ position: "relative", overflow: "hidden", minWidth: 0, display: "flex", alignItems: "center", gap: 10, minHeight: 58, padding: "10px 12px", border: "none", borderRadius: 16, background: on ? `linear-gradient(160deg, ${M.card}, color-mix(in srgb, ${M.card} 70%, transparent))` : `color-mix(in srgb, ${M.card} ${v.built ? 75 : 45}%, transparent)`, boxShadow: on ? "inset 0 0 0 1.5px #6B5C32, 0 10px 22px -14px rgba(107,92,50,.45)" : "inset 0 0 0 1px rgba(201,169,97,.2)", fontFamily: "inherit", textAlign: "left", cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
+              <span aria-hidden="true" style={{ width: 34, height: 34, flex: "none", borderRadius: 11, background: v.built ? ON_GRADIENT : M.divider, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={16} strokeWidth={2.1} color={v.built ? "#FFFFFF" : M.faint} /></span>
+              <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+                <span style={{ fontSize: 13.5, fontWeight: 700, color: v.built ? M.raisin : M.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v.label}</span>
+                {!v.built ? <span style={{ fontSize: 11, fontWeight: 600, color: M.faint }}>Coming soon</span> : null}
+              </span>
+              {on ? <span style={{ flex: "none", width: 20, height: 20, borderRadius: "50%", backgroundColor: "#6B5C32", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 3px 8px -3px rgba(107,92,50,.8)" }}><Check size={12} strokeWidth={3} color="#FFFFFF" aria-hidden="true" /></span> : null}
+            </button>
+          );
+        })}
+      </div>
+      <SheetNote>Only dashboards your role can open are listed.</SheetNote>
+    </SheetFrame>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Today's problems (desktop rules: use-problem-tiles.ts, the same tiles as the desktop strip)
+// ---------------------------------------------------------------------------
+// "Bad" tiles use the bright red in both themes (the tone's own dark red is dim on a dark card).
+const toneValue = (t: Tile) => (t.tone === "bad" ? "#DC2626" : TONE[t.tone].value === "#1F1D1B" ? M.raisin : TONE[t.tone].value);
+const PROBLEM_LINES: Record<string, [string, string]> = { overdue: ["Production", "orders overdue"], overdueSets: ["Customer sets", "overdue"], svc: ["Service cases", "overdue"] };
+const problemLines = (t: Tile): [string, string] => {
+  const fixed = PROBLEM_LINES[t.key];
+  if (fixed) return fixed;
+  const [a, ...r] = t.label.split(" · ");
+  return [a, r.join(" · ")];
+};
+
+function ProblemsSection({ tiles, onTap }: { tiles: Tile[]; onTap: (t: Tile) => void }) {
+  const wide = useResponsiveLayout().mode !== "phone";
+  if (tiles.length === 0) return null;
+  return (
+    <section aria-label="Today's problems" style={{ padding: "14px 10px 14px" }}>
+      <div style={{ paddingBottom: 10 }}><Label style={{ whiteSpace: "nowrap" }}>TODAY’S PROBLEMS</Label></div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? Math.min(tiles.length, 4) : 2},minmax(0,1fr))`, gridAutoRows: "1fr", gap: 8 }}>
+        {tiles.map((p) => {
+          const [t1, t2] = problemLines(p);
+          const bar = TONE[p.tone].bar;
+          return (
+            <button key={p.key} type="button" onClick={() => onTap(p)} aria-label={`${p.value} ${p.label}${p.hint ? `, ${p.hint}` : ""}`}
+              style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 5, boxSizing: "border-box", padding: "8px 6px 8px 6px", borderRadius: 14, border: "none", background: `linear-gradient(160deg, ${M.card} 0%, color-mix(in srgb, ${bar} 5%, ${M.card}) 100%)`, boxShadow: `inset 0 3px 0 ${bar}, inset 0 0 0 1px color-mix(in srgb, ${bar} 32%, transparent), 0 1px 2px rgba(31,29,27,.05), 0 10px 22px -14px rgba(31,29,27,.30)`, fontFamily: "inherit", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent" }}>
+              <span style={{ flex: "none", width: 44, textAlign: "center", fontSize: 20, fontWeight: 800, lineHeight: "26px", letterSpacing: -1, color: toneValue(p), ...TNUM }}>{p.value}</span>
+              <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 30, lineHeight: "15px", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: M.raisin, overflow: "hidden", textOverflow: "ellipsis" }}>{t1}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 500, color: M.ink, overflow: "hidden", textOverflow: "ellipsis" }}>{t2}</span>
+              </span>
+              <span aria-hidden="true" style={{ width: 18, height: 18, flex: "none", borderRadius: "50%", backgroundColor: M.divider, display: "flex", alignItems: "center", justifyContent: "center", color: M.taupe }}><ArrowUpRight size={10} strokeWidth={2.4} /></span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// "Not in" and "Efficiency" are computed from attendance and job-card data that no /m screen lists, so the tile
+// explains itself instead of faking a list.
+function ProblemSheet({ tile, onClose, onOpen, isNavAllowed }: { tile: Tile; onClose: () => void; onOpen: (to: string) => void; isNavAllowed: (h: string) => boolean }) {
+  const d = problemDest(tile.key);
+  const blockedRoute = d.kind === "route";
+  const canEmployees = isNavAllowed("/employees");
+  return (
+    <SheetFrame open title={tile.label} sub={tile.hint} onClose={onClose}>
+      <SheetCard pad="14px 16px">
+        <div style={{ fontSize: 22, fontWeight: 700, color: toneValue(tile), ...TNUM }}>{tile.value}</div>
+        <div style={{ fontSize: 13, color: M.ink, lineHeight: 1.5, marginTop: 6 }}>
+          {blockedRoute
+            ? `Your role can't open ${d.where} on mobile, so the list behind this number is not available here.`
+            : `The detailed ${d.where.toLowerCase()} list is part of the desktop dashboard and is not on mobile yet. The Employees list shows people, not today’s attendance or efficiency.`}
         </div>
       </SheetCard>
-      <SheetNote>Only dashboards your role can open are listed. “Soon” views are not designed for mobile yet.</SheetNote>
+      {!blockedRoute && canEmployees ? (
+        <button type="button" onClick={() => onOpen("/m/employees")} style={{ marginTop: 12, width: "100%", height: 44, border: "none", borderRadius: 12, backgroundColor: M.taupe, color: M.paper, fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Employees</button>
+      ) : null}
     </SheetFrame>
   );
 }
@@ -344,8 +472,9 @@ function NotAvailable({ view, onFirst, firstLabel }: { view: DashView; onFirst: 
 // The dashboard proper (mounted only for users who may open it)
 // ---------------------------------------------------------------------------
 function Dashboard() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const { hasPermission, dashboardTabs } = usePermissions();
+  const { hasPermission, isNavAllowed, dashboardTabs } = usePermissions();
   const allowed = useMemo(() => allowedViews(dashboardTabs), [dashboardTabs]);
   const resolved = resolveView(params.get("view"), allowed);
   const view: DashView | null = resolved.kind === "view" ? resolved.view : null;
@@ -385,8 +514,15 @@ function Dashboard() {
     payslips: hasPermission("payslips", "read"),
     revenueFigures: hasPermission("revenue-figures", "read"),
   };
-  // The removed "Not in" tile used to bump this to open the attendance log.
-  const logSignal = 0;
+  // The "Not in" tile bumps this to open the attendance log (Employees view).
+  const [logSignal, setLogSignal] = useState(0);
+  // "Not in" from another view: switch to Employees on the tile's day first, then ask for the log once Employees is on screen
+  // (a bump before it mounts would be read as the starting value and open nothing).
+  const [logWant, setLogWant] = useState(false);
+  // The day the tile was computed for (the Employees drill reads that day, whatever period is in view), and the Efficiency drill's request.
+  const [drillDate, setDrillDate] = useState("");
+  const [effSignal, setEffSignal] = useState(0);
+  const [effWant, setEffWant] = useState(false);
   const { sub: rawSub, setSub } = useDashboardSub("operations");
   const opsSub: HomeOpsSub = rawSub === "production" ? "production" : rawSub === "floor" ? "floor" : "overview";
 
@@ -402,13 +538,79 @@ function Dashboard() {
   // No fetch runs off an unresolved period (the month list has not loaded yet).
   const data = useSalesData(periodKey, { ...access, view: access.view && ready });
 
+  // Service cases overdue is not shown on the phone Home (owner 2026-11-20); the desktop strip keeps it.
+  const tiles = useProblemTiles(allowed).filter((t) => t.key !== "svc");
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [problem, setProblem] = useState<Tile | null>(null);
+  // A tile that scrolls to a card: once the card is in the page (after the view and the data have rendered) go to it.
+  // The card a tile wants to scroll to; dropped after 8 s so a card that never renders (no access, feed failed) cannot leave it pending.
+  const scrollTo = useRef<{ id: string; until: number } | null>(null);
+  const goToCard = (id: string): boolean => {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.style.scrollMarginTop = "80px";
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  };
+  useEffect(() => {
+    const want = scrollTo.current;
+    if (want && (goToCard(want.id) || Date.now() > want.until)) scrollTo.current = null;
+  });
+  useEffect(() => {
+    if (!(logWant && onPeople && peopleView)) return;
+    // A timer, not requestAnimationFrame: frames do not run while the tab is in the background, so the drill would open late.
+    // eslint-disable-next-line no-restricted-syntax -- one-shot deferral inside an effect (defers the setState past the commit)
+    const id = window.setTimeout(() => { setLogSignal((n) => n + 1); setLogWant(false); }, 0);
+    return () => window.clearTimeout(id);
+  }, [logWant, onPeople, peopleView]);
+  useEffect(() => {
+    if (!(effWant && onPeople && peopleView)) return;
+    // A timer, not requestAnimationFrame: frames do not run while the tab is in the background, so the drill would open late.
+    // eslint-disable-next-line no-restricted-syntax -- one-shot deferral inside an effect (defers the setState past the commit)
+    const id = window.setTimeout(() => { setEffSignal((n) => n + 1); setEffWant(false); }, 0);
+    return () => window.clearTimeout(id);
+  }, [effWant, onPeople, peopleView]);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const closeViews = useCallback(() => setViewsOpen(false), []);
+  const closeProblem = useCallback(() => setProblem(null), []);
 
   const setView = (v: DashView) => {
     setParams((prev) => { const n = new URLSearchParams(prev); n.set("view", v); return n; });
     setViewsOpen(false);
+  };
+  const onTile = (t: Tile) => {
+    // On Operations the overdue tile scrolls to the list behind its number (as on the desktop), not away from the dashboard.
+    if (t.key === "overdue" && onOps && opsView) {
+      if (opsSub === "overview" && goToCard("ops-overdue")) return;
+      scrollTo.current = { id: "ops-overdue", until: Date.now() + 8000 };
+      setSub("overview");
+      return;
+    }
+    // Customer sets overdue: the Sales card behind the number (scroll to it, switching to Sales first when needed).
+    if (t.key === "overdueSets" && allowed.includes("sales")) {
+      if (onSales && goToCard("sales-overdue-sets")) return;
+      scrollTo.current = { id: "sales-overdue-sets", until: Date.now() + 8000 };
+      if (!onSales) setView("sales");
+      return;
+    }
+    // Not in: the Employees attendance log for the tile's own day (same roster rule as the tile: headcount workers, not
+    // outsourced, who have ever clocked in). Period and view change in ONE URL update, so Back returns to where you were.
+    if (t.key === "absent" && t.date && allowed.includes("people") && peopleView) {
+      setParams((prev) => { const n = writePeriod(prev, { mode: "monthly", month: t.date!.slice(0, 7), day: t.date }); n.set("view", "people"); return n; });
+      setDrillDate(t.date);
+      setLogWant(true);
+      return;
+    }
+    // Efficiency: workers under 75% on the tile's day (Employees > Efficiency drill; same rule as the tile).
+    if (t.key === "eff" && t.date && allowed.includes("people") && peopleView) {
+      setDrillDate(t.date);
+      if (!onPeople) setParams((prev) => { const n = new URLSearchParams(prev); n.set("view", "people"); return n; });
+      setEffWant(true);
+      return;
+    }
+    const d = problemDest(t.key);
+    if (d.kind === "route" && isNavAllowed(d.navGate)) navigate(d.to);
+    else setProblem(t);
   };
   const refresh = () => { data.refresh(); setRefreshedAt(new Date()); };
   const firstAllowed = allowed[0];
@@ -418,9 +620,10 @@ function Dashboard() {
     <HomeTop>
       {/* Home v10 sets no line-height (browser `normal`); the /m shell inherits 1.5. Scoped to this screen's content. */}
       <div style={{ lineHeight: "normal" }}>
-      {/* Today's problems removed from the phone Home (owner 2026-11-11: "整个手机版本
-          dashboard都不要看到这个上面的"); the desktop dashboard keeps its strip. */}
+      {/* Today's problems: restored for Home Sales v12 (owner 2026-11-20, supersedes the 2026-11-11 removal). */}
+      <ProblemsSection tiles={tiles} onTap={onTile} />
       <ViewBar
+        sticky={view !== "sales"}
         view={view ?? (resolved.kind === "blocked" ? resolved.view : "sales")}
         canSwitch={allowed.length > 1}
         onViews={() => setViewsOpen(true)}
@@ -468,7 +671,7 @@ function Dashboard() {
             />
           </div>
         ) : (
-          <EmpView access={peopleAccess} period={period} today={today} logSignal={logSignal} />
+          <EmpView access={peopleAccess} period={period} today={today} logSignal={logSignal} drill={{ logDate: drillDate, effSignal, effDate: drillDate }} />
         )
       ) : view !== "sales" ? (
         <ComingSoon view={view!} onSales={allowed.includes("sales") ? () => setView("sales") : null} />
@@ -488,6 +691,7 @@ function Dashboard() {
         </>
       )}
       <ViewsSheet open={viewsOpen} allowed={allowed} current={view} onPick={setView} onClose={closeViews} />
+      {problem ? <ProblemSheet tile={problem} onClose={closeProblem} onOpen={(to) => { setProblem(null); navigate(to); }} isNavAllowed={isNavAllowed} /> : null}
       </div>
     </HomeTop>
   );

@@ -153,7 +153,8 @@ test("phone header geometry is shared: one 44px leading slot, fixed 52px row, of
   assert.match(subTabs, /useStickyBelowHeader\(\)/);
   assert.doesNotMatch(subTabs, /top: 52/);
   assert.match(dashboard, /useStickyBelowHeader\(\)/);
-  assert.match(dashboard, /position: "sticky", top,/);
+  // Home Sales v12: the bar is sticky on Operations / Employees only (Sales joins its card); phones draw the top bar in the page, so it pins at the inset.
+  assert.match(dashboard, /position: sticky \? "sticky" : "relative"/);
   // Home on phones: no second safe-area pad on top of the header's.
   assert.match(home, /paddingTop: mode === "phone" \? 0 : "env\(safe-area-inset-top\)"/);
   // Custom detail screens use the shared header (back arrow) on phones.
