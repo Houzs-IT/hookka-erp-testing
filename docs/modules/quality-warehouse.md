@@ -1,6 +1,5 @@
 # Quality, Warehouse, Scanning & Platform — Module Guide
 
-> **Last verified: 2026-11-20** (branch `fix/pillow-ready-before-packing-main`): the two `public-do-qr.ts` `/:token/advance` anchors moved to :715 after the pillow fields were added to the DO QR candidate check. Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `feat/permissions-tab-main`): the two `rbac.ts` anchor rows re-derived after the per-account permission lookup moved them. Nothing else re-checked.
 
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
