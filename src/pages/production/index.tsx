@@ -5322,6 +5322,7 @@ export default function ProductionPage({
       pieceNo: number,
       totalPieces: number,
       forSofa: string,
+      soNoOverride?: string,
     ): FgSticker => {
       const sorted = [...pillows].sort((a, b) => a.poNo.localeCompare(b.poNo) || a.unitNo - b.unitNo);
       const lines = new Map<string, { name: string; fabric: string; qty: number }>();
@@ -5335,10 +5336,15 @@ export default function ProductionPage({
       }
       const rep = sorted[0];
       const pillowLines = [...lines.values()];
+      // A pillow's fg unit carries its own LINE number (SO-2611-318-03) in
+      // salesOrderNo; the carton belongs to the whole order, so print the SO
+      // number (owner 2026-11-20 live check).
+      const soNo = soNoOverride || (rep.salesOrderNo || "").replace(/-\d{2,}$/, "");
       return {
         ...rep,
+        salesOrderNo: soNo || rep.salesOrderNo,
         key: `pillow-carton-${rep.salesOrderId || rep.key}`,
-        unitSerial: `${rep.salesOrderNo || rep.salesOrderId}-PL`,
+        unitSerial: `${(soNoOverride || (rep.salesOrderNo || "").replace(/-\d{2,}$/, "")) || rep.salesOrderId}-PL`,
         pieceNo,
         totalPieces,
         productCode: "PILLOW",
@@ -5573,7 +5579,7 @@ export default function ProductionPage({
       if (hasPillow) {
         const legShift = hasLegs ? 1 : 0;
         outputForSo.push(
-          buildPillowCarton(rawPillows, compartmentCount + legShift + 1, totalPacks, fullCompartment),
+          buildPillowCarton(rawPillows, compartmentCount + legShift + 1, totalPacks, fullCompartment, compartment1.salesOrderNo),
         );
       }
 
