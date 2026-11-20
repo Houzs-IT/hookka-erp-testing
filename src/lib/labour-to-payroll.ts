@@ -64,6 +64,29 @@ export function scaleLabourToPayroll(
   return { byWorkerDay: days, byWorkerDayDept: depts };
 }
 
+/**
+ * Whole sen for parts of a group whose rounded parts must add up to the
+ * group's own rounded total (largest remainder). A department's category
+ * lines then sum to exactly the department figure the dashboard prints,
+ * instead of drifting a sen (owner 2026-11-20: 「1仙也修好」).
+ */
+export function roundWithinGroups(parts: readonly { group: string; sen: number }[]): number[] {
+  const out = parts.map((p) => Math.floor(p.sen));
+  const byGroup = new Map<string, number[]>();
+  parts.forEach((p, i) => byGroup.set(p.group, [...(byGroup.get(p.group) ?? []), i]));
+  for (const idx of byGroup.values()) {
+    const target = Math.round(idx.reduce((s, i) => s + parts[i].sen, 0));
+    let left = target - idx.reduce((s, i) => s + out[i], 0);
+    const order = [...idx].sort((a, b) => (parts[b].sen - Math.floor(parts[b].sen)) - (parts[a].sen - Math.floor(parts[a].sen)));
+    for (const i of order) {
+      if (left <= 0) break;
+      out[i] += 1;
+      left -= 1;
+    }
+  }
+  return out;
+}
+
 export function wholeMonthsAround(from: string, to: string): { from: string; to: string } {
   const [year, month] = to.slice(0, 7).split("-").map(Number);
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
