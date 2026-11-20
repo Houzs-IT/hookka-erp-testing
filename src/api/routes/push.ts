@@ -16,6 +16,8 @@
 // Crypto lives in ../lib/web-push.ts and uses ONLY crypto.subtle + fetch
 // (the Node `web-push` package does not run on Workers).
 // ============================================================
+import { todayYmdMY } from "../../lib/utils";
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { resolveWorkerToken } from "./worker-auth";
@@ -285,9 +287,9 @@ export async function sendPushToSubscribers(
     const likeClauses = codes.map(() => "departmentCodes LIKE ?").join(" OR ");
     const rows = await db
       .prepare(
-        `SELECT id FROM workers WHERE status = 'ACTIVE' AND (departmentCode IN (${ph}) OR ${likeClauses})`,
+        `SELECT id FROM workers WHERE ${employedOnSql("")} AND (departmentCode IN (${ph}) OR ${likeClauses})`,
       )
-      .bind(...codes, ...codes.map((c2) => `%"${c2}"%`))
+      .bind(...employedOnParams(todayYmdMY()), ...codes, ...codes.map((c2) => `%"${c2}"%`))
       .all<{ id: string }>();
     const deptWorkerIds = new Set((rows.results ?? []).map((r) => r.id));
     workerIdFilter = workerIdFilter

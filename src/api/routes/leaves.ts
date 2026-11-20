@@ -6,6 +6,8 @@
 // D1 `workers` table on POST. PUT accepts either a path-less body (legacy
 // shape: `{ id, status, approvedBy }`) or `/:id` + body.
 // ---------------------------------------------------------------------------
+import { todayYmdMY } from "../../lib/utils";
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -127,9 +129,10 @@ app.get("/balances", async (c) => {
   const [wres, lres, publicHolidays] = await Promise.all([
     c.var.DB.prepare(
       `SELECT id, name, annual_leave_entitlement_days, medical_leave_entitlement_days
-         FROM workers WHERE orgId = ? AND status = 'ACTIVE'`,
+         FROM workers WHERE orgId = ? AND ${employedOnSql("")}`,
     )
-      .bind(orgId)
+      // Employed today by the one rule (owner 2026-11-21).
+      .bind(orgId, ...employedOnParams(todayYmdMY()))
       .all<{ id: string; name: string } & WorkerEntitlementFields>(),
     c.var.DB.prepare(
       `SELECT workerId, type, status, startDate, endDate, days

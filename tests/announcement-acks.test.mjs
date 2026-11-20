@@ -75,10 +75,11 @@ function makeDb({ announcements = [], workers = [], acks = [] } = {}) {
         return null;
       },
       async all() {
-        // workers roster: SELECT ... FROM workers WHERE status = 'ACTIVE'
-        if (/FROM workers WHERE status = 'ACTIVE'/i.test(s)) {
+        // workers roster: employed today by the one employment rule
+        // (owner 2026-11-21) — ACTIVE, not a test account, in this fixture.
+        if (/FROM workers WHERE \(\s*empNo NOT LIKE 'TEST%'/i.test(s)) {
           const out = [...workerTable.values()].filter(
-            (w) => w.status === "ACTIVE",
+            (w) => w.status === "ACTIVE" && !/^TEST/i.test(w.empNo ?? ""),
           );
           return { results: out.map((w) => ({ ...w })) };
         }

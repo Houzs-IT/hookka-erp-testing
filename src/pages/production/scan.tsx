@@ -10,7 +10,7 @@ import { useSearchParams } from "react-router-dom";
 import { parseStickerData } from "@/lib/qr-utils";
 import { fetchJson } from "@/lib/fetch-json";
 import { useUnsavedChanges } from "@/lib/use-unsaved-changes";
-import { workerCoversDept } from "@/lib/worker";
+import { workerCoversDept, isPickableWorker } from "@/lib/worker";
 
 const WorkerListSchema = z.object({
   success: z.boolean(),
@@ -453,6 +453,7 @@ function ScannerPage() {
                     >
                       <option value="">Select worker...</option>
                       {workers
+                        .filter((w) => isPickableWorker(w))
                         .filter((w) =>
                           picShowAll
                             ? true

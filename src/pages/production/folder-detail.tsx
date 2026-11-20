@@ -10,6 +10,7 @@
 //   - Multi-select + Apply Date / Apply PIC (reuses BatchActionToolbar)
 //   - Remove from Folder (pops a JC out of this folder, doesn't touch the JC)
 //   - Delete the whole folder
+import { isPickableWorker } from "@/lib/worker";
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useToast } from "@/components/ui/toast";
@@ -92,7 +93,7 @@ type FolderJcRow = {
   distributedAt: string | null;
 };
 
-type Worker = { id: string; name: string; departmentCode: string | null; departmentCodes?: string[] | null };
+type Worker = { id: string; name: string; departmentCode: string | null; departmentCodes?: string[] | null; empNo?: string | null; status?: string | null; joinDate?: string | null; resignedAt?: string | null };
 
 export default function ProductionFolderDetailPage() {
   const navigate = useNavigate();
@@ -677,7 +678,7 @@ export default function ProductionFolderDetailPage() {
             selected.map((r) => (r.departmentCode || "").toUpperCase()).filter(Boolean),
           );
           const sorted = workers
-            .slice()
+            .filter((w) => isPickableWorker(w))
             .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
           if (selectedDepts.size === 0) {
             return sorted.map((w) => ({ id: w.id, name: w.name }));
@@ -695,7 +696,7 @@ export default function ProductionFolderDetailPage() {
         })()}
         // Full roster behind the dialog's "All departments" toggle.
         allWorkers={workers
-          .slice()
+          .filter((w) => isPickableWorker(w))
           .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
           .map((w) => ({ id: w.id, name: w.name }))}
         onCancel={() => setPicOpen(false)}

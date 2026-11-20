@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, CheckCircle2, AlertTriangle, ScanLine } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
-import { workerCoversDept } from "@/lib/worker";
+import { workerCoversDept, isPickableWorker } from "@/lib/worker";
 
 type ScanAction = "PACK" | "LOAD" | "DELIVER" | "RETURN";
 
@@ -305,7 +305,7 @@ export default function FGScanPage() {
                 {action === "PACK" ? "Select worker..." : "(no worker)"}
               </option>
               {workers
-                .filter((w) => (picShowAll ? true : workerCoversDept(w, "PACKING")))
+                .filter((w) => isPickableWorker(w) && (picShowAll ? true : workerCoversDept(w, "PACKING")))
                 .map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}{w.empNo ? ` (${w.empNo})` : ""}

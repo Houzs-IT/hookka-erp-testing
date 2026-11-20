@@ -5,6 +5,7 @@
 // doesn't need any changes. On POST/PUT, `departmentCode` is resolved by
 // joining on the departments table rather than trusting the client payload.
 // ---------------------------------------------------------------------------
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { syncWorkerPayroll } from "../lib/worker-payroll-sync";
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
@@ -1164,9 +1165,12 @@ app.post("/bulk-generate-pins", async (c) => {
       `SELECT w.id AS id, w.empNo AS empNo, w.name AS name
          FROM workers w
          LEFT JOIN worker_pins p ON p.workerId = w.id
-        WHERE w.status = 'ACTIVE' AND p.workerId IS NULL
+        WHERE ${employedOnSql("w")} AND p.workerId IS NULL
         ORDER BY w.empNo`,
-    ).all<{ id: string; empNo: string; name: string }>();
+    )
+      // Employed today by the one rule (owner 2026-11-21): no test accounts.
+      .bind(...employedOnParams(todayYmdMY()))
+      .all<{ id: string; empNo: string; name: string }>();
     targets = res.results ?? [];
   }
 

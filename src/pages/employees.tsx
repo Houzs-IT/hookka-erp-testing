@@ -1,3 +1,4 @@
+import { isPickableWorker } from "@/lib/worker";
 import { useState, useEffect, useMemo, useCallback, useRef, startTransition, Fragment } from "react";
 import { usePermissions } from "@/lib/use-permission";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -2008,7 +2009,7 @@ function WorkingHoursTab({
                         >
                           <option value="">— select worker —</option>
                           {workers
-                            .filter((w) => w.status === "ACTIVE")
+                            .filter((w) => isPickableWorker(w))
                             .map((w) => (
                               <option key={w.id} value={w.id}>{w.name}</option>
                             ))}
@@ -10770,7 +10771,7 @@ function LeaveManagementTab({ workers }: { workers: Worker[] }) {
                     onChange={(e) => setNewLeave((f) => ({ ...f, workerId: e.target.value }))}
                     className="flex h-8 w-full rounded-md border border-[#E2DDD8] bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
                   >
-                    {workers.filter((w) => w.status === "ACTIVE").map((w) => (
+                    {workers.filter((w) => isPickableWorker(w)).map((w) => (
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
                   </select>
@@ -11027,7 +11028,7 @@ function AdvancesTab({ workers }: { workers: Worker[] }) {
   const workerOptions = useMemo(
     () =>
       workers
-        .filter((w) => w.status === "ACTIVE" && !w.empNo?.startsWith("TEST"))
+        .filter((w) => isPickableWorker(w))
         .sort((a, b) => (a.empNo || "").localeCompare(b.empNo || ""))
         .map((w) => ({ value: w.id, label: `${w.empNo} — ${w.name}` })),
     [workers],

@@ -1,3 +1,5 @@
+import { employedOn } from "./employment";
+import { todayYmdMY } from "./utils";
 /**
  * Returns true if `w` is assignable to a job card in production department
  * `dept`. The worker covers a dept when either
@@ -21,6 +23,19 @@
  * full record. Both satisfy the shape below, so callers from either side
  * compile without juggling types.
  */
+/**
+ * Who a picker may offer TODAY (owner 2026-11-21, point 6): the people employed
+ * today by the one employment rule — no test accounts, nobody before their join
+ * date or after their last day. A card already carrying someone else keeps
+ * showing their name; only the choices narrow.
+ */
+export function isPickableWorker(
+  w: { empNo?: string | null; status?: string | null; joinDate?: string | null; resignedAt?: string | null },
+  day: string = todayYmdMY(),
+): boolean {
+  return employedOn(w, day);
+}
+
 export function workerCoversDept(
   w: { departmentCode?: string | null; departmentCodes?: string[] | null },
   dept: string,
