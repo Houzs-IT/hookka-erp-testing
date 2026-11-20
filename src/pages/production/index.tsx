@@ -5377,11 +5377,38 @@ export default function ProductionPage({
         nonSofa.push(s);
       }
     }
-    // Pillows of a SO with NO sofa: still ONE carton, numbered 1/1
-    // (owner 2026-11-20: all pillows of an order go in one box).
+    // Owner 2026-11-20: the pillow carton is for orders whose pillows are
+    // NOT packed yet, and every order after. Stickers are re-drawn on every
+    // open, so an order whose pillows already finished Packing keeps the
+    // layout it was printed with (legacy: corner note on the last sofa box;
+    // one sticker per pillow for a pillow-only order).
+    // "Already packed" = every pillow's PACKING card finished BEFORE the carton
+    // went live (2026-11-20). A carton packed since then keeps the carton
+    // layout when it is reopened.
+    const CARTON_LIVE = "2026-11-20";
+    const PACK_DONE = new Set(["COMPLETED", "TRANSFERRED"]);
+    const pillowsPacked = new Map<string, boolean>(); // salesOrderId → every pillow packed before CARTON_LIVE
+    for (const o of ordersToProcess) {
+      if (!o.salesOrderId) continue;
+      if ((o.itemCategory || "").toUpperCase() !== "ACCESSORY") continue;
+      if (!/pillow/i.test(`${o.productName || ""} ${o.productCode || ""}`)) continue;
+      const packing = (o.jobCards || []).filter((j) => j.departmentCode === "PACKING");
+      const done =
+        packing.length > 0 &&
+        packing.every(
+          (j) => PACK_DONE.has(j.status) && !!j.completedDate && String(j.completedDate).slice(0, 10) < CARTON_LIVE,
+        );
+      pillowsPacked.set(o.salesOrderId, (pillowsPacked.get(o.salesOrderId) ?? true) && done);
+    }
+    const legacyPillows = (soId: string): boolean => pillowsPacked.get(soId) === true;
+
+    // Pillows of a SO with NO sofa: ONE carton, numbered 1/1 (owner
+    // 2026-11-20: all pillows of an order go in one box) — or, already packed,
+    // the stickers they were printed with.
     for (const [soId, pillows] of pillowsBySo) {
       if (!sofaBySo.has(soId)) {
-        nonSofa.push(buildPillowCarton(pillows, 1, 1, ""));
+        if (legacyPillows(soId)) nonSofa.push(...pillows);
+        else nonSofa.push(buildPillowCarton(pillows, 1, 1, ""));
         pillowsBySo.delete(soId);
       }
     }
@@ -5496,11 +5523,21 @@ export default function ProductionPage({
       );
       const rawPillows = pillowsBySo.get(soId) ?? [];
       // Every pillow of the SO goes in ONE carton = ONE more piece
-      // (owner 2026-11-20), however many pillow types there are.
+      // (owner 2026-11-20), however many pillow types there are. Already
+      // packed → the legacy layout: one piece per pillow product, the first
+      // shown as a corner note on the last sofa box.
       const hasPillow = rawPillows.length > 0;
+      const legacy = hasPillow && legacyPillows(soId);
+      const legacyGroups = new Map<string, FgSticker[]>();
+      if (legacy) {
+        for (const p of rawPillows) {
+          const k = p.productCode || p.productName || "PILLOW";
+          legacyGroups.set(k, [...(legacyGroups.get(k) ?? []), p]);
+        }
+      }
       const compartmentCount = group.length;
       const totalPacks =
-        compartmentCount + (hasLegs ? 1 : 0) + (hasPillow ? 1 : 0);
+        compartmentCount + (hasLegs ? 1 : 0) + (legacy ? legacyGroups.size : hasPillow ? 1 : 0);
 
       // Sofa fullCompartment label — joined productCodes of every sofa PO
       // in the SO (preserving order + duplicates) with shared-prefix
@@ -5574,9 +5611,31 @@ export default function ProductionPage({
         };
         outputForSo.push(legsSticker);
       }
-      // Pillow carton (after the leg, last): its own sticker, no longer a
-      // corner note on the last compartment (owner 2026-11-20).
-      if (hasPillow) {
+      if (legacy) {
+        // The pre-2026-11-20 layout, unchanged, for orders already packed.
+        const legShift = hasLegs ? 1 : 0;
+        const lastCompartment = group[group.length - 1];
+        let pillowIdx = 0;
+        for (const [, pillowGroup] of legacyGroups) {
+          const rep = pillowGroup[0];
+          const name = rep.productName || rep.productCode || "Pillow";
+          const fabric = rep.fabricCode ? ` ${rep.fabricCode}` : "";
+          const labelWithFabric = `${name}${fabric} x${pillowGroup.length}`;
+          rep.pieceNo = compartmentCount + legShift + 1 + pillowIdx;
+          rep.totalPieces = totalPacks;
+          rep.wipLabel = fullCompartment;
+          rep.boxLabel = labelWithFabric;
+          rep.pieceName = labelWithFabric;
+          if (pillowIdx === 0) {
+            rep.comboPairKey = lastCompartment.key;
+            rep.isSyntheticPillow = true;
+          }
+          outputForSo.push(rep);
+          pillowIdx++;
+        }
+      } else if (hasPillow) {
+        // Pillow carton (after the leg, last): its own sticker, no longer a
+        // corner note on the last compartment (owner 2026-11-20).
         const legShift = hasLegs ? 1 : 0;
         outputForSo.push(
           buildPillowCarton(rawPillows, compartmentCount + legShift + 1, totalPacks, fullCompartment, compartment1.salesOrderNo),
