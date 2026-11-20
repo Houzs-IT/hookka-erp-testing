@@ -1619,7 +1619,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                   setDrill({
                     title: "Active Jobs — pending by customer",
                     subtitle:
-                      "Bedframe = pieces in production · Sofa = sets (1 SO = 1 set)",
+                      "Bedframe = pieces in production · Sofa = sets (1 order = 1 set, consignment included)",
                     node: (
                       <MiniTable
                         cols={["Customer", "Bedframe units", "Sofa sets"]}
