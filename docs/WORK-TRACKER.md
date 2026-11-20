@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-20**: HK-0164 item 15 added (worker scan returns to My task, split task counts; PR #1485, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 14 added (Pending approval count read 0; branch `fix/outsource-pending-count`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 13 added (Issue button and Scan QR back on the PC Issue Work panel; branch `feat/outsource-issue-pc-buttons`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 12 added (worker My task days-held spacing; branch `fix/worker-task-days-held-space`, to `staging`); nothing else re-checked.
@@ -35,6 +36,7 @@ Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to a
 12. DONE (branch `fix/worker-task-days-held-space`, to `staging`), 2026-11-20: worker My task card read "Issued 19 Nov 2026 11:21 ·1 day held" (no space after the dot, seen on staging at 360px). Now "Issued ... · 1 day held", and no trailing dot when the days are unknown.
 13. DONE (branch `feat/outsource-issue-pc-buttons`, to `staging`, tests only; not seen on staging), owner 2026-11-20: keep the Issue button and Scan QR on the PC Issue Work panel (as on `main`). Reverses the scanner-only part of item 9: a scanner Enter, the Issue button and Scan QR (camera) all issue, and the field clears. The sticker hint from item 11 stays.
 14. DONE (branch `fix/outsource-pending-count`, to `staging`), 2026-11-20: the Pending approval tab count always read 0 (staging showed Pending 0 · Incomplete 1 · Completed 0 · All 2 with one pending row). Cause: the count query named its column `pending_approval`, and the Postgres adapter (`db-pg.ts`) returns it as `pendingApproval`, so the code read undefined. The column is now `pending`. The test fake camelCases aliases like the adapter, so the old name fails the test.
+15. DONE (branch `feat/hk0164-outsource-home`, PR #1485, to `staging`, tests only; not seen on staging), owner 2026-11-19: "whenever they scan they go back to the outsourced worker if it match". A worker scan the server answers with pendingApproval (from home SCAN JOB CARD or the bottom Scan tab) returns to My task with "Sent to the office: <PO> · <item>". The My task box and header split the count: "1 to finish · 1 waiting for office · Oldest: ..." (oldest = items still to sew). Test: `tests/outsource-worker-tasks.test.mjs`.
 
 ## Revert the staging Production Revenue line fix (#1337, fix/revert-1337-revenue-line-replay, 2026-11-11)
 Ask: back #1337 out of staging; keep main's #1318 (BUG-2026-11-11-498) as the one fix.
