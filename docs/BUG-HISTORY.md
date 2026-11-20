@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-11-20**: newest entry BUG-2026-11-20-499 (branch `fix/ready-before-packing`, to `staging`; 427-498 are taken on other branches).
 > **Last verified: 2026-11-11**: BUG-2026-11-11-426 marked reverted on staging (branch `fix/revert-1337-revenue-line-replay`); main's BUG-2026-11-11-498 (#1318) is the fix kept; nothing else re-checked.
 > **Last verified: 2026-11-11**: newest entry BUG-2026-11-11-426 (branch `fix/production-revenue-line-replay`, to `staging`; 394-425 not checked on other branches).
 > **Last verified: 2026-10-26**: newest entry BUG-2026-10-26-393 (branch `fix/staging-password-from-secret`, to `staging`; 383-392 are taken on other branches).
@@ -234,6 +235,24 @@ Entries themselves stay newest-first.
 - `audit-logging` (2) — [BUG-2026-04-27-007](#bug-2026-04-27-007-audit-event-write-failures-swallowed-silently)
 
 ---
+
+## BUG-2026-11-20-499 — Pillows waited for the Packing scan before they could go on a Delivery Order `delivery` `production` 🟡
+
+Fixed on branch (`fix/ready-before-packing`, to `staging`). Not deployed. Prod effect UNMEASURED.
+
+**Symptom.** A pillow whose Fibre card was scanned complete still did not show in Pending Delivery. It only appeared after the Packing department scanned it. While it was being made it showed in neither Planning nor Pending Delivery.
+
+**Root cause.** The Delivery readiness rule uses the UPHOLSTERY cards as the "made" signal. A pillow or cushion has none, so the no-Upholstery branch fell back to the PO's own `COMPLETED` status, and the PO only completes when its last card, PACKING, is done. The SO / CO READY_TO_SHIP cascade (`siblingUphGateDone`) had the same fallback, and `cascadeUpholsteryToSO` / `ToCO` loaded only UPHOLSTERY cards and stopped early for an order with none.
+
+**Fix.** One rule: every card before PACKING done means ready, because PACKING only wraps finished goods. Sofas and bedframes keep the UPHOLSTERY gate (Upholstery is their last card before Packing), so they are unchanged, and the sofa-set check on the Delivery page is unchanged. For a PO with no UPHOLSTERY card, `cardsBeforePackingDone` (`src/lib/delivery-pipeline.ts`) decides, and an empty set never counts. It is used by `poReadyForDelivery`, `poReadyForConsignment`, `poInPlanning`, `poInPlanningConsignment` and, on the backend, `siblingUphGateDone`. The two cascades and the SO rollback now load every card except PACKING. The old repair-scope special case is folded in: a scoped repair with no Upholstery follows the same before-PACKING rule. Cards are inserted with the PO in one batch (`_shared/production-builder.ts`), so a PO cannot be missing cards that would let it through early.
+
+**Known gap, not fixed here.** Finished-goods units are still created when the PO completes, which is at PACKING. A DO dispatched before PACKING marks no units as LOADED (sofas already behave this way), and the units created later read as in the warehouse.
+
+**Prod check.** UNMEASURED. Before deploy, count the non-completed, non-cancelled POs with no UPHOLSTERY card whose every non-PACKING card is COMPLETED/TRANSFERRED: those rows move into Pending Delivery, and their SOs can move to READY_TO_SHIP on the next card scan.
+
+**Class.** C28 row 4 closed, row 5 added.
+
+**Regression.** `tests/delivery-pipeline.test.mjs` (pillow ready with PACKING pending, pillow on FIBRE not ready, sofa still gated on UPHOLSTERY only, CO mirror, Planning), `tests/so-ready-accessory-gate.test.mjs` (sofa + pillow SO goes READY_TO_SHIP at FIBRE done, pillow-only SO goes up and back down; DEV-08 cases kept), `tests/repair-scope.test.mjs` source guard.
 
 ## BUG-2026-11-11-426 — Production Revenue priced an order from the wrong sales-order line (piece number used as line number) `production` `pricing` 🟡
 

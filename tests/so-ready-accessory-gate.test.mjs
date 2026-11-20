@@ -35,8 +35,8 @@ function fakeDb({ orders, pos, jcs }) {
     if ((m = /FROM production_orders WHERE (salesOrderId|consignmentOrderId) = \?/.exec(sql))) {
       return { all: pos.filter((p) => p[m[1]] === args[0]) };
     }
-    if (/FROM job_cards\s+WHERE departmentCode = 'UPHOLSTERY'/.test(sql)) {
-      return { all: jcs.filter((j) => j.departmentCode === "UPHOLSTERY" && args.includes(j.productionOrderId)) };
+    if (/FROM job_cards\s+WHERE departmentCode <> 'PACKING'/.test(sql)) {
+      return { all: jcs.filter((j) => j.departmentCode !== "PACKING" && args.includes(j.productionOrderId)) };
     }
     if ((m = /UPDATE (?:sales|consignment)_orders SET status = '(\w+)'.*WHERE id = \?/s.exec(sql))) {
       const o = orders.find((x) => x.id === args[args.length - 1]);
@@ -85,7 +85,7 @@ function soScenario({ soStatus = "IN_PRODUCTION", sofaUph = "COMPLETED", pillowS
   };
 }
 
-test("siblingUphGateDone: no UPHOLSTERY card needs the PO itself COMPLETED or CANCELLED", () => {
+test("siblingUphGateDone: no card at all needs the PO itself COMPLETED or CANCELLED", () => {
   assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, []), false);
   assert.equal(siblingUphGateDone({ status: "PENDING" }, []), false);
   assert.equal(siblingUphGateDone({ status: "ON_HOLD" }, []), false);
@@ -95,8 +95,44 @@ test("siblingUphGateDone: no UPHOLSTERY card needs the PO itself COMPLETED or CA
 });
 
 test("siblingUphGateDone: with UPHOLSTERY cards, the cards decide (unchanged)", () => {
-  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "COMPLETED" }, { status: "TRANSFERRED" }]), true);
-  assert.equal(siblingUphGateDone({ status: "COMPLETED" }, [{ status: "COMPLETED" }, { status: "WAITING" }]), false);
+  const U = "UPHOLSTERY";
+  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "COMPLETED", departmentCode: U }, { status: "TRANSFERRED", departmentCode: U }]), true);
+  assert.equal(siblingUphGateDone({ status: "COMPLETED" }, [{ status: "COMPLETED", departmentCode: U }, { status: "WAITING", departmentCode: U }]), false);
+  // An unscanned earlier card does not hold a sofa back.
+  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "PENDING", departmentCode: "FAB_CUT" }, { status: "COMPLETED", departmentCode: U }]), true);
+});
+
+test("siblingUphGateDone: no UPHOLSTERY card, every card before PACKING done -> done", () => {
+  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "COMPLETED", departmentCode: "FIBRE" }]), true);
+  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "IN_PROGRESS", departmentCode: "FIBRE" }]), false);
+});
+
+test("SO with sofa + pillow goes READY_TO_SHIP once the pillow FIBRE is done, PACKING still pending", async () => {
+  const s = soScenario();
+  s.jcs.push(
+    { id: "jc-sew", productionOrderId: "po-pillow", departmentCode: "FAB_SEW", status: "COMPLETED" },
+    { id: "jc-fib", productionOrderId: "po-pillow", departmentCode: "FIBRE", status: "COMPLETED" },
+    { id: "jc-pack", productionOrderId: "po-pillow", departmentCode: "PACKING", status: "PENDING" },
+  );
+  await cascadeUpholsteryToSO(fakeDb(s), "po-pillow");
+  assert.equal(s.orders[0].status, "READY_TO_SHIP");
+});
+
+test("pillow-only SO: READY_TO_SHIP at FIBRE done, back to IN_PRODUCTION if FIBRE is undone", async () => {
+  const mk = (fibre, soStatus) => ({
+    orders: [{ id: "so-2", status: soStatus }],
+    pos: [{ id: "po-p", poNo: "SO-2-01", salesOrderId: "so-2", itemCategory: "ACCESSORY", status: "IN_PROGRESS", stockedIn: 0 }],
+    jcs: [
+      { id: "jc-fib", productionOrderId: "po-p", departmentCode: "FIBRE", status: fibre },
+      { id: "jc-pack", productionOrderId: "po-p", departmentCode: "PACKING", status: "PENDING" },
+    ],
+  });
+  const up = mk("COMPLETED", "IN_PRODUCTION");
+  await cascadeUpholsteryToSO(fakeDb(up), "po-p");
+  assert.equal(up.orders[0].status, "READY_TO_SHIP");
+  const down = mk("IN_PROGRESS", "READY_TO_SHIP");
+  await cascadeUpholsteryToSO(fakeDb(down), "po-p");
+  assert.equal(down.orders[0].status, "IN_PRODUCTION");
 });
 
 test("SO stays IN_PRODUCTION when the sofa is upholstered but the pillow is still in progress", async () => {

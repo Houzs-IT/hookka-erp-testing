@@ -717,8 +717,7 @@ type ProductionOrderApiShape = {
   // gate stays in step with the backend (cascadeUpholsteryToSO drops DIVAN
   // UPH JCs from the readiness check when this contains "Headboard Only").
   specialOrder?: string;
-  // Service-order Repair Scope snapshot (0160). poInPlanning /
-  // poReadyForDelivery key their no-UPHOLSTERY fallback on it.
+  // Service-order Repair Scope snapshot (0160), shown on the row.
   repairScope?: string | null;
   // wipType lets us identify DIVAN UPHOLSTERY rows for the HB-only filter
   // — see isHbOnlySpecial / pickRelevantUphCards below. wipLabel +
