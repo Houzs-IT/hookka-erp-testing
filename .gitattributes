@@ -1,0 +1,4 @@
+# Every text file is stored with LF line endings (owner 2026-11-20, item 7).
+# Files written on Windows were committed with CRLF, which broke regex tests
+# and made diffs noisy. Binary files are detected automatically.
+* text=auto eol=lf
