@@ -171,6 +171,14 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
     if (/^SELECT \* FROM outsource_issues WHERE org_id = \? AND worker_id = \? AND status = 'COMPLETED'/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0] && i.worker_id === args[1] && i.status === "COMPLETED");
     }
+    if (/^SELECT COUNT\(\*\) AS total,/i.test(text)) {
+      const rows = state.issues.filter((i) => i.org_id === args[0] && (!/worker_id = \?/.test(text) || i.worker_id === args[1]));
+      return [{
+        total: String(rows.length),
+        incomplete: String(rows.filter((i) => i.status === "INCOMPLETE").length),
+        completed: String(rows.filter((i) => i.status === "COMPLETED").length),
+      }];
+    }
     if (/^SELECT \* FROM outsource_issues WHERE/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0]);
     }

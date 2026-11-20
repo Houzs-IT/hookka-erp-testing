@@ -31,7 +31,9 @@ function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.El
       <p className="mt-2 text-sm text-[#5A5550]">
         {isCompleted
           ? `${t("tasks.completed")} ${formatIssueDateTime(issue.completedAt)}`
-          : `${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)} ·${daysHeldText(t, issue)}`}
+          : [`${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)}`, daysHeldText(t, issue)]
+              .filter(Boolean)
+              .join(" · ")}
       </p>
     </li>
   );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   IssueStatus,
+  IssueStatusCounts,
   OutsourceIssue,
   OutsourceIssueWithDone,
   OutsourceWorkerSummary,
@@ -13,7 +14,7 @@ import {
 import { describeIssue } from "@/lib/outsource-issue-format";
 import { useDebounced } from "@/pages/m/lib/use-debounced";
 
-export type { OutsourceIssue, OutsourceIssueWithDone, OutsourceWorkerSummary };
+export type { IssueStatusCounts, OutsourceIssue, OutsourceIssueWithDone, OutsourceWorkerSummary };
 
 export type StatusFilter = IssueStatus | "ALL";
 export type FeedbackTone = "success" | "warning" | "danger";
@@ -36,6 +37,7 @@ interface ApiEnvelope<T> {
   code?: string;
   error?: string;
   data?: T;
+  counts?: IssueStatusCounts;
 }
 
 const ISSUES_URL = "/api/outsource-issues";
@@ -58,6 +60,7 @@ interface ListResult {
   key: string;
   issues: OutsourceIssueWithDone[];
   isTruncated: boolean;
+  counts: IssueStatusCounts | null;
   error: string | null;
 }
 
@@ -91,6 +94,7 @@ export interface UseOutsourceIssueResult {
   isListLoading: boolean;
   listError: string | null;
   isListTruncated: boolean;
+  statusCounts: IssueStatusCounts | null;
   refreshList: () => void;
 }
 
@@ -132,18 +136,19 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
         const envelope = await readEnvelope<OutsourceIssueWithDone[]>(response);
         if (isCancelled) return;
         if (!response.ok || !envelope?.data) {
-          setListResult({ key: listKey, issues: [], isTruncated: false, error: failureMessage(envelope, response.status) });
+          setListResult({ key: listKey, issues: [], isTruncated: false, counts: null, error: failureMessage(envelope, response.status) });
           return;
         }
         setListResult({
           key: listKey,
           issues: envelope.data,
           isTruncated: response.headers.has("X-List-Truncated"),
+          counts: envelope.counts ?? null,
           error: null,
         });
       } catch {
         if (!isCancelled) {
-          setListResult({ key: listKey, issues: [], isTruncated: false, error: NETWORK_MESSAGE });
+          setListResult({ key: listKey, issues: [], isTruncated: false, counts: null, error: NETWORK_MESSAGE });
         }
       }
     };
@@ -282,6 +287,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     isListLoading: currentList === null,
     listError: currentList?.error ?? null,
     isListTruncated: currentList?.isTruncated ?? false,
+    statusCounts: (currentList ?? listResult)?.counts ?? null,
     refreshList,
   };
 }
