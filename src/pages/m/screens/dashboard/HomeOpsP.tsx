@@ -217,7 +217,7 @@ export function PlantLoadCard({ d, period, periodKey, curYm }: { d: OpsData; per
               </div>
             ))}
           </div>
-          <SheetNote2>Bedframe = pieces in production · Sofa = sets (1 SO = 1 set)</SheetNote2>
+          <SheetNote2>Bedframe = pieces in production · Sofa = sets (1 order = 1 set, consignment included)</SheetNote2>
         </SheetFrame>
       ) : null}
 
