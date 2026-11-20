@@ -92,12 +92,17 @@ export function notifyNotificationsChanged(): void {
 
 /** Fetch the feed. Returns [] on any failure — the bell degrades to dark. */
 export async function loadNotifications(): Promise<Notification[]> {
+  return (await tryLoadNotifications()) ?? [];
+}
+
+/** Same, but null on failure — the pop-up must tell "failed" from "empty". */
+export async function tryLoadNotifications(): Promise<Notification[] | null> {
   try {
     const res = await fetch(NOTIFICATIONS_URL);
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return parseNotificationList(await res.json());
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -121,4 +126,34 @@ export async function markNotificationsRead(ids: string[]): Promise<boolean> {
   }
   if (ok) notifyNotificationsChanged();
   return ok;
+}
+
+// ── Pop-up (HK-0155) ───────────────────────────────────────────────────────
+
+/** Where a row leads — the bell row, the pop-up card and the OS notification all use it. */
+export function notificationTarget(n: Pick<Notification, "link">): string {
+  return n.link || "/notifications";
+}
+
+/**
+ * Unread rows whose id was not in the previous load, newest first. `seen` is
+ * null on the very first load: the backlog the user already has must not pop
+ * up all at once on every page open, so the first load pops nothing.
+ */
+export function newArrivals(
+  seen: ReadonlySet<string> | null,
+  list: readonly Notification[],
+): Notification[] {
+  if (!seen) return [];
+  return list
+    .filter((n) => isUnread(n) && !seen.has(n.id))
+    .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+}
+
+/** Ids seen so far. Grows only, so a slow, older response cannot "un-see" a row and pop it twice. */
+export function addSeen(
+  seen: ReadonlySet<string> | null,
+  list: readonly Notification[],
+): Set<string> {
+  return new Set([...(seen ?? []), ...list.map((n) => n.id)]);
 }

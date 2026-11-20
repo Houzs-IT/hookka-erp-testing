@@ -187,3 +187,37 @@ test("the API reads isRead from an integer OR a boolean column", () => {
   const src = readFileSync("src/api/routes/notifications.ts", "utf8");
   assert.match(src, /r\.isRead === true/, "a BOOLEAN column must not read as unread");
 });
+
+// ── HK-0155 pop-up: which rows pop, and where a tap goes ───────────────────
+
+test("first load pops nothing — the existing backlog must not flood the screen", () => {
+  assert.deepEqual(feed.newArrivals(null, [n("a", false, "2026-11-18T10:00:00Z")]), []);
+});
+
+test("a later load pops only unread rows it has not seen, newest first", () => {
+  const seen = new Set(["a", "b"]);
+  const list = [
+    n("a", false, "2026-11-18T10:00:00Z"), // seen before
+    n("c", false, "2026-11-18T10:01:00Z"),
+    n("d", true, "2026-11-18T10:02:00Z"), // new but already read elsewhere
+    n("e", false, "2026-11-18T10:03:00Z"),
+  ];
+  assert.deepEqual(feed.newArrivals(seen, list).map((x) => x.id), ["e", "c"]);
+});
+
+test("nothing new → no pop-up", () => {
+  const list = [n("a", false, "2026-11-18T10:00:00Z")];
+  assert.deepEqual(feed.newArrivals(new Set(["a"]), list), []);
+});
+
+test("a tapped pop-up opens the same link the bell row opens", () => {
+  assert.equal(feed.notificationTarget({ link: "/production?order=SO-1" }), "/production?order=SO-1");
+  assert.equal(feed.notificationTarget({ link: undefined }), "/notifications");
+  assert.equal(feed.notificationTarget({ link: "" }), "/notifications");
+});
+
+test("seen ids only grow — an older, slower response cannot make a row pop twice", () => {
+  const seen = feed.addSeen(null, [n("a", false, "2026-11-18T10:00:00Z"), n("b", false, "2026-11-18T10:01:00Z")]);
+  const afterStale = feed.addSeen(seen, [n("a", false, "2026-11-18T10:00:00Z")]); // stale list lacks b
+  assert.deepEqual(feed.newArrivals(afterStale, [n("b", false, "2026-11-18T10:01:00Z")]), []);
+});
