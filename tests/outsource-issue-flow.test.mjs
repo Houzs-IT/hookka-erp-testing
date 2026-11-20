@@ -235,6 +235,11 @@ test("lists: tracking rows carry the live work status, the worker list splits In
 
   const workers = await Issue.listOutsourceWorkers(db, ORG);
   assert.deepEqual(workers.map((w) => [w.name, w.incompleteCount, w.departmentNames]), [["Ali", 1, ["Fabric Sewing"]], ["Bala", 0, ["Fabric Sewing"]]]);
+
+  const open = state.issues.find((i) => i.status === "INCOMPLETE");
+  await Issue.submitIssuesForApproval(db, { issueIds: [open.id], scan });
+  const afterSubmit = await Issue.countIssuesByStatus(db, { orgId: ORG, filter: {} });
+  assert.deepEqual(afterSubmit, { ALL: 2, PENDING_APPROVAL: 1, INCOMPLETE: 0, COMPLETED: 1 });
 });
 
 test("every handler that completes cards for a worker checks before the first write and closes after", () => {
