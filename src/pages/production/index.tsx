@@ -5389,7 +5389,9 @@ export default function ProductionPage({
     const PACK_DONE = new Set(["COMPLETED", "TRANSFERRED"]);
     const pillowsPacked = new Map<string, boolean>(); // salesOrderId → every pillow packed before CARTON_LIVE
     for (const o of ordersToProcess) {
-      if (!o.salesOrderId) continue;
+      // Same order key the stickers group by (sales OR consignment order).
+      const orderKey = o.salesOrderId || o.consignmentOrderId;
+      if (!orderKey) continue;
       if ((o.itemCategory || "").toUpperCase() !== "ACCESSORY") continue;
       if (!/pillow/i.test(`${o.productName || ""} ${o.productCode || ""}`)) continue;
       const packing = (o.jobCards || []).filter((j) => j.departmentCode === "PACKING");
@@ -5398,7 +5400,7 @@ export default function ProductionPage({
         packing.every(
           (j) => PACK_DONE.has(j.status) && !!j.completedDate && String(j.completedDate).slice(0, 10) < CARTON_LIVE,
         );
-      pillowsPacked.set(o.salesOrderId, (pillowsPacked.get(o.salesOrderId) ?? true) && done);
+      pillowsPacked.set(orderKey, (pillowsPacked.get(orderKey) ?? true) && done);
     }
     const legacyPillows = (soId: string): boolean => pillowsPacked.get(soId) === true;
 
@@ -6027,7 +6029,9 @@ export default function ProductionPage({
           (o.itemCategory || "").toUpperCase() === "ACCESSORY" &&
           /pillow/i.test(`${o.productName || ""} ${o.productCode || ""}`);
         scoped = all.filter(
-          (o) => poIds.has(o.id) || (isPillowPo(o) && soSet.has(o.companySOId || "")),
+          (o) =>
+            poIds.has(o.id) ||
+            (isPillowPo(o) && (soSet.has(o.companySOId || "") || soSet.has(o.companyCOId || ""))),
         );
       }
       if (scoped.length === 0) {

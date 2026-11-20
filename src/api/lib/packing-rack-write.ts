@@ -81,7 +81,20 @@ export async function applyPackingRack(
   pieceNo?: number | null,
 ): Promise<PackingRackWriteResult> {
   const res = await applyPackingRackOne(db, jobCardId, rackingNumber, pieceNo);
-  if (!res.ok || !jobCardId) return res;
+  if (res.ok && jobCardId) await rackCartonRiders(db, jobCardId, rackingNumber ?? "");
+  return res;
+}
+
+// The pillow carton's riders: the order's OTHER pillow PACKING cards that have
+// no sticker of their own (no token). Racked card-level through the single-card
+// writer, so it never fans out again. Shared by the item→rack scan
+// (applyPackingRack) and the /r/ rack page's "scan items" stock-in (owner
+// 2026-11-20: 「要显示」). No-op for anything that is not a pillow.
+export async function rackCartonRiders(
+  db: D1Database,
+  jobCardId: string,
+  rackingNumber: string,
+): Promise<void> {
   try {
     const po = await db
       .prepare(
@@ -92,10 +105,10 @@ export async function applyPackingRack(
       )
       .bind(jobCardId)
       .first<{ id: string; salesOrderId: string | null; consignmentOrderId: string | null; productName: string | null; productCode: string | null }>();
-    if (!po || !isPillow(po)) return res;
+    if (!po || !isPillow(po)) return;
     const orderCol = po.salesOrderId ? "salesOrderId" : po.consignmentOrderId ? "consignmentOrderId" : null;
     const orderId = po.salesOrderId || po.consignmentOrderId;
-    if (!orderCol || !orderId) return res;
+    if (!orderCol || !orderId) return;
     const sibs = await db
       .prepare(
         `SELECT jc.id AS "cardId", po.productName AS "productName", po.productCode AS "productCode"
@@ -112,9 +125,8 @@ export async function applyPackingRack(
       await applyPackingRackOne(db, s.cardId, rackingNumber, null);
     }
   } catch (e) {
-    console.warn("[applyPackingRack] pillow carton fan-out skipped", e);
+    console.warn("[rackCartonRiders] pillow carton fan-out skipped", e);
   }
-  return res;
 }
 
 async function applyPackingRackOne(

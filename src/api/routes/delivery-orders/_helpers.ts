@@ -10,6 +10,7 @@
 
 import type { Context } from "hono";
 import { runSelfApply } from "../../lib/self-apply";
+import { isPillow } from "../../../lib/delivery-pipeline";
 import type { Env } from "../../worker";
 import {
   consumeFGBatchesForDO,
@@ -2581,6 +2582,49 @@ export async function validateDoComposition(
       status: 400,
       error: `This delivery order mixes ${hubMap.size} delivery hubs (${[...hubMap.values()].join(", ")}). A DO can only deliver to one hub — split into separate DOs, one per hub.`,
     };
+  }
+
+  // (4) PILLOW CARTON (owner 2026-11-20): every pillow of an order is packed
+  // in ONE box, so they ship on ONE DO. When this DO carries a pillow, the
+  // order's other pillows that are not on another (non-cancelled) DO must be
+  // on it too. Pillows already shipped on an earlier DO (orders split before
+  // this rule) don't block it, and a DO with no pillow (sofa only) is fine.
+  const pillowPos = await db
+    .prepare(
+      `SELECT id AS "id", poNo AS "poNo", salesOrderId AS "salesOrderId",
+              productName AS "productName", productCode AS "productCode"
+         FROM production_orders WHERE id IN (${placeholders})`,
+    )
+    .bind(...poIds)
+    .all<{ id: string; poNo: string; salesOrderId: string | null; productName: string | null; productCode: string | null }>();
+  const pillowSoIds = [
+    ...new Set((pillowPos.results ?? []).filter((r) => r.salesOrderId && isPillow(r)).map((r) => r.salesOrderId as string)),
+  ];
+  if (pillowSoIds.length > 0) {
+    const ph = pillowSoIds.map(() => "?").join(",");
+    const left = await db
+      .prepare(
+        `SELECT po.poNo AS "poNo", po.productName AS "productName", po.productCode AS "productCode"
+           FROM production_orders po
+          WHERE po.salesOrderId IN (${ph})
+            AND po.status <> 'CANCELLED'
+            AND po.id NOT IN (${placeholders})
+            AND NOT EXISTS (
+              SELECT 1 FROM delivery_order_items di
+                JOIN delivery_orders d ON d.id = di.deliveryOrderId
+               WHERE di.productionOrderId = po.id AND d.status <> 'CANCELLED'${excludeDoId ? " AND d.id <> ?" : ""}
+            )`,
+      )
+      .bind(...pillowSoIds, ...poIds, ...(excludeDoId ? [excludeDoId] : []))
+      .all<{ poNo: string; productName: string | null; productCode: string | null }>();
+    const missing = (left.results ?? []).filter((r) => isPillow(r)).map((r) => r.poNo);
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: `All pillows of an order go in one box, so they ship on one delivery order. Add ${missing.join(", ")} to this delivery order (or take this order's pillows off it).`,
+      };
+    }
   }
   return { ok: true };
 }

@@ -28,7 +28,7 @@ test("labels say Packing Sticker", () => {
 });
 
 test("Foam Bonding print brings the order's pillows", () => {
-  assert.match(s, /\(isPillowPo\(o\) && soSet\.has\(o\.companySOId \|\| ""\)\)/);
+  assert.match(s, /\(isPillowPo\(o\) && \(soSet\.has\(o\.companySOId \|\| ""\) \|\| soSet\.has\(o\.companyCOId \|\| ""\)\)\)/);
 });
 
 test("the carton prints the order's SO number, not a pillow's line number (live check 2026-11-20)", () => {

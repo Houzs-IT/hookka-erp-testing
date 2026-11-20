@@ -2301,6 +2301,18 @@ app.post("/:id/scan-complete", async (c) => {
   // "already complete · by <who>" vs a fresh green tick.
   let wholeCardAlreadyComplete = false;
 
+  // Pillow carton re-scan (owner 2026-11-20: 「scan了一次scan完」): the carton's
+  // own pillow may already be done (scanned before, or completed by hand), so
+  // a re-scan still packs the order's other pillows before any guard below
+  // can stop it. Idempotent — only pillows not yet packed are touched.
+  const cartonCardDone =
+    (target.jc.departmentCode || "").toUpperCase() === "PACKING" &&
+    isPillow(target.po) &&
+    (target.jc.status === "COMPLETED" || target.jc.status === "TRANSFERRED");
+  if (cartonCardDone) {
+    await completeCartonPillows(c, db, target.po, worker, nowIso, today, ctxUserId);
+  }
+
   // Same-worker guard.
   if (!wholeCard && target.slot.pic1Id === worker.id) {
     const freshJc = await fetchPO(db, target.po.id);
@@ -2658,6 +2670,7 @@ app.post("/:id/scan-complete", async (c) => {
   // order's other pillows too, credited to the same worker.
   if (
     jcJustCompleted &&
+    !cartonCardDone &&
     (target.jc.departmentCode || "").toUpperCase() === "PACKING" &&
     isPillow(target.po)
   ) {
