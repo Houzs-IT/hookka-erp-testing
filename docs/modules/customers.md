@@ -25,7 +25,7 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 
 ## Entry points
 - Pages
-  - `/customers` → `src/pages/customers.tsx:3428` (`CustomersPage` — list/KPI/CRUD + nested pricing/maintenance/combo panels)
+  - `/customers` → `src/pages/customers.tsx:3448` (`CustomersPage` — list/KPI/CRUD + nested pricing/maintenance/combo panels)
   - Users/Org/Mailbox → `src/pages/settings/Users.tsx:226` (`UsersPage`; SUPER_ADMIN-gated account admin)
   - `src/pages/settings/index.tsx` (settings shell) · `src/pages/settings/organisations.tsx` (sister-company config)
   - Mail Center → `src/pages/mail-center/index.tsx` (Gmail-style shell) + `detail.tsx` / `compose.tsx`; client view prefs in `src/pages/mail-center/mail-prefs.ts`
@@ -59,12 +59,12 @@ Owns **customers** (the debtor master) and the **platform plumbing** every other
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `CustomersPage` | `src/pages/customers.tsx:3428` | List/KPI/columns/CRUD/context menu (default export) |
+| `CustomersPage` | `src/pages/customers.tsx:3448` | List/KPI/columns/CRUD/context menu (default export) |
 | `CustomerProductsPanel` | `src/pages/customers.tsx:202` | Per-customer pricing (mirrors Products bulk-edit) |
-| `CustomerMaintenancePanel` | `src/pages/customers.tsx:1651` | Per-customer config snapshot tabs |
-| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2417` | Per-customer combo pricing (config editor) |
-| `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2707` | Price-history viewer |
-| `AssignSkuModal` | `src/pages/customers.tsx:3235` | SKU assignment modal |
+| `CustomerMaintenancePanel` | `src/pages/customers.tsx:1671` | Per-customer config snapshot tabs |
+| `CustomerSofaCombosPanel` | `src/pages/customers.tsx:2437` | Per-customer combo pricing (config editor) |
+| `CustomerPriceHistoryDialog` | `src/pages/customers.tsx:2727` | Price-history viewer |
+| `AssignSkuModal` | `src/pages/customers.tsx:3255` | SKU assignment modal |
 | `UsersPage` | `src/pages/settings/Users.tsx:234` | Users/Org/Mailbox tab shell |
 | `validateDebtorCode` | `src/api/routes/customers.ts:93` | Debtor-code validation on create/edit |
 | `rowToCustomer` | `src/api/routes/customers.ts:294` | Dual-key row → customer, buckets hubs |
