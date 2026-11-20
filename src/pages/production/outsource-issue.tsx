@@ -25,6 +25,7 @@ import {
   formatIssueDateTime,
   formatPiece,
   issueStatusLabel,
+  shortWorkerName,
 } from "@/lib/outsource-issue-format";
 import { LIST_CAP, useEnforceSwitch, useOutsourceIssue } from "./use-outsource-issue";
 import type {
@@ -64,6 +65,7 @@ const NEUTRAL_GRID_SURFACE = [
   "[&_thead_th]:!bg-slate-50 [&_thead_th]:!text-slate-600",
   "[&_[data-dg=row]]:!bg-white [&_[data-dg=row]:hover]:!bg-slate-50",
   "[&_[data-dg=row]>td.sticky]:!bg-white [&_[data-dg=row]:hover>td.sticky]:!bg-slate-50",
+  "[&_td.sticky.right-0]:border-l [&_td.sticky.right-0]:border-stone-200 [&_th.sticky.right-0]:border-l [&_th.sticky.right-0]:border-stone-200",
 ].join(" ");
 
 const APPROVE_BUTTON_CLASS = "bg-emerald-700 text-white hover:bg-emerald-800";
@@ -78,10 +80,30 @@ function NumericText({ value }: { value: string }): JSX.Element {
   return <span className="tabular-nums">{value}</span>;
 }
 
-function ClippedText({ value }: { value: string }): JSX.Element {
+function ClippedText({ value, title }: { value: string; title?: string }): JSX.Element {
   return (
-    <span className="block max-w-[200px] truncate" title={value}>
+    <span className="block max-w-[200px] truncate" title={title ?? value}>
       {value}
+    </span>
+  );
+}
+
+function DateTimeCell({ value }: { value: string }): JSX.Element {
+  const splitAt = value.lastIndexOf(" ");
+  if (splitAt < 0) return <NumericText value={value} />;
+  return (
+    <span className="block leading-tight tabular-nums">
+      <span className="block">{value.slice(0, splitAt)}</span>
+      <span className="block text-xs text-[#6B7280]">{value.slice(splitAt + 1)}</span>
+    </span>
+  );
+}
+
+function ProductItemCell({ product, item }: { product: string; item: string }): JSX.Element {
+  return (
+    <span className="block max-w-[260px] leading-tight" title={`${product}\n${item}`}>
+      <span className="block truncate font-medium text-[#1F1D1B]">{product}</span>
+      <span className="block truncate text-xs text-[#6B7280]">{item}</span>
     </span>
   );
 }
@@ -148,10 +170,10 @@ function dateTimeColumn(
   return {
     key,
     label,
-    width: "112px",
+    width: "100px",
     sortable: true,
     defaultHidden: isHiddenByDefault,
-    render: (_value, row) => <NumericText value={formatIssueDateTime(row[key])} />,
+    render: (_value, row) => <DateTimeCell value={formatIssueDateTime(row[key])} />,
     exportValue: (row) => formatIssueDateTime(row[key]),
   };
 }
@@ -159,7 +181,13 @@ function dateTimeColumn(
 function buildColumns(review: ReviewPermissions): Column<OutsourceIssueWithDone>[] {
   return [
     dateTimeColumn("issuedAt", "Issued at", false),
-    { key: "workerName", label: "Worker", width: "92px", sortable: true },
+    {
+      key: "workerName",
+      label: "Worker",
+      width: "120px",
+      sortable: true,
+      render: (_value, row) => <ClippedText value={shortWorkerName(row.workerName)} title={row.workerName} />,
+    },
     { key: "departmentName", label: "Department", width: "100px", sortable: true, defaultHidden: true },
     {
       key: "poNo",
@@ -170,23 +198,19 @@ function buildColumns(review: ReviewPermissions): Column<OutsourceIssueWithDone>
     },
     {
       key: "productName",
-      label: "Product",
-      width: "100px",
+      label: "Product & Item",
+      width: "200px",
       sortable: true,
-      render: (_value, row) => <ClippedText value={row.productName} />,
-    },
-    {
-      key: "itemLabel",
-      label: "Item",
-      width: "92px",
-      sortable: true,
-      render: (_value, row) => <ClippedText value={row.itemLabel} />,
+      render: (_value, row) => <ProductItemCell product={row.productName} item={row.itemLabel} />,
+      exportValue: (row) => `${row.productName} / ${row.itemLabel}`,
+      filterAccessor: (row) => `${row.productName} ${row.itemLabel}`,
     },
     {
       key: "piece",
       label: "Piece",
-      width: "44px",
+      width: "64px",
       align: "right",
+      defaultHidden: true,
       render: (_value, row) => <NumericText value={formatPiece(row)} />,
       exportValue: (row) => formatPiece(row),
       filterAccessor: (row) => formatPiece(row),
@@ -252,7 +276,17 @@ function StepBadge({ step, label, isDone }: { step: number; label: string; isDon
   );
 }
 
-function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; canIssue: boolean }): JSX.Element {
+function IssueWorkBar({
+  issue,
+  canIssue,
+  canUndo,
+  isSuperAdmin,
+}: {
+  issue: UseOutsourceIssueResult;
+  canIssue: boolean;
+  canUndo: boolean;
+  isSuperAdmin: boolean;
+}): JSX.Element {
   const [scanText, setScanText] = useState("");
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -272,97 +306,104 @@ function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; c
 
   return (
     <section className={`${CARD_CLASS} space-y-3 p-4`} aria-labelledby="issue-work-heading">
-      <div className="space-y-2">
-        <h2 id="issue-work-heading" className="text-base font-bold text-[#1F1D1B]">
-          Issue Work
-        </h2>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <StepBadge step={1} label="Select worker" isDone={Boolean(issue.selectedWorker)} />
-          <span className="text-xs text-[#9C948C]" aria-hidden>
-            →
-          </span>
-          <StepBadge step={2} label="Scan sticker" isDone={issue.sessionIssues.length > 0} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <h2 id="issue-work-heading" className="text-base font-bold text-[#1F1D1B]">
+            Issue Work
+          </h2>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StepBadge step={1} label="Select worker" isDone={Boolean(issue.selectedWorker)} />
+            <span className="text-xs text-[#9C948C]" aria-hidden>
+              →
+            </span>
+            <StepBadge step={2} label="Scan sticker" isDone={issue.sessionIssues.length > 0} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {isSuperAdmin ? <EnforceSwitch /> : null}
+          <SessionIssuesPopover issue={issue} canUndo={canUndo} />
         </div>
       </div>
 
-      <div>
-        <label htmlFor="outsource-worker" className="mb-1 block text-xs font-medium text-[#6B7280]">
-          Worker
-        </label>
-        <select
-          id="outsource-worker"
-          className={`${SELECT_CLASS} h-10 w-full`}
-          value={issue.selectedWorkerId}
-          onChange={(event) => issue.selectWorker(event.target.value)}
-          disabled={issue.isWorkersLoading}
-        >
-          <option value="">{issue.isWorkersLoading ? "Loading workers…" : "Select a worker"}</option>
-          {issue.workers.map((worker) => (
-            <option key={worker.id} value={worker.id}>
-              {worker.empNo} · {worker.name} · {worker.departmentNames.join(" / ") || "No department"} (
-              {worker.incompleteCount} open)
-            </option>
-          ))}
-        </select>
-        {issue.workersError ? (
-          <p className="mt-1 text-xs text-[#9A3A2D]">Could not load workers: {issue.workersError}</p>
-        ) : null}
-        {!issue.isWorkersLoading && !issue.workersError && issue.workers.length === 0 ? (
-          <p className="mt-1 text-xs text-[#6B7280]">No active outsourced workers.</p>
-        ) : null}
-      </div>
-
-      {!canIssue ? <p className="text-xs text-[#9A3A2D]">You do not have permission to issue work.</p> : null}
-
       <form
+        className="grid grid-cols-1 gap-3 md:grid-cols-[260px_minmax(0,1fr)_auto] md:items-end"
         onSubmit={(event) => {
           event.preventDefault();
           submitScan();
         }}
       >
-        <label htmlFor="outsource-scan" className="mb-1 block text-xs font-medium text-[#6B7280]">
-          Scan sticker
-        </label>
-        <div className="flex gap-2">
-          <Input
-            id="outsource-scan"
-            ref={scanInputRef}
-            value={scanText}
-            onChange={(event) => setScanText(event.target.value)}
-            placeholder={issue.selectedWorker ? "Scan, type or paste the sticker code" : "Pick a worker first"}
-            disabled={isScanDisabled}
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            enterKeyHint="send"
-            aria-describedby="outsource-scan-hint"
-            className="min-w-0 flex-1"
-          />
-          <Button type="submit" variant="primary" disabled={isScanDisabled || issue.isIssuing || !scanText.trim()}>
-            <ArrowRight className="h-4 w-4" aria-hidden />
-            Issue
-          </Button>
+        <div className="min-w-0">
+          <label htmlFor="outsource-worker" className="mb-1 block text-xs font-medium text-[#6B7280]">
+            Worker
+          </label>
+          <select
+            id="outsource-worker"
+            className={`${SELECT_CLASS} h-10 w-full`}
+            value={issue.selectedWorkerId}
+            onChange={(event) => issue.selectWorker(event.target.value)}
+            disabled={issue.isWorkersLoading}
+          >
+            <option value="">{issue.isWorkersLoading ? "Loading workers…" : "Select a worker"}</option>
+            {issue.workers.map((worker) => (
+              <option key={worker.id} value={worker.id}>
+                {worker.empNo} · {worker.name} · {worker.departmentNames.join(" / ") || "No department"} (
+                {worker.incompleteCount} open)
+              </option>
+            ))}
+          </select>
         </div>
-        <p id="outsource-scan-hint" className="mt-1 text-xs text-[#6B7280]">
-          {issue.isIssuing
-            ? "Issuing…"
-            : "Scan the QR on the item's production sticker or its job card. Each scan issues one item to this worker."}
-        </p>
+
+        <div className="min-w-0">
+          <label htmlFor="outsource-scan" className="mb-1 block text-xs font-medium text-[#6B7280]">
+            Scan sticker
+          </label>
+          <div className="flex gap-2">
+            <Input
+              id="outsource-scan"
+              ref={scanInputRef}
+              value={scanText}
+              onChange={(event) => setScanText(event.target.value)}
+              placeholder={issue.selectedWorker ? "Scan, type or paste the sticker code" : "Pick a worker first"}
+              disabled={isScanDisabled}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              enterKeyHint="send"
+              aria-describedby="outsource-scan-hint"
+              className="h-10 min-w-0 flex-1"
+            />
+            <Button type="submit" variant="primary" className="h-10 shrink-0" disabled={isScanDisabled || issue.isIssuing || !scanText.trim()}>
+              <ArrowRight className="h-4 w-4" aria-hidden />
+              Issue
+            </Button>
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10 w-full md:w-auto"
+          disabled={isScanDisabled}
+          onClick={() => {
+            setCameraError(null);
+            setIsCameraOpen(true);
+          }}
+        >
+          <ScanLine className="h-4 w-4" aria-hidden />
+          Scan QR
+        </Button>
       </form>
 
-      <Button
-        type="button"
-        variant="outline"
-        className="w-full"
-        disabled={isScanDisabled}
-        onClick={() => {
-          setCameraError(null);
-          setIsCameraOpen(true);
-        }}
-      >
-        <ScanLine className="h-4 w-4" aria-hidden />
-        Scan QR
-      </Button>
+      <p id="outsource-scan-hint" className="text-xs text-[#6B7280]">
+        {issue.isIssuing
+          ? "Issuing…"
+          : "Scan the QR on the item's production sticker or its job card. Each scan issues one item to this worker."}
+      </p>
+      {issue.workersError ? <p className="text-xs text-[#9A3A2D]">Could not load workers: {issue.workersError}</p> : null}
+      {!issue.isWorkersLoading && !issue.workersError && issue.workers.length === 0 ? (
+        <p className="text-xs text-[#6B7280]">No active outsourced workers.</p>
+      ) : null}
+      {!canIssue ? <p className="text-xs text-[#9A3A2D]">You do not have permission to issue work.</p> : null}
       {cameraError ? <p className="text-xs text-[#9A3A2D]">{cameraError}</p> : null}
       {isCameraOpen ? (
         <QrCameraScanner
@@ -390,41 +431,72 @@ function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; c
   );
 }
 
-function SessionIssues({ issue, canUndo }: { issue: UseOutsourceIssueResult; canUndo: boolean }): JSX.Element {
+function SessionIssuesPopover({ issue, canUndo }: { issue: UseOutsourceIssueResult; canUndo: boolean }): JSX.Element {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const count = issue.sessionIssues.length;
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const closeOnOutside = (event: MouseEvent): void => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isOpen]);
+
   return (
-    <div className="p-4">
-      <h3 className="text-sm font-bold text-[#1F1D1B]">
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls="session-issues-panel"
+        onClick={() => setIsOpen((open) => !open)}
+        className="inline-flex h-10 items-center gap-1.5 rounded-full border border-[#E2DDD8] bg-[#F7F4F0] px-3 text-sm font-semibold text-[#6B5C32] hover:bg-[#EFEAE3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6B5C32]"
+      >
         Issued this session
-        {issue.sessionIssues.length > 0 ? (
-          <span className="ml-2 text-xs font-semibold tabular-nums text-[#6B5C32]">{issue.sessionIssues.length}</span>
-        ) : null}
-      </h3>
-      {issue.sessionIssues.length === 0 ? (
-        <p className="mt-1 text-sm text-[#6B7280]">Nothing issued yet. Scan a sticker to start.</p>
-      ) : (
-        <ul className="mt-1 divide-y divide-[#F0ECE9]">
-          {issue.sessionIssues.map((item) => (
-            <li key={item.id} className="flex items-center gap-2 py-2">
-              <div className="min-w-0 flex-1">
-                <p className="break-words text-sm font-medium tabular-nums text-[#1F1D1B]">{describeIssue(item)}</p>
-                <p className="text-xs text-[#6B7280]">{item.workerName}</p>
-              </div>
-              {canUndo ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={issue.undoingId === item.id}
-                  onClick={() => void issue.undoIssue(item)}
-                >
-                  <Undo2 className="h-3.5 w-3.5" aria-hidden />
-                  Undo
-                </Button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
+        <span className="rounded-full bg-white px-1.5 text-xs tabular-nums text-[#1F1D1B]">{count}</span>
+      </button>
+      {isOpen ? (
+        <div
+          id="session-issues-panel"
+          className="absolute right-0 z-30 mt-2 max-h-80 w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-[#E6E0D9] bg-white p-3 shadow-lg"
+        >
+          {count === 0 ? (
+            <p className="text-sm text-[#6B7280]">Nothing issued yet. Scan a sticker to start.</p>
+          ) : (
+            <ul className="divide-y divide-[#F0ECE9]">
+              {issue.sessionIssues.map((item) => (
+                <li key={item.id} className="flex items-center gap-2 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm font-medium tabular-nums text-[#1F1D1B]">{describeIssue(item)}</p>
+                    <p className="text-xs text-[#6B7280]">{item.workerName}</p>
+                  </div>
+                  {canUndo ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={issue.undoingId === item.id}
+                      onClick={() => void issue.undoIssue(item)}
+                    >
+                      <Undo2 className="h-3.5 w-3.5" aria-hidden />
+                      Undo
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -432,19 +504,13 @@ function SessionIssues({ issue, canUndo }: { issue: UseOutsourceIssueResult; can
 function EnforceSwitch(): JSX.Element {
   const { isEnforced, isLoading, isSaving, error, setEnforced } = useEnforceSwitch();
   return (
-    <div className="flex items-center gap-3 p-4">
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-[#1F1D1B]" id="enforce-switch-label">
-          Only allow issued items
-        </p>
-        <p
-          className="truncate text-xs text-[#6B7280]"
-          title="When on, an outsourced worker can finish work in their department only on an item issued to them here. Turn on after every item they hold has been issued."
-        >
-          Workers can finish only items issued to them.
-        </p>
-        {error ? <p className="mt-1 text-xs text-[#9A3A2D]">{error}</p> : null}
-      </div>
+    <div
+      className="flex items-center gap-2"
+      title="When on, an outsourced worker can finish work in their department only on an item issued to them here. Turn on after every item they hold has been issued."
+    >
+      <span className="text-sm font-semibold text-[#1F1D1B]" id="enforce-switch-label">
+        Only allow issued items
+      </span>
       <button
         type="button"
         role="switch"
@@ -462,13 +528,14 @@ function EnforceSwitch(): JSX.Element {
           }`}
         />
       </button>
+      {error ? <span className="text-xs text-[#9A3A2D]">{error}</span> : null}
     </div>
   );
 }
 
 function StatusTabs({ issue }: { issue: UseOutsourceIssueResult }): JSX.Element {
   return (
-    <div role="group" aria-label="Status" className="flex rounded-md bg-slate-100 p-1">
+    <div role="group" aria-label="Status" className="flex max-w-full overflow-x-auto rounded-md bg-slate-100 p-1">
       {STATUS_FILTERS.map((option) => (
         <button
           key={option.key}
@@ -492,7 +559,6 @@ function StatusTabs({ issue }: { issue: UseOutsourceIssueResult }): JSX.Element 
 function TrackingFilters({ issue }: { issue: UseOutsourceIssueResult }): JSX.Element {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <StatusTabs issue={issue} />
       <select
         aria-label="Worker"
         className={SELECT_CLASS}
@@ -558,10 +624,11 @@ function TrackingLedger({ issue, review }: { issue: UseOutsourceIssueResult; rev
           maxHeight="calc(100dvh - 260px)"
           loading={issue.isListLoading}
           emptyMessage="No issues match these filters."
-          gridId="outsource-issue-tracking-v3"
+          gridId="outsource-issue-tracking-v4"
           hideToolbarCount
           exportName="outsource-work"
-          toolbarStart={<TrackingFilters issue={issue} />}
+          toolbarStart={<StatusTabs issue={issue} />}
+          toolbarSecondRow={<TrackingFilters issue={issue} />}
           searchPlaceholder="Search PO no, product, or item…"
           onSearchChange={(query) => issue.setFilters({ query })}
         />
@@ -588,16 +655,8 @@ export default function OutsourceIssuePage(): JSX.Element {
         title="Outsource Work"
         subtitle="Issue work to outsourced workers, approve what they bring back, and track what is still out."
       />
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[340px_minmax(0,1fr)] lg:items-start">
-        <div className="space-y-3">
-          <IssueWorkPanel issue={issue} canIssue={canIssue} />
-          <div className={`${CARD_CLASS} divide-y divide-[#F0ECE9]`}>
-            <SessionIssues issue={issue} canUndo={canUndo} />
-            {isSuperAdmin ? <EnforceSwitch /> : null}
-          </div>
-        </div>
-        <TrackingLedger issue={issue} review={review} />
-      </div>
+      <IssueWorkBar issue={issue} canIssue={canIssue} canUndo={canUndo} isSuperAdmin={isSuperAdmin} />
+      <TrackingLedger issue={issue} review={review} />
     </div>
   );
 }

@@ -255,6 +255,8 @@ export type DataGridProps<T> = {
   emptyMessage?: string;
   // Shown at the left of the toolbar (e.g. status tabs); search and buttons move to the right.
   toolbarStart?: React.ReactNode;
+  // When set, the toolbar splits in two: toolbarStart + search on row 1, this + the buttons on row 2.
+  toolbarSecondRow?: React.ReactNode;
   loading?: boolean;
   stickyHeader?: boolean;
   maxHeight?: string;
@@ -2005,6 +2007,7 @@ export function DataGrid<T extends Record<string, any>>({
   rowClassName,
   emptyMessage = "No data found.",
   toolbarStart,
+  toolbarSecondRow,
   loading = false,
   stickyHeader = true,
   maxHeight,
@@ -3642,6 +3645,14 @@ export function DataGrid<T extends Record<string, any>>({
             </button>
           )}
         </div>
+
+        {toolbarSecondRow && (
+          <>
+            <div className="basis-full h-0" aria-hidden />
+            {toolbarSecondRow}
+            <div className="flex-1" />
+          </>
+        )}
 
         {/* Clear filters */}
         {activeFilterCount > 0 && (
