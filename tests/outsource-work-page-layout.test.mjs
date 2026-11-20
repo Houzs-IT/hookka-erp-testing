@@ -6,12 +6,13 @@ const readLf = (path) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 const page = readLf("src/pages/production/outsource-issue.tsx");
 const grid = readLf("src/components/ui/data-grid.tsx");
 
-test("issuing is scanner-only: no camera, no Issue button, Enter submits and clears", () => {
-  assert.doesNotMatch(page, /QrCameraScanner|>\s*Camera\s*</);
-  assert.doesNotMatch(page, /type="submit"/);
+test("issuing on PC: scanner Enter, an Issue button and Scan QR all issue; the field clears", () => {
+  assert.match(page, /<Button type="submit"[^>]*>\s*<ArrowRight[^>]*\/>\s*Issue\s*<\/Button>/);
+  assert.match(page, /<ScanLine[^>]*\/>\s*Scan QR/);
+  assert.match(page, /<QrCameraScanner\s+onDecode=\{\(text\) => void issue\.issueByScan\(text\)\}/);
   assert.match(page, /onSubmit=\{\(event\) => \{\s*event\.preventDefault\(\);\s*submitScan\(\);/);
   assert.match(page, /setScanText\(""\);\s*void issue\.issueByScan\(text\);/);
-  assert.match(page, /if \(selectedWorkerId && !isIssuing\) scanInputRef\.current\?\.focus\(\);/);
+  assert.match(page, /if \(selectedWorkerId && !isIssuing && !isCameraOpen\) scanInputRef\.current\?\.focus\(\);/);
 });
 
 test("default columns fit a 902px table (1366px screen) with Actions pinned last", () => {
