@@ -764,27 +764,23 @@ test("cascade: material filter runs before consumption, keyed off the PO's stamp
   assert.match(cascadeSrc, /ownerDeptCodes/);
 });
 
-test("delivery-pipeline: no-UPH fallback is gated on COMPLETED status / scope, not card absence", () => {
-  assert.match(pipelineSrc, /function repairScopeExcludesUph\(/);
-  // poInPlanning + poInPlanningConsignment (CO mirror, BUG-2026-07-01-005) both
-  // gate their no-UPH fallback on the repair scope.
+test("delivery-pipeline: no-UPH fallback is gated on the cards before PACKING, not card absence", () => {
+  // A route with no UPHOLSTERY card (pillow, or a scoped repair) is ready once
+  // every card before PACKING is done. An empty set never qualifies, so a PO
+  // with no such cards can't slip through on card absence alone.
+  assert.match(pipelineSrc, /pre\.length > 0 && pre\.every\(/);
   assert.equal(
-    (pipelineSrc.match(/if \(!repairScopeExcludesUph\(po\)\) return false;/g) ?? []).length,
+    (pipelineSrc.match(/return cardsBeforePacking\(po\)\.some\(/g) ?? []).length,
     2,
-    "poInPlanning + poInPlanningConsignment must still gate the no-UPH fallback on the scope",
+    "poInPlanning + poInPlanningConsignment use the before-PACKING cards",
   );
-  // poReadyForDelivery's no-UPH fallback (BUG-2026-06-20-001: ACCESSORY
-  // pillows have no upholstery card) is gated on the PO's own COMPLETED status
-  // OR the repair scope — never on card absence alone, so a half-made
-  // (IN_PROGRESS) non-upholstered PO can't slip through.
   assert.match(pipelineSrc, /if \(po\.status === "COMPLETED"\) return allDone;/);
-  assert.match(pipelineSrc, /if \(repairScopeExcludesUph\(po\)\) return allDone;/);
-  // Zero job cards never qualifies (all four predicates: poInPlanning,
-  // poReadyForDelivery, the CO mirror poReadyForConsignment (BUG-2026-07-01-004),
-  // and the CO planning mirror poInPlanningConsignment (BUG-2026-07-01-005)).
+  assert.equal((pipelineSrc.match(/return noUphRouteReady\(po\);/g) ?? []).length, 2);
+  // Zero job cards never qualifies for the two ready predicates (poReadyForDelivery
+  // and its CO mirror poReadyForConsignment, BUG-2026-07-01-004).
   assert.equal(
     (pipelineSrc.match(/if \(jcs\.length === 0\) return false;/g) ?? []).length,
-    4,
+    2,
   );
 });
 
