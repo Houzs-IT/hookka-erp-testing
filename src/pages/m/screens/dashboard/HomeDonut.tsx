@@ -1,4 +1,4 @@
-// Donut of the v10 customer / state cards: 326x236 SVG, outside leader-line
+// Donut of the v10/v12 customer / state cards (v12: sits flush at the top of its inner panel): 326x236 SVG, outside leader-line
 // labels ("Name 19%") for slices of 5% or more, centre read-out. Geometry is
 // home-lib donutArcs (a port of the prototype's arcPath).
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -44,7 +44,7 @@ export function Donut({
     return () => window.removeEventListener("resize", fit);
   }, []);
   return (
-    <div ref={box} role="img" aria-label={ariaLabel} style={{ position: "relative", width: "100%", height: DONUT.h, marginTop: 8 }}>
+    <div ref={box} role="img" aria-label={ariaLabel} style={{ position: "relative", width: "100%", height: DONUT.h }}>
       <svg viewBox={`0 0 ${DONUT.w} ${DONUT.h}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }} aria-hidden="true">
         {arcs.map(({ slice, d }) => (
           <path

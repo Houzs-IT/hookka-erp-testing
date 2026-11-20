@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-20**: Home Sales v12 phone redesign added (branch `redesign/mobile-dashboard-sales`, not pushed); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 9 added (My task split counts on `main`; branch `feat/hk0164-task-counts-main`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 items 7 and 8 added (approval flow and newer Outsource Work page to `main`; branch `feat/hk0164-approval-main`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 6 added (worker My task days-held spacing; branch `fix/worker-task-days-held-space-main`, to `main`); nothing else re-checked.
@@ -324,6 +325,14 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Home Sales v12 phone redesign (redesign/mobile-dashboard-sales, 2026-11-20)
+Owner approved the Home Sales v12 design (visual only) and these additions: Customer overdue sets + both sheets, Today's problems back as a 2x2, Scan to Create (SO / PI / GR / PV) as the four-up row, department colours from Settings > Department Configuration, KPI sheets with sticky TOTAL / sort / status filter / top 4 + Show all / Open links.
+- [x] 1. Glass header, greeting, Scan to Create, Today's problems, picker, period bar + calendar (`HomeDashboard.tsx`, `ScanToCreate.tsx`).
+- [x] 2. Sales cards and sheets restyled (`sales-glass.tsx`, `HomeSalesA/B.tsx`, `SalesView.tsx`, `home-sheets.tsx`); Forecast blue In-progress pill on that card only.
+- [x] 3. Customer overdue sets (`HomeSalesOverdue.tsx`, `dept-colors.ts`), desktop API and rules reused.
+- [x] 4. Guard tests updated: Today's problems is back (`m-home-dashboard`, `m-home-employees`), seller sheet wording.
+- [ ] 5. Owner design review (desktop + mobile), then staging / commit / PR. Real-data check needs an API environment: none is configured in this folder (no `.env` / `.dev.vars`); browser checks so far use a mock API.
 
 ## 🔵 One production-revenue rule + one completed-sets rule across the system (2026-11-20)
 Owner 「为什么这三遍的revenue都不一样？算法不一样？帮我统一全套系统的 这类型算法 查看全系统哪里有 然后再辐射过去全部部门 还有我的completed set是对的吧」 (screenshots: Floor Live, Department Revenue, Revenue chart). Findings: one shared rule (a department books an order's full value when its last card closes); Floor Live dropped accessory (FAB_CUT 19 Nov 30,276.25 vs 30,976.25 = RM 700 accessory); the chart's Production line is the Upholstery row; Finance / Board / Labour Cost / Lim daily / chart "All" use the older Upholstery-only CTE (no combined cards, qty floored to 1, no orgId); Labour Cost "Category Revenue" is a minutes split (accessory folded into sofa); dashboard "today" was UTC. Owner decisions (2026-11-20):

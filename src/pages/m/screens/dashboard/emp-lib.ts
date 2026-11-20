@@ -387,7 +387,9 @@ const workerIdOf = (r: EmpAtt, byId: Set<string>, byName: Map<string, string>) =
   r.employeeId && byId.has(r.employeeId) ? r.employeeId : (byName.get((r.employeeName ?? "").trim().toLowerCase()) ?? null);
 
 /** One day in focus: every clock record that day, plus every headcount worker with none as NOT IN; not in → late → on time. */
-export function dayLog(slice: EmpSlice, day: string): { rows: LogRow[]; absent: number; late: number; on: number; groups: LogGroups } {
+/** `tileRule`: presence exactly as the Today's problems "Not in" tile counts it (use-problem-tiles.ts): only a record with a clock-in or
+ *  clock-out counts a person as in, matched by employee id alone. Off = the log's own rule (any record that day, id or name). */
+export function dayLog(slice: EmpSlice, day: string, tileRule = false): { rows: LogRow[]; absent: number; late: number; on: number; groups: LogGroups } {
   const { clockers } = rosterOf(slice);
   const byId = new Set(slice.workers.map((w) => w.id));
   const byName = new Map(slice.workers.map((w) => [(w.name ?? "").trim().toLowerCase(), w.id]));
@@ -397,7 +399,8 @@ export function dayLog(slice: EmpSlice, day: string): { rows: LogRow[]; absent: 
   const byEmp = new Map<string, { last: EmpAtt; workerId: string | null; days: number }>();
   for (const r of slice.attendance) {
     if (!r.date || r.date.slice(0, 10) !== day) continue;
-    const workerId = workerIdOf(r, byId, byName);
+    if (tileRule && !(r.clockIn || r.clockOut)) continue;
+    const workerId = tileRule ? (r.employeeId && byId.has(r.employeeId) ? r.employeeId : null) : workerIdOf(r, byId, byName);
     const k = workerId ?? r.employeeId ?? r.employeeName ?? "";
     const cur = byEmp.get(k);
     byEmp.set(k, { last: !cur || r.date >= (cur.last.date ?? "") ? r : cur.last, workerId, days: (cur?.days ?? 0) + 1 });
@@ -497,4 +500,28 @@ export function axisLabelIdx(n: number): Set<number> {
   const out = new Set<number>();
   for (let i = 0; i < n; i++) if ((i % every === 0 || i === n - 1) && !(i !== n - 1 && n - 1 - i < every && i % every === 0 && n - 1 - i < every / 2)) out.add(i);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Workers under the efficiency line on one day: the "Efficiency" Today's-problems tile's own rule (use-problem-tiles.ts)
+// ---------------------------------------------------------------------------
+export const LOW_EFF_PCT = 75;
+export const LOW_EFF_MIN_WORK = 60;
+export type LowEffRow = { id: string; name: string; dept: string | null; work: number; prod: number; eff: number };
+/**
+ * Same inputs as the tile: that day's `performance.byDay[].workers` (workingMinutes / productionMinutes); helpers left out by the
+ * row's own `isHelper` flag; a worker counts when workingMinutes >= 60 and production / working is below 75%. Lowest first.
+ * `considered` = the people the tile measures (non-helpers that day), so the count and the names can be checked against it.
+ */
+export function lowEffOn(slice: EmpSlice, date: string): { rows: LowEffRow[]; considered: number; overall: number | null } {
+  const day = slice.performance.byDay.find((d) => d.date === date);
+  const ws = (day?.workers ?? []).filter((w) => !w.isHelper);
+  const byId = new Map(slice.workers.map((w) => [w.id, w]));
+  const work = ws.reduce((a, w) => a + w.workingMinutes, 0);
+  const prod = ws.reduce((a, w) => a + w.productionMinutes, 0);
+  const rows = ws
+    .filter((w) => w.workingMinutes >= LOW_EFF_MIN_WORK && (w.productionMinutes / w.workingMinutes) * 100 < LOW_EFF_PCT)
+    .map((w) => ({ id: w.workerId, name: byId.get(w.workerId)?.name ?? w.workerId, dept: byId.get(w.workerId)?.dept ?? null, work: w.workingMinutes, prod: w.productionMinutes, eff: (w.productionMinutes / w.workingMinutes) * 100 }))
+    .sort((a, b) => a.eff - b.eff || a.name.localeCompare(b.name));
+  return { rows, considered: ws.length, overall: work > 0 ? (prod / work) * 100 : null };
 }

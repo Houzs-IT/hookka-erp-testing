@@ -15,7 +15,7 @@
 // The department bar / "Step N of 10" come from currentDepartment, as before.
 // ===========================================================================
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowDownUp, Calendar, CalendarX, Factory, Search, SearchX, TriangleAlert, X } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { todayISO } from "@/pages/production/utils";
@@ -38,7 +38,7 @@ import {
   TINT_WARNING,
 } from "../lib/production-ui";
 
-type PO = {
+export type PO = {
   id: string;
   poNo?: string;
   status?: string;
@@ -102,7 +102,9 @@ export function ProductionScreen() {
   // Same endpoint + params the desktop overview uses (no dept = Overview rule).
   // Slow historically, so it never blocks the list: tiles show "—" until it lands.
   const { data: odData } = useCachedJson<OverdueResp>("/api/production-orders/overdue-counts");
-  const [query, setQuery] = useState("");
+  // ?q= pre-fills the search (the Home Sales "Customer overdue sets" drill opens this list for one sales order).
+  const [params] = useSearchParams();
+  const [query, setQuery] = useState(params.get("q") ?? "");
   const dquery = useDebounced(query);
   const [chip, setChip] = useState("all");
   const [od, setOd] = useState<OverdueKey | null>(null);
@@ -601,16 +603,20 @@ export function ProductionScreen() {
 }
 
 // ---- One production-order card (Production Orders v3) ----------------------
-function PoCard({
+/** Also used by the Home Sales "Customer overdue sets" drill, so a line there looks exactly like it does in this list. */
+export function PoCard({
   po,
   today,
   overdue,
   onClick,
+  deptColor,
 }: {
   po: PO;
   today: string;
   overdue: boolean;
   onClick: () => void;
+  /** Optional (Home Sales overdue drill): a round dot in the department's own colour beside the department name. The stage bar is unchanged. */
+  deptColor?: (code: string) => string;
 }) {
   const [pressed, setPressed] = useState(false);
   const code = str(po, "poNo", "companySOId") || "—";
@@ -684,8 +690,10 @@ function PoCard({
                 whiteSpace: "nowrap",
               }}
             >
-              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                Dept <span style={{ fontWeight: 700, color: tint.fg }}>{si >= 0 ? DEPTS[si].name : "—"}</span>
+              <span style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 5, overflow: "hidden", whiteSpace: "nowrap" }}>
+                <span>Dept</span>
+                {deptColor && si >= 0 ? <span aria-hidden="true" style={{ width: 8, height: 8, flex: "none", borderRadius: "50%", background: deptColor(DEPTS[si].code) }} /> : null}
+                <span style={{ minWidth: 0, fontWeight: 700, color: tint.fg, overflow: "hidden", textOverflow: "ellipsis" }}>{si >= 0 ? DEPTS[si].name : "—"}</span>
               </span>
               <span style={{ flex: "none" }}>{si >= 0 ? `Step ${si + 1} of ${DEPTS.length}` : ""}</span>
             </div>

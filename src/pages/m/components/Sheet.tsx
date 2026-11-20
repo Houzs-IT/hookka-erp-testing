@@ -1,7 +1,8 @@
 // Sheet — bottom-sheet overlay used for filters, quick actions, and (later)
 // create/edit forms. Slides up from the bottom, dimmed backdrop, drag handle,
 // optional title. Closes on backdrop tap / Esc.
-import { type ReactNode, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { M, M_MAX_WIDTH } from "../theme";
 import { useResponsiveLayout } from "../lib/responsive-layout";
@@ -21,9 +22,14 @@ type Props = {
   bare?: boolean;
   /** Optional phone top-corner radius; omitted = 20, as before. */
   phoneRadius?: number;
+  /** Optional extra style for the sheet panel (Home Sales v12 glass sheet); omitted = unchanged. */
+  panelStyle?: CSSProperties;
+  /** Render into document.body. A sheet opened from inside a card with backdrop-filter / transform / filter would otherwise
+   *  be trapped in that card (position:fixed is relative to such an ancestor). Omitted = rendered in place, as before. */
+  portal?: boolean;
 };
 
-export function Sheet({ open, onClose, title, children, bare = false, phoneRadius = 20 }: Props) {
+export function Sheet({ open, onClose, title, children, bare = false, phoneRadius = 20, panelStyle, portal = false }: Props) {
   const { mode, railWidth } = useResponsiveLayout();
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -77,7 +83,7 @@ export function Sheet({ open, onClose, title, children, bare = false, phoneRadiu
   if (!open) return null;
 
   const phone = mode === "phone";
-  return (
+  const layer = (
     <div
       onClick={onClose}
       style={{
@@ -108,6 +114,7 @@ export function Sheet({ open, onClose, title, children, bare = false, phoneRadiu
           overflowY: "auto",
           paddingBottom: "max(16px, env(safe-area-inset-bottom))",
           boxShadow: "0 -8px 30px rgba(31,29,27,0.18)",
+          ...panelStyle,
         }}
       >
         {/* Drag handle */}
@@ -154,4 +161,5 @@ export function Sheet({ open, onClose, title, children, bare = false, phoneRadiu
       </div>
     </div>
   );
+  return portal && typeof document !== "undefined" ? createPortal(layer, document.body) : layer;
 }

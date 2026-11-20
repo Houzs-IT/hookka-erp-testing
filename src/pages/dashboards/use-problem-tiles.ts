@@ -21,7 +21,7 @@ type Feed = {
 };
 
 export type Tone = "bad" | "warn" | "ok" | "info";
-export type Tile = { key: string; tab: string; sub?: string; anchor?: string; value: string; label: string; hint?: string; tone: Tone };
+export type Tile = { key: string; tab: string; sub?: string; anchor?: string; value: string; label: string; hint?: string; tone: Tone; /** The day the tile was computed for (YYYY-MM-DD); "absent" and "eff" only. The phone Home opens the matching Employees drill on it. */ date?: string };
 
 export const TONE: Record<Tone, { bar: string; value: string }> = {
   bad: { bar: "#DC2626", value: "#B91C1C" },
@@ -85,7 +85,7 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
         const roster = emp.workers.filter((w) => w.countsToHeadcount && !isOutsourced(w) && ever.has(w.id));
         const absent = roster.filter((w) => !inDay.has(w.id));
         out.push({
-          key: "absent", tab: "people", anchor: "emp-attendance", value: `${absent.length}`,
+          key: "absent", tab: "people", anchor: "emp-attendance", date: day, value: `${absent.length}`,
           label: `Not in · ${day.slice(5)}`,
           hint: absent.length ? absent.map((w) => w.name).slice(0, 2).join(", ") + (absent.length > 2 ? ` +${absent.length - 2}` : "") : `all ${roster.length} in`,
           tone: absent.length ? "bad" : "ok",
@@ -104,7 +104,7 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
         const eff = work > 0 ? (prodMin / work) * 100 : null;
         const low = ws.filter((w) => w.workingMinutes >= 60 && (w.productionMinutes / w.workingMinutes) * 100 < LOW_EFF_PCT).length;
         out.push({
-          key: "eff", tab: "people", value: eff == null ? "—" : `${eff.toFixed(0)}%`,
+          key: "eff", tab: "people", date: latest.date, value: eff == null ? "—" : `${eff.toFixed(0)}%`,
           label: `Efficiency · ${latest.date.slice(5)}`,
           hint: `${low} worker${low === 1 ? "" : "s"} under ${LOW_EFF_PCT}%`,
           tone: eff == null ? "info" : eff >= 100 ? "ok" : eff >= 85 ? "warn" : "bad",

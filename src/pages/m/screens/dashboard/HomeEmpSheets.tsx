@@ -9,7 +9,7 @@ import { SheetFrame } from "./home-ui";
 import { TNUM } from "./home-style";
 import { Empty, LegendChip, RowList, Segment, type RowSpec } from "./emp-ui";
 import { sheetCard as sheetPanel } from "./ops-style";
-import { avatarOf, costCentreName, daysInPeriod, dayLog, dLab, eff, effColor, overallText, poolEff, rowEff, hLog, hhmm, hrs, lateMin, pct, pctOf, type Row } from "./emp-lib";
+import { LOW_EFF_MIN_WORK, LOW_EFF_PCT, avatarOf, costCentreName, daysInPeriod, dayLog, dLab, eff, effColor, overallText, poolEff, rowEff, hLog, hhmm, hrs, lateMin, pct, pctOf, type Row } from "./emp-lib";
 import { NP_LEGEND, deptRow, npDeptRow, npPersonRow, workerRow } from "./emp-rows";
 import { NpChart } from "./HomeEmpB";
 import type { EmpModel, LogPick } from "./emp-model";
@@ -128,6 +128,21 @@ export function EmpSheets({ m }: { m: EmpModel }) {
       </>);
   }
 
+  if (top.type === "lowEff") {
+    const { rows: low, considered, overall } = m.lowEff;
+    const list: RowSpec[] = low.map((r, i) => {
+      const row: Row = { id: r.id, name: r.name, dept: r.dept ?? "", work: r.work, prod: r.prod, cost: 0, daysWorked: 1, byDay: [] };
+      return { ...workerRow(m, row, i, null), onTap: undefined, lines: [`${r.dept ? deptName(r.dept) : "—"} · production ${hrs(r.prod)} / working ${hrs(r.work)}`] };
+    });
+    return frame(`Workers under ${LOW_EFF_PCT}% · ${dLab(top.date)}`,
+      `${low.length} of ${considered} people · helpers left out · at least ${LOW_EFF_MIN_WORK} min working · overall ${pct(overall)}`,
+      <>
+        {low.length === 0 ? <div role="status" style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 12, backgroundColor: "color-mix(in srgb, #1B7F5A 12%, transparent)", color: "#1B7F5A", fontSize: 13, fontWeight: 700 }}>No one is under {LOW_EFF_PCT}% on {dLab(top.date)}.</div> : null}
+        <Panel rows={list} empty={considered === 0 ? "No working hours recorded on this day." : undefined} />
+        <Note>Efficiency = production ÷ working minutes of that day. Lowest first. Same rule as the Today’s problems Efficiency tile.</Note>
+      </>);
+  }
+
   if (top.type === "log") {
     const month = m.logPick === "month";
     const chips: [LogPick & string, string][] = [["today", "Today"], ["yday", "Yesterday"], ["month", "This month"]];
@@ -157,6 +172,9 @@ export function EmpSheets({ m }: { m: EmpModel }) {
             );
           })}
         </div>
+        {!month && m.dayL && m.logDay && m.dayL.absent === 0 && rows.length > 0 ? (
+          <div role="status" style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 12, backgroundColor: "color-mix(in srgb, #1B7F5A 12%, transparent)", color: "#1B7F5A", fontSize: 13, fontWeight: 700 }}>All {m.dayL.on + m.dayL.late} in on {dLab(m.logDay)}: no one is absent.</div>
+        ) : null}
         <Panel rows={rows} empty="No attendance recorded in this period." />
         <Note>Tap the lit chip again to return to {dLab(W.anchor || m.today)} (the day picked above).</Note>
       </>

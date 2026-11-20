@@ -278,8 +278,8 @@ test("HomeDashboard mounts Employees beside Sales and Operations without touchin
   assert.match(src, /<OpsView access=\{opsAccess\}/);
   assert.match(src, /<SalesView /);
   assert.match(src, /peopleView = dashboardTabs \? tabHas\("people"\) : hasPermission\("workers", "read"\)/);
-  // The "Not in" tile that opened the log is gone with Today's problems (owner 2026-11-11).
-  assert.doesNotMatch(src, /key === "absent" && onPeople/);
+  // Today's problems is back (Home Sales v12, owner 2026-11-20): the "Not in" tile opens the Employees attendance log on the tile's own day.
+  assert.match(src, /t\.key === "absent" && t\.date && allowed\.includes\("people"\) && peopleView/);
 });
 
 test("salary needs payroll AND its server-gated inputs; revenue and department output each carry their own No access", () => {

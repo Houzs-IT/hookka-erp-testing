@@ -142,9 +142,11 @@ test("screens keep no more fixed-position layers than the known full-screen ones
   // none is a toast, bar or banner.
   // A new toast, bar or banner must use ResponsiveActionDock, not a fixed offset.
   // Floor Live adds one: FloorLiveCompleted.tsx, the full-screen monthly "Completed" detail (Claude Design handoff).
+  // Home Sales v12 adds one: HomeDashboard.tsx, the viewport-sized page glow behind the Home (a background, pointer-events none; not a toast, bar or banner).
   assert.deepEqual(found, [
     "cases/case-overlay.tsx",
     "dashboard/FloorLiveCompleted.tsx",
+    "dashboard/HomeDashboard.tsx",
     "employees/AdjustmentRequests.tsx",
     "employees/BreakdownPage.tsx",
     "employees/DeptPerfDayPage.tsx",

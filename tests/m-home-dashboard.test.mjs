@@ -448,7 +448,7 @@ test("Phase 4 fixes: forecast months are short like Home v10, and the top-seller
   assert.match(a, /unit === "month" \? f\.label\.slice\(0, 3\) : f\.label/);
   const sheets = read("screens/dashboard/home-sheets.tsx");
   assert.match(sheets, /title: `\$\{s\.code\} · \$\{a\.periodText\}`,/);
-  assert.match(sheets, /sub: "Customers who bought it",/);
+  assert.match(sheets, /customers who bought it`,/); // v12: "<Category> · customers who bought it"
   assert.doesNotMatch(sheets, /by customer/);
 });
 
@@ -467,8 +467,10 @@ test("Phase 4 fixes: a label wraps to two lines when the name does not fit besid
   assert.match(src, /\{` \$\{pct\}`\}/, "the percentage is always appended to the last line");
 });
 
-// Owner 2026-11-11: "整个手机版本dashboard都不要看到这个上面的" — no Today's problems on the phone Home.
-test("phone Home shows no Today's problems tiles", () => {
+// Owner 2026-11-20 (Home Sales v12) restored Today's problems on the phone Home, superseding the 2026-11-11 removal.
+// Same tiles as the desktop strip (use-problem-tiles.ts); the /m/dashboard shell (DashboardScreen) still shows none.
+test("phone Home shows Today's problems from the desktop tile rules", () => {
   const src = readFileSync("src/pages/m/screens/dashboard/HomeDashboard.tsx", "utf8");
-  assert.doesNotMatch(src, /useProblemTiles|ProblemsSection|TODAY’S PROBLEMS/);
+  assert.match(src, /useProblemTiles/);
+  assert.match(src, /aria-label="Today's problems"/);
 });
