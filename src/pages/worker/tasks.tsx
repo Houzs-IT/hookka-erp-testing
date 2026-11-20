@@ -4,9 +4,9 @@ import { Link } from "react-router-dom";
 import { ChevronDown, ScanLine } from "lucide-react";
 import type { OutsourceIssue } from "@/api/lib/outsource-issue";
 import { useT } from "@/lib/worker-i18n";
-import { formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
-import { daysHeldText, useOutsourceTasks } from "./use-outsource-tasks";
-import type { Translate } from "./use-outsource-tasks";
+import { countTasks, daysHeldText, formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
+import type { Translate } from "@/lib/outsource-issue-format";
+import { useOutsourceTasks } from "./use-outsource-tasks";
 
 const STATUS_CHIP: Record<OutsourceIssue["status"], { className: string; key: string }> = {
   INCOMPLETE: { className: "bg-[#FAEFCB] text-[#8A5F14]", key: "tasks.incomplete" },
@@ -75,10 +75,9 @@ export default function WorkerTasksPage(): JSX.Element {
     <div className="space-y-4 pb-24">
       <div>
         <h1 className="text-xl font-bold text-[#1F1D1B]">{t("tasks.title")}</h1>
-        <p className="text-sm text-[#5A5550]">
-          {incomplete.length} {t("tasks.toFinish")}
-        </p>
+        <p className="text-sm text-[#5A5550]">{countTasks(t, incomplete)}</p>
       </div>
+
 
       {incomplete.length === 0 ? (
         <div className="rounded-xl border border-[#D8D2CC] bg-white p-6 text-center text-sm text-[#5A5550]">

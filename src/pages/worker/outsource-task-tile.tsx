@@ -2,7 +2,8 @@ import type { JSX } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, PackageOpen } from "lucide-react";
 import { useT } from "@/lib/worker-i18n";
-import { summarizeTasks, useOutsourceTasks } from "./use-outsource-tasks";
+import { summarizeTasks } from "@/lib/outsource-issue-format";
+import { useOutsourceTasks } from "./use-outsource-tasks";
 
 export function OutsourceTaskTile(): JSX.Element | null {
   const t = useT();
