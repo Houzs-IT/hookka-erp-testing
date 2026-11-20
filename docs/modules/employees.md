@@ -76,7 +76,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `DepartmentLaborTab` | `src/pages/employees.tsx:4583` | Dept labor cost breakdown |
 | `EmployeeDetailTab` | `src/pages/employees.tsx:5488` | Tab 4 — guard-unmounted detail |
 | `PayrollTab` | `src/pages/employees.tsx:6904` | Tab 5 — payroll drafts |
-| `LaborCostTab` | `src/pages/employees.tsx:8793` | Tab 5b — labor cost + DepartmentsManager |
+| `LaborCostTab` | `src/pages/employees.tsx:8801` | Tab 5b — labor cost + DepartmentsManager |
 | `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10596 / 11741` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
@@ -95,7 +95,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `buildDeptDay` | `src/api/routes/worker.ts:262` | DEV-31 "Today's departments" payload (live or saved) |
 | `computeLiveDeptDay` | `src/api/lib/punch-autofill.ts:327` | Live split: punch-out maths with now as the end |
 | `splitDayHours` / `currentStation` | `src/lib/dept-scan-split.ts:148 / 171` | Shared split (autofill + live) and where the worker is now |
-| `GET /salary/effective` | `src/api/routes/workers.ts:1267` | Day-weighted salary per period |
+| `GET /salary/effective` | `src/api/routes/workers.ts:1310` | Day-weighted salary per period |
 | `POST /auto-from-punch` / `settle-period` | `src/api/routes/payroll-hour-deductions.ts:149 / 211` | Short-hour docks |
 
 ## Gotchas

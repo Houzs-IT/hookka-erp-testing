@@ -2785,8 +2785,9 @@ function EmployeeMasterTab({
       toast.error("Employee number and name are required.");
       return;
     }
-    if (draft.status === "RESIGNED" && !/^\d{4}-\d{2}-\d{2}$/.test(draft.resignedAt || "")) {
-      toast.error("A resignation date is required when status is Resigned.");
+    const isLeaver = draft.status === "RESIGNED" || draft.status === "INACTIVE";
+    if (isLeaver && !/^\d{4}-\d{2}-\d{2}$/.test(draft.resignedAt || "")) {
+      toast.error("A last working day is required when status is Resigned or Inactive.");
       return;
     }
     if (draft.efficiencyThresholdPct < 0 || draft.efficiencyThresholdPct > 100) {
@@ -2801,8 +2802,8 @@ function EmployeeMasterTab({
       toast.error("Leadership allowance cannot be negative.");
       return;
     }
-    // Backend rejects a non-empty resignedAt unless status is RESIGNED.
-    const resignedAt = draft.status === "RESIGNED" ? draft.resignedAt || "" : "";
+    // Backend rejects a non-empty resignedAt unless the worker is a leaver.
+    const resignedAt = isLeaver ? draft.resignedAt || "" : "";
     // A salary change is recorded with an EFFECTIVE DATE via a follow-up
     // prompt, not silently overwritten — so this PUT keeps the OLD salary and
     // the prompt writes the dated worker_salary_history row afterwards. A raise
@@ -3242,7 +3243,7 @@ function EmployeeMasterTab({
         render: (_value, row) =>
           <span className="inline-flex items-center gap-1">
               <Badge variant="status" status={row.status} />
-              {row.status === "RESIGNED" && row.resignedAt && (
+              {(row.status === "RESIGNED" || row.status === "INACTIVE") && row.resignedAt && (
                 <span className="text-[11px] text-[#9CA3AF]">
                   · left {formatDateDMY(row.resignedAt)}
                 </span>

@@ -261,7 +261,8 @@ app.post("/settle-period", async (c) => {
   // ACTIVE / RESIGNED-in-month people; office / sales / admin never log factory
   // hours so they never appear in the To-fill gap.
   const workersRes = await c.var.DB.prepare(
-    "SELECT id, workingHoursPerDay FROM workers WHERE status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)",
+    // Same payee scope as payroll, test accounts out (owner 2026-11-21: one rule).
+    "SELECT id, workingHoursPerDay FROM workers WHERE (status = 'ACTIVE' OR (status IN ('RESIGNED','INACTIVE') AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
   )
     .bind(`${period}-%`)
     .all<{ id: string; workingHoursPerDay: number | null }>();

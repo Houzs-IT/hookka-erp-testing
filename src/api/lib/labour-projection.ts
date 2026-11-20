@@ -114,7 +114,7 @@ export async function projectedPayslipsForMonth(
 
   const wres = await db
     .prepare(
-      "SELECT id, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
+      "SELECT id, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status IN ('RESIGNED','INACTIVE') AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
     )
     .bind(`${period}-%`)
     .all<ProjWorkerRow>();
@@ -205,7 +205,7 @@ export async function projectedPayslipsForMonth(
         ? Number(worker.joinDate.slice(8, 10))
         : undefined;
     const resignedDay =
-      worker.status === "RESIGNED" &&
+      (worker.status === "RESIGNED" || worker.status === "INACTIVE") &&
       typeof worker.resignedAt === "string" &&
       worker.resignedAt.startsWith(`${period}-`)
         ? Number(worker.resignedAt.slice(8, 10))
