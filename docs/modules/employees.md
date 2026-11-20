@@ -69,7 +69,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11977` | 9-tab admin host (default export, at file tail) |
+| `EmployeesPage` (shell + tab switch) | `src/pages/employees.tsx:11989` | 9-tab admin host (default export, at file tail) |
 | `WorkingHoursTab` | `src/pages/employees.tsx:1028` | Tab 1 — flat working-hours grid |
 | `EmployeeMasterTab` | `src/pages/employees.tsx:2476` | Tab 2 — worker master + salary |
 | `EfficiencyOverviewTab` | `src/pages/employees.tsx:3971` | Tab 3 — efficiency overview |

@@ -397,7 +397,8 @@ app.get("/", async (c) => {
   // v10 (2026-11-17): a shared card is credited to its two PIC slots, half each (payslip rule).
   // v11 (2026-11-17): shared-card halves kept, not rounded per card.
   // v12 (2026-11-17): a day counts earned minutes only for people with logged hours.
-  const protoV = "v12";
+  // v13 (2026-11-21): workers carry joinDate / resignedAt / isOutsource (one employment rule).
+  const protoV = "v13";
   const kvKey = `dashboard:prototype:${orgId}:${protoV}`;
   const computePrototype = async () => {
   // ---- Sales ------------------------------------------------------------

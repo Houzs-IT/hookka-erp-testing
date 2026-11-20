@@ -31,3 +31,12 @@ test("emails, Command Center history, Finance, accounting and Board Report use t
   assert.match(read("src/api/routes/accounting.ts"), /employedDuring\(w, `\$\{ym\}-01`, `\$\{ym\}-31`\)/);
   assert.match(read("src/api/lib/operations-report.ts"), /\.bind\(\.\.\.employedDuringParams\(p\.startYmd, p\.endYmd\)\)/);
 });
+
+test("batch 2b: capacity, Command Center today, Floor Live, Attendance cards, phone overview", () => {
+  assert.match(read("src/lib/capacity-headcount.ts"), /return truthy\(w\.isOutsource\) \|\| isTestWorker\(w\);/);
+  assert.match(read("src/api/routes/dashboard-overview.ts"), /\.bind\(\.\.\.employedOnParams\(myTodayISO\(\)\)\)/);
+  assert.match(read("src/api/lib/floor-live-data.ts"), /const testIds = new Set\(workers\.filter\(\(w\) => isTestWorker\(w\)\)/);
+  assert.match(read("src/pages/employees.tsx"), /monthFrom,\s*\n\s*monthTo,\s*\n\s*\),\s*\n\s*\);/);
+  assert.match(read("src/pages/m/screens/employees/overview-model.ts"), /if \(range\) return workers\.filter\(\(w\) => employedDuring\(w, range\.from, range\.to\)\);/);
+  assert.match(read("src/api/routes/dashboard-prototype.ts"), /const protoV = "v13";/);
+});

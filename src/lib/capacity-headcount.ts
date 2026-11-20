@@ -5,7 +5,7 @@
 // people named as PIC on the job cards completed that day, which left out
 // helpers and anyone whose cards finished on another day.
 // ---------------------------------------------------------------------------
-import { isOutsourceWorker } from "./labour-to-date";
+import { isTestWorker } from "./employment";
 
 export interface PunchRow {
   employeeId: string | null | undefined;
@@ -22,9 +22,13 @@ export interface HeadcountWorker {
 
 const truthy = (v: unknown) => v === true || v === 1 || v === "1" || v === "t" || v === "true";
 
-/** Outsource = the worker flag, or the OSC… employee number / OUTSOURCE… name rule payroll uses. */
+/**
+ * Outsource = the worker's isOutsource flag (owner 2026-11-21: one rule; every
+ * OSC… / OUTSOURCE… record carries it). Test accounts are left out too — they
+ * are not headcount.
+ */
 export function isOutsourceForHeadcount(w: HeadcountWorker): boolean {
-  return truthy(w.isOutsource) || isOutsourceWorker({ empNo: w.empNo, name: w.name });
+  return truthy(w.isOutsource) || isTestWorker(w);
 }
 
 /**

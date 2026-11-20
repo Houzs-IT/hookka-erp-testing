@@ -6,6 +6,7 @@
 // Needs action: Pending time adjustments (the shell's pending list — the same list as the Working Hours tab badge) and
 // Attendance exceptions (Off-site punch records this month, each record once, the same rule and range the Attendance
 // screen's Off-site list uses).
+import { employedDuring } from "../../../../lib/employment";
 import { fmtDistance, offsitePunchTime, rowFarthestMeters, rowLocation } from "./attendance-location";
 import { punchRows, type AttRow } from "./attendance-model";
 import { monthLabel, monthShort, type YmdRange } from "./employees-dates";
@@ -23,18 +24,22 @@ export function overviewLabel(today: string): string {
 }
 
 export type SummaryTotals = { workerCount?: number; workingMinutes?: number; efficiencyPct?: number };
-export type WorkerLite = { id?: string; status?: string; empNo?: string };
+export type WorkerLite = { id?: string; status?: string; empNo?: string; joinDate?: string | null; resignedAt?: string | null };
+export type Range = { from: string; to: string };
 /** One row of `GET /api/working-hour-entries/summary` (hours in ANY department, per worker, for from..to). */
 export type HoursRow = { workerId?: string; totalHours?: number };
 
 /** The roster both numbers of "Workers with logged hours" use: ACTIVE workers, test accounts excluded (desktop's headcount). */
-export function activeRoster(workers: readonly WorkerLite[]): WorkerLite[] {
+export function activeRoster(workers: readonly WorkerLite[], range?: Range): WorkerLite[] {
+  // With a range: the people employed in it (one employment rule, owner
+  // 2026-11-21). Without: today's ACTIVE non-test roster, as before.
+  if (range) return workers.filter((w) => employedDuring(w, range.from, range.to));
   return workers.filter((w) => w.status === "ACTIVE" && !/^TEST/i.test(w.empNo || ""));
 }
 
 /** Desktop's headcount: ACTIVE workers, test accounts excluded. */
-export function countWorkers(workers: readonly WorkerLite[]): number {
-  return activeRoster(workers).length;
+export function countWorkers(workers: readonly WorkerLite[], range?: Range): number {
+  return activeRoster(workers, range).length;
 }
 
 /**
@@ -43,14 +48,14 @@ export function countWorkers(workers: readonly WorkerLite[]): number {
  * only credit is a job card or an approved extra-production claim (no hours row) are not counted, so the result can never
  * exceed the roster size.
  */
-export function countLoggedHours(workers: readonly WorkerLite[], hours: readonly HoursRow[]): number {
+export function countLoggedHours(workers: readonly WorkerLite[], hours: readonly HoursRow[], range?: Range): number {
   const hoursById = new Map<string, number>();
   for (const h of hours) {
     if (!h.workerId) continue;
     hoursById.set(h.workerId, (hoursById.get(h.workerId) ?? 0) + (Number(h.totalHours) || 0));
   }
   const counted = new Set<string>();
-  for (const w of activeRoster(workers)) {
+  for (const w of activeRoster(workers, range)) {
     if (w.id && (hoursById.get(w.id) ?? 0) > 0) counted.add(w.id);
   }
   return counted.size;
@@ -81,8 +86,10 @@ export function buildCards(input: {
   totals: SummaryTotals | null;
   /** The hours summary rows; null while loading, failed or not allowed. */
   hours: readonly HoursRow[] | null;
+  /** The period the cards cover (month to date); counts the people employed in it. */
+  range?: Range;
 }): OverviewCard[] {
-  const total = input.workers ? countWorkers(input.workers) : null;
+  const total = input.workers ? countWorkers(input.workers, input.range) : null;
   const t = input.totals;
   const minutes = t?.workingMinutes ?? 0;
   const eff = t && minutes > 0 ? Number((t.efficiencyPct ?? 0).toFixed(1)) : 0;
@@ -93,7 +100,7 @@ export function buildCards(input: {
       icon: "UserCheck",
       label: "WORKERS WITH LOGGED HOURS",
       // Same roster on both sides: logged-hours workers within the active, non-test roster, over that roster.
-      value: input.workers && input.hours ? `${countLoggedHours(input.workers, input.hours)}/${total}` : "—",
+      value: input.workers && input.hours ? `${countLoggedHours(input.workers, input.hours, input.range)}/${total}` : "—",
       tone: "green",
       target: "working-hours",
     },

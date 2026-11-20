@@ -8,8 +8,10 @@ import { punchInHeadcountByDay, isOutsourceForHeadcount } from "../src/lib/capac
 const workers = [
   { id: "w1", empNo: "HK001", name: "Ali" },
   { id: "w2", empNo: "HK002", name: "Helper Siti" }, // helper — counts
-  { id: "o1", empNo: "OSC01", name: "Budi" }, // OSC number — outsource
-  { id: "o2", empNo: "HK090", name: "OUTSOURCE Team A" }, // OUTSOURCE name
+  // Outsource = the isOutsource flag (owner 2026-11-21: one rule; every OSC… /
+  // OUTSOURCE… record carries it on prod).
+  { id: "o1", empNo: "OSC01", name: "Budi", isOutsource: true },
+  { id: "o2", empNo: "HK090", name: "OUTSOURCE Team A", isOutsource: true },
   { id: "o3", empNo: "HK091", name: "Flagged", isOutsource: true }, // flag
 ];
 
@@ -32,12 +34,14 @@ test("counts distinct punched-in people per day, outsource left out", () => {
   assert.equal(m.get("2026-11-13"), 2);
 });
 
-test("outsource rule: flag, OSC employee number or OUTSOURCE name", () => {
+test("outsource rule: the flag; test accounts are not headcount either", () => {
   assert.equal(isOutsourceForHeadcount(workers[0]), false);
   assert.equal(isOutsourceForHeadcount(workers[1]), false);
   for (const w of workers.slice(2)) assert.equal(isOutsourceForHeadcount(w), true, w.id);
   assert.equal(isOutsourceForHeadcount({ id: "x", isOutsource: 1 }), true);
   assert.equal(isOutsourceForHeadcount({ id: "x", isOutsource: false }), false);
+  assert.equal(isOutsourceForHeadcount({ id: "x", empNo: "OSC09", name: "No flag" }), false);
+  assert.equal(isOutsourceForHeadcount({ id: "t", empNo: "TEST-001", name: "Lim" }), true);
 });
 
 test("the overview feed uses the punch-in count, keeps the PIC count, refreshes on attendance", () => {
