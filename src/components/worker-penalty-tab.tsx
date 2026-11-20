@@ -10,6 +10,7 @@
 //
 // Kept out of employees.tsx on purpose — that file is past 11k lines.
 // ---------------------------------------------------------------------------
+import { isPickableWorker } from "@/lib/worker";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Plus, Search, X, Pencil, Trash2, Send, Check, Undo2, ImagePlus } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -649,7 +650,7 @@ function PenaltyEditor({
     const qq = pickerQuery.trim().toLowerCase();
     const taken = new Set(lines.map((l) => l.workerId));
     return workers
-      .filter((w) => w.status !== "RESIGNED" && !w.empNo?.startsWith("TEST") && !taken.has(w.id))
+      .filter((w) => isPickableWorker(w) && !taken.has(w.id))
       .filter((w) => !qq || `${w.empNo} ${w.name} ${w.departmentCode ?? ""}`.toLowerCase().includes(qq))
       .sort((a, b) => (a.empNo || "").localeCompare(b.empNo || ""))
       .slice(0, 30);

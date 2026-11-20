@@ -8,6 +8,8 @@
 //
 // deptSchedule is stored as JSON TEXT, parsed on read.
 // ---------------------------------------------------------------------------
+import { todayYmdMY } from "../../lib/utils";
+import { employedOn } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -303,7 +305,7 @@ app.get("/capacity", async (c) => {
       "SELECT id, code, name, shortName, sequence, color, workingHoursPerDay FROM departments ORDER BY sequence",
     ).all<DepartmentRow>(),
     c.var.DB.prepare(
-      "SELECT id, departmentCode, status FROM workers",
+      `SELECT id AS "id", departmentCode AS "departmentCode", status AS "status", empNo AS "empNo", joinDate AS "joinDate", resignedAt AS "resignedAt" FROM workers`,
     ).all<WorkerRow>(),
     c.var.DB.prepare("SELECT * FROM schedule_entries").all<ScheduleEntryRow>(),
   ]);
@@ -325,7 +327,7 @@ app.get("/capacity", async (c) => {
 
   const capacityByDept = departments.map((dept) => {
     const deptWorkers = workers.filter(
-      (w) => w.departmentCode === dept.code && w.status === "ACTIVE",
+      (w) => w.departmentCode === dept.code && employedOn(w, todayYmdMY()),
     );
     const workerCount = deptWorkers.length;
     const hoursPerDay = dept.workingHoursPerDay || DEFAULT_HOURS_PER_DAY;

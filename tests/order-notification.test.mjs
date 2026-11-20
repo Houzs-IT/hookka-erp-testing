@@ -152,8 +152,12 @@ function makeDb(seed = []) {
           const [org, ...ids] = bound;
           return { results: ids.map((i) => ORDERS[i]).filter((r) => r && r.orgId === org) };
         }
-        if (/FROM workers WHERE status = 'ACTIVE'/i.test(s)) {
-          pushQueries.push(bound.slice(0, bound.length / 2));
+        // Push audience: employed today (three date binds first — one
+        // employment rule, owner 2026-11-21), then the department codes and
+        // their LIKE patterns.
+        if (/FROM workers WHERE \(\s*empNo NOT LIKE 'TEST%'/i.test(s)) {
+          const rest = bound.slice(3);
+          pushQueries.push(rest.slice(0, rest.length / 2));
           return { results: [] };
         }
         return { results: [] };

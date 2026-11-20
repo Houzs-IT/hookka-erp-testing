@@ -18,6 +18,7 @@
 //   POST   /issues       file new issue
 //   PATCH  /profile      update phone
 // ============================================================
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
@@ -3744,9 +3745,10 @@ app.get("/team-stats", async (c) => {
   // ---- Resolve every team worker (active workers whose dept set intersects
   // the leader's). We pull ACTIVE workers and parse their JSON client-side
   // (≤50 active workers, brute force is fine).
+  // The team = people employed today (one employment rule, owner 2026-11-21).
   const allWorkersRes = await c.var.DB.prepare(
-    "SELECT id, departmentCode, departmentCodes FROM workers WHERE status = 'ACTIVE'",
-  ).all<{
+    `SELECT id, departmentCode, departmentCodes FROM workers WHERE ${employedOnSql("")}`,
+  ).bind(...employedOnParams(todayYmdMY())).all<{
     id: string;
     departmentCode: string | null;
     departmentCodes: string | null;

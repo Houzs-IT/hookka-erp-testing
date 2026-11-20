@@ -29,7 +29,7 @@ import { useTimeout } from "@/lib/scheduler";
 import { useToast } from "@/components/ui/toast";
 import { getCurrentUser } from "@/lib/auth";
 import { readCsrfCookie, CSRF_HEADER_NAME } from "@/lib/csrf";
-import { workerCoversDept } from "@/lib/worker";
+import { workerCoversDept, isPickableWorker } from "@/lib/worker";
 import { fetchVariantsConfig, getVariantsConfigSync } from "@/lib/kv-config";
 import { componentBadgeLabel } from "@/lib/wip-types";
 import { legPacksSeparately, type LegHeightOption } from "@/lib/leg-packing";
@@ -3743,9 +3743,10 @@ export default function ProductionPage({
   // src/lib/worker.ts. On the "ALL" overview tab there's no inline PIC
   // editor, so the filter is bypassed there as a defensive fallback.
   const deptWorkers = useMemo(() => {
-    const list = [...(workers || [])].sort((a, b) =>
-      (a.name || "").localeCompare(b.name || ""),
-    );
+    // Only people employed today are offered (one employment rule).
+    const list = [...(workers || [])]
+      .filter((w) => isPickableWorker(w))
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     if (activeTab === "ALL" || picShowAll) return list;
     return list.filter((w) => workerCoversDept(w, activeTab));
   }, [workers, activeTab, picShowAll]);

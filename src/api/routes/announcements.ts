@@ -23,6 +23,8 @@
 // handler before the first read/write. Same pattern as ensurePendingMigrations
 // in sales-orders.ts / ensureAttendanceGeo in worker.ts.
 // ============================================================
+import { todayYmdMY } from "../../lib/utils";
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
@@ -1237,8 +1239,9 @@ async function audienceRoster(
 ): Promise<Array<{ id: string; empNo?: string | null; name?: string | null }>> {
   const res = await db
     .prepare(
-      "SELECT id, empNo, name, departmentCode, departmentCodes FROM workers WHERE status = 'ACTIVE' ORDER BY name ASC",
-    )
+      // Employed today by the one rule (owner 2026-11-21).
+      `SELECT id, empNo, name, departmentCode, departmentCodes FROM workers WHERE ${employedOnSql("")} ORDER BY name ASC`,
+    ).bind(...employedOnParams(todayYmdMY()))
     .all<{
       id: string;
       empNo?: string | null;

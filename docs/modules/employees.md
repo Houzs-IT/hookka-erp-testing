@@ -77,7 +77,7 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `EmployeeDetailTab` | `src/pages/employees.tsx:5488` | Tab 4 — guard-unmounted detail |
 | `PayrollTab` | `src/pages/employees.tsx:6904` | Tab 5 — payroll drafts |
 | `LaborCostTab` | `src/pages/employees.tsx:8801` | Tab 5b — labor cost + DepartmentsManager |
-| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10596 / 11741` | Leave + attendance tabs |
+| `LeaveManagementTab` / `AttendanceTab` | `src/pages/employees.tsx:10604 / 11749` | Leave + attendance tabs |
 | `computeMonthlyLabor` | `src/lib/labor-engine.ts:587` | THE payroll + cost engine (both divisors) |
 | `effectiveSalarySenForMonth` / `salaryAsOfSen` | `src/lib/labor-engine.ts:438 / 412` | Day-weighted effective salary |
 | `countElapsedWorkingDays` | `src/lib/labor-engine.ts:135` | Cost-side divisor (real Mon–Sat − holidays) |
@@ -90,9 +90,9 @@ Owns the whole workforce lifecycle: the **employee master** (workers + effective
 | `OutsourcePieceTab` | `src/components/outsource-piece-tab.tsx:126` | Outsource tab (HK-0130) — rates, import, wages report |
 | `payrollPeriodForApproval` / `findPenaltyDrift` / `postPenaltiesForPeriod` | `src/api/lib/worker-penalties.ts:303 / 449 / 502` | Penalty payroll month, approval drift guard, posting on payroll approval |
 | `POST /login` / `resolveWorkerToken` | `src/api/routes/worker-auth.ts:124 / 337` | PIN login + token resolution |
-| `getWorker` (token gate) | `src/api/routes/worker.ts:163` | X-Worker-Token → ACTIVE worker or 401/403 |
+| `getWorker` (token gate) | `src/api/routes/worker.ts:171` | X-Worker-Token → ACTIVE worker or 401/403 |
 | `POST /clock` / `POST /dept-scan` | `src/api/routes/worker.ts:1262 / 1519` | Clock in/out + department scan |
-| `buildDeptDay` | `src/api/routes/worker.ts:262` | DEV-31 "Today's departments" payload (live or saved) |
+| `buildDeptDay` | `src/api/routes/worker.ts:270` | DEV-31 "Today's departments" payload (live or saved) |
 | `computeLiveDeptDay` | `src/api/lib/punch-autofill.ts:327` | Live split: punch-out maths with now as the end |
 | `splitDayHours` / `currentStation` | `src/lib/dept-scan-split.ts:148 / 171` | Shared split (autofill + live) and where the worker is now |
 | `GET /salary/effective` | `src/api/routes/workers.ts:1310` | Day-weighted salary per period |
