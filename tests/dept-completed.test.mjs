@@ -120,3 +120,12 @@ test("12-day average never counts a Sunday, even with a card closed on it (owner
   // window = Mon 2 + Tue 3 only → (20 + 22) / 2
   assert.deepEqual(usualDays(days, "2026-11-04").get("FAB_CUT"), { bed: 21, sofa: 0 });
 });
+
+test("/completed runs its three heavy reads together, each cached (owner 2026-11-20: the Employees tab showed … on a cold cache)", () => {
+  const r = read("src/api/routes/floor-live.ts");
+  assert.match(r, /const \[days, rangeRows, revRows\] = await Promise\.all\(\[/);
+  assert.match(r, /dept-completed:range:\$\{orgId\}:\$\{from\}:\$\{to\}/);
+  // The cache stores JSON: the range Map travels as entries.
+  assert.match(r, /\[\.\.\.\(await loadDeptCompletedRange\(db, orgId, from, to\)\)\.entries\(\)\]/);
+  assert.match(r, /rangeRows \? new Map\(rangeRows\) : dayCounts\(days, from\)/);
+});
