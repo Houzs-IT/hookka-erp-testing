@@ -232,6 +232,8 @@ export function computeLabourToDate(input: {
   const buckets = new Map<string, number>();
   const loggedByWorker = new Map<string, number>();
   const directLoggedByWorker = new Map<string, number>();
+  // worker → department → logged cost: the shape step 5 spreads pay over.
+  const loggedByWorkerDept = new Map<string, Map<string, number>>();
   // Outsource is direct labour wherever the hours were logged (owner
   // 2026-11-06), so its non-production hours move across at step 5.
   const outsourceElsewhere = new Map<string, number>();
@@ -240,6 +242,9 @@ export function computeLabourToDate(input: {
     const key = `${e.departmentCode}|${cat}`;
     buckets.set(key, (buckets.get(key) ?? 0) + cost);
     loggedByWorker.set(workerId, (loggedByWorker.get(workerId) ?? 0) + cost);
+    const byDeptOfWorker = loggedByWorkerDept.get(workerId) ?? new Map<string, number>();
+    byDeptOfWorker.set(e.departmentCode, (byDeptOfWorker.get(e.departmentCode) ?? 0) + cost);
+    loggedByWorkerDept.set(workerId, byDeptOfWorker);
     const outsource = outsourceIds.has(workerId);
     if (productionCodes.has(e.departmentCode) || outsource) directLoggedByWorker.set(workerId, (directLoggedByWorker.get(workerId) ?? 0) + cost);
     if (outsource && !productionCodes.has(e.departmentCode)) outsourceElsewhere.set(e.departmentCode, (outsourceElsewhere.get(e.departmentCode) ?? 0) + cost);
@@ -390,58 +395,52 @@ export function computeLabourToDate(input: {
     byWorker.set(top[0], top[1] + peopleDiff);
   }
 
-  // 5. Direct vs non-production: the Payroll Reconciliation's lines
-  //    (employees.tsx reconBurden and friends). Logged hours go to the
-  //    department they were logged under; each person's statutory, allowances
-  //    (piece wages sit there) and pay-vs-cost differences go to their HOME
-  //    department; overhead closes to the total.
+  // 5. Direct vs non-production — ONE basis with the dashboard's department
+  //    table and Employees > Labor Cost (owner 2026-11-20: 「b」, was the
+  //    Payroll Reconciliation's lines). Each person's month (byWorker, which
+  //    adds up to the card's total) is spread over the departments they
+  //    logged hours in, in proportion to the logged cost; someone with no
+  //    logged hours sits wholly in their home department. Outsource is direct
+  //    labour wherever it was logged (owner 2026-11-06). The spread places
+  //    every sen, so nothing is left "paid, hours not logged".
   type Line = "direct" | "warehousing" | "shortfall" | "overhead";
   const lineOf = (code: string): Line =>
     code === "PRODUCTION_SHORTFALL" ? "shortfall" : code === "WAREHOUSING" ? "warehousing" : productionCodes.has(code) ? "direct" : "overhead";
   const lines: Record<Line, number> = { direct: 0, warehousing: 0, shortfall: 0, overhead: 0 };
   const nonProdByDept = new Map<string, number>();
-  const addNonProd = (code: string, sen: number) => nonProdByDept.set(code, (nonProdByDept.get(code) ?? 0) + sen);
-  for (const [key, v] of buckets) {
-    const code = key.split("|")[0];
-    const sen = Math.round(v);
-    lines[lineOf(code)] += sen;
-    if (!productionCodes.has(code)) addNonProd(code, sen);
-  }
-  for (const [code, sen] of outsourceElsewhere) {
-    lines[lineOf(code)] -= sen;
-    lines.direct += sen;
-    addNonProd(code, -sen);
-  }
-  const burdenByWorker = new Map<string, number>();
-  let underRecordedSen = 0;
-  for (const p of payslips) {
-    const code = p.departmentCode || "UNASSIGNED";
-    if (!isFactoryDept(code)) continue;
-    const allowances = (Number(p.allowancesSen) || 0) * share;
-    const burden = statOf(p) * share + allowances + (bridge.get(p.id) ?? 0);
-    const line = outsourceIds.has(p.employeeId) ? "direct" : lineOf(code);
-    lines[line] += burden;
-    if (line === "direct") burdenByWorker.set(p.employeeId, (burdenByWorker.get(p.employeeId) ?? 0) + burden);
-    else addNonProd(code, burden);
-    if (finished) {
-      const gross = Number(p.grossPaySen) || 0;
-      if (gross > 0) {
-        const gap = Math.round(gross - (loggedByWorker.get(p.employeeId) ?? 0) - (bridge.get(p.id) ?? 0) - (Number(p.allowancesSen) || 0));
-        if (gap > 50) underRecordedSen += gap;
+  const directByWorker = new Map<string, number>();
+  for (const [id, costSen] of byWorker) {
+    const outsource = outsourceIds.has(id);
+    const perDept = loggedByWorkerDept.get(id);
+    const loggedTotal = perDept ? [...perDept.values()].reduce((a, v) => a + v, 0) : 0;
+    const home = String(workers.get(id)?.departmentCode ?? "").trim() || "UNASSIGNED";
+    const parts: [string, number][] =
+      perDept && loggedTotal > 0
+        ? [...perDept.entries()].map(([code, v]) => [code, (costSen * v) / loggedTotal])
+        : [[home, costSen]];
+    let direct = 0;
+    for (const [code, sen] of parts) {
+      if (outsource || productionCodes.has(code)) {
+        direct += sen;
+        continue;
       }
+      lines[lineOf(code)] += sen;
+      nonProdByDept.set(code, (nonProdByDept.get(code) ?? 0) + sen);
     }
+    lines.direct += direct;
+    directByWorker.set(id, direct);
   }
   const directSen = Math.round(lines.direct);
   const warehousingSen = Math.round(lines.warehousing);
   const shortfallSen = Math.round(lines.shortfall);
-  const overheadSen = totalSen - underRecordedSen - directSen - warehousingSen - shortfallSen;
+  const underRecordedSen = 0;
+  const overheadSen = totalSen - directSen - warehousingSen - shortfallSen;
   const nonProductionSen = totalSen - directSen;
 
-  // Per person. Rounding each person, and a person whose logged value is above
-  // what they were paid, leave the sum a little off the direct line: it is
-  // settled on the people with room, largest first, so the rows add up to it.
+  // Per person, rounded; the rounding left over is settled on the people with
+  // room, largest first, so the rows add up to the direct line.
   const workerSplit: LabourWorker[] = [...byWorker.entries()].map(([id, costSen]) => {
-    const direct = Math.min(Math.max(costSen, 0), Math.max(0, Math.round((directLoggedByWorker.get(id) ?? 0) + (burdenByWorker.get(id) ?? 0))));
+    const direct = Math.min(Math.max(costSen, 0), Math.max(0, Math.round(directByWorker.get(id) ?? 0)));
     return { id, costSen, directSen: direct, nonProductionSen: costSen - direct };
   });
   let directLeft = directSen - workerSplit.reduce((a, w) => a + w.directSen, 0);
@@ -460,13 +459,13 @@ export function computeLabourToDate(input: {
     directLeft += move;
   }
 
-  // The non-production lines add up to the non-production total; what no
-  // department explains (people outside the factory departments) is OTHER.
+  // The non-production lines add up to the non-production total; rounding
+  // (and anyone outside every department) lands on OTHER.
   const nonProductionLines = [...nonProdByDept.entries()]
     .map(([departmentCode, v]) => ({ departmentCode, sen: Math.round(v) }))
     .filter((l) => l.sen !== 0)
     .sort((x, y) => y.sen - x.sen);
-  const otherSen = nonProductionSen - underRecordedSen - nonProductionLines.reduce((a, l) => a + l.sen, 0);
+  const otherSen = nonProductionSen - nonProductionLines.reduce((a, l) => a + l.sen, 0);
   if (otherSen !== 0) nonProductionLines.push({ departmentCode: "OTHER", sen: otherSen });
 
   const outsourceByDept = new Map<string, number>();

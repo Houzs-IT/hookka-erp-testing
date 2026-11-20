@@ -163,9 +163,11 @@ test("a finished month is the payroll: direct (outsource included) + non-product
   });
   // Payroll: 21000 + 500 + 5000 + 300000.
   assert.equal(out.totalSen, 326500);
-  // Direct: a's FAB_SEW day (270000/27 = 10000) + a's statutory and allowance + outsource piece wages.
-  assert.equal(out.split.directSen, 10000 + 500 + 1000 + 5000);
-  assert.equal(out.split.warehousingSen, 10000);
+  // Basis B (owner 2026-11-20): a's whole month (21000 + 500 = 21500) is spread
+  // over the hours a logged — one FAB_SEW day, one WAREHOUSING day, equal cost —
+  // so half each; outsource piece wages stay direct.
+  assert.equal(out.split.directSen, 10750 + 5000);
+  assert.equal(out.split.warehousingSen, 10750);
   assert.equal(out.split.outsourceSen, 5000);
   assert.equal(out.split.directSen + out.split.nonProductionSen, out.totalSen);
   assert.equal(out.split.warehousingSen + out.split.shortfallSen + out.split.overheadSen + out.split.underRecordedSen, out.split.nonProductionSen);
