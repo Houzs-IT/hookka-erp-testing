@@ -436,3 +436,14 @@ test("the server derives leave days from the dates instead of trusting the clien
     "the leaves POST must not store whatever `days` the client posted",
   );
 });
+
+// BUG-2026-11-21-002: the balances worker SELECT filtered `orgId = ?`, but the
+// workers table has no org_id column — every GET /api/leaves/balances 500'd.
+test("balances: the workers SELECT never filters on orgId (no such column)", () => {
+  const src = read(LEAVES_ROUTE);
+  const i = src.indexOf('app.get("/balances"');
+  assert.ok(i >= 0);
+  const seg = src.slice(i, src.indexOf("FROM leaves", i));
+  assert.ok(/FROM workers WHERE/.test(seg), "workers SELECT present");
+  assert.ok(!/FROM workers WHERE orgId/.test(seg), "workers has no org_id column");
+});

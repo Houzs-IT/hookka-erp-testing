@@ -178,6 +178,13 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-11-21-002 — Leave balances (Employees → Leave) always returned 500 `hr` `sql` 🔴
+
+- **Symptom:** GET /api/leaves/balances returned 500 for every call (found 2026-11-21 while verifying #1531 live; tail: `column "org_id" does not exist`).
+- **Cause:** the balances worker SELECT filtered `FROM workers WHERE orgId = ?`, but migration 0087 deliberately left `workers` single-org — it has no org_id column. The filter predates #1531.
+- **Fix:** drop the orgId filter on the workers SELECT (the leaves SELECT keeps its own, which is a real column).
+- **Regression test:** `tests/leave-entitlement.test.mjs` ("never filters on orgId").
+
 ## BUG-2026-11-21-001 — List reads returned 500 for a few minutes after every deploy `infrastructure` `sql` 🟡
 
 - **Symptom:** GET /api/sales-orders (list + stats) on 2026-11-20 and GET /api/production-orders on 2026-11-21 returned fast 500s for a few minutes right after a deploy, then recovered on their own.
