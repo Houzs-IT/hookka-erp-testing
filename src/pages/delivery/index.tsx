@@ -2293,7 +2293,10 @@ export default function DeliveryPage() {
     // While searching, show the server's whole-table matches across every
     // status (searchResults is a separate set so the browse-derived counts/
     // lists above stay correct). Empty search = normal tab-scoped view.
-    if (search.trim()) return searchResults;
+    // Owner 2026-11-20 「没有分层？」: the search still reads the WHOLE table,
+    // but each tab shows only its own stage. The "Matches for" bar above the
+    // grid gives every other tab's count and jumps there, so nothing is hidden.
+    if (search.trim()) return searchResults.filter((d) => statuses.includes(d.status));
     // "Load all" (review G3) swaps the 50-row page for every DO of the tab.
     return (loadedAllDOs ?? deliveryOrders).filter((d) => statuses.includes(d.status));
   }, [loadedAllDOs, deliveryOrders, searchResults, activeTab, search]);
