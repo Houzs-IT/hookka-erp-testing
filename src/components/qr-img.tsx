@@ -14,7 +14,7 @@
 // inputs still reuse the memoised data URL from qrcode.toDataURL's own cache.
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState, memo } from "react";
-import { getQRCodeDataURL } from "@/lib/qr-utils";
+import { getQRCodeDataURL, qrBitmapPx } from "@/lib/qr-utils";
 
 type QRImgProps = {
   data: string;
@@ -80,7 +80,7 @@ function QRImgBase({ data, size = 200, className, alt = "QR", eager = false }: Q
       setSrc("");
       return;
     }
-    getQRCodeDataURL(data, size)
+    getQRCodeDataURL(data, qrBitmapPx(size, eager))
       .then((url) => {
         if (!cancelled) setSrc(url);
       })
@@ -90,7 +90,7 @@ function QRImgBase({ data, size = 200, className, alt = "QR", eager = false }: Q
     return () => {
       cancelled = true;
     };
-  }, [data, size, shouldRender]);
+  }, [data, size, eager, shouldRender]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!src) {
