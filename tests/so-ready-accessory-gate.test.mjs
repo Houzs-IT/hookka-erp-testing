@@ -79,7 +79,7 @@ function soScenario({ soStatus = "IN_PRODUCTION", sofaUph = "COMPLETED", pillowS
     orders: [{ id: "so-1", status: soStatus }],
     pos: [
       { id: "po-sofa", poNo: "SO-1-01", salesOrderId: "so-1", itemCategory: "SOFA", status: "IN_PROGRESS", stockedIn: 0 },
-      { id: "po-pillow", poNo: "SO-1-02", salesOrderId: "so-1", itemCategory: "ACCESSORY", status: pillowStatus, stockedIn: 0 },
+      { id: "po-pillow", poNo: "SO-1-02", salesOrderId: "so-1", itemCategory: "ACCESSORY", productCode: "SQUARE PILLOW", status: pillowStatus, stockedIn: 0 },
     ],
     jcs: [uph("po-sofa", sofaUph)],
   };
@@ -103,8 +103,11 @@ test("siblingUphGateDone: with UPHOLSTERY cards, the cards decide (unchanged)", 
 });
 
 test("siblingUphGateDone: no UPHOLSTERY card, every card before PACKING done -> done", () => {
-  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "COMPLETED", departmentCode: "FIBRE" }]), true);
-  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS" }, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "IN_PROGRESS", departmentCode: "FIBRE" }]), false);
+  const pillow = { status: "IN_PROGRESS", productCode: "SQUARE PILLOW" };
+  assert.equal(siblingUphGateDone(pillow, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "COMPLETED", departmentCode: "FIBRE" }]), true);
+  assert.equal(siblingUphGateDone(pillow, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "IN_PROGRESS", departmentCode: "FIBRE" }]), false);
+  // Pillows only: any other no-UPHOLSTERY product still needs the PO COMPLETED.
+  assert.equal(siblingUphGateDone({ status: "IN_PROGRESS", productCode: "SEAT CUSHION" }, [{ status: "COMPLETED", departmentCode: "FAB_SEW" }, { status: "COMPLETED", departmentCode: "FOAM" }]), false);
 });
 
 test("SO with sofa + pillow goes READY_TO_SHIP once the pillow FIBRE is done, PACKING still pending", async () => {
@@ -121,7 +124,7 @@ test("SO with sofa + pillow goes READY_TO_SHIP once the pillow FIBRE is done, PA
 test("pillow-only SO: READY_TO_SHIP at FIBRE done, back to IN_PRODUCTION if FIBRE is undone", async () => {
   const mk = (fibre, soStatus) => ({
     orders: [{ id: "so-2", status: soStatus }],
-    pos: [{ id: "po-p", poNo: "SO-2-01", salesOrderId: "so-2", itemCategory: "ACCESSORY", status: "IN_PROGRESS", stockedIn: 0 }],
+    pos: [{ id: "po-p", poNo: "SO-2-01", salesOrderId: "so-2", itemCategory: "ACCESSORY", productCode: "SQUARE PILLOW", status: "IN_PROGRESS", stockedIn: 0 }],
     jcs: [
       { id: "jc-fib", productionOrderId: "po-p", departmentCode: "FIBRE", status: fibre },
       { id: "jc-pack", productionOrderId: "po-p", departmentCode: "PACKING", status: "PENDING" },
@@ -185,7 +188,7 @@ test("CO twin: same gate for consignment orders", async () => {
     orders: [{ id: "co-1", status: "IN_PRODUCTION" }],
     pos: [
       { id: "po-sofa", poNo: "CO-1-01", consignmentOrderId: "co-1", itemCategory: "SOFA", status: "IN_PROGRESS", stockedIn: 0 },
-      { id: "po-pillow", poNo: "CO-1-02", consignmentOrderId: "co-1", itemCategory: "ACCESSORY", status: pillowStatus, stockedIn: 0 },
+      { id: "po-pillow", poNo: "CO-1-02", consignmentOrderId: "co-1", itemCategory: "ACCESSORY", productCode: "SQUARE PILLOW", status: pillowStatus, stockedIn: 0 },
     ],
     jcs: [uph("po-sofa", "COMPLETED")],
   });

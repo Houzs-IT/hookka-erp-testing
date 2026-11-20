@@ -4,6 +4,7 @@
 // each re-deriving the gate (the dashboard previously replicated it off the
 // raw job_cards table and drifted to RM 25,218 vs the page's RM 50,793).
 
+import { parseRepairScope } from "./repair-scope";
 import { aggregateRacksFromPackingCards } from "./rack-format";
 
 export type PipelineJobCard = {
@@ -26,9 +27,13 @@ export type PipelinePO = {
   stockOriginSoId?: string | null;
   salesOrderId?: string | null;
   itemCategory?: string;
+  // Read by isPillow: pillows skip the PACKING wait.
+  productCode?: string;
+  productName?: string;
   specialOrder?: string;
   // Service-order Repair Scope snapshot (0160, JSON string or null).
-  // Carried onto the Ready rows; readiness itself reads the job cards.
+  // A CUSTOM scope can exclude UPHOLSTERY entirely — the readiness
+  // fallback below keys on this field, never on card absence alone.
   repairScope?: string | null;
   jobCards?: PipelineJobCard[];
 };
@@ -55,10 +60,26 @@ export function pickRelevantUphCards(po: PipelinePO): PipelineJobCard[] {
   return uph.filter((j) => (j.wipType || "").toUpperCase() !== "DIVAN");
 }
 
-// Every card before PACKING. PACKING only wraps finished goods, so it never
-// gates delivery: a route with no UPHOLSTERY step (pillow / cushion: FAB_CUT ->
-// FAB_SEW -> FIBRE -> PACKING, or a scoped repair) is ready once these are done.
-// Cards are inserted with the PO in one batch, so none can be missing here.
+// Repair-Scope fallback predicate (0160): TRUE only when the PO carries a
+// stamped non-FULL scope that EXCLUDES UPHOLSTERY (only a CUSTOM scope can —
+// every owner preset includes it). Keyed on the scope, never on UPH-card
+// absence alone, so a normal full PO whose UPH cards merely haven't been
+// created yet can NOT slip through the gates below.
+function repairScopeExcludesUph(po: PipelinePO): boolean {
+  const scope = parseRepairScope(po.repairScope ?? null);
+  return scope !== null && !scope.depts.includes("UPHOLSTERY");
+}
+
+// Pillows only (owner 2026-11-20): a pillow is ready for a DO once every card
+// before PACKING is done (FAB_CUT -> FAB_SEW -> FIBRE), because PACKING only
+// wraps it. Other no-UPHOLSTERY products still wait for the PO to complete.
+// There is no pillow category (pillows are ACCESSORY), so match the product.
+export function isPillow(po: { productCode?: string | null; productName?: string | null }): boolean {
+  return /PILLOW/i.test(`${po.productCode ?? ""} ${po.productName ?? ""}`);
+}
+
+// Every card before PACKING. Cards are inserted with the PO in one batch, so
+// none can be missing here.
 function cardsBeforePacking(po: PipelinePO): PipelineJobCard[] {
   return (po.jobCards || []).filter((j) => j.departmentCode !== "PACKING");
 }
@@ -77,22 +98,29 @@ export function noUphRouteReady(po: PipelinePO): boolean {
 
 // Planning: PO still in production — has upholstery cards and at least one
 // is not yet done. Excludes CANCELLED/COMPLETED and CO-sourced POs.
-// No UPHOLSTERY card (pillow / cushion / scoped repair): any card before
-// PACKING not yet done.
+// No UPHOLSTERY card: a pillow is in Planning while any card before PACKING is
+// open; a scoped repair falls back to "any existing job card not yet done".
 export function poInPlanning(po: PipelinePO): boolean {
   if (po.status === "COMPLETED" || po.status === "CANCELLED") return false;
   if (po.consignmentOrderId) return false;
   const uphCards = pickRelevantUphCards(po);
   if (uphCards.length === 0) {
-    return cardsBeforePacking(po).some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
+    if (isPillow(po)) {
+      return cardsBeforePacking(po).some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
+    }
+    if (!repairScopeExcludesUph(po)) return false;
+    const jcs = po.jobCards || [];
+    if (jcs.length === 0) return false;
+    return jcs.some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
   }
   return uphCards.some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
 }
 
 // Pending Delivery: production complete (all upholstery cards done), not
 // CANCELLED, not CO-sourced, and not already on a non-cancelled DO.
-// No UPHOLSTERY card (pillow / cushion / scoped repair): ready when every card
-// before PACKING is COMPLETED/TRANSFERRED (zero such cards never qualifies).
+// No UPHOLSTERY card: a pillow is ready when every card before PACKING is
+// COMPLETED/TRANSFERRED; anything else needs the PO COMPLETED, or a scoped
+// repair with every card done (zero cards never qualifies).
 export function poReadyForDelivery(po: PipelinePO, linkedPOIds: Set<string>): boolean {
   if (po.status === "CANCELLED") return false;
   // A held PO is paused work — it belongs in Outstanding, not Pending Delivery,
@@ -131,7 +159,10 @@ export function poReadyForDelivery(po: PipelinePO, linkedPOIds: Set<string>): bo
     // out) — trusting the COMPLETED status here can't let a half-made sofa slip
     // through.
     if (po.status === "COMPLETED") return allDone;
-    return noUphRouteReady(po);
+    if (isPillow(po)) return noUphRouteReady(po);
+    // Scoped repair that excludes upholstery (0160): ready when all cards done.
+    if (repairScopeExcludesUph(po)) return allDone;
+    return false;
   }
   return uphCards.every((j) => j.status === "COMPLETED" || j.status === "TRANSFERRED");
 }
@@ -165,7 +196,10 @@ export function poReadyForConsignment(po: PipelinePO, linkedPOIds: Set<string>):
       (j) => j.status === "COMPLETED" || j.status === "TRANSFERRED",
     );
     if (po.status === "COMPLETED") return allDone;
-    return noUphRouteReady(po);
+    if (isPillow(po)) return noUphRouteReady(po);
+    // Scoped repair that excludes upholstery (0160): ready when all cards done.
+    if (repairScopeExcludesUph(po)) return allDone;
+    return false;
   }
   return uphCards.every((j) => j.status === "COMPLETED" || j.status === "TRANSFERRED");
 }
@@ -182,7 +216,13 @@ export function poInPlanningConsignment(po: PipelinePO): boolean {
   if (!po.consignmentOrderId) return false; // SO-origin POs go to the Delivery page
   const uphCards = pickRelevantUphCards(po);
   if (uphCards.length === 0) {
-    return cardsBeforePacking(po).some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
+    if (isPillow(po)) {
+      return cardsBeforePacking(po).some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
+    }
+    if (!repairScopeExcludesUph(po)) return false;
+    const jcs = po.jobCards || [];
+    if (jcs.length === 0) return false;
+    return jcs.some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
   }
   return uphCards.some((j) => j.status !== "COMPLETED" && j.status !== "TRANSFERRED");
 }

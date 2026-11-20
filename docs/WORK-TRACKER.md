@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-20**: pillow-only narrowing entry added (BUG-2026-11-20-500, branch `fix/ready-before-packing-pillow-only`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-20**: pillow-ready-before-Packing entry added (BUG-2026-11-20-499, branch `fix/ready-before-packing`, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 15 added (worker scan returns to My task, split task counts; PR #1485, to `staging`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 14 added (Pending approval count read 0; branch `fix/outsource-pending-count`, to `staging`); nothing else re-checked.
@@ -38,6 +39,11 @@ Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to a
 13. DONE (branch `feat/outsource-issue-pc-buttons`, to `staging`, tests only; not seen on staging), owner 2026-11-20: keep the Issue button and Scan QR on the PC Issue Work panel (as on `main`). Reverses the scanner-only part of item 9: a scanner Enter, the Issue button and Scan QR (camera) all issue, and the field clears. The sticker hint from item 11 stays.
 14. DONE (branch `fix/outsource-pending-count`, to `staging`), 2026-11-20: the Pending approval tab count always read 0 (staging showed Pending 0 · Incomplete 1 · Completed 0 · All 2 with one pending row). Cause: the count query named its column `pending_approval`, and the Postgres adapter (`db-pg.ts`) returns it as `pendingApproval`, so the code read undefined. The column is now `pending`. The test fake camelCases aliases like the adapter, so the old name fails the test.
 15. DONE (branch `feat/hk0164-outsource-home`, PR #1485, to `staging`, tests only; not seen on staging), owner 2026-11-19: "whenever they scan they go back to the outsourced worker if it match". A worker scan the server answers with pendingApproval (from home SCAN JOB CARD or the bottom Scan tab) returns to My task with "Sent to the office: <PO> · <item>". The My task box and header split the count: "1 to finish · 1 waiting for office · Oldest: ..." (oldest = items still to sew). Test: `tests/outsource-worker-tasks.test.mjs`.
+
+## Delivery does not wait for Packing, pillows only (BUG-2026-11-20-500, fix/ready-before-packing-pillow-only, 2026-11-20)
+Ask: handle it for pillows only.
+1. DONE (branch, tests only): `isPillow` (product code or name contains PILLOW) gates the before-PACKING rule; other no-UPHOLSTERY products back to waiting for PACKING. Dashboard and DO QR pass the product fields.
+2. OPEN: not checked on the staging site; prod impact UNMEASURED.
 
 ## Delivery does not wait for Packing (BUG-2026-11-20-499, fix/ready-before-packing, 2026-11-20)
 Ask: when Fibre scans a pillow complete it should appear for a Delivery Order without waiting for Packing; one rule for every product: every card before Packing done means ready.
