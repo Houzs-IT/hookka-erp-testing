@@ -180,7 +180,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
         .filter((m) => m.slice(0, 4) === focusMonth.slice(0, 4))
         .map((m) => {
           const b = byMonth.get(m) ?? ZERO;
-          return { key: m, label: monthLabel(m), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Direct: canLabour ? Math.round(b.direct / 100) : 0, NonProd: canLabour ? Math.round(b.nonProd / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue };
+          return { key: m, label: monthLabel(m), Revenue: b.revenue / 100, Materials: b.material / 100, Direct: canLabour ? b.direct / 100 : 0, NonProd: canLabour ? b.nonProd / 100 : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue };
         });
     }
     const days = [...byDay.keys()].filter((d) => inPeriod(period, d)).sort();
@@ -188,7 +188,7 @@ export function CostingPanel({ period, costByDay, onPeriodChange }: { period: Pe
       days.map((d) => ({ d, b: byDay.get(d)! })),
       (x) => x.d,
       (x) => [x.b.revenue, x.b.material, x.b.labour],
-    ).map(({ d, b }) => ({ key: d, label: d.slice(5), Revenue: Math.round(b.revenue / 100), Materials: Math.round(b.material / 100), Direct: canLabour ? Math.round(b.direct / 100) : 0, NonProd: canLabour ? Math.round(b.nonProd / 100) : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue }));
+    ).map(({ d, b }) => ({ key: d, label: d.slice(5), Revenue: b.revenue / 100, Materials: b.material / 100, Direct: canLabour ? b.direct / 100 : 0, NonProd: canLabour ? b.nonProd / 100 : 0, "Cost %": pctOf(cost(b), b.revenue), revenue: b.revenue }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ytd, months, byMonth, byDay, period, focusMonth, canLabour]);
   const pick = (e: { activeLabel?: unknown } | null) => {

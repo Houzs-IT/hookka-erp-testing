@@ -50,10 +50,11 @@ export function DailyProductionRevenueCard({ period, onPeriodChange }: { period:
       rows: [...buckets.entries()].filter(([k, b]) => byMonth || b.total > 0 || deptActive(k) || new Date(`${k}T00:00:00Z`).getUTCDay() !== 0).map(([k, b]) => ({
         key: k,
         label: byMonth ? monthLabel(k).slice(0, 3) : k.slice(5),
-        Bedframe: Math.round(b.bedframe / 100),
-        Sofa: Math.round(b.sofa / 100),
+        // Exact ringgit: the tooltip prints them to the sen (owner 2026-11-20).
+        Bedframe: b.bedframe / 100,
+        Sofa: b.sofa / 100,
         // anything not classed bedframe / sofa (accessories, unclassified)
-        Other: Math.max(0, Math.round((b.total - b.bedframe - b.sofa) / 100)),
+        Other: Math.max(0, (b.total - b.bedframe - b.sofa) / 100),
         totalSen: b.total,
       })),
       total: sum,
