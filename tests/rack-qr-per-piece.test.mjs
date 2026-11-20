@@ -145,7 +145,7 @@ test("the per-piece rack column DDL is the ONE shared (exported) helper — no d
   );
   assert.match(
     rackQr,
-    /import \{ ensurePiecePicsRackingColumn \} from "\.\.\/lib\/packing-rack-write"/,
+    /import \{[^}]*\bensurePiecePicsRackingColumn\b[^}]*\} from "\.\.\/lib\/packing-rack-write"/,
     "public-rack-qr.ts must import the shared DDL, not re-declare it",
   );
 });

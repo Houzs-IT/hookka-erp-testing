@@ -52,7 +52,7 @@ import { PO_COLS, resolvePo } from "../lib/sticker-resolve";
 import type { PoMatch, PoRow } from "../lib/sticker-resolve";
 import { pickPackingCard } from "../lib/packing-card-resolve";
 import { packingPieceIdentity } from "../lib/packing-piece-identity";
-import { ensurePiecePicsRackingColumn } from "../lib/packing-rack-write";
+import { ensurePiecePicsRackingColumn, rackCartonRiders } from "../lib/packing-rack-write";
 import { resolveCard as resolvePackingCardByToken } from "./public-rack-write";
 import { todayYmdMY } from "../../lib/utils";
 
@@ -827,6 +827,18 @@ app.post("/:rackId/stock-in", async (c: Context<Env>) => {
       );
     }
     await c.var.DB.batch([...moveDeletes, ...writes, ...rackingUpdates]);
+
+    // Pillow carton (owner 2026-11-20: 「要显示」): the carton is ONE scanned
+    // item, but the order's other pillows ride inside it — give them this rack
+    // too, so every pillow shows where the box is. No-op for non-pillows.
+    if (rackLabel) {
+      const seenCards = new Set<string>();
+      for (const it of items) {
+        if (!it.jobCardId || seenCards.has(it.jobCardId)) continue;
+        seenCards.add(it.jobCardId);
+        await rackCartonRiders(c.var.DB, it.jobCardId, rackLabel);
+      }
+    }
 
     return c.json({ ok: true, count: items.length });
   } catch (err) {
