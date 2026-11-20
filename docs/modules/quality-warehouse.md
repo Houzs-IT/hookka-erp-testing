@@ -1,5 +1,6 @@
 # Quality, Warehouse, Scanning & Platform — Module Guide
 
+> **Last verified: 2026-11-20** (branch `fix/pillow-ready-before-packing-main`): the two `public-do-qr.ts` `/:token/advance` anchors moved to :715 after the pillow fields were added to the DO QR candidate check. Nothing else re-checked.
 > **Last verified: 2026-10-05** (branch `feat/permissions-tab-main`): the two `rbac.ts` anchor rows re-derived after the per-account permission lookup moved them. Nothing else re-checked.
 
 > **Last verified: 2026-08-14** (branch `docs/docs-vs-code-audit`) — corrected against the
@@ -69,7 +70,7 @@ is enforced by hand in the handler, not by the middleware.
    → `resolveCard` (`:80`, archive-aware) → `applyPackingRack` (`packing-rack-write.ts:71`) sets/clears the
    rackingNumber AND mirrors `rack_items`. Both `/r/` and `/p/` (plus office + worker) build the move-match
    key via `packingPieceIdentity` (`packing-piece-identity.ts:48`) — never re-inline it.
-5. **DO dispatch/deliver (public `/do-qr/`)** — `POST /api/public/do-qr/:token/advance` (`public-do-qr.ts:707`)
+5. **DO dispatch/deliver (public `/do-qr/`)** — `POST /api/public/do-qr/:token/advance` (`public-do-qr.ts:715`)
    is forward-only through the SAME office PUT path: DISPATCH DRAFT→LOADED, DELIVER LOADED/IN_TRANSIT→DELIVERED.
 6. **Login → session + CSRF** — `POST /api/auth/login` (`auth.ts:148`) issues the HttpOnly `hookka_session`
    cookie + non-HttpOnly `hookka_csrf`; `authMiddleware` (`auth-middleware.ts`) resolves the token and
@@ -91,7 +92,7 @@ is enforced by hand in the handler, not by the middleware.
 | `POST /:rackId/stock-in` | `src/api/routes/public-rack-qr.ts:633` | Public rack QR stock-in handler |
 | `resolveCard` | `src/api/routes/public-rack-write.ts:80` | Archive-aware token → packing card |
 | `POST /:token/rack` | `src/api/routes/public-rack-write.ts:228` | Public `/p/` set/clear rackingNumber |
-| `POST /:token/advance` | `src/api/routes/public-do-qr.ts:707` | Public DO forward transition (dispatch/deliver) |
+| `POST /:token/advance` | `src/api/routes/public-do-qr.ts:715` | Public DO forward transition (dispatch/deliver) |
 | `resolveToken` | `src/api/routes/public-do-qr.ts:181` | 64-hex qrtoken → DO(s) resolver |
 | `applyPackingRack` | `src/api/lib/packing-rack-write.ts:71` | Rack set/clear + `rack_items` occupancy mirror |
 | `ensurePiecePicsRackingColumn` | `src/api/lib/packing-rack-write.ts:35` | Shared mig-0192 DDL self-apply |
