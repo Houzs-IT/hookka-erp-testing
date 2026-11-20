@@ -1972,6 +1972,8 @@ async function completeCartonPillows(
   try {
     // Same self-apply guard as the scan endpoints before a completedAt write.
     await ensureJobCardCompletedAt(db);
+    // qr_token is minted only when a card's OWN packing sticker is printed.
+    await ensureJobCardQrTokenColumn(db);
     const sibs = await db
       .prepare(
         `SELECT * FROM production_orders
@@ -1984,7 +1986,12 @@ async function completeCartonPillows(
         .prepare(
           `SELECT * FROM job_cards
             WHERE productionOrderId = ? AND departmentCode = 'PACKING'
-              AND status NOT IN ('COMPLETED','TRANSFERRED','BLOCKED','CANCELLED')`,
+              AND status NOT IN ('COMPLETED','TRANSFERRED','BLOCKED','CANCELLED')
+              -- Owner 2026-11-20: stickers already printed are not affected. A
+              -- pillow that got its OWN packing sticker (a token was minted for
+              -- its card, e.g. the old one-sticker-per-pillow print) is scanned
+              -- on its own; only pillows riding in the carton complete here.
+              AND (qr_token IS NULL OR qr_token = '')`,
         )
         .bind(sib.id)
         .all<JobCardRow>();
