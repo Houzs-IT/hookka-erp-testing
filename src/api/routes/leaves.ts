@@ -129,10 +129,12 @@ app.get("/balances", async (c) => {
   const [wres, lres, publicHolidays] = await Promise.all([
     c.var.DB.prepare(
       `SELECT id, name, annual_leave_entitlement_days, medical_leave_entitlement_days
-         FROM workers WHERE orgId = ? AND ${employedOnSql("")}`,
+         FROM workers WHERE ${employedOnSql("")}`,
     )
-      // Employed today by the one rule (owner 2026-11-21).
-      .bind(orgId, ...employedOnParams(todayYmdMY()))
+      // Employed today by the one rule (owner 2026-11-21). No orgId filter:
+      // the workers table has no org_id column (0087 left workers single-org),
+      // so "orgId = ?" made this whole endpoint 500 (BUG-2026-11-21-002).
+      .bind(...employedOnParams(todayYmdMY()))
       .all<{ id: string; name: string } & WorkerEntitlementFields>(),
     c.var.DB.prepare(
       `SELECT workerId, type, status, startDate, endDate, days
