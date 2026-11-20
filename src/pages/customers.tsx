@@ -83,6 +83,8 @@ import { useSofaSeatHeights } from "@/lib/use-sofa-seat-heights";
 import { sofaSeatLabel } from "@/lib/sofa-seat-heights";
 import { useDiscardGuard, useFormDiscardGuard } from "@/lib/use-discard-guard";
 import { figureOrDash } from "@/lib/loading-figure";
+import { CheckboxMultiSelect } from "@/components/checkbox-multi-select";
+import { pickQuotationModels, quotationModelOptions } from "@/lib/quotation-model-filter";
 
 type CustomerMutationResponse =
   | { success: true; data: Customer }
@@ -479,6 +481,12 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
     }
   };
 
+  // HK-0168: models the quotation Export / Email covers. Empty = all models.
+  const [quotationModels, setQuotationModels] = useState<string[]>([]);
+  const quotationModelChoices = useMemo(
+    () => quotationModelOptions(rows, productById).map((m) => ({ value: m, label: m })),
+    [rows, productById],
+  );
   const [exportingQuotation, setExportingQuotation] = useState(false);
   const [emailingQuotation, setEmailingQuotation] = useState(false);
   const [exportingCatalogue, setExportingCatalogue] = useState(false);
@@ -670,7 +678,7 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
         "@/lib/generate-customer-quotation-pdf-v2"
       );
       const doc = generateCustomerQuotationPdfV2({
-        ...json.data,
+        ...pickQuotationModels(json.data, quotationModels, productById),
         letterhead,
       });
       const safeCode = (json.data.customer.code || customerName).replace(
@@ -784,7 +792,10 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
       const { default: generateCustomerQuotationPdfV2 } = await import(
         "@/lib/generate-customer-quotation-pdf-v2"
       );
-      const doc = generateCustomerQuotationPdfV2({ ...json.data, letterhead });
+      const doc = generateCustomerQuotationPdfV2({
+        ...pickQuotationModels(json.data, quotationModels, productById),
+        letterhead,
+      });
       const safeCode = (json.data.customer.code || customerName).replace(
         /[^a-zA-Z0-9_-]+/g,
         "_",
@@ -869,6 +880,15 @@ function CustomerProductsPanel({ customerId, customerName, customer }: { custome
                 className="h-8 px-2 text-xs border border-[#E2DDD8] rounded-md bg-white text-[#1F1D1B] focus:outline-none focus:ring-2 focus:ring-[#6B5C32]"
               />
             </div>
+            <CheckboxMultiSelect
+              options={quotationModelChoices}
+              selected={quotationModels}
+              onChange={setQuotationModels}
+              allLabel="All models"
+              noun="models"
+              title="Models the quotation PDF (Export and Email) covers"
+              className="min-w-[130px] h-8"
+            />
             <Button
               variant="outline"
               size="sm"
