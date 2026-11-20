@@ -17,6 +17,7 @@ import {
   parseJobCardBarcode,
   jobCardBarcodeValue,
   JC_BARCODE_PREFIX,
+  qrBitmapPx,
 } from '../src/lib/qr-utils.ts';
 import QRCode from 'qrcode';
 
@@ -160,4 +161,18 @@ test('the short compartment form is much less dense than the legacy wk= form it 
     longV - shortV >= 2,
     `expected the short form (v${shortV}) to be >=2 QR versions below the legacy wk= form (v${longV})`,
   );
+});
+
+// Pillow-paired FG packing sticker prints its QR at 72px. The bitmap used to be
+// drawn at that same 72px, about 1.4 px per module for the /p/<token> URL, so the
+// printed modules came out uneven and phones could not read it.
+test('print QR bitmap keeps >= 8 px per module even for the 72px pillow sticker', () => {
+  const url = `${PROD_ORIGIN}/p/${'a'.repeat(64)}?p=2`;
+  const modules = QRCode.create(url, { errorCorrectionLevel: 'Q' }).modules.size + 4;
+  const printPx = qrBitmapPx(72, true);
+  assert.ok(printPx / modules >= 8, `print bitmap ${printPx}px gives ${(printPx / modules).toFixed(2)} px/module`);
+  assert.equal(qrBitmapPx(104, true), 600);
+  assert.equal(qrBitmapPx(800, true), 800);
+  // On-screen (lazy) tiles keep their display size so 300+ tiles stay cheap.
+  assert.equal(qrBitmapPx(72, false), 72);
 });

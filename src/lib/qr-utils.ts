@@ -48,6 +48,15 @@ export async function getQRCodeDataURL(
   });
 }
 
+/**
+ * Bitmap width to draw a QR at. Print (eager) QRs keep the 600px source so a
+ * small printed QR still has sharp, even modules; on-screen tiles stay at the
+ * display size to keep generation cheap. The <img> display size is unchanged.
+ */
+export function qrBitmapPx(displayPx: number, eager: boolean): number {
+  return eager ? Math.max(displayPx, 600) : displayPx;
+}
+
 // ============================================================
 // Schedule WIP code — the scannable twin of the per-WIP sticker QR.
 //
