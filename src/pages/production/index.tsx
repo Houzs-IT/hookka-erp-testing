@@ -194,6 +194,65 @@ const OverviewResizeCtx = createContext<{ start: (e: React.MouseEvent, key: stri
 // Portaled to <body> with fixed positioning so no scroll/overflow container
 // (the Grid's horizontal scroll box) can clip it; re-anchors on scroll/resize.
 // Mount it only while open. `panelWidth` keeps a wide panel on screen.
+// The pillow carton's body (owner 2026-11-20): what is in the box, in place of
+// the size / seat / leg rows. One pillow line → Item / Colour / Qty rows; more
+// → one row per item + colour with its qty, then the total. Lives inside the
+// fixed sticker box (flex-1 + overflow hidden) and shrinks the type as lines
+// grow, so the QR at the bottom is never pushed off the 100 × 150 mm label.
+type PillowCartonSticker = {
+  pillowLines?: { name: string; fabric: string; qty: number }[];
+  pillowTotal?: number;
+};
+const CARTON_SCALE = {
+  screen: { label: "72px", size: 13, unit: "px", big: 16 },
+  foam: { label: "58px", size: 9, unit: "px", big: 11 },
+  print: { label: "30mm", size: 14, unit: "pt", big: 18 },
+} as const;
+// "SQUARE PILLOW (16\"X16\")" → { item: "SQUARE PILLOW", size: "16\" x 16\"" }, so the
+// colour and qty never get cut off a narrow label line.
+function splitPillowName(name: string): { item: string; size: string } {
+  const m = /^(.*?)\s*\(\s*(\d+(?:\.\d+)?)\s*"?\s*[xX×]\s*(\d+(?:\.\d+)?)\s*"?\s*\)\s*$/.exec(name);
+  return m ? { item: m[1].trim(), size: `${m[2]}" x ${m[3]}"` } : { item: name, size: "" };
+}
+function PillowCartonLines({ s, scale }: { s: PillowCartonSticker; scale: keyof typeof CARTON_SCALE }) {
+  const sc = CARTON_SCALE[scale];
+  const lines = s.pillowLines ?? [];
+  const shrink = lines.length <= 3 ? 1 : lines.length <= 5 ? 0.85 : 0.72;
+  const fs = `${Math.round(sc.size * shrink * 10) / 10}${sc.unit}`;
+  const big = `${sc.big}${sc.unit}`;
+  const label = (t: string) => (
+    <span className="font-semibold shrink-0" style={{ display: "inline-block", width: sc.label, color: "#6B7280" }}>{t}</span>
+  );
+  const one = lines.length === 1 ? splitPillowName(lines[0].name) : null;
+  return (
+    <div className="flex-1 overflow-hidden" style={{ fontSize: fs, lineHeight: 1.25, borderTop: "1px solid #E6E0D9", marginTop: "2px", paddingTop: "2px" }}>
+      {one ? (
+        <>
+          <div className="flex">{label("Item")}<span className="min-w-0 break-words">: {one.item}</span></div>
+          {one.size && <div className="flex">{label("Size")}<span>: {one.size}</span></div>}
+          <div className="flex">{label("Colour")}<span className="font-bold break-all">: {lines[0].fabric || "—"}</span></div>
+          <div className="flex items-baseline">{label("Qty")}: <span className="font-bold" style={{ fontSize: big }}>&nbsp;{lines[0].qty} PCS</span></div>
+        </>
+      ) : (
+        <>
+          {lines.map((l) => {
+            const n = splitPillowName(l.name);
+            return (
+              <div key={`${l.name}|${l.fabric}`} className="flex items-baseline gap-1">
+                <span className="flex-1 min-w-0 break-words">
+                  {n.item.replace(/\s*PILLOW$/i, "")}{n.size ? ` ${n.size}` : ""} · <span className="font-bold">{l.fabric || "—"}</span>
+                </span>
+                <span className="font-bold shrink-0 whitespace-nowrap">× {l.qty}</span>
+              </div>
+            );
+          })}
+          <div className="flex items-baseline">{label("Total")}: <span className="font-bold" style={{ fontSize: big }}>&nbsp;{s.pillowTotal ?? 0} PCS</span></div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AnchoredPopover({
   anchorRef,
   onClose,
@@ -1725,6 +1784,14 @@ export default function ProductionPage({
     // Synthetic Pillow sticker — same pairing pattern as legs but pinned
     // to the LAST compartment as a 2-in-1.
     isSyntheticPillow?: boolean;
+    // The PILLOW CARTON sticker (owner 2026-11-20): every pillow of an SO is
+    // packed in ONE box with its own sticker, numbered after the sofa pieces
+    // (sofa 2 pieces + pillows → pillow box is 3/3). It lists each pillow
+    // line (item + colour + qty) and the total. Replaces the old 2-in-1
+    // corner note on the last sofa compartment.
+    isPillowCarton?: boolean;
+    pillowLines?: { name: string; fabric: string; qty: number }[];
+    pillowTotal?: number;
     pieceNo: number;
     totalPieces: number;
     pieceName: string;
@@ -4804,7 +4871,7 @@ export default function ProductionPage({
     if (onScreenStickers.length === 0) {
       toast.info(
         activeTab === "ALL"
-          ? "No job-card stickers to print. Upholstery & Packing use FG Stickers instead."
+          ? "No job-card stickers to print. Upholstery & Packing use Packing Stickers instead."
           : "No job cards in the current filter.",
       );
       return;
@@ -5247,6 +5314,43 @@ export default function ProductionPage({
     // The pillow is its own real fg_unit (not synthetic like legs) so its
     // QR scans normally; it just gets renumbered + paired into the
     // compartment chain.
+    // ONE carton sticker for all of an SO's pillows. The first pillow's own
+    // fg_unit carries the QR (its PACKING card mints the token); the lines
+    // group by item + colour with their qty.
+    const buildPillowCarton = (
+      pillows: FgSticker[],
+      pieceNo: number,
+      totalPieces: number,
+      forSofa: string,
+    ): FgSticker => {
+      const sorted = [...pillows].sort((a, b) => a.poNo.localeCompare(b.poNo) || a.unitNo - b.unitNo);
+      const lines = new Map<string, { name: string; fabric: string; qty: number }>();
+      for (const p of sorted) {
+        const name = (p.productName || p.productCode || "Pillow").replace(/^SOFA\s+/i, "").trim();
+        const fabric = p.fabricCode || "";
+        const k = `${name}|${fabric}`;
+        const line = lines.get(k) ?? { name, fabric, qty: 0 };
+        line.qty += 1;
+        lines.set(k, line);
+      }
+      const rep = sorted[0];
+      const pillowLines = [...lines.values()];
+      return {
+        ...rep,
+        key: `pillow-carton-${rep.salesOrderId || rep.key}`,
+        unitSerial: `${rep.salesOrderNo || rep.salesOrderId}-PL`,
+        pieceNo,
+        totalPieces,
+        productCode: "PILLOW",
+        boxLabel: forSofa,
+        wipLabel: forSofa,
+        isPillowCarton: true,
+        isSyntheticPillow: false,
+        comboPairKey: undefined,
+        pillowLines,
+        pillowTotal: pillowLines.reduce((s, l) => s + l.qty, 0),
+      };
+    };
     const isPillowSticker = (s: FgSticker): boolean =>
       s.itemCategory === "ACCESSORY" &&
       /pillow/i.test(s.productName + " " + s.productCode);
@@ -5267,11 +5371,11 @@ export default function ProductionPage({
         nonSofa.push(s);
       }
     }
-    // Pillows belonging to a SO that has NO sofa go back into nonSofa
-    // (they print as standalone 1/1 stickers, no aggregation).
+    // Pillows of a SO with NO sofa: still ONE carton, numbered 1/1
+    // (owner 2026-11-20: all pillows of an order go in one box).
     for (const [soId, pillows] of pillowsBySo) {
       if (!sofaBySo.has(soId)) {
-        nonSofa.push(...pillows);
+        nonSofa.push(buildPillowCarton(pillows, 1, 1, ""));
         pillowsBySo.delete(soId);
       }
     }
@@ -5385,21 +5489,12 @@ export default function ProductionPage({
         (s) => legPacksSeparately(s.legHeightInches, legHeightOptions),
       );
       const rawPillows = pillowsBySo.get(soId) ?? [];
-      // Group pillows by productCode so the badge shows
-      // "Square Pillow x3" instead of producing 3 separate stickers.
-      // Each group → 1 representative sticker (uses the first fg_unit's
-      // QR; others are dropped from rendering).
-      const pillowGroups = new Map<string, FgSticker[]>();
-      for (const p of rawPillows) {
-        const k = p.productCode || p.productName || "PILLOW";
-        const list = pillowGroups.get(k) ?? [];
-        list.push(p);
-        pillowGroups.set(k, list);
-      }
-      const hasPillow = pillowGroups.size > 0;
+      // Every pillow of the SO goes in ONE carton = ONE more piece
+      // (owner 2026-11-20), however many pillow types there are.
+      const hasPillow = rawPillows.length > 0;
       const compartmentCount = group.length;
       const totalPacks =
-        compartmentCount + (hasLegs ? 1 : 0) + pillowGroups.size;
+        compartmentCount + (hasLegs ? 1 : 0) + (hasPillow ? 1 : 0);
 
       // Sofa fullCompartment label — joined productCodes of every sofa PO
       // in the SO (preserving order + duplicates) with shared-prefix
@@ -5449,7 +5544,6 @@ export default function ProductionPage({
       // secondary whose comboPairKey points back to a given primary,
       // so primary cards display their paired secondary inline.
       const compartment1 = group[0];
-      const lastCompartment = group[group.length - 1];
 
       const outputForSo: FgSticker[] = [];
       // Sofas first, in order
@@ -5474,31 +5568,13 @@ export default function ProductionPage({
         };
         outputForSo.push(legsSticker);
       }
-      // Pillows (after leg, last)
+      // Pillow carton (after the leg, last): its own sticker, no longer a
+      // corner note on the last compartment (owner 2026-11-20).
       if (hasPillow) {
         const legShift = hasLegs ? 1 : 0;
-        let pillowIdx = 0;
-        for (const [, pillowGroup] of pillowGroups) {
-          const rep = pillowGroup[0];
-          const qty = pillowGroup.length;
-          const name = rep.productName || rep.productCode || "Pillow";
-          // Include fabric color so packers see "Square Pillow KN390-2 x3"
-          // instead of just "Square Pillow x3" — color is what differentiates
-          // pillow groups within the same SO.
-          const fabric = rep.fabricCode ? ` ${rep.fabricCode}` : "";
-          const labelWithFabric = `${name}${fabric} x${qty}`;
-          rep.pieceNo = compartmentCount + legShift + 1 + pillowIdx;
-          rep.totalPieces = totalPacks;
-          rep.wipLabel = fullCompartment;
-          rep.boxLabel = labelWithFabric;
-          rep.pieceName = labelWithFabric;
-          if (pillowIdx === 0) {
-            rep.comboPairKey = lastCompartment.key;
-            rep.isSyntheticPillow = true;
-          }
-          outputForSo.push(rep);
-          pillowIdx++;
-        }
+        outputForSo.push(
+          buildPillowCarton(rawPillows, compartmentCount + legShift + 1, totalPacks, fullCompartment),
+        );
       }
 
       aggregated.push(...outputForSo);
@@ -5825,9 +5901,14 @@ export default function ProductionPage({
       const FETCH_BASE =
         "/api/production-orders?fields=minimal&include=jobCards";
       let scopeTokens: string[] = [];
+      // The visible rows' SO numbers ride along so the SAME order's pillows
+      // load too: pillows never pass Foam Bonding, so they are not in this
+      // grid, yet they are part of the order's packing (pillow carton, and
+      // the sofa's x/N count). Owner 2026-11-20.
+      const visibleSoIds = Array.from(new Set(visibleRows.map((r) => r.soId || "").filter(Boolean)));
       if (hasSelectionScope) scopeTokens = Array.from(selSoIds);
       else if (!q && hasGridScope)
-        scopeTokens = visibleRows.map((r) => r.poId || "").filter(Boolean);
+        scopeTokens = [...visibleRows.map((r) => r.poId || "").filter(Boolean), ...visibleSoIds];
       const url =
         scopeTokens.length > 0
           ? `${FETCH_BASE}&scope=${encodeURIComponent(scopeTokens.join(","))}`
@@ -5876,7 +5957,13 @@ export default function ProductionPage({
         const poIds = new Set(
           visibleRows.map((r) => r.poId || "").filter(Boolean),
         );
-        scoped = all.filter((o) => poIds.has(o.id));
+        const soSet = new Set(visibleSoIds);
+        const isPillowPo = (o: ProductionOrder) =>
+          (o.itemCategory || "").toUpperCase() === "ACCESSORY" &&
+          /pillow/i.test(`${o.productName || ""} ${o.productCode || ""}`);
+        scoped = all.filter(
+          (o) => poIds.has(o.id) || (isPillowPo(o) && soSet.has(o.companySOId || "")),
+        );
       }
       if (scoped.length === 0) {
         toast.warning(
@@ -7531,7 +7618,7 @@ export default function ProductionPage({
               section below handles job-card printing for all others via its
               own "Print All" button. */}
           {(activeTab === "UPHOLSTERY" || activeTab === "PACKING") && (
-            <Button variant="outline" onClick={handlePrintFgStickers}>Print FG Stickers</Button>
+            <Button variant="outline" onClick={handlePrintFgStickers}>Print Packing Stickers</Button>
           )}
           {/* Foam Bonding packing-stickers entry point was MOVED out of
               this header on 2026-05-24 per Wei Siang: he wanted the
@@ -8665,7 +8752,7 @@ export default function ProductionPage({
           the Production Sheet count above, 1:1 (FAB_CUT respects the per-
           PO fabric merge, UPHOLSTERY gets one sticker per job card).
           Hidden on Overview (dashboard) and on Packing (which uses the
-          richer FG Sticker Preview below — each physical box carries its
+          richer Packing Sticker Preview below — each physical box carries its
           own piece-N-of-M numbering that differs between bedframes and
           sofas). Horizontally scrollable so the row stays one line. */}
       {activeTab !== "ALL" && activeTab !== "PACKING" && (
@@ -8972,10 +9059,11 @@ export default function ProductionPage({
                           <div className="truncate"><span className="inline-block w-[58px] font-semibold text-[#6B7280]">Our SO</span>: {s.salesOrderNo || "—"}</div>
                           <div className="truncate"><span className="inline-block w-[58px] font-semibold text-[#6B7280]">Model</span>: <span className="font-bold">{s.productCode || "—"}</span></div>
                           {s.boxLabel && (
-                            <div className="truncate"><span className="inline-block w-[58px] font-semibold text-[#6B7280]">WIP</span>: {s.boxLabel}</div>
+                            <div className="truncate"><span className="inline-block w-[58px] font-semibold text-[#6B7280]">{s.isPillowCarton ? "For sofa" : "WIP"}</span>: {s.boxLabel}</div>
                           )}
                         </div>
                         <div className="border-t border-black my-1" />
+                        {s.isPillowCarton ? <PillowCartonLines s={s} scale="foam" /> : (<>
                         <div className="space-y-[1.5px] leading-tight text-[#1F1D1B]" style={{ fontSize: "9px" }}>
                           <div><span className="inline-block w-[58px] font-semibold text-[#6B7280]">Size</span>: {s.sizeLabel || "—"}</div>
                           {s.itemCategory === "SOFA" && s.seatSize && (
@@ -9000,6 +9088,7 @@ export default function ProductionPage({
                             >: {oemMarkFor(s) ? <span className="font-bold text-[#6B5C32]">{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold text-[#9A3A2D]">★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}</span>
                           </div>
                         )}
+                        </>)}
                         <div className="mt-auto pt-1 border-t border-dashed border-black flex items-end gap-1">
                           <QRImg
                             eager
@@ -9022,7 +9111,7 @@ export default function ProductionPage({
                             <div className="font-bold leading-none" style={{ fontSize: "18px" }}>
                               {s.pieceNo}/{s.totalPieces}
                             </div>
-                            <div className="font-bold uppercase" style={{ fontSize: "9px" }}>{s.pieceName}</div>
+                            <div className="font-bold uppercase" style={{ fontSize: "9px" }}>{s.isPillowCarton ? "PILLOW" : s.pieceName}</div>
                             <div className="text-[7px] text-[#888]">{s.shortCode}</div>
                           </div>
                           {pillowPair && (
@@ -9064,7 +9153,7 @@ export default function ProductionPage({
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-[#6B5C32]" />
               <h2 className="text-sm font-semibold text-[#1F1D1B]">
-                FG Sticker Preview
+                Packing Sticker Preview
                 <span className="ml-2 text-xs font-normal text-[#8A7F73]">
                   {(() => {
                     // Two-source count, mirrors how UPH's QR Stickers
@@ -9221,7 +9310,7 @@ export default function ProductionPage({
                         </div>
                         {s.boxLabel && (
                           <div className="flex items-baseline gap-1">
-                            <span className="inline-block w-[72px] font-semibold text-[#6B7280] shrink-0">WIP</span>
+                            <span className="inline-block w-[72px] font-semibold text-[#6B7280] shrink-0">{s.isPillowCarton ? "For sofa" : "WIP"}</span>
                             <span
                               className="flex-1 min-w-0 truncate"
                               style={{
@@ -9233,6 +9322,7 @@ export default function ProductionPage({
                         )}
                       </div>
                       <div className="border-t border-[#E6E0D9] my-1" />
+                      {s.isPillowCarton ? <PillowCartonLines s={s} scale="screen" /> : (<>
                       <div className="space-y-[2px] text-[13px] leading-tight text-[#1F1D1B]">
                         <div className="truncate"><span className="inline-block w-[72px] font-semibold text-[#6B7280]">Size</span>: {s.sizeLabel || "—"}</div>
                         {s.itemCategory === "SOFA" && s.seatSize && (
@@ -9258,6 +9348,7 @@ export default function ProductionPage({
                           }}
                         >: {oemMarkFor(s) ? <span className="font-bold text-[#6B5C32]">{oemMarkFor(s)} </span> : null}{s.specialOrder ? <span className="font-bold text-[#9A3A2D]">★ {s.specialOrder}</span> : (oemMarkFor(s) ? null : "—")}</span>
                       </div>
+                      </>)}
                       {/* Wei Siang 2026-05-15 (revised again): leg moves
                           INTO the right column ABOVE the SOFA piece-name
                           / pieceNo. Single dashed separator at the top
@@ -9278,7 +9369,7 @@ export default function ProductionPage({
                               </>
                             )}
                             <div className="leading-tight truncate uppercase font-semibold text-[#6B7280]" style={{ fontSize: "10px" }}>
-                              {s.pieceName || "Packing"}
+                              {s.isPillowCarton ? "PILLOW" : (s.pieceName || "Packing")}
                             </div>
                             <div className="font-bold leading-tight" style={{ fontSize: "22px" }}>
                               {s.pieceNo}/{s.totalPieces}
@@ -9746,7 +9837,7 @@ export default function ProductionPage({
                       </div>
                       {s.boxLabel && (
                         <div className="flex items-baseline gap-[1mm]">
-                          <span className="font-semibold shrink-0" style={{ width: "30mm" }}>WIP</span>
+                          <span className="font-semibold shrink-0" style={{ width: "30mm" }}>{s.isPillowCarton ? "For sofa" : "WIP"}</span>
                           <span
                             className="flex-1 min-w-0 truncate"
                             style={{
@@ -9758,6 +9849,7 @@ export default function ProductionPage({
                       )}
                     </div>
                     <div className="border-t border-black my-[2mm]" />
+                    {s.isPillowCarton ? <PillowCartonLines s={s} scale="print" /> : (<>
                     <div className="space-y-[1.5mm]" style={{ fontSize: "14pt", lineHeight: 1.25 }}>
                       <div><span className="inline-block w-[30mm] font-semibold">Size</span>: {s.sizeLabel || "—"}</div>
                       {s.itemCategory === "SOFA" && s.seatSize && (
@@ -9801,6 +9893,7 @@ export default function ProductionPage({
                         </span>
                       </div>
                     )}
+                    </>)}
                     {/* Wei Siang 2026-05-15 (revised again): leg moves
                         INTO the right column ABOVE the main piece
                         name / pieceNo. Single dashed separator at the
@@ -9826,7 +9919,7 @@ export default function ProductionPage({
                             </>
                           )}
                           <div className="uppercase font-semibold" style={{ fontSize: "11pt" }}>
-                            {s.pieceName || "Packing"}
+                            {s.isPillowCarton ? "PILLOW" : (s.pieceName || "Packing")}
                           </div>
                           <div className="font-bold" style={{ fontSize: pillowPair || legsPair ? "22pt" : "28pt", lineHeight: 1 }}>
                             {s.pieceNo}/{s.totalPieces}
