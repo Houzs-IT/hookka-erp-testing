@@ -108,18 +108,25 @@ app.get("/completed", async (c) => {
     const db = c.var.DB;
     const orgId = getOrgId(c);
     const { today } = myClock();
-    // The per-day history is one heavy pass over every job card (~7 s cold):
-    // shared for 2 minutes (stale-while-revalidate), under the 3-minute refresh.
-    const days = await cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId));
-    // One day = straight from the per-day rows; a longer period needs the
-    // range query (a sofa order finishing on two days counts once).
-    const range = from === to ? dayCounts(days, from) : await loadDeptCompletedRange(db, orgId, from, to);
-    // Production value (Department Revenue's rows) over the period and the
-    // drill's month in one read, shared for 2 minutes.
+    // Three heavy reads, run TOGETHER and each shared for 2 minutes
+    // (stale-while-revalidate, under the 3-minute refresh). Run one after
+    // another they took over 30 s on a cold cache and the dashboard's
+    // Employees tab gave up, showing "…" (owner 2026-11-20).
+    //   - the per-day history: one pass over every job card (~7 s cold);
+    //   - a period longer than a day: the range query (a sofa order
+    //     finishing on two days counts once); one day reads the per-day rows;
+    //   - production value (Department Revenue's rows) over the period and
+    //     the drill's month in one read.
     const monthStart = `${month}-01`;
     const lo = from < monthStart ? from : monthStart;
     const hi = to > `${month}-31` ? to : (`${month}-31` > today ? today : `${month}-31`);
-    const revRows = await cached(c, `dept-completed:value:${orgId}:${lo}:${hi}`, 120, () => loadDeptRevenue(db, orgId, lo, hi));
+    const [days, rangeRows, revRows] = await Promise.all([
+      cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId)),
+      // Cached as entries: the cache stores JSON, which drops a Map.
+      from === to ? Promise.resolve(null) : cached(c, `dept-completed:range:${orgId}:${from}:${to}`, 120, async () => [...(await loadDeptCompletedRange(db, orgId, from, to)).entries()]),
+      cached(c, `dept-completed:value:${orgId}:${lo}:${hi}`, 120, () => loadDeptRevenue(db, orgId, lo, hi)),
+    ]);
+    const range = rangeRows ? new Map(rangeRows) : dayCounts(days, from);
     const value = valueByDept(revRows, from, to);
     const dayValue = valueByDay(revRows);
     c.header("Cache-Control", "no-store");
