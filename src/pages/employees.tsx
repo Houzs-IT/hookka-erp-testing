@@ -43,6 +43,7 @@ import { EmployeeDrawer, type EmployeeDraft } from "@/components/employee-drawer
 import { HelperTag } from "@/components/helper-tag";
 import { HelperOverallLine } from "@/pages/dashboards/HelperOverallLine";
 import { useLabourCost } from "@/pages/dashboards/use-labour-cost";
+import { roundWithinGroups } from "@/lib/labour-to-payroll";
 import { WorkerPenaltyTab } from "@/components/worker-penalty-tab";
 import { OutsourcePieceTab } from "@/components/outsource-piece-tab";
 import { DepartmentMultiSelect } from "@/components/department-multi-select";
@@ -9322,7 +9323,11 @@ function LaborCostTab({
     // → "" (non-production has only the empty bucket).
     const catOrder: Record<string, number> = { SOFA: 0, BEDFRAME: 1, ACCESSORY: 2, "": 3 };
     const out: LaborCostRow[] = [];
-    for (const [key, b] of buckets.entries()) {
+    // Category lines of a department add up to that department's figure on
+    // the dashboard, to the sen.
+    const bucketList = [...buckets.entries()];
+    const paidRounded = roundWithinGroups(bucketList.map(([key, b]) => ({ group: key.split("|")[0], sen: b.paidSen })));
+    for (const [bi, [key, b]] of bucketList.entries()) {
       const [departmentCode, category] = key.split("|") as [string, Category];
       const dept = deptByCode.get(departmentCode);
       const isProduction = prodCodes.has(departmentCode);
@@ -9333,7 +9338,7 @@ function LaborCostTab({
         category,
         hours: Math.round(b.hours * 100) / 100,
         laborCostSen: roundSen(b.laborCostSen),
-        paidSen: roundSen(b.paidSen),
+        paidSen: paidRounded[bi],
         revenueSen: isProduction && category
           ? (byDeptCategory[`${departmentCode}|${category}`] ?? 0)
           : 0,

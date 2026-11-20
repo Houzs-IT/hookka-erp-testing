@@ -14,8 +14,8 @@
 //     its header counts DISTINCT departments (owner 2026-11-17), not rows.
 //   Overhead Breakdown — the non-production departments, each with its bucket: Overhead, Borrowed (Warehousing) or Shortfall.
 //   Revenue Raw Data — the recognised units (needs `revenue-figures:read`), newest first.
-import { roundSen } from "../../../../lib/utils";
 import { workerDayEntryCostsSen } from "../../../../lib/labor-day-cost";
+import { roundWithinGroups } from "../../../../lib/labour-to-payroll";
 import { countElapsedWorkingDays, dailyPaidEntryCostSen, isDailyPaidWorker } from "../../../../lib/labor-engine";
 import type { PayRuleVersion } from "../../../../lib/pay-rules";
 import type { DlDept, DlEntry, DlWorker } from "./department-labor-model";
@@ -159,7 +159,10 @@ export function computeLaborCost(input: {
   }
 
   const rows: LcRow[] = [];
-  for (const [key, b] of buckets) {
+  // Category lines of a department add up to the department's dashboard figure, to the sen.
+  const bucketList = [...buckets.entries()];
+  const rounded = roundWithinGroups(bucketList.map(([key, b]) => ({ group: key.split("|")[0], sen: b.costSen })));
+  for (const [bi, [key, b]] of bucketList.entries()) {
     const [deptCode, cat] = key.split("|") as [string, LcCategory];
     const isProduction = prodCodes.has(deptCode);
     rows.push({
@@ -168,7 +171,7 @@ export function computeLaborCost(input: {
       deptName: deptByCode.get(deptCode)?.name ?? deptCode,
       category: cat,
       hours: Math.round(b.hours * 100) / 100,
-      costSen: input.costDataOk ? roundSen(b.costSen) : 0,
+      costSen: input.costDataOk ? rounded[bi] : 0,
       revenueSen: isProduction && cat ? (input.byDeptCategory?.[`${deptCode}|${cat}`] ?? 0) : 0,
       isProduction,
       isShortfall: deptCode === "PRODUCTION_SHORTFALL",

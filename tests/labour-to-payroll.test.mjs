@@ -96,3 +96,13 @@ test("the dashboard's Labour cost card follows the picked day, not the month aro
   assert.match(source, /labourMonthsWithin\(labourMonths, keepDaysWithin\(costByWorkerDay, focus\.from, focus\.to\)\)/);
   assert.match(source, /periodTotals = useMemo\(\(\) => sumWindow\(\(d\) => inFocus\(period, d\), costByWorkerDay\)/);
 });
+
+test("roundWithinGroups: a department's category lines add up to its rounded total (owner 2026-11-20: 1 sen)", async () => {
+  const { roundWithinGroups } = await import("../src/lib/labour-to-payroll.ts");
+  // Packing: 1,000.4 + 2,899.4 = 3,899.8 → 3,900; plain rounding gives 1,000 + 2,899 = 3,899.
+  const parts = [{ group: "PACKING", sen: 100040.4 }, { group: "PACKING", sen: 289940.4 }, { group: "FRAMING", sen: 500.5 }];
+  const r = roundWithinGroups(parts);
+  assert.equal(r[0] + r[1], Math.round(100040.4 + 289940.4));
+  assert.equal(r[2], 501);
+  assert.ok(r.every(Number.isInteger));
+});
