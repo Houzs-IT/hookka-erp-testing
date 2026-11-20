@@ -133,16 +133,16 @@ export function countSets(rows: DeptRevenueRow[]): SetCount {
 }
 
 /**
- * One row per (production order, department) whose department cards ALL
- * completed, with the last completion inside [from, to] (YYYY-MM-DD,
- * inclusive). The per-PO gate is production-revenue.ts's, grouped by
- * department as well.
+ * The department-done rows, ONE RULE shared by Department Revenue and Floor
+ * Live's Completed counts (dept-completed.ts): `dept_done` = one row per
+ * (production order, department) whose cards in that department are all
+ * done, with the day the last one finished, including the POs a COMBINED
+ * card covers (see below). Floor Live used to count without the combined
+ * cards, so a bedframe whose Wood Cutting / Framing / Webbing card sat on its
+ * sibling PO never counted there (owner 2026-11-20, item 6).
  */
-export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: string): Promise<DeptRevenueRow[]> {
-  await ensureProductionOrderSourceLine(db);
-  const res = await db
-    .prepare(
-      `WITH per_po_dept AS (
+export const DEPT_DONE_CTES = `
+       per_po_dept AS (
          SELECT productionOrderId,
                 departmentCode,
                 MAX(CASE WHEN status IN ('COMPLETED','TRANSFERRED')
@@ -197,7 +197,19 @@ export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: s
           WHERE spo.status <> 'CANCELLED'
             AND NOT EXISTS (SELECT 1 FROM job_cards sj
                              WHERE sj.productionOrderId = spo.id AND sj.departmentCode = od.dept)
-       ),
+       )`;
+
+/**
+ * One row per (production order, department) whose department cards ALL
+ * completed, with the last completion inside [from, to] (YYYY-MM-DD,
+ * inclusive). The per-PO gate is production-revenue.ts's, grouped by
+ * department as well.
+ */
+export async function loadDeptRevenue(db: Db, orgId: string, from: string, to: string): Promise<DeptRevenueRow[]> {
+  await ensureProductionOrderSourceLine(db);
+  const res = await db
+    .prepare(
+      `WITH ${DEPT_DONE_CTES},
        po_wip AS (
          SELECT productionOrderId,
                 MAX(CASE WHEN UPPER(wipType) = 'HEADBOARD' THEN 1 ELSE 0 END) AS has_hb,

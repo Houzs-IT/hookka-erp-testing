@@ -18,7 +18,7 @@
 // Read-only.
 // ---------------------------------------------------------------------------
 
-import type { DeptRevenueRow } from "./dept-revenue";
+import { DEPT_DONE_CTES, type DeptRevenueRow } from "./dept-revenue";
 
 type Db = {
   prepare(sql: string): { bind(...args: unknown[]): { all<T = unknown>(): Promise<{ results?: T[] }> } };
@@ -35,17 +35,8 @@ export type DeptCompleted = {
 };
 
 const DONE = `jc.status IN ('COMPLETED','TRANSFERRED') AND jc.completedDate IS NOT NULL`;
-const PER_PO_DEPT = `
-  per_po_dept AS (
-    SELECT jc.productionOrderId,
-           jc.departmentCode,
-           MAX(CASE WHEN ${DONE} THEN jc.completedDate END) AS done_at
-      FROM job_cards jc
-     WHERE jc.departmentCode IS NOT NULL
-     GROUP BY jc.productionOrderId, jc.departmentCode
-    HAVING COUNT(*) > 0
-       AND SUM(CASE WHEN ${DONE} THEN 1 ELSE 0 END) = COUNT(*)
-  )`;
+// Department-done rows: Department Revenue's own CTEs, combined cards included (one rule).
+const PER_PO_DEPT = DEPT_DONE_CTES;
 const ORDER_KEY = `COALESCE(po.salesOrderId, po.consignmentOrderId, po.id)`;
 
 // A sofa SET (1 order) is done in a department on the day that department
@@ -94,7 +85,7 @@ export async function loadDeptCompletedByDay(db: Db, orgId: string | null): Prom
                   substr(d.done_at::text, 1, 10) AS day,
                   SUM(CASE WHEN po.itemCategory = 'BEDFRAME' THEN po.quantity ELSE 0 END) AS bed,
                   0 AS sofa
-             FROM per_po_dept d
+             FROM dept_done d
              JOIN production_orders po ON po.id = d.productionOrderId
             WHERE ${orgFilter}
               AND d.done_at IS NOT NULL
@@ -137,7 +128,7 @@ export async function loadDeptCompletedRange(db: Db, orgId: string, from: string
            SELECT d.departmentCode AS dept,
                   SUM(CASE WHEN po.itemCategory = 'BEDFRAME' THEN po.quantity ELSE 0 END) AS bed,
                   0 AS sofa
-             FROM per_po_dept d
+             FROM dept_done d
              JOIN production_orders po ON po.id = d.productionOrderId
             WHERE po.orgId = ?
               AND d.done_at IS NOT NULL

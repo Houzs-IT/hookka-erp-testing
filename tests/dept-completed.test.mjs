@@ -129,3 +129,16 @@ test("/completed runs its three heavy reads together, each cached (owner 2026-11
   assert.match(r, /\[\.\.\.\(await loadDeptCompletedRange\(db, orgId, from, to\)\)\.entries\(\)\]/);
   assert.match(r, /rangeRows \? new Map\(rangeRows\) : dayCounts\(days, from\)/);
 });
+
+test("Floor Live counts use Department Revenue's department-done rows, combined cards included (owner 2026-11-20, item 6)", () => {
+  const s = read("src/api/lib/dept-completed.ts");
+  assert.match(s, /import \{ DEPT_DONE_CTES, type DeptRevenueRow \} from "\.\/dept-revenue"/);
+  assert.match(s, /const PER_PO_DEPT = DEPT_DONE_CTES;/);
+  assert.equal((s.match(/FROM dept_done d/g) || []).length, 2);
+  assert.doesNotMatch(s, /FROM per_po_dept d/);
+  const r = read("src/api/lib/dept-revenue.ts");
+  assert.match(r, /export const DEPT_DONE_CTES = `/);
+  assert.match(r, /`WITH \$\{DEPT_DONE_CTES\},/);
+  assert.match(r, /order_dept AS \(/);
+  assert.match(r, /dept_done AS \(/);
+});
