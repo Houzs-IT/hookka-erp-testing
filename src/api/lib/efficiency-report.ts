@@ -16,6 +16,7 @@
 // (actualMinutes ?? estMinutes) × wipQty is credited once per its
 // completedDate; per-worker share = total / |distinct workers credited|.
 // ---------------------------------------------------------------------------
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { DEFAULT_FACTORY_GEOFENCE, evalPunchLocation } from "./geofence";
 import { creditCardToPics, jcMinutesTotal } from "../../lib/job-card-minutes";
 import { helperWorkerIds, loadApprovedExtraTime } from "./efficiency-allowance";
@@ -158,12 +159,15 @@ export async function collectEfficiencyData(
 
   // 2. Active workers — every active worker is a row in the report, even
   //    if they had zero hours yesterday (absent / leave shows clearly).
+  // Everyone EMPLOYED on the report day (one employment rule, owner
+  // 2026-11-21): a joiner from their join date, a leaver through their last
+  // day, never a test account ("of 44 active workers" counted 4 test logins).
   const wRes = await db
     .prepare(
       `SELECT id, empNo, name, departmentCode, status
-         FROM workers WHERE status = 'ACTIVE'`,
+         FROM workers WHERE ${employedOnSql("")}`,
     )
-    .bind()
+    .bind(...employedOnParams(dateYmd))
     .all<WorkerRow>();
   const allWorkers = wRes.results ?? [];
 

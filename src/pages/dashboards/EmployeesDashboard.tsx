@@ -17,7 +17,7 @@ import { DEPT_FLOOR, deptName } from "./ops-floor-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import {
   BORDER, CARD_BG, CARD_BORDER, CHART_AXIS, CHART_GOLD, CHART_INK, GREEN, MUTED, RED, TEAL,
-  fmtN, hasKeyedHours, inFocus, inPeriod, isOutsourced, periodLabel, prodEffOfDay, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
+  fmtN, hasKeyedHours, inFocus, inPeriod, isOutsourced, countsOn, countsDuring, periodLabel, prodEffOfDay, shiftMonth, ymd, type Period, CC_TICK, CC_AXIS_LINE } from "./dashboard-shared-lib";
 import { HelperOverallLine } from "./HelperOverallLine";
 
 // ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ import { HelperOverallLine } from "./HelperOverallLine";
 // average down.
 // ---------------------------------------------------------------------------
 
-type FeedWorker = { id: string; empNo: string | null; name: string | null; dept: string | null; role: string | null; countsToHeadcount: boolean; isHelper?: boolean };
+type FeedWorker = { id: string; empNo: string | null; name: string | null; dept: string | null; role: string | null; countsToHeadcount: boolean; isHelper?: boolean; status?: string | null; joinDate?: string | null; resignedAt?: string | null; isOutsource?: boolean };
 type Feed = {
   success?: boolean;
   meta?: { config?: { efficiencyTargetPct?: number } };
@@ -123,7 +123,13 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   // at least once — a login kept only for viewing (owner 2026-10-17: Chee "只是
   // 账号提供观看") never clocks and is not a worker who is absent.
   const clockers = useMemo(() => new Set((employee?.attendance ?? []).filter((r) => r.clockIn || r.clockOut).map((r) => r.employeeId)), [employee]);
-  const roster = useMemo(() => workers.filter((w) => w.countsToHeadcount && !isOutsourced(w) && clockers.has(w.id)), [workers, clockers]);
+  // Everyone employed at some point of the feed window; each day narrows it
+  // with countsOn (one employment rule, owner 2026-11-21).
+  const feedFrom = (employee?.performance.byDay ?? []).reduce((m, d) => (!m || d.date < m ? d.date : m), "");
+  const roster = useMemo(
+    () => workers.filter((w) => (feedFrom ? countsDuring(w, feedFrom, today) : w.countsToHeadcount) && !isOutsourced(w) && clockers.has(w.id)),
+    [workers, clockers, feedFrom, today],
+  );
   const outsourced = useMemo(() => new Set(workers.filter(isOutsourced).map((w) => w.id)), [workers]);
 
   // Per worker per day, the period's working / production minutes.
@@ -229,8 +235,11 @@ export function EmployeesDashboard({ period }: { period: Period }) {
   // same source as the attendance log below — headcount workers only.
   const presence = useMemo(() => {
     const att = new Set((employee?.attendance ?? []).filter((r) => r.date === anchor).map((r) => r.employeeId));
-    const absent = roster.filter((w) => !att.has(w.id));
-    return { present: roster.length - absent.length, absent };
+    // Only people employed ON that day (a joiner is not absent before they
+    // joined; a leaver still counts on the days they worked).
+    const onDay = roster.filter((w) => countsOn(w, anchor));
+    const absent = onDay.filter((w) => !att.has(w.id));
+    return { present: onDay.length - absent.length, absent, headcount: onDay.length };
   }, [employee, anchor, roster]);
 
   // ---- Worker rows ------------------------------------------------------------
@@ -416,7 +425,7 @@ export function EmployeesDashboard({ period }: { period: Period }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tile
           label={`Present on ${anchor || "—"}`}
-          value={`${fmtN(presence.present)} / ${fmtN(roster.length)}`}
+          value={`${fmtN(presence.present)} / ${fmtN(presence.headcount)}`}
           sub={presence.absent.length ? `${presence.absent.length} not in: ${presence.absent.map((w) => w.name).slice(0, 3).join(", ")}${presence.absent.length > 3 ? "…" : ""}` : "everyone clocked in"}
           color={presence.absent.length ? "#9A3A2D" : "#1F1D1B"}
           onClick={() => document.getElementById("emp-attendance")?.scrollIntoView({ behavior: "smooth", block: "start" })}

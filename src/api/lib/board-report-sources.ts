@@ -19,6 +19,7 @@
 // reason on that section and the Notes page lists it; it never renders as 0.
 // Shaping is pure and lives in src/lib/board-report.ts.
 // ---------------------------------------------------------------------------
+import { employedDuring } from "../../lib/employment";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { makeInProcessGet, type InProcessResult } from "./in-process-get";
@@ -29,7 +30,6 @@ import { defectRates, NOT_OUR_FAULT_CAUSES } from "./service-issue-stats";
 import { collectWorkforce, resolvePeriod } from "./operations-report";
 import { loadMonthPerfDays } from "./kpi-metrics";
 import { workerEfficiencyPcts } from "./workforce-perf";
-import { countsToHeadcount } from "./headcount-rule";
 import { countEfficiencyBands, EFFICIENCY_MIN_RANK_MINUTES } from "../../lib/efficiency-bands";
 import type { StockTakeCheck } from "../../lib/stock-take-check";
 import {
@@ -113,9 +113,11 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     try {
       const [perfDays, ws] = await Promise.all([
         loadMonthPerfDays(db, orgId, month),
-        db.prepare("SELECT id, emp_no, status FROM workers").all<{ id: string; empNo?: string | null; emp_no?: string | null; status: string | null }>(),
+        db.prepare(`SELECT id AS "id", empNo AS "empNo", status AS "status", joinDate AS "joinDate", resignedAt AS "resignedAt" FROM workers`).all<{ id: string; empNo: string | null; status: string | null; joinDate: string | null; resignedAt: string | null }>(),
       ]);
-      const counted = new Set((ws.results ?? []).filter((x) => countsToHeadcount(x.status, x.empNo ?? x.emp_no ?? null)).map((x) => String(x.id)));
+      // The people employed in THAT month (one employment rule, owner
+      // 2026-11-21) — a leaver stays in the month they worked.
+      const counted = new Set((ws.results ?? []).filter((x) => employedDuring(x, `${month}-01`, `${month}-31`)).map((x) => String(x.id)));
       const people = workerEfficiencyPcts(perfDays, (d) => d.startsWith(month), (id) => counted.has(id), EFFICIENCY_MIN_RANK_MINUTES);
       bands = countEfficiencyBands(people.map((x) => x.pct));
     } catch (e) {

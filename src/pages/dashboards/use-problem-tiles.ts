@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { deptName } from "./ops-floor-lib";
-import { isOutsourced } from "./dashboard-shared-lib";
+import { isOutsourced, countsOn } from "./dashboard-shared-lib";
 import type { OverdueSetsSummary } from "@/api/lib/customer-overdue-sets";
 
 // "Today's problems" tiles — shared by the desktop strip (ProblemsStrip.tsx)
@@ -82,7 +82,7 @@ export function useProblemTiles(visibleTabs: readonly string[]): Tile[] {
       if (day) {
         const ever = new Set(clocked.map((r) => r.employeeId));
         const inDay = new Set(clocked.filter((r) => r.date === day).map((r) => r.employeeId));
-        const roster = emp.workers.filter((w) => w.countsToHeadcount && !isOutsourced(w) && ever.has(w.id));
+        const roster = emp.workers.filter((w) => countsOn(w, day) && !isOutsourced(w) && ever.has(w.id));
         const absent = roster.filter((w) => !inDay.has(w.id));
         out.push({
           key: "absent", tab: "people", anchor: "emp-attendance", date: day, value: `${absent.length}`,

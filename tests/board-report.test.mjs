@@ -440,7 +440,8 @@ test("page 11 shows the bands next to the existing top / bottom workers, behind 
   const wf = src.slice(src.indexOf("const workforce = guarded"), src.indexOf("const notes ="));
   assert.ok(wf.indexOf('hasPermission(c, "workers", "read")') < wf.indexOf("loadMonthPerfDays("), "gate first");
   assert.match(wf, /workerEfficiencyPcts\(/);
-  assert.match(wf, /countsToHeadcount\(/);
+  // The month's employed people by the one employment rule (owner 2026-11-21).
+  assert.match(wf, /employedDuring\(x, `\$\{month\}-01`, `\$\{month\}-31`\)/);
   assert.match(wf, /EFFICIENCY_MIN_RANK_MINUTES/);
   assert.match(wf, /topEfficiency: wf\.topEfficiency/);
   const page = read("src/pages/board-report/pages-business.tsx");

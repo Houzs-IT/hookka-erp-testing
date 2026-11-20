@@ -26,8 +26,9 @@ A worker is **employed on day D** when:
 
 | Batch | Scope | Status |
 |---|---|---|
-| 1 | Shared rule; payroll onboarding/offboarding sync (`src/api/lib/worker-payroll-sync.ts`, `generatePayslipsForPeriod(..., { onlyWorkerIds })`); INACTIVE = leaver with a last day (API + drawer); join date honoured; INACTIVE paid its last month; test accounts out of hour docks | this PR |
-| 2 | Counts: Employees page TOTAL / PRESENT, dashboard Employees tab + phone, Command Center headcount (live + past), Finance / accounting per-head, Board Report (active workers, bands, joined/left), daily efficiency email, employee digest, Daily Capacity, Floor Live | next |
+| 1 | Shared rule; payroll onboarding/offboarding sync (`src/api/lib/worker-payroll-sync.ts`, `generatePayslipsForPeriod(..., { onlyWorkerIds })`); INACTIVE = leaver with a last day (API + drawer); join date honoured; INACTIVE paid its last month; test accounts out of hour docks | DONE (#1528, live 2026-11-21) |
+| 2a | Counts: Employees page TOTAL / PRESENT (department-performance workerCount), dashboard Employees tab + phone (per-day `countsOn`, feed carries joinDate / resignedAt / isOutsource), problem tile, attendance log, Command Center past-month headcount, Finance history headcount, accounting per-head, Board Report (active workers, bands, joined/left incl. INACTIVE), daily efficiency email, employee digest | this PR |
+| 2b | Daily Capacity headcount, Floor Live, Command Center live headcount, Attendance tab cards, phone Employees overview | next |
 | 3 | Pickers: PIC dropdowns (FE + server check), penalty, leave, advances, working-hours, scheduling, PIN generation, announcements / push / team | next |
 | 4 | Data: SOE SHWE Nov / Dec payslips, EMP-039 last day; worker-app lockout after the last day (not on the status change) | needs owner OK for writes |
 

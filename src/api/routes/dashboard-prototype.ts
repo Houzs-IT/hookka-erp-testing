@@ -50,6 +50,8 @@
 // completions before 2026-08-14, so any "units produced" series built from it
 // would read as a factory that made nothing for three months.
 // ---------------------------------------------------------------------------
+import { todayYmdMY } from "../../lib/utils";
+import { employedOn } from "../../lib/employment";
 import { loadLabourMonth } from "../lib/labour-to-date";
 import { loadServiceSla } from "../lib/dashboard-service-sla";
 import { liveOpenPunchRows } from "../lib/punch-autofill";
@@ -64,7 +66,6 @@ import { collectOverdueSetsRows, summarizeOverdueSets, todayInMalaysia } from ".
 import { poInPlanning, poReadyForDelivery, type PipelinePO } from "../../lib/delivery-pipeline";
 import { loadPoValueMap, loadDoValueMap } from "../lib/do-value";
 import { buildDailySlice } from "../lib/dashboard-daily-slice";
-import { countsToHeadcount } from "../lib/headcount-rule";
 import { buildPerfDays, num, dayKey } from "../lib/workforce-perf";
 import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
 import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
@@ -170,6 +171,9 @@ type WorkerRow = {
   status: string | null;
   efficiencyThresholdPct: number | string | null;
   workingHoursPerDay: number | string | null;
+  joinDate?: string | null;
+  resignedAt?: string | null;
+  isOutsource?: boolean | number | null;
 };
 
 // The commonest non-zero value across the workforce. A zero in either column
@@ -564,7 +568,8 @@ app.get("/", async (c) => {
   const workersSec = await section("workers", () =>
     c.var.DB.prepare(
       `SELECT id, emp_no, name, department_code, position, status,
-              efficiency_threshold_pct, working_hours_per_day
+              efficiency_threshold_pct, working_hours_per_day,
+              join_date, resigned_at, is_outsource
          FROM workers
         ORDER BY name ASC`,
     ).all<WorkerRow>().then((r) => r.results ?? []),
@@ -1882,10 +1887,13 @@ app.get("/", async (c) => {
         status: w.status,
         targetPct: num(w.efficiencyThresholdPct) || null,
         hoursPerDay: num(w.workingHoursPerDay) || null,
-        // Headcount rule copied from the real Employees page: ACTIVE only,
-        // and TEST* accounts excluded (owner 2026-07-11, same rule Payroll
-        // uses so headcount tallies system-wide).
-        countsToHeadcount: countsToHeadcount(w.status, w.empNo),
+        // The one employment rule (owner 2026-11-21): today's flag, plus the
+        // dates so each screen counts a joiner from their join date and a
+        // leaver through their last day (countsOn / countsDuring).
+        countsToHeadcount: employedOn(w, todayYmdMY()),
+        joinDate: w.joinDate ?? null,
+        resignedAt: w.resignedAt ?? null,
+        isOutsource: w.isOutsource === true || w.isOutsource === 1,
         isHelper: helperIds.has(w.id),
       })),
       attendance,

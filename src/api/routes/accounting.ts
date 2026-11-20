@@ -12,6 +12,7 @@
 // columns (`created_at`, `updated_at`) are snake_case per repo convention
 // and are remapped to camelCase in the response.
 // ---------------------------------------------------------------------------
+import { employedDuring } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { runSelfApply } from "../lib/self-apply";
@@ -16970,18 +16971,12 @@ app.get("/dashboard", async (c) => {
   const unitsByMonth = new Map<string, number>();
   try {
     const wRes = await db
-      .prepare(`SELECT joinDate, resignedAt FROM workers`)
-      .all<{ joinDate?: string | null; join_date?: string | null; resignedAt?: string | null; resigned_at?: string | null }>();
+      .prepare(`SELECT empNo AS "empNo", status AS "status", joinDate AS "joinDate", resignedAt AS "resignedAt" FROM workers`)
+      .all<{ empNo: string | null; status: string | null; joinDate: string | null; resignedAt: string | null }>();
     for (const ym of allMonths) {
-      const monthEnd = `${ym}-31`; // string compare — a YYYY-MM-DD never exceeds it within the month
-      let n = 0;
-      for (const w of wRes.results ?? []) {
-        const joined = String(w.joinDate ?? w.join_date ?? "").slice(0, 10);
-        const left = String(w.resignedAt ?? w.resigned_at ?? "").slice(0, 10);
-        if (joined && joined > monthEnd) continue;      // not hired yet
-        if (left && left < `${ym}-01`) continue;         // already gone
-        n += 1;
-      }
+      // On the payroll for any part of the month, by the one employment rule
+      // (owner 2026-11-21): no test accounts; INACTIVE placed by its last day.
+      const n = (wRes.results ?? []).filter((w) => employedDuring(w, `${ym}-01`, `${ym}-31`)).length;
       headByMonth.set(ym, n);
     }
   } catch {

@@ -18,6 +18,7 @@
 // Sections are filled incrementally; unfinished ones return `null` behind a
 // stable type so the frontend contract never shifts. See WORK-TRACKER.
 // ---------------------------------------------------------------------------
+import { employedDuringParams, employedDuringSql } from "../../lib/employment";
 import {
   computeMonthlyEfficiencyByWorker,
   resolveEfficiencyAllowanceSen,
@@ -579,10 +580,11 @@ export async function collectWorkforce(
               efficiencyAllowanceSen AS "allowanceSen",
               efficiencyThresholdPct AS "thresholdPct"
          FROM workers
-        WHERE (status = 'ACTIVE' OR status IS NULL)
-          AND (empNo IS NULL OR empNo NOT LIKE 'TEST%')`,
+        WHERE ${employedDuringSql("")}`,
     )
-    .bind()
+    // Employed in the period by the one rule (owner 2026-11-21), not today's
+    // status — a past month's report keeps the people who worked it.
+    .bind(...employedDuringParams(p.startYmd, p.endYmd))
     .all<{
       id: string;
       name: string;
@@ -788,7 +790,8 @@ async function collectPeople(db: Db, p: ResolvedPeriod): Promise<PeopleSection> 
       joined.push({ name: name(r), department: dept(r) });
     }
     const status = String(pick(r, "status") ?? "");
-    if (status === "RESIGNED" && inWindow(pick(r, "resignedAt", "resigned_at"))) {
+    // INACTIVE is a leaver too (owner 2026-11-21).
+    if ((status === "RESIGNED" || status === "INACTIVE") && inWindow(pick(r, "resignedAt", "resigned_at"))) {
       left.push({ name: name(r), department: dept(r) });
     }
   }
