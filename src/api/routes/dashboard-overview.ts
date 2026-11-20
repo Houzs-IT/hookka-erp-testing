@@ -10,7 +10,7 @@
 //
 // Mounted at /api/dashboard/overview. Auth-gated globally; tenant-scoped.
 // ---------------------------------------------------------------------------
-import { loadDeptCompletedByDay, type DeptDayCount } from "../lib/dept-completed";
+import { loadDeptCompletedByDay, loadUpholsterySofaSets, type DeptDayCount } from "../lib/dept-completed";
 import type { SetCount } from "../lib/dept-revenue";
 import { todayYmdMY } from "../../lib/utils";
 import { Hono } from "hono";
@@ -328,6 +328,7 @@ app.get("/", async (c) => {
       compRangeRes,
       backlogJcRes,
       headRes,
+      sofaSetRows,
     ] = await Promise.all([
       db
         .prepare(
@@ -346,7 +347,7 @@ app.get("/", async (c) => {
           pic2Id: string | null;
         }>(),
       // Active Jobs — still-in-production POs, split Bedframe (units =
-      // qty) vs Sofa (sets = distinct SOs), with the customer for the
+      // qty) vs Sofa (sets = distinct orders, consignment too), with the customer for the
       // click-through breakdown.
       //
       // "Still in production" cannot be read off the production order alone.
@@ -365,7 +366,7 @@ app.get("/", async (c) => {
           `SELECT po.itemCategory AS "cat",
                   po.customerName AS "customerName",
                   COALESCE(SUM(po.quantity),0) AS "units",
-                  COUNT(DISTINCT po.salesOrderId) AS "sos"
+                  COUNT(DISTINCT COALESCE(po.salesOrderId, po.consignmentOrderId, po.id)) AS "sos"
              FROM production_orders po
              LEFT JOIN sales_orders so ON so.id = po.salesOrderId
             WHERE po.orgId = ? AND po.status NOT IN ('COMPLETED','CANCELLED')
@@ -728,6 +729,15 @@ app.get("/", async (c) => {
           "SELECT departmentCode AS dept, COUNT(*) AS n FROM workers WHERE status = 'ACTIVE' AND empNo NOT LIKE 'TEST%' GROUP BY departmentCode",
         )
         .all<{ dept: string; n: number }>(),
+      // Sofa SETS completed, Floor Live's rule (an order = one set, on the day
+      // its last sofa production order finishes Upholstery), over the headline
+      // day and the drill window (owner 2026-11-20).
+      loadUpholsterySofaSets(
+        db,
+        orgId,
+        completedHeadlineDate < completedRangeStart ? completedHeadlineDate : completedRangeStart,
+        completedHeadlineDate > completedRangeEnd ? completedHeadlineDate : completedRangeEnd,
+      ),
     ]);
 
     // ---- Working-day windows (owner 2026-10-15) ----
@@ -1054,17 +1064,29 @@ app.get("/", async (c) => {
       return { bedframeUnits, sofaSets, byCustomer };
     };
     const activeJobs = rollUp(activeJobsRes.results ?? []);
-    const completedYesterday = rollUp(compYestRes.results ?? []);
+    // Sofa sets from the one set rule (sofaSetRows); the per-PO query keeps
+    // the bedframe units.
+    const yestSets = new Map<string, number>();
+    for (const s of sofaSetRows) if (s.day === completedHeadlineDate) yestSets.set(s.customerName, (yestSets.get(s.customerName) ?? 0) + 1);
+    const completedYesterday = rollUp([
+      ...(compYestRes.results ?? []).filter((r) => (r.cat ?? "").toUpperCase() !== "SOFA"),
+      ...[...yestSets].map(([customerName, sos]) => ({ cat: "SOFA", customerName, units: 0, sos })),
+    ]);
     // Completed per day (no customer split). Fill every day so the list is
     // continuous (0 on idle days). Window = last 7 days for all-time /
     // current; the whole selected month otherwise.
     const compByDay = new Map<string, { bf: number; sofa: number }>();
     for (const r of compLast7Res.results ?? []) {
       if (!r.d) continue;
-      compByDay.set(r.d, {
-        bf: Number(r.bfUnits) || 0,
-        sofa: Number(r.sofaSets) || 0,
-      });
+      compByDay.set(r.d, { bf: Number(r.bfUnits) || 0, sofa: 0 });
+    }
+    let rangeSofaSets = 0;
+    for (const s of sofaSetRows) {
+      if (s.day < completedRangeStart || s.day > completedRangeEnd) continue;
+      rangeSofaSets += 1;
+      const v = compByDay.get(s.day) ?? { bf: 0, sofa: 0 };
+      v.sofa += 1;
+      compByDay.set(s.day, v);
     }
     // Range totals, counted ONCE over the whole window.
     //
@@ -1857,7 +1879,8 @@ app.get("/", async (c) => {
       // Headline totals for the selected window, deduped once (see the query).
       completedRange: {
         bedframeUnits: Number(compRangeRes?.bfUnits) || 0,
-        sofaSets: Number(compRangeRes?.sofaSets) || 0,
+        // Each set has one day, so the window's count is simply its rows.
+        sofaSets: rangeSofaSets,
       },
       capacityDays,
       capacityWorkersSource,

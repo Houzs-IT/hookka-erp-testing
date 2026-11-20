@@ -31,6 +31,7 @@ import {
 } from "./on-time-delivery";
 import { todayYmdMY } from "../../lib/utils";
 import { FINISHED_PRODUCTION_ORDERS_CTE } from "./production-revenue";
+import { loadUpholsterySofaSets } from "./dept-completed";
 
 // Fabric / foam item-group keys (mirror dashboard-overview.ts:43 + the foam
 // split the material section uses). Kept local so this file is self-contained.
@@ -346,7 +347,9 @@ async function collectProduction(
 
   return {
     bedframeUnits: Number(unitsRow?.bfUnits ?? 0),
-    sofaSets: Number(unitsRow?.sofaSets ?? 0),
+    // One set rule with Floor Live / the Command Center (owner 2026-11-20):
+    // an order is one set, on the day its last sofa finishes Upholstery.
+    sofaSets: (await loadUpholsterySofaSets(db, orgId, p.startYmd, p.endYmd)).length,
     overdueCount: Number(overdueRow?.n ?? 0),
     onTimePct: null, // derived in the delivery pass
   };
