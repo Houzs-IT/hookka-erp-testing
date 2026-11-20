@@ -13,7 +13,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { BedDouble, CalendarDays, ChevronLeft, ChevronRight, Sofa, Wallet, type LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { todayYmdMY } from "@/lib/utils";
+import { formatCurrency, todayYmdMY } from "@/lib/utils";
 import {
   behindPace, deptCompletedDays, deptCompletedFor, myNowMin,
   type DeptCompletedResponse,
@@ -28,14 +28,13 @@ const SHADOW_PANEL = "0 0 0 1px rgba(31,29,27,.05),0 2px 4px rgba(31,29,27,.06),
 const SHADOW_TILE = "0 0 0 1px rgba(31,29,27,.04),0 2px 4px rgba(31,29,27,.06),0 10px 24px -12px rgba(31,29,27,.28)";
 const TODAY_ROW = `color-mix(in srgb, ${M.taupe} 8%, ${M.card})`;
 const STRIP_BG = `color-mix(in srgb, ${M.taupe} 12%, ${M.card})`;
-// 390px: 330px inner width = 46 + bar + 62 + 62 + 80 + 4 gaps of 4 → the bar keeps ~64px; "12 Nov" and "RM 170,640" fit.
-const TABLE_GRID = "46px minmax(0,1fr) 62px 62px 80px";
+// 390px: 330px inner width = 46 + bar + 56 + 56 + 98 + 4 gaps of 4 → the bar keeps ~58px; "12 Nov" and "RM 170,640.50" fit.
+const TABLE_GRID = "46px minmax(0,1fr) 56px 56px 98px";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const rmN = (sen: number | undefined) => Math.round((sen ?? 0) / 100).toLocaleString("en-MY");
-/** Desktop's format (DeptCompletedStrip): "RM 9,698", whole ringgit. */
-const rm = (sen: number | undefined) => `RM ${rmN(sen)}`;
+/** Desktop's format (DeptCompletedStrip): "RM 9,698.50" — to the sen, as every revenue figure (owner 2026-11-20). */
+const rm = (sen: number | undefined) => formatCurrency(Math.round(sen ?? 0));
 
 // ---- the strip in a department card --------------------------------------------
 export function CategoryStrip({ code, name, data, showUsual, live, onOpen }: {
@@ -74,11 +73,11 @@ export function CategoryStrip({ code, name, data, showUsual, live, onOpen }: {
               {x.k} <b style={{ fontSize: 14, color: tone(x.v, x.usual), ...TNUM }}>{x.v}</b>
               {showUsual ? <span style={{ fontSize: 10.5, color: M.body, ...TNUM }}> / {Math.round(x.usual)}</span> : null}
             </span>
-            <span style={{ fontSize: 11.5, fontWeight: 600, color: M.taupe, ...TNUM }}>RM {rmN(x.sen)}</span>
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: M.taupe, ...TNUM }}>{rm(x.sen)}</span>
           </span>
         ))}
         {/* Accessory: value only, no count (owner 2026-11-20). */}
-        {accSen > 0 ? <span style={{ gridColumn: "1 / -1", fontSize: 11, color: M.body, ...TNUM }}>Accessory <b style={{ color: M.taupe }}>RM {rmN(accSen)}</b></span> : null}
+        {accSen > 0 ? <span style={{ gridColumn: "1 / -1", fontSize: 11, color: M.body, ...TNUM }}>Accessory <b style={{ color: M.taupe }}>{rm(accSen)}</b></span> : null}
       </span>
       <ChevronRight size={16} strokeWidth={2} color={M.taupe} aria-hidden="true" />
     </button>

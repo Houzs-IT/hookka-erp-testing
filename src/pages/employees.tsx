@@ -42,6 +42,7 @@ import { normalizePaymentMethod, paymentDestinationLabel } from "@/lib/payment-m
 import { EmployeeDrawer, type EmployeeDraft } from "@/components/employee-drawer";
 import { HelperTag } from "@/components/helper-tag";
 import { HelperOverallLine } from "@/pages/dashboards/HelperOverallLine";
+import { useLabourCost } from "@/pages/dashboards/use-labour-cost";
 import { WorkerPenaltyTab } from "@/components/worker-penalty-tab";
 import { OutsourcePieceTab } from "@/components/outsource-piece-tab";
 import { DepartmentMultiSelect } from "@/components/department-multi-select";
@@ -8475,6 +8476,11 @@ type LaborCostRow = {
   isShortfall: boolean;
   isWarehousing: boolean;
   outsourceSen: number;
+  /** Payroll basis (owner 2026-11-20): each person's month as paid, spread
+   *  over their logged hours: the dashboard's labour figure
+   *  (src/lib/labour-to-payroll.ts). `laborCostSen` stays the logged-hours
+   *  value, which the payroll reconciliation below bridges from. */
+  paidSen: number;
 };
 
 function periodToDateRange(period: string): { from: string; to: string } {
@@ -8910,6 +8916,10 @@ function LaborCostTab({
   // refuse just fills the console with 403s on every date change.
   const { hasPermission: hasPerm } = usePermissions();
   const canSeeRevenue = hasPerm("revenue-figures", "read");
+  // The dashboard's labour, per worker-day-department, scaled to payroll. The
+  // table's Labor Cost is this figure so the two screens print one number per
+  // department (owner 2026-11-20).
+  const paidLabour = useLabourCost(from, to, hasPerm("payroll", "read"));
   const prodRevUrl = useMemo(
     () =>
       canSeeRevenue
@@ -9194,13 +9204,18 @@ function LaborCostTab({
 
     // Group by (departmentCode, category). Hours summed; cost = sum over each
     // entry of regular_hours × regular_rate + ot_hours × ot_base_rate × multiplier.
-    type Bucket = { hours: number; laborCostSen: number; outsourceSen: number };
+    type Bucket = { hours: number; laborCostSen: number; outsourceSen: number; paidSen: number };
     const buckets = new Map<string, Bucket>();
-    const addToBucket = (bucketKey: string, hours: number, cost: number, isOutsource: boolean) => {
-      const cur = buckets.get(bucketKey) ?? { hours: 0, laborCostSen: 0, outsourceSen: 0 };
+    // Every costed segment, before the category filter, keyed by
+    // worker|date|department: the key the payroll scaling uses.
+    type Seg = { bucketKey: string; cat: string; hours: number; cost: number; isOutsource: boolean; wdd: string };
+    const segList: Seg[] = [];
+    const addToBucket = (bucketKey: string, hours: number, cost: number, isOutsource: boolean, paid: number) => {
+      const cur = buckets.get(bucketKey) ?? { hours: 0, laborCostSen: 0, outsourceSen: 0, paidSen: 0 };
       cur.hours += hours;
       cur.laborCostSen += cost;
-      if (isOutsource) cur.outsourceSen += cost;
+      cur.paidSen += paid;
+      if (isOutsource) cur.outsourceSen += paid;
       buckets.set(bucketKey, cur);
     };
 
@@ -9233,8 +9248,7 @@ function LaborCostTab({
           const hours = Number(e.hours) || 0;
           const cost = dailyPaidEntryCostSen(w, hours, dayHours);
           const cat = (typeof e.category === "string" ? e.category.trim().toUpperCase() : "") as Category;
-          if (categoryFilter && cat !== categoryFilter && cat !== "") continue;
-          addToBucket(`${e.departmentCode}|${cat}`, hours, cost, isOutsource);
+          segList.push({ bucketKey: `${e.departmentCode}|${cat}`, cat, hours, cost, isOutsource, wdd: `${k}|${e.departmentCode || ""}` });
         }
         continue;
       }
@@ -9266,8 +9280,40 @@ function LaborCostTab({
         // have empty cat and fall through into the "always-show" branch
         // below - they are not category-tagged labor and stay visible so
         // operators don't lose sight of borrowed / idle hours.
-        if (categoryFilter && cat !== categoryFilter && cat !== "") continue;
-        addToBucket(`${e.departmentCode}|${cat}`, hours, cost, isOutsource);
+        segList.push({ bucketKey: `${e.departmentCode}|${cat}`, cat, hours, cost, isOutsource, wdd: `${k}|${e.departmentCode || ""}` });
+      }
+    }
+
+    // Payroll basis: each worker-day-department carries the dashboard's paid
+    // figure, split across its entries in the shape of their logged cost (or
+    // hours when nothing was costed). Paid days with no costed entry here (a
+    // person paid with no hours, spread over the month under their home
+    // department) land on that department's uncategorised line. Until the
+    // payroll figures arrive the paid column equals the logged one.
+    const paidByWdd = paidLabour.ready ? paidLabour.byWorkerDayDept : null;
+    const segsByWdd = new Map<string, Seg[]>();
+    for (const s of segList) {
+      const arr = segsByWdd.get(s.wdd) ?? [];
+      arr.push(s);
+      segsByWdd.set(s.wdd, arr);
+    }
+    const passes = (cat: string) => !categoryFilter || cat === categoryFilter || cat === "";
+    for (const [wdd, segs] of segsByWdd) {
+      const target = paidByWdd ? paidByWdd.get(wdd) ?? 0 : null;
+      const costSum = segs.reduce((s, x) => s + x.cost, 0);
+      const hourSum = segs.reduce((s, x) => s + x.hours, 0);
+      for (const s of segs) {
+        if (!passes(s.cat)) continue;
+        const share = costSum > 0 ? s.cost / costSum : hourSum > 0 ? s.hours / hourSum : 1 / segs.length;
+        addToBucket(s.bucketKey, s.hours, s.cost, s.isOutsource, target == null ? s.cost : target * share);
+      }
+    }
+    if (paidByWdd) {
+      for (const [wdd, sen] of paidByWdd) {
+        if (!sen || segsByWdd.has(wdd)) continue;
+        const [workerId, , dept] = wdd.split("|");
+        const w = workersById.get(workerId);
+        addToBucket(`${dept}|`, 0, 0, !!w && isOutsourceWorker(w), sen);
       }
     }
 
@@ -9287,6 +9333,7 @@ function LaborCostTab({
         category,
         hours: Math.round(b.hours * 100) / 100,
         laborCostSen: roundSen(b.laborCostSen),
+        paidSen: roundSen(b.paidSen),
         revenueSen: isProduction && category
           ? (byDeptCategory[`${departmentCode}|${category}`] ?? 0)
           : 0,
@@ -9303,10 +9350,13 @@ function LaborCostTab({
       return (catOrder[a.category] ?? 99) - (catOrder[b.category] ?? 99);
     });
     return out;
-  }, [entriesResp, plResp, workersById, period, from, to, allDepts, prodCodes, categoryFilter, holidayList, effSalaryOf, payRuleVersions]);
+  }, [entriesResp, plResp, workersById, period, from, to, allDepts, prodCodes, categoryFilter, holidayList, effSalaryOf, payRuleVersions, paidLabour.ready, paidLabour.byWorkerDayDept]);
 
   // KPIs across the full table.
   const totalLaborCostSen = rows.reduce((s, r) => s + r.laborCostSen, 0);
+  // Payroll basis: what the cards and the tables print (same as the dashboard).
+  const paidTotalSen = rows.reduce((s, r) => s + r.paidSen, 0);
+  const paidProductionSen = rows.filter((r) => r.isProduction).reduce((s, r) => s + r.paidSen, 0);
   const productionLaborCostSen = rows
     .filter((r) => r.isProduction)
     .reduce((s, r) => s + r.laborCostSen, 0);
@@ -9853,13 +9903,13 @@ function LaborCostTab({
 
     // ── KPI dashboard cards — mirror the on-screen strip. ──
     const cards: PrintCard[] = [
-      { label: "Production Labor Cost", value: formatCurrency(productionLaborCostSen) },
+      { label: "Production Labor Cost", value: formatCurrency(paidProductionSen) },
       // Same rule as the screen: the printed report must not carry what the
       // screen withholds, or the restriction lasts until someone hits Print.
       ...(canSeeRevenue
         ? [
             { label: "Total Revenue", value: formatCurrency(totalRevenueSen) },
-            { label: "Remain", value: formatCurrency(totalRevenueSen - productionLaborCostSen), color: "#15803D" },
+            { label: "Remain", value: formatCurrency(totalRevenueSen - paidProductionSen), color: "#15803D" },
           ]
         : []),
       { label: "Borrowed (Warehousing)", value: formatCurrency(warehousingLaborCostSen), color: "#9C6F1E" },
@@ -9905,7 +9955,7 @@ function LaborCostTab({
         { header: "Department", value: (r) => (r as LaborCostRow).departmentName },
         { header: "Category", value: (r) => { const c = (r as LaborCostRow).category; return c ? c[0] + c.slice(1).toLowerCase() : "—"; } },
         { header: "Hours", align: "right", value: (r) => `${(r as LaborCostRow).hours.toFixed(1)}h` },
-        { header: "Labor Cost", align: "right", value: (r) => formatCurrency((r as LaborCostRow).laborCostSen) },
+        { header: "Labor Cost", align: "right", value: (r) => formatCurrency((r as LaborCostRow).paidSen) },
         ...(canSeeRevenue
           ? [{ header: "Department Revenue", align: "right" as const, value: (r: unknown) => { const row = r as LaborCostRow; return row.category ? formatCurrency(row.revenueSen) : "n/a"; } }]
           : []),
@@ -9915,7 +9965,7 @@ function LaborCostTab({
           value: (r) => {
             const row = r as LaborCostRow;
             if (!row.category || row.revenueSen <= 0) return "—";
-            const pct = (row.laborCostSen / row.revenueSen) * 100;
+            const pct = (row.paidSen / row.revenueSen) * 100;
             // Red when labour eats a high share of the category's revenue.
             return { text: `${pct.toFixed(1)}%`, color: pct >= 35 ? "#9A3A2D" : "#15803D", bold: true };
           },
@@ -9961,7 +10011,7 @@ function LaborCostTab({
     canSeeRevenue,
     from,
     to,
-    productionLaborCostSen,
+    paidProductionSen,
     totalRevenueSen,
     warehousingLaborCostSen,
     shortfallLaborCostSen,
@@ -10048,23 +10098,23 @@ function LaborCostTab({
         <div className={`grid gap-3 grid-cols-2 ${fullCostCard && canSeeRevenue ? "md:grid-cols-6" : "md:grid-cols-5"} mb-4 max-md:grid-cols-2 max-sm:grid-cols-1`}>
           <Card>
             <CardContent className="p-3">
-              <p className="text-xs text-[#6B7280]">Production Hours Value</p>
+              <p className="text-xs text-[#6B7280]">Production Labor Cost</p>
               <p
                 className="text-lg font-bold text-[#1F1D1B]"
-                title={`Production-only (excl. Warehousing / Repair / Maintenance / Shortfall). Total incl. overhead = ${formatCurrency(totalLaborCostSen)}`}
+                title={`Payroll basis, as on the dashboard: each person's pay spread over their logged hours. Production departments only. Total incl. overhead = ${formatCurrency(paidTotalSen)}`}
               >
-                {formatCurrency(productionLaborCostSen)}
+                {formatCurrency(paidProductionSen)}
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3" title="Labor for the non-production depts — Warehousing / Repair / Maintenance / Production Shortfall / R&D — plus any office / sales / admin salaries. These don't earn revenue directly.">
-              <p className="text-xs text-[#6B7280]">Non-Production Hours Value</p>
-              <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(totalLaborCostSen - productionLaborCostSen)}</p>
+              <p className="text-xs text-[#6B7280]">Non-Production Labor Cost</p>
+              <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(paidTotalSen - paidProductionSen)}</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-3" title="Production + Non-Production — the full labor bill for the period.">
+            <CardContent className="p-3" title="Logged hours at the Labor Cost rate, before allowances, employer EPF / SOCSO / EIS and anyone paid with no hours. Reference only; the reconciliation below bridges it to payroll.">
               <p className="text-xs text-[#6B7280]">Logged Hours Value</p>
               <p className="text-lg font-bold text-[#1F1D1B]">{formatCurrency(totalLaborCostSen)}</p>
             </CardContent>
@@ -10105,9 +10155,9 @@ function LaborCostTab({
                   title="Remain = Total Revenue − Production Labor Cost. Positive = labor came in under booked revenue this period; negative = labor outpaced bookings (e.g. workshop did a lot of in-progress work whose POs haven't completed UPHOLSTERY yet, so Total Revenue hasn't recognized it)."
                 >
                   <p className="text-xs text-[#6B7280]">Remain</p>
-                  <p className={`text-lg font-bold ${(totalRevenueSen - productionLaborCostSen) >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}`}>
-                    {totalRevenueSen > 0 || productionLaborCostSen > 0
-                      ? formatCurrency(totalRevenueSen - productionLaborCostSen)
+                  <p className={`text-lg font-bold ${(totalRevenueSen - paidProductionSen) >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}`}>
+                    {totalRevenueSen > 0 || paidProductionSen > 0
+                      ? formatCurrency(totalRevenueSen - paidProductionSen)
                       : "—"}
                   </p>
                 </CardContent>
@@ -10302,7 +10352,7 @@ function LaborCostTab({
                 {showProduction ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 Production Breakdown
                 <span className="text-xs font-normal text-[#6B7280]">
-                  ({rows.filter((r) => r.isProduction).length} dept{rows.filter((r) => r.isProduction).length === 1 ? "" : "s"} - {formatCurrency(productionLaborCostSen)})
+                  ({rows.filter((r) => r.isProduction).length} dept{rows.filter((r) => r.isProduction).length === 1 ? "" : "s"} - {formatCurrency(paidProductionSen)})
                 </span>
               </span>
             </button>
@@ -10321,7 +10371,7 @@ function LaborCostTab({
                 </thead>
                 <tbody>
                   {rows.filter((r) => r.isProduction).map((r) => {
-                    const ratio = r.revenueSen > 0 ? (r.laborCostSen / r.revenueSen) * 100 : 0;
+                    const ratio = r.revenueSen > 0 ? (r.paidSen / r.revenueSen) * 100 : 0;
                     return (
                       <tr key={r.id} className="border-b border-[#E2DDD8] hover:bg-[#FAF9F7] transition-colors">
                         <td className="h-10 px-3 font-medium text-[#1F1D1B]">{r.departmentName}</td>
@@ -10329,7 +10379,7 @@ function LaborCostTab({
                           {r.category ? r.category[0] + r.category.slice(1).toLowerCase() : <span className="text-[#9CA3AF]">—</span>}
                         </td>
                         <td className="h-10 px-3 text-right font-medium tabular-nums">{r.hours.toFixed(1)}h</td>
-                        <td className="h-10 px-3 text-right font-medium tabular-nums">{formatCurrency(r.laborCostSen)}</td>
+                        <td className="h-10 px-3 text-right font-medium tabular-nums">{formatCurrency(r.paidSen)}</td>
                         <td className="h-10 px-3 text-right tabular-nums text-[#4B5563]">
                           {r.category ? formatCurrency(r.revenueSen) : <span className="text-[#9CA3AF]">n/a</span>}
                         </td>
@@ -10361,7 +10411,7 @@ function LaborCostTab({
                 Warehousing, Production Shortfall). These don't have a
                 Category Revenue mapping so we drop the Cost / Revenue
                 columns; just show where the overhead dollars went. */}
-            {rows.some((r) => !r.isProduction && r.laborCostSen > 0) && (
+            {rows.some((r) => !r.isProduction && r.paidSen > 0) && (
               <div className="mt-4">
                 <button
                   type="button"
@@ -10372,7 +10422,7 @@ function LaborCostTab({
                     {showOverhead ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                     Overhead Breakdown
                     <span className="text-xs font-normal text-[#6B7280]">
-                      ({rows.filter((r) => !r.isProduction).length} - {formatCurrency(overheadLaborCostSen + warehousingLaborCostSen + shortfallLaborCostSen)} - not in Production Labor Cost)
+                      ({rows.filter((r) => !r.isProduction).length} - {formatCurrency(paidTotalSen - paidProductionSen)} - not in Production Labor Cost)
                     </span>
                   </span>
                 </button>
@@ -10403,7 +10453,7 @@ function LaborCostTab({
                           <tr key={r.id} className={`border-b border-[#E2DDD8] hover:bg-[#FAF9F7] transition-colors ${rowClass}`}>
                             <td className="h-10 px-3 font-medium text-[#1F1D1B]">{r.departmentName}</td>
                             <td className="h-10 px-3 text-right font-medium tabular-nums">{r.hours.toFixed(1)}h</td>
-                            <td className="h-10 px-3 text-right font-medium tabular-nums">{formatCurrency(r.laborCostSen)}</td>
+                            <td className="h-10 px-3 text-right font-medium tabular-nums">{formatCurrency(r.paidSen)}</td>
                             <td className="h-10 px-3 text-[#6B7280] text-xs">{bucketLabel}</td>
                           </tr>
                         );

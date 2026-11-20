@@ -65,6 +65,10 @@ export function computeLaborCost(input: {
   /** "DEPT|CATEGORY" → attributed revenue (sen), from the production-revenue endpoint; null = revenue not available. */
   byDeptCategory: Readonly<Record<string, number>> | null;
   costDataOk: boolean;
+  /** Payroll basis (owner 2026-11-20, same as desktop and the dashboard): `worker|date|dept` → paid sen from
+   *  use-labour-cost. Each worker-day-department's paid figure is split over its entries in the shape of their logged cost;
+   *  a paid day with no entry here lands on its department's uncategorised line. null = logged-hours value. */
+  paidByWdd?: ReadonlyMap<string, number> | null;
 }): LcResult {
   const { entries, workers, depts, holidays, effSalary, range, category } = input;
   const versions = input.versions as PayRuleVersion[];
@@ -86,14 +90,16 @@ export function computeLaborCost(input: {
   const catOf = (e: DlEntry) => (typeof e.category === "string" ? e.category.trim().toUpperCase() : "") as LcCategory;
 
   const buckets = new Map<string, { hours: number; costSen: number }>();
-  const add = (e: DlEntry, hours: number, cost: number) => {
-    const cat = catOf(e);
-    if (category && cat !== category && cat !== "") return;
-    const key = `${e.departmentCode}|${cat}`;
+  const put = (key: string, hours: number, cost: number) => {
     const cur = buckets.get(key) ?? { hours: 0, costSen: 0 };
     cur.hours += hours;
     cur.costSen += cost;
     buckets.set(key, cur);
+  };
+  // Every costed entry, keyed worker|date|department, before the category filter: the payroll scaling's key.
+  const segList: { e: DlEntry; hours: number; cost: number; wdd: string }[] = [];
+  const add = (e: DlEntry, hours: number, cost: number) => {
+    segList.push({ e, hours, cost, wdd: `${e.workerId}|${e.date}|${e.departmentCode || ""}` });
   };
 
   for (const [k, day] of segs) {
@@ -125,6 +131,31 @@ export function computeLaborCost(input: {
       payRuleVersions: versions,
     });
     day.forEach((e, i) => add(e, Number(e.hours) || 0, costs[i]));
+  }
+
+  const paid = input.costDataOk ? input.paidByWdd ?? null : null;
+  const byWdd = new Map<string, typeof segList>();
+  for (const s of segList) {
+    const arr = byWdd.get(s.wdd) ?? [];
+    arr.push(s);
+    byWdd.set(s.wdd, arr);
+  }
+  for (const [wdd, list] of byWdd) {
+    const target = paid ? paid.get(wdd) ?? 0 : null;
+    const costSum = list.reduce((a, s) => a + s.cost, 0);
+    const hourSum = list.reduce((a, s) => a + s.hours, 0);
+    for (const s of list) {
+      const cat = catOf(s.e);
+      if (category && cat !== category && cat !== "") continue;
+      const share = costSum > 0 ? s.cost / costSum : hourSum > 0 ? s.hours / hourSum : 1 / list.length;
+      put(`${s.e.departmentCode}|${cat}`, s.hours, target == null ? s.cost : target * share);
+    }
+  }
+  if (paid) {
+    for (const [wdd, sen] of paid) {
+      if (!sen || byWdd.has(wdd)) continue;
+      put(`${wdd.split("|")[2] ?? ""}|`, 0, sen);
+    }
   }
 
   const rows: LcRow[] = [];
