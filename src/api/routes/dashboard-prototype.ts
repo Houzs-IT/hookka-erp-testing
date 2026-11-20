@@ -1437,6 +1437,8 @@ app.get("/", async (c) => {
       status: r.status ?? "",
       consignmentOrderId: r.consignmentOrderId ?? undefined,
       itemCategory: r.itemCategory ?? undefined,
+      productCode: r.productCode ?? undefined,
+      productName: r.productName ?? undefined,
       specialOrder: r.specialOrder ?? undefined,
       repairScope: r.repairscope ?? null,
       jobCards: jcByPoAll.get(r.id) ?? [],

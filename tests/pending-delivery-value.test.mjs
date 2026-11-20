@@ -199,6 +199,7 @@ test("pending-value: an accessory still in production stays excluded", () => {
     quantity: 3, itemCategory: "ACCESSORY", status: "IN_PRODUCTION",
     jobCards: [
       { departmentCode: "FAB_CUT", status: "COMPLETED" },
+      { departmentCode: "FAB_SEW", status: "IN_PROGRESS" },
       { departmentCode: "PACKING", status: "PENDING" },
     ],
   };
