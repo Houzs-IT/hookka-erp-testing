@@ -234,6 +234,16 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
     if (/^SELECT \* FROM outsource_issues WHERE org_id = \? AND worker_id = \? AND status = 'COMPLETED'/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0] && i.worker_id === args[1] && i.status === "COMPLETED");
     }
+    if (/^SELECT COUNT\(\*\) AS total,/i.test(text)) {
+      const rows = state.issues.filter((i) => i.org_id === args[0] && (!/worker_id = \?/.test(text) || i.worker_id === args[1]));
+      const open = rows.filter((i) => i.status === "INCOMPLETE");
+      return [{
+        total: String(rows.length),
+        pending_approval: String(open.filter((i) => i.submitted_at).length),
+        incomplete: String(open.filter((i) => !i.submitted_at).length),
+        completed: String(rows.filter((i) => i.status === "COMPLETED").length),
+      }];
+    }
     if (/^SELECT \* FROM outsource_issues WHERE/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0]);
     }

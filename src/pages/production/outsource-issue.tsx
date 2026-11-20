@@ -323,7 +323,7 @@ function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; c
           ref={scanInputRef}
           value={scanText}
           onChange={(event) => setScanText(event.target.value)}
-          placeholder={issue.selectedWorker ? "Scan a sticker. It issues on Enter." : "Pick a worker first"}
+          placeholder={issue.selectedWorker ? "Scan the item's sticker. It issues on Enter." : "Pick a worker first"}
           disabled={isScanDisabled}
           autoComplete="off"
           autoCapitalize="off"
@@ -332,7 +332,9 @@ function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; c
           aria-describedby="outsource-scan-hint"
         />
         <p id="outsource-scan-hint" className="mt-1 text-xs text-[#6B7280]">
-          {issue.isIssuing ? "Issuing…" : "Keep scanning. Each sticker issues as soon as the scanner sends Enter."}
+          {issue.isIssuing
+            ? "Issuing…"
+            : "Scan the QR on the item's production sticker or its job card. Each scan issues one item to this worker."}
         </p>
       </form>
 
@@ -440,6 +442,9 @@ function StatusTabs({ issue }: { issue: UseOutsourceIssueResult }): JSX.Element 
           }`}
         >
           {option.label}
+          {issue.statusCounts ? (
+            <span className="ml-1.5 tabular-nums text-xs font-semibold text-slate-500">{issue.statusCounts[option.key]}</span>
+          ) : null}
         </button>
       ))}
     </div>
