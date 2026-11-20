@@ -56,11 +56,127 @@ export function isBenignSelfApplyError(err: unknown): boolean {
 // `.run()` and `.bind().run()` identically for a parameterless statement, and
 // forcing 20 call sites to converge on one shape is a bigger change than this
 // fix earns.
-type Runnable = { run(): Promise<unknown> };
+type Runnable = { run(): Promise<unknown>; all?: () => Promise<{ results?: unknown[] }> };
 type Bindable = { bind(...args: unknown[]): Runnable };
 type Runner = {
   prepare(sql: string): Partial<Runnable> & Partial<Bindable>;
 };
+
+// ---------------------------------------------------------------------------
+// Skip what is already applied (BUG-2026-11-21: 500s right after a deploy).
+//
+// Postgres takes an ACCESS EXCLUSIVE lock for EVERY `ALTER TABLE`, including
+// `ADD COLUMN IF NOT EXISTS` / `DROP COLUMN IF EXISTS` that end up doing
+// nothing. A deploy boots many isolates at once, each running its module's
+// block on the hottest tables (sales_orders, job_cards, …): the ALTERs queue
+// behind long reads, every later read queues behind the ALTERs, and some
+// requests die on a lock timeout or a deadlock — which is not "benign", so the
+// read that triggered it returned 500 until the isolates settled. One worse
+// case: `ALTER COLUMN … TYPE TEXT USING …` rewrites the whole table every time.
+//
+// So before running, one read-only look at the catalog drops every statement
+// whose effect is already there. A warm database runs no DDL at all; a
+// genuinely missing column still gets added exactly as before. Statements this
+// does not recognise run as before, and if the catalog read itself fails the
+// whole list runs as before.
+// ---------------------------------------------------------------------------
+const ADD_COLUMN = /^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+"?(\w+)"?/i;
+const DROP_COLUMN = /^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?\s+DROP\s+COLUMN\s+IF\s+EXISTS\s+"?(\w+)"?\s*;?\s*$/i;
+const COLUMN_TYPE_TEXT = /^\s*ALTER\s+TABLE\s+"?(\w+)"?\s+ALTER\s+COLUMN\s+"?(\w+)"?\s+TYPE\s+TEXT\b/i;
+const CREATE_INDEX = /^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+"?(\w+)"?/i;
+const DROP_INDEX = /^\s*DROP\s+INDEX\s+IF\s+EXISTS\s+"?(\w+)"?\s*;?\s*$/i;
+const CREATE_TABLE = /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?(\w+)"?/i;
+
+/** The adapter stores camelCase columns snake_case; unquoted names fold to lower case. */
+function columnNames(name: string): string[] {
+  const snake = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  return [...new Set([snake, name.toLowerCase()])];
+}
+
+type Catalog = {
+  tables: Set<string>;
+  columns: Map<string, string>; // "table.column" -> data_type
+  indexes: Set<string>;
+};
+
+/**
+ * Which statements still need to run, given the catalog. Exported for tests.
+ * A statement is dropped only when the catalog PROVES it would change nothing.
+ */
+export function statementsStillNeeded(stmts: string[], cat: Catalog): string[] {
+  return stmts.filter((sql) => {
+    let m = ADD_COLUMN.exec(sql);
+    if (m) {
+      const t = m[1].toLowerCase();
+      return !(cat.tables.has(t) && columnNames(m[2]).some((c) => cat.columns.has(`${t}.${c}`)));
+    }
+    m = DROP_COLUMN.exec(sql);
+    if (m) {
+      const t = m[1].toLowerCase();
+      return cat.tables.has(t) && columnNames(m[2]).some((c) => cat.columns.has(`${t}.${c}`));
+    }
+    m = COLUMN_TYPE_TEXT.exec(sql);
+    if (m) {
+      const t = m[1].toLowerCase();
+      const type = columnNames(m[2]).map((c) => cat.columns.get(`${t}.${c}`)).find((x) => x != null);
+      return !(type && type.toLowerCase() === "text");
+    }
+    m = CREATE_INDEX.exec(sql);
+    if (m) return !cat.indexes.has(m[1].toLowerCase());
+    m = DROP_INDEX.exec(sql);
+    if (m) return cat.indexes.has(m[1].toLowerCase());
+    m = CREATE_TABLE.exec(sql);
+    if (m) return !cat.tables.has(m[1].toLowerCase());
+    return true;
+  });
+}
+
+/** Tables the recognised statements touch (the catalog read is scoped to them). */
+function tablesOf(stmts: string[]): string[] {
+  const out = new Set<string>();
+  for (const sql of stmts) {
+    const m = ADD_COLUMN.exec(sql) || DROP_COLUMN.exec(sql) || COLUMN_TYPE_TEXT.exec(sql) || CREATE_TABLE.exec(sql);
+    if (m) out.add(m[1].toLowerCase());
+  }
+  return [...out];
+}
+
+async function readCatalog(db: Runner, tables: string[]): Promise<Catalog | null> {
+  const rows = async (sql: string, args: unknown[]): Promise<Record<string, unknown>[]> => {
+    const stmt = db.prepare(sql);
+    const bound = typeof stmt.bind === "function" ? stmt.bind(...args) : (stmt as Runnable);
+    if (typeof bound.all !== "function") throw new Error("self-apply: catalog read needs all()");
+    const res = await bound.all();
+    return (res?.results ?? []) as Record<string, unknown>[];
+  };
+  try {
+    const cat: Catalog = { tables: new Set(), columns: new Map(), indexes: new Set() };
+    if (tables.length > 0) {
+      const ph = tables.map(() => "?").join(",");
+      for (const r of await rows(
+        `SELECT table_name AS "t", column_name AS "c", data_type AS "d"
+           FROM information_schema.columns
+          WHERE table_schema = current_schema() AND table_name IN (${ph})`,
+        tables,
+      )) {
+        const t = String(r.t ?? "").toLowerCase();
+        if (!t) continue;
+        cat.tables.add(t);
+        cat.columns.set(`${t}.${String(r.c ?? "").toLowerCase()}`, String(r.d ?? ""));
+      }
+    }
+    for (const r of await rows(
+      `SELECT indexname AS "i" FROM pg_indexes WHERE schemaname = current_schema()`,
+      [],
+    )) {
+      cat.indexes.add(String(r.i ?? "").toLowerCase());
+    }
+    return cat;
+  } catch (err) {
+    console.warn("[self-apply] catalog read failed; running every statement", err);
+    return null;
+  }
+}
 
 function runnableFor(stmt: Partial<Runnable> & Partial<Bindable>): Runnable {
   if (typeof stmt.run === "function") return stmt as Runnable;
@@ -86,7 +202,9 @@ export async function runSelfApply(
   stmts: string[],
 ): Promise<void> {
   const failures: { sql: string; msg: string }[] = [];
-  for (const sql of stmts) {
+  const cat = await readCatalog(db, tablesOf(stmts));
+  const todo = cat ? statementsStillNeeded(stmts, cat) : stmts;
+  for (const sql of todo) {
     try {
       await runnableFor(db.prepare(sql)).run();
     } catch (err) {
@@ -102,6 +220,21 @@ export async function runSelfApply(
       `self-apply "${label}" failed on ${failures.length} statement(s); ` +
         `first: ${failures[0].sql} → ${failures[0].msg}`,
     );
+  }
+}
+
+/**
+ * For READ paths: run the module's self-apply, but never fail the read on it.
+ * A list or a stats card should not 500 because a concurrent isolate holds a
+ * DDL lock (BUG-2026-11-21); the failure is logged and the memo is already
+ * cleared by the module, so the next request retries. Write paths keep
+ * awaiting the self-apply directly so a missing column still stops them.
+ */
+export async function selfApplyForRead(label: string, run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (err) {
+    console.warn(`[self-apply:${label}] skipped for a read: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

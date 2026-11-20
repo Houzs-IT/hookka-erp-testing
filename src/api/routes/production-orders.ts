@@ -26,6 +26,7 @@
 // JSON columns: none on production_orders/job_cards themselves. piece_pics is
 // its own table in the schema.
 // ---------------------------------------------------------------------------
+import { selfApplyForRead } from "../lib/self-apply";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
@@ -844,7 +845,9 @@ app.get("/", async (c) => {
   // hold_reason/held_by/held_at; ensure those columns exist FIRST so a DB that
   // hasn't seen an SO/CO write since the ON HOLD deploy doesn't 500 with
   // "column hold_reason does not exist" (BUG-2026-06-24-008). Memoized — cheap.
-  await ensurePendingMigrations(c.var.DB);
+  // A READ: a self-apply failure (a DDL lock held by a sibling isolate right
+  // after a deploy) must not 500 the list — BUG-2026-11-21.
+  await selfApplyForRead("production-orders", () => ensurePendingMigrations(c.var.DB));
 
   // Scoped sticker-print fetch — bypass the KV + snapshot caches (these are
   // targeted, always-fresh reads driven by which rows are on screen, NOT the

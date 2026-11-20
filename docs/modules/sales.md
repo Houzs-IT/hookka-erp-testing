@@ -79,7 +79,7 @@ Owns the customer-facing order lifecycle: **Sales Orders** (SO) and their line i
 | `SalesOrderDetailPage` | `src/pages/sales/detail.tsx:585` | SO detail; linked POs/JCs/DOs/invoices |
 | `app.post("/")` (create) | `src/api/routes/sales-orders.ts:1766` | SO create + combo pass + snapshot invalidation |
 | `app.put("/:id")` (edit) | `src/api/routes/sales-orders.ts:3320` | SO edit + re-run combo pass |
-| `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2555` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
+| `app.post("/:id/confirm")` | `src/api/routes/sales-orders.ts:2563` | DRAFT/PENDING → IN_PRODUCTION, cascade to POs |
 | `app.patch("/:id/prices")` | `src/api/routes/sales-orders.ts:6058` | Price-only edit (HK-0156): changes line base prices after the PUT production lock; items/qty/specs untouched. Blocked from INVOICED or once a non-cancelled invoice exists (`soPriceEditBlock` `src/api/lib/so-price-edit.ts:12`). UI: "Edit Prices" → `PricesEditModal` on SO detail |
 | `app.patch("/:id/dates")` | `src/api/routes/sales-orders.ts:5934` | Customer DD / Hookka Expected DD pencil (HK-0121); bypasses the PUT production lock, frozen from DELIVERED; re-dates POs/JCs via `redateProductionFromSODates` (`:5769`) |
 | `createProductionOrdersForSO` | `sales-orders/_helpers.ts:591` | One production_orders row per SO item |

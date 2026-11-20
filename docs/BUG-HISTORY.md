@@ -178,6 +178,13 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-11-21-001 — List reads returned 500 for a few minutes after every deploy `infrastructure` `sql` 🟡
+
+- **Symptom:** GET /api/sales-orders (list + stats) on 2026-11-20 and GET /api/production-orders on 2026-11-21 returned fast 500s for a few minutes right after a deploy, then recovered on their own.
+- **Cause:** every cold isolate re-ran its module's runtime self-apply. Postgres takes an ACCESS EXCLUSIVE lock for every `ALTER TABLE`, even an `ADD COLUMN IF NOT EXISTS` that changes nothing; `ALTER COLUMN org_id TYPE TEXT USING …` on wip_cascade_log rewrote the table each time. With many isolates booting at once on hot tables, the locks queued behind long reads and the reads behind them; lock timeouts and deadlocks are not "benign", so the read that triggered the self-apply 500'd.
+- **Fix:** `runSelfApply` reads the catalog first (information_schema.columns + pg_indexes) and skips every statement whose effect is already there, so a warm DB runs no DDL. Unrecognised statements run as before, and so does everything if the catalog read fails. List/stats reads now use `selfApplyForRead`, which logs a self-apply failure instead of failing the read.
+- **Regression test:** `tests/self-apply-skip-applied.test.mjs`.
+
 ## BUG-2026-11-20-001 — Labour Cost and Finance production revenue returned 500 after the one-rule change `dashboard` `sql` 🔴
 
 - **Symptom:** `/api/working-hour-entries/production-revenue` returned 500 right after #1490 shipped. Labour Cost department revenue showed nothing.

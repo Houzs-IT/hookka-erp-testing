@@ -10,6 +10,7 @@
 // while the TS types expose `createdAt`/`updatedAt` (camelCase). The row->API
 // mapper handles the rename. `so_status_changes.autoActions` is a JSON blob.
 // ---------------------------------------------------------------------------
+import { selfApplyForRead } from "../lib/self-apply";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -180,7 +181,7 @@ app.get("/", async (c) => {
   // This list filters on is_stock, which a fresh DB may not have yet — no SO
   // write need ever have run here. Memoized per isolate, so only the first
   // request pays for it.
-  await ensurePendingMigrations(db);
+  await selfApplyForRead("sales-orders", () => ensurePendingMigrations(db)); // a READ: never 500 on it (BUG-2026-11-21)
   const pageParam = c.req.query("page");
   const limitParam = c.req.query("limit");
   const paginate = pageParam !== undefined || limitParam !== undefined;
@@ -1011,7 +1012,7 @@ app.get("/status-changes", async (c) => {
 app.get("/stats", async (c) => {
   const orgId = getOrgId(c);
   // Reads is_stock — ensure it exists on this DB first, same as GET / above.
-  await ensurePendingMigrations(c.var.DB);
+  await selfApplyForRead("sales-orders", () => ensurePendingMigrations(c.var.DB)); // a READ (BUG-2026-11-21)
   // 0134 — Service Order vs Sales Order scope. Same semantics as the GET
   // list above so /service-order's tab badges + dashboard cards read off
   // a SV-only aggregate instead of the combined ~570-row total.
