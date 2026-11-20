@@ -22,7 +22,9 @@ const STATUS_CHIP: Record<OutsourceIssue["status"], { className: string; key: st
 function taskTimeLine(t: Translate, issue: OutsourceIssue): string {
   if (issue.status === "COMPLETED") return `${t("tasks.completed")} ${formatIssueDateTime(issue.completedAt)}`;
   if (issue.status === "PENDING_APPROVAL") return `${t("tasks.finishedScan")} ${formatIssueDateTime(issue.submittedAt)}`;
-  return `${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)} ·${daysHeldText(t, issue)}`;
+  const held = daysHeldText(t, issue);
+  const issued = `${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)}`;
+  return held ? `${issued} · ${held}` : issued;
 }
 
 function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.Element {

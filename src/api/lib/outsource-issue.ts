@@ -509,19 +509,61 @@ const STATUS_CONDITIONS: Record<IssueStatus, string> = {
   COMPLETED: "status = 'COMPLETED'",
 };
 
+export type IssueStatusCounts = Record<IssueStatus | "ALL", number>;
+
+export async function countIssuesByStatus(
+  db: Runner,
+  request: { orgId: string; filter: IssueFilter },
+): Promise<IssueStatusCounts> {
+  await ensureOutsourceIssueTable(db);
+  const { conditions, params } = issueWhere(request.orgId, request.filter);
+  const row = await freshFirst<Row>(
+    db,
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.PENDING_APPROVAL} THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.INCOMPLETE} THEN 1 ELSE 0 END) AS incomplete,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.COMPLETED} THEN 1 ELSE 0 END) AS completed
+           FROM outsource_issues WHERE ${conditions.join(" AND ")}`,
+      )
+      .bind(...params),
+  );
+  return {
+    ALL: Number(row?.total ?? 0),
+    PENDING_APPROVAL: Number(row?.pending ?? 0),
+    INCOMPLETE: Number(row?.incomplete ?? 0),
+    COMPLETED: Number(row?.completed ?? 0),
+  };
+}
+
 export async function listIssues(
   db: Runner,
   request: { orgId: string; filter: IssueFilter },
 ): Promise<OutsourceIssueWithDone[]> {
   await ensureOutsourceIssueTable(db);
-  const { filter } = request;
+  const { conditions, params } = issueWhere(request.orgId, request.filter);
+  if (request.filter.status) conditions.push(STATUS_CONDITIONS[request.filter.status]);
+  const rows = await freshAll<Row>(
+    db,
+    db
+      .prepare(
+        `SELECT * FROM outsource_issues WHERE ${conditions.join(" AND ")}
+          ORDER BY issued_at DESC LIMIT ${ISSUE_LIST_CAP + 1}`,
+      )
+      .bind(...params),
+  );
+  return attachDone(db, await withDepartmentNames(db, rows.map(toIssue)));
+}
+
+/** Worker, date and search filters; the status filter is added by the caller. */
+function issueWhere(orgId: string, filter: IssueFilter): { conditions: string[]; params: unknown[] } {
   const conditions = ["org_id = ?"];
-  const params: unknown[] = [request.orgId];
+  const params: unknown[] = [orgId];
   if (filter.workerId) {
     conditions.push("worker_id = ?");
     params.push(filter.workerId);
   }
-  if (filter.status) conditions.push(STATUS_CONDITIONS[filter.status]);
   if (filter.fromDate) {
     conditions.push("issued_at >= ?");
     params.push(`${filter.fromDate}T00:00:00${MALAYSIA_OFFSET}`);
@@ -538,16 +580,7 @@ export async function listIssues(
     );
     params.push(pattern, pattern, pattern, pattern, pattern);
   }
-  const rows = await freshAll<Row>(
-    db,
-    db
-      .prepare(
-        `SELECT * FROM outsource_issues WHERE ${conditions.join(" AND ")}
-          ORDER BY issued_at DESC LIMIT ${ISSUE_LIST_CAP + 1}`,
-      )
-      .bind(...params),
-  );
-  return attachDone(db, await withDepartmentNames(db, rows.map(toIssue)));
+  return { conditions, params };
 }
 
 export async function listWorkerIssues(

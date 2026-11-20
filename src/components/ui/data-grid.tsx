@@ -156,6 +156,9 @@ export type Column<T> = {
   // do not bleed through. Defaults to false — fully opt-in, every other grid
   // in the codebase keeps its existing behaviour.
   sticky?: boolean;
+  // Freeze this column to the RIGHT edge. Only honoured on the LAST visible
+  // column (an actions column that must stay on screen). Opt-in.
+  stickyEnd?: boolean;
   // Optional value-filter accessor — when defined, the per-column value-
   // filter dropdown (the "(All)" checkbox panel) reads from this fn
   // instead of `getNestedValue(row, key)`. Used for two reasons:
@@ -195,6 +198,9 @@ export type Column<T> = {
   // How the total is shown. Default: formatRM for currency (sen), else formatNumber.
   totalFormat?: (n: number) => React.ReactNode;
 };
+
+const STICKY_END_CELL_CLASS = "right-0 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]";
+const STICKY_END_HEADER_CLASS = `sticky z-20 bg-[#F0ECE9] ${STICKY_END_CELL_CLASS}`;
 
 export type ContextMenuItem = {
   label: string;
@@ -360,6 +366,8 @@ export type DataGridProps<T> = {
   checkboxSelectOnly?: boolean;
   // The search box's hint (default "Search...").
   searchPlaceholder?: string;
+  // Hide the "X of Y records" text in the toolbar when the page already shows a count.
+  hideToolbarCount?: boolean;
 };
 
 type SavedView = {
@@ -1911,6 +1919,7 @@ export function DataGrid<T extends Record<string, any>>({
   reorderableHeaders,
   checkboxSelectOnly,
   searchPlaceholder,
+  hideToolbarCount = false,
 }: DataGridProps<T>) {
   // ── Column visibility & order ──
   // Two-tier persistence per gridId:
@@ -3074,6 +3083,8 @@ export function DataGrid<T extends Record<string, any>>({
     }
     return out;
   })();
+  const lastVisibleColumn = visibleColumns[visibleColumns.length - 1];
+  const stickyEndKey = lastVisibleColumn?.stickyEnd ? lastVisibleColumn.key : null;
 
   return (
     <div className={cn("flex flex-col", className)}>
@@ -3084,7 +3095,7 @@ export function DataGrid<T extends Record<string, any>>({
         {toolbarStart}
         {toolbarStart && <div className="flex-1" />}
         {/* Search — h-9 / text-sm for finger-target on iPad Safari */}
-        <div className="relative flex-1 max-w-[280px] max-md:max-w-full">
+        <div className="relative flex-1 min-w-[180px] max-w-[280px] max-md:max-w-full">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#999]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
           </svg>
@@ -3418,9 +3429,11 @@ export function DataGrid<T extends Record<string, any>>({
         </div>
 
         {/* Row count */}
-        <span className="text-[10px] text-[#999] tabular-nums">
-          {sortedData.length} of {data.length} records
-        </span>
+        {!hideToolbarCount && (
+          <span className="text-[10px] text-[#999] tabular-nums">
+            {sortedData.length} of {data.length} records
+          </span>
+        )}
       </div>
 
       {/* Table — no own border/rounding: the grid is wrapped in a Card on every
@@ -3509,6 +3522,7 @@ export function DataGrid<T extends Record<string, any>>({
                 const hasFilter = hasValueFilter || hasTextFilter;
                 const stickyLeft = stickyOffsets.get(col.key);
                 const isSticky = stickyLeft !== undefined;
+                const isStickyEnd = col.key === stickyEndKey;
                 return (
                   <th
                     key={col.key}
@@ -3524,6 +3538,7 @@ export function DataGrid<T extends Record<string, any>>({
                       // above stickyHeader's z-10, keeping the corner cell on
                       // top during simultaneous H+V scroll.
                       isSticky && "sticky bg-[#F0ECE9] z-20",
+                      isStickyEnd && STICKY_END_HEADER_CLASS,
                       // Where a dragged header will land (finance v2 reorder).
                       dropKey === col.key && "shadow-[inset_2px_0_0_#6B5C32]",
                     )}
@@ -3710,6 +3725,7 @@ export function DataGrid<T extends Record<string, any>>({
                         const value = getNestedValue(row, col.key);
                         const stickyLeft = stickyOffsets.get(col.key);
                         const isSticky = stickyLeft !== undefined;
+                        const isPinned = isSticky || col.key === stickyEndKey;
                         // Cell-content sizing ("fit fit", 2026-06-11). For a
                         // column WITH a resolved width (declared `width` or a
                         // user resize) the content div clips via width:0 +
@@ -3750,10 +3766,11 @@ export function DataGrid<T extends Record<string, any>>({
                               // hover styles target the <tr>, not its
                               // children; the static row colors are enough
                               // to keep the column readable during scroll.
-                              isSticky && "sticky z-10 bg-white",
-                              isSticky && isEven && "bg-[#FAFAFA]",
-                              isSticky && rowClassName?.(row),
-                              isSticky && isSelected && "!bg-[#CCE0FF]",
+                              isPinned && "sticky z-10 bg-white",
+                              isPinned && isEven && "bg-[#FAFAFA]",
+                              isPinned && rowClassName?.(row),
+                              isPinned && isSelected && "!bg-[#CCE0FF]",
+                              col.key === stickyEndKey && STICKY_END_CELL_CLASS,
                             )}
                             style={{
                               height: "26px",
@@ -3960,7 +3977,12 @@ export function DataGrid<T extends Record<string, any>>({
                   return (
                     <td
                       key={col.key}
-                      className={cn("whitespace-nowrap px-2 py-1.5 bg-[#F0ECE9]", alignClass(col), isSticky && "sticky z-20")}
+                      className={cn(
+                        "whitespace-nowrap px-2 py-1.5 bg-[#F0ECE9]",
+                        alignClass(col),
+                        isSticky && "sticky z-20",
+                        col.key === stickyEndKey && STICKY_END_HEADER_CLASS,
+                      )}
                       style={isSticky ? { left: `${stickyLeft}px` } : undefined}
                     >
                       {t !== undefined
