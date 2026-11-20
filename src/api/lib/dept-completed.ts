@@ -57,7 +57,8 @@ const sofaSets = (orgFilter: string) => `
   sofa_sets AS (
     SELECT s.departmentCode,
            ${ORDER_KEY} AS order_key,
-           MAX(CASE WHEN s.all_done = 1 THEN s.done_at END) AS set_at
+           MAX(CASE WHEN s.all_done = 1 THEN s.done_at END) AS set_at,
+           MAX(po.customerName) AS customer_name
       FROM po_dept_state s
       JOIN production_orders po ON po.id = s.productionOrderId
      WHERE po.itemCategory = 'SOFA'
@@ -150,6 +151,30 @@ export async function loadDeptCompletedRange(db: Db, orgId: string, from: string
   const out = new Map<string, { bedframeUnits: number; sofaSets: number }>();
   for (const r of res.results ?? []) if (r.dept) out.set(r.dept, { bedframeUnits: num(r.bed), sofaSets: num(r.sofa) });
   return out;
+}
+
+/**
+ * Every sofa SET Upholstery finished in [from, to], one row per set with its
+ * day and customer: the Floor Live / Department Revenue set rule (an order is
+ * one set, on the day its LAST sofa production order is done). The Command
+ * Center's Completed tiles read this, so its sets match Floor Live (owner
+ * 2026-11-20: Completed Yesterday said 9 sets where Floor Live said 7, because
+ * it counted an order on every day one of its modules finished).
+ */
+export async function loadUpholsterySofaSets(db: Db, orgId: string, from: string, to: string): Promise<{ day: string; customerName: string }[]> {
+  const res = await db
+    .prepare(
+      `WITH ${sofaSets("po.orgId = ?")}
+       SELECT substr(ss.set_at::text, 1, 10) AS "day", ss.customer_name AS "customerName"
+         FROM sofa_sets ss
+        WHERE ss.departmentCode = 'UPHOLSTERY'
+          AND ss.set_at IS NOT NULL
+          AND substr(ss.set_at::text, 1, 10) >= ?
+          AND substr(ss.set_at::text, 1, 10) <= ?`,
+    )
+    .bind(orgId, from, to)
+    .all<{ day: string | null; customerName: string | null }>();
+  return (res.results ?? []).filter((r) => r.day).map((r) => ({ day: String(r.day), customerName: r.customerName || "—" }));
 }
 
 export const USUAL_WORKING_DAYS = 12;
