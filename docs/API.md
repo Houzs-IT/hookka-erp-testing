@@ -171,7 +171,7 @@ offsets pointing past the end of their own file.
 | `/api/forecasts` | `src/api/routes/forecasts.ts` | `GET /` <sub>:56</sub><br>`POST /` <sub>:81</sub> | gated |
 | `/api/ocr-accuracy` | `src/api/routes/ocr-accuracy.ts` | `GET /` <sub>:80</sub><br>`GET /models` <sub>:377</sub> | gated |
 | `/api/historical-sales` | `src/api/routes/historical-sales.ts` | `GET /` <sub>:49</sub> | gated |
-| `/api/leaves` | `src/api/routes/leaves.ts` | `GET /` <sub>:81</sub><br>`GET /balances` <sub>:113</sub><br>`POST /` <sub>:178</sub><br>`PUT /` <sub>:248</sub><br>`PUT /:id` <sub>:286</sub><br>`DELETE /:id` <sub>:353</sub> | gated |
+| `/api/leaves` | `src/api/routes/leaves.ts` | `GET /` <sub>:81</sub><br>`GET /balances` <sub>:113</sub><br>`POST /` <sub>:180</sub><br>`PUT /` <sub>:250</sub><br>`PUT /:id` <sub>:288</sub><br>`DELETE /:id` <sub>:355</sub> | gated |
 | `/api/lorries` | `src/api/routes/lorries.ts` | `GET /` <sub>:50</sub><br>`POST /` <sub>:62</sub><br>`PUT /` <sub>:110</sub><br>`GET /:id` <sub>:165</sub><br>`PUT /:id` <sub>:177</sub><br>`DELETE /:id` <sub>:234</sub> | gated |
 | `/api/maintenance-logs` | `src/api/routes/maintenance-logs.ts` | `GET /` <sub>:51</sub><br>`POST /` <sub>:66</sub><br>`GET /:id` <sub>:121</sub><br>`DELETE /:id` <sub>:138</sub> | gated |
 | `/api/mrp` | `src/api/routes/mrp.ts` | `GET /` <sub>:421</sub><br>`GET /runs` <sub>:489</sub><br>`GET /runs/:id` <sub>:510</sub><br>`POST /` <sub>:567</sub> | gated |
