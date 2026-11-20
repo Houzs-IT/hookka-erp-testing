@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OutsourceIssue } from "@/api/lib/outsource-issue";
 import { workerFetch } from "@/layouts/WorkerLayout";
-import { daysOut } from "@/lib/outsource-issue-format";
-
-export type Translate = (key: string) => string;
 
 export type OutsourceTasksState =
   | { kind: "loading" }
@@ -55,17 +52,4 @@ export function useOutsourceTasks(): { state: OutsourceTasksState; reload: () =>
   }, [reload]);
 
   return { state, reload };
-}
-
-export function daysHeldText(t: Translate, issue: OutsourceIssue): string {
-  const days = daysOut(issue);
-  if (days === null) return "";
-  if (days === 0) return t("tasks.heldToday");
-  return t(days === 1 ? "tasks.dayHeld" : "tasks.daysHeld").replace("{n}", String(days));
-}
-
-export function summarizeTasks(t: Translate, incomplete: OutsourceIssue[]): string {
-  const base = `${incomplete.length} ${t("tasks.toFinish")}`;
-  const oldest = incomplete[0];
-  return oldest ? `${base} · ${t("tasks.oldest")}: ${daysHeldText(t, oldest)}` : base;
 }

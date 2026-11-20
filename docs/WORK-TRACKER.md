@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-20**: HK-0164 item 9 added (My task split counts on `main`; branch `feat/hk0164-task-counts-main`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 items 7 and 8 added (approval flow and newer Outsource Work page to `main`; branch `feat/hk0164-approval-main`); nothing else re-checked.
 > **Last verified: 2026-11-20**: HK-0164 item 6 added (worker My task days-held spacing; branch `fix/worker-task-days-held-space-main`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-19**: HK-0165 supplier on Add Raw Material entry added (branch `fix/outsource-issue-labels`, to `main`); nothing else re-checked.
@@ -353,6 +354,7 @@ Ask (Violet, ticket HK-0164): the office scans each fabric item to issue it to a
 7. DONE (branch `feat/hk0164-approval-main`, to `main`, tests only; owner chose to port without a staging Approve test), 2026-11-20: approval flow and the newer Outsource Work page, from staging #1483, #1486, #1487, #1488, #1494, #1498 and #1499. A worker's scan of an issued item waits as Pending approval; the office Approves (completes the Fabric Sewing step) or Sends back. Tabs Pending approval / Incomplete / Completed / All with counts, code field under Scan QR, sticker hint, PC Issue button and Scan QR, Approve / Send back pinned right (`stickyEnd` and `hideToolbarCount` added to main's `DataGrid`).
    Differs from staging on purpose: Approve does NOT write the piece-wage record (staging's `outsource-issue-pay.ts` is left out). On `main` the completed FAB_SEW cards are paid by `syncScannedPieceRecords` (HK-0163), which staging does not have; two writers would compete for the one record per order. Owner confirmed 2026-11-20: keep main's sync.
 8. OPEN: staging tracker item 8 says Approve returned 500 on staging (ref `11b7f07a`); never re-tested. Prod: who holds `production-orders:create` (Approve) and `outsource-issues:update` (Send back) is UNMEASURED; with no approver, worker scans of issued items wait forever.
+9. DONE (branch `feat/hk0164-task-counts-main`, to `main`, tests only), owner 2026-11-20: part 2 of staging PR #1485 only. The worker's My task box and header split the count: "1 to finish · 1 waiting for office · Oldest: ..." (oldest = items still to sew). Part 1 (a matched scan jumps back to My task with "Sent to the office") is left on staging. Test: `tests/outsource-worker-tasks.test.mjs`.
 
 ## CONNECT-0003: Hookka accounts sign in to Houzs Connect (feat/connect-login-main, to main, 2026-11-19)
 From CONNECT-0003 (Lim Wei Siang, Houzs Connect). Same change as the staging PR (feat/connect-login, PR 1153), cut from `main`; `docs/API.md` is left to the post-merge bot.

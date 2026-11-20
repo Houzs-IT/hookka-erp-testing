@@ -1692,6 +1692,12 @@ const dict: Dict = {
     zh: '项待完成',
     my: 'to finish',
   },
+  'tasks.waitingForOffice': {
+    en: 'waiting for office',
+    ms: 'menunggu pejabat',
+    zh: '项等待办公室批准',
+    my: 'waiting for office',
+  },
   'tasks.empty': {
     en: 'You have nothing to finish. Ask the office to issue work to you.',
     ms: 'Tiada apa-apa untuk disiapkan. Minta pejabat mengeluarkan kerja kepada anda.',
