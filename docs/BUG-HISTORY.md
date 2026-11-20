@@ -1,4 +1,5 @@
 # Bug History
+> **Last verified: 2026-11-20**: newest entry BUG-2026-11-20-500 (branch `fix/ready-before-packing-pillow-only`, to `staging`); BUG-2026-11-20-499 marked narrowed.
 > **Last verified: 2026-11-20**: newest entry BUG-2026-11-20-499 (branch `fix/ready-before-packing`, to `staging`; 427-498 are taken on other branches).
 > **Last verified: 2026-11-11**: BUG-2026-11-11-426 marked reverted on staging (branch `fix/revert-1337-revenue-line-replay`); main's BUG-2026-11-11-498 (#1318) is the fix kept; nothing else re-checked.
 > **Last verified: 2026-11-11**: newest entry BUG-2026-11-11-426 (branch `fix/production-revenue-line-replay`, to `staging`; 394-425 not checked on other branches).
@@ -236,9 +237,21 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-11-20-500 — The before-Packing rule from 499 is limited to pillows `delivery` `production` 🟡
+
+Fixed on branch (`fix/ready-before-packing-pillow-only`, to `staging`). Not deployed. Prod effect UNMEASURED.
+
+**Why.** Owner asked for pillows only. BUG-2026-11-20-499 applied "every card before PACKING done" to every product with no UPHOLSTERY card, so cushions, service-charge lines and scoped repairs also stopped waiting for PACKING.
+
+**Fix.** `isPillow` (`src/lib/delivery-pipeline.ts`): the product code or name contains PILLOW. There is no pillow category, pillows are ACCESSORY next to cushions and service charges. Only a pillow takes the before-PACKING rule in `poReadyForDelivery`, `poReadyForConsignment`, `poInPlanning`, `poInPlanningConsignment` and the backend `siblingUphGateDone`. Every other no-UPHOLSTERY product is back to the pre-499 rule: ready when the PO is COMPLETED, or a scoped repair with every card done, and not shown in Planning unless it is a scoped repair. `PipelinePO` gained `productCode` / `productName`; the dashboard pipeline (`dashboard-prototype.ts`) and the DO QR candidate check (`public-do-qr.ts`) now pass them, so they agree with the Delivery page. The SO rollback query reads `productCode, productName` too.
+
+**Known limit.** A product named with PILLOW that is not a pillow would take the pillow rule; a pillow named without the word would not.
+
+**Regression.** `tests/delivery-pipeline.test.mjs` (`isPillow`; a cushion with PACKING pending is not ready and not in Planning), `tests/so-ready-accessory-gate.test.mjs` (a cushion does not count toward READY_TO_SHIP before COMPLETED), `tests/repair-scope.test.mjs` source guard.
+
 ## BUG-2026-11-20-499 — Pillows waited for the Packing scan before they could go on a Delivery Order `delivery` `production` 🟡
 
-Fixed on branch (`fix/ready-before-packing`, to `staging`). Not deployed. Prod effect UNMEASURED.
+Narrowed to pillows only by BUG-2026-11-20-500. Was: merged to `staging` as #1505 and checked there (5 of 5 cases). Prod effect UNMEASURED.
 
 **Symptom.** A pillow whose Fibre card was scanned complete still did not show in Pending Delivery. It only appeared after the Packing department scanned it. While it was being made it showed in neither Planning nor Pending Delivery.
 

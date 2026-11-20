@@ -36,6 +36,7 @@
 > **Last verified: 2026-10-16**: branch `fix/po-list-cache-main`, to `main`, ports from `staging` C2 row 9, C15 rows 7 and 8 (row 6 is staging-only) and C22 row 4 (BUG-2026-10-16-295 to -298). Nothing else re-checked.
 > **Last verified: 2026-10-14**: branch `fix/hk0093-cn-print-co-fabric` adds C29 row 6, the CN print reading CO No. / fabric from a stale-while-revalidate snapshot (BUG-2026-10-14-285). Nothing else re-checked.
 > **Last verified: 2026-10-01**: branch `fix/worker-history-snapshot-stale` **adds C29 — a read right after a write, served from Hyperdrive's cache** (BUG-2026-10-01-245). Nothing else re-checked.
+> **Last verified: 2026-11-20**: branch `fix/ready-before-packing-pillow-only`: C28 rule limited to pillows (BUG-2026-11-20-500). Nothing else re-checked.
 > **Last verified: 2026-11-20**: branch `fix/ready-before-packing`: C28 rule restated (cards before PACKING), row 4 closed, row 5 added (BUG-2026-11-20-499). Nothing else re-checked.
 > **Last verified: 2026-10-01**: branch `fix/dev08-accessory-so-ready` **adds C28 — UPHOLSTERY cards as the proxy for "made"** (BUG-2026-10-01-241, DEV-08). Nothing else re-checked.
 > **Last verified: 2026-09-25**: restamped on branch `feat/dashboard-kpi-no-icons` (PR #524): C15 gains row 5, the Worker Efficiency card that printed worker ids after a refused `/api/workers` read (BUG-2026-09-25-194). Nothing else re-checked.
@@ -1870,10 +1871,10 @@ UPHOLSTERY cards, so the proxy is right for almost every row a tester looks at. 
 written separately and each fix repaired only the gate in front of its author.
 
 **The rule.** An empty UPHOLSTERY set never decides on its own. With no UPHOLSTERY card, the
-PO is made once every card before PACKING is done (`cardsBeforePackingDone` in
-`src/lib/delivery-pipeline.ts`; an empty set is never done) or the PO is `COMPLETED`. PACKING
-only wraps finished goods, so it never gates delivery. For the order-level cascades use
-`siblingUphGateDone` in `production-orders/_helpers.ts`, which calls the same helper.
+PO is made once it is `COMPLETED`. A pillow (`isPillow`) is made earlier, once every card
+before PACKING is done (`cardsBeforePackingDone` in `src/lib/delivery-pipeline.ts`; an empty
+set is never done), because PACKING only wraps it. For the order-level cascades use
+`siblingUphGateDone` in `production-orders/_helpers.ts`, which calls the same helpers.
 
 **Instances**
 
@@ -1883,7 +1884,7 @@ only wraps finished goods, so it never gates delivery. For the order-level casca
 | 2 | Consignment "ready to ship" list — completed pillows missing | ✅ 2026-07-01 (BUG-2026-07-01-004) |
 | 3 | `cascadeUpholsteryToSO` / `ToCO` / `cascadeUpholsteryRollbackToSO` — SO flipped to READY_TO_SHIP on the sofa's upholstery while its pillows were on Fab Sew | ✅ 2026-10-01 on branch `fix/dev08-accessory-so-ready` (BUG-2026-10-01-241), not deployed |
 | 4 | `poInPlanning` (`src/lib/delivery-pipeline.ts`) — an in-production pillow does not preview in the Delivery Planning tab | ✅ 2026-11-20 on branch `fix/ready-before-packing` (BUG-2026-11-20-499), owner asked for it |
-| 5 | Rows 1 to 3 fell back to the PO's `COMPLETED` status, so a pillow waited for the PACKING scan before it could go on a DO | ✅ 2026-11-20 on branch `fix/ready-before-packing` (BUG-2026-11-20-499), not deployed |
+| 5 | Rows 1 to 3 fell back to the PO's `COMPLETED` status, so a pillow waited for the PACKING scan before it could go on a DO | ✅ 2026-11-20, #1505 (BUG-2026-11-20-499), limited to pillows on branch `fix/ready-before-packing-pillow-only` (BUG-2026-11-20-500) |
 
 Test: `tests/so-ready-accessory-gate.test.mjs` (no `mine.length === 0) return true` left in
 `_helpers.ts`; every cascade goes through `siblingUphGateDone`).

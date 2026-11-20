@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
 import { canAdvanceToReadyToShip, READY_TO_SHIP_FROM_SQL } from "../../lib/ready-to-ship-guard";
-import { cardsBeforePackingDone } from "../../../lib/delivery-pipeline";
+import { cardsBeforePackingDone, isPillow } from "../../../lib/delivery-pipeline";
 import { runSelfApply } from "../../lib/self-apply";
 import {
   sequenceBlockers,
@@ -3651,12 +3651,12 @@ export async function applyWipInventoryChange(
 // The READY_TO_SHIP gate for one sibling PO, shared by the SO / CO forward
 // cascades and the SO rollback so the two directions can never disagree.
 // `cards` are the PO's cards before PACKING. With UPHOLSTERY cards, those
-// decide. A PO with none (pillow / cushion: FAB_CUT → FAB_SEW → FIBRE → PACKING)
-// counts once every card before PACKING is done, or the PO is COMPLETED /
-// CANCELLED. PACKING only wraps finished goods, so it never gates shipping.
-// An empty set is never "done" (DEV-08: pillows still on Fab Sew).
+// decide. A PO with none counts once it is COMPLETED / CANCELLED; a pillow
+// (FAB_CUT → FAB_SEW → FIBRE → PACKING) counts as soon as every card before
+// PACKING is done, since PACKING only wraps it. An empty set is never "done"
+// (DEV-08: pillows still on Fab Sew).
 export function siblingUphGateDone(
-  po: { status?: string | null } | undefined,
+  po: { status?: string | null; productCode?: string | null; productName?: string | null } | undefined,
   cards: { status: string; departmentCode?: string | null }[],
 ): boolean {
   const uph = cards.filter((j) => j.departmentCode === "UPHOLSTERY");
@@ -3664,7 +3664,7 @@ export function siblingUphGateDone(
     return uph.every((j) => j.status === "COMPLETED" || j.status === "TRANSFERRED");
   }
   if (po?.status === "COMPLETED" || po?.status === "CANCELLED") return true;
-  return cardsBeforePackingDone(cards);
+  return po !== undefined && isPillow(po) && cardsBeforePackingDone(cards);
 }
 
 // ---------------------------------------------------------------------------
@@ -3980,7 +3980,7 @@ export async function cascadeUpholsteryRollbackToSO(
 
   const siblings = await db
     .prepare(
-      "SELECT id, status, itemCategory, specialOrder FROM production_orders WHERE salesOrderId = ?",
+      "SELECT id, status, itemCategory, specialOrder, productCode, productName FROM production_orders WHERE salesOrderId = ?",
     )
     .bind(so.id)
     .all<{
@@ -3988,6 +3988,8 @@ export async function cascadeUpholsteryRollbackToSO(
       status: string | null;
       itemCategory: string | null;
       specialOrder: string | null;
+      productCode: string | null;
+      productName: string | null;
     }>();
   const siblingPOs = siblings.results ?? [];
   if (siblingPOs.length === 0) return;
@@ -4005,8 +4007,8 @@ export async function cascadeUpholsteryRollbackToSO(
 
   // Mirror the forward path: every sibling PO must have all its UPH JCs in
   // COMPLETED/TRANSFERRED for the SO to remain READY_TO_SHIP. POs with no
-  // UPH JCs need every card before PACKING done (same siblingUphGateDone as
-  // the forward path).
+  // UPH JCs need the PO COMPLETED, or (pillows) every card before PACKING done
+  // (same siblingUphGateDone as the forward path).
   // HB-only sibling POs: drop their DIVAN UPH JCs so the rollback decision
   // stays in sync with the forward cascade (which also ignores them).
   const poById = new Map(siblingPOs.map((p) => [p.id, p]));
