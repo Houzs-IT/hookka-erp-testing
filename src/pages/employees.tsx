@@ -43,6 +43,7 @@ import { EmployeeDrawer, type EmployeeDraft } from "@/components/employee-drawer
 import { HelperTag } from "@/components/helper-tag";
 import { HelperOverallLine } from "@/pages/dashboards/HelperOverallLine";
 import { useLabourCost } from "@/pages/dashboards/use-labour-cost";
+import { employedDuring } from "@/lib/employment";
 import { roundWithinGroups } from "@/lib/labour-to-payroll";
 import { WorkerPenaltyTab } from "@/components/worker-penalty-tab";
 import { OutsourcePieceTab } from "@/components/outsource-piece-tab";
@@ -12109,8 +12110,15 @@ export default function EmployeesPage() {
   // inactive) workers are excluded so the "Total Workers" / "Present" KPIs drop
   // the moment someone is marked Resigned. TEST accounts excluded too (owner
   // 2026-07-11) — same rule as Payroll, so headcount tallies system-wide.
-  const totalWorkers = workers.filter(
-    (w) => w.status === "ACTIVE" && !/^TEST/i.test(w.empNo || ""),
+  // Employed at any time in the summary range — the one employment rule
+  // (owner 2026-11-21). Present (people of them with attendance) is counted by
+  // the same rule server-side, so Present can never exceed this.
+  const totalWorkers = workers.filter((w) =>
+    employedDuring(
+      { empNo: w.empNo, status: w.status, joinDate: w.joinDate, resignedAt: (w as { resignedAt?: string | null }).resignedAt },
+      summaryRange.from,
+      summaryRange.to,
+    ),
   ).length;
   const presentCount = summaryTotals?.workerCount ?? 0;
   const summaryWorkingMinutes = summaryTotals?.workingMinutes ?? 0;

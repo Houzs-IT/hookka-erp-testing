@@ -3,6 +3,7 @@
 // constant/function exports breaks Vite Fast Refresh (react-refresh/only-
 // export-components).
 import { formatCurrency } from "../../lib/utils";
+import { employedDuring, employedOn } from "../../lib/employment";
 import { CAT, NEUTRAL, STATUS } from "../../lib/chart-standard";
 
 export const TAUPE = CAT[0];   // chart series — house standard (was #6B5C32)
@@ -601,6 +602,32 @@ export function auditTier(effPct: number, low = 90): AuditTier | null {
  * in the totals; they are not counted as people (headcount, present / not in,
  * per-person averages, the ranking).
  */
-export function isOutsourced(w: { empNo?: string | null; name?: string | null } | null | undefined): boolean {
-  return !!w && (/^OSC/i.test(w.empNo ?? "") || /^OUTSOURCE/i.test((w.name ?? "").trim()));
+export function isOutsourced(
+  w: { empNo?: string | null; name?: string | null; isOutsource?: boolean | number | null } | null | undefined,
+): boolean {
+  if (!w) return false;
+  // The worker's isOutsource flag decides (owner 2026-11-21: one rule); the
+  // name pattern is only a fallback for an older feed without the flag.
+  if (w.isOutsource !== undefined && w.isOutsource !== null) return w.isOutsource === true || w.isOutsource === 1;
+  return /^OSC/i.test(w.empNo ?? "") || /^OUTSOURCE/i.test((w.name ?? "").trim());
+}
+
+// A feed worker counted on a DAY / in a PERIOD by the one employment rule
+// (src/lib/employment.ts, owner 2026-11-21): a joiner counts from their join
+// date, a leaver through their last day — not by today's status. An older feed
+// without the dates falls back to its countsToHeadcount flag.
+type HeadcountWorker = {
+  empNo?: string | null;
+  status?: string | null;
+  joinDate?: string | null;
+  resignedAt?: string | null;
+  countsToHeadcount: boolean;
+};
+export function countsOn(w: HeadcountWorker, day: string): boolean {
+  if (w.joinDate === undefined && w.resignedAt === undefined) return w.countsToHeadcount;
+  return employedOn(w, day);
+}
+export function countsDuring(w: HeadcountWorker, from: string, to: string): boolean {
+  if (w.joinDate === undefined && w.resignedAt === undefined) return w.countsToHeadcount;
+  return employedDuring(w, from, to);
 }

@@ -32,6 +32,7 @@
 // level — operator can drill from a low daily % straight to the worker(s)
 // pulling the average down.
 // ---------------------------------------------------------------------------
+import { employedDuring } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -271,7 +272,8 @@ app.get("/", async (c) => {
     // rebuild backstops any approval that reuses an existing created_at.)
     sourceTables: ["job_cards", "working_hour_entries", "worker_nonprod_requests", "production_orders", "workers"],
   };
-  const cacheKey = `from=${fromStr}&to=${toStr}&dept=${departmentCode ?? ""}&cat=${category ?? ""}`;
+  // v2 (2026-11-21): workerCount = employed people present (one employment rule).
+  const cacheKey = `v2&from=${fromStr}&to=${toStr}&dept=${departmentCode ?? ""}&cat=${category ?? ""}`;
   const _snap_check = await Promise.all([
     readSnapshot(c.var.DB, snapConfig, orgId, cacheKey),
     getSourceSignature(c.var.DB, snapConfig.sourceTables),
@@ -671,16 +673,21 @@ app.get("/", async (c) => {
 
   // ---- Resolve worker names in one batch.
   const workerNameById = new Map<string, string>();
+  // PRESENT counts only people EMPLOYED in the range (owner 2026-11-21: one
+  // employment rule; Present can never exceed the employed headcount). Hours
+  // and efficiency are unchanged.
+  const employedPresent = new Set<string>();
   if (workerIds.size > 0) {
     const ids = Array.from(workerIds);
     const ph = ids.map(() => "?").join(",");
     const r = await c.var.DB.prepare(
-      `SELECT id, name FROM workers WHERE id IN (${ph})`,
+      `SELECT id AS "id", name AS "name", empNo AS "empNo", status AS "status", joinDate AS "joinDate", resignedAt AS "resignedAt" FROM workers WHERE id IN (${ph})`,
     )
       .bind(...ids)
-      .all<{ id: string; name: string }>();
+      .all<{ id: string; name: string; empNo: string | null; status: string | null; joinDate: string | null; resignedAt: string | null }>();
     for (const row of r.results ?? []) {
       workerNameById.set(row.id, row.name);
+      if (employedDuring(row, fromStr, toStr)) employedPresent.add(row.id);
     }
   }
 
@@ -771,7 +778,7 @@ app.get("/", async (c) => {
         workingMinutes: totalWorking,
         productionMinutes: totalProduction,
         ...totalPair,
-        workerCount: workerIds.size,
+        workerCount: employedPresent.size,
         // Provenance of the numerator (BUG-2026-08-13-103). `productionMinutes`
         // is EARNED STANDARD time for every card outside `measuredCards`, so
         // the caption must say "standard vs clocked" whenever measuredCards is
@@ -817,7 +824,7 @@ app.get("/", async (c) => {
     const endsToday = toStr === defaultTo;
     if (isFullScope && endsToday) {
       const metrics: EmployeeStateMetrics = {
-        activeHeadcount: workerIds.size,
+        activeHeadcount: employedPresent.size,
         totalWorkingMinutes: totalWorking,
         laborCostSen: 0,
         avgEfficiencyPct: totalPair.efficiencyPct,

@@ -10,6 +10,7 @@
 //   • pre-payroll— worker_nonprod_requests still PENDING (need a decision)
 //   • low-eff    — computeMonthlyEfficiencyByWorker over the trailing 7 days
 // ---------------------------------------------------------------------------
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import {
   HOOKKA_ATTENDANCE,
   hhmmToMinutes,
@@ -56,8 +57,10 @@ export async function runEmployeeDigest(
   const roster = new Map<string, { name: string; dept: string }>();
   try {
     const r = await db
-      .prepare("SELECT id, name, departmentCode FROM workers WHERE status = 'ACTIVE'")
-      .bind()
+      // Employed today by the one rule (owner 2026-11-21) — no test accounts,
+      // no one before their join date.
+      .prepare(`SELECT id, name, departmentCode FROM workers WHERE ${employedOnSql("")}`)
+      .bind(...employedOnParams(todayYmd))
       .all<{ id: string; name?: string; departmentCode?: string; department_code?: string }>();
     for (const w of r.results ?? []) {
       roster.set(w.id, {
@@ -77,10 +80,10 @@ export async function runEmployeeDigest(
         `SELECT w.id AS workerId, w.name AS name, w.departmentCode AS departmentCode
            FROM workers w
            LEFT JOIN attendance_records a ON a.employeeId = w.id AND a.date = ?
-          WHERE w.status = 'ACTIVE' AND (a.id IS NULL OR a.clockIn IS NULL)
+          WHERE ${employedOnSql("w")} AND (a.id IS NULL OR a.clockIn IS NULL)
           ORDER BY w.departmentCode, w.name`,
       )
-      .bind(todayYmd)
+      .bind(todayYmd, ...employedOnParams(todayYmd))
       .all<{ workerId: string; name?: string; departmentCode?: string; departmentcode?: string }>();
     for (const w of r.results ?? []) {
       absent.push({

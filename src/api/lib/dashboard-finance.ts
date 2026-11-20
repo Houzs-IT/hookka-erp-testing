@@ -24,6 +24,7 @@
 //   flagged "annualised".
 //   Money is integer sen; ratios are plain fractions (0.12 = 12%).
 
+import { employedOn } from "../../lib/employment";
 import { rollingForecast } from "../../lib/revenue-forecast";
 
 export type FinMonth = {
@@ -241,16 +242,11 @@ export function headcountAt(
   isCounted: (status: string | null, empNo: string | null) => boolean,
 ): number {
   if (ym >= nowYm) return workers.filter((w) => isCounted(w.status, w.empNo)).length;
+  // A finished month: the people employed on its last day, by the one
+  // employment rule (owner 2026-11-21) — a leaver whose last day IS the month
+  // end still counts, INACTIVE is placed by its last working day.
   const end = monthEnd(ym);
-  let n = 0;
-  for (const w of workers) {
-    if (/^TEST/i.test(w.empNo ?? "")) continue;
-    if (w.status === "INACTIVE") continue;
-    if (w.joinDate && String(w.joinDate).slice(0, 10) > end) continue;
-    if (w.resignedAt && String(w.resignedAt).slice(0, 10) <= end) continue;
-    n++;
-  }
-  return n;
+  return workers.filter((w) => employedOn(w, end)).length;
 }
 
 // ---- the payload -------------------------------------------------------------

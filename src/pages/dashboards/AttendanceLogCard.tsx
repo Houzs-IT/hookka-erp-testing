@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { MUTED, inFocus, isOutsourced, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
+import { MUTED, inFocus, isOutsourced, countsOn, countsDuring, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import { deptName } from "./ops-floor-lib";
 
@@ -62,7 +62,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
       byWorker.set(id, [...(byWorker.get(id) ?? []), r]);
     }
     const rows = employee.workers
-      .filter((w) => w.countsToHeadcount && !isOutsourced(w) && everClocked.has(w.id))
+      .filter((w) => countsDuring(w, `${monthYm}-01`, `${monthYm}-31`) && !isOutsourced(w) && everClocked.has(w.id))
       .map((w) => {
         const mine = byWorker.get(w.id) ?? [];
         const inDays = new Set(mine.map((r) => r.date));
@@ -127,7 +127,7 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
     if (period.day && !perDay) {
       const seen = new Set([...byEmp.values()].map((v) => v.workerId).filter(Boolean));
       for (const w of employee.workers) {
-        if (!w.countsToHeadcount || isOutsourced(w) || !everClocked.has(w.id) || seen.has(w.id)) continue;
+        if (!countsOn(w, period.day) || isOutsourced(w) || !everClocked.has(w.id) || seen.has(w.id)) continue;
         rows.push({
           key: `absent|${w.id}`,
           last: { employeeId: w.id, employeeName: w.name, dept: w.dept, date: period.day, clockIn: null, clockOut: null, workingMinutes: 0, productionMinutes: 0, overtimeMinutes: 0, efficiencyPct: null },

@@ -10,6 +10,7 @@
 //
 // Mounted at /api/dashboard/overview. Auth-gated globally; tenant-scoped.
 // ---------------------------------------------------------------------------
+import { employedOnParams, employedOnSql } from "../../lib/employment";
 import { loadDeptCompletedByDay, loadUpholsterySofaSets, type DeptDayCount } from "../lib/dept-completed";
 import type { SetCount } from "../lib/dept-revenue";
 import { todayYmdMY } from "../../lib/utils";
@@ -2095,13 +2096,14 @@ app.get("/", async (c) => {
             (
               await db
                 .prepare(
+                  // The one employment rule (owner 2026-11-21): INACTIVE with
+                  // no last day and test accounts no longer count forever.
                   `SELECT departmentCode AS "dept", COUNT(*) AS "n"
                      FROM workers
-                    WHERE (joinDate IS NULL OR joinDate <= ?)
-                      AND (resignedAt IS NULL OR resignedAt >= ?)
+                    WHERE ${employedOnSql("")}
                     GROUP BY departmentCode`,
                 )
-                .bind(M, M)
+                .bind(...employedOnParams(M))
                 .all<{ dept: string | null; n: number }>()
             ).results ?? [];
           const reconHeadByDept = reconHeadRows.map((r) => ({

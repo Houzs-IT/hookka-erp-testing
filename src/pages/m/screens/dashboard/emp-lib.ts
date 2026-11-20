@@ -5,13 +5,13 @@
 // lives inside a component body and cannot be imported. The desktop files are NOT edited; tests/m-home-employees
 // holds fixtures that pin this copy to the desktop's documented behaviour.
 import { dropIdleSundays } from "../../../../lib/idle-sundays";
-import { AMBER, GREEN, MUTED, RED, hasKeyedHours, inFocus, inPeriod, isOutsourced, periodLabel, type Period } from "../../../dashboards/dashboard-shared-lib";
+import { AMBER, GREEN, MUTED, RED, hasKeyedHours, inFocus, inPeriod, isOutsourced, countsOn, countsDuring, periodLabel, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
 
 // ---------------------------------------------------------------------------
 // Feed shapes (GET /api/dashboard/prototype → employee)
 // ---------------------------------------------------------------------------
-export type EmpWorker = { id: string; empNo?: string | null; name: string | null; dept: string | null; role?: string | null; countsToHeadcount: boolean; isHelper?: boolean };
+export type EmpWorker = { id: string; empNo?: string | null; name: string | null; dept: string | null; role?: string | null; countsToHeadcount: boolean; isHelper?: boolean; status?: string | null; joinDate?: string | null; resignedAt?: string | null; isOutsource?: boolean };
 export type EmpAtt = {
   employeeId: string | null; employeeName: string | null; dept: string | null; date: string | null; clockIn: string | null; clockOut: string | null;
   workingMinutes: number; productionMinutes: number; overtimeMinutes: number; efficiencyPct: number | null;
@@ -114,8 +114,9 @@ export function rosterOf(slice: EmpSlice) {
 }
 export function presenceOn(slice: EmpSlice, roster: EmpWorker[], anchor: string) {
   const att = new Set(slice.attendance.filter((r) => r.date === anchor).map((r) => r.employeeId));
-  const absent = roster.filter((w) => !att.has(w.id));
-  return { present: roster.length - absent.length, absent };
+  const onDay = roster.filter((w) => countsOn(w, anchor));
+  const absent = onDay.filter((w) => !att.has(w.id));
+  return { present: onDay.length - absent.length, absent, headcount: onDay.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +416,7 @@ export function dayLog(slice: EmpSlice, day: string, tileRule = false): { rows: 
   });
   const seen = new Set([...byEmp.values()].map((v) => v.workerId).filter(Boolean));
   for (const w of slice.workers) {
-    if (!w.countsToHeadcount || isOutsourced(w) || !clockers.has(w.id) || seen.has(w.id)) continue;
+    if (!countsOn(w, day) || isOutsourced(w) || !clockers.has(w.id) || seen.has(w.id)) continue;
     rows.push({ key: `absent|${w.id}`, id: w.id, name: w.name ?? "—", dept: w.dept, date: day, clockIn: null, clockOut: null, working: null, prod: null, nonProd: null, eff: null, absent: true, days: 0, late: 0 });
   }
   const rank = (r: LogRow) => (r.absent ? 0 : r.late > 0 ? 1 : 2);
@@ -442,7 +443,7 @@ export function monthLog(slice: EmpSlice, monthYm: string): { rows: MonthRow[]; 
     byWorker.set(id, [...(byWorker.get(id) ?? []), r]);
   }
   const rows: MonthRow[] = slice.workers
-    .filter((w) => w.countsToHeadcount && !isOutsourced(w) && clockers.has(w.id))
+    .filter((w) => countsDuring(w, `${monthYm}-01`, `${monthYm}-31`) && !isOutsourced(w) && clockers.has(w.id))
     .map((w) => {
       const mine = byWorker.get(w.id) ?? [];
       const inDays = new Set(mine.map((r) => r.date));
