@@ -45,7 +45,7 @@ export function buildSalesTrend(byDay: ByDay[], period: Period, today: string): 
     return [...byMonth.entries()].map(([m, v]) => ({
       date: m.slice(5),
       iso: m,
-      Revenue: Math.round(v.revenueSen / 100),
+      Revenue: v.revenueSen / 100, // exact ringgit — tooltips print to the sen (owner 2026-11-20)
       Orders: v.orders,
     }));
   }
@@ -74,7 +74,7 @@ export function buildSalesTrend(byDay: ByDay[], period: Period, today: string): 
     out.push({
       date: iso.slice(8),
       iso,
-      Revenue: hit ? Math.round(hit.revenueSen / 100) : 0,
+      Revenue: hit ? hit.revenueSen / 100 : 0,
       Orders: hit ? hit.orders : 0,
     });
     cursor.setDate(cursor.getDate() + 1);

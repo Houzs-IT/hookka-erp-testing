@@ -892,9 +892,11 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
         ? dropIdleSundays(weekRev, (r) => r.week, (r) => [r.salesOrderSen, r.invoiceSen, r.productionSen]).map((r) => ({
             // All-time → "MM-DD" of the week-start; month → "MM-DD" of the day.
             m: r.week.slice(5),
-            "Sales Orders": Math.round(r.salesOrderSen / 100),
-            Invoices: Math.round(r.invoiceSen / 100),
-            Production: Math.round(r.productionSen / 100),
+            // Exact ringgit (owner 2026-11-20: one rounding everywhere) — the
+            // tooltip prints these to the sen; bar heights don't care.
+            "Sales Orders": r.salesOrderSen / 100,
+            Invoices: r.invoiceSen / 100,
+            Production: r.productionSen / 100,
           }))
         : dropIdleSundays(
             splitRaw?.revenue ?? [],
@@ -902,9 +904,9 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
             (r) => [pickCat(r.salesOrder, revCat), pickCat(r.invoice, revCat), pickCat(r.production, revCat)],
           ).map((r) => ({
             m: r.bucket.slice(5),
-            "Sales Orders": Math.round(pickCat(r.salesOrder, revCat) / 100),
-            Invoices: Math.round(pickCat(r.invoice, revCat) / 100),
-            Production: Math.round(pickCat(r.production, revCat) / 100),
+            "Sales Orders": pickCat(r.salesOrder, revCat) / 100,
+            Invoices: pickCat(r.invoice, revCat) / 100,
+            Production: pickCat(r.production, revCat) / 100,
           })),
     [weekRev, revCat, splitRaw],
   );

@@ -231,7 +231,7 @@ export function ProductionDailyPanels({
     () =>
       bucket((lim?.revenue?.byDay ?? []).filter((d) => inPeriod(period, d.date)), period, (a, b) => ({
         ...a, orders: a.orders + b.orders, unpricedOrders: a.unpricedOrders + b.unpricedOrders, revenueSen: a.revenueSen + b.revenueSen,
-      })).map((d) => ({ iso: d.iso, date: d.key, sen: d.revenueSen, Revenue: Math.round(d.revenueSen / 100) })),
+      })).map((d) => ({ iso: d.iso, date: d.key, sen: d.revenueSen, Revenue: d.revenueSen / 100 })),
     [lim, period],
   );
   const revTotals = useMemo(() => {
@@ -279,7 +279,13 @@ export function ProductionDailyPanels({
           <BarChart data={rows} margin={{ top: 6, right: 6, bottom: 0, left: 0 }} style={{ cursor: "pointer" }} onClick={pick(rows)}>
             <XAxis dataKey="date" tick={CC_TICK} axisLine={CC_AXIS_LINE} tickLine={false} />
             <YAxis tick={CC_TICK} axisLine={false} tickLine={false} width={yWidth} allowDecimals={false} tickFormatter={fmt} />
-            <Tooltip cursor={{ fill: "#F0ECE9" }} contentStyle={TOOLTIP} />
+            {/* A money chart (fmt given) prints its tooltip to the sen, like every
+                revenue figure (owner 2026-11-20). */}
+            <Tooltip
+              cursor={{ fill: "#F0ECE9" }}
+              contentStyle={TOOLTIP}
+              formatter={fmt ? (v) => formatCurrency(Math.round(Number(v) * 100)) : undefined}
+            />
             {dayLine && <ReferenceLine x={dayLine} stroke={AMBER} strokeWidth={2} />}
             {body}
           </BarChart>

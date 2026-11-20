@@ -31,3 +31,16 @@ test("revenue figures are never rounded to whole ringgit", () => {
     assert.doesNotMatch(s, /Math\.round\(\(?[^)]*\)? ?\/ ?100\)\.toLocaleString/, `${p}: whole-RM toLocaleString`);
   }
 });
+
+test("revenue charts carry exact ringgit, so their tooltips print to the sen (owner 2026-11-20)", () => {
+  for (const p of [
+    "src/pages/dashboard-b/index.tsx",
+    "src/pages/dashboards/DailyProductionRevenueCard.tsx",
+    "src/pages/dashboards/CostingPanel.tsx",
+    "src/pages/dashboards/ProductionDailyPanels.tsx",
+    "src/pages/dashboards/dashboard-sales-lib.ts",
+  ]) {
+    const s = read(p);
+    assert.doesNotMatch(s, /Math\.round\([^)]*(?:[Rr]evenue|production|[Ss]en)[^)]*\/ ?100\)/, `${p}: revenue rounded to whole ringgit`);
+  }
+});
