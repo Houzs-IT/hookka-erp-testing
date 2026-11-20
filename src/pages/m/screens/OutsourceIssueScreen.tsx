@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { CSSProperties, JSX } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, ChevronDown, ScanLine, Search, Undo2, X, XCircle } from "lucide-react";
+import { AlertTriangle, Camera, Check, CheckCircle2, ChevronDown, CornerUpLeft, Search, Undo2, X, XCircle } from "lucide-react";
 import { QrCameraScanner } from "@/components/qr-camera-scanner";
 import { usePermissions } from "@/lib/use-permission";
 import {
@@ -10,6 +10,7 @@ import {
   formatDays,
   formatIssueDateTime,
   formatPiece,
+  issueStatusLabel,
 } from "@/lib/outsource-issue-format";
 import {
   useOutsourceIssue,
@@ -26,6 +27,7 @@ import { MobileCard, MobileHeader, SegmentedSwitch, Sheet, StatusPill } from "..
 import { ResponsiveActionDock } from "../components/ResponsiveActionDock";
 import { chip, CHIP_ROW, CHIP_ROW_CLASS } from "../lib/control-styles";
 import { M, M_ACCENT, SEMANTIC } from "../theme";
+import type { SemanticStyle } from "../theme";
 
 type ScreenTab = "issue" | "tracking";
 
@@ -35,6 +37,7 @@ const SCREEN_TABS: { key: ScreenTab; label: string }[] = [
 ];
 
 const STATUS_CHIPS: { key: StatusFilter; label: string }[] = [
+  { key: "PENDING_APPROVAL", label: "Pending approval" },
   { key: "INCOMPLETE", label: "Incomplete" },
   { key: "COMPLETED", label: "Completed" },
   { key: "ALL", label: "All" },
@@ -392,7 +395,7 @@ function IssuePane({
             }}
             style={{ ...PRIMARY_BUTTON, opacity: isScanDisabled ? 0.45 : 1 }}
           >
-            <ScanLine size={20} aria-hidden />
+            <Camera size={20} aria-hidden />
             {issue.selectedWorker ? "Scan QR" : "Pick a worker to scan"}
           </button>
           <form
@@ -442,9 +445,66 @@ function IssuePane({
   );
 }
 
-function TrackingCard({ item }: { item: OutsourceIssueWithDone }): JSX.Element {
+const STATUS_PILL: Record<OutsourceIssueWithDone["status"], SemanticStyle> = {
+  INCOMPLETE: SEMANTIC.WARNING,
+  PENDING_APPROVAL: SEMANTIC.INFO,
+  COMPLETED: SEMANTIC.SUCCESS,
+};
+
+const OUTLINE_BUTTON: CSSProperties = {
+  ...PRIMARY_BUTTON,
+  height: 44,
+  fontSize: 15,
+  backgroundColor: M.card,
+  color: M.raisin,
+  border: `1px solid ${M.border}`,
+};
+
+interface ReviewAccess {
+  canApprove: boolean;
+  canSendBack: boolean;
+}
+
+interface TrackingCardProps {
+  item: OutsourceIssueWithDone;
+  issue: UseOutsourceIssueResult;
+  access: ReviewAccess;
+}
+
+function ReviewButtons({ item, issue, access }: TrackingCardProps): JSX.Element | null {
+  if (item.status !== "PENDING_APPROVAL" || (!access.canApprove && !access.canSendBack)) return null;
+  const isBusy = issue.reviewingId === item.id;
+  return (
+    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+      {access.canSendBack ? (
+        <button
+          type="button"
+          disabled={isBusy}
+          onClick={() => void issue.sendBackIssue(item)}
+          style={{ ...OUTLINE_BUTTON, flex: 1, opacity: isBusy ? 0.6 : 1 }}
+        >
+          <CornerUpLeft size={18} aria-hidden />
+          Send back
+        </button>
+      ) : null}
+      {access.canApprove ? (
+        <button
+          type="button"
+          disabled={isBusy}
+          onClick={() => void issue.approveIssue(item)}
+          style={{ ...PRIMARY_BUTTON, height: 44, fontSize: 15, flex: 1, opacity: isBusy ? 0.6 : 1 }}
+        >
+          <Check size={18} aria-hidden />
+          Approve
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function TrackingCard({ item, issue, access }: TrackingCardProps): JSX.Element {
   const isCompleted = item.status === "COMPLETED";
-  const needsCheck = !isCompleted && item.workDone;
+  const needsCheck = item.status === "INCOMPLETE" && item.workDone;
   const days = daysOut(item);
   const daysText = days === null ? "" : isCompleted ? `took ${formatDays(days)}` : `${formatDays(days)} out`;
   return (
@@ -458,25 +518,28 @@ function TrackingCard({ item }: { item: OutsourceIssueWithDone }): JSX.Element {
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flex: "none" }}>
-          <StatusPill
-            style={isCompleted ? SEMANTIC.SUCCESS : SEMANTIC.WARNING}
-            label={isCompleted ? "Completed" : "Incomplete"}
-            size="sm"
-          />
+          <StatusPill style={STATUS_PILL[item.status]} label={issueStatusLabel(item.status)} size="sm" />
           {needsCheck ? <StatusPill style={SEMANTIC.DANGER} label="Check" size="sm" /> : null}
         </div>
       </div>
       <div style={{ fontSize: 12.5, color: M.muted }}>
         {item.workerName} · {item.departmentName} · Issued {formatIssueDateTime(item.issuedAt)} · {daysText}
       </div>
-      {isCompleted ? (
-        <div style={{ fontSize: 12.5, color: M.muted }}>Completed {formatIssueDateTime(item.completedAt)}</div>
+      {item.submittedAt ? (
+        <div style={{ fontSize: 12.5, color: M.muted }}>Finished scan {formatIssueDateTime(item.submittedAt)}</div>
       ) : null}
+      {isCompleted ? (
+        <div style={{ fontSize: 12.5, color: M.muted }}>
+          Approved {formatIssueDateTime(item.completedAt)}
+          {item.approvedBy ? ` by ${item.approvedBy}` : ""} · Payroll {item.payrollPeriod || "not recorded"}
+        </div>
+      ) : null}
+      <ReviewButtons item={item} issue={issue} access={access} />
     </MobileCard>
   );
 }
 
-function TrackingPane({ issue }: { issue: UseOutsourceIssueResult }): JSX.Element {
+function TrackingPane({ issue, access }: { issue: UseOutsourceIssueResult; access: ReviewAccess }): JSX.Element {
   const [isWorkerSheetOpen, setIsWorkerSheetOpen] = useState(false);
   const filterWorker = issue.workers.find((worker) => worker.id === issue.filters.workerId) ?? null;
   return (
@@ -522,6 +585,7 @@ function TrackingPane({ issue }: { issue: UseOutsourceIssueResult }): JSX.Elemen
         />
       </div>
       <div style={{ padding: "12px 16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+        {issue.feedback ? <FeedbackBanner tone={issue.feedback.tone} message={issue.feedback.message} /> : null}
         {issue.listError ? (
           <div style={MESSAGE_STYLE}>
             <div>Could not load the list: {issue.listError}</div>
@@ -540,7 +604,7 @@ function TrackingPane({ issue }: { issue: UseOutsourceIssueResult }): JSX.Elemen
         ) : (
           <>
             {issue.issues.map((item) => (
-              <TrackingCard key={item.id} item={item} />
+              <TrackingCard key={item.id} item={item} issue={issue} access={access} />
             ))}
             {issue.isListTruncated ? (
               <div style={{ ...MESSAGE_STYLE, padding: 8, fontSize: 12.5 }}>
@@ -571,6 +635,10 @@ export function OutsourceIssueScreen(): JSX.Element {
   const { hasPermission, loading: isPermissionsLoading } = usePermissions();
   const canIssue = isPermissionsLoading || hasPermission("outsource-issues", "create");
   const canUndo = isPermissionsLoading || hasPermission("outsource-issues", "delete");
+  const access: ReviewAccess = {
+    canApprove: !isPermissionsLoading && hasPermission("production-orders", "create"),
+    canSendBack: !isPermissionsLoading && hasPermission("outsource-issues", "update"),
+  };
   const [tab, setTab] = useState<ScreenTab>("issue");
 
   return (
@@ -584,7 +652,7 @@ export function OutsourceIssueScreen(): JSX.Element {
           <IssuePane issue={issue} canIssue={canIssue} canUndo={canUndo} />
         </div>
       ) : (
-        <TrackingPane issue={issue} />
+        <TrackingPane issue={issue} access={access} />
       )}
     </>
   );

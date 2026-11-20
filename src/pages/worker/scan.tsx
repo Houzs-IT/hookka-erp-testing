@@ -82,6 +82,7 @@ const ScanCompleteEnvelope = z
         // a rescan of an already-finished variant (no slot filled) so the page
         // can show "already complete" instead of a misleading green ✓.
         alreadyComplete: z.boolean().optional(),
+        pendingApproval: z.boolean().optional(),
         // Shared / dept fan-out endpoints (scan-complete-shared / -dept) return
         // the department they actually completed; used to label the ✓ card.
         deptCode: z.string().optional(),
@@ -218,6 +219,7 @@ type Result =
       // header instead of the green ✓ so the worker isn't told they just did
       // work they didn't. BUG-2026-06-08.
       alreadyComplete?: boolean;
+      pendingApproval?: boolean;
       // Secondary line on the ✓ / already card — e.g. "已满:2 人 (Ali + Siti)"
       // or "完成人:Ali" so a shared scan says BY WHOM (Wei Siang 2026-06-15).
       detail?: string;
@@ -2243,6 +2245,7 @@ export default function WorkerScanPage() {
           order: ctx.order,
           piece: ctx.piece,
           alreadyComplete: !!data.data.alreadyComplete,
+          pendingApproval: !!data.data.pendingApproval,
           // Who's on the PIC slots — shown under the ✓ so a shared Sew/Uph
           // completion says BY WHOM (1 or 2 names).
           detail:
@@ -2753,14 +2756,19 @@ export default function WorkerScanPage() {
           exactly which piece they just completed. */}
       {result.kind === "success" && (
         <div
-          className={`${result.alreadyComplete ? "bg-[#7A5B1A]" : "bg-[#3E6570]"} text-white rounded-xl p-6 text-center`}
+          className={`${result.pendingApproval ? "bg-[#6B5C32]" : result.alreadyComplete ? "bg-[#7A5B1A]" : "bg-[#3E6570]"} text-white rounded-xl p-6 text-center`}
         >
           <CheckCircle2 className="h-12 w-12 mx-auto mb-3" />
           <p className="text-xl font-bold mb-1">
-            {result.alreadyComplete
-              ? t("scan.alreadyDone")
-              : `${t("scan.complete")} ✓`}
+            {result.pendingApproval
+              ? t("scan.sentForApproval")
+              : result.alreadyComplete
+                ? t("scan.alreadyDone")
+                : `${t("scan.complete")} ✓`}
           </p>
+          {result.pendingApproval && (
+            <p className="text-sm opacity-95 mb-2">{t("scan.waitingApproval")}</p>
+          )}
           <p className="text-base font-semibold opacity-95">
             {wipNameFor(result.jobCard, result.order)}
           </p>
@@ -2779,7 +2787,7 @@ export default function WorkerScanPage() {
                 .replace("{n}", String(result.piece.totalPieces))}
             </p>
           )}
-          {!result.alreadyComplete && (
+          {!result.alreadyComplete && !result.pendingApproval && (
             <p className="text-xs opacity-75 mt-1">PIC slot {result.slot}</p>
           )}
 

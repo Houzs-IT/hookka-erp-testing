@@ -38,6 +38,18 @@ function dayNumberOf(iso: string): number {
   return Date.UTC(year, month - 1, day) / MILLISECONDS_PER_DAY;
 }
 
+export type IssueStatusName = "INCOMPLETE" | "PENDING_APPROVAL" | "COMPLETED";
+
+const ISSUE_STATUS_LABELS: Record<IssueStatusName, string> = {
+  INCOMPLETE: "Incomplete",
+  PENDING_APPROVAL: "Pending approval",
+  COMPLETED: "Completed",
+};
+
+export function issueStatusLabel(status: IssueStatusName): string {
+  return ISSUE_STATUS_LABELS[status];
+}
+
 export function formatIssueDateTime(iso: string | null | undefined): string {
   return isValidIso(iso) ? dateTimeFormatter.format(new Date(iso)).replace(",", "") : "—";
 }
