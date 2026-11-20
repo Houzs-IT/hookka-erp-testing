@@ -8,8 +8,22 @@ import { formatIssueDateTime, formatPiece } from "@/lib/outsource-issue-format";
 import { daysHeldText, useOutsourceTasks } from "./use-outsource-tasks";
 import type { Translate } from "./use-outsource-tasks";
 
+const STATUS_CHIP: Record<OutsourceIssue["status"], { className: string; key: string }> = {
+  INCOMPLETE: { className: "bg-[#FAEFCB] text-[#8A5F14]", key: "tasks.incomplete" },
+  PENDING_APPROVAL: { className: "bg-[#E0EDF0] text-[#3E6570]", key: "tasks.pendingApproval" },
+  COMPLETED: { className: "bg-[#EEF3E4] text-[#3F6430]", key: "tasks.completed" },
+};
+
+function taskTimeLine(t: Translate, issue: OutsourceIssue): string {
+  if (issue.status === "COMPLETED") return `${t("tasks.completed")} ${formatIssueDateTime(issue.completedAt)}`;
+  if (issue.status === "PENDING_APPROVAL") return `${t("tasks.finishedScan")} ${formatIssueDateTime(issue.submittedAt)}`;
+  const held = daysHeldText(t, issue);
+  const issued = `${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)}`;
+  return held ? `${issued} · ${held}` : issued;
+}
+
 function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.Element {
-  const isCompleted = issue.status === "COMPLETED";
+  const chip = STATUS_CHIP[issue.status];
   return (
     <li className="rounded-xl border border-[#D8D2CC] bg-white p-4">
       <div className="flex items-start justify-between gap-3">
@@ -20,21 +34,11 @@ function TaskCard({ issue, t }: { issue: OutsourceIssue; t: Translate }): JSX.El
             {issue.pieceNo === null ? "" : ` · ${t("tasks.piece")} ${formatPiece(issue)}`}
           </p>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
-            isCompleted ? "bg-[#EEF3E4] text-[#3F6430]" : "bg-[#FAEFCB] text-[#8A5F14]"
-          }`}
-        >
-          {isCompleted ? t("tasks.completed") : t("tasks.incomplete")}
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${chip.className}`}>
+          {t(chip.key)}
         </span>
       </div>
-      <p className="mt-2 text-sm text-[#5A5550]">
-        {isCompleted
-          ? `${t("tasks.completed")} ${formatIssueDateTime(issue.completedAt)}`
-          : [`${t("tasks.issued")} ${formatIssueDateTime(issue.issuedAt)}`, daysHeldText(t, issue)]
-              .filter(Boolean)
-              .join(" · ")}
-      </p>
+      <p className="mt-2 text-sm text-[#5A5550]">{taskTimeLine(t, issue)}</p>
     </li>
   );
 }

@@ -48,8 +48,10 @@ const WARNING_CODES = new Set(["ALREADY_ISSUED", "ALREADY_DONE"]);
 
 export const LIST_CAP = 500;
 
+const COMPLETION_URL_PREFIX = "/api/production-orders/";
+
 export const DEFAULT_FILTERS: TrackingFilters = {
-  status: "INCOMPLETE",
+  status: "PENDING_APPROVAL",
   workerId: "",
   from: "",
   to: "",
@@ -88,6 +90,9 @@ export interface UseOutsourceIssueResult {
   sessionIssues: OutsourceIssue[];
   undoIssue: (issue: OutsourceIssue) => Promise<void>;
   undoingId: string;
+  approveIssue: (issue: OutsourceIssue) => Promise<void>;
+  sendBackIssue: (issue: OutsourceIssue) => Promise<void>;
+  reviewingId: string;
   filters: TrackingFilters;
   setFilters: (patch: Partial<TrackingFilters>) => void;
   issues: OutsourceIssueWithDone[];
@@ -106,6 +111,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
   const [sessionIssues, setSessionIssues] = useState<OutsourceIssue[]>([]);
   const [isIssuing, setIsIssuing] = useState(false);
   const [undoingId, setUndoingId] = useState("");
+  const [reviewingId, setReviewingId] = useState("");
   const lastScanRef = useRef({ value: "", at: 0 });
   const isBusyRef = useRef(false);
   const pendingScanRef = useRef<string | null>(null);
@@ -267,6 +273,63 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     }
   }, []);
 
+  const runReview = useCallback(
+    async (issue: OutsourceIssue, request: () => Promise<Response>, successMessage: string): Promise<void> => {
+      setReviewingId(issue.id);
+      try {
+        const response = await request();
+        const envelope = await readEnvelope<unknown>(response);
+        if (response.ok && envelope?.success !== false) {
+          setFeedback({ tone: "success", message: successMessage });
+          invalidateCachePrefix(ISSUES_URL);
+          setListReloadTick((current) => current + 1);
+          return;
+        }
+        setFeedback({ tone: "danger", message: failureMessage(envelope, response.status) });
+      } catch {
+        setFeedback({ tone: "danger", message: NETWORK_MESSAGE });
+      } finally {
+        setReviewingId("");
+      }
+    },
+    [],
+  );
+
+  const approveIssue = useCallback(
+    async (issue: OutsourceIssue): Promise<void> => {
+      const scan = issue.submittedScan;
+      if (!scan || !scan.url.startsWith(COMPLETION_URL_PREFIX)) {
+        setFeedback({
+          tone: "danger",
+          message: "This item has no finished scan to approve. Send it back and ask the worker to scan it again.",
+        });
+        return;
+      }
+      await runReview(
+        issue,
+        () =>
+          fetch(scan.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(scan.body),
+          }),
+        `Received from ${issue.workerName}: ${describeIssue(issue)}. ${issue.departmentName} is completed.`,
+      );
+    },
+    [runReview],
+  );
+
+  const sendBackIssue = useCallback(
+    async (issue: OutsourceIssue): Promise<void> => {
+      await runReview(
+        issue,
+        () => fetch(`${ISSUES_URL}/${encodeURIComponent(issue.id)}/send-back`, { method: "POST" }),
+        `Sent back to ${issue.workerName}: ${describeIssue(issue)}`,
+      );
+    },
+    [runReview],
+  );
+
   return {
     workers,
     isWorkersLoading: workersResult.loading,
@@ -281,6 +344,9 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
     sessionIssues,
     undoIssue,
     undoingId,
+    approveIssue,
+    sendBackIssue,
+    reviewingId,
     filters,
     setFilters,
     issues,

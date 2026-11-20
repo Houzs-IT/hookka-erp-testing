@@ -485,3 +485,23 @@ export async function loadWorkerPieceLines(db: Runner, workerId: string, period:
     amountSen: Number(r.amountSen ?? r.amount_sen) || 0,
   }));
 }
+
+/** Payroll month already recorded per order, for the Outsource Work Payroll column. */
+export async function loadRecordedPeriods(db: Runner, orderIds: readonly string[]): Promise<Map<string, string>> {
+  const periodByOrder = new Map<string, string>();
+  if (orderIds.length === 0) return periodByOrder;
+  await ensureOutsourcePieceTables(db);
+  const rows = await freshAll<Record<string, unknown>>(
+    db,
+    db
+      .prepare(
+        `SELECT production_order_id, payroll_period FROM outsource_piece_records
+          WHERE production_order_id IN (${orderIds.map(() => "?").join(",")})`,
+      )
+      .bind(...orderIds),
+  );
+  for (const row of rows) {
+    periodByOrder.set(text(row.productionOrderId, row.production_order_id), text(row.payrollPeriod, row.payroll_period));
+  }
+  return periodByOrder;
+}
