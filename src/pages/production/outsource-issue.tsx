@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   CornerUpLeft,
   RefreshCw,
+  ScanLine,
   Undo2,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { QrCameraScanner } from "@/components/qr-camera-scanner";
 import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/ui/data-grid";
 import type { Column } from "@/components/ui/data-grid";
@@ -251,12 +254,14 @@ function StepBadge({ step, label, isDone }: { step: number; label: string; isDon
 
 function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; canIssue: boolean }): JSX.Element {
   const [scanText, setScanText] = useState("");
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const { selectedWorkerId, isIssuing } = issue;
 
   useEffect(() => {
-    if (selectedWorkerId && !isIssuing) scanInputRef.current?.focus();
-  }, [selectedWorkerId, isIssuing]);
+    if (selectedWorkerId && !isIssuing && !isCameraOpen) scanInputRef.current?.focus();
+  }, [selectedWorkerId, isIssuing, isCameraOpen]);
 
   const isScanDisabled = !issue.selectedWorker || !canIssue;
   const submitScan = (): void => {
@@ -318,25 +323,58 @@ function IssueWorkPanel({ issue, canIssue }: { issue: UseOutsourceIssueResult; c
         <label htmlFor="outsource-scan" className="mb-1 block text-xs font-medium text-[#6B7280]">
           Scan sticker
         </label>
-        <Input
-          id="outsource-scan"
-          ref={scanInputRef}
-          value={scanText}
-          onChange={(event) => setScanText(event.target.value)}
-          placeholder={issue.selectedWorker ? "Scan the item's sticker. It issues on Enter." : "Pick a worker first"}
-          disabled={isScanDisabled}
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          enterKeyHint="send"
-          aria-describedby="outsource-scan-hint"
-        />
+        <div className="flex gap-2">
+          <Input
+            id="outsource-scan"
+            ref={scanInputRef}
+            value={scanText}
+            onChange={(event) => setScanText(event.target.value)}
+            placeholder={issue.selectedWorker ? "Scan, type or paste the sticker code" : "Pick a worker first"}
+            disabled={isScanDisabled}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            enterKeyHint="send"
+            aria-describedby="outsource-scan-hint"
+            className="min-w-0 flex-1"
+          />
+          <Button type="submit" variant="primary" disabled={isScanDisabled || issue.isIssuing || !scanText.trim()}>
+            <ArrowRight className="h-4 w-4" aria-hidden />
+            Issue
+          </Button>
+        </div>
         <p id="outsource-scan-hint" className="mt-1 text-xs text-[#6B7280]">
           {issue.isIssuing
             ? "Issuing…"
             : "Scan the QR on the item's production sticker or its job card. Each scan issues one item to this worker."}
         </p>
       </form>
+
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        disabled={isScanDisabled}
+        onClick={() => {
+          setCameraError(null);
+          setIsCameraOpen(true);
+        }}
+      >
+        <ScanLine className="h-4 w-4" aria-hidden />
+        Scan QR
+      </Button>
+      {cameraError ? <p className="text-xs text-[#9A3A2D]">{cameraError}</p> : null}
+      {isCameraOpen ? (
+        <QrCameraScanner
+          onDecode={(text) => void issue.issueByScan(text)}
+          onClose={() => setIsCameraOpen(false)}
+          onError={(message) => {
+            setCameraError(message);
+            setIsCameraOpen(false);
+          }}
+          statusText={issue.feedback?.message}
+        />
+      ) : null}
 
       {issue.feedback ? (
         <div
