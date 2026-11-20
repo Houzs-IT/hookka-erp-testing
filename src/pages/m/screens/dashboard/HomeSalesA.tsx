@@ -253,7 +253,7 @@ export function RevenueCard({ data, access }: { data: SalesData; access: SalesAc
                 {vis.map(([k, l, c]) => (
                   <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, lineHeight: "16px", color: M.ink, ...TNUM }}>
                     <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: c }} />{l}
-                    <span style={{ marginLeft: "auto", paddingLeft: 10, fontWeight: 700, color: M.raisin }}>{rm(Math.round(pick[k] / 100) * 100)}</span>
+                    <span style={{ marginLeft: "auto", paddingLeft: 10, fontWeight: 700, color: M.raisin }}>{rm(pick[k])}</span>
                   </div>
                 ))}
               </div>
@@ -391,7 +391,7 @@ export function PipelineCard({ data, periodKey, periodText }: { data: SalesData;
 // ---------------------------------------------------------------------------
 const TONE_COLOR: Record<ReturnType<typeof fcTone>, string> = { hit: DATA.moss, missed: DATA.amber, "so-far": DATA.so, none: DATA.noTarget, future: DATA.future };
 const kRM = (sen: number) => `RM ${Math.round(sen / 100 / 1000).toLocaleString("en-MY")}k`;
-const kRMexact = (sen: number) => `RM ${Math.round(sen / 100).toLocaleString("en-MY")}`;
+const kRMexact = (sen: number) => rm(sen);
 
 export function ForecastCard({
   data, access, period, todayYmd, onLegend,

@@ -107,7 +107,7 @@ export function useEmpModel({ access, period, today, logSignal, drill }: { acces
   const revStatus: MoneyStatus = money.revenue.status;
   const revText = (sen: number | null) => (revStatus === "denied" ? "No access" : revStatus === "error" ? "—" : revStatus === "loading" || sen == null ? "…" : rm(sen));
   const outStatus: MoneyStatus = money.prog.status;
-  const outText = (sen: number) => (outStatus === "denied" ? "No access" : outStatus === "error" ? "—" : outStatus === "loading" ? "…" : rm(Math.round(sen / 100) * 100));
+  const outText = (sen: number) => (outStatus === "denied" ? "No access" : outStatus === "error" ? "—" : outStatus === "loading" ? "…" : rm(sen));
 
   return {
     feed, employee, target, access, today, period, latest: latestDay(days),

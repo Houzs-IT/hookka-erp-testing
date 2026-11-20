@@ -65,8 +65,9 @@ test("a running month without generated payslips reads the same live estimate th
 
 test("the original cards are untouched", () => {
   assert.match(UI, /<p className="text-lg font-bold text-\[#1F1D1B\]">\{formatCurrency\(totalLaborCostSen\)\}<\/p>/);
-  assert.match(UI, /<p className="text-lg font-bold text-\[#1F1D1B\]">\{formatCurrency\(totalLaborCostSen - productionLaborCostSen\)\}<\/p>/);
-  assert.match(UI, /formatCurrency\(totalRevenueSen - productionLaborCostSen\)/);
+  // Owner 2026-11-20: the production / non-production cards and Remain are on the payroll basis (the dashboard's figure).
+  assert.match(UI, /<p className="text-lg font-bold text-\[#1F1D1B\]">\{formatCurrency\(paidTotalSen - paidProductionSen\)\}<\/p>/);
+  assert.match(UI, /formatCurrency\(totalRevenueSen - paidProductionSen\)/);
   // Six across only when all six are there; otherwise the strip keeps its five columns.
   assert.match(UI, /\$\{fullCostCard && canSeeRevenue \? "md:grid-cols-6" : "md:grid-cols-5"\}/);
   // The print mirrors the original strip — the new card is not printed.

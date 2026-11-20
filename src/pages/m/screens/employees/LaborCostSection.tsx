@@ -29,6 +29,7 @@ import { catLabel, computeLaborCost, costRatio, overheadBucket, parseLcCategory,
 import { PeriodSheet } from "./PeriodSheet";
 import RevenueUnitsPage from "./RevenueUnitsPage";
 import { laborCostState, useLaborCost } from "./use-labor-cost";
+import { useLabourCost } from "../../../dashboards/use-labour-cost";
 import { useEmployeesPeriod } from "./use-employees-period";
 
 const PREVIEW = 5;
@@ -124,6 +125,8 @@ export default function LaborCostSection() {
   const data = useLaborCost(range);
   const st = laborCostState(data);
   const { workers, entries, depts, holidays, effSalary, versions, revenue } = data;
+  // Payroll basis: the dashboard's labour per worker-day-department (owner 2026-11-20, same as desktop).
+  const paidLabour = useLabourCost(range.from, range.to, st.costDataOk);
   // MEMOISED: the menu effect below depends on `result`. A fresh object every render re-ran that effect every render, and its
   // bridge.set() re-renders the shell, which re-renders this section: an endless loop that froze the other tabs (PR #1422 regression).
   const result = useMemo(
@@ -140,9 +143,10 @@ export default function LaborCostSection() {
             category,
             byDeptCategory: revenue.value?.byDeptCategory ?? null,
             costDataOk: st.costDataOk,
+            paidByWdd: paidLabour.ready ? paidLabour.byWorkerDayDept : null,
           })
         : null,
-    [st.ready, st.costDataOk, workers.value, entries.value, depts.value, holidays.value, versions.value, effSalary.value, revenue.value, range.from, range.to, category],
+    [st.ready, st.costDataOk, workers.value, entries.value, depts.value, holidays.value, versions.value, effSalary.value, revenue.value, range.from, range.to, category, paidLabour.ready, paidLabour.byWorkerDayDept],
   );
   const money = (sen: number) => (result?.mode === "unavailable" ? "Unavailable" : formatRM(sen));
   const revOk = st.revenue === "ok";

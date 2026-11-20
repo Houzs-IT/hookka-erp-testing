@@ -544,9 +544,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.work)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{hrs(r.prod)}</td>
                       <td className="px-3 py-1.5 text-right font-semibold tabular-nums" style={{ color: effColor(v, target) }}>{pct(v)}<HelperOverallLine overallPct={eff(r.prod, r.work)} helperMinutes={r.hw} className="font-normal" /></td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(r.bf / 100) * 100) : "…"}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(r.sofa / 100) * 100) : "…"}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{progResp ? formatCurrency(Math.round(r.acc / 100) * 100) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(r.bf)) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(r.sofa)) : "…"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{progResp ? formatCurrency(Math.round(r.acc)) : "…"}</td>
                       {canSalary && <>
                         <td className="px-3 py-1.5 text-right tabular-nums">{money(r.cost)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && progResp ? pct(lp) : "…"}</td>
@@ -564,9 +564,9 @@ export function EmployeesDashboard({ period }: { period: Period }) {
                     <td className="px-3 py-1.5 text-right tabular-nums">{hrs(deptTotal.work)}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums">{hrs(deptTotal.prod)}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: effColor(peff(deptTotal.prod, deptTotal.work, deptTotal.hp, deptTotal.hw), target) }}>{pct(peff(deptTotal.prod, deptTotal.work, deptTotal.hp, deptTotal.hw))}<HelperOverallLine overallPct={eff(deptTotal.prod, deptTotal.work)} helperMinutes={deptTotal.hw} className="font-normal" /></td>
-                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(deptTotal.bf / 100) * 100) : "…"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(deptTotal.sofa / 100) * 100) : "…"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{progResp ? formatCurrency(Math.round(deptTotal.acc / 100) * 100) : "…"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: CHART_INK }}>{progResp ? formatCurrency(Math.round(deptTotal.bf)) : "…"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: TEAL }}>{progResp ? formatCurrency(Math.round(deptTotal.sofa)) : "…"}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-[#6B7280]">{progResp ? formatCurrency(Math.round(deptTotal.acc)) : "…"}</td>
                     {canSalary && <>
                       <td className="px-3 py-1.5 text-right tabular-nums">{money(deptTotal.cost)}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-[#6B5C32]">{salaryReady && progResp ? pct(ratio(deptTotal.cost, deptTotal.bf + deptTotal.sofa + deptTotal.acc)) : "…"}</td>

@@ -5,7 +5,7 @@
 // Actions: desktop detail.tsx per status (lib/procurement-mobile.ts
 // poActions), each shown only with the permission its server route checks.
 // ===========================================================================
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Ban, CircleCheck, Download, Files, Lock, Mail, Package, PackageCheck, Pencil, Printer, Receipt, Scale, Trash2, type LucideIcon,
@@ -25,12 +25,17 @@ import {
 import { BottomDock, ConfirmLines, FieldLabel, PrimaryButton, SecondaryButton, SheetFooter, SheetSub, Surface } from "../delivery/ui";
 import { DL, INPUT, SHADOW_SECTION, T } from "../delivery/ui-tokens";
 import { useConfirmSheet, useMobileToast } from "../delivery/ui-hooks";
-import { downloadPoPdf, printGrnFromPo, putPo, refreshProcurementCaches, send } from "./actions";
+import type { PoEmailDraft } from "@/lib/po-email-draft";
+import { downloadPoPdf, poEmailDraft, printGrnFromPo, putPo, refreshProcurementCaches, send } from "./actions";
 import { Banner, ChainRow, DetailColumn, Fact, InfoRows, KvSection, LineCard, MenuGroup, MenuRow, OffFlow, Progress, SectionTitle, Timeline, TilePill, TotalBlock, type ChainNode } from "./parts";
 import { DetailFrame } from "./ProcurementDetailScreen";
 import { PoForm, type PoFormMode } from "./PoForm";
 import { ReceiveForm } from "./ReceiveForm";
 import { PiForm } from "./PiForm";
+
+const ComposeDialog = lazy(() =>
+  import("@/pages/mail-center/compose").then((m) => ({ default: m.ComposeDialog })),
+);
 
 type Env = { success?: boolean; data?: RawRow; linkedGRNs?: RawRow[]; linkedPIs?: RawRow[] };
 
@@ -74,6 +79,7 @@ export function PoDetail({ id }: { id: string }) {
   const [poForm, setPoForm] = useState<PoFormMode | null>(null);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [piOpen, setPiOpen] = useState(false);
+  const [emailDraft, setEmailDraft] = useState<PoEmailDraft | null>(null);
 
   const after = (ok: boolean, msg: string, err?: string) => {
     if (!ok) {
@@ -99,11 +105,19 @@ export function PoDetail({ id }: { id: string }) {
       if (live) return navigate({ pathname: `/m/procurement/${encodeURIComponent(s(live, "id"))}`, search: location.search });
       return setPiOpen(true);
     }
+    // HK-0113: through Mail Center, as desktop — POST /:id/email no longer exists.
     if (k === "EMAIL") {
       setBusy(true);
-      const r = await send(`${url}/email`, "POST");
-      setBusy(false);
-      return after(r.ok, "Queued for delivery", r.ok ? undefined : r.error);
+      try {
+        const draft = await poEmailDraft(po);
+        if (draft) setEmailDraft(draft);
+        else toast.show(`Supplier ${s(po, "supplierName")} has no email on file`, "error");
+      } catch (e) {
+        toast.show(e instanceof Error ? e.message : "Could not prepare the email", "error");
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
     if (k === "DELETE") {
       const ok = await confirmSheet.confirm({ title: "Delete PO", sub: poNo, lines: [{ icon: "warning", text: `Permanently delete PO ${poNo}? This cannot be undone.` }], confirmLabel: "Delete" });
@@ -270,6 +284,20 @@ export function PoDetail({ id }: { id: string }) {
           />
         </>
       ) : null}
+      {emailDraft && (
+        <Suspense fallback={null}>
+          <ComposeDialog
+            open
+            onClose={() => setEmailDraft(null)}
+            prefill={emailDraft}
+            stayOnSent
+            onSent={async () => {
+              const r = await send(`${url}/mark-emailed`, "POST");
+              after(r.ok, "Sent to supplier", r.ok ? undefined : `Sent, but the PO was not marked as emailed: ${r.error}`);
+            }}
+          />
+        </Suspense>
+      )}
       {confirmSheet.node}
       {toast.node}
     </DetailFrame>

@@ -13,15 +13,40 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, CheckCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useInterval } from "@/lib/scheduler";
 import type { Notification } from "@/types";
 import {
-  loadNotifications,
+  addSeen,
+  tryLoadNotifications,
   markNotificationsRead,
   recentForBell,
   subscribeNotifications,
   unreadCount,
   isUnread,
+  newArrivals,
+  notificationTarget,
 } from "@/lib/notifications-feed";
+
+// HK-0155: ERP users have no push, so the bell polls and pops up new rows
+// itself. Keeps polling in a background tab so the OS notification still fires.
+const POLL_MS = 60_000;
+const POPUP_MS = 10_000;
+
+/** OS-level pop-up, only when the user allowed it. Best-effort: some browsers
+ *  (Android Chrome) have no Notification constructor and throw. */
+function showSystemNotification(n: Notification, onClick: () => void) {
+  try {
+    if (typeof window.Notification === "undefined" || window.Notification.permission !== "granted") return;
+    const sys = new window.Notification(n.title, { body: n.message, tag: n.id, icon: "/pwa-icon-erp-192.png" });
+    sys.onclick = () => {
+      window.focus();
+      sys.close();
+      onClick();
+    };
+  } catch {
+    /* no OS pop-up on this browser — the in-app card still shows */
+  }
+}
 
 const SEVERITY_DOT: Record<Notification["severity"], string> = {
   CRITICAL: "bg-[#9A3A2D]",
@@ -51,11 +76,35 @@ export function NotificationBell() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>([]);
+  const [popup, setPopup] = useState<{ n: Notification; more: number } | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const seenRef = useRef<Set<string> | null>(null);
+  const openItemRef = useRef<(n: Notification) => void>(() => {});
 
   const refresh = useCallback(() => {
-    void loadNotifications().then(setItems);
+    void tryLoadNotifications().then((list) => {
+      // A failed load changes nothing, so the next good one can't pop the whole backlog.
+      if (!list) return;
+      const fresh = newArrivals(seenRef.current, list);
+      seenRef.current = addSeen(seenRef.current, list);
+      setItems(list);
+      if (fresh.length === 0) return;
+      setPopup({ n: fresh[0], more: fresh.length - 1 });
+      // OS notification only when the tab is out of sight; in front, the card is enough.
+      if (document.hidden) {
+        for (const n of fresh.slice(0, 3)) showSystemNotification(n, () => openItemRef.current(n));
+      }
+    });
   }, []);
+
+  useInterval(refresh, POLL_MS, { pauseOnHidden: false });
+
+  useEffect(() => {
+    if (!popup) return;
+    // eslint-disable-next-line no-restricted-syntax -- must re-arm for each new pop-up; useTimeout re-arms only when ms changes
+    const t = window.setTimeout(() => setPopup(null), POPUP_MS);
+    return () => window.clearTimeout(t);
+  }, [popup]);
 
   // First paint, plus whenever the OTHER surface (the /notifications page)
   // marks something read, plus when the tab regains focus.
@@ -102,10 +151,13 @@ export function NotificationBell() {
 
   function openItem(n: Notification) {
     setOpen(false);
+    setPopup(null);
     if (isUnread(n)) void markRead([n.id]);
-    if (n.link) navigate(n.link);
-    else navigate("/notifications");
+    navigate(notificationTarget(n));
   }
+  useEffect(() => {
+    openItemRef.current = openItem;
+  });
 
   return (
     <div className="relative" ref={popoverRef}>
@@ -116,7 +168,14 @@ export function NotificationBell() {
         onClick={() => {
           const next = !open;
           setOpen(next);
+          setPopup(null);
           if (next) refresh();
+          // Ask once, on a click (browsers ignore a prompt without one), so new
+          // notices can also pop up as OS notifications while the tab is hidden.
+          if (typeof window.Notification !== "undefined" && window.Notification.permission === "default") {
+            // Old Safari returns undefined (callback form), hence Promise.resolve.
+            void Promise.resolve(window.Notification.requestPermission()).catch(() => {});
+          }
         }}
         className={cn(
           "relative rounded-md p-2 text-[#6B7280] hover:bg-[#F0ECE9] transition-colors",
@@ -134,6 +193,43 @@ export function NotificationBell() {
           </span>
         )}
       </button>
+
+      {popup && !open && (
+        <div
+          role="alert"
+          className="absolute right-0 top-full mt-1 w-80 max-w-[90vw] rounded-md border border-[#E2DDD8] bg-white shadow-lg z-50"
+        >
+          <button
+            type="button"
+            onClick={() => openItem(popup.n)}
+            className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-[#F0ECE9]"
+          >
+            <span
+              className={cn(
+                "mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full",
+                SEVERITY_DOT[popup.n.severity] ?? "bg-[#3E6570]",
+              )}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold text-[#1F1D1B]">{popup.n.title}</span>
+              <span className="block truncate text-xs text-[#6B7280]">{popup.n.message}</span>
+              {popup.more > 0 && (
+                <span className="mt-0.5 block text-[10px] text-[#9CA3AF]">
+                  +{popup.more} more new notification{popup.more === 1 ? "" : "s"}
+                </span>
+              )}
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setPopup(null)}
+            className="absolute right-1 top-1 rounded px-1 text-xs text-[#9CA3AF] hover:text-[#1F1D1B]"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {open && (
         <div className="absolute right-0 top-full mt-1 w-96 max-w-[90vw] rounded-md border border-[#E2DDD8] bg-white shadow-lg z-50">

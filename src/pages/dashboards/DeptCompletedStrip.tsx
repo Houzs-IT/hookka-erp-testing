@@ -11,10 +11,12 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
+import { formatCurrency } from "@/lib/utils";
 import type { DeptCompletedResponse } from "./floor-live-lib";
 import { behindPace, deptCompletedFor, deptCompletedDays, myNowMin } from "./floor-live-lib";
 
-const rm = (sen: number | undefined) => `RM ${Math.round((sen ?? 0) / 100).toLocaleString("en-MY")}`;
+// Revenue shows to the sen everywhere (owner 2026-11-20: one rounding rule across the system).
+const rm = (sen: number | undefined) => formatCurrency(Math.round(sen ?? 0));
 
 export function DeptCompletedStrip({ code, name, data, label, showUsual, live, today }: {
   code: string;
