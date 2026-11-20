@@ -4,6 +4,7 @@
 // live in ../../lib/procurement-mobile.ts and the server decides.
 // ===========================================================================
 import { invalidateCachePrefix } from "@/lib/cached-fetch";
+import { buildPoEmailDraft, type PoEmailDraft } from "@/lib/po-email-draft";
 import { mutateJson } from "../../config/mutate";
 import { rows, s, type RawRow } from "../../lib/procurement-mobile";
 
@@ -95,6 +96,29 @@ export async function downloadPoPdf(po: RawRow): Promise<void> {
   const purchaseOrgCode = (sup && s(sup, "purchaseOrgCode")) || "HOOKKA";
   const lh = letterheadForPurchaseOrg(purchaseOrgCode, orgs);
   generatePurchaseOrderPdf({ ...po, purchaseOrgCode } as unknown as Parameters<typeof generatePurchaseOrderPdf>[0], lh);
+}
+
+/**
+ * detail.tsx openEmail (HK-0113): the Mail Center draft for "Email to Supplier",
+ * PO PDF attached. Null when the supplier has no email on file.
+ */
+export async function poEmailDraft(po: RawRow): Promise<PoEmailDraft | null> {
+  const { generatePurchaseOrderPdf, letterheadForPurchaseOrg } = await import("@/lib/generate-purchase-order-pdf");
+  const { sup, orgs } = await supplierAndOrgs(s(po, "supplierId"));
+  const purchaseOrgCode = (sup && s(sup, "purchaseOrgCode")) || "HOOKKA";
+  const lh = letterheadForPurchaseOrg(purchaseOrgCode, orgs);
+  const doc = generatePurchaseOrderPdf({ ...po, purchaseOrgCode } as unknown as Parameters<typeof generatePurchaseOrderPdf>[0], lh, { returnDoc: true });
+  if (!doc) throw new Error("Could not build the PO PDF");
+  const dataUri = doc.output("datauristring");
+  return buildPoEmailDraft({
+    poNo: s(po, "poNo"),
+    supplierName: s(po, "supplierName"),
+    supplierEmail: sup ? s(sup, "email") : null,
+    supplierEmail2: sup ? s(sup, "email2") : null,
+    supplierEmail3: sup ? s(sup, "email3") : null,
+    companyName: lh.name,
+    pdfBase64: dataUri.slice(dataUri.indexOf(",") + 1),
+  });
 }
 
 /** detail.tsx "Print GRN" — the PO-shaped GRN print. */
