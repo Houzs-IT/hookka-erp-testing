@@ -25,7 +25,7 @@
   "outsource-piece.ts": 2,
   "payments.ts": 1,
   "production-leadtimes.ts": 2,
-  "production-orders.ts": 15,
+  "production-orders.ts": 19,
   "purchase-invoices.ts": 5,
   "purchase-orders.ts": 1,
   "raw-materials.ts": 3,

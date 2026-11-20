@@ -134,7 +134,8 @@ test("every scan handler that updates a job card also records its events", () =>
     "utf8",
   );
   const cardUpdates = source.split("UPDATE job_cards SET status = ?, completedDate = ?").slice(1);
-  assert.equal(cardUpdates.length, 3);
+  // 3 scan endpoints + the pillow-carton fan-out (completeCartonPillows, 2026-11-20).
+  assert.equal(cardUpdates.length, 4);
   for (const afterUpdate of cardUpdates) {
     const untilNextStatement = afterUpdate.slice(0, afterUpdate.indexOf("scheduleFireAndForget"));
     assert.match(untilNextStatement, /await recordScanEvents\(db, /);
