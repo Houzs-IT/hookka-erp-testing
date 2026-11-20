@@ -725,10 +725,11 @@ app.get("/", async (c) => {
       // route never filters by org). Do not add `WHERE orgId = ?` here.
       db
         .prepare(
-          // TEST accounts excluded (owner 2026-07-11): they are not real
-          // headcount — same rule the Payroll queries use.
-          "SELECT departmentCode AS dept, COUNT(*) AS n FROM workers WHERE status = 'ACTIVE' AND empNo NOT LIKE 'TEST%' GROUP BY departmentCode",
+          // Employed today by the one rule (owner 2026-11-21): TEST out, a
+          // joiner from their join date, a leaver through their last day.
+          `SELECT departmentCode AS dept, COUNT(*) AS n FROM workers WHERE ${employedOnSql("")} GROUP BY departmentCode`,
         )
+        .bind(...employedOnParams(myTodayISO()))
         .all<{ dept: string; n: number }>(),
       // Sofa SETS completed, Floor Live's rule (an order = one set, on the day
       // its last sofa production order finishes Upholstery), over the headline

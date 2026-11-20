@@ -38,7 +38,7 @@ export default function OverviewSection({
 
   // "Workers with logged hours" needs BOTH the roster and the hours summary; if either request failed it reads "—".
   const loggedSourcesOk = !data.workers.error && !data.hours.error;
-  const cards = buildCards({ workers: data.workers.rows, totals: data.totals.value, hours: loggedSourcesOk ? data.hours.rows : null });
+  const cards = buildCards({ workers: data.workers.rows, totals: data.totals.value, hours: loggedSourcesOk ? data.hours.rows : null, range });
   const cardsError = data.canWorkers && (data.workers.error || data.totals.error || data.hours.error);
   const needs = needsAction(
     { allowed: pending.allowed, rows: pending.rows as NonprodReq[] | null, loading: pending.loading, error: !!pending.error },

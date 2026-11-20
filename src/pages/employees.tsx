@@ -11802,9 +11802,14 @@ function AttendanceTab({
   );
   const monthKpis = useMemo(() => {
     const prodCodes = productionDeptCodes.size > 0 ? productionDeptCodes : PRODUCTION_DEPT_CODES;
-    // Active, non-TEST workers only — mirrors the Payroll active-only rule.
-    const activeWorkers = workers.filter(
-      (w) => w.status === "ACTIVE" && !/^TEST/i.test(w.empNo || ""),
+    // The people employed in the selected month (one employment rule, owner
+    // 2026-11-21) — a joiner from their join date, a leaver through their last day.
+    const activeWorkers = workers.filter((w) =>
+      employedDuring(
+        { empNo: w.empNo, status: w.status, joinDate: w.joinDate, resignedAt: (w as { resignedAt?: string | null }).resignedAt },
+        monthFrom,
+        monthTo,
+      ),
     );
     const activeCount = activeWorkers.length;
     const avgSalarySen = activeCount

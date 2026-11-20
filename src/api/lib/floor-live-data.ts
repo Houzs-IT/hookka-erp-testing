@@ -8,6 +8,7 @@
 //                   Written nightly by POST /api/internal/floor-live-snapshot
 //                   (.github/workflows/floor-live-snapshot.yml).
 // ---------------------------------------------------------------------------
+import { isTestWorker } from "../../lib/employment";
 import { buildPerfDays, dayKey } from "./workforce-perf";
 import { helperWorkerIds, loadApprovedExtraTime } from "./efficiency-allowance";
 import { ensureDeptScanEvents, liveOpenPunchRows } from "./punch-autofill";
@@ -29,7 +30,7 @@ export async function computeFloorLive(db: D1Database, orgId: string, date: stri
     db.prepare(`SELECT code, name, is_production, sequence FROM departments`).all<{
       code: string; name: string | null; isProduction: boolean | number | null; sequence: number | string | null;
     }>(),
-    db.prepare(`SELECT id, name, department_code FROM workers`).all<{ id: string; name: string | null; departmentCode: string | null }>(),
+    db.prepare(`SELECT id, name, department_code, emp_no FROM workers`).all<{ id: string; name: string | null; departmentCode: string | null; empNo?: string | null }>(),
     db.prepare(
       `SELECT employee_id, department_code, clock_in, clock_out
          FROM attendance_records
@@ -54,7 +55,9 @@ export async function computeFloorLive(db: D1Database, orgId: string, date: stri
   ]);
   const departments = deptRes.results ?? [];
   const workers = workerRes.results ?? [];
-  const attendance = attRes.results ?? [];
+  // Test accounts are not floor headcount (owner 2026-11-21: one rule).
+  const testIds = new Set(workers.filter((w) => isTestWorker(w)).map((w) => w.id));
+  const attendance = (attRes.results ?? []).filter((a) => !a.employeeId || !testIds.has(a.employeeId));
   const whe = wheRes.results ?? [];
   const jobCards = jcRes.results ?? [];
 
