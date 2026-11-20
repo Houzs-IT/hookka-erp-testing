@@ -193,7 +193,7 @@ const text = (a: unknown, b?: unknown): string => String(a ?? b ?? "");
 const marks = (n: number): string => Array.from({ length: n }, () => "?").join(",");
 
 export const PAYABLE_WORKERS_WHERE =
-  "(status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'";
+  "(status = 'ACTIVE' OR (status IN ('RESIGNED','INACTIVE') AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'";
 
 const FINISHED_STATUSES = new Set(["COMPLETED", "TRANSFERRED"]);
 

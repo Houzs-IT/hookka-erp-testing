@@ -74,13 +74,14 @@ function makeDatabase({ workers, payslips = [], failOnInsertNumber = 0 }) {
     return workers.filter(
       (worker) =>
         (worker.status === "ACTIVE" ||
-          (worker.status === "RESIGNED" && String(worker.resignedAt ?? "").startsWith(resignedPrefix))) &&
+          ((worker.status === "RESIGNED" || worker.status === "INACTIVE") && String(worker.resignedAt ?? "").startsWith(resignedPrefix))) &&
         !worker.empNo.startsWith("TEST"),
     );
   }
 
   function rowsFor(target, sqlText, boundValues) {
-    if (/FROM workers WHERE \(status = 'ACTIVE' OR \(status = 'RESIGNED' AND resignedAt LIKE \?\)\) AND empNo NOT LIKE 'TEST%'/.test(sqlText)) {
+    // INACTIVE leavers are paid their last month too (owner 2026-11-21).
+    if (/FROM workers WHERE \(status = 'ACTIVE' OR \(status IN \('RESIGNED','INACTIVE'\) AND resignedAt LIKE \?\)\) AND empNo NOT LIKE 'TEST%'/.test(sqlText)) {
       return eligibleWorkers(boundValues[0]);
     }
     if (/FROM workers WHERE .*id NOT IN \(SELECT employeeId FROM payslips WHERE period = \?\)/.test(sqlText)) {

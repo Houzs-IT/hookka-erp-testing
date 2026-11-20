@@ -5,6 +5,7 @@
 // doesn't need any changes. On POST/PUT, `departmentCode` is resolved by
 // joining on the departments table rather than trusting the client payload.
 // ---------------------------------------------------------------------------
+import { syncWorkerPayroll } from "../lib/worker-payroll-sync";
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -363,7 +364,12 @@ app.post("/", async (c) => {
     }
 
     const id = genId();
-    const joinDate = todayYmdMY();
+    // The join date the form sends is recorded (owner 2026-11-21); it was
+    // always overwritten with today. Empty / malformed → today, as before.
+    const joinDate =
+      typeof body.joinDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.joinDate)
+        ? body.joinDate
+        : todayYmdMY();
     const resolvedHours =
       workingHoursPerDay ?? department.workingHoursPerDay;
 
@@ -456,7 +462,10 @@ app.post("/", async (c) => {
       action: "create",
       after: rowToWorker(created),
     });
-    return c.json({ success: true, data: rowToWorker(created) }, 201);
+    // Onboarding reaches payroll on its own: months already generated (and not
+    // approved) get this worker's payslip from the join month on.
+    const payrollSync = await syncWorkerPayroll(c, id, { fromPeriod: joinDate.slice(0, 7) });
+    return c.json({ success: true, data: rowToWorker(created), payrollSync }, 201);
   } catch (e) {
     return c.json(
       { success: false, error: e instanceof Error ? e.message : "Invalid request body" },
@@ -568,14 +577,16 @@ app.put("/:id", async (c) => {
     const isValidDate = (v: unknown): v is string =>
       typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
     let nextResignedAt: string | null;
-    if (nextStatus === "RESIGNED") {
+    // INACTIVE is a leaver too and needs the last working day (owner
+    // 2026-11-21) — otherwise payroll, headcount and history can't place them.
+    if (nextStatus === "RESIGNED" || nextStatus === "INACTIVE") {
       const candidate =
         body.resignedAt !== undefined ? body.resignedAt : existing.resignedAt;
       if (!isValidDate(candidate)) {
         return c.json(
           {
             success: false,
-            error: "A resignation date (YYYY-MM-DD) is required when status is Resigned.",
+            error: "A last working day (YYYY-MM-DD) is required when status is Resigned or Inactive.",
           },
           400,
         );
@@ -588,7 +599,7 @@ app.put("/:id", async (c) => {
         return c.json(
           {
             success: false,
-            error: "Set status to Resigned before recording a resignation date.",
+            error: "Set status to Resigned or Inactive before recording a last working day.",
           },
           400,
         );
@@ -871,7 +882,32 @@ app.put("/:id", async (c) => {
       before: rowToWorker(existing),
       after: rowToWorker(updated),
     });
-    return c.json({ success: true, data: rowToWorker(updated) });
+    // Onboarding / offboarding reach payroll on their own (owner 2026-11-21):
+    // a moved join date, a new last day, or a return to ACTIVE re-syncs this
+    // worker's DRAFT payslips from the earliest affected month.
+    const LEFT = ["RESIGNED", "INACTIVE"];
+    const oldJoin = String(existing.joinDate ?? "").slice(0, 10);
+    const newJoin = String(updated.joinDate ?? "").slice(0, 10);
+    const wasLeft = LEFT.includes(String(existing.status ?? ""));
+    const isLeft = LEFT.includes(String(updated.status ?? ""));
+    const oldLast = String(existing.resignedAt ?? "").slice(0, 10);
+    const newLast = String(updated.resignedAt ?? "").slice(0, 10);
+    const months: string[] = [];
+    let recomputePeriod: string | null = null;
+    if (oldJoin !== newJoin) months.push(oldJoin.slice(0, 7), newJoin.slice(0, 7));
+    if (isLeft && newLast && (!wasLeft || newLast !== oldLast)) {
+      months.push(newLast.slice(0, 7));
+      if (oldLast) months.push(oldLast.slice(0, 7));
+      recomputePeriod = newLast.slice(0, 7);
+    }
+    if (wasLeft && !isLeft && oldLast) {
+      months.push(oldLast.slice(0, 7));
+      recomputePeriod = oldLast.slice(0, 7);
+    }
+    const affected = months.filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();
+    const payrollSync =
+      affected.length > 0 ? await syncWorkerPayroll(c, id, { fromPeriod: affected[0], recomputePeriod }) : null;
+    return c.json({ success: true, data: rowToWorker(updated), payrollSync });
   } catch (e) {
     // Was a bare "Invalid request body" with the real cause thrown away —
     // matched the DB error to nothing and cost a diagnosis round-trip on
@@ -963,10 +999,13 @@ app.delete("/:id", async (c) => {
   //
   // NOTE: the workers table has no updated_at column (see 0001_init.sql),
   // which is why the spec's `updated_at = ?` clause is skipped here.
+  // INACTIVE needs a last working day (owner 2026-11-21): keep one already on
+  // record, otherwise today.
+  const lastDay = todayYmdMY();
   await c.var.DB.batch([
     c.var.DB.prepare(
-      "UPDATE workers SET status = 'INACTIVE' WHERE id = ?",
-    ).bind(id),
+      "UPDATE workers SET status = 'INACTIVE', resignedAt = COALESCE(NULLIF(resignedAt, ''), ?) WHERE id = ?",
+    ).bind(lastDay, id),
     // Kill any live worker-portal sessions so the inactive worker can't
     // keep browsing on an old token.
     c.var.DB.prepare("DELETE FROM worker_tokens WHERE workerId = ?").bind(id),
@@ -974,11 +1013,15 @@ app.delete("/:id", async (c) => {
   const updated = await c.var.DB.prepare("SELECT * FROM workers WHERE id = ?")
     .bind(id)
     .first<WorkerRow>();
+  // Offboarding reaches payroll: the last month is re-prorated, later drafts go.
+  const leftMonth = String(updated?.resignedAt ?? lastDay).slice(0, 7);
+  const payrollSync = await syncWorkerPayroll(c, id, { fromPeriod: leftMonth, recomputePeriod: leftMonth });
   return c.json({
     success: true,
     data: updated
       ? rowToWorker(updated)
       : { ...rowToWorker(existing), status: "INACTIVE" },
+    payrollSync,
   });
 });
 

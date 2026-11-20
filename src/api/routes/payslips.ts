@@ -11,6 +11,7 @@
 //   PUT  /api/payslips                        → bulk status update for period
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
@@ -505,7 +506,7 @@ async function nextPayslipId(
 }
 
 export const MISSING_PAYSLIP_SQL =
-  "SELECT id, empNo, name FROM workers WHERE empNo NOT LIKE 'TEST%' AND (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND (joinDate IS NULL OR joinDate <= ?) AND id NOT IN (SELECT employeeId FROM payslips WHERE period = ?) ORDER BY empNo";
+  "SELECT id, empNo, name FROM workers WHERE empNo NOT LIKE 'TEST%' AND (status = 'ACTIVE' OR (status IN ('RESIGNED','INACTIVE') AND resignedAt LIKE ?)) AND (joinDate IS NULL OR joinDate <= ?) AND id NOT IN (SELECT employeeId FROM payslips WHERE period = ?) ORDER BY empNo";
 
 export interface MissingPayslipWorker {
   id: string;
@@ -613,7 +614,7 @@ async function buildDayDetailForPeriod(
         ? Number(w.joinDate.slice(8, 10))
         : undefined;
     const resignedDay =
-      w?.status === "RESIGNED" &&
+      (w?.status === "RESIGNED" || w?.status === "INACTIVE") &&
       typeof w?.resignedAt === "string" &&
       w.resignedAt.startsWith(`${period}-`)
         ? Number(w.resignedAt.slice(8, 10))
@@ -787,7 +788,7 @@ app.get("/projected", async (c) => {
 
   // Same worker scope as POST: ACTIVE, plus RESIGNED in their final month.
   const wres = await c.var.DB.prepare(
-    "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
+    "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status IN ('RESIGNED','INACTIVE') AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
   )
     .bind(`${period}-%`)
     .all<WorkerRow>();
@@ -910,7 +911,7 @@ app.get("/projected", async (c) => {
         ? Number(worker.joinDate.slice(8, 10))
         : undefined;
     const resignedDay =
-      worker.status === "RESIGNED" &&
+      (worker.status === "RESIGNED" || worker.status === "INACTIVE") &&
       typeof worker.resignedAt === "string" &&
       worker.resignedAt.startsWith(`${period}-`)
         ? Number(worker.resignedAt.slice(8, 10))
@@ -1079,6 +1080,33 @@ app.post("/", async (c) => {
   // RBAC gate (P3.3-followup) — payslips:create (generate).
   const denied = await requirePermission(c, "payslips", "create");
   if (denied) return denied;
+  let body: GenerateBody;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: "Invalid request body" }, 400);
+  }
+  return generatePayslipsForPeriod(c, body);
+});
+
+export type GenerateBody = {
+  period?: string;
+  regenerate?: boolean;
+  /**
+   * Onboarding / offboarding (owner 2026-11-21): recompute ONLY these
+   * workers' payslips for the period — their DRAFT rows are replaced, nobody
+   * else is touched, and the "already generated" guard does not apply. Refused
+   * when one of them already has an approved payslip in the period.
+   */
+  onlyWorkerIds?: string[];
+};
+
+/**
+ * Generate (or regenerate) a period's payslips. The route above and the
+ * worker onboarding / offboarding hook (syncWorkerPayroll) both call this, so
+ * a single worker's payslip is computed by exactly the same code as a full run.
+ */
+export async function generatePayslipsForPeriod(c: Context<Env>, body: GenerateBody): Promise<Response> {
   // Migrations are inert on deploy — the payment columns exist only because
   // this runs and is AWAITED before the first write below. Same for the
   // advance table + payslips.advance_deduction_sen: the INSERT further down
@@ -1092,8 +1120,11 @@ app.post("/", async (c) => {
   // this runs.
   await ensurePayrollTaxColumns(c.var.DB);
   try {
-    const body = await c.req.json();
     const { period, regenerate } = body;
+    const onlyWorkerIds = Array.isArray(body.onlyWorkerIds)
+      ? [...new Set(body.onlyWorkerIds.filter((x): x is string => typeof x === "string" && x.length > 0))]
+      : [];
+    const only = onlyWorkerIds.length > 0;
     if (!period) {
       return c.json(
         { success: false, error: "Period is required (e.g. 2026-04)" },
@@ -1110,7 +1141,28 @@ app.post("/", async (c) => {
     // signed off the audit trail is inviolate, the operator has to
     // un-approve first (a separate flow) before a regenerate.
     const draftDeletions: D1PreparedStatement[] = [];
-    if (regenerate) {
+    if (only) {
+      const ph = onlyWorkerIds.map(() => "?").join(",");
+      const approvedRow = await c.var.DB.prepare(
+        `SELECT COUNT(*) AS c FROM payslips WHERE period = ? AND status != 'DRAFT' AND employeeId IN (${ph})`,
+      )
+        .bind(period, ...onlyWorkerIds)
+        .first<{ c: number }>();
+      if ((approvedRow?.c ?? 0) > 0) {
+        return c.json(
+          {
+            success: false,
+            error: "Cannot recompute — this worker's payslip in this period is already approved. Un-approve first.",
+          },
+          400,
+        );
+      }
+      draftDeletions.push(
+        c.var.DB.prepare(
+          `DELETE FROM payslips WHERE period = ? AND status = 'DRAFT' AND employeeId IN (${ph})`,
+        ).bind(period, ...onlyWorkerIds),
+      );
+    } else if (regenerate) {
       const approvedRow = await c.var.DB.prepare(
         "SELECT COUNT(*) AS c FROM payslips WHERE period = ? AND status != 'DRAFT'",
       )
@@ -1151,9 +1203,11 @@ app.post("/", async (c) => {
       // partial, month) — the existing absence math prorates the days after
       // they left. Later months exclude them because resignedAt no longer
       // matches the period. Earlier months were generated while still ACTIVE.
-      "SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status = 'RESIGNED' AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'",
+      `SELECT id, empNo, name, departmentCode, status, basicSalarySen, workingDaysPerMonth, workingHoursPerDay, otMultiplier, epfEnabled, socsoEnabled, eisEnabled, pcbEnabled, taxResidency, taxCategory, taxChildReliefSen, resignedAt, joinDate, efficiencyAllowanceSen, efficiencyThresholdPct, leadershipAllowanceSen, paymentMethod, bankName, bankAccount, payMode, dailyRateSen FROM workers WHERE (status = 'ACTIVE' OR (status IN ('RESIGNED','INACTIVE') AND resignedAt LIKE ?)) AND empNo NOT LIKE 'TEST%'${
+        only ? ` AND id IN (${onlyWorkerIds.map(() => "?").join(",")})` : ""
+      }`,
     )
-      .bind(`${period}-%`)
+      .bind(`${period}-%`, ...onlyWorkerIds)
       .all<WorkerRow>();
     const activeWorkers = wres.results ?? [];
 
@@ -1287,7 +1341,7 @@ app.post("/", async (c) => {
     );
 
     const nextId = await nextPayslipId(c.var.DB, period);
-    const firstId = draftDeletions.length > 0 ? nextId.replace(/\d+$/, "001") : nextId;
+    const firstId = draftDeletions.length > 0 && !only ? nextId.replace(/\d+$/, "001") : nextId;
     const idPrefix = firstId.replace(/\d+$/, "");
     const firstSequence = Number(firstId.slice(idPrefix.length));
     const payslipInserts: D1PreparedStatement[] = [];
@@ -1318,7 +1372,7 @@ app.post("/", async (c) => {
       // worked nor absent. Workers still employed (resignedDay undefined) keep
       // the normal full-salary-minus-absences treatment.
       const resignedDay =
-        worker.status === "RESIGNED" &&
+        (worker.status === "RESIGNED" || worker.status === "INACTIVE") &&
         typeof worker.resignedAt === "string" &&
         worker.resignedAt.startsWith(`${period}-`)
           ? Number(worker.resignedAt.slice(8, 10))
@@ -1554,7 +1608,7 @@ app.post("/", async (c) => {
       isBadBody ? 400 : 500,
     );
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // PUT /api/payslips — bulk status update for a period

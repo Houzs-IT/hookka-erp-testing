@@ -170,7 +170,9 @@ export function EmployeeDrawer({
   // Shown when they ARE resigned, and also whenever a date is already on the
   // record — otherwise flipping someone back to ACTIVE hides a stale leaving
   // date that nobody can see or clear.
-  const showResignedAt = draft.status === "RESIGNED" || Boolean(draft.resignedAt);
+  // Inactive is a leaver too and needs the last working day (owner 2026-11-21).
+  const isLeaver = draft.status === "RESIGNED" || draft.status === "INACTIVE";
+  const showResignedAt = isLeaver || Boolean(draft.resignedAt);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
@@ -288,11 +290,11 @@ export function EmployeeDrawer({
                 pay them for months they were gone. */}
             {showResignedAt && (
               <Field
-                label="Resigned on"
+                label="Last working day"
                 hint={
-                  draft.status === "RESIGNED"
-                    ? "Required — payroll stops at this date."
-                    : "Not resigned; this date is ignored and cleared on save."
+                  isLeaver
+                    ? "Required — payroll, headcount and attendance stop after this date."
+                    : "Still employed; this date is ignored and cleared on save."
                 }
               >
                 <Input
