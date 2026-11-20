@@ -237,12 +237,15 @@ export function makeFakeDb({ cards = defaultCards(), slots = [], workers = defau
     if (/^SELECT COUNT\(\*\) AS total,/i.test(text)) {
       const rows = state.issues.filter((i) => i.org_id === args[0] && (!/worker_id = \?/.test(text) || i.worker_id === args[1]));
       const open = rows.filter((i) => i.status === "INCOMPLETE");
-      return [{
-        total: String(rows.length),
-        pending_approval: String(open.filter((i) => i.submitted_at).length),
-        incomplete: String(open.filter((i) => !i.submitted_at).length),
-        completed: String(rows.filter((i) => i.status === "COMPLETED").length),
-      }];
+      const values = [
+        rows.length,
+        open.filter((i) => i.submitted_at).length,
+        open.filter((i) => !i.submitted_at).length,
+        rows.filter((i) => i.status === "COMPLETED").length,
+      ];
+      // Aliases come back camelCased, as the Postgres adapter (db-pg.ts toCamel) returns them.
+      const aliases = [...text.matchAll(/AS (\w+)/gi)].map((m) => m[1].replace(/_([a-z])/g, (_, c) => c.toUpperCase()));
+      return [Object.fromEntries(aliases.map((alias, i) => [alias, String(values[i])]))];
     }
     if (/^SELECT \* FROM outsource_issues WHERE/i.test(text)) {
       return state.issues.filter((i) => i.org_id === args[0]);

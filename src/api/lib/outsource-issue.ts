@@ -522,7 +522,7 @@ export async function countIssuesByStatus(
     db
       .prepare(
         `SELECT COUNT(*) AS total,
-                SUM(CASE WHEN ${STATUS_CONDITIONS.PENDING_APPROVAL} THEN 1 ELSE 0 END) AS pending_approval,
+                SUM(CASE WHEN ${STATUS_CONDITIONS.PENDING_APPROVAL} THEN 1 ELSE 0 END) AS pending,
                 SUM(CASE WHEN ${STATUS_CONDITIONS.INCOMPLETE} THEN 1 ELSE 0 END) AS incomplete,
                 SUM(CASE WHEN ${STATUS_CONDITIONS.COMPLETED} THEN 1 ELSE 0 END) AS completed
            FROM outsource_issues WHERE ${conditions.join(" AND ")}`,
@@ -531,7 +531,7 @@ export async function countIssuesByStatus(
   );
   return {
     ALL: Number(row?.total ?? 0),
-    PENDING_APPROVAL: Number(row?.pending_approval ?? 0),
+    PENDING_APPROVAL: Number(row?.pending ?? 0),
     INCOMPLETE: Number(row?.incomplete ?? 0),
     COMPLETED: Number(row?.completed ?? 0),
   };
