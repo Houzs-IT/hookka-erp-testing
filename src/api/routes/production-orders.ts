@@ -54,6 +54,7 @@ import {
   readCompletedAt,
 } from "../lib/job-card-completed-at";
 import { recordScanEvents } from "../lib/job-card-events";
+import { isPillow } from "../../lib/delivery-pipeline";
 import { getOrgId } from "../lib/tenant";
 import {
   poListCacheVersion,
@@ -1944,6 +1945,107 @@ app.post("/packing-rack-tokens", async (c) => {
 // POST /api/production-orders/:id/scan-complete
 // B-flow piece-pic FIFO routing + sticker binding.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Pillow carton fan-out (owner 2026-11-20: 「pillow 全部都一箱」). The carton's
+// packing sticker carries ONE pillow's card; when that card completes, the
+// order's OTHER pillow production orders complete their PACKING card the same
+// way a scan would: every piece slot gets the worker as PIC1, the card goes
+// COMPLETED with today's Malaysia date, the WIP inventory change + labour
+// posting run per card, and each PO's status rolls up (FG units + the SO / CO
+// cascade on completion). Cards already done, BLOCKED or CANCELLED are left
+// alone, and so are ON_HOLD / CANCELLED orders. Never throws into the scan:
+// the scanned pillow is already saved, so a failure here is logged.
+// ---------------------------------------------------------------------------
+async function completeCartonPillows(
+  c: Context<Env>,
+  db: D1Database,
+  po: ProductionOrderRow,
+  worker: { id: string; name: string },
+  nowIso: string,
+  today: string,
+  sessionUserId: unknown,
+): Promise<void> {
+  const orderCol = po.salesOrderId ? "salesOrderId" : po.consignmentOrderId ? "consignmentOrderId" : null;
+  const orderId = po.salesOrderId || po.consignmentOrderId;
+  if (!orderCol || !orderId) return;
+  try {
+    // Same self-apply guard as the scan endpoints before a completedAt write.
+    await ensureJobCardCompletedAt(db);
+    const sibs = await db
+      .prepare(
+        `SELECT * FROM production_orders
+          WHERE ${orderCol} = ? AND id <> ? AND status NOT IN ('CANCELLED','ON_HOLD')`,
+      )
+      .bind(orderId, po.id)
+      .all<ProductionOrderRow>();
+    for (const sib of (sibs.results ?? []).filter((s) => isPillow(s))) {
+      const cards = await db
+        .prepare(
+          `SELECT * FROM job_cards
+            WHERE productionOrderId = ? AND departmentCode = 'PACKING'
+              AND status NOT IN ('COMPLETED','TRANSFERRED','BLOCKED','CANCELLED')`,
+        )
+        .bind(sib.id)
+        .all<JobCardRow>();
+      let touched = false;
+      for (const jc of cards.results ?? []) {
+        const slots = await ensurePiecePicsForJc(db, jc);
+        for (const s of slots) {
+          if (s.pic1Id) continue;
+          await db
+            .prepare(
+              `UPDATE piece_pics SET pic1Id = ?, pic1Name = ?, completedAt = ?, lastScanAt = ? WHERE id = ?`,
+            )
+            .bind(worker.id, worker.name, nowIso, nowIso, s.id)
+            .run();
+        }
+        const merged: JobCardRow = {
+          ...jc,
+          status: "COMPLETED",
+          completedDate: today,
+          completedAt: observedCompletionAt(nowIso),
+          overdue: "COMPLETED",
+          pic1Id: jc.pic1Id || worker.id,
+          pic1Name: jc.pic1Id ? jc.pic1Name : worker.name,
+        };
+        await db
+          .prepare(
+            `UPDATE job_cards SET status = ?, completedDate = ?, completedAt = ?, overdue = ?,
+               pic1Id = ?, pic1Name = ?, updated_at = NOW() WHERE id = ?`,
+          )
+          .bind("COMPLETED", today, readCompletedAt(merged), "COMPLETED", merged.pic1Id, merged.pic1Name ?? "", jc.id)
+          .run();
+        await recordScanEvents(db, jc, merged, { workerName: worker.name, sessionUserId });
+        const siblings = await db
+          .prepare("SELECT * FROM job_cards WHERE productionOrderId = ?")
+          .bind(sib.id)
+          .all<JobCardRow>();
+        await applyWipInventoryChange(db, sib, merged, "COMPLETED", siblings.results ?? [], jc.status, {
+          orgId: scanOrgId(c),
+          source: "SCAN",
+        });
+        await postJobCardLabor(db, jc.id, sib.id);
+        touched = true;
+      }
+      if (!touched) continue;
+      const after = await recomputePoStatusAndProgress(db, sib.id);
+      if (after?.after?.status === "COMPLETED") {
+        await postProductionOrderCompletion(db, sib.id);
+        await cascadePoCompletionToSO(db, sib.salesOrderId);
+        await cascadePoCompletionToCO(db, sib.consignmentOrderId);
+      }
+    }
+    await cascadeUpholsteryToSO(db, po.id);
+    await cascadeUpholsteryToCO(db, po.id);
+  } catch (err) {
+    console.error("[completeCartonPillows] fan-out failed", {
+      poId: po.id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 app.post("/:id/scan-complete", async (c) => {
   // Two auth paths (mirrors scan-complete-dept): a dashboard user goes through
   // RBAC; a shop-floor worker token is bound below and restricted to PACKING
@@ -2543,6 +2645,17 @@ app.post("/:id/scan-complete", async (c) => {
   }
   await cascadeUpholsteryToSO(db, target.po.id);
   await cascadeUpholsteryToCO(db, target.po.id);
+
+  // Pillow carton (owner 2026-11-20): every pillow of an order is packed in
+  // ONE box with ONE sticker, so packing that sticker's pillow packs the
+  // order's other pillows too, credited to the same worker.
+  if (
+    jcJustCompleted &&
+    (target.jc.departmentCode || "").toUpperCase() === "PACKING" &&
+    isPillow(target.po)
+  ) {
+    await completeCartonPillows(c, db, target.po, worker, nowIso, today, ctxUserId);
+  }
 
   await invalidateProductionCachesAfterScan(c);
 

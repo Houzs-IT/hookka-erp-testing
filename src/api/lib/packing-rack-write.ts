@@ -21,6 +21,7 @@
 // the office path. No NEW column here.
 // ---------------------------------------------------------------------------
 
+import { isPillow } from "../../lib/delivery-pipeline";
 import { packingPieceIdentity } from "./packing-piece-identity";
 import { todayYmdMY } from "../../lib/utils";
 
@@ -69,7 +70,51 @@ export type PackingRackWriteResult =
 // row PER PIECE (piece-distinct identity). When pieceNo is omitted / 0, or the
 // WIP is genuinely a single piece, behavior is EXACTLY the legacy card-level
 // path — old single-piece stickers and the office dropdown are unaffected.
+// Pillow carton (owner 2026-11-20): all of an order's pillows sit in ONE box,
+// so racking that box's card racks the order's other pillow PACKING cards too
+// (card-level). The extra cards go through the single-card writer, so they
+// never fan out again.
 export async function applyPackingRack(
+  db: D1Database,
+  jobCardId: string | null | undefined,
+  rackingNumber: string | null | undefined,
+  pieceNo?: number | null,
+): Promise<PackingRackWriteResult> {
+  const res = await applyPackingRackOne(db, jobCardId, rackingNumber, pieceNo);
+  if (!res.ok || !jobCardId) return res;
+  try {
+    const po = await db
+      .prepare(
+        `SELECT po.id AS "id", po.salesOrderId AS "salesOrderId", po.consignmentOrderId AS "consignmentOrderId",
+                po.productName AS "productName", po.productCode AS "productCode"
+           FROM job_cards jc JOIN production_orders po ON po.id = jc.productionOrderId
+          WHERE jc.id = ?`,
+      )
+      .bind(jobCardId)
+      .first<{ id: string; salesOrderId: string | null; consignmentOrderId: string | null; productName: string | null; productCode: string | null }>();
+    if (!po || !isPillow(po)) return res;
+    const orderCol = po.salesOrderId ? "salesOrderId" : po.consignmentOrderId ? "consignmentOrderId" : null;
+    const orderId = po.salesOrderId || po.consignmentOrderId;
+    if (!orderCol || !orderId) return res;
+    const sibs = await db
+      .prepare(
+        `SELECT jc.id AS "cardId", po.productName AS "productName", po.productCode AS "productCode"
+           FROM production_orders po
+           JOIN job_cards jc ON jc.productionOrderId = po.id AND jc.departmentCode = 'PACKING'
+          WHERE po.${orderCol} = ? AND po.id <> ? AND po.status <> 'CANCELLED'`,
+      )
+      .bind(orderId, po.id)
+      .all<{ cardId: string; productName: string | null; productCode: string | null }>();
+    for (const s of (sibs.results ?? []).filter((x) => isPillow(x))) {
+      await applyPackingRackOne(db, s.cardId, rackingNumber, null);
+    }
+  } catch (e) {
+    console.warn("[applyPackingRack] pillow carton fan-out skipped", e);
+  }
+  return res;
+}
+
+async function applyPackingRackOne(
   db: D1Database,
   jobCardId: string | null | undefined,
   rackingNumber: string | null | undefined,
