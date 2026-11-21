@@ -54,6 +54,25 @@ export function employedOn(w: EmploymentFields, day: string): boolean {
   return !last || last >= day;
 }
 
+/**
+ * May this worker use the worker app on `day`? (owner 2026-11-21: lock the
+ * day AFTER the last working day, not the moment the status changes.)
+ * ACTIVE: yes. RESIGNED / INACTIVE: up to and including resignedAt; no last
+ * day on record = locked. Any other status = locked. Unlike employedOn, a test
+ * account or a not-yet-joined ACTIVE hire keeps access (setting up a phone
+ * before day one is normal).
+ */
+export function canUseWorkerApp(
+  w: { status?: string | null; resignedAt?: string | null },
+  day: string,
+): boolean {
+  const s = (w.status ?? "").toUpperCase();
+  if (s === "ACTIVE") return true;
+  if (!LEFT.has(s)) return false;
+  const last = ymd(w.resignedAt);
+  return !!last && last >= day;
+}
+
 /** Employed on at least one day of [from, to] (YYYY-MM-DD, inclusive). */
 export function employedDuring(w: EmploymentFields, from: string, to: string): boolean {
   if (isTestWorker(w)) return false;

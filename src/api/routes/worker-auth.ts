@@ -15,6 +15,8 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { hashPin, isPinHashed } from "../lib/auth-utils";
+import { canUseWorkerApp } from "../../lib/employment";
+import { todayYmdMY } from "../../lib/utils";
 import {
   checkLoginRateLimit,
   clearLoginRateLimit,
@@ -76,6 +78,7 @@ type WorkerRow = {
   position: string | null;
   phone: string | null;
   status: string;
+  resignedAt: string | null;
   basicSalarySen: number;
   workingHoursPerDay: number;
   workingDaysPerMonth: number;
@@ -146,7 +149,9 @@ app.post("/login", async (c) => {
   if (!worker) {
     return c.json({ success: false, error: "Employee not found" }, 404);
   }
-  if (worker.status !== "ACTIVE") {
+  // A leaver keeps the app up to and including their last working day
+  // (owner 2026-11-21); from the next day sign-in is refused.
+  if (!canUseWorkerApp(worker, todayYmdMY())) {
     return c.json({ success: false, error: "Employee account inactive" }, 403);
   }
 
@@ -339,11 +344,21 @@ export async function resolveWorkerToken(
   token: string | undefined,
 ): Promise<string | null> {
   if (!token) return null;
+  // The token is only good while the worker may use the app: a leaver keeps
+  // it up to and including their last working day, then every worker-token
+  // route (scan-complete, announcements, outsource issues, /api/worker/*)
+  // refuses it (owner 2026-11-21). Checked here, at the one resolver, so no
+  // route can forget it.
   const row = await db
-    .prepare("SELECT workerId FROM worker_tokens WHERE token = ?")
+    .prepare(
+      `SELECT t.workerId AS "workerId", w.status AS "status", w.resignedAt AS "resignedAt"
+         FROM worker_tokens t JOIN workers w ON w.id = t.workerId
+        WHERE t.token = ?`,
+    )
     .bind(token)
-    .first<{ workerId: string }>();
-  return row ? row.workerId : null;
+    .first<{ workerId: string; status: string | null; resignedAt: string | null }>();
+  if (!row) return null;
+  return canUseWorkerApp(row, todayYmdMY()) ? row.workerId : null;
 }
 
 export default app;

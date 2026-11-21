@@ -174,7 +174,7 @@ function withTokens(base, tokenMap) {
     ...base,
     db: {
       prepare(sql) {
-        if (/FROM worker_tokens WHERE token = \?/i.test(sql.trim())) {
+        if (/FROM worker_tokens (t JOIN workers w ON w\.id = t\.workerId\s+)?WHERE (t\.)?token = \?/i.test(sql.trim())) {
           let bound = [];
           const obj = {
             bind(...args) {
@@ -183,7 +183,7 @@ function withTokens(base, tokenMap) {
             },
             async first() {
               const workerId = tokenMap.get(bound[0]);
-              return workerId ? { workerId } : null;
+              return workerId ? { workerId, status: "ACTIVE", resignedAt: null } : null;
             },
             async all() {
               return { results: [] };

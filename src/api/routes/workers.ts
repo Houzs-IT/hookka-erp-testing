@@ -5,7 +5,7 @@
 // doesn't need any changes. On POST/PUT, `departmentCode` is resolved by
 // joining on the departments table rather than trusting the client payload.
 // ---------------------------------------------------------------------------
-import { employedOnParams, employedOnSql } from "../../lib/employment";
+import { canUseWorkerApp, employedOnParams, employedOnSql } from "../../lib/employment";
 import { syncWorkerPayroll } from "../lib/worker-payroll-sync";
 import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
@@ -818,7 +818,10 @@ app.put("/:id", async (c) => {
       }
     }
 
-    if (merged.status !== "ACTIVE") {
+    // Only kill the open session once the worker may no longer use the app —
+    // a leaver keeps it up to and including their last working day (owner
+    // 2026-11-21); after that resolveWorkerToken refuses the token anyway.
+    if (!canUseWorkerApp(merged, todayYmdMY())) {
       await c.var.DB.prepare("DELETE FROM worker_tokens WHERE workerId = ?")
         .bind(id)
         .run();
@@ -1003,17 +1006,20 @@ app.delete("/:id", async (c) => {
   // INACTIVE needs a last working day (owner 2026-11-21): keep one already on
   // record, otherwise today.
   const lastDay = todayYmdMY();
-  await c.var.DB.batch([
-    c.var.DB.prepare(
-      "UPDATE workers SET status = 'INACTIVE', resignedAt = COALESCE(NULLIF(resignedAt, ''), ?) WHERE id = ?",
-    ).bind(lastDay, id),
-    // Kill any live worker-portal sessions so the inactive worker can't
-    // keep browsing on an old token.
-    c.var.DB.prepare("DELETE FROM worker_tokens WHERE workerId = ?").bind(id),
-  ]);
+  await c.var.DB.prepare(
+    "UPDATE workers SET status = 'INACTIVE', resignedAt = COALESCE(NULLIF(resignedAt, ''), ?) WHERE id = ?",
+  )
+    .bind(lastDay, id)
+    .run();
   const updated = await c.var.DB.prepare("SELECT * FROM workers WHERE id = ?")
     .bind(id)
     .first<WorkerRow>();
+  // Kill live worker-portal sessions only once the last working day has
+  // passed (owner 2026-11-21) — until then the worker may still clock out and
+  // finish; afterwards resolveWorkerToken refuses the token regardless.
+  if (!updated || !canUseWorkerApp(updated, lastDay)) {
+    await c.var.DB.prepare("DELETE FROM worker_tokens WHERE workerId = ?").bind(id).run();
+  }
   // Offboarding reaches payroll: the last month is re-prorated, later drafts go.
   const leftMonth = String(updated?.resignedAt ?? lastDay).slice(0, 7);
   const payrollSync = await syncWorkerPayroll(c, id, { fromPeriod: leftMonth, recomputePeriod: leftMonth });

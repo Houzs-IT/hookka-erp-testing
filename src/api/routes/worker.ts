@@ -18,7 +18,7 @@
 //   POST   /issues       file new issue
 //   PATCH  /profile      update phone
 // ============================================================
-import { employedOnParams, employedOnSql } from "../../lib/employment";
+import { canUseWorkerApp, employedOnParams, employedOnSql } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
@@ -136,6 +136,7 @@ type WorkerRow = {
   position: string | null;
   phone: string | null;
   status: string;
+  resignedAt?: string | null;
   basicSalarySen: number;
   workingHoursPerDay: number;
   workingDaysPerMonth: number;
@@ -183,7 +184,7 @@ async function getWorker(
     };
   }
   const w = await c.var.DB.prepare(
-    "SELECT id, empNo, name, departmentId, departmentCode, departmentCodes, categories, position, phone, status, basicSalarySen, workingHoursPerDay, workingDaysPerMonth, otMultiplier FROM workers WHERE id = ?",
+    "SELECT id, empNo, name, departmentId, departmentCode, departmentCodes, categories, position, phone, status, resignedAt, basicSalarySen, workingHoursPerDay, workingDaysPerMonth, otMultiplier FROM workers WHERE id = ?",
   )
     .bind(workerId)
     .first<WorkerRow>();
@@ -193,11 +194,11 @@ async function getWorker(
       response: c.json({ success: false, error: "Worker not found" }, 404),
     };
   }
-  // A worker who is no longer ACTIVE (RESIGNED / INACTIVE) is locked out of the
-  // ENTIRE worker app — every request is rejected, not just fresh logins. This
-  // catches a phone that was already signed in before the worker was resigned
-  // (the login gate alone wouldn't kick an existing session).
-  if (w.status !== "ACTIVE") {
+  // A leaver (RESIGNED / INACTIVE) is locked out of the ENTIRE worker app from
+  // the day AFTER their last working day (owner 2026-11-21) — every request,
+  // not just fresh logins, so a phone signed in before they left is cut off
+  // too. On the last day itself they can still clock out and finish work.
+  if (!canUseWorkerApp(w, todayYmdMY())) {
     return {
       ok: false,
       response: c.json(
