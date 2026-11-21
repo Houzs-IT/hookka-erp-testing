@@ -118,3 +118,19 @@ test("overview cache: version bumped for the month split, and the all-time snaps
   assert.match(src, /payloadVersion\?: string \} \| null\)\?\.payloadVersion === overviewV/);
   assert.match(src, /payloadVersion: overviewV,/);
 });
+
+test("toggles are one page-wide store, so separately mounted Backlog and Plant Load agree", async () => {
+  const store = await import("../src/pages/dashboards/backlog-toggle-store.ts");
+  const before = store.getBacklogToggles();
+  store.toggleBacklogMonth("overdue");
+  store.toggleBacklogCategory("Bedframe");
+  const after = store.getBacklogToggles();
+  assert.notEqual(after, before, "a new snapshot object so React re-renders");
+  assert.ok(after.hiddenMonth.has("overdue"));
+  assert.ok(after.hiddenCat.has("Bedframe"));
+  store.toggleBacklogMonth("overdue");
+  assert.equal(store.getBacklogToggles().hiddenMonth.has("overdue"), false);
+  const page = readFileSync(resolve(process.cwd(), "src/pages/dashboard-b/index.tsx"), "utf8");
+  assert.match(page, /const \{ hiddenCat: hiddenDept, hiddenMonth \} = useBacklogToggles\(\);/);
+  assert.doesNotMatch(page, /useState<Set<string>>\(new Set\(\)\);\s*const toggleDept/);
+});
