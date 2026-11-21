@@ -1251,6 +1251,10 @@ export default function ProductionPage({
   const [overduePanelMode, setOverduePanelMode] = useState<
     "BEDFRAME" | "SOFA" | null
   >(null);
+  // "Skipped steps" chip (owner 2026-11-20): narrow the grid to orders where a
+  // later department is scanned done while an earlier one is still open —
+  // usually a card nobody scanned (goods made, sometimes already shipped).
+  const [skippedOnly, setSkippedOnly] = useState(false);
   // Anchor for scrolling the grid into view when an overdue chip is clicked
   // (the grid sits below the filter bar; on a tall page it can be off-screen).
   const gridSectionRef = useRef<HTMLDivElement | null>(null);
@@ -1524,6 +1528,7 @@ export default function ProductionPage({
           });
         });
       }
+      if (next) setSkippedOnly(false);
       setOverduePanelMode(next);
     },
     [overduePanelMode, setUrlBatch, clearAllOverviewFilters],
@@ -2968,6 +2973,51 @@ export default function ProductionPage({
     if (overdueCountsResp && !ids) refreshOverdueCounts();
   }, [overduePanelMode, overdueCountsResp, refreshOverdueCounts]);
 
+  // Orders with a SKIPPED STEP — the WIP flow (owner 2026-11-20: 「下个步骤好了
+  // 上个步骤还没好 就是跳流程了」). A step is skipped when:
+  //   - inside ONE WIP chain (the component segment of the card's wipKey, e.g.
+  //     the back cushion: WOOD_CUT → FRAMING → … → FIBRE), a later department
+  //     is done while an earlier one is still open; or
+  //   - a MERGE point is done while a chain feeding it is still open:
+  //     UPHOLSTERY for a sofa / accessory (every component meets there), and
+  //     PACKING for any product (everything ends there).
+  // Cancelled orders and blocked cards are ignored.
+  const skippedPoIds = useMemo(() => {
+    const DONE = new Set(["COMPLETED", "TRANSFERRED"]);
+    const RANK: Record<string, number> = {
+      FAB_CUT: 0, FAB_SEW: 1, WOOD_CUT: 2, FOAM_CUTTING: 3, FRAMING: 4,
+      WEBBING: 5, FOAM: 6, FIBRE: 7, UPHOLSTERY: 8, PACKING: 9,
+    };
+    const chain = (j: { wipKey?: string | null }) => (j.wipKey || "").split("::")[1] || "";
+    const out = new Set<string>();
+    for (const o of orders) {
+      if (o.status === "CANCELLED") continue;
+      const cards = (o.jobCards || []).filter(
+        (j) => j.departmentCode && RANK[j.departmentCode] != null && j.status !== "BLOCKED",
+      );
+      const open = cards.filter((j) => !DONE.has(j.status));
+      if (open.length === 0) continue;
+      const done = cards.filter((j) => DONE.has(j.status));
+      const isBedframe = (o.itemCategory || "").toUpperCase() === "BEDFRAME";
+      const skipped =
+        // PACKING closes everything.
+        done.some((j) => j.departmentCode === "PACKING") ||
+        // UPHOLSTERY joins every sofa / accessory component.
+        (!isBedframe &&
+          done.some((d) => d.departmentCode === "UPHOLSTERY") &&
+          open.some((x) => RANK[x.departmentCode] < RANK.UPHOLSTERY)) ||
+        // Inside one WIP chain: a later step done, an earlier one open.
+        done.some((d) =>
+          open.some(
+            (x) => chain(x) !== "" && chain(x) === chain(d) && RANK[x.departmentCode] < RANK[d.departmentCode],
+          ),
+        );
+      if (skipped) out.add(o.id);
+    }
+    return out;
+  }, [orders]);
+  const skippedCount = skippedPoIds.size;
+
   // Apply the page-level filter panel to `orders` first, then scope further
   // by active tab (Overview = everything; dept tab = only orders that have
   // a non-empty cell in that dept).
@@ -2981,6 +3031,8 @@ export default function ProductionPage({
       // window". Other filters (search / customer / state / category) still
       // layer on top so the operator can narrow further within the overdue set.
       if (overduePoIdSet && !overduePoIdSet.has(o.id)) return false;
+      // Skipped-steps chip — date-independent, like the overdue chips.
+      if (skippedOnly && !skippedPoIds.has(o.id)) return false;
       if (q) {
         const hay = haystackByPo.get(o.id) || "";
         if (!hay.includes(q)) return false;
@@ -3020,7 +3072,7 @@ export default function ProductionPage({
       // search is active (`q`) so the client-side date window can't re-hide a
       // COMPLETED / old order the operator searched for — mirrors the fetch +
       // grid value-filter bypasses above. With no search active, byte-identical.
-      if (!overduePoIdSet && !q) {
+      if (!overduePoIdSet && !skippedOnly && !q) {
         if (deferredFltDueFrom && axisVal && axisVal < deferredFltDueFrom) return false;
         if (deferredFltDueTo && axisVal && axisVal > deferredFltDueTo) return false;
       }
@@ -3070,6 +3122,7 @@ export default function ProductionPage({
     deferredFltCategory,
     // Overdue chip filter — recompute when the active chip / its id-set changes.
     overduePoIdSet,
+    skippedOnly, skippedPoIds,
     showCancelled,
     deferredIncompleteOnly,
     // activeTab drives the dueDate axis branch added 2026-05-07 (overview
@@ -7829,6 +7882,42 @@ export default function ProductionPage({
         >
           Sofa ⚠ {sofaOverdueCount}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !skippedOnly;
+            if (next) {
+              // Same as the overdue chips: clear the narrowing filters so the
+              // whole set shows, and switch an active overdue chip off.
+              setOverduePanelMode(null);
+              setUrlBatch({ q: "", state: "", customer: "", cat: "" });
+              setFltSearchInput("");
+              clearAllOverviewFilters();
+              requestAnimationFrame(() => {
+                gridSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              });
+            }
+            setSkippedOnly(next);
+          }}
+          className={`text-xs px-2 py-1.5 rounded border transition font-semibold ${
+            skippedCount > 0
+              ? skippedOnly
+                ? "bg-[#9C6F1E] text-white border-[#9C6F1E]"
+                : "bg-[#FAEFCB] text-[#7A5512] border-[#E8D597] hover:bg-[#F5E3A8]"
+              : "bg-white text-[#9CA3AF] border-[#E6E0D9] cursor-default"
+          }`}
+          disabled={skippedCount === 0}
+          aria-pressed={skippedOnly}
+          title={
+            skippedCount > 0
+              ? skippedOnly
+                ? "Showing the orders with a skipped step. Click to clear this filter."
+                : `${skippedCount} order${skippedCount === 1 ? "" : "s"} where a later department is scanned done while an earlier one is still open — usually a card nobody scanned. Click to list them.`
+              : "No skipped steps"
+          }
+        >
+          Skipped steps {skippedCount}
+        </button>
         {/* Wei Siang 2026-05-13: removed the "Filter Incomplete" button —
             its narrowing wasn't matching the operator's mental model
             ("Production Filter 不完整"). The same effect is available via
@@ -7861,6 +7950,7 @@ export default function ProductionPage({
             setPicShowAll(false);
             clearAllOverviewFilters();
             setOverduePanelMode(null);
+            setSkippedOnly(false);
             // 2. DataGrid's INTERNAL filter state for every dept tab —
             //    Wei Siang 2026-05-13: "Clear All 应该把下面 Listing 在内
             //    的整个内容、彻彻底底干干净净地把 Filter 都清掉". The grid
