@@ -326,8 +326,8 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
-## 🔵 Worker app locks the day AFTER the last working day (fix/worker-app-lock-after-last-day, 2026-11-21)
-Owner 2026-11-21: "等到最后上班日之后才锁". A RESIGNED / INACTIVE worker keeps the worker app up to and including `resignedAt`; from the next day every worker-token request is refused. Was: locked + tokens purged the moment the status changed.
+## ✅ Worker app locks the day AFTER the last working day (#1535, 2026-11-21)
+Owner 2026-11-21: "等到最后上班日之后才锁". A RESIGNED / INACTIVE worker keeps the worker app up to and including `resignedAt`; from the next day every worker-token request is refused. Was: locked + tokens purged the moment the status changed. Live 2026-11-21 after deploy: a leaver whose last day has passed (EMP-012, last day 2026-04-30) is refused at sign-in (403 "Employee account inactive"); an ACTIVE worker still reaches the PIN check; worker routes with an unknown token answer 401 (the new joined token query runs, no 500). UNTESTED live: a real phone token after the change (no worker traffic on Saturday evening) — check Monday.
 
 ## 🔵 Home Sales v12 phone redesign (redesign/mobile-dashboard-sales, 2026-11-20)
 Owner approved the Home Sales v12 design (visual only) and these additions: Customer overdue sets + both sheets, Today's problems back as a 2x2, Scan to Create (SO / PI / GR / PV) as the four-up row, department colours from Settings > Department Configuration, KPI sheets with sticky TOTAL / sort / status filter / top 4 + Show all / Open links.

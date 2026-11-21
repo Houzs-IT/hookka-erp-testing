@@ -1,5 +1,7 @@
 # Employee onboarding / offboarding — one rule across the system
 
+> **Last verified: 2026-11-21** against `src/lib/employment.ts`, `src/api/routes/worker-auth.ts`, `src/api/routes/workers.ts`
+
 Owner 2026-11-21: 「create 了 new joiner 该有的东西全部都要有 … 进出进出都会有变动
 包括我的 dashboard … 只要有员工的地方就会变动」. The owner approved the 7 points below.
 
