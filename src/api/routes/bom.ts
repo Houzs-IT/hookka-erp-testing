@@ -23,6 +23,7 @@ import {
   type SavedBomChange,
 } from "../lib/bom-edit-card-sync";
 import { todayYmdMY } from "../../lib/utils";
+import { memoizeSelfApply, runSelfApply } from "../lib/self-apply";
 
 const app = new Hono<Env>();
 
@@ -34,6 +35,10 @@ type BOMTemplateRow = {
   category: "BEDFRAME" | "SOFA" | null;
   l1Processes: string | null;
   wipComponents: string | null;
+  /** Product-level (L1) raw materials, JSON text. snake_case column added
+   *  2026-11-22 (runtime self-apply below); read dual-keyed. */
+  l1_materials?: string | null;
+  l1Materials?: string | null;
   version: string;
   versionStatus: "DRAFT" | "ACTIVE" | "OBSOLETE" | null;
   effectiveFrom: string | null;
@@ -101,6 +106,27 @@ function safeParse<T>(text: string | null, fallback: T): T {
   }
 }
 
+// L1 (product-level) materials were sent by the BOM editor but never stored:
+// no column, and no handler read them, so they vanished on reload (found
+// 2026-11-22 while planning product costing — docs/plans/product-costing.md).
+// Migrations do not run on deploy, so the column is self-applied before the
+// first write of every handler that stores it.
+let l1MaterialsMemo: Promise<void> | null = null;
+function ensureL1MaterialsColumn(db: D1Database): Promise<void> {
+  // runSelfApply reads the catalog first and skips DDL already applied, so a
+  // warm DB takes no ALTER lock (BUG-2026-11-21-001); memoizeSelfApply drops
+  // the memo if the round fails, so the next write tries again.
+  return memoizeSelfApply(
+    () => l1MaterialsMemo,
+    (p) => { l1MaterialsMemo = p; },
+    () => runSelfApply(db, "bom", ["ALTER TABLE bom_templates ADD COLUMN IF NOT EXISTS l1_materials TEXT"]),
+  );
+}
+
+function l1MaterialsOf(row: BOMTemplateRow): unknown[] {
+  return safeParse<unknown[]>(row.l1_materials ?? row.l1Materials ?? null, []);
+}
+
 function rowToTemplate(row: BOMTemplateRow) {
   return {
     id: row.id,
@@ -108,6 +134,7 @@ function rowToTemplate(row: BOMTemplateRow) {
     baseModel: row.baseModel ?? row.productCode,
     category: (row.category ?? "BEDFRAME") as "BEDFRAME" | "SOFA",
     l1Processes: safeParse<unknown[]>(row.l1Processes, []),
+    l1Materials: l1MaterialsOf(row),
     wipComponents: safeParse<unknown[]>(row.wipComponents, []),
     version: row.version,
     versionStatus: (row.versionStatus ?? "DRAFT") as
@@ -133,6 +160,7 @@ function rowToTemplateListItem(row: BOMTemplateRow) {
     baseModel: row.baseModel ?? row.productCode,
     category: (row.category ?? "BEDFRAME") as "BEDFRAME" | "SOFA",
     l1Processes: safeParse<unknown[]>(row.l1Processes, []),
+    l1Materials: l1MaterialsOf(row),
     wipComponents: safeParse<unknown[]>(row.wipComponents, []),
     version: row.version,
     versionStatus: (row.versionStatus ?? "DRAFT") as
@@ -348,6 +376,7 @@ app.post("/templates", async (c) => {
     const body = await c.req.json();
     const { productCode, baseModel, category, l1Processes, wipComponents } =
       body;
+    await ensureL1MaterialsColumn(c.var.DB);
     if (!productCode || !baseModel || !category) {
       return c.json(
         {
@@ -369,6 +398,7 @@ app.post("/templates", async (c) => {
       wipComponents: JSON.stringify(
         Array.isArray(wipComponents) ? wipComponents : [],
       ),
+      l1Materials: JSON.stringify(Array.isArray(body.l1Materials) ? body.l1Materials : []),
       version: body.version || "1.0",
       versionStatus: body.versionStatus || "DRAFT",
       effectiveFrom: body.effectiveFrom || new Date().toISOString(),
@@ -378,9 +408,9 @@ app.post("/templates", async (c) => {
 
     await c.var.DB.prepare(
       `INSERT INTO bom_templates (id, productCode, baseModel, category,
-         l1Processes, wipComponents, version, versionStatus, effectiveFrom,
+         l1Processes, wipComponents, l1_materials, version, versionStatus, effectiveFrom,
          effectiveTo, changeLog)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         row.id,
@@ -389,6 +419,7 @@ app.post("/templates", async (c) => {
         row.category,
         row.l1Processes,
         row.wipComponents,
+        row.l1Materials,
         row.version,
         row.versionStatus,
         row.effectiveFrom,
@@ -436,6 +467,7 @@ app.put("/templates", async (c) => {
       category: "BEDFRAME" | "SOFA";
       l1Processes: string;
       wipComponents: string;
+      l1Materials: string;
       version: string;
       versionStatus: "DRAFT" | "ACTIVE" | "OBSOLETE";
       effectiveFrom: string;
@@ -462,6 +494,7 @@ app.put("/templates", async (c) => {
         wipComponents: JSON.stringify(
           Array.isArray(raw.wipComponents) ? raw.wipComponents : [],
         ),
+        l1Materials: JSON.stringify(Array.isArray(raw.l1Materials) ? raw.l1Materials : []),
         version:
           typeof raw.version === "string" && raw.version ? raw.version : "1.0",
         versionStatus:
@@ -478,6 +511,7 @@ app.put("/templates", async (c) => {
       });
     }
 
+    await ensureL1MaterialsColumn(c.var.DB);
     // Single atomic batch: wipe + re-insert.
     const statements = [
       c.var.DB.prepare("DELETE FROM bom_templates"),
@@ -485,9 +519,9 @@ app.put("/templates", async (c) => {
         c.var.DB
           .prepare(
             `INSERT INTO bom_templates (id, productCode, baseModel, category,
-               l1Processes, wipComponents, version, versionStatus,
+               l1Processes, wipComponents, l1_materials, version, versionStatus,
                effectiveFrom, effectiveTo, changeLog)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             t.id,
@@ -496,6 +530,7 @@ app.put("/templates", async (c) => {
             t.category,
             t.l1Processes,
             t.wipComponents,
+            t.l1Materials,
             t.version,
             t.versionStatus,
             t.effectiveFrom,
@@ -545,6 +580,10 @@ app.put("/templates/:id", async (c) => {
     }
     if (Array.isArray(body.wipComponents)) {
       patch.wipComponents = JSON.stringify(body.wipComponents);
+    }
+    if (Array.isArray(body.l1Materials)) {
+      await ensureL1MaterialsColumn(c.var.DB);
+      patch.l1_materials = JSON.stringify(body.l1Materials);
     }
     if (typeof body.version === "string") patch.version = body.version;
     if (

@@ -178,6 +178,13 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-11-22-001 — BOM product-level (L1) raw materials vanished after save `bom` `costing` 🟡
+
+- **Symptom:** in BOM Builder, materials added on the L1 tab (or brought in by Load Default from a master template) showed after Save but were gone after a reload (found 2026-11-22 in a read-only review while planning product costing).
+- **Cause:** the editor sent `l1Materials`, but `bom_templates` had no column for it and none of POST / bulk PUT / PUT `/api/bom/templates` read it; reads never returned it.
+- **Fix:** snake_case column `l1_materials` (runtime self-apply through `runSelfApply`, so a warm DB takes no ALTER lock); all three writes store it, both read shapes return it dual-keyed. Material consumption does not read L1 materials today (unchanged).
+- **Regression test:** `tests/bom-l1-materials-persist.test.mjs`.
+
 ## BUG-2026-11-21-003 — Attendance log counted days before joining / after leaving as "not in" `hr` `dashboard` 🟡
 
 - **Symptom:** Dashboard → Employees → Attendance log → This month showed SAN WIN (joined and left 2026-11-10, worked that day) with "10 days not in"; the phone month log said the same.
