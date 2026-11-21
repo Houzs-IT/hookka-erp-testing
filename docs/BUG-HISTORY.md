@@ -178,6 +178,13 @@ Entries themselves stay newest-first.
 
 ---
 
+## BUG-2026-11-21-003 — Attendance log counted days before joining / after leaving as "not in" `hr` `dashboard` 🟡
+
+- **Symptom:** Dashboard → Employees → Attendance log → This month showed SAN WIN (joined and left 2026-11-10, worked that day) with "10 days not in"; the phone month log said the same.
+- **Cause:** a person's expected days ran from their first clock-in to the end of the month, ignoring the last working day (and the join date when the first day had no punch).
+- **Fix:** `expectedWorkDays` (dashboard-shared-lib) keeps only days the person was employed by the one employment rule; desktop AttendanceLogCard and phone emp-lib both use it. Same sweep: the Reports "Active" count and Planning's per-department headcount now use `isPickableWorker` (they counted TEST accounts / ignored dates).
+- **Regression test:** `tests/attendance-expected-days.test.mjs`.
+
 ## BUG-2026-11-21-002 — Leave balances (Employees → Leave) always returned 500 `hr` `sql` 🔴
 
 - **Symptom:** GET /api/leaves/balances returned 500 for every call (found 2026-11-21 while verifying #1531 live; tail: `column "org_id" does not exist`).

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { MUTED, inFocus, isOutsourced, countsOn, countsDuring, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
+import { MUTED, inFocus, isOutsourced, countsOn, countsDuring, expectedWorkDays, periodLabel, stepDay, ymd, type Period } from "./dashboard-shared-lib";
 import type { EmployeeSlice } from "./EmployeesInsights";
 import { deptName } from "./ops-floor-lib";
 
@@ -67,10 +67,9 @@ export function AttendanceLogCard({ employee, period: pagePeriod, perDay = false
         const mine = byWorker.get(w.id) ?? [];
         const inDays = new Set(mine.map((r) => r.date));
         const lates = mine.map((r) => lateMin(r.clockIn)).filter((m) => m > 0);
-        // Days before the person's first clock-in this month are not counted
-        // as absences (a mid-month joiner).
-        const first = [...inDays].sort()[0] ?? workDays[0];
-        const expected = workDays.filter((d) => d >= (first ?? ""));
+        // Only the days the person was employed count as expected: not before
+        // joining, not after the last working day (one employment rule).
+        const expected = expectedWorkDays(w, workDays, [...inDays].sort()[0]);
         return {
           id: w.id,
           name: w.name ?? w.id,

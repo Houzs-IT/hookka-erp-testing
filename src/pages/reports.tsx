@@ -1,3 +1,4 @@
+import { isPickableWorker } from "@/lib/worker";
 import { useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { cachedFetchJsonResult } from "@/lib/cached-fetch";
@@ -1805,7 +1806,8 @@ function EmployeeReportTab() {
 
   const { workers, perf, attendance } = data;
   const totalWorkers = workers.length;
-  const activeWorkers = workers.filter((w) => w.status === "ACTIVE").length;
+  // Employed today by the one rule (owner 2026-11-21): no test accounts.
+  const activeWorkers = workers.filter((w) => isPickableWorker(w)).length;
 
   // By department
   const deptCount: Record<string, number> = {};
