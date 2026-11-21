@@ -333,7 +333,7 @@ Decided: labour = RM 2,200 / 26 d / 9 h (as today); material price = main suppli
 ## 🟡 PO lines saved at RM 0 although a supplier price exists (investigating, 2026-11-22)
 Last 60 POs: 14 POs / 50 lines at RM 0 (13 POs by Siti, 1 by Violet, PO-2611-039 onward); 48 of the 50 had a price for that same supplier dated before the PO. Desktop New PO fills RM 15.00 for HG1313-12 / HUGYP (tested, not saved). 26 of the 50 lines are ordered in ROLL while most are priced per MTR; there is deliberately no ROLL->MTR factor (Violet 2026-11-12, pi-line-uom.ts). Some ROLL-priced lines were also RM 0 - cause not found. Owner to choose: (A) a per-ROLL price in the supplier price list, picked by the PO line unit (recommended) or (B) ask metres per roll. Back-filling the 14 POs needs owner approval.
 
-## 🟡 Plant Load / Department Backlog by customer delivery month (design, awaiting owner, 2026-11-22)
+## 🔵 Plant Load / Department Backlog by customer delivery month (owner approved v3 design, building on feat/backlog-by-delivery-month, 2026-11-22)
 Owner: 17.4d backlog mixes Nov / Dec / Jan orders; wants the split by customer delivery date. Design: https://claude.ai/artifact/JYDoet89boJYK77HzFVWYx (private; numbers are the owner's example, not real). Backend: dashboard-overview.ts backlog job-card query joins sales_orders already - add so.customerDeliveryDate and bucket open minutes by overdue / this month / next / later / none. Note: a client fetch of /api/production-orders?fields=minimal&include=jobCards answered 503 on prod 2026-11-22 (too heavy) - do not use it for this.
 
 ## ✅ Worker app locks the day AFTER the last working day (#1535, 2026-11-21)
