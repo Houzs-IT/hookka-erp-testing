@@ -43,6 +43,7 @@ import { workingDaysBack, workingDaysInRange } from "../lib/working-days";
 import { outsourceMinutesByDay, punchInHeadcountByDay, type CardCredit, type HeadcountWorker, type PunchRow } from "../../lib/capacity-headcount";
 import { ensureProductionOrderSourceLine } from "../lib/production-order-line";
 import { FINISHED_PRODUCTION_ORDERS_CTE, PRODUCTION_ORDER_PRICE_JOINS_SQL, PRODUCTION_ORDER_UNIT_PRICE_SQL } from "../lib/production-revenue";
+import { deliveryBucket, sortBuckets } from "../../lib/delivery-bucket";
 import {
   allocateDocsByCategory,
   DEPT_REVENUE_ORDER,
@@ -364,21 +365,27 @@ app.get("/", async (c) => {
       // dropping it would hide real work rather than finished work.
       db
         .prepare(
+          // Grouped by the order's customer delivery date too (owner
+          // 2026-11-22: split by delivery month). One order has one delivery
+          // date, so the DISTINCT order count never spans two groups.
           `SELECT po.itemCategory AS "cat",
                   po.customerName AS "customerName",
+                  substr(COALESCE(so.customerDeliveryDate::text, co.customerDeliveryDate::text, ''), 1, 10) AS "deliveryDate",
                   COALESCE(SUM(po.quantity),0) AS "units",
                   COUNT(DISTINCT COALESCE(po.salesOrderId, po.consignmentOrderId, po.id)) AS "sos"
              FROM production_orders po
              LEFT JOIN sales_orders so ON so.id = po.salesOrderId
+             LEFT JOIN consignment_orders co ON co.id = po.consignmentOrderId
             WHERE po.orgId = ? AND po.status NOT IN ('COMPLETED','CANCELLED')
               AND (so.status IS NULL
                    OR so.status NOT IN ('INVOICED','SHIPPED','DELIVERED','CLOSED'))
-            GROUP BY po.itemCategory, po.customerName`,
+            GROUP BY po.itemCategory, po.customerName, 3`,
         )
         .bind(orgId)
         .all<{
           cat: string | null;
           customerName: string | null;
+          deliveryDate: string | null;
           units: number;
           sos: number;
         }>(),
@@ -703,10 +710,12 @@ app.get("/", async (c) => {
                   jc.estMinutes AS "estMinutes", jc.actualMinutes AS "actualMinutes",
                   jc.wipQty AS "wipQty", jc.completedDate AS "completedDate",
                   po.itemCategory AS "cat", po.status AS "poStatus",
-                  so.status AS "soStatus"
+                  so.status AS "soStatus",
+                  COALESCE(so.customerDeliveryDate::text, co.customerDeliveryDate::text) AS "deliveryDate"
              FROM job_cards jc
              JOIN production_orders po ON po.id = jc.productionOrderId
              LEFT JOIN sales_orders so ON so.id = po.salesOrderId
+             LEFT JOIN consignment_orders co ON co.id = po.consignmentOrderId
             WHERE jc.orgId = ?`,
         )
         .bind(orgId)
@@ -720,6 +729,7 @@ app.get("/", async (c) => {
           cat: string | null;
           poStatus: string;
           soStatus: string | null;
+          deliveryDate: string | null;
         }>(),
       // NOTE: `workers` is NOT org-scoped (no org_id column — the workers
       // route never filters by org). Do not add `WHERE orgId = ?` here.
@@ -909,6 +919,9 @@ app.get("/", async (c) => {
       let windowBed = 0;
       let sofaMin = 0;
       let bedframeMin = 0;
+      // Open minutes per customer-delivery bucket (lib/delivery-bucket), so
+      // the dashboard can toggle months like it toggles Sofa / Bedframe.
+      const monthMin = new Map<string, { sofaMin: number; bedframeMin: number }>();
       for (const r of backlogRows) {
         if (r.dept !== code) continue;
         // r.dept is the JC's departmentCode; jcMinutesTotal skips the ×wipQty
@@ -950,9 +963,14 @@ app.get("/", async (c) => {
           r.jcStatus !== "TRANSFERRED"
         ) {
           const m = jcMinutesTotal(r.estMinutes ?? 0, jc);
-          if ((r.cat ?? "").toUpperCase() === "SOFA") sofaMin += m;
-          else if ((r.cat ?? "").toUpperCase() === "BEDFRAME")
-            bedframeMin += m;
+          const cat = (r.cat ?? "").toUpperCase();
+          if (cat === "SOFA" || cat === "BEDFRAME") {
+            const key = deliveryBucket(r.deliveryDate, todayISOTop);
+            const e = monthMin.get(key) ?? { sofaMin: 0, bedframeMin: 0 };
+            if (cat === "SOFA") { sofaMin += m; e.sofaMin += m; }
+            else { bedframeMin += m; e.bedframeMin += m; }
+            monthMin.set(key, e);
+          }
         }
       }
       // Per-dept capacity keeps its own rolling-7 basis: it is that dept's
@@ -994,6 +1012,9 @@ app.get("/", async (c) => {
         sofaDays,
         bedframeDays,
         backlogDays,
+        // Optional in the type: a reconstructed past month has no split.
+        byMonth: sortBuckets(monthMin.keys()).map((month) => ({ month, ...monthMin.get(month)! })) as
+          { month: string; sofaMin: number; bedframeMin: number }[] | undefined,
       };
     })
       .filter((d) => d.totalMin > 0 || d.dailyCapMin > 0)
@@ -1066,6 +1087,20 @@ app.get("/", async (c) => {
       return { bedframeUnits, sofaSets, byCustomer };
     };
     const activeJobs = rollUp(activeJobsRes.results ?? []);
+    // Same rows per customer AND delivery bucket, for the month toggles.
+    const ajMonth = new Map<string, { customer: string; month: string; bedframeUnits: number; sofaSets: number }>();
+    for (const r of activeJobsRes.results ?? []) {
+      const cat = (r.cat ?? "").toUpperCase();
+      if (cat !== "BEDFRAME" && cat !== "SOFA") continue;
+      const customer = r.customerName || "—";
+      const month = deliveryBucket(r.deliveryDate, todayISOTop);
+      const k = `${customer}|${month}`;
+      const e = ajMonth.get(k) ?? { customer, month, bedframeUnits: 0, sofaSets: 0 };
+      if (cat === "BEDFRAME") e.bedframeUnits += Number(r.units) || 0;
+      else e.sofaSets += Number(r.sos) || 0;
+      ajMonth.set(k, e);
+    }
+    const activeJobsByMonth = [...ajMonth.values()].filter((v) => v.bedframeUnits > 0 || v.sofaSets > 0);
     // Sofa sets from the one set rule (sofaSetRows); the per-PO query keeps
     // the bedframe units.
     const yestSets = new Map<string, number>();
@@ -1876,6 +1911,10 @@ app.get("/", async (c) => {
       backlogMin: backlogGrandMin,
       backlogDays,
       activeJobs,
+      // Active Jobs per customer AND customer-delivery bucket (owner
+      // 2026-11-22). Live only: a stored past-month snapshot replaces
+      // activeJobs and has no month split, so the UI then hides the months.
+      activeJobsByMonth: activeJobsByMonth as typeof activeJobsByMonth | undefined,
       completedYesterday,
       completedLast7,
       // Headline totals for the selected window, deduped once (see the query).
@@ -1913,6 +1952,7 @@ app.get("/", async (c) => {
             ? (m.backlogByDept as typeof backlogByDept)
             : backlogByDept,
           backlogGrandMin: Number(m.backlogGrandMin) || 0,
+          activeJobsByMonth: undefined,
           activeJobs: {
             bedframeUnits: Number(m.activeJobs?.bedframeUnits) || 0,
             sofaSets: Number(m.activeJobs?.sofaSets) || 0,
@@ -2125,7 +2165,7 @@ app.get("/", async (c) => {
             ...stateProduction,
             backlogMin: reconBacklogGrandMin,
             backlogDays: reconBacklogDays,
-            backlogByDept: reconBacklogByDept,
+            backlogByDept: reconBacklogByDept.map((d) => ({ ...d, byMonth: undefined })),
             backlogGrandMin: reconBacklogGrandMin,
           };
           stateEmployee = {

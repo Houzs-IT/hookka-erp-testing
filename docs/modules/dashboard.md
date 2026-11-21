@@ -44,11 +44,12 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:716` | Main component: staged fetches, useMemos, all JSX |
-| `KTile` | `src/pages/dashboard-b/index.tsx:439` | The KPI card used by the four Command Center cards |
-| `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:394 / 421` | Sparkline + delta-% chip |
-| `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:521` | Per-section loading placeholder |
-| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:650 / 578 / 625` | Presentational helpers |
+| `DashboardBPage` | `src/pages/dashboard-b/index.tsx:729` | Main component: staged fetches, useMemos, all JSX |
+| `KTile` | `src/pages/dashboard-b/index.tsx:450` | The KPI card used by the four Command Center cards |
+| `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:405 / 432` | Sparkline + delta-% chip |
+| `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:534` | Per-section loading placeholder |
+| `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:663 / 591 / 638` | Presentational helpers |
+| Delivery-month toggles (Backlog / Plant Load) | `src/pages/dashboards/backlog-months.ts` + `src/lib/delivery-bucket.ts` | Owner 2026-11-22: legend toggles per customer-delivery month beside Sofa / Bedframe; API sends `backlogByDept[].byMonth` + `production.activeJobsByMonth` (live only; past-month snapshots have no split, toggles hide) |
 | KPI rail JSX | `src/pages/dashboard-b/index.tsx:1117` | Sales · Invoices · Pending Delivery · Outstanding cards |
 | Revenue chart + Plant Load JSX | `src/pages/dashboard-b/index.tsx:1374` | Area chart + backlog-vs-capacity gauge |
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |
@@ -56,7 +57,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | Top sellers / Fabric usage / Backlog+Purchasing JSX | `src/pages/dashboard-b/index.tsx:2062 / 2059 / 2427` | |
 | Department Revenue JSX | `src/pages/dashboard-b/index.tsx:1688` | `DeptRevenueCard` (`DeptRevenueCard.tsx`): per-department revenue table (Today / Avg / day / Total / Sets) + line chart, All/Bedframe/Sofa; with `embed.day` the table shows that day (`dayBucketIndex`) and a chart click calls `onPickDay` |
 | `DeptRevenueChart` | `src/pages/dashboard-b/charts.tsx:258` | One line per production department; `markDay` draws the picked day, `onPickDay` makes points clickable |
-| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2299` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
+| `app.get("/revenue-split")` | `src/api/routes/dashboard-overview.ts:2341` | Department revenue + Revenue chart Bedframe/Sofa split, computed fresh (not snapshotted/frozen); rules in `src/api/lib/dept-revenue.ts` |
 | Phone Department Revenue | `src/pages/m/screens/Home.tsx:1251` | /m Home: one bar per department + `CatPills` toggle (also on the phone Revenue chart) |
 | `RevenueChart` / `CustomerPieChart` | `src/pages/dashboard-b/charts.tsx:68 / 149` | Lazy recharts wrappers (~357 KB chunk) |
 | `app.get("/")` (overview) | `src/api/routes/dashboard-overview.ts:96` | Single ~2000-line aggregate handler; gated on `dashboard:read` or a dashboard tab (HK-0132) |

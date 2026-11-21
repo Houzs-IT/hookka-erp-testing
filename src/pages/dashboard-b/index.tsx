@@ -11,6 +11,17 @@
 import { CAT, NEUTRAL, STATUS } from "@/lib/chart-standard";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { categoryDays } from "@/pages/dashboards/dashboard-widgets-lib";
+import {
+  backlogMonthKeys,
+  deptMonthSegments,
+  filterDeptByMonths,
+  filterJobs,
+  monthColor,
+  shownBacklogMin,
+  type JobsMonth,
+  type MonthMin,
+} from "@/pages/dashboards/backlog-months";
+import { bucketLabel, NO_DATE, OVERDUE } from "@/lib/delivery-bucket";
 import { CompletedDrill } from "./CompletedDrill";
 import { InvoiceListDrill, OutstandingDrill, PendingDeliveryDrill, SoListDrill } from "./KpiDrills";
 import { parseDashPeriod } from "../../api/lib/dash-period";
@@ -119,8 +130,12 @@ type Overview = {
       sofaDays?: number | null;
       bedframeDays?: number | null;
       backlogDays: number | null;
+      /** Open minutes per customer-delivery bucket (lib/delivery-bucket). */
+      byMonth?: MonthMin[];
     }[];
     backlogGrandMin: number;
+    /** Active Jobs per customer and delivery bucket; live feed only. */
+    activeJobsByMonth?: JobsMonth[];
   };
   purchasing?: {
     openPOCount: number;
@@ -735,10 +750,22 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
       else n.add(k);
       return n;
     });
+  // Customer-delivery months switched off in the Department Backlog legend
+  // (owner 2026-11-22) — Plant Load, Total Backlog and Active Jobs follow.
+  const [hiddenMonth, setHiddenMonth] = useState<Set<string>>(new Set());
+  const toggleMonth = (k: string) =>
+    setHiddenMonth((prev) => {
+      const n = new Set(prev);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
   const [drill, setDrill] = useState<{
     title: string;
     subtitle?: string;
     node: React.ReactNode;
+    /** Drills that redraw with the Sofa / Bedframe / month toggles. */
+    live?: "backlog" | "jobs";
   } | null>(null);
   // Embedded (merged dashboard): fetch only what the shown sections draw. A
   // tab used to embed this page several times and every copy fetched — and
@@ -954,8 +981,81 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
     const sum = (f: (r: (typeof weekRev)[number]) => number) => live.reduce((a, r) => a + f(r), 0);
     return { days, orders: sum((r) => r.salesOrderSen) / days, production: sum((r) => r.productionSen) / days, invoiced: sum((r) => r.invoiceSen) / days };
   })();
-  const backlogDays = prod?.backlogDays ?? 0;
+  // Sofa / Bedframe and delivery-month toggles (Department Backlog legend)
+  // drive Plant Load, Total Backlog and Active Jobs too (owner 2026-11-22).
+  const sofaOn = !hiddenDept.has("Sofa");
+  const bedOn = !hiddenDept.has("Bedframe");
+  const monthKeys = backlogMonthKeys(prod?.backlogByDept ?? [], prod?.activeJobsByMonth);
+  const monthIdx = new Map(monthKeys.filter((k) => k !== OVERDUE && k !== NO_DATE).map((k, i) => [k, i]));
+  const colorOfMonth = (k: string) => monthColor(k, monthIdx.get(k) ?? 0);
+  const backlogFiltered = hiddenMonth.size > 0 || !sofaOn || !bedOn;
+  const shownMin = backlogFiltered
+    ? shownBacklogMin(prod?.backlogByDept ?? [], hiddenMonth, sofaOn, bedOn)
+    : (prod?.backlogMin ?? 0);
+  // Same capacity as the API's headline (backlogMin ÷ backlogDays), so the
+  // filtered days are the visible share of the same queue.
+  const backlogDays =
+    backlogFiltered && (prod?.backlogMin ?? 0) > 0
+      ? Math.round(((prod?.backlogDays ?? 0) * shownMin) / (prod?.backlogMin ?? 1) * 10) / 10
+      : (prod?.backlogDays ?? 0);
+  const jobsShown = prod?.activeJobsByMonth
+    ? filterJobs(prod.activeJobsByMonth, hiddenMonth, sofaOn, bedOn)
+    : prod?.activeJobs
+      ? {
+          bedframeUnits: bedOn ? prod.activeJobs.bedframeUnits : 0,
+          sofaSets: sofaOn ? prod.activeJobs.sofaSets : 0,
+          byCustomer: prod.activeJobs.byCustomer
+            .map((c) => ({ ...c, bedframeUnits: bedOn ? c.bedframeUnits : 0, sofaSets: sofaOn ? c.sofaSets : 0 }))
+            .filter((c) => c.bedframeUnits || c.sofaSets),
+        }
+      : null;
+  const showingLabel = `${sofaOn && bedOn ? "Sofa + Bedframe" : sofaOn ? "Sofa" : bedOn ? "Bedframe" : "nothing"} · ${
+    hiddenMonth.size === 0 ? "all delivery months" : monthKeys.filter((k) => !hiddenMonth.has(k)).map(bucketLabel).join(", ") || "no month"
+  }`;
   const util = Math.min(1, backlogDays / 14);
+  // Sofa / Bedframe + delivery-month toggles — one legend, used on the card
+  // and inside the Total Backlog / Active Jobs drills.
+  const backlogLegend = (
+    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs">
+      {(
+        [
+          ["Sofa", C_INV],
+          ["Bedframe", C_SO],
+        ] as const
+      ).map(([k, c]) => {
+        const off = hiddenDept.has(k);
+        return (
+          <button
+            key={k}
+            type="button"
+            aria-pressed={!off}
+            onClick={() => toggleDept(k)}
+            className="inline-flex items-center gap-1 transition-opacity"
+            style={{ color: off ? "#C2BBAE" : c, opacity: off ? 0.55 : 1, textDecoration: off ? "line-through" : "none" }}
+          >
+            ● {k}
+          </button>
+        );
+      })}
+      {monthKeys.length > 0 && <span aria-hidden="true" className="h-3 w-px bg-[#E2DDD8]" />}
+      {monthKeys.map((k) => {
+        const off = hiddenMonth.has(k);
+        return (
+          <button
+            key={k}
+            type="button"
+            aria-pressed={!off}
+            onClick={() => toggleMonth(k)}
+            className="inline-flex items-center gap-1 transition-opacity"
+            style={{ color: off ? "#C2BBAE" : "#1F1D1B", opacity: off ? 0.55 : 1, textDecoration: off ? "line-through" : "none" }}
+          >
+            <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: colorOfMonth(k) }} />
+            {bucketLabel(k)}
+          </button>
+        );
+      })}
+    </div>
+  );
   const gaugeAccent = backlogDays > 12 ? C_RED : backlogDays > 7 ? C_PROD : C_GREEN;
   // Month-awareness: the state widgets (Backlog / Active Jobs / Workforce)
   // are point-in-time counts. Three cases for a selected period:
@@ -1574,30 +1674,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                 disabled={!prod?.backlogByDept}
                 onClick={() =>
                   prod?.backlogByDept &&
-                  setDrill({
-                    title: "Total Backlog — per Department",
-                    subtitle: `${hm(prod.backlogGrandMin)} of active work across ${prod.backlogByDept.length} dept${prod.backlogByDept.length === 1 ? "" : "s"}`,
-                    node: (
-                      <MiniTable
-                        cols={[
-                          "Department",
-                          "Sofa",
-                          "Bedframe",
-                          "Total",
-                          "Daily cap",
-                          "Backlog",
-                        ]}
-                        rows={prod.backlogByDept.map((d) => [
-                          d.dept,
-                          hm(d.sofaMin),
-                          hm(d.bedframeMin),
-                          hm(d.totalMin),
-                          `${hm(d.dailyCapMin)}/d`,
-                          d.backlogDays == null ? "stalled" : `${d.backlogDays.toLocaleString()}d`,
-                        ])}
-                      />
-                    ),
-                  })
+                  setDrill({ title: "Total Backlog — per Department", node: null, live: "backlog" })
                 }
                 className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
@@ -1610,30 +1687,13 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                 </span>
                 <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
                   {backlogDays.toLocaleString()}d ·{" "}
-                  {hrs(prod?.backlogMin)}
+                  {hrs(shownMin)}
                 </span>
               </button>
               <button
                 type="button"
                 disabled={!prod?.activeJobs}
-                onClick={() =>
-                  prod?.activeJobs &&
-                  setDrill({
-                    title: "Active Jobs — pending by customer",
-                    subtitle:
-                      "Bedframe = pieces in production · Sofa = sets (1 order = 1 set, consignment included)",
-                    node: (
-                      <MiniTable
-                        cols={["Customer", "Bedframe units", "Sofa sets"]}
-                        rows={prod.activeJobs.byCustomer.map((c) => [
-                          c.customer,
-                          c.bedframeUnits ? c.bedframeUnits.toLocaleString() : "—",
-                          c.sofaSets ? c.sofaSets.toLocaleString() : "—",
-                        ])}
-                      />
-                    ),
-                  })
-                }
+                onClick={() => prod?.activeJobs && setDrill({ title: "Active Jobs — pending by customer", node: null, live: "jobs" })}
                 className="w-full flex items-center justify-between gap-2 rounded-lg bg-[#F7F4EF] hover:bg-[#F0ECE6] px-3 py-2 text-left transition-colors"
               >
                 <span className="flex min-w-0 items-center gap-2">
@@ -1644,8 +1704,8 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                   </span>
                 </span>
                 <span className="shrink-0 whitespace-nowrap pl-2 text-[13px] font-bold text-[#1F1D1B] tabular-nums">
-                  {(prod?.activeJobs?.bedframeUnits ?? 0).toLocaleString()} /{" "}
-                  {(prod?.activeJobs?.sofaSets ?? 0).toLocaleString()}
+                  {(jobsShown?.bedframeUnits ?? 0).toLocaleString()} /{" "}
+                  {(jobsShown?.sofaSets ?? 0).toLocaleString()}
                 </span>
               </button>
               <button
@@ -2662,37 +2722,9 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
             <SectionTitle
               title="Department Backlog"
               sub="active work vs daily capacity — bottleneck first · click a legend to toggle"
-              right={
-                <div className="flex gap-3 text-xs">
-                  {(
-                    [
-                      ["Sofa", C_INV],
-                      ["Bedframe", C_SO],
-                    ] as const
-                  ).map(([k, c]) => {
-                    const off = hiddenDept.has(k);
-                    return (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => toggleDept(k)}
-                        className="inline-flex items-center gap-1 transition-opacity"
-                        style={{
-                          color: off ? "#C2BBAE" : c,
-                          opacity: off ? 0.55 : 1,
-                          textDecoration: off ? "line-through" : "none",
-                        }}
-                      >
-                        ● {k}
-                      </button>
-                    );
-                  })}
-                </div>
-              }
+              right={backlogLegend}
             />
             {(() => {
-              const sofaOn = !hiddenDept.has("Sofa");
-              const bedOn = !hiddenDept.has("Bedframe");
               // 2026-05-25: bar widths now scale by DAYS-to-clear, not by
               // raw work minutes. Wei Siang reported: "22.8d 的 bar 比 8.7d
               // 还短" — because Fabric Sewing had high work-minutes (long
@@ -2703,11 +2735,15 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
               // = segment minutes / dept's daily capacity; the bar's two
               // segments now sum to `showDays` and each row's total bar
               // width is proportional to the biggest dept's wait days.
-              const rows = (prod?.backlogByDept ?? []).map((d) => {
+              const rows = (prod?.backlogByDept ?? []).map((raw) => {
+                // Delivery months switched off leave the row as if those
+                // orders did not exist (backlog-months.filterDeptByMonths).
+                const d = filterDeptByMonths(raw, hiddenMonth);
+                const segs = deptMonthSegments(raw, hiddenMonth, sofaOn, bedOn);
                 // Owner 2026-11-12: one category shown → its own capacity;
                 // both shown → total / total (dashboard-widgets-lib categoryDays).
                 const cat = categoryDays(d, sofaOn, bedOn);
-                if (cat) return { d, ...cat };
+                if (cat) return { d, segs, ...cat };
                 // dailyCapMin === 0 → "stalled" (no completions in the rolling
                 // window). Never divide by a 1-minute fallback — that painted
                 // thousands of fake days (owner audit 2026-07-11).
@@ -2721,8 +2757,8 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                   : filtered
                     ? sofaDays + bedDays
                     : d.backlogDays;
-                return { d, sofaDays, bedDays, showDays };
-              });
+                return { d, segs, sofaDays, bedDays, showDays };
+              }).sort((a, b) => (b.showDays ?? Infinity) - (a.showDays ?? Infinity));
               const mxDays = Math.max(1, ...rows.map((r) => r.showDays ?? 0));
               // Rows spread over the card's height (it stretches to Plant
               // Load beside it); each row also says what the days are made of.
@@ -2734,7 +2770,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     <span className="hidden w-32 shrink-0 text-right sm:block">Queued · capacity</span>
                     <span className="w-12 shrink-0 text-right">Days</span>
                   </div>
-                  {rows.map(({ d, sofaDays, bedDays, showDays }) => (
+                  {rows.map(({ d, segs, sofaDays, bedDays, showDays }) => (
                 <div
                   key={d.dept}
                   className="flex items-center gap-3 py-1.5 border-b border-[#F7F4EF] last:border-0"
@@ -2743,7 +2779,18 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                     {d.dept}
                   </span>
                   <div className="flex-1 h-3 rounded bg-[#F5F2ED] overflow-hidden flex">
-                    {sofaOn && (
+                    {/* With the delivery-month split the bar is coloured by
+                        month (owner 2026-11-22); an older feed keeps the
+                        Sofa / Bedframe colours. */}
+                    {segs.length > 0 && segs.map((sg) => (
+                      <div
+                        key={sg.month}
+                        className="h-full"
+                        title={`${bucketLabel(sg.month)} · ${sg.days.toFixed(1)}d`}
+                        style={{ width: `${(sg.days / mxDays) * 100}%`, background: colorOfMonth(sg.month) }}
+                      />
+                    ))}
+                    {segs.length === 0 && sofaOn && (
                       <div
                         className="h-full"
                         style={{
@@ -2752,7 +2799,7 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
                         }}
                       />
                     )}
-                    {bedOn && (
+                    {segs.length === 0 && bedOn && (
                       <div
                         className="h-full"
                         style={{
@@ -2885,7 +2932,54 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
           subtitle={drill.subtitle}
           onClose={() => setDrill(null)}
         >
-          {drill.node}
+          {drill.live ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-[#5A5550]">Showing <b>{showingLabel}</b></span>
+                {backlogLegend}
+              </div>
+              {drill.live === "backlog" ? (
+                <MiniTable
+                  cols={["Department", "Sofa", "Bedframe", "Total", "Daily cap", "Backlog"]}
+                  rows={(prod?.backlogByDept ?? [])
+                    .map((raw) => filterDeptByMonths(raw, hiddenMonth))
+                    .map((d) => {
+                      const cat = categoryDays(d, sofaOn, bedOn);
+                      const days = cat ? cat.showDays : sofaOn && bedOn ? d.backlogDays : 0;
+                      const q = (sofaOn ? d.sofaMin : 0) + (bedOn ? d.bedframeMin : 0);
+                      return { d, days, q };
+                    })
+                    .filter((r) => r.q > 0 || r.d.dailyCapMin > 0)
+                    .sort((a, b) => (b.days ?? Infinity) - (a.days ?? Infinity))
+                    .map(({ d, days, q }) => [
+                      d.dept,
+                      sofaOn ? hm(d.sofaMin) : "—",
+                      bedOn ? hm(d.bedframeMin) : "—",
+                      hm(q),
+                      `${hm(d.dailyCapMin)}/d`,
+                      days == null ? "stalled" : `${days.toLocaleString()}d`,
+                    ])}
+                />
+              ) : (
+                <>
+                  <p className="text-xs text-[#9CA3AF]">
+                    Bedframe = pieces in production · Sofa = sets (1 order = 1 set, consignment included)
+                    {!prod?.activeJobsByMonth && hiddenMonth.size > 0 ? " · this view has no delivery-month split, so the month toggles do not apply here" : ""}
+                  </p>
+                  <MiniTable
+                    cols={["Customer", "Bedframe units", "Sofa sets"]}
+                    rows={(jobsShown?.byCustomer ?? []).map((c) => [
+                      c.customer,
+                      c.bedframeUnits ? c.bedframeUnits.toLocaleString() : "—",
+                      c.sofaSets ? c.sofaSets.toLocaleString() : "—",
+                    ])}
+                  />
+                </>
+              )}
+            </div>
+          ) : (
+            drill.node
+          )}
         </Modal>
       )}
     </div>

@@ -23,7 +23,7 @@ const SRC = readFileSync(
 const SHIPPED = ["INVOICED", "SHIPPED", "DELIVERED", "CLOSED"];
 
 test("Active Jobs ignores production orders whose sales order already shipped", () => {
-  const q = SRC.slice(SRC.indexOf("// Active Jobs"), SRC.indexOf("// Active Jobs") + 1600);
+  const q = SRC.slice(SRC.indexOf("// Active Jobs"), SRC.indexOf("// Active Jobs") + 2600);
   assert.match(q, /LEFT JOIN sales_orders so ON so\.id = po\.salesOrderId/);
   for (const s of SHIPPED) {
     assert.ok(q.includes(`'${s}'`), `Active Jobs still counts a ${s} sales order`);
