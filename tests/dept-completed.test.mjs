@@ -121,13 +121,34 @@ test("12-day average never counts a Sunday, even with a card closed on it (owner
   assert.deepEqual(usualDays(days, "2026-11-04").get("FAB_CUT"), { bed: 21, sofa: 0 });
 });
 
-test("/completed runs its three heavy reads together, each cached (owner 2026-11-20: the Employees tab showed … on a cold cache)", () => {
+test("/completed: two heavy reads together, stale-served for a day, keys survive the date change (owner 2026-11-21: first open ~28 s)", () => {
   const r = read("src/api/routes/floor-live.ts");
-  assert.match(r, /const \[days, rangeRows, revRows\] = await Promise\.all\(\[/);
-  assert.match(r, /dept-completed:range:\$\{orgId\}:\$\{from\}:\$\{to\}/);
-  // The cache stores JSON: the range Map travels as entries.
-  assert.match(r, /\[\.\.\.\(await loadDeptCompletedRange\(db, orgId, from, to\)\)\.entries\(\)\]/);
-  assert.match(r, /rangeRows \? new Map\(rangeRows\) : dayCounts\(days, from\)/);
+  assert.match(r, /const \[days, revRows\] = await Promise\.all\(\[/);
+  // The separate range query is gone: period counts are summed from the per-day rows.
+  assert.doesNotMatch(r, /loadDeptCompletedRange/);
+  assert.match(r, /const range = rangeCounts\(days, from, to\);/);
+  // Both reads keep serving the last value (refreshing behind it) for a day.
+  assert.equal((r.match(/\{ staleSeconds: DAY \}/g) || []).length, 2);
+  // The value key is the month, not today's date.
+  assert.match(r, /dept-completed:value:\$\{orgId\}:\$\{lo\}:\$\{hiKey\}/);
+  const k = read("src/api/lib/kv-cache.ts");
+  assert.match(k, /expirationTtl: Math\.max\(hardTtl\(ttlSeconds\), opts\?\.staleSeconds \?\? 0\)/);
+});
+
+test("rangeCounts sums the per-day rows over [from, to] per department", async () => {
+  const { rangeCounts, dayCounts } = await import("../src/api/lib/dept-completed.ts");
+  const days = [
+    { dept: "FAB_CUT", date: "2026-10-31", bedframeUnits: 9, sofaSets: 9 },
+    { dept: "FAB_CUT", date: "2026-11-02", bedframeUnits: 20, sofaSets: 1 },
+    { dept: "FAB_CUT", date: "2026-11-03", bedframeUnits: 22, sofaSets: 2 },
+    { dept: "PACKING", date: "2026-11-03", bedframeUnits: 5, sofaSets: 0 },
+    { dept: "PACKING", date: "2026-11-04", bedframeUnits: 7, sofaSets: 3 },
+  ];
+  const m = rangeCounts(days, "2026-11-01", "2026-11-03");
+  assert.deepEqual(m.get("FAB_CUT"), { bedframeUnits: 42, sofaSets: 3 });
+  assert.deepEqual(m.get("PACKING"), { bedframeUnits: 5, sofaSets: 0 });
+  assert.deepEqual(dayCounts(days, "2026-11-04").get("PACKING"), { bedframeUnits: 7, sofaSets: 3 });
+  assert.equal(dayCounts(days, "2026-11-04").has("FAB_CUT"), false);
 });
 
 test("Floor Live counts use Department Revenue's department-done rows, combined cards included (owner 2026-11-20, item 6)", () => {

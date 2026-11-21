@@ -20,7 +20,7 @@ import { requireReadOrDashboardTab } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { summarizeFloorLive } from "../lib/floor-live";
 import { computeFloorLive, readFloorLiveSnapshot, readFloorLiveSnapshots } from "../lib/floor-live-data";
-import { dayCounts, loadDeptCompletedByDay, loadDeptCompletedRange, shapeDeptCompleted, valueByDay, valueByDept } from "../lib/dept-completed";
+import { loadDeptCompletedByDay, rangeCounts, shapeDeptCompleted, valueByDay, valueByDept } from "../lib/dept-completed";
 import { loadDeptRevenue } from "../lib/dept-revenue";
 import { cached } from "../lib/kv-cache";
 
@@ -108,25 +108,28 @@ app.get("/completed", async (c) => {
     const db = c.var.DB;
     const orgId = getOrgId(c);
     const { today } = myClock();
-    // Three heavy reads, run TOGETHER and each shared for 2 minutes
-    // (stale-while-revalidate, under the 3-minute refresh). Run one after
-    // another they took over 30 s on a cold cache and the dashboard's
-    // Employees tab gave up, showing "…" (owner 2026-11-20).
-    //   - the per-day history: one pass over every job card (~7 s cold);
-    //   - a period longer than a day: the range query (a sofa order
-    //     finishing on two days counts once); one day reads the per-day rows;
+    // Two heavy reads, run TOGETHER, each fresh for 2 minutes (under the
+    // 3-minute refresh) and then served stale-while-revalidate for up to a
+    // day: the first open of the day answers at once from the last value and
+    // refreshes behind it (owner 2026-11-21: the first open waited ~28 s,
+    // because the cache hard-expired after 12 quiet minutes and the value key
+    // changed every day).
+    //   - the per-day history: one pass over every job card (~7 s cold).
+    //     The period counts are summed from it (rangeCounts) — the separate
+    //     range query returned the same numbers and was a third heavy read;
     //   - production value (Department Revenue's rows) over the period and
-    //     the drill's month in one read.
+    //     the drill's month in one read, keyed by month (not by today) so the
+    //     key survives the date change.
     const monthStart = `${month}-01`;
     const lo = from < monthStart ? from : monthStart;
     const hi = to > `${month}-31` ? to : (`${month}-31` > today ? today : `${month}-31`);
-    const [days, rangeRows, revRows] = await Promise.all([
-      cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId)),
-      // Cached as entries: the cache stores JSON, which drops a Map.
-      from === to ? Promise.resolve(null) : cached(c, `dept-completed:range:${orgId}:${from}:${to}`, 120, async () => [...(await loadDeptCompletedRange(db, orgId, from, to)).entries()]),
-      cached(c, `dept-completed:value:${orgId}:${lo}:${hi}`, 120, () => loadDeptRevenue(db, orgId, lo, hi)),
+    const hiKey = to > `${month}-31` ? to : month;
+    const DAY = 86400;
+    const [days, revRows] = await Promise.all([
+      cached(c, `dept-completed:byday:${orgId}`, 120, () => loadDeptCompletedByDay(db, orgId), { staleSeconds: DAY }),
+      cached(c, `dept-completed:value:${orgId}:${lo}:${hiKey}`, 120, () => loadDeptRevenue(db, orgId, lo, hi), { staleSeconds: DAY }),
     ]);
-    const range = rangeRows ? new Map(rangeRows) : dayCounts(days, from);
+    const range = rangeCounts(days, from, to);
     const value = valueByDept(revRows, from, to);
     const dayValue = valueByDay(revRows);
     c.header("Cache-Control", "no-store");

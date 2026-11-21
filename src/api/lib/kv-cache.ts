@@ -58,6 +58,9 @@ export async function cached<T>(
   key: string,
   ttlSeconds: number,
   fetcher: () => Promise<T>,
+  /** How long a stale value may still be served (instantly, refreshed in the
+   *  background) before it hard-expires. Default: hardTtl(ttlSeconds). */
+  opts?: { staleSeconds?: number },
 ): Promise<T> {
   const kv = c.env.SESSION_CACHE;
   if (!kv) return fetcher();
@@ -69,7 +72,7 @@ export async function cached<T>(
       soft: Date.now() + ttlSeconds * 1000,
     };
     await kv.put(key, JSON.stringify(env), {
-      expirationTtl: hardTtl(ttlSeconds),
+      expirationTtl: Math.max(hardTtl(ttlSeconds), opts?.staleSeconds ?? 0),
     });
   };
   // Recompute + repersist off the response path. Swallow errors — a failed

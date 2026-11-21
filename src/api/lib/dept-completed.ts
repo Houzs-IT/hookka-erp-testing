@@ -115,7 +115,24 @@ export async function loadDeptCompletedByDay(db: Db, orgId: string | null): Prom
 
 /** One day straight from the per-day rows (same numbers as the range query for a single day). */
 export function dayCounts(days: DeptDayCount[], date: string): Map<string, { bedframeUnits: number; sofaSets: number }> {
-  return new Map(days.filter((d) => d.date === date).map((d) => [d.dept, { bedframeUnits: d.bedframeUnits, sofaSets: d.sofaSets }]));
+  return rangeCounts(days, date, date);
+}
+
+/** Per department over [from, to], summed from the per-day rows. Equal to
+ *  loadDeptCompletedRange: a bedframe order has ONE done day per department
+ *  (dept_done) and a sofa set ONE set day (sofa_sets), so nothing is counted
+ *  twice across days. Checked on prod 2026-11-21 for Oct, Nov-to-date and a
+ *  7-day window: every department identical. */
+export function rangeCounts(days: DeptDayCount[], from: string, to: string): Map<string, { bedframeUnits: number; sofaSets: number }> {
+  const out = new Map<string, { bedframeUnits: number; sofaSets: number }>();
+  for (const d of days) {
+    if (d.date < from || d.date > to) continue;
+    const s = out.get(d.dept) ?? { bedframeUnits: 0, sofaSets: 0 };
+    s.bedframeUnits += d.bedframeUnits;
+    s.sofaSets += d.sofaSets;
+    out.set(d.dept, s);
+  }
+  return out;
 }
 
 /** Per department over [from, to] — a sofa set counts once, on the day its
