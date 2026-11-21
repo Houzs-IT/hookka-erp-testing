@@ -182,6 +182,12 @@ app.get("/", async (c) => {
   // Snapshot is only used for the default `period=all` view. Specific
   // month filters skip the snapshot and run the compute (those reads
   // are rare — operator usually leaves it on "All").
+  // Payload version: bump on every shape change. It keys the KV and feed
+  // copies, and the period=all snapshot is only reused when it carries the
+  // same version (it is not keyed by it, so a deploy that adds fields would
+  // otherwise keep serving the old shape until a source table changed —
+  // which is what hid #1538's month split on 2026-11-22).
+  const overviewV = "v31"; // v31 (2026-11-22): backlogByDept[].byMonth + activeJobsByMonth; v30: capacityDays outsource/inHouse; v29: punched-in headcount
   if (period === "all") {
     const [snap, sig] = await Promise.all([
       readSnapshot(c.var.DB, orgId),
@@ -189,7 +195,11 @@ app.get("/", async (c) => {
       // MAX(updated_at), so the tiles kept counting it.
       getDashboardSignature(c.var.DB),
     ]);
-    if (isSnapshotFresh(snap, sig.maxUpdatedAt, sig.rowCount) && snap) {
+    if (
+      isSnapshotFresh(snap, sig.maxUpdatedAt, sig.rowCount) &&
+      snap &&
+      (snap.data as { payloadVersion?: string } | null)?.payloadVersion === overviewV
+    ) {
       // Keep the daily state snapshot fresh even when the dashboard_snapshot
       // stays valid all day (so a quiet-data day still records its row).
       captureTodayState(snap.data);
@@ -201,7 +211,6 @@ app.get("/", async (c) => {
   // v23 (2026-08-14, BUG-2026-08-13-142): payload gained `customerConcentration`.
   // A pre-fix body has no such key, and the card would render "—" until the 60s
   // TTL rolled; bumping the version makes that window zero.
-  const overviewV = "v30"; // v30 (2026-11-18): capacityDays[].outsourceMinutes / inHouseMinutes; v29: workers = punched-in headcount
   const kvKey = `dashboard:overview:${orgId}:${overviewV}:${period}`;
   const computeOverview = async () => {
     const db = c.var.DB;
@@ -2236,6 +2245,7 @@ app.get("/", async (c) => {
       period,
       salesMonths,
       employee: stateEmployee,
+      payloadVersion: overviewV,
     };
   };
 

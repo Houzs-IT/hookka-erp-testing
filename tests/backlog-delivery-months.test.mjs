@@ -111,3 +111,10 @@ test("API: the backlog and Active Jobs queries read the customer delivery date (
   assert.match(src, /byMonth: sortBuckets\(monthMin\.keys\(\)\)/);
   assert.match(src, /activeJobsByMonth: activeJobsByMonth as/);
 });
+
+test("overview cache: version bumped for the month split, and the all-time snapshot is reused only at the same version", () => {
+  const src = readFileSync(resolve(process.cwd(), "src/api/routes/dashboard-overview.ts"), "utf8");
+  assert.match(src, /const overviewV = "v3[1-9]"/);
+  assert.match(src, /payloadVersion\?: string \} \| null\)\?\.payloadVersion === overviewV/);
+  assert.match(src, /payloadVersion: overviewV,/);
+});
