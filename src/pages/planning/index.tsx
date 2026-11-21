@@ -1,3 +1,4 @@
+import { isPickableWorker } from "@/lib/worker";
 import { useEffect, useState, useCallback, useMemo, startTransition } from "react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useNavigate } from "react-router-dom";
@@ -958,8 +959,8 @@ export default function PlanningPage() {
       const deptWorkers = workers.filter(
         (w) =>
           w.departmentCode === dept.code &&
-          w.status === "ACTIVE" &&
-          !/^TEST/i.test(w.empNo || ""),
+          // Employed today by the one rule (owner 2026-11-21).
+          isPickableWorker(w),
       );
       const workerCount = deptWorkers.length;
       // Average working hours per day across this dept's active

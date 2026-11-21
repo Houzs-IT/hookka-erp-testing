@@ -5,7 +5,7 @@
 // lives inside a component body and cannot be imported. The desktop files are NOT edited; tests/m-home-employees
 // holds fixtures that pin this copy to the desktop's documented behaviour.
 import { dropIdleSundays } from "../../../../lib/idle-sundays";
-import { AMBER, GREEN, MUTED, RED, hasKeyedHours, inFocus, inPeriod, isOutsourced, countsOn, countsDuring, periodLabel, type Period } from "../../../dashboards/dashboard-shared-lib";
+import { AMBER, GREEN, MUTED, RED, hasKeyedHours, inFocus, inPeriod, isOutsourced, countsOn, countsDuring, expectedWorkDays, periodLabel, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
 
 // ---------------------------------------------------------------------------
@@ -448,8 +448,7 @@ export function monthLog(slice: EmpSlice, monthYm: string): { rows: MonthRow[]; 
       const mine = byWorker.get(w.id) ?? [];
       const inDays = new Set(mine.map((r) => r.date));
       const lates = mine.map((r) => lateMin(r.clockIn)).filter((m) => m > 0);
-      const first = [...inDays].sort()[0] ?? workDays[0];
-      const expected = workDays.filter((d) => d >= (first ?? ""));
+      const expected = expectedWorkDays(w, workDays, [...inDays].sort()[0]);
       return { id: w.id, name: w.name ?? w.id, dept: w.dept, daysIn: inDays.size, notIn: Math.max(0, expected.length - inDays.size), late: lates.length, lateMin: lates.reduce((a, b) => a + b, 0) };
     })
     .sort((a, b) => b.notIn - a.notIn || b.late - a.late || b.lateMin - a.lateMin || a.name.localeCompare(b.name));

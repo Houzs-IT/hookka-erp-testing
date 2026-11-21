@@ -631,3 +631,15 @@ export function countsDuring(w: HeadcountWorker, from: string, to: string): bool
   if (w.joinDate === undefined && w.resignedAt === undefined) return w.countsToHeadcount;
   return employedDuring(w, from, to);
 }
+
+/** The working days a person was EXPECTED in: only days they were employed
+ *  (joined, not yet past their last day). A day before joining or after the
+ *  last working day is never "not in" (owner 2026-11-21: SAN WIN worked her
+ *  one day and showed "10 days not in"). With no join date on record, days
+ *  before the first clock-in are skipped as before. */
+export function expectedWorkDays(w: HeadcountWorker, workDays: readonly string[], firstIn: string | null | undefined): string[] {
+  const hasDates = !(w.joinDate === undefined && w.resignedAt === undefined);
+  const join = String(w.joinDate ?? "").slice(0, 10);
+  const from = join || firstIn || workDays[0] || "";
+  return workDays.filter((d) => d >= from && (!hasDates || employedOn(w, d)));
+}
