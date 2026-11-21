@@ -88,7 +88,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `deriveTopLevelWipKey` / `breakBomIntoWips` | `src/api/lib/bom-wip-breakdown.ts:125 / 350` | THE wipKey formula / BOM → job-card WIPs |
 | `consumeRawMaterialsForPO` / `postJobCardLabor` | `src/api/lib/po-cost-cascade.ts:813 / 1116` | RM consumption / labour GL posting |
 | `applyPackingRack` | `src/api/lib/packing-rack-write.ts:71` | Rack set/clear + rack_items occupancy mirror |
-| `PUT /templates/:id` / `POST /templates/bulk-process-edit` | `src/api/routes/bom.ts:526 / 685` | BOM template update / batch process edit |
+| `PUT /templates/:id` / `POST /templates/bulk-process-edit` | `src/api/routes/bom.ts:561 / 724` | BOM template update / batch process edit |
 | `GET /:id/events` | `src/api/routes/job-cards.ts:430` | Job-card event timeline |
 
 ## Gotchas
