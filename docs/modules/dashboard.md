@@ -49,7 +49,7 @@ The homepage **Command Center** at `/dashboard`: a KPI rail (Sales · Invoices �
 | `Spark` / `DeltaChip` | `src/pages/dashboard-b/index.tsx:405 / 432` | Sparkline + delta-% chip |
 | `SectionRowsSkeleton` | `src/pages/dashboard-b/index.tsx:534` | Per-section loading placeholder |
 | `Gauge` / `MiniTable` / `SectionTitle` | `src/pages/dashboard-b/index.tsx:663 / 591 / 638` | Presentational helpers |
-| Delivery-month toggles (Backlog / Plant Load) | `src/pages/dashboards/backlog-months.ts` + `src/lib/delivery-bucket.ts` | Owner 2026-11-22: legend toggles per customer-delivery month beside Sofa / Bedframe; API sends `backlogByDept[].byMonth` + `production.activeJobsByMonth` (live only; past-month snapshots have no split, toggles hide) |
+| Delivery-month toggles (Backlog / Plant Load) | `src/pages/dashboards/backlog-months.ts` + `src/lib/delivery-bucket.ts` + `backlog-toggle-store.ts` (page-wide store: Operations mounts Backlog and Plant Load as separate instances) | Owner 2026-11-22: legend toggles per customer-delivery month beside Sofa / Bedframe; API sends `backlogByDept[].byMonth` + `production.activeJobsByMonth` (live only; past-month snapshots have no split, toggles hide) |
 | KPI rail JSX | `src/pages/dashboard-b/index.tsx:1117` | Sales · Invoices · Pending Delivery · Outstanding cards |
 | Revenue chart + Plant Load JSX | `src/pages/dashboard-b/index.tsx:1374` | Area chart + backlog-vs-capacity gauge |
 | Order Pipeline + Worker efficiency JSX | `src/pages/dashboard-b/index.tsx:1609` | |

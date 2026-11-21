@@ -22,6 +22,7 @@ import {
   type MonthMin,
 } from "@/pages/dashboards/backlog-months";
 import { bucketLabel, NO_DATE, OVERDUE } from "@/lib/delivery-bucket";
+import { toggleBacklogCategory, toggleBacklogMonth, useBacklogToggles } from "@/pages/dashboards/backlog-toggle-store";
 import { CompletedDrill } from "./CompletedDrill";
 import { InvoiceListDrill, OutstandingDrill, PendingDeliveryDrill, SoListDrill } from "./KpiDrills";
 import { parseDashPeriod } from "../../api/lib/dash-period";
@@ -742,24 +743,12 @@ export default function DashboardBPage({ embed }: { embed?: { period: string; se
     });
   const [fabMode, setFabMode] = useState<"prev" | "next">("prev");
   const [fabGran, setFabGran] = useState<"month" | "quarter">("month");
-  const [hiddenDept, setHiddenDept] = useState<Set<string>>(new Set());
-  const toggleDept = (k: string) =>
-    setHiddenDept((prev) => {
-      const n = new Set(prev);
-      if (n.has(k)) n.delete(k);
-      else n.add(k);
-      return n;
-    });
-  // Customer-delivery months switched off in the Department Backlog legend
-  // (owner 2026-11-22) — Plant Load, Total Backlog and Active Jobs follow.
-  const [hiddenMonth, setHiddenMonth] = useState<Set<string>>(new Set());
-  const toggleMonth = (k: string) =>
-    setHiddenMonth((prev) => {
-      const n = new Set(prev);
-      if (n.has(k)) n.delete(k);
-      else n.add(k);
-      return n;
-    });
+  // Sofa / Bedframe + delivery-month toggles live in a page-wide store:
+  // Operations mounts Department Backlog and Plant Load as separate instances
+  // of this page, and both must follow the same legend (backlog-toggle-store).
+  const { hiddenCat: hiddenDept, hiddenMonth } = useBacklogToggles();
+  const toggleDept = toggleBacklogCategory;
+  const toggleMonth = toggleBacklogMonth;
   const [drill, setDrill] = useState<{
     title: string;
     subtitle?: string;
