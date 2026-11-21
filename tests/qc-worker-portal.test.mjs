@@ -64,7 +64,7 @@ function makeDb(over = {}) {
 
     // worker-auth token resolution
     if (/FROM worker_tokens|worker_sessions|FROM worker_auth/i.test(s)) {
-      return { rows: state.tokenValid ? [{ workerId: state.worker.id, workerid: state.worker.id, expiresAt: null }] : [], changes: 0 };
+      return { rows: state.tokenValid ? [{ workerId: state.worker.id, workerid: state.worker.id, expiresAt: null, status: state.worker.status ?? "ACTIVE", resignedAt: state.worker.resignedAt ?? null }] : [], changes: 0 };
     }
     if (/^SELECT id, empNo, name, departmentId/i.test(s)) {
       return { rows: args[0] === state.worker.id ? [{ ...state.worker }] : [], changes: 0 };

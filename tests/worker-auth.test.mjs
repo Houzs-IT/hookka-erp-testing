@@ -79,6 +79,13 @@ function makeDb({ workers: workerSeed = [] } = {}) {
         }
         // SELECT workerId FROM worker_tokens WHERE token = ?  (auth middleware)
         // SELECT * FROM worker_tokens WHERE token = ?          (/me handler)
+        // resolveWorkerToken joins the worker for the leaver lock (2026-11-21).
+        if (/FROM worker_tokens t JOIN workers w ON w\.id = t\.workerId\s+WHERE t\.token = \?/i.test(s)) {
+          const row = sessions.get(bound[0]);
+          if (!row) return null;
+          const w = workers.get(row.workerId);
+          return w ? { workerId: row.workerId, status: w.status, resignedAt: w.resignedAt ?? null } : null;
+        }
         if (/FROM worker_tokens WHERE token = \?/i.test(s)) {
           const row = sessions.get(bound[0]);
           if (!row) return null;
@@ -377,4 +384,35 @@ test('reset-pin invalidates ALL of the workers tokens', async () => {
     (s) => s.workerId === WORKER.id,
   );
   assert.equal(afterReset.length, 0);
+});
+
+// Owner 2026-11-21: a leaver keeps the app through the last working day and is
+// locked out from the day after — the open session too, not just new logins.
+test('a leaver signs in ON the last day; from the next day the same token is refused', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).format(new Date());
+  const { db, _state } = makeDb({
+    workers: [{ ...WORKER, status: 'RESIGNED', resignedAt: today }],
+  });
+  const mod = await import(
+    pathToFileURL(resolve(process.cwd(), 'src/api/routes/worker-auth.ts')).href + '?t=leaver'
+  );
+  const app = wrap(mod.default);
+  const res = await callRoute(
+    app,
+    { method: 'POST', path: '/login', body: { empNo: 'EMP001', firstTimePin: '123456' } },
+    db,
+  );
+  const json = await res.json();
+  assert.equal(json.success, true, 'a leaver can still sign in on their last day');
+  assert.equal(await mod.resolveWorkerToken(db, json.token), WORKER.id);
+
+  // The last working day is now in the past → the open session is cut off.
+  _state.workers.get(WORKER.id).resignedAt = '2000-01-01';
+  assert.equal(await mod.resolveWorkerToken(db, json.token), null, 'token refused after the last day');
+  const again = await callRoute(
+    app,
+    { method: 'POST', path: '/login', body: { empNo: 'EMP001', pin: '123456' } },
+    db,
+  );
+  assert.equal(again.status, 403, 'and signing in again is refused');
 });
