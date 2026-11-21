@@ -30,7 +30,7 @@ A worker is **employed on day D** when:
 | 2a | Counts: Employees page TOTAL / PRESENT (department-performance workerCount), dashboard Employees tab + phone (per-day `countsOn`, feed carries joinDate / resignedAt / isOutsource), problem tile, attendance log, Command Center past-month headcount, Finance history headcount, accounting per-head, Board Report (active workers, bands, joined/left incl. INACTIVE), daily efficiency email, employee digest | DONE (#1529, live 2026-11-21) |
 | 2b | Daily Capacity headcount (outsource = flag, TEST out), Floor Live (TEST out), Command Center live headcount, Attendance tab month cards, phone Employees overview; dashboard feed snapshot v13 so the new fields show at once | DONE (#1530, live 2026-11-21) |
 | 3 | Pickers via `isPickableWorker` (src/lib/worker.ts): PIC dropdowns (production page, scan, FG scan, folder batch PIC), penalty, new leave, advances, working-hours reassign; server rosters on today's rule: leave balances, push audience, leader team, announcement acks, PIN bulk generation, scheduling | this PR |
-| 4 | Data: SOE SHWE Nov / Dec payslips, EMP-039 last day; worker-app lockout after the last day (not on the status change) | needs owner OK for writes |
+| 4 | Data: SOE SHWE Nov / Dec payslips (DONE 2026-11-21, owner OK: PS-2611-041 RM 814.74 = 10 days after joining 11-20 + 2h OT, PS-2612 RM 2,050.00; both DRAFT; no EPF/SOCSO confirmed correct by owner). EMP-039 last day: NOT written: EMP-039 is a duplicate record of EMP-038 WANNA HLAING (same join date, EMP-038 already RESIGNED 2026-10-07 and holds the Jul–Oct payslips); dating EMP-039 would have made the sync add a second Oct payslip, so EMP-039 stays INACTIVE with no date (counted nowhere). Worker-app lockout after the last day: open, not yet assigned. | data done; lockout open |
 
 ## The 45 places (research, 2026-11-21)
 
@@ -57,3 +57,7 @@ In each month that already has payslips, from `fromPeriod` on:
 - not employed → delete the DRAFT.
 
 Approved payslips are never touched. Months not generated yet pick the worker up on their own run.
+
+## Live check 2026-11-21 (read-only, after #1531 / #1532)
+
+Employed today 40 of 55 records (excluded: 11 RESIGNED, 2 INACTIVE, 4 TEST). Dashboard countsToHeadcount 40; leave balances 40 rows (endpoint was 500ing on a non-existent workers.org_id, fixed in #1532, BUG-2026-11-21-002); Nov payroll 41 = employed-during-Nov 41, Dec 40 = 40, no missing / extra; Floor Live 34 = today's 34 punches, all employed, new joiner included. UNTESTED live: the automatic payslip on a brand-new hire (SOE SHWE predates #1528, his were added by hand); check on the next real hire.
