@@ -20,6 +20,9 @@ import { MaterialScalingEditor, RawMaterialSelect } from "@/components/bom/mater
 import { formatCurrency } from "@/lib/utils";
 import type { CostingResult } from "@/lib/product-costing";
 import { buildWipTypes } from "@/lib/wip-types";
+import { rdFormNo } from "@/lib/rd-form-no";
+import { applyRdScan, rdScanChanges, type RdChange, type RdScanReading } from "@/lib/rd-scan";
+import { todayYmdMY as todayYmd } from "@/lib/utils";
 import { getVariantsConfigSync } from "@/lib/kv-config";
 
 type Proc = { dept: string; deptCode: string; category: string; minutes: number };
@@ -128,7 +131,7 @@ function ProcessRows({ procs, pcs, onChange }: { procs: Proc[]; pcs: number; onC
   );
 }
 
-function MaterialRows({ mats, materials, onChange }: { mats: WIPMaterial[]; materials: RawMaterialOption[]; onChange: (m: WIPMaterial[]) => void }) {
+function MaterialRows({ mats, materials, pcs, onChange }: { mats: WIPMaterial[]; materials: RawMaterialOption[]; pcs: number; onChange: (m: WIPMaterial[]) => void }) {
   const set = (i: number, patch: Partial<WIPMaterial>) => onChange(mats.map((m, j) => (j === i ? { ...m, ...patch } : m)));
   const isFiller = (m: WIPMaterial) => !m.autoDetect && /FILLER/i.test(materials.find((o) => o.itemCode === (m.code || m.inventoryCode))?.itemGroup ?? "");
   return (
@@ -152,7 +155,9 @@ function MaterialRows({ mats, materials, onChange }: { mats: WIPMaterial[]; mate
               </div>
             )}
             <input type="number" min={0} value={m.qty} onFocus={(e) => e.currentTarget.select()} onChange={(e) => set(i, { qty: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-20 rounded border border-[#CFC8BB] px-2 text-right" aria-label="Quantity per piece" />
-            <span className="text-[12px] text-[#6B7280]">{m.unit || "PCS"} / pc</span>
+            <span className="text-[12px] text-[#6B7280]" title="The R&D Spec Form prints qty per product = per piece x pieces">
+              {m.unit || "PCS"} / pc · = {+((Number(m.qty) || 0) * pcs).toFixed(3)} per product
+            </span>
             <input type="number" min={0} value={m.wastePct ?? ""} placeholder="0" onChange={(e) => set(i, { wastePct: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-16 rounded border border-[#E2DDD8] px-2 text-right" aria-label="Wastage %" />
             <span className="text-[12px] text-[#6B7280]">% waste</span>
             {isFiller(m) && (
@@ -286,13 +291,55 @@ function CopyDialog({
   );
 }
 
+function ScanReview({ changes, reading, onApply, onClose }: { changes: RdChange[]; reading: RdScanReading; onApply: (picked: RdChange[]) => void; onClose: () => void }) {
+  const [on, setOn] = useState<boolean[]>(() => changes.map((c) => c.kind !== "unmatched"));
+  const text = (c: RdChange) =>
+    c.kind === "minutes"
+      ? `#${c.wipNo} ${c.dept}: ${c.from} → ${c.to} min / pc`
+      : c.kind === "qty"
+        ? `#${c.wipNo} ${c.code}: ${+c.fromPerProduct.toFixed(4)} → ${c.toPerProduct} per product`
+        : c.kind === "add"
+          ? `#${c.wipNo} add ${c.code} ${c.perProduct} ${c.unit} per product`
+          : `#${c.wipNo} could not place "${c.what}" — key it in by hand`;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="Review the scanned R&D form">
+      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+        <div className="border-b border-[#EFEBE3] px-4 py-3">
+          <div className="font-semibold">Read from the form{reading.formNo ? ` ${reading.formNo}` : ""}</div>
+          <div className="text-[12px] text-[#6B7280]">
+            {reading.filledBy ? `Filled by ${reading.filledBy}` : "Filled by: not read"}
+            {reading.filledOn ? ` on ${reading.filledOn}` : ""}. Check each line against the paper — untick anything read wrong.
+          </div>
+        </div>
+        <div className="max-h-80 overflow-y-auto p-4 space-y-1 text-sm">
+          {changes.length === 0 && <div className="text-[#6B7280]">Nothing new was written on the form (or nothing could be read).</div>}
+          {changes.map((c, i) => (
+            <label key={i} className={`flex items-start gap-2 ${c.kind === "unmatched" ? "text-[#B45309]" : ""}`}>
+              <input type="checkbox" disabled={c.kind === "unmatched"} checked={on[i]} onChange={(e) => setOn(on.map((v, j) => (j === i ? e.target.checked : v)))} className="mt-1" />
+              <span>{text(c)}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-[#EFEBE3] px-4 py-3">
+          <button type="button" onClick={onClose} className="rounded border border-[#D8D1C3] px-3 py-1.5 text-sm">Cancel</button>
+          <button type="button" onClick={() => onApply(changes.filter((_, i) => on[i]))} className="rounded bg-[#6B5A2E] px-3 py-1.5 text-sm font-semibold text-white">
+            Put ticked lines into the editor
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CostingEditor({
   template,
+  productId,
   category,
   tier,
   onDone,
 }: {
   template: EditableTemplate;
+  productId: string;
   category: string;
   tier: string | null;
   onDone: (saved: boolean) => void;
@@ -305,6 +352,13 @@ export function CostingEditor({
   const [live, setLive] = useState<CostingResult | null>(null);
   const [copyOpen, setCopyOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Plan D11: "these changes come from a filled R&D Spec Form" - recorded with
+  // the form no., who filled it and its date; the server adds who keyed it in.
+  const [fromRd, setFromRd] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scan, setScan] = useState<{ reading: RdScanReading; changes: RdChange[] } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [rd, setRd] = useState({ formNo: rdFormNo(template.productCode, todayYmd()), filledBy: "", filledOn: todayYmd() });
   const dirty = JSON.stringify(bom) !== original;
   // Same WIP type list as the BOM Builder (built-ins + Maintenance extras).
   const wipTypes = useMemo(() => buildWipTypes(getVariantsConfigSync()?.wipTypes), []);
@@ -364,6 +418,15 @@ export function CostingEditor({
         toast.error(j.error || "Could not save the BOM.");
         return;
       }
+      if (fromRd) {
+        const rr = await fetch(`/api/product-costing/${encodeURIComponent(productId)}/rd-entry`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...rd, bomId: template.id }),
+        });
+        if (!rr.ok) toast.error("BOM saved, but the R&D form record was not - note the form no. by hand.");
+      }
+      invalidateCachePrefix("/api/audit-events");
       invalidateCachePrefix("/api/bom");
       invalidateCachePrefix("/api/product-costing");
       invalidateCachePrefix("/api/products");
@@ -374,18 +437,55 @@ export function CostingEditor({
     }
   };
 
+  // Phase 7: read a filled R&D form; the reply is only shown for review.
+  const scanForm = async (file: File) => {
+    setScanning(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/product-costing/${encodeURIComponent(productId)}/rd-scan`, { method: "POST", body: fd });
+      const j = (await r.json().catch(() => ({}))) as { success?: boolean; error?: string; data?: RdScanReading };
+      if (!r.ok || !j.data) {
+        toast.error(j.error || "Could not read the form.");
+        return;
+      }
+      setScan({ reading: j.data, changes: rdScanChanges(bom, j.data) });
+    } finally {
+      setScanning(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+  const applyScan = (picked: RdChange[]) => {
+    if (!scan) return;
+    const lookup = (code: string) => {
+      const k = code.trim().toUpperCase();
+      const hit = materials.find((o) => o.itemCode.toUpperCase() === k);
+      return hit ? { code: hit.itemCode, name: hit.description, unit: hit.baseUOM } : null;
+    };
+    setBom(applyRdScan(bom, picked, lookup));
+    setFromRd(true);
+    setRd({
+      formNo: scan.reading.formNo || rd.formNo,
+      filledBy: scan.reading.filledBy || rd.filledBy,
+      filledOn: scan.reading.filledOn || rd.filledOn,
+    });
+    setScan(null);
+    toast.success(`${picked.length} line${picked.length === 1 ? "" : "s"} put into the editor. Check, then Save.`);
+  };
+
   const cancel = async () => {
     if (dirty && !(await confirm({ title: "Discard changes?", message: "Your edits to this costing have not been saved.", danger: true }))) return;
     onDone(false);
   };
 
-  const renderLevel = (path: Path, label: string, wipType: string, pcs: number, level: number) => {
+  const renderLevel = (path: Path, label: string, wipType: string, pcs: number, level: number, no?: number) => {
     const { processes, materials: mats } = getAt(bom, path);
     return (
       <div key={path.join(".") || "l1"} style={{ marginLeft: Math.max(0, level - 2) * 24 }} className="relative">
         {level > 2 && <div aria-hidden className="absolute -left-4 top-0 h-6 w-4 border-l border-b border-gray-300 rounded-bl" />}
         <div className="rounded-lg border border-[#E2DDD8] bg-white overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 px-3 py-2" style={{ background: LEVEL_TINT[Math.min(level - 1, LEVEL_TINT.length - 1)] }}>
+            {no != null && <span className="text-[11px] font-bold text-[#6B5A2E]" title="Same number as on the R&D Spec Form">#{no}</span>}
             <span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-black/10">{level === 1 ? "Product" : `L${level}`}</span>
             {path.length > 0 ? (
               <>
@@ -420,7 +520,7 @@ export function CostingEditor({
             </div>
             <div>
               <div className="mb-1 text-[11px] font-semibold uppercase text-[#6B7280]">Raw materials · qty per piece</div>
-              <MaterialRows mats={mats} materials={materials} onChange={(m) => setBom(setMats(bom, path, m))} />
+              <MaterialRows mats={mats} materials={materials} pcs={pcs} onChange={(m) => setBom(setMats(bom, path, m))} />
             </div>
           </div>
         </div>
@@ -429,10 +529,11 @@ export function CostingEditor({
   };
 
   const rows: ReactElement[] = [renderLevel([], "", "", 1, 1)];
+  let wipNo = 0;
   const walk = (list: Node[], path: Path, level: number) =>
     list.forEach((n, i) => {
       const p = [...path, i];
-      rows.push(renderLevel(p, String(n.wipCode ?? ""), String(n.wipType ?? ""), Number(n.quantity) || 1, level));
+      rows.push(renderLevel(p, String(n.wipCode ?? ""), String(n.wipType ?? ""), Number(n.quantity) || 1, level, ++wipNo));
       walk(n.children ?? [], p, level + 1);
     });
   walk(bom.wipComponents, [], 2);
@@ -449,9 +550,27 @@ export function CostingEditor({
         )}
         <div className="ml-auto flex flex-wrap gap-2">
           <button type="button" onClick={() => setCopyOpen(true)} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm font-semibold">Copy from model…</button>
+          <input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && void scanForm(e.target.files[0])} />
+          <button type="button" disabled={scanning} onClick={() => fileRef.current?.click()} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm disabled:opacity-50">
+            {scanning ? "Reading form…" : "Scan filled R&D form…"}
+          </button>
           <button type="button" onClick={cancel} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm">Cancel</button>
           <button type="button" disabled={!dirty || saving} onClick={save} className="rounded bg-[#6B5A2E] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
         </div>
+      </div>
+      <div className="rounded-lg border border-[#E2DDD8] bg-white px-4 py-2 text-[13px]">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={fromRd} onChange={(e) => setFromRd(e.target.checked)} />
+          <span>These changes come from a filled <b>R&amp;D Spec Form</b></span>
+        </label>
+        {fromRd && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input value={rd.formNo} onChange={(e) => setRd({ ...rd, formNo: e.target.value })} placeholder="Form no." className="h-8 w-44 rounded border border-[#CFC8BB] px-2" aria-label="Form no." />
+            <input value={rd.filledBy} onChange={(e) => setRd({ ...rd, filledBy: e.target.value })} placeholder="Filled by (R&D)" className="h-8 w-44 rounded border border-[#CFC8BB] px-2" aria-label="Filled by" />
+            <input type="date" value={rd.filledOn} onChange={(e) => setRd({ ...rd, filledOn: e.target.value })} className="h-8 rounded border border-[#CFC8BB] px-2" aria-label="Date on the form" />
+            <span className="text-[11px] text-[#6B7280]">WIP numbers (#1, #2…) match the form. Saved with your name as the person who keyed it in.</span>
+          </div>
+        )}
       </div>
       {bom.wipComponents.length === 0 && (
         <div className="rounded-lg border border-dashed border-[#D8CBA8] bg-white p-4 text-sm text-[#6B7280]">
@@ -467,6 +586,7 @@ export function CostingEditor({
           + Add WIP
         </button>
       </div>
+      {scan && <ScanReview changes={scan.changes} reading={scan.reading} onApply={applyScan} onClose={() => setScan(null)} />}
       {copyOpen && <CopyDialog category={category} selfId={template.id} onClose={() => setCopyOpen(false)} onCopy={doCopy} />}
     </div>
   );

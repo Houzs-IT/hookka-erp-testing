@@ -199,6 +199,32 @@ export default function ProductCostingPage() {
   const [savingStd, setSavingStd] = useState(false);
   const [editing, setEditing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // R&D forms keyed in for this product (plan D11), from the audit journal.
+  const { data: auditResp } = useCachedJson<{ data?: { action: string; afterJson?: string | null; after?: unknown; ts?: string; createdAt?: string }[] }>(
+    c ? `/api/audit-events?resource=products&resourceId=${encodeURIComponent(c.product.id)}` : null,
+    60,
+  );
+  const rdEntries = useMemo(
+    () =>
+      (auditResp?.data ?? [])
+        .filter((e) => e.action === "rd-form-entry")
+        .map((e) => {
+          let a: Record<string, unknown> = {};
+          try {
+            a = (typeof e.after === "object" && e.after ? e.after : JSON.parse(String(e.afterJson ?? "{}"))) as Record<string, unknown>;
+          } catch {
+            a = {};
+          }
+          return {
+            formNo: String(a.formNo ?? ""),
+            filledBy: String(a.filledBy ?? ""),
+            filledOn: String(a.filledOn ?? ""),
+            enteredBy: String(a.enteredBy ?? ""),
+            at: String(e.ts ?? e.createdAt ?? ""),
+          };
+        }),
+    [auditResp],
+  );
   const { confirm } = useConfirm();
   const { toast } = useToast();
   const [wantPct, setWantPct] = useState("");
@@ -269,6 +295,24 @@ export default function ProductCostingPage() {
                     <div className="text-[11px] text-[#6B7280]">{hint}</div>
                   </button>
                 ))}
+                <div className="my-1 border-t border-[#EFEBE3]" />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setExportOpen(false);
+                    const { generateRdFormPdf } = await import("@/lib/generate-rd-form-pdf");
+                    generateRdFormPdf({
+                      product: { ...c.product, ...(productResp?.data ?? {}) } as CostingPdfInput["product"],
+                      bom: c.bom,
+                      nodes: c.nodes,
+                      blankLines: 2,
+                    });
+                  }}
+                  className="block w-full rounded px-3 py-2 text-left hover:bg-[#FAF8F4]"
+                >
+                  <div className="text-sm font-semibold text-[#111827]">R&amp;D Spec Form (to fill in)</div>
+                  <div className="text-[11px] text-[#6B7280]">what the BOM has now + empty boxes and lines for R&amp;D; key it back in with Edit costing</div>
+                </button>
               </div>
             )}
           </div>
@@ -328,6 +372,22 @@ export default function ProductCostingPage() {
         );
       })()}
 
+      {(rdEntries?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-[#E2DDD8] bg-white px-4 py-2 text-[12px] text-[#374151]">
+          <span className="font-semibold">R&amp;D forms entered:</span>{" "}
+          {rdEntries!.slice(0, 3).map((e, i) => (
+            <span key={i}>
+              {i > 0 && " · "}
+              {e.formNo}
+              {e.filledBy ? ` filled by ${e.filledBy}` : ""}
+              {e.filledOn ? ` on ${e.filledOn}` : ""}
+              {e.enteredBy ? `, keyed in by ${e.enteredBy}` : ""}
+              {e.at ? ` (${e.at.slice(0, 10)})` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+
       {c.tiers.length > 0 && (
         <div className="rounded-lg border border-[#E2DDD8] bg-white p-3">
           <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -366,6 +426,7 @@ export default function ProductCostingPage() {
           {editing && c.template ? (
             <CostingEditor
               template={c.template}
+              productId={c.product.id}
               category={c.product.category}
               tier={c.tier}
               onDone={(saved) => {
