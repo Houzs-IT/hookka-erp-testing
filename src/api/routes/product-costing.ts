@@ -294,7 +294,7 @@ app.get("/summary", async (c) => {
       best.set(t.productCode, t);
     }
   }
-  const data: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; missingLines: number; fabricLines: number; tier: string | null }> = {};
+  const data: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; otherLines: number; missingLines: number; fabricLines: number; tier: string | null }> = {};
   for (const [code, tpl] of best) {
     const r = computeCosting({ bom: bomOf(tpl), ...inputs });
     data[code] = {
@@ -304,6 +304,9 @@ app.get("/summary", async (c) => {
       materialLines: r.materialLines,
       missingLines: r.missingLines,
       fabricLines: r.fabricFromOrderLines,
+      // Lines other than "fabric from order" — every bedframe / sofa BOM is
+      // seeded with the fabric line, so THIS is what says "materials set up".
+      otherLines: r.materialLines - r.fabricFromOrderLines,
       tier: r.tier,
     };
   }

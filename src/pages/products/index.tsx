@@ -2939,7 +2939,7 @@ export default function ProductsPage() {
   // Product costing summary (plan D4): per product code, raw materials at
   // the supplier price in effect today (fabric at tier Lv1) + line counts.
   const { data: costResp } = useCachedJson<{
-    data?: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; missingLines: number; fabricLines: number }>;
+    data?: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; otherLines?: number; missingLines: number; fabricLines: number }>;
   }>(viewMode === "skuMaster" ? "/api/product-costing/summary" : null, 120);
   const costMap = costResp?.data ?? null;
   const [costFilter, setCostFilter] = useState<"all" | "noMaterials" | "noPrice">("all");
@@ -2947,7 +2947,10 @@ export default function ProductsPage() {
     if (costFilter === "all" || !costMap) return filteredRaw;
     return filteredRaw.filter((p) => {
       const cs = costMap[p.code];
-      return costFilter === "noMaterials" ? !cs || cs.materialLines === 0 : !!cs && cs.missingLines > 0;
+      // "No materials yet" = nothing set up besides the fabric-from-order line
+      // (owner 2026-11-22: every bedframe / sofa has that line, so counting
+      // it left this filter empty).
+      return costFilter === "noMaterials" ? !cs || (cs.otherLines ?? cs.materialLines) === 0 : !!cs && cs.missingLines > 0;
     });
   }, [filteredRaw, costFilter, costMap]);
 
@@ -3549,6 +3552,9 @@ export default function ProductsPage() {
             ) : (
               <span>
                 {formatCurrency(v)}
+                {cs && cs.materialLines > 0 && (cs.otherLines ?? cs.materialLines) === 0 && (
+                  <span className="ml-1 text-[10px] text-[#9CA3AF]" title="Only the fabric-from-order line is set up; other raw materials are not in the BOM yet">fabric only</span>
+                )}
                 {(cs?.missingLines ?? 0) > 0 && (
                   <span className="ml-1 text-[10px] font-semibold text-[#B91C1C]">{cs?.missingLines} no price</span>
                 )}
