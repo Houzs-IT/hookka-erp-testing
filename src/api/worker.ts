@@ -1181,6 +1181,7 @@ app.use("/api/*", pollEtag);
 import customers from "./routes/customers";
 import bom from "./routes/bom";
 import products from "./routes/products";
+import productCosting from "./routes/product-costing";
 import globalSearch from "./routes/search";
 import productConfigs from "./routes/product-configs";
 import workers from "./routes/workers";
@@ -1400,6 +1401,7 @@ app.route("/api/customers", customers);
 app.route("/api/mail-center", mailCenter);
 app.route("/api/datagrid-layouts", datagridLayouts);
 app.route("/api/bom", bom);
+app.route("/api/product-costing", productCosting);
 app.route("/api/products", products);
 // Unified cross-module search behind the Ctrl+K palette (see routes/search.ts).
 app.route("/api/search", globalSearch);
