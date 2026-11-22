@@ -68,7 +68,7 @@ test("scan route: reads only (no BOM write), uses the shared Claude caller, norm
   assert.match(block, /MISSING_ANTHROPIC_KEY_ERROR/);
   assert.doesNotMatch(block, /UPDATE bom_templates|INSERT INTO bom_templates|PUT/);
   const editor = readFileSync("src/pages/products/costing-editor.tsx", "utf8");
-  assert.match(editor, /Scan filled R&D form…/);
+  assert.match(editor, /Scan filled R&amp;D form…/);
   assert.match(editor, /Put ticked lines into the editor/);
   assert.match(editor, /setBom\(applyRdScan\(bom, picked, lookup\)\)/);
 });

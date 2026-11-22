@@ -27,7 +27,9 @@ test("Products list: click still toggles the dropdown, double-click opens the pr
 
 test("dropdown keeps everything it had (owner: dropdown information remains)", () => {
   const p = read("src/pages/products/index.tsx");
-  for (const s of ["Price vs Labor", "View BOM", "Manage Variants", "<CustomerAssignmentsSection", "CncTemplatePanel"]) {
+  // Round 2 (owner-approved design ④, 2026-11-22): the labour-only "Price vs
+  // Labor" box became cost tiles on total cost; everything else stays.
+  for (const s of ["Labour", "Total cost", "View BOM", "Manage Variants", "<CustomerAssignmentsSection", "CncTemplatePanel"]) {
     assert.ok(p.includes(s), s);
   }
   assert.doesNotMatch(p, /function CustomerAssignmentsSection\(/, "moved to its own file, not duplicated");

@@ -21,7 +21,7 @@ test("one data path: saves with PUT /api/bom/templates/:id after the job-card pr
 });
 
 test("one Copy button, three independent parts", () => {
-  assert.equal((editor.match(/Copy from model…<\/button>/g) ?? []).length, 1);
+  assert.equal((editor.match(/Copy from another model…<\/button>/g) ?? []).length, 1);
   for (const s of ['"WIP processes"', '"WIP time"', '"Raw materials"']) assert.ok(editor.includes(s), s);
   assert.match(editor, /copyBomParts\(bom, toBom\(src\), parts\)/);
 });
@@ -46,4 +46,16 @@ test("WIP names read as the BOM page shows them, not raw {TOKENS}", () => {
   assert.equal(wipLabel("{DIVAN_HEIGHT} Divan", { defaultVariants: { divanHeight: '10"' } }), '10" Divan');
   assert.equal(wipLabel("{PRODUCT_CODE} -HB {FABRIC} (FC)", { code: "1003-(K)", defaultVariants: { fabricCode: "PC151-01" } }), "1003-(K) -HB PC151-01 (FC)");
   assert.equal(wipLabel("Plain name", undefined), "Plain name");
+});
+
+test("editor v2 (owner-approved design ②): one toolbar, choices visible first, tidy tables, reorder like the BOM page", () => {
+  assert.match(editor, /1\. WHAT TO COPY \(tick any\)/);
+  assert.ok(editor.indexOf("1. WHAT TO COPY") < editor.indexOf("2. FROM WHICH MODEL"));
+  assert.match(editor, />\s*\{scanning \? "Reading form…" : "More ▾"\}/);
+  assert.match(editor, /PROCESSES<\/div>/);
+  assert.match(editor, /RAW MATERIALS<\/div>/);
+  assert.match(editor, /import \{ canMoveWipNode, moveWipNode \} from "@\/lib\/wip-tree-ops";/);
+  assert.match(editor, /moveWipNode\(bom\.wipComponents, path\[0\], path\.slice\(1\), dir\)/);
+  assert.match(editor, /\+ Scaling/);
+  assert.match(editor, /wipLabel\(String\(node\.wipCode \?\? ""\), labelProduct\)/);
 });

@@ -9,7 +9,7 @@
 // minutes preview / sync runs the same way. The material picker and scaling
 // editor are the BOM Builder's own (components/bom/material-editor.tsx).
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { cachedFetchJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
@@ -24,6 +24,8 @@ import { rdFormNo } from "@/lib/rd-form-no";
 import { applyRdScan, rdScanChanges, type RdChange, type RdScanReading } from "@/lib/rd-scan";
 import { todayYmdMY as todayYmd } from "@/lib/utils";
 import { getVariantsConfigSync } from "@/lib/kv-config";
+import { canMoveWipNode, moveWipNode } from "@/lib/wip-tree-ops";
+import { wipLabel } from "@/lib/wip-label";
 
 type Proc = { dept: string; deptCode: string; category: string; minutes: number };
 type Node = {
@@ -103,78 +105,155 @@ function addChild(bom: Bom, path: Path, wipType: string): Bom {
   return updateNode(bom, path, (n) => ({ ...n, children: [...(n.children ?? []), child] }));
 }
 
-function ProcessRows({ procs, pcs, onChange }: { procs: Proc[]; pcs: number; onChange: (p: Proc[]) => void }) {
+function ProcessRows({ procs, pcs, labour, onChange }: { procs: Proc[]; pcs: number; labour: (i: number) => number | null; onChange: (p: Proc[]) => void }) {
   const set = (i: number, patch: Partial<Proc>) => onChange(procs.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
-    <div className="space-y-1">
-      {procs.map((p, i) => (
-        <div key={i} className="flex flex-wrap items-center gap-2 text-[13px]">
-          <select
-            value={p.deptCode}
-            onChange={(e) => set(i, { deptCode: e.target.value, dept: DEPTS.find(([c]) => c === e.target.value)?.[1] ?? e.target.value })}
-            className="h-8 rounded border border-[#E2DDD8] bg-white px-2"
-            aria-label="Department"
-          >
-            {!DEPTS.some(([c]) => c === p.deptCode) && <option value={p.deptCode}>{p.dept || p.deptCode || "—"}</option>}
-            {DEPTS.map(([c, l]) => <option key={c} value={c}>{l}</option>)}
-          </select>
-          <input value={p.category ?? ""} onChange={(e) => set(i, { category: e.target.value })} placeholder="CAT" className="h-8 w-20 rounded border border-[#E2DDD8] px-2" aria-label="Category" />
-          <input type="number" min={0} value={p.minutes} onFocus={(e) => e.currentTarget.select()} onChange={(e) => set(i, { minutes: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-20 rounded border border-[#CFC8BB] px-2 text-right" aria-label="Minutes per piece" />
-          <span className="text-[11px] text-[#6B7280]">min / pc × {pcs} = {(Number(p.minutes) || 0) * pcs} min</span>
-          <button type="button" onClick={() => onChange(procs.filter((_, j) => j !== i))} className="ml-auto text-[12px] text-[#9A3A2D] hover:underline">Remove</button>
-        </div>
-      ))}
-      <button type="button" onClick={() => onChange([...procs, { dept: "Fab Cut", deptCode: "FAB_CUT", category: "", minutes: 0 }])} className="text-[12px] font-medium text-[#6B5A2E] hover:underline">
+    <div>
+      <div className="px-3 pt-2 text-[11px] font-bold tracking-wide text-[#6B5A2E]">PROCESSES</div>
+      {procs.length > 0 && (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="bg-[#FAF8F4] text-left text-[11px] uppercase text-[#6B7280]">
+              <th className="px-3 py-1.5 font-semibold">Department</th>
+              <th className="px-3 py-1.5 font-semibold">Category</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Min / piece</th>
+              <th className="px-3 py-1.5 text-right font-semibold">× {pcs} PCS</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Labour</th>
+              <th className="w-8" />
+            </tr>
+          </thead>
+          <tbody>
+            {procs.map((p, i) => (
+              <tr key={i} className="border-t border-[#EFEBE3]">
+                <td className="px-3 py-1.5">
+                  <select
+                    value={p.deptCode}
+                    onChange={(e) => set(i, { deptCode: e.target.value, dept: DEPTS.find(([c]) => c === e.target.value)?.[1] ?? e.target.value })}
+                    className="h-8 w-44 rounded border border-[#E2DDD8] bg-white px-2"
+                    aria-label="Department"
+                  >
+                    {!DEPTS.some(([c]) => c === p.deptCode) && <option value={p.deptCode}>{p.dept || p.deptCode || "—"}</option>}
+                    {DEPTS.map(([c, l]) => <option key={c} value={c}>{l}</option>)}
+                  </select>
+                </td>
+                <td className="px-3 py-1.5"><input value={p.category ?? ""} onChange={(e) => set(i, { category: e.target.value })} placeholder="CAT" className="h-8 w-20 rounded border border-[#E2DDD8] px-2" aria-label="Category" /></td>
+                <td className="px-3 py-1.5 text-right"><input type="number" min={0} value={p.minutes} onFocus={(e) => e.currentTarget.select()} onChange={(e) => set(i, { minutes: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-20 rounded border border-[#CFC8BB] px-2 text-right" aria-label="Minutes per piece" /></td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{(Number(p.minutes) || 0) * pcs} min</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{labour(i) == null ? "—" : rm(labour(i)!)}</td>
+                <td className="px-2 py-1.5 text-center"><button type="button" onClick={() => onChange(procs.filter((_, j) => j !== i))} className="text-base leading-none text-[#9A3A2D]" aria-label="Remove process">×</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <button type="button" onClick={() => onChange([...procs, { dept: "Fab Cut", deptCode: "FAB_CUT", category: "", minutes: 0 }])} className="px-3 py-2 text-[12px] font-semibold text-[#6B5A2E] hover:underline">
         + Add process
       </button>
     </div>
   );
 }
 
-function MaterialRows({ mats, materials, pcs, onChange }: { mats: WIPMaterial[]; materials: RawMaterialOption[]; pcs: number; onChange: (m: WIPMaterial[]) => void }) {
+function MaterialRows({ mats, materials, pcs, amount, onChange }: { mats: WIPMaterial[]; materials: RawMaterialOption[]; pcs: number; amount: (i: number) => { sen: number | null; note: string }; onChange: (m: WIPMaterial[]) => void }) {
+  const [scaleOpen, setScaleOpen] = useState<number | null>(null);
   const set = (i: number, patch: Partial<WIPMaterial>) => onChange(mats.map((m, j) => (j === i ? { ...m, ...patch } : m)));
   const isFiller = (m: WIPMaterial) => !m.autoDetect && /FILLER/i.test(materials.find((o) => o.itemCode === (m.code || m.inventoryCode))?.itemGroup ?? "");
+  const scaleText = (m: WIPMaterial) => {
+    const r = m.scaling?.[0];
+    if (!r) return null;
+    const dim = String(r.dimension ?? "").toLowerCase().replace(/_/g, " ");
+    return `${dim || "scaling"} ${r.perUnit >= 0 ? "+" : ""}${r.perUnit}${(m.scaling?.length ?? 0) > 1 ? ` · +${(m.scaling?.length ?? 1) - 1}` : ""}`;
+  };
   return (
-    <div className="space-y-2">
-      {mats.map((m, i) => (
-        <div key={i} className="rounded border border-[#EFEBE3] bg-[#FCFBF8] p-2 space-y-1">
-          <div className="flex flex-wrap items-center gap-2 text-[13px]">
-            {m.autoDetect ? (
-              <span className="inline-flex items-center gap-1 rounded bg-[#E3EEF4] px-2 py-1 text-[12px] font-semibold text-[#1F4E6B]">
-                From order: {m.autoDetect === "FABRIC" ? "fabric" : "leg"}
-                <button type="button" onClick={() => set(i, { autoDetect: undefined, name: "", code: "" })} className="ml-1 text-[#6B7280]" aria-label="Clear from order">×</button>
-              </span>
-            ) : (
-              <div className="min-w-[220px]">
-                <RawMaterialSelect
-                  value={m.code ?? ""}
-                  materials={materials}
-                  onSelect={(o) => set(i, { code: o.itemCode, name: o.description, unit: o.baseUOM, inventoryCode: o.itemCode, autoDetect: undefined })}
-                  onSelectAutoDetect={(kind) => set(i, autoDetectMaterialPatch(kind))}
-                />
-              </div>
-            )}
-            <input type="number" min={0} value={m.qty} onFocus={(e) => e.currentTarget.select()} onChange={(e) => set(i, { qty: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-20 rounded border border-[#CFC8BB] px-2 text-right" aria-label="Quantity per piece" />
-            <span className="text-[12px] text-[#6B7280]" title="The R&D Spec Form prints qty per product = per piece x pieces">
-              {m.unit || "PCS"} / pc · = {+((Number(m.qty) || 0) * pcs).toFixed(3)} per product
-            </span>
-            <input type="number" min={0} value={m.wastePct ?? ""} placeholder="0" onChange={(e) => set(i, { wastePct: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-16 rounded border border-[#E2DDD8] px-2 text-right" aria-label="Wastage %" />
-            <span className="text-[12px] text-[#6B7280]">% waste</span>
-            {isFiller(m) && (
-              <span className="flex items-center gap-1 text-[12px] text-[#B8601A]">
-                cut
-                <input type="number" placeholder="L" value={m.cutLengthIn ?? ""} onChange={(e) => set(i, { cutLengthIn: parseFloat(e.target.value) || 0 })} className="h-7 w-14 rounded border border-[#E8B786] px-1" aria-label="Cut length (in)" />
-                ×
-                <input type="number" placeholder="W" value={m.cutWidthIn ?? ""} onChange={(e) => set(i, { cutWidthIn: parseFloat(e.target.value) || 0 })} className="h-7 w-14 rounded border border-[#E8B786] px-1" aria-label="Cut width (in)" />
-                in
-              </span>
-            )}
-            <button type="button" onClick={() => onChange(mats.filter((_, j) => j !== i))} className="ml-auto text-[12px] text-[#9A3A2D] hover:underline">Remove</button>
-          </div>
-          <MaterialScalingEditor scaling={m.scaling} unit={m.unit || "PCS"} isCut={isFiller(m)} onChange={(s) => set(i, { scaling: s })} />
-        </div>
-      ))}
-      <button type="button" onClick={() => onChange([...mats, { code: "", name: "", qty: 1, unit: "PCS" }])} className="text-[12px] font-medium text-[#6B5A2E] hover:underline">
+    <div className="border-t border-[#EFEBE3]">
+      <div className="px-3 pt-2 text-[11px] font-bold tracking-wide text-[#6B5A2E]">RAW MATERIALS</div>
+      {mats.length > 0 && (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="bg-[#FAF8F4] text-left text-[11px] uppercase text-[#6B7280]">
+              <th className="px-3 py-1.5 font-semibold">Material</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Qty / piece</th>
+              <th className="px-3 py-1.5 font-semibold">UOM</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Waste %</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Per product</th>
+              <th className="px-3 py-1.5 font-semibold">Scaling</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Amount</th>
+              <th className="w-8" />
+            </tr>
+          </thead>
+          <tbody>
+            {mats.map((m, i) => {
+              const amt = amount(i);
+              const st = scaleText(m);
+              return (
+                <Fragment key={i}>
+                  <tr className="border-t border-[#EFEBE3] align-middle">
+                    <td className="px-3 py-1.5">
+                      {m.autoDetect ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-[#9CC3D6] bg-[#E3EEF4] px-2 py-0.5 text-[12px] font-semibold text-[#1F4E6B]">
+                          From order: {m.autoDetect === "FABRIC" ? "fabric" : "leg"}
+                          <button type="button" onClick={() => set(i, { autoDetect: undefined, name: "", code: "" })} className="ml-1 text-[#6B7280]" aria-label="Clear from order">×</button>
+                        </span>
+                      ) : (
+                        <div className="min-w-[220px]">
+                          <RawMaterialSelect
+                            value={m.code ?? ""}
+                            materials={materials}
+                            onSelect={(o) => set(i, { code: o.itemCode, name: o.description, unit: o.baseUOM, inventoryCode: o.itemCode, autoDetect: undefined })}
+                            onSelectAutoDetect={(kind) => set(i, autoDetectMaterialPatch(kind))}
+                          />
+                        </div>
+                      )}
+                      {isFiller(m) && (
+                        <div className="mt-1 flex items-center gap-1 text-[12px] text-[#B8601A]">
+                          cut
+                          <input type="number" placeholder="L" value={m.cutLengthIn ?? ""} onChange={(e) => set(i, { cutLengthIn: parseFloat(e.target.value) || 0 })} className="h-7 w-14 rounded border border-[#E8B786] px-1" aria-label="Cut length (in)" />
+                          ×
+                          <input type="number" placeholder="W" value={m.cutWidthIn ?? ""} onChange={(e) => set(i, { cutWidthIn: parseFloat(e.target.value) || 0 })} className="h-7 w-14 rounded border border-[#E8B786] px-1" aria-label="Cut width (in)" />
+                          in
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 text-right"><input type="number" min={0} value={m.qty} onFocus={(e) => e.currentTarget.select()} onChange={(e) => set(i, { qty: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-20 rounded border border-[#CFC8BB] px-2 text-right" aria-label="Quantity per piece" /></td>
+                    <td className="px-3 py-1.5 text-[#374151]">{m.unit || "PCS"}</td>
+                    <td className="px-3 py-1.5 text-right"><input type="number" min={0} value={m.wastePct ?? ""} placeholder="0" onChange={(e) => set(i, { wastePct: Math.max(0, parseFloat(e.target.value) || 0) })} className="h-8 w-16 rounded border border-[#E2DDD8] px-2 text-right" aria-label="Wastage %" /></td>
+                    <td className="px-3 py-1.5 text-right tabular-nums" title="per piece × pieces × (1 + waste %) — the R&D form prints it without waste">
+                      {+((Number(m.qty) || 0) * pcs * (1 + (Number(m.wastePct) || 0) / 100)).toFixed(3)} {m.unit || "PCS"}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setScaleOpen(scaleOpen === i ? null : i)}
+                        className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[12px] ${st ? "border-[#D8D1C3] bg-white text-[#374151]" : "border-dashed border-[#D8D1C3] bg-white text-[#6B7280]"}`}
+                      >
+                        {st ? `↕ ${st}` : "+ Scaling"}
+                      </button>
+                    </td>
+                    <td className={`px-3 py-1.5 text-right tabular-nums ${amt.sen == null ? "font-semibold text-[#B91C1C]" : ""}`}>
+                      {amt.sen == null ? amt.note || "No price" : rm(amt.sen)}
+                      {amt.sen != null && amt.note && <span className="ml-1 text-[11px] font-normal text-[#6B7280]">{amt.note}</span>}
+                    </td>
+                    <td className="px-2 py-1.5 text-center"><button type="button" onClick={() => onChange(mats.filter((_, j) => j !== i))} className="text-base leading-none text-[#9A3A2D]" aria-label="Remove material">×</button></td>
+                  </tr>
+                  {scaleOpen === i && (
+                    <tr>
+                      <td colSpan={8} className="px-3 pb-2">
+                        <div className="rounded-md border border-[#D8CBA8] bg-[#FFFDF7] p-2">
+                          <div className="mb-1 flex items-center text-[12px] font-semibold">
+                            Scaling for {m.autoDetect ? "From order: fabric" : m.code || "this material"}
+                            <button type="button" onClick={() => setScaleOpen(null)} className="ml-auto rounded border border-[#D8D1C3] bg-white px-2 py-0.5 text-[11px]">Done</button>
+                          </div>
+                          <MaterialScalingEditor scaling={m.scaling} unit={m.unit || "PCS"} isCut={isFiller(m)} onChange={(sc) => set(i, { scaling: sc })} />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      <button type="button" onClick={() => onChange([...mats, { code: "", name: "", qty: 1, unit: "PCS" }])} className="px-3 py-2 text-[12px] font-semibold text-[#6B5A2E] hover:underline">
         + Add raw material
       </button>
     </div>
@@ -233,20 +312,37 @@ function CopyDialog({
     mins += (t.l1Processes ?? []).reduce((s, p) => s + (Number(p.minutes) || 0), 0);
     return { wips, mins, mats };
   };
+  const picked = pick ? count(pick) : null;
+  const what = [parts.processes && "processes", parts.time && "time", parts.materials && "materials"].filter(Boolean).join(" + ");
+  const rows: [keyof CopyParts, string, string][] = [
+    ["processes", "WIP processes", "the WIP tree and each WIP's departments"],
+    ["time", "WIP time", "minutes per process — matched to the same WIP + department here"],
+    ["materials", "Raw materials", 'qty, scaling and "from order" settings'],
+  ];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="Copy from another model">
       <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="border-b border-[#EFEBE3] px-4 py-3 font-semibold">{pick ? `Copy from ${pick.productCode}` : "Copy from another model"}</div>
-        {!pick ? (
-          <div className="p-4 space-y-2">
+        <div className="border-b border-[#EFEBE3] px-4 py-3 font-semibold">Copy from another model</div>
+        <div className="space-y-3 p-4 text-sm">
+          <div>
+            <div className="mb-1 text-[11px] font-bold text-[#5F5A52]">1. WHAT TO COPY (tick any)</div>
+            {rows.map(([k, label, hint]) => (
+              <label key={k} className="flex items-start gap-2 py-0.5">
+                <input type="checkbox" checked={parts[k]} onChange={(e) => setParts({ ...parts, [k]: e.target.checked })} className="mt-1" />
+                <span><b>{label}</b> — {hint}</span>
+              </label>
+            ))}
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] font-bold text-[#5F5A52]">2. FROM WHICH MODEL ({category ? `${category.toLowerCase()}s only — same category` : "any"})</div>
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search model" className="h-9 w-full rounded border border-[#CFC8BB] px-2 text-sm" />
-            <div className="max-h-72 overflow-y-auto divide-y divide-[#F3F1EC]">
-              {all === null && <div className="py-3 text-sm text-[#6B7280]">Loading…</div>}
-              {all !== null && shown.length === 0 && <div className="py-3 text-sm text-[#6B7280]">No matching model</div>}
+            <div className="mt-1 max-h-56 divide-y divide-[#F3F1EC] overflow-y-auto rounded border border-[#EFEBE3]">
+              {all === null && <div className="px-2 py-3 text-sm text-[#6B7280]">Loading…</div>}
+              {all !== null && shown.length === 0 && <div className="px-2 py-3 text-sm text-[#6B7280]">No matching model</div>}
               {shown.map((t) => {
                 const n = count(t);
                 return (
-                  <button key={t.id} type="button" onClick={() => setPick(t)} className="flex w-full items-center justify-between px-2 py-2 text-left text-sm hover:bg-[#FAF8F4]">
+                  <button key={t.id} type="button" onClick={() => setPick(t)} className={`flex w-full items-center justify-between px-2 py-2 text-left text-sm ${pick?.id === t.id ? "bg-[#F6F1E6]" : "hover:bg-[#FAF8F4]"}`}>
                     <span className="font-semibold">{t.productCode}</span>
                     <span className="text-[11px] text-[#6B7280]">{n.wips} WIPs · {n.mins} min · {n.mats} materials</span>
                   </button>
@@ -254,37 +350,18 @@ function CopyDialog({
               })}
             </div>
           </div>
-        ) : (
-          <div className="p-4 space-y-3 text-sm">
-            <p className="text-[#6B7280]">Pick what to copy. Each part replaces only that part on this page; the rest stays. You can copy again from another model at any time.</p>
-            {(() => {
-              const n = count(pick);
-              const rows: [keyof CopyParts, string, string][] = [
-                ["processes", "WIP processes", `the WIP tree (${n.wips} WIPs) and each WIP's departments`],
-                ["time", "WIP time", `minutes per process (${n.mins} min); matched to the same WIP + department here`],
-                ["materials", "Raw materials", `${n.mats} materials with qty, scaling and "from order" settings`],
-              ];
-              return rows.map(([k, label, hint]) => (
-                <label key={k} className="flex items-start gap-2">
-                  <input type="checkbox" checked={parts[k]} onChange={(e) => setParts({ ...parts, [k]: e.target.checked })} className="mt-1" />
-                  <span><b>{label}</b> — {hint}</span>
-                </label>
-              ));
-            })()}
-          </div>
-        )}
+          <p className="text-[11px] text-[#6B7280]">Each part replaces only that part here; the rest stays. Nothing is saved until you press Save.</p>
+        </div>
         <div className="flex justify-end gap-2 border-t border-[#EFEBE3] px-4 py-3">
-          <button type="button" onClick={pick ? () => setPick(null) : onClose} className="rounded border border-[#D8D1C3] px-3 py-1.5 text-sm">{pick ? "Back" : "Cancel"}</button>
-          {pick && (
-            <button
-              type="button"
-              disabled={!parts.processes && !parts.time && !parts.materials}
-              onClick={() => onCopy(pick, parts)}
-              className="rounded bg-[#6B5A2E] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              Copy
-            </button>
-          )}
+          <button type="button" onClick={onClose} className="rounded border border-[#D8D1C3] px-3 py-1.5 text-sm">Cancel</button>
+          <button
+            type="button"
+            disabled={!pick || !what}
+            onClick={() => pick && onCopy(pick, parts)}
+            className="rounded bg-[#6B5A2E] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {pick && what ? `Copy ${what} from ${pick.productCode}${picked ? ` (${picked.wips} WIPs)` : ""}` : "Copy"}
+          </button>
         </div>
       </div>
     </div>
@@ -336,12 +413,15 @@ export function CostingEditor({
   productId,
   category,
   tier,
+  labelProduct,
   onDone,
 }: {
   template: EditableTemplate;
   productId: string;
   category: string;
   tier: string | null;
+  /** Fills {TOKENS} in WIP names for display (size, default variants). */
+  labelProduct?: Parameters<typeof wipLabel>[1];
   onDone: (saved: boolean) => void;
 }) {
   const { confirm } = useConfirm();
@@ -363,6 +443,9 @@ export function CostingEditor({
   // Same WIP type list as the BOM Builder (built-ins + Maintenance extras).
   const wipTypes = useMemo(() => buildWipTypes(getVariantsConfigSync()?.wipTypes), []);
   const [newType, setNewType] = useState(category === "SOFA" ? "SOFA_BASE" : "DIVAN");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [showL1, setShowL1] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const reqSeq = useRef(0);
 
   useEffect(() => {
@@ -478,25 +561,46 @@ export function CostingEditor({
     onDone(false);
   };
 
-  const renderLevel = (path: Path, label: string, wipType: string, pcs: number, level: number, no?: number) => {
+  const liveNode = (id: string) => live?.nodes.find((n) => n.id === id);
+  const move = (path: Path, dir: -1 | 1) => {
+    const r = moveWipNode(bom.wipComponents, path[0], path.slice(1), dir);
+    if (r) setBom({ ...clone(bom), wipComponents: r.roots as Node[] });
+  };
+
+  const renderLevel = (path: Path, node: Node | null, level: number, no?: number) => {
     const { processes, materials: mats } = getAt(bom, path);
+    const pcs = node ? Number(node.quantity) || 1 : 1;
+    const ln = liveNode(node ? String(node.id ?? "") : "l1");
+    const key = path.join(".") || "l1";
+    const pretty = node ? wipLabel(String(node.wipCode ?? ""), labelProduct) : "";
+    const canUp = node ? canMoveWipNode(bom.wipComponents, path[0], path.slice(1), -1) : false;
+    const canDown = node ? canMoveWipNode(bom.wipComponents, path[0], path.slice(1), 1) : false;
+    const arrow = "rounded border border-[#D8D1C3] bg-white px-1.5 text-[12px] leading-6 disabled:opacity-30";
     return (
-      <div key={path.join(".") || "l1"} style={{ marginLeft: Math.max(0, level - 2) * 24 }} className="relative">
-        {level > 2 && <div aria-hidden className="absolute -left-4 top-0 h-6 w-4 border-l border-b border-gray-300 rounded-bl" />}
-        <div className="rounded-lg border border-[#E2DDD8] bg-white overflow-hidden">
+      <div key={key} style={{ marginLeft: Math.max(0, level - 2) * 24 }} className="relative">
+        {level > 2 && <div aria-hidden className="absolute -left-4 top-0 h-6 w-4 rounded-bl border-b border-l border-gray-300" />}
+        <div className="overflow-hidden rounded-lg border border-[#E2DDD8] bg-white">
           <div className="flex flex-wrap items-center gap-2 px-3 py-2" style={{ background: LEVEL_TINT[Math.min(level - 1, LEVEL_TINT.length - 1)] }}>
             {no != null && <span className="text-[11px] font-bold text-[#6B5A2E]" title="Same number as on the R&D Spec Form">#{no}</span>}
-            <span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-black/10">{level === 1 ? "Product" : `L${level}`}</span>
-            {path.length > 0 ? (
+            <span className="rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-bold">{level === 1 ? "Product" : `L${level}`}</span>
+            {node ? (
               <>
-                <input
-                  value={label}
-                  onChange={(e) => setBom(updateNode(bom, path, (n) => ({ ...n, wipCode: e.target.value })))}
-                  placeholder="WIP name"
-                  className="h-7 min-w-[200px] flex-1 rounded border border-[#CFC8BB] bg-white px-2 text-sm font-semibold"
-                  aria-label="WIP name"
-                />
-                <span className="text-xs text-[#6B7280]">{wipType} ×</span>
+                {renaming === key ? (
+                  <input
+                    autoFocus
+                    value={String(node.wipCode ?? "")}
+                    onChange={(e) => setBom(updateNode(bom, path, (n) => ({ ...n, wipCode: e.target.value })))}
+                    onBlur={() => setRenaming(null)}
+                    placeholder="WIP name"
+                    className="h-7 min-w-[220px] flex-1 rounded border border-[#CFC8BB] bg-white px-2 text-sm font-semibold"
+                    aria-label="WIP name (with {TOKENS})"
+                  />
+                ) : (
+                  <button type="button" onClick={() => setRenaming(key)} className="min-w-0 truncate text-left text-sm font-semibold hover:underline" title={`Stored as ${node.wipCode ?? ""} — click to rename`}>
+                    {pretty || "(no name)"}
+                  </button>
+                )}
+                <span className="ml-auto text-xs text-[#6B7280]">{node.wipType} ×</span>
                 <input
                   type="number"
                   min={1}
@@ -506,34 +610,47 @@ export function CostingEditor({
                   aria-label="Pieces per finished good"
                 />
                 <span className="text-xs text-[#6B7280]">PCS</span>
-                <button type="button" onClick={() => setBom(addChild(bom, path, wipType))} className="text-[12px] text-[#6B5A2E] hover:underline">+ Sub-WIP</button>
-                <button type="button" onClick={() => setBom(removeNode(bom, path))} className="text-[12px] text-[#9A3A2D] hover:underline">Remove WIP</button>
+                <button type="button" disabled={!canUp} onClick={() => move(path, -1)} className={arrow} title="Move up (same as the BOM page)" aria-label="Move WIP up">↑</button>
+                <button type="button" disabled={!canDown} onClick={() => move(path, 1)} className={arrow} title="Move down (same as the BOM page)" aria-label="Move WIP down">↓</button>
+                <button type="button" onClick={() => setBom(addChild(bom, path, String(node.wipType)))} className="text-[12px] font-semibold text-[#6B5A2E] hover:underline">+ Sub-WIP</button>
+                <button type="button" onClick={() => setBom(removeNode(bom, path))} className="text-[12px] text-[#9A3A2D] hover:underline">Remove</button>
               </>
             ) : (
               <span className="text-sm font-semibold">Product-level processes and materials</span>
             )}
           </div>
-          <div className="grid gap-3 p-3 md:grid-cols-2">
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase text-[#6B7280]">Processes · minutes per piece</div>
-              <ProcessRows procs={processes} pcs={pcs} onChange={(p) => setBom(setProcs(bom, path, p))} />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase text-[#6B7280]">Raw materials · qty per piece</div>
-              <MaterialRows mats={mats} materials={materials} pcs={pcs} onChange={(m) => setBom(setMats(bom, path, m))} />
-            </div>
+          <ProcessRows procs={processes} pcs={pcs} labour={(i) => ln?.processes[i]?.labourSen ?? null} onChange={(pr) => setBom(setProcs(bom, path, pr))} />
+          <MaterialRows
+            mats={mats}
+            materials={materials}
+            pcs={pcs}
+            amount={(i) => {
+              const m = ln?.materials[i];
+              if (!m) return { sen: null, note: "—" };
+              if (m.status === "fabric-tier") return { sen: m.amountSen, note: live?.tier ?? "" };
+              if (m.status === "from-order") return { sen: null, note: "from order" };
+              if (m.status === "no-code") return { sen: null, note: "pick a material" };
+              return { sen: m.amountSen, note: "" };
+            }}
+            onChange={(mm) => setBom(setMats(bom, path, mm))}
+          />
+          <div className="flex justify-end gap-4 border-t border-[#EFEBE3] bg-[#FAF8F4] px-3 py-1.5 text-[12px] text-[#6B7280]">
+            <span>Labour <b className="text-[#111827]">{ln ? rm(ln.labourSen) : "—"}</b></span>
+            <span>Materials <b className="text-[#111827]">{ln ? rm(ln.materialSen) : "—"}</b></span>
+            <span>WIP cost <b className="text-[#111827]">{ln ? rm(ln.labourSen + ln.materialSen) : "—"}</b></span>
           </div>
         </div>
       </div>
     );
   };
 
-  const rows: ReactElement[] = [renderLevel([], "", "", 1, 1)];
+  const hasL1 = bom.l1Processes.length > 0 || bom.l1Materials.length > 0 || showL1;
+  const rows: ReactElement[] = hasL1 ? [renderLevel([], null, 1)] : [];
   let wipNo = 0;
   const walk = (list: Node[], path: Path, level: number) =>
     list.forEach((n, i) => {
       const p = [...path, i];
-      rows.push(renderLevel(p, String(n.wipCode ?? ""), String(n.wipType ?? ""), Number(n.quantity) || 1, level, ++wipNo));
+      rows.push(renderLevel(p, n, level, ++wipNo));
       walk(n.children ?? [], p, level + 1);
     });
   walk(bom.wipComponents, [], 2);
@@ -548,33 +665,49 @@ export function CostingEditor({
             {live.missingLines > 0 && <span className="ml-1 font-semibold text-[#B91C1C]">· {live.missingLines} without a price</span>}
           </span>
         )}
-        <div className="ml-auto flex flex-wrap gap-2">
-          <button type="button" onClick={() => setCopyOpen(true)} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm font-semibold">Copy from model…</button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setCopyOpen(true)} className="rounded border border-[#6B5A2E] bg-white px-3 py-1.5 text-sm font-semibold text-[#6B5A2E]">Copy from another model…</button>
+          <div className="relative">
+            <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm font-semibold">
+              {scanning ? "Reading form…" : "More ▾"}
+            </button>
+            {moreOpen && (
+              <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-[#E2DDD8] bg-white p-1 text-left shadow-lg">
+                <button type="button" disabled={scanning} onClick={() => { setMoreOpen(false); fileRef.current?.click(); }} className="block w-full rounded px-3 py-2 text-left hover:bg-[#FAF8F4]">
+                  <div className="text-sm font-semibold">Scan filled R&amp;D form…</div>
+                  <div className="text-[11px] text-[#6B7280]">read a filled form, tick what to put in</div>
+                </button>
+                <button type="button" onClick={() => { setMoreOpen(false); setFromRd((v) => !v); }} className="block w-full rounded px-3 py-2 text-left hover:bg-[#FAF8F4]">
+                  <div className="text-sm font-semibold">{fromRd ? "☑" : "☐"} This came from an R&amp;D Spec Form</div>
+                  <div className="text-[11px] text-[#6B7280]">records form no. / filled by / date with the save</div>
+                </button>
+                {!hasL1 && (
+                  <button type="button" onClick={() => { setMoreOpen(false); setShowL1(true); }} className="block w-full rounded border-t border-[#EFEBE3] px-3 py-2 text-left hover:bg-[#FAF8F4]">
+                    <div className="text-sm font-semibold">+ Product-level process / material</div>
+                    <div className="text-[11px] text-[#6B7280]">for work done on the finished product, not a WIP</div>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           <input ref={fileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && void scanForm(e.target.files[0])} />
-          <button type="button" disabled={scanning} onClick={() => fileRef.current?.click()} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm disabled:opacity-50">
-            {scanning ? "Reading form…" : "Scan filled R&D form…"}
-          </button>
           <button type="button" onClick={cancel} className="rounded border border-[#D8D1C3] bg-white px-3 py-1.5 text-sm">Cancel</button>
           <button type="button" disabled={!dirty || saving} onClick={save} className="rounded bg-[#6B5A2E] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
         </div>
       </div>
-      <div className="rounded-lg border border-[#E2DDD8] bg-white px-4 py-2 text-[13px]">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={fromRd} onChange={(e) => setFromRd(e.target.checked)} />
-          <span>These changes come from a filled <b>R&amp;D Spec Form</b></span>
-        </label>
-        {fromRd && (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <input value={rd.formNo} onChange={(e) => setRd({ ...rd, formNo: e.target.value })} placeholder="Form no." className="h-8 w-44 rounded border border-[#CFC8BB] px-2" aria-label="Form no." />
-            <input value={rd.filledBy} onChange={(e) => setRd({ ...rd, filledBy: e.target.value })} placeholder="Filled by (R&D)" className="h-8 w-44 rounded border border-[#CFC8BB] px-2" aria-label="Filled by" />
-            <input type="date" value={rd.filledOn} onChange={(e) => setRd({ ...rd, filledOn: e.target.value })} className="h-8 rounded border border-[#CFC8BB] px-2" aria-label="Date on the form" />
-            <span className="text-[11px] text-[#6B7280]">WIP numbers (#1, #2…) match the form. Saved with your name as the person who keyed it in.</span>
-          </div>
-        )}
-      </div>
+      {fromRd && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#E2DDD8] bg-white px-4 py-2 text-[13px]">
+          <b>From an R&amp;D Spec Form:</b>
+          <input value={rd.formNo} onChange={(e) => setRd({ ...rd, formNo: e.target.value })} placeholder="Form no." className="h-8 w-44 rounded border border-[#CFC8BB] px-2" aria-label="Form no." />
+          <input value={rd.filledBy} onChange={(e) => setRd({ ...rd, filledBy: e.target.value })} placeholder="Filled by (R&D)" className="h-8 w-44 rounded border border-[#CFC8BB] px-2" aria-label="Filled by" />
+          <input type="date" value={rd.filledOn} onChange={(e) => setRd({ ...rd, filledOn: e.target.value })} className="h-8 rounded border border-[#CFC8BB] px-2" aria-label="Date on the form" />
+          <button type="button" onClick={() => setFromRd(false)} className="text-[12px] text-[#9A3A2D]">Not from a form</button>
+          <span className="w-full text-[11px] text-[#6B7280]">WIP numbers (#1, #2…) match the form. Saved with your name as the person who keyed it in.</span>
+        </div>
+      )}
       {bom.wipComponents.length === 0 && (
         <div className="rounded-lg border border-dashed border-[#D8CBA8] bg-white p-4 text-sm text-[#6B7280]">
-          No WIPs yet. Use <b>Copy from model…</b> above, or add a WIP below, then set each process's minutes and raw material usage.
+          No WIPs yet. Use <b>Copy from another model…</b> above, or add a WIP below, then set each process's minutes and raw material usage.
         </div>
       )}
       <div className="space-y-2">{rows}</div>
