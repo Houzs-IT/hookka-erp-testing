@@ -16,6 +16,9 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
 import { actorName } from "../lib/actor-name";
+import { claudeFetch, MISSING_ANTHROPIC_KEY_ERROR } from "../lib/claude-fetch";
+import { stripJsonFences } from "../lib/scan-engine";
+import { normaliseRdScan } from "../../lib/rd-scan";
 import { memoizeSelfApply, runSelfApply, selfApplyForRead } from "../lib/self-apply";
 import { todayYmdMY } from "../../lib/utils";
 import {
@@ -384,6 +387,127 @@ app.post("/:productId/standard", async (c) => {
     after: { id, labourSen: costing.labourSen, materialSen: costing.materialSen, totalSen: costing.totalSen, tier: costing.tier },
   });
   return c.json({ success: true, data: await latestStandard(db, product.id) }, 201);
+});
+
+// POST /:productId/rd-entry — record that a BOM save came from a filled R&D
+// Spec Form (plan D11: "record of who / when"): form no., who filled it, the
+// date on the paper; the server adds who keyed it in and when (audit journal).
+app.post("/:productId/rd-entry", async (c) => {
+  const denied = await requirePermission(c, "products", "update");
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => null)) as { formNo?: unknown; filledBy?: unknown; filledOn?: unknown; bomId?: unknown } | null;
+  const formNo = String(body?.formNo ?? "").trim().slice(0, 60);
+  const filledBy = String(body?.filledBy ?? "").trim().slice(0, 80);
+  const filledOn = String(body?.filledOn ?? "").trim().slice(0, 10);
+  if (!formNo) return c.json({ success: false, error: "Form no. is required" }, 400);
+  if (filledOn && !/^\d{4}-\d{2}-\d{2}$/.test(filledOn)) return c.json({ success: false, error: "Date must be YYYY-MM-DD" }, 400);
+  const product = await c.var.DB.prepare("SELECT id FROM products WHERE id = ? OR code = ? LIMIT 1")
+    .bind(c.req.param("productId"), c.req.param("productId"))
+    .first<{ id: string }>();
+  if (!product) return c.json({ success: false, error: "Product not found" }, 404);
+  const entry = { formNo, filledBy, filledOn, bomId: typeof body?.bomId === "string" ? body.bomId : null, enteredBy: await actorName(c) };
+  await emitAudit(c, { resource: "products", resourceId: product.id, action: "rd-form-entry", after: entry });
+  return c.json({ success: true, data: entry }, 201);
+});
+
+// POST /:productId/rd-scan — read a filled R&D Spec Form (PDF or photo) and
+// return what is written on it (phase 7). WRITES NOTHING: the costing editor
+// shows each reading as a change to tick, and the operator saves as usual.
+// The prompt carries the form's own numbered layout (WIP #, departments, the
+// "now" minutes, materials on file) so handwriting is matched to a WIP number
+// and a department / material code rather than guessed from scratch.
+const RD_SCAN_MODEL = "claude-sonnet-4-6"; // same model as the customer-PO scan
+const RD_SCAN_MAX_BYTES = 20 * 1024 * 1024;
+
+app.post("/:productId/rd-scan", async (c) => {
+  const denied = await requirePermission(c, "products", "update");
+  if (denied) return denied;
+  const apiKey = c.env?.ANTHROPIC_API_KEY;
+  if (!apiKey) return c.json({ success: false, error: MISSING_ANTHROPIC_KEY_ERROR }, 503);
+  let file: File | null = null;
+  try {
+    const fd = await c.req.formData();
+    const f = fd.get("file");
+    file = f instanceof File ? f : null;
+  } catch {
+    return c.json({ success: false, error: "Upload the filled form as a file" }, 400);
+  }
+  if (!file) return c.json({ success: false, error: "Upload the filled form as a file" }, 400);
+  if (file.size > RD_SCAN_MAX_BYTES) return c.json({ success: false, error: "File is over 20 MB" }, 400);
+  const mime = file.type || "application/pdf";
+  const isPdf = /pdf/i.test(mime);
+  if (!isPdf && !/^image\/(jpeg|png|webp|gif)$/i.test(mime)) {
+    return c.json({ success: false, error: "Use a PDF or a JPG / PNG photo of the form" }, 400);
+  }
+  const loaded = await loadCosting(c.var.DB, c.req.param("productId"), undefined);
+  if (!loaded) return c.json({ success: false, error: "Product not found" }, 404);
+  const { product, costing } = loaded;
+
+  // The form as printed: WIP #n, its departments with "now" minutes, its
+  // materials on file (qty per product, unit).
+  let no = 0;
+  const layout = costing.nodes
+    .filter((n) => n.level > 1)
+    .map((n) => {
+      no += 1;
+      const procs = n.processes.map((p) => `${p.dept} (now ${p.minutesPerPc} min/pc)`).join("; ") || "no processes";
+      const mats = n.materials.map((m) => `${m.code || m.name} ${+(m.qtyPerPc * n.pcs).toFixed(4)} ${m.unit}`).join("; ") || "none";
+      return `#${no} ${n.label} x${n.pcs} PCS | processes: ${procs} | materials on file: ${mats}`;
+    })
+    .join("\n");
+  const prompt =
+    `This is a filled-in "R&D Spec Form" for product ${product.code} (${product.name}). ` +
+    `It was printed from this layout (WIP numbers are printed on the form as #1, #2 ...):\n${layout}\n\n` +
+    `Read ONLY what was HANDWRITTEN on the form:\n` +
+    `- minutes: a number written in a process's minutes box (per piece). Skip boxes left empty.\n` +
+    `- corrections: a corrected quantity written beside a material that was already printed (quantity per product).\n` +
+    `- newMaterials: material code + quantity (per product) + unit written on the blank lines under a WIP, or in the "Extra raw materials" table with its WIP no.\n` +
+    `- formNo (printed top right), filledBy and filledOn (the "Filled by (R&D)" line and its date, as YYYY-MM-DD).\n` +
+    `If something is unreadable, leave it out. Never invent values.\n` +
+    `Return JSON only: {"formNo":"","filledBy":"","filledOn":"","minutes":[{"wipNo":1,"dept":"Packing","minutes":20}],` +
+    `"corrections":[{"wipNo":2,"code":"PLY18","qty":1.5,"unit":"PCS"}],"newMaterials":[{"wipNo":3,"code":"STAPLE","qty":40,"unit":"PCS"}]}`;
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
+  const data = btoa(binary);
+  const media = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } }
+    : { type: "image", source: { type: "base64", media_type: mime.toLowerCase(), data } };
+
+  const resp = await claudeFetch(
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      signal: AbortSignal.timeout(90_000),
+      body: JSON.stringify({
+        model: RD_SCAN_MODEL,
+        max_tokens: 4096,
+        temperature: 0,
+        messages: [{ role: "user", content: [media, { type: "text", text: prompt }] }],
+      }),
+    },
+    "rd_form_scan",
+  ).catch((e: unknown) => e as Error);
+  if (resp instanceof Error) return c.json({ success: false, error: `Could not reach the reader: ${resp.message}` }, 502);
+  const bodyText = await resp.text();
+  if (!resp.ok) return c.json({ success: false, error: `Reader error ${resp.status}: ${bodyText.slice(0, 200)}` }, 502);
+  let text = "";
+  try {
+    const parsed = JSON.parse(bodyText) as { content?: { type: string; text?: string }[] };
+    text = parsed.content?.find((b) => b.type === "text")?.text ?? "";
+  } catch {
+    return c.json({ success: false, error: "The reader returned something unreadable" }, 502);
+  }
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(stripJsonFences(text));
+  } catch {
+    return c.json({ success: false, error: "Could not read the form — try a clearer scan or photo" }, 422);
+  }
+  const reading = normaliseRdScan(raw, no);
+  await emitAudit(c, { resource: "products", resourceId: product.id, action: "rd-form-scan", after: { formNo: reading.formNo, minutes: reading.minutes.length, corrections: reading.corrections.length, newMaterials: reading.newMaterials.length } });
+  return c.json({ success: true, data: reading });
 });
 
 export default app;
