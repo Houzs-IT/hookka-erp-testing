@@ -10,6 +10,7 @@ import { RecordLoadError } from "@/components/ui/record-load-error";
 import type { MaterialScaling } from "@/api/lib/material-scaling";
 import { buildWipTypes } from "@/lib/wip-types";
 import { getVariantsConfigSync } from "@/lib/kv-config";
+import { ProductTabStrip } from "./product-tabs";
 
 // ---------- Types ----------
 // Mirrors the master BOMTemplate shape exposed by /api/bom/templates.
@@ -615,7 +616,8 @@ export default function BOMPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <ProductTabStrip productId={product.id} active="bom" />
             {template && (
               <VersionSelector
                 versions={allVersions}

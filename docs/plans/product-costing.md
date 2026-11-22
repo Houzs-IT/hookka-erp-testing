@@ -26,7 +26,7 @@ Owner 2026-11-21/22: "每一次做新的 products，我要自己去算人工多�
 
 ## Phases (each = one PR, verified live, merged)
 
-Status: pre-work (D14) shipped #1542. Phase 1 = engine + read API (`GET /api/product-costing/:productId`, `GET|PUT /api/product-costing/fabric-tiers`); the standard-cost table moves to phase 2 with its "Set as standard" button.
+Status: pre-work (D14) shipped #1542. Phase 1 = engine + read API (`GET /api/product-costing/:productId`, `GET|PUT /api/product-costing/fabric-tiers`); the standard-cost table moves to phase 2b with its "Set as standard" button. Phase 2 = costing page (view) + product page tabs (BOM / Costing / Customers / Documents) + double-click + Costing button. Still owed on the product page: Manage Variants inside it (D13) — phase 2b.
 
 1. **Foundations** — persist BOM L1 materials (today dropped by `PUT /api/bom/templates/:id`, no column); fabric price tiers setting; `GET /api/products/:id/costing` (WIP minutes + labour, materials priced per D2, tiers per D9, prices + customer prices, standard cost); standard-cost table + "update standard".
 2. **Costing page (view)** — `/products/:id/costing`: KPI tiles, cost by WIP (indented), price check + calculator, cost by department, tier selector; Costing button in the Products row.

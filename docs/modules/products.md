@@ -56,9 +56,12 @@ Money is integer sen; many product columns are legacy camelCase.
 
 ## Entry points
 - **Pages** (all under `/products`, one page hosts three views)
-  - `/products` → `src/pages/products/index.tsx:2194` (`ProductsPage`; `viewMode` = `skuMaster|catalog|maintenance`)
-  - `/products/:id/bom` → `src/pages/products/bom.tsx:462` (`BOMPage` — Master BOM Templates editor; also reached via `?sku=` from sales/consignment)
-  - `/products/:id/documents` → `src/pages/products/documents.tsx:92` (`ProductDocumentsPage` — production docs per variant)
+  - `/products` → `src/pages/products/index.tsx:2014` (`ProductsPage`; `viewMode` = `skuMaster|catalog|maintenance`)
+  - `/products/:id/bom` → `src/pages/products/bom.tsx:456` (`BOMPage` — Master BOM Templates editor; also reached via `?sku=` from sales/consignment)
+  - `/products/:id/documents` → `src/pages/products/documents.tsx:93` (`ProductDocumentsPage` — production docs per variant)
+  - `/products/:id/costing` → `src/pages/products/costing.tsx:155` (`ProductCostingPage` — cost of the ACTIVE BOM, price check + calculator; data from `/api/product-costing/:id`)
+  - `/products/:id/customers` → `src/pages/products/customers.tsx:10` (Customer Assignments, shared component `customer-assignments.tsx`)
+  - The four product pages share the tab strip `product-tabs.tsx` (D13). In the list, CLICK a row = the dropdown (unchanged); DOUBLE-CLICK = `/products/:id/costing`; the dropdown also has a Costing button beside View BOM.
   - Catalog is NOT a route — `ProductCatalog` (`src/pages/products/catalog.tsx:138`) renders inline as `viewMode==="catalog"`
   - Dialogs: `MasterPriceHistoryDialog.tsx`, `MaintenanceConfigHistoryDialog.tsx`, `MaintenanceItemHistoryDialog.tsx`
 - **API routes**
@@ -93,10 +96,10 @@ Money is integer sen; many product columns are legacy camelCase.
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `ProductsPage` (default export) | `src/pages/products/index.tsx:2194` | 3-way view host; `viewMode` state just below |
-| `VariantEditorDialog` | `src/pages/products/index.tsx:703` | Add/edit a product variant |
-| `MaintenanceView` | `src/pages/products/index.tsx:1191` | Maintenance-config view (Edit/Save/Cancel) |
-| `CustomerAssignmentsSection` | `src/pages/products/index.tsx:521` | Per-customer SKU assignment (expand row) |
+| `ProductsPage` (default export) | `src/pages/products/index.tsx:2014` | 3-way view host; `viewMode` state just below |
+| `VariantEditorDialog` | `src/pages/products/index.tsx:523` | Add/edit a product variant |
+| `MaintenanceView` | `src/pages/products/index.tsx:1011` | Maintenance-config view (Edit/Save/Cancel) |
+| `CustomerAssignmentsSection` | `src/pages/products/customer-assignments.tsx:25` | Per-customer SKU assignment (expand row) |
 | `ProductionConfig` / `CategoryBadge` | `src/pages/products/index.tsx:428 / 415` | Per-dept config display helpers |
 | `ProductCatalog` | `src/pages/products/catalog.tsx:138` | Model-based photo grid (inline catalog view) |
 | `rowToProduct` | `src/api/routes/products.ts:166` | Re-nests children + parses JSON columns on read |
