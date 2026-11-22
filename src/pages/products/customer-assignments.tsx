@@ -15,7 +15,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { invalidateCachePrefix, useCachedJson } from "@/lib/cached-fetch";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
-import { formatCurrency, todayYmdMY } from "@/lib/utils";
+import { bedframePrice3Sen, formatCurrency, todayYmdMY } from "@/lib/utils";
 
 type CustomerAssignment = {
   id: string;
@@ -36,9 +36,12 @@ export function CustomerAssignmentsSection({
   productId,
   active,
   costSen,
+  category,
 }: {
   productId: string;
   active: boolean;
+  /** Product category — a BEDFRAME also shows its Price 3 (Price 2 × 1.1, worked out, not stored). */
+  category?: string | null;
   /** Today's total cost of the product; shows the margin column when given. */
   costSen?: number | null;
 }) {
@@ -56,6 +59,9 @@ export function CustomerAssignmentsSection({
   const { confirm } = useConfirm();
   const { toast } = useToast();
   const [editing, setEditing] = useState<string | null>(null);
+  // The customer's "base price" IS Price 2 — named the same as the product
+  // page (owner 2026-11-22: 「改名叫 Price 2，床架显示 Price 3 就好」).
+  const isBed = category === "BEDFRAME";
   const [form, setForm] = useState({ base: "", p1: "", from: todayYmdMY(), reason: "" });
   const [nextChange, setNextChange] = useState<Record<string, PriceRow | null>>({});
 
@@ -142,7 +148,7 @@ export function CustomerAssignmentsSection({
   async function saveChange(a: CustomerAssignment) {
     const base = Math.round(Number(form.base) * 100);
     const p1 = form.p1.trim() === "" ? null : Math.round(Number(form.p1) * 100);
-    if (!(base > 0)) return toast.error("Enter the new base price.");
+    if (!(base > 0)) return toast.error("Enter the new Price 2.");
     if (p1 != null && !(p1 > 0)) return toast.error("Price 1 must be above 0, or left empty.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(form.from)) return toast.error("Pick the effective date.");
     setBusy(true);
@@ -196,7 +202,8 @@ export function CustomerAssignmentsSection({
             <thead>
               <tr className="text-left text-[10px] font-medium text-[#6B7280] uppercase border-b border-[#E5E7EB]">
                 <th className="px-2 py-1.5">Customer</th>
-                <th className="px-2 py-1.5 text-right">Base Price</th>
+                {isBed && <th className="px-2 py-1.5 text-right" title="Price 2 × 1.1, worked out automatically">Price 3 (auto)</th>}
+                <th className="px-2 py-1.5 text-right">Price 2</th>
                 {showMargin && <th className="px-2 py-1.5 text-right">Margin on cost</th>}
                 <th className="px-2 py-1.5 text-right">Price 1</th>
                 {hasSeat && <th className="px-2 py-1.5">Seat Heights</th>}
@@ -210,6 +217,11 @@ export function CustomerAssignmentsSection({
                 return (
                   <tr key={a.id} className={`border-b border-[#F3F4F6] last:border-0 ${editing === a.id ? "bg-[#FFFDF7]" : ""}`}>
                     <td className="px-2 py-1.5 text-[#111827] font-medium">{a.customerName}</td>
+                    {isBed && (
+                      <td className="px-2 py-1.5 text-right tabular-nums text-[#6B7280]">
+                        {bedframePrice3Sen(a.basePriceSen) != null ? formatCurrency(bedframePrice3Sen(a.basePriceSen)!) : <span className="text-[#9CA3AF]">-</span>}
+                      </td>
+                    )}
                     <td className="px-2 py-1.5 text-right tabular-nums text-[#111827]">
                       {a.basePriceSen != null && a.basePriceSen > 0 ? formatCurrency(a.basePriceSen) : <span className="text-[#9CA3AF]">-</span>}
                     </td>
@@ -225,7 +237,7 @@ export function CustomerAssignmentsSection({
                     <td className="px-2 py-1.5">
                       {nx?.basePriceSen ? (
                         <span className="rounded bg-[#FDF3D8] px-1.5 py-0.5 text-[11px] text-[#8A6A12]">
-                          {formatCurrency(nx.basePriceSen)} from {String(nx.effectiveFrom).slice(0, 10)}
+                          Price 2 {formatCurrency(nx.basePriceSen)} from {String(nx.effectiveFrom).slice(0, 10)}
                         </span>
                       ) : (
                         <span className="text-[#9CA3AF]">—</span>
@@ -263,9 +275,17 @@ export function CustomerAssignmentsSection({
           <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-[#D8CBA8] bg-[#FFFDF7] p-3 text-xs">
             <b className="w-full text-[13px]">Change price — {a.customerName}</b>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-[#6B7280]">New base price (RM)</span>
+              <span className="text-[11px] text-[#6B7280]">New Price 2 (RM)</span>
               <input inputMode="decimal" value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value })} className="h-9 w-28 rounded border border-[#CFC8BB] px-2 text-right text-sm" />
             </label>
+            {isBed && (
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-[#6B7280]">Price 3 (auto = Price 2 × 1.1)</span>
+                <span className="flex h-9 w-28 items-center justify-end rounded border border-dashed border-[#CFC8BB] bg-[#FAF8F4] px-2 text-sm tabular-nums text-[#6B7280]">
+                  {newBase > 0 ? formatCurrency(bedframePrice3Sen(newBase)!) : "—"}
+                </span>
+              </div>
+            )}
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-[#6B7280]">Price 1 (RM, optional)</span>
               <input inputMode="decimal" value={form.p1} onChange={(e) => setForm({ ...form, p1: e.target.value })} className="h-9 w-28 rounded border border-[#CFC8BB] px-2 text-right text-sm" />
