@@ -432,3 +432,37 @@ export function priceForMargin(costSen: number, marginPct: number): number | nul
   if (!Number.isFinite(marginPct) || marginPct >= 100) return null;
   return Math.round(costSen / (1 - marginPct / 100));
 }
+
+// ---- standard cost (D3) ---------------------------------------------------
+
+/** What is kept with a standard so later prices can be compared line by line. */
+export type StandardSnapshot = {
+  /** material code → unit price (sen) at the time the standard was set. */
+  linePrices: Record<string, number>;
+  /** fabric tier → material total (sen), so a tier switch compares like with like. */
+  tierMaterialSen: Record<string, number>;
+};
+
+export function standardSnapshot(r: CostingResult): StandardSnapshot {
+  const linePrices: Record<string, number> = {};
+  for (const n of r.nodes) {
+    for (const m of n.materials) {
+      if (m.status === "priced" && m.priceSen != null && m.code) linePrices[m.code.toUpperCase()] = m.priceSen;
+    }
+  }
+  const tierMaterialSen: Record<string, number> = {};
+  for (const t of r.tiers) tierMaterialSen[t.level] = t.materialSen;
+  return { linePrices, tierMaterialSen };
+}
+
+/** Today's cost against the standard, at the same fabric tier when there is one. */
+export function compareToStandard(
+  today: Pick<CostingResult, "labourSen" | "materialSen" | "totalSen" | "tier">,
+  std: { labourSen: number; materialSen: number; tierMaterialSen?: Record<string, number> },
+): { stdMaterialSen: number; stdTotalSen: number; diffSen: number; diffPct: number | null } {
+  const stdMaterialSen =
+    today.tier && std.tierMaterialSen && std.tierMaterialSen[today.tier] != null ? std.tierMaterialSen[today.tier] : std.materialSen;
+  const stdTotalSen = std.labourSen + stdMaterialSen;
+  const diffSen = today.totalSen - stdTotalSen;
+  return { stdMaterialSen, stdTotalSen, diffSen, diffPct: stdTotalSen > 0 ? (diffSen / stdTotalSen) * 100 : null };
+}

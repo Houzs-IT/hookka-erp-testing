@@ -48,7 +48,15 @@ export function ProductTabs({
             {extra && <span className="text-[#6B7280]">{extra}</span>}
           </div>
         </div>
-        <ProductTabStrip productId={productId} active={active} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to={`/products?variants=${encodeURIComponent(productId)}`}
+            className="rounded-md border border-[#E8D597] bg-[#FDF6D8] px-3 py-1.5 text-xs font-medium text-[#8A6A12] hover:bg-[#FBF0C4]"
+          >
+            Manage Variants
+          </Link>
+          <ProductTabStrip productId={productId} active={active} />
+        </div>
       </div>
     </div>
   );

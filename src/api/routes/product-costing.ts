@@ -15,12 +15,16 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
+import { actorName } from "../lib/actor-name";
+import { memoizeSelfApply, runSelfApply, selfApplyForRead } from "../lib/self-apply";
 import { todayYmdMY } from "../../lib/utils";
 import {
   computeCosting,
   normaliseFabricTiers,
   priceInEffect,
+  standardSnapshot,
   type BindingIn,
+  type StandardSnapshot,
   type PriceHistoryIn,
   type BomIn,
   type RawMaterialIn,
@@ -108,16 +112,14 @@ type TemplateRow = {
   l1Materials?: string | null;
 };
 
-app.get("/:productId", async (c) => {
-  const denied = await requirePermission(c, "products", "read");
-  if (denied) return denied;
-  const db = c.var.DB;
-  const productId = c.req.param("productId");
+type Product = { id: string; code: string; name: string; category: string };
+
+async function loadCosting(db: D1Database, productId: string, tier: string | undefined) {
   const product = await db
     .prepare("SELECT id, code, name, category FROM products WHERE id = ? OR code = ? LIMIT 1")
     .bind(productId, productId)
-    .first<{ id: string; code: string; name: string; category: string }>();
-  if (!product) return c.json({ success: false, error: "Product not found" }, 404);
+    .first<Product>();
+  if (!product) return null;
 
   // The ACTIVE BOM (one per product since D14); a product with only a draft
   // still gets a costing, flagged so the page can say so.
@@ -185,11 +187,87 @@ app.get("/:productId", async (c) => {
     if (now) bindings.push({ ...b, unitPrice: now.priceSen, effectiveFrom: now.effectiveFrom || b.effectiveFrom });
   }
 
-  const tier = c.req.query("tier") ?? undefined;
   const costing = computeCosting(
     { bom, rawMaterials, bindings, fabricTiers, sheetDefaults },
     { tier },
   );
+  return { product, tpl, fabricTiers, costing };
+}
+
+// ---- standard cost (D3): "the cost we agreed", kept append-only ----------
+// Each "Set as standard" adds a row; the newest is the standard. The page
+// compares today's cost against it so a supplier price rise shows up.
+let standardMemo: Promise<void> | null = null;
+function ensureStandardTable(db: D1Database): Promise<void> {
+  return memoizeSelfApply(
+    () => standardMemo,
+    (p) => {
+      standardMemo = p;
+    },
+    () =>
+      runSelfApply(db, "product-costing", [
+        `CREATE TABLE IF NOT EXISTS product_standard_costs (
+           id TEXT PRIMARY KEY,
+           product_id TEXT NOT NULL,
+           bom_id TEXT,
+           labour_sen INTEGER NOT NULL,
+           material_sen INTEGER NOT NULL,
+           total_sen INTEGER NOT NULL,
+           fabric_tier TEXT,
+           snapshot TEXT,
+           missing_lines INTEGER NOT NULL DEFAULT 0,
+           set_at TEXT NOT NULL,
+           set_by TEXT
+         )`,
+        "CREATE INDEX IF NOT EXISTS idx_product_standard_costs_product ON product_standard_costs (product_id, set_at)",
+      ]),
+  );
+}
+
+type StandardRow = {
+  id: string;
+  labour_sen: number;
+  material_sen: number;
+  total_sen: number;
+  fabric_tier: string | null;
+  snapshot: string | null;
+  missing_lines: number;
+  set_at: string;
+  set_by: string | null;
+};
+
+async function latestStandard(db: D1Database, productId: string) {
+  await selfApplyForRead("product-costing", () => ensureStandardTable(db));
+  const row = await db
+    .prepare(
+      `SELECT id, labour_sen, material_sen, total_sen, fabric_tier, snapshot, missing_lines, set_at, set_by
+         FROM product_standard_costs WHERE product_id = ? ORDER BY set_at DESC LIMIT 1`,
+    )
+    .bind(productId)
+    .first<StandardRow>()
+    .catch(() => null);
+  if (!row) return null;
+  const snap = parse<StandardSnapshot>(row.snapshot, { linePrices: {}, tierMaterialSen: {} });
+  return {
+    id: row.id,
+    labourSen: Number(row.labour_sen),
+    materialSen: Number(row.material_sen),
+    totalSen: Number(row.total_sen),
+    tier: row.fabric_tier,
+    missingLines: Number(row.missing_lines),
+    setAt: row.set_at,
+    setBy: row.set_by,
+    ...snap,
+  };
+}
+
+app.get("/:productId", async (c) => {
+  const denied = await requirePermission(c, "products", "read");
+  if (denied) return denied;
+  const loaded = await loadCosting(c.var.DB, c.req.param("productId"), c.req.query("tier") ?? undefined);
+  if (!loaded) return c.json({ success: false, error: "Product not found" }, 404);
+  const { product, tpl, fabricTiers, costing } = loaded;
+  const standard = await latestStandard(c.var.DB, product.id);
   return c.json({
     success: true,
     data: {
@@ -198,9 +276,52 @@ app.get("/:productId", async (c) => {
         ? { id: tpl.id, version: tpl.version, status: tpl.versionStatus, effectiveFrom: tpl.effectiveFrom }
         : null,
       fabricTiers,
+      standard,
       ...costing,
     },
   });
+});
+
+// POST /:productId/standard — today's cost becomes the standard (append-only).
+app.post("/:productId/standard", async (c) => {
+  const denied = await requirePermission(c, "products", "update");
+  if (denied) return denied;
+  const db = c.var.DB;
+  await ensureStandardTable(db);
+  const loaded = await loadCosting(db, c.req.param("productId"), c.req.query("tier") ?? undefined);
+  if (!loaded) return c.json({ success: false, error: "Product not found" }, 404);
+  const { product, tpl, costing } = loaded;
+  if (!tpl) return c.json({ success: false, error: "This product has no BOM, so there is no cost to keep." }, 400);
+  const id = `psc-${crypto.randomUUID().slice(0, 12)}`;
+  const setBy = await actorName(c);
+  const setAt = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT INTO product_standard_costs (id, product_id, bom_id, labour_sen, material_sen, total_sen,
+         fabric_tier, snapshot, missing_lines, set_at, set_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      product.id,
+      tpl.id,
+      costing.labourSen,
+      costing.materialSen,
+      costing.totalSen,
+      costing.tier,
+      JSON.stringify(standardSnapshot(costing)),
+      costing.missingLines,
+      setAt,
+      setBy,
+    )
+    .run();
+  await emitAudit(c, {
+    resource: "products",
+    resourceId: product.id,
+    action: "set-standard-cost",
+    after: { id, labourSen: costing.labourSen, materialSen: costing.materialSen, totalSen: costing.totalSen, tier: costing.tier },
+  });
+  return c.json({ success: true, data: await latestStandard(db, product.id) }, 201);
 });
 
 export default app;

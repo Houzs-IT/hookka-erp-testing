@@ -2109,6 +2109,19 @@ export default function ProductsPage() {
   // PATCH-in-flight flag so the Save button can show a loading state and
   // prevent double-submit while the request is on the wire.
   const [variantSaving, setVariantSaving] = useState(false);
+  // The product page's "Manage Variants" button (plan D13) lands here with
+  // ?variants=<productId>: open that product's variant editor once loaded.
+  const variantsParam = searchParams.get("variants");
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot open from a deep link */
+  useEffect(() => {
+    if (!variantsParam || products.length === 0) return;
+    const hit = products.find((x) => x.id === variantsParam || x.code === variantsParam);
+    if (hit) setEditingVariant(hit);
+    const next = new URLSearchParams(searchParams);
+    next.delete("variants");
+    setSearchParams(next, { replace: true });
+  }, [variantsParam, products, searchParams, setSearchParams]);
+  /* eslint-enable react-hooks/set-state-in-effect */
   const [editingPrice, setEditingPrice] = useState<string | null>(null);
   const [priceInput, setPriceInput] = useState("");
   const [editingM3, setEditingM3] = useState<string | null>(null);

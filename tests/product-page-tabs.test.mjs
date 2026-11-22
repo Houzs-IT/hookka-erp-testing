@@ -42,9 +42,11 @@ test("every product page shows the same tab strip", () => {
   assert.match(read("src/pages/products/customers.tsx"), /active="customers"/);
 });
 
-test("costing page: no price is never shown as RM 0, and the calculator changes nothing", () => {
+test("costing page: no price is never shown as RM 0; only Set-as-standard writes", () => {
   const c = read("src/pages/products/costing.tsx");
   assert.match(c, /m\.priceSen == null \? <span className="font-semibold text-\[#B91C1C\]">No price<\/span>/);
   assert.match(c, /m\.amountSen == null \? "—"/);
-  assert.doesNotMatch(c, /method: "(POST|PUT|PATCH|DELETE)"/);
+  // The only write is "Set as standard" (D3), behind a confirm; the calculator writes nothing.
+  assert.equal((c.match(/method: "(POST|PUT|PATCH|DELETE)"/g) ?? []).length, 1);
+  assert.match(c, /await confirm\(\{[\s\S]{0,800}\/standard[\s\S]{0,200}method: "POST"/);
 });

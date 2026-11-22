@@ -15,7 +15,9 @@ import { useParams } from "react-router-dom";
 import { isUnknownOutcome, useCachedJson } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { bedframePrice3Sen, formatCurrency } from "@/lib/utils";
-import { marginOn, priceForMargin, type CostMaterial, type CostNode } from "@/lib/product-costing";
+import { compareToStandard, marginOn, priceForMargin, type CostMaterial, type CostNode } from "@/lib/product-costing";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 import { ProductTabs } from "./product-tabs";
 
 type CostingData = {
@@ -33,6 +35,16 @@ type CostingData = {
   materialLines: number;
   missingLines: number;
   fabricFromOrderLines: number;
+  standard: {
+    labourSen: number;
+    materialSen: number;
+    totalSen: number;
+    tier: string | null;
+    setAt: string;
+    setBy: string | null;
+    linePrices: Record<string, number>;
+    tierMaterialSen: Record<string, number>;
+  } | null;
 };
 
 type ProductLite = { id: string; code: string; name: string; category: string; basePriceSen?: number | null; price1Sen?: number | null };
@@ -56,7 +68,7 @@ function MaterialStatusNote({ m }: { m: CostMaterial }) {
   return <span className="text-[11px] font-semibold text-[#B91C1C]">{text}</span>;
 }
 
-function NodeCard({ node, category }: { node: CostNode; category: string }) {
+function NodeCard({ node, category, stdPrices }: { node: CostNode; category: string; stdPrices?: Record<string, number> }) {
   const indent = Math.max(0, node.level - 2) * 24;
   const perFg = category === "SOFA" ? "set" : category === "BEDFRAME" ? "bedframe" : "unit";
   return (
@@ -127,6 +139,11 @@ function NodeCard({ node, category }: { node: CostNode; category: string }) {
                 </td>
                 <td className="px-3 py-1.5 text-right tabular-nums">
                   {m.priceSen == null ? <span className="font-semibold text-[#B91C1C]">No price</span> : `${rm(m.priceSen)} / ${m.priceUnit || m.unit || "unit"}`}
+                  {(() => {
+                    const std = m.status === "priced" ? stdPrices?.[m.code.toUpperCase()] : undefined;
+                    if (std == null || m.priceSen == null || std === m.priceSen) return null;
+                    return <div className={`text-[11px] ${m.priceSen > std ? "text-[#B91C1C]" : "text-[#15803D]"}`}>standard {rm(std)}</div>;
+                  })()}
                 </td>
                 <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{m.amountSen == null ? "—" : rm(m.amountSen)}</td>
               </tr>
@@ -162,6 +179,9 @@ export default function ProductCostingPage() {
   const c = resp?.data;
   const { data: custResp } = useCachedJson<{ data?: Assignment[] }>(c ? `/api/customer-products/by-product/${c.product.id}` : null);
   const [sellAt, setSellAt] = useState("");
+  const [savingStd, setSavingStd] = useState(false);
+  const { confirm } = useConfirm();
+  const { toast } = useToast();
   const [wantPct, setWantPct] = useState("");
 
   const prices = useMemo(() => {
@@ -202,6 +222,49 @@ export default function ProductCostingPage() {
         <Kpi label={`Margin at Price 2${price2 ? ` (${rm(price2)})` : ""}`} value={m2 ? rm(m2.marginSen) : "—"} sub={m2 ? `${pct(m2.pct)} of price` : "no Price 2"} tone={m2 ? (m2.marginSen >= 0 ? "good" : "bad") : undefined} />
       </div>
 
+      {c.bom && (() => {
+        const std = c.standard;
+        const cmp = std ? compareToStandard(c, std) : null;
+        const setStandard = async () => {
+          const ok = await confirm({
+            title: std ? "Update standard to today?" : "Set today's cost as standard?",
+            message: `The standard cost becomes ${rm(total)}${c.tier ? ` (fabric ${c.tier})` : ""}. Earlier standards are kept in the history.`,
+          });
+          if (!ok) return;
+          setSavingStd(true);
+          try {
+            const r = await fetch(`/api/product-costing/${encodeURIComponent(c.product.id)}/standard${c.tier ? `?tier=${encodeURIComponent(c.tier)}` : ""}`, { method: "POST" });
+            const j = (await r.json().catch(() => ({}))) as { success?: boolean; error?: string };
+            if (!r.ok || j.success === false) {
+              toast.error(j.error || "Could not save the standard cost.");
+            } else {
+              toast.success("Standard cost saved.");
+              refresh();
+            }
+          } finally {
+            setSavingStd(false);
+          }
+        };
+        return (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-[#E2DDD8] bg-white px-4 py-3 text-[13px]">
+            {std && cmp ? (
+              <>
+                <div><span className="text-[#6B7280]">Standard cost</span> <b className="tabular-nums">{rm(cmp.stdTotalSen)}</b> <span className="text-[11px] text-[#6B7280]">set {std.setAt.slice(0, 10)}{std.setBy ? ` by ${std.setBy}` : ""}</span></div>
+                <div><span className="text-[#6B7280]">Today</span> <b className="tabular-nums">{rm(total)}</b></div>
+                <div className={cmp.diffSen > 0 ? "text-[#B91C1C]" : cmp.diffSen < 0 ? "text-[#15803D]" : "text-[#6B7280]"}>
+                  {cmp.diffSen === 0 ? "Same as standard" : `${cmp.diffSen > 0 ? "+" : "−"}${rm(Math.abs(cmp.diffSen))} (${pct(cmp.diffPct == null ? null : Math.abs(cmp.diffPct))}) vs standard`}
+                </div>
+              </>
+            ) : (
+              <div className="text-[#6B7280]">No standard cost yet — set today's cost as the standard to track price changes against it.</div>
+            )}
+            <button type="button" disabled={savingStd} onClick={setStandard} className="ml-auto rounded-md border border-[#D8CBA8] bg-[#F6F1E6] px-3 py-1.5 text-xs font-semibold text-[#6B5A2E] disabled:opacity-50">
+              {savingStd ? "Saving…" : std ? "Update standard to today" : "Set as standard"}
+            </button>
+          </div>
+        );
+      })()}
+
       {c.tiers.length > 0 && (
         <div className="rounded-lg border border-[#E2DDD8] bg-white p-3">
           <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -234,7 +297,7 @@ export default function ProductCostingPage() {
           </div>
           <div className="space-y-2 overflow-x-auto">
             {c.nodes.length === 0 && <div className="text-sm text-[#6B7280]">No WIPs in this BOM.</div>}
-            {c.nodes.map((n) => <NodeCard key={n.id} node={n} category={c.product.category} />)}
+            {c.nodes.map((n) => <NodeCard key={n.id} node={n} category={c.product.category} stdPrices={c.standard?.linePrices} />)}
           </div>
         </div>
 

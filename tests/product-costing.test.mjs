@@ -15,6 +15,8 @@ import {
   marginOn,
   priceForMargin,
   priceInEffect,
+  standardSnapshot,
+  compareToStandard,
 } from "../src/lib/product-costing.ts";
 
 const rms = [
@@ -186,4 +188,32 @@ test("price in effect TODAY: a saved future price has not started yet (owner: ef
   assert.equal(priceInEffect({ unitPrice: 700 }, [], today).priceSen, 700);
   // First-ever price is in the future: no price yet.
   assert.equal(priceInEffect({ unitPrice: 900, effectiveFrom: "2027-01-01" }, [{ oldPrice: 0, newPrice: 900, effectiveFrom: "2027-01-01" }], today), null);
+});
+
+test("standard cost: snapshot keeps line prices + tier totals; today compares at the same tier (D3)", () => {
+  const input = {
+    rawMaterials: rms,
+    bindings,
+    bom: { wipComponents: [{ quantity: 2, materials: [{ autoDetect: "FABRIC", qty: 3, unit: "M" }, { code: "PLY18", qty: 0.5, unit: "PCS" }] }] },
+  };
+  const then = computeCosting(input, { tier: "Lv2" });
+  const snap = standardSnapshot(then);
+  assert.deepEqual(snap.linePrices, { PLY18: 6800 });
+  assert.deepEqual(snap.tierMaterialSen, { Lv1: 14000, Lv2: 16400, Lv3: 19400, Lv4: 21800 });
+  const std = { labourSen: then.labourSen, materialSen: then.materialSen, tierMaterialSen: snap.tierMaterialSen };
+  // Plywood goes up 6800 → 7800; viewed at Lv3, the standard is Lv3's too.
+  const now = computeCosting({ ...input, bindings: bindings.map((b) => (b.materialCode === "PLY18" && b.isMainSupplier ? { ...b, unitPrice: 7800 } : b)) }, { tier: "Lv3" });
+  const cmp = compareToStandard(now, std);
+  assert.equal(cmp.stdMaterialSen, 19400);
+  assert.equal(cmp.diffSen, 1000);
+  assert.ok(Math.abs(cmp.diffPct - (1000 / 19400) * 100) < 1e-9);
+});
+
+test("standard cost route: append-only table via memoized self-apply, set by the signed-in user", () => {
+  const r = readFileSync(resolve(process.cwd(), "src/api/routes/product-costing.ts"), "utf8");
+  assert.match(r, /CREATE TABLE IF NOT EXISTS product_standard_costs/);
+  assert.match(r, /memoizeSelfApply\(/);
+  assert.match(r, /app\.post\("\/:productId\/standard"/);
+  assert.match(r, /const setBy = await actorName\(c\)/);
+  assert.doesNotMatch(r, /UPDATE product_standard_costs|DELETE FROM product_standard_costs/);
 });

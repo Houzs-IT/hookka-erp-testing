@@ -110,7 +110,7 @@ Money is integer sen; many product columns are legacy camelCase.
 | `resolvePrices` | `src/api/routes/customer-products.ts:95` | Inherit-or-override price resolution |
 | `app.put("/templates")` | `src/api/routes/bom.ts:460` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
 | `app.put("/templates/:id")` | `src/api/routes/bom.ts:578` | Single-template upsert |
-| `app.get("/:productId")` (costing) | `src/api/routes/product-costing.ts:111` | Costing of the ACTIVE BOM: labour, materials at the supplier price in effect today, fabric tiers; engine `computeCosting` `src/lib/product-costing.ts:265` |
+| `app.get("/:productId")` (costing) | `src/api/routes/product-costing.ts:264` | Costing of the ACTIVE BOM: labour, materials at the supplier price in effect today, fabric tiers; engine `computeCosting` `src/lib/product-costing.ts:265` |
 | `app.put("/:id")` (master) | `src/api/routes/bom-master-templates.ts:127` | Master preset upsert; bulk replace is `app.put("/")` `:217` (clears sibling isDefault) |
 | `resolveMaintenanceConfigAsOf` | `src/api/routes/maintenance-config.ts:66` | Newest-as-of-today config resolver |
 | `app.post("/changes")` | `src/api/routes/maintenance-config.ts:174` | Append effective-dated config row |
