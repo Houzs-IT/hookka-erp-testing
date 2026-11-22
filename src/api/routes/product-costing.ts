@@ -114,33 +114,9 @@ type TemplateRow = {
 
 type Product = { id: string; code: string; name: string; category: string };
 
-async function loadCosting(db: D1Database, productId: string, tier: string | undefined) {
-  const product = await db
-    .prepare("SELECT id, code, name, category FROM products WHERE id = ? OR code = ? LIMIT 1")
-    .bind(productId, productId)
-    .first<Product>();
-  if (!product) return null;
-
-  // The ACTIVE BOM (one per product since D14); a product with only a draft
-  // still gets a costing, flagged so the page can say so.
-  const tpl = await db
-    .prepare(
-      `SELECT * FROM bom_templates WHERE productCode = ?
-         ORDER BY CASE WHEN versionStatus = 'ACTIVE' THEN 0 WHEN versionStatus = 'DRAFT' THEN 1 ELSE 2 END,
-                  effectiveFrom DESC
-         LIMIT 1`,
-    )
-    .bind(product.code)
-    .first<TemplateRow>();
-
-  const bom: BomIn = tpl
-    ? {
-        l1Processes: parse(tpl.l1Processes, []),
-        l1Materials: parse(tpl.l1_materials ?? tpl.l1Materials ?? null, []),
-        wipComponents: parse(tpl.wipComponents, []),
-      }
-    : {};
-
+// Everything the engine needs besides the BOM — loaded once per request so
+// the list summary costs every product from one read of each table.
+async function loadPricingInputs(db: D1Database) {
   const [rmRes, bindRes, histRes, fabricTiers, sheetDefaults] = await Promise.all([
     db.prepare("SELECT * FROM raw_materials").all<Record<string, unknown>>(),
     db
@@ -187,6 +163,36 @@ async function loadCosting(db: D1Database, productId: string, tier: string | und
     if (now) bindings.push({ ...b, unitPrice: now.priceSen, effectiveFrom: now.effectiveFrom || b.effectiveFrom });
   }
 
+  return { rawMaterials, bindings, fabricTiers, sheetDefaults };
+}
+
+const bomOf = (tpl: TemplateRow): BomIn => ({
+  l1Processes: parse(tpl.l1Processes, []),
+  l1Materials: parse(tpl.l1_materials ?? tpl.l1Materials ?? null, []),
+  wipComponents: parse(tpl.wipComponents, []),
+});
+
+async function loadCosting(db: D1Database, productId: string, tier: string | undefined) {
+  const product = await db
+    .prepare("SELECT id, code, name, category FROM products WHERE id = ? OR code = ? LIMIT 1")
+    .bind(productId, productId)
+    .first<Product>();
+  if (!product) return null;
+
+  // The ACTIVE BOM (one per product since D14); a product with only a draft
+  // still gets a costing, flagged so the page can say so.
+  const tpl = await db
+    .prepare(
+      `SELECT * FROM bom_templates WHERE productCode = ?
+         ORDER BY CASE WHEN versionStatus = 'ACTIVE' THEN 0 WHEN versionStatus = 'DRAFT' THEN 1 ELSE 2 END,
+                  effectiveFrom DESC
+         LIMIT 1`,
+    )
+    .bind(product.code)
+    .first<TemplateRow>();
+
+  const bom: BomIn = tpl ? bomOf(tpl) : {};
+  const { rawMaterials, bindings, fabricTiers, sheetDefaults } = await loadPricingInputs(db);
   const costing = computeCosting(
     { bom, rawMaterials, bindings, fabricTiers, sheetDefaults },
     { tier },
@@ -260,6 +266,46 @@ async function latestStandard(db: D1Database, productId: string) {
     ...snap,
   };
 }
+
+// GET /summary — one line per product with a BOM, for the Products list
+// columns (D4): materials at the first fabric tier, line counts for the
+// "No materials" / "no price" flags. Declared before /:productId.
+app.get("/summary", async (c) => {
+  const denied = await requirePermission(c, "products", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  const [tplRes, inputs] = await Promise.all([
+    db.prepare("SELECT * FROM bom_templates").all<TemplateRow>(),
+    loadPricingInputs(db),
+  ]);
+  // Same pick as the costing page: ACTIVE, else DRAFT, newest first.
+  const rank = (s: string | null) => (s === "ACTIVE" ? 0 : s === "DRAFT" ? 1 : 2);
+  const best = new Map<string, TemplateRow>();
+  for (const t of tplRes.results ?? []) {
+    const cur = best.get(t.productCode);
+    if (
+      !cur ||
+      rank(t.versionStatus) < rank(cur.versionStatus) ||
+      (rank(t.versionStatus) === rank(cur.versionStatus) && String(t.effectiveFrom ?? "") > String(cur.effectiveFrom ?? ""))
+    ) {
+      best.set(t.productCode, t);
+    }
+  }
+  const data: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; missingLines: number; fabricLines: number; tier: string | null }> = {};
+  for (const [code, tpl] of best) {
+    const r = computeCosting({ bom: bomOf(tpl), ...inputs });
+    data[code] = {
+      labourSen: r.labourSen,
+      materialSen: r.materialSen,
+      totalSen: r.totalSen,
+      materialLines: r.materialLines,
+      missingLines: r.missingLines,
+      fabricLines: r.fabricFromOrderLines,
+      tier: r.tier,
+    };
+  }
+  return c.json({ success: true, data });
+});
 
 app.get("/:productId", async (c) => {
   const denied = await requirePermission(c, "products", "read");

@@ -30,7 +30,7 @@ Status: pre-work (D14) shipped #1542. Phase 1 = engine + read API (`GET /api/pro
 
 1. **Foundations** — persist BOM L1 materials (today dropped by `PUT /api/bom/templates/:id`, no column); fabric price tiers setting; `GET /api/products/:id/costing` (WIP minutes + labour, materials priced per D2, tiers per D9, prices + customer prices, standard cost); standard-cost table + "update standard".
 2. **Costing page (view)** — `/products/:id/costing`: KPI tiles, cost by WIP (indented), price check + calculator, cost by department, tier selector; Costing button in the Products row.
-3. **List columns** — batch costing summary endpoint + 4 columns + "No materials yet" filter.
+3. **List columns** — batch costing summary endpoint + 4 columns + "No materials yet" filter. Built 11-22: `GET /api/product-costing/summary` (one engine run per product, inputs read once); Products list Raw mat. / Total cost columns; Margin (P2/P1) and Cost % now on TOTAL cost (labour + materials) — the labour-only margin is gone from the list (the dropdown's Price vs Labor box still shows it); "No materials" when the BOM has no material lines; chips All / No materials yet / Has a material with no price. Fact 11-22: only 2 of 444 ACTIVE BOMs carry non-fabric materials, so most rows show fabric-only or "No materials" until BOMs are filled (phase 4).
 4. **Edit + copy** — editing on the costing page through the BOM Builder data path; selective copy (processes / time / materials) with deep-copied ids.
 5. **PDFs** — the three reports (print layout, hierarchy, pagination).
 6. **R&D Spec Form** — PDF + key-in screen + record of who/when.
