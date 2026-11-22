@@ -19,6 +19,8 @@ import { compareToStandard, marginOn, priceForMargin, type CostMaterial, type Co
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { ProductTabs } from "./product-tabs";
+import { wipLabel } from "@/lib/wip-label";
+import { CostingEditor, type EditableTemplate } from "./costing-editor";
 
 type CostingData = {
   product: { id: string; code: string; name: string; category: string };
@@ -35,6 +37,7 @@ type CostingData = {
   materialLines: number;
   missingLines: number;
   fabricFromOrderLines: number;
+  template: EditableTemplate | null;
   standard: {
     labourSen: number;
     materialSen: number;
@@ -47,7 +50,19 @@ type CostingData = {
   } | null;
 };
 
-type ProductLite = { id: string; code: string; name: string; category: string; basePriceSen?: number | null; price1Sen?: number | null };
+type ProductLite = {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  baseModel?: string;
+  sizeCode?: string;
+  sizeLabel?: string;
+  basePriceSen?: number | null;
+  price1Sen?: number | null;
+  defaultVariants?: { fabricCode?: string; divanHeight?: string; legHeight?: string; seatHeight?: string } | null;
+};
+
 type Assignment = { id: string; customerName: string; basePriceSen?: number | null };
 
 const LEVEL_TINT = ["#F3F4F6", "#E3EEF4", "#F1E6F2", "#FBE8D8", "#E9F1E2", "#FDF6D8"];
@@ -68,7 +83,7 @@ function MaterialStatusNote({ m }: { m: CostMaterial }) {
   return <span className="text-[11px] font-semibold text-[#B91C1C]">{text}</span>;
 }
 
-function NodeCard({ node, category, stdPrices }: { node: CostNode; category: string; stdPrices?: Record<string, number> }) {
+function NodeCard({ node, category, stdPrices, product }: { node: CostNode; category: string; stdPrices?: Record<string, number>; product?: ProductLite }) {
   const indent = Math.max(0, node.level - 2) * 24;
   const perFg = category === "SOFA" ? "set" : category === "BEDFRAME" ? "bedframe" : "unit";
   return (
@@ -79,7 +94,7 @@ function NodeCard({ node, category, stdPrices }: { node: CostNode; category: str
       <div className="rounded-lg border border-[#E2DDD8] bg-white overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-2" style={{ background: LEVEL_TINT[Math.min(node.level - 1, LEVEL_TINT.length - 1)] }}>
           <span className="text-[10px] font-bold rounded px-1.5 py-0.5 bg-black/10">{node.level === 1 ? "Product" : `L${node.level}`}</span>
-          <span className="font-semibold text-sm text-[#111827] truncate">{node.label || "—"}</span>
+          <span className="font-semibold text-sm text-[#111827] truncate">{wipLabel(node.label, product) || "—"}</span>
           <span className="ml-auto text-xs text-[#6B7280] whitespace-nowrap">{node.wipType ? `${node.wipType} · ` : ""}× {node.pcs} PCS</span>
         </div>
         {node.processes.length > 0 && (
@@ -175,11 +190,13 @@ export default function ProductCostingPage() {
   const [tier, setTier] = useState<string | null>(null);
   const url = `/api/product-costing/${encodeURIComponent(id)}${tier ? `?tier=${encodeURIComponent(tier)}` : ""}`;
   const { data: resp, loading, error, failure, refresh } = useCachedJson<{ success?: boolean; data?: CostingData; error?: string }>(url, 60);
-  const { data: productResp } = useCachedJson<{ data?: ProductLite }>(`/api/products/${encodeURIComponent(id)}`);
   const c = resp?.data;
+  // By the product's id from the costing reply: the route param may be a code.
+  const { data: productResp } = useCachedJson<{ data?: ProductLite }>(c ? `/api/products/${encodeURIComponent(c.product.id)}` : null);
   const { data: custResp } = useCachedJson<{ data?: Assignment[] }>(c ? `/api/customer-products/by-product/${c.product.id}` : null);
   const [sellAt, setSellAt] = useState("");
   const [savingStd, setSavingStd] = useState(false);
+  const [editing, setEditing] = useState(false);
   const { confirm } = useConfirm();
   const { toast } = useToast();
   const [wantPct, setWantPct] = useState("");
@@ -294,11 +311,28 @@ export default function ProductCostingPage() {
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-sm font-semibold text-[#111827]">Cost by WIP</h2>
             <span className="text-[11px] text-[#6B7280]">Minutes from the BOM · unit prices from the supplier price list (main supplier, price in effect today)</span>
+            {c.template && !editing && (
+              <button type="button" onClick={() => setEditing(true)} className="ml-auto rounded-md bg-[#6B5A2E] px-3 py-1.5 text-xs font-semibold text-white">
+                Edit costing
+              </button>
+            )}
           </div>
-          <div className="space-y-2 overflow-x-auto">
-            {c.nodes.length === 0 && <div className="text-sm text-[#6B7280]">No WIPs in this BOM.</div>}
-            {c.nodes.map((n) => <NodeCard key={n.id} node={n} category={c.product.category} stdPrices={c.standard?.linePrices} />)}
-          </div>
+          {editing && c.template ? (
+            <CostingEditor
+              template={c.template}
+              category={c.product.category}
+              tier={c.tier}
+              onDone={(saved) => {
+                setEditing(false);
+                if (saved) refresh();
+              }}
+            />
+          ) : (
+            <div className="space-y-2 overflow-x-auto">
+              {c.nodes.length === 0 && <div className="text-sm text-[#6B7280]">No WIPs in this BOM.</div>}
+              {c.nodes.map((n) => <NodeCard key={n.id} node={n} category={c.product.category} stdPrices={c.standard?.linePrices} product={productResp?.data} />)}
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">

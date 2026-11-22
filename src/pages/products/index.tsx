@@ -154,6 +154,23 @@ const ANALYTIC_COLS: AnalyticCol[] = [
     applies: () => true,
     label: () => "Labor (est.)",
   },
+  // Product costing (owner 2026-11-22, plan D4): raw materials priced from
+  // the supplier price list and the total cost; the margin and % columns
+  // below now read the TOTAL cost (labour + materials), not labour alone.
+  {
+    key: "rawMat",
+    width: "minmax(120px,1fr)",
+    defaultOn: true,
+    applies: () => true,
+    label: () => "Raw mat.",
+  },
+  {
+    key: "totalCost",
+    width: "minmax(104px,0.95fr)",
+    defaultOn: true,
+    applies: () => true,
+    label: () => "Total cost",
+  },
   {
     key: "marginP2",
     width: "minmax(170px,1.15fr)",
@@ -168,7 +185,7 @@ const ANALYTIC_COLS: AnalyticCol[] = [
     defaultOn: true,
     applies: () => true,
     label: (c) =>
-      c === "SOFA" ? "Labor % (tier)" : c === "ACCESSORY" ? "Labor % (Base)" : "Labor % (P2)",
+      c === "SOFA" ? "Cost % (tier)" : c === "ACCESSORY" ? "Cost % (Base)" : "Cost % (P2)",
   },
   {
     key: "marginP1",
@@ -182,7 +199,7 @@ const ANALYTIC_COLS: AnalyticCol[] = [
     width: "minmax(112px,0.85fr)",
     defaultOn: false,
     applies: (c) => c === "BEDFRAME",
-    label: () => "Labor % (P1)",
+    label: () => "Cost % (P1)",
   },
 ];
 
@@ -2919,6 +2936,21 @@ export default function ProductsPage() {
     return products;
   }, [products, categoryFilter, searchQuery, incompleteCodes]);
 
+  // Product costing summary (plan D4): per product code, raw materials at
+  // the supplier price in effect today (fabric at tier Lv1) + line counts.
+  const { data: costResp } = useCachedJson<{
+    data?: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; missingLines: number; fabricLines: number }>;
+  }>(viewMode === "skuMaster" ? "/api/product-costing/summary" : null, 120);
+  const costMap = costResp?.data ?? null;
+  const [costFilter, setCostFilter] = useState<"all" | "noMaterials" | "noPrice">("all");
+  const costFiltered = useMemo(() => {
+    if (costFilter === "all" || !costMap) return filteredRaw;
+    return filteredRaw.filter((p) => {
+      const cs = costMap[p.code];
+      return costFilter === "noMaterials" ? !cs || cs.materialLines === 0 : !!cs && cs.missingLines > 0;
+    });
+  }, [filteredRaw, costFilter, costMap]);
+
   // Numeric value for an analytic column (labor / margin / labor%) for a
   // product, so the analytic columns are sortable AND filterable with the
   // SAME maths the body cells render. Mirrors the body-cell logic: the
@@ -2937,6 +2969,12 @@ export default function ProductsPage() {
             : 0;
       const laborSen = laborCostSenForMinutes(totalMin);
       if (key === "labor") return laborSen > 0 ? laborSen : null;
+      // Total cost = the list's labour + the BOM's priced materials. No
+      // material lines at all → no total (the cell says "No materials").
+      const cs = costMap?.[p.code];
+      const totalCost = cs && cs.materialLines > 0 ? laborSen + cs.materialSen : null;
+      if (key === "rawMat") return cs && cs.materialLines > 0 ? cs.materialSen : null;
+      if (key === "totalCost") return totalCost;
       const isSofaCat = p.category === "SOFA";
       const sofaRep = isSofaCat
         ? ((p.seatHeightPrices || [])
@@ -2946,13 +2984,13 @@ export default function ProductsPage() {
       const mainPrice = isSofaCat ? sofaRep : (p.basePriceSen ?? p.costPriceSen ?? 0);
       const priceFor =
         key === "marginP1" || key === "laborPctP1" ? (p.price1Sen ?? 0) : mainPrice;
-      if (priceFor <= 0 || laborSen <= 0) return null;
+      if (priceFor <= 0 || totalCost == null || totalCost <= 0) return null;
       if (key === "laborPctP2" || key === "laborPctP1")
-        return (laborSen / priceFor) * 100;
+        return (totalCost / priceFor) * 100;
       // marginP2 / marginP1
-      return priceFor - laborSen;
+      return priceFor - totalCost;
     },
-    [configMap, sofaTier],
+    [configMap, sofaTier, costMap],
   );
 
   // Per-column sort value for a product. Returns string | number; the
@@ -2976,6 +3014,8 @@ export default function ProductsPage() {
       // -1 convention so sort behaviour stays consistent across the table.
       if (
         key === "labor" ||
+        key === "rawMat" ||
+        key === "totalCost" ||
         key === "marginP2" ||
         key === "marginP1" ||
         key === "laborPctP2" ||
@@ -3090,12 +3130,14 @@ export default function ProductsPage() {
           return n > 0 ? `${n} set` : "Configure";
         }
         case "labor":
+        case "rawMat":
+        case "totalCost":
         case "marginP2":
         case "marginP1":
         case "laborPctP2":
         case "laborPctP1": {
           const v = analyticValueFor(p, key);
-          if (v == null) return "";
+          if (v == null) return key === "rawMat" && costMap ? "No materials" : "";
           if (key === "laborPctP2" || key === "laborPctP1")
             return `${v.toFixed(1)}%`;
           if (key === "labor") return formatCurrency(v);
@@ -3116,7 +3158,7 @@ export default function ProductsPage() {
         }
       }
     },
-    [configMap, sofaTier, analyticValueFor],
+    [configMap, sofaTier, analyticValueFor, costMap],
   );
 
 
@@ -3137,7 +3179,7 @@ export default function ProductsPage() {
   // edits and dirty tints are exactly the ones the hand-made table had.
   const skuRows = useMemo<SkuRow[]>(
     () =>
-      filteredRaw.map((p) => {
+      costFiltered.map((p) => {
         const cfg = configMap.get(p.code);
         const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
         const dirty = dirtyEdits.get(p.id);
@@ -3165,7 +3207,7 @@ export default function ProductsPage() {
         }
         return row;
       }),
-    [filteredRaw, configMap, dirtyEdits, sortValueFor, filterValueFor, analyticValueFor, sofaHeightList],
+    [costFiltered, configMap, dirtyEdits, sortValueFor, filterValueFor, analyticValueFor, sofaHeightList],
   );
 
   // The body cell for column `key` (a BASE_COLS / ANALYTIC_COLS key) of
@@ -3182,7 +3224,6 @@ export default function ProductsPage() {
     const price1Val = p.price1Sen ?? 0;
     const basePrice = p.basePriceSen ?? p.costPriceSen ?? 0;
     const price3Val = productPrice3Sen(p);
-    const laborCostSen = laborCostSenForMinutes(totalMin);
     const sofaRepPriceSen = isSofa
       ? ((p.seatHeightPrices || [])
           .filter((s) => entryTier(s.tier) === sofaTier && s.priceSen > 0)
@@ -3484,49 +3525,48 @@ export default function ProductsPage() {
         );
       }
     }
-    // Analytic cells (Labor / Margin / Labor %), keyed by each analytic
-    // column's key. Same computation as before.
+    // Analytic cells (Labor / Raw mat. / Total cost / Margin / Cost %), keyed
+    // by each analytic column's key. The numbers come from analyticValueFor,
+    // the same function sort / filter / export read, so they cannot disagree.
     for (const c of ANALYTIC_COLS.filter((ac) => ac.applies(cat))) {
       const mainPrice = isSofa ? sofaRepPriceSen : basePrice;
       const priceFor =
         c.key === "marginP1" || c.key === "laborPctP1"
           ? price1Val
           : mainPrice;
-      const isPct =
-        c.key === "laborPctP2" || c.key === "laborPctP1";
+      const v = analyticValueFor(p, c.key);
+      const cs = costMap?.[p.code];
       bodyCellByKey[c.key] = () => (
         <div
           className="text-right text-sm tabular-nums truncate"
           title={filterValueFor(p, c.key) || "—"}
         >
-          {c.key === "labor" ? (
-            laborCostSen > 0 ? (
-              formatCurrency(laborCostSen)
+          {c.key === "rawMat" ? (
+            !costMap ? (
+              <span className="text-[#9CA3AF]">…</span>
+            ) : v == null ? (
+              <span className="text-[11px] text-[#9CA3AF]">No materials</span>
             ) : (
-              <span className="text-[#9CA3AF]">—</span>
+              <span>
+                {formatCurrency(v)}
+                {(cs?.missingLines ?? 0) > 0 && (
+                  <span className="ml-1 text-[10px] font-semibold text-[#B91C1C]">{cs?.missingLines} no price</span>
+                )}
+              </span>
             )
-          ) : priceFor <= 0 || laborCostSen <= 0 ? (
+          ) : v == null ? (
             <span className="text-[#9CA3AF]">—</span>
-          ) : isPct ? (
-            <span className="text-[#111827]">
-              {((laborCostSen / priceFor) * 100).toFixed(1)}%
-            </span>
+          ) : c.key === "labor" || c.key === "totalCost" ? (
+            formatCurrency(v)
+          ) : c.key === "laborPctP2" || c.key === "laborPctP1" ? (
+            <span className="text-[#111827]">{v.toFixed(1)}%</span>
           ) : (
-            (() => {
-              const m = priceFor - laborCostSen;
-              return (
-                <span
-                  className={
-                    m >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"
-                  }
-                >
-                  {formatCurrency(m)}
-                  <span className="ml-1 text-[10px] text-[#9CA3AF]">
-                    ({((m / priceFor) * 100).toFixed(1)}%)
-                  </span>
-                </span>
-              );
-            })()
+            <span className={v >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
+              {formatCurrency(v)}
+              <span className="ml-1 text-[10px] text-[#9CA3AF]">
+                ({priceFor > 0 ? ((v / priceFor) * 100).toFixed(1) : "—"}%)
+              </span>
+            </span>
           )}
         </div>
       );
@@ -4244,6 +4284,26 @@ export default function ProductsPage() {
       {/* SKU Master list — the shared DataGrid (header menu, drag, column
           chooser + saved / team layouts, URL-kept search / filters / sort,
           Retry). Row click opens the detail panel under the row. */}
+      {viewMode === "skuMaster" && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {([
+            ["all", "All"],
+            ["noMaterials", "No materials yet"],
+            ["noPrice", "Has a material with no price"],
+          ] as const).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={costFilter === k}
+              onClick={() => setCostFilter(k)}
+              className={`rounded-full border px-3 py-1 ${costFilter === k ? "border-[#6B5A2E] bg-[#F6F1E6] font-semibold text-[#6B5A2E]" : "border-[#E2DDD8] bg-white text-[#6B7280] hover:bg-[#FAF8F4]"}`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="text-[11px] text-[#9CA3AF]">Raw material price = main supplier, price in effect today · fabric from order at Lv1</span>
+        </div>
+      )}
       {viewMode === "skuMaster" && (
         <DataGrid<SkuRow>
           key={skuGridId}
