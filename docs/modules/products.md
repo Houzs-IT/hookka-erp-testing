@@ -60,6 +60,7 @@ Money is integer sen; many product columns are legacy camelCase.
   - `/products/:id/bom` → `src/pages/products/bom.tsx:456` (`BOMPage` — Master BOM Templates editor; also reached via `?sku=` from sales/consignment)
   - `/products/:id/documents` → `src/pages/products/documents.tsx:93` (`ProductDocumentsPage` — production docs per variant)
   - `/products/:id/costing` → `src/pages/products/costing.tsx:155` (`ProductCostingPage` — cost of the ACTIVE BOM, price check + calculator; data from `/api/product-costing/:id`)
+  - Costing PDFs (Full / Production Spec / Labour) → `src/lib/generate-costing-pdf.ts`, from the costing page's Export PDF menu.
   - Products list cost columns (Raw mat. / Total cost / Margin / Cost %) read `GET /api/product-costing/summary` (`costMap` in `index.tsx`).
   - `/products/:id/customers` → `src/pages/products/customers.tsx:10` (Customer Assignments, shared component `customer-assignments.tsx`)
   - The four product pages share the tab strip `product-tabs.tsx` (D13). In the list, CLICK a row = the dropdown (unchanged); DOUBLE-CLICK = `/products/:id/costing`; the dropdown also has a Costing button beside View BOM.
