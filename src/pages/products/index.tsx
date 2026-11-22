@@ -3750,6 +3750,7 @@ export default function ProductsPage() {
         <CustomerAssignmentsSection
           productId={p.id}
           active={isExpanded}
+          category={p.category}
           costSen={(() => {
             const cs = costMap?.[p.code];
             return cs && cs.materialLines > 0 ? laborCostSen + cs.materialSen : null;

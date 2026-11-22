@@ -53,3 +53,13 @@ test("list dropdown: cost tiles on TOTAL cost, Export PDF from the list, CNC fol
   assert.match(p, /<summary[^>]*>CNC cutting template<\/summary>/);
   assert.match(read("src/pages/products/costing.tsx"), /<CostingExportMenu productId=\{c\.product\.id\} tier=\{c\.tier\} \/>/);
 });
+
+test("customer prices say Price 2 (not 'base price') and a bedframe shows its worked-out Price 3", () => {
+  const ca = readFileSync(new URL("../src/pages/products/customer-assignments.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(ca, />Base Price</);
+  assert.match(ca, />Price 2</);
+  assert.match(ca, /New Price 2 \(RM\)/);
+  assert.match(ca, /const isBed = category === "BEDFRAME";/);
+  assert.match(ca, /bedframePrice3Sen\(newBase\)/);
+  assert.match(readFileSync(new URL("../src/pages/products/customers.tsx", import.meta.url), "utf8"), /category=\{p\.category\}/);
+});

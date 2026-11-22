@@ -26,7 +26,7 @@ export default function ProductCustomersPage() {
     <div className="space-y-4 w-full">
       <ProductTabs productId={p.id} code={p.code} name={p.name} category={p.category} active="customers" />
       <div className="rounded-lg border border-[#E2DDD8] bg-white p-4">
-        <CustomerAssignmentsSection productId={p.id} active costSen={data?.data?.totalSen ?? null} />
+        <CustomerAssignmentsSection productId={p.id} active category={p.category} costSen={data?.data?.totalSen ?? null} />
       </div>
     </div>
   );
