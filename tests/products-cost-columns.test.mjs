@@ -36,3 +36,14 @@ test("filters: All / No materials yet / Has a material with no price", () => {
   for (const s of ['"No materials yet"', '"Has a material with no price"']) assert.ok(page.includes(s), s);
   assert.match(page, /costFiltered\.map\(\(p\) => \{/);
 });
+
+test("'No materials yet' ignores the fabric-from-order line every bedframe / sofa has (owner 2026-11-22)", () => {
+  assert.match(route, /otherLines: r\.materialLines - r\.fabricFromOrderLines/);
+  assert.match(page, /costFilter === "noMaterials" \? !cs \|\| \(cs\.otherLines \?\? cs\.materialLines\) === 0/);
+  assert.match(page, />fabric only<\/span>/);
+});
+
+test("product pages use the full width", () => {
+  const costing = readFileSync(resolve(process.cwd(), "src/pages/products/costing.tsx"), "utf8");
+  assert.doesNotMatch(costing, /max-w-\[1400px\]/);
+});

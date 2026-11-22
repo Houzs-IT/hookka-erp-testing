@@ -254,7 +254,7 @@ export default function ProductCostingPage() {
   const statusLabel = c.bom ? `${c.bom.version ? `BOM ${c.bom.version}` : "BOM"} · ${c.bom.status === "ACTIVE" ? "Active" : c.bom.status ?? ""}` : "No BOM";
 
   return (
-    <div className="space-y-4 max-w-[1400px]">
+    <div className="space-y-4 w-full">
       <ProductTabs productId={c.product.id} code={c.product.code} name={c.product.name} category={c.product.category} active="costing" extra={statusLabel} />
 
       {c.bom && !editing && (
