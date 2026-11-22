@@ -41,7 +41,8 @@ test("customer price change = the customer page's price history (one source), wi
   assert.match(ca, /effectiveFrom: form\.from/);
   assert.match(ca, /invalidateCachePrefix\("\/api\/customer-products"\)/);
   assert.match(read("src/api/routes/customer-products.ts"), /\(await actorName\(c, body\.createdBy\)\)/);
-  assert.match(read("src/pages/products/customers.tsx"), /costSen=\{costResp\?\.data\?\.totalSen \?\? null\}/);
+  assert.match(read("src/pages/products/customers.tsx"), /costSen=\{data\?\.data\?\.totalSen \?\? null\}/);
+  assert.match(read("src/pages/products/customers.tsx"), /`\/api\/product-costing\/\$\{encodeURIComponent\(id\)\}`/);
 });
 
 test("list dropdown: cost tiles on TOTAL cost, Export PDF from the list, CNC folded", () => {
