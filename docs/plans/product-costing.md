@@ -26,7 +26,7 @@ Owner 2026-11-21/22: "每一次做新的 products，我要自己去算人工多�
 
 ## Phases (each = one PR, verified live, merged)
 
-Status: pre-work (D14) shipped #1542. Phase 1 = engine + read API (`GET /api/product-costing/:productId`, `GET|PUT /api/product-costing/fabric-tiers`); the standard-cost table moves to phase 2 with its "Set as standard" button.
+Status: pre-work (D14) shipped #1542. Phase 1 = engine + read API (`GET /api/product-costing/:productId`, `GET|PUT /api/product-costing/fabric-tiers`); the standard-cost table moves to phase 2b with its "Set as standard" button. Phase 2 = costing page (view) + product page tabs (BOM / Costing / Customers / Documents) + double-click + Costing button. Phase 2 also ships the standard cost (D3): `product_standard_costs` (append-only, runtime self-apply), `POST /api/product-costing/:id/standard`, "Set as standard / Update standard to today" on the page, today vs standard at the same fabric tier, per-line "standard RM x" when a price moved. Manage Variants on the product page is a button that opens the existing variant editor on the Products list (`/products?variants=<id>`); moving the editor itself into the product page is a later clean-up (it lives in the 4.5k-line products/index.tsx).
 
 1. **Foundations** — persist BOM L1 materials (today dropped by `PUT /api/bom/templates/:id`, no column); fabric price tiers setting; `GET /api/products/:id/costing` (WIP minutes + labour, materials priced per D2, tiers per D9, prices + customer prices, standard cost); standard-cost table + "update standard".
 2. **Costing page (view)** — `/products/:id/costing`: KPI tiles, cost by WIP (indented), price check + calculator, cost by department, tier selector; Costing button in the Products row.

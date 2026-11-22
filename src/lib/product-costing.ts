@@ -400,7 +400,9 @@ export function computeCosting(input: CostingInputs, opts: { tier?: string } = {
   walk(bom.wipComponents, 2);
 
   const minutes = nodes.reduce((s, n) => s + n.processes.reduce((a, p) => a + p.minutes, 0), 0);
-  const labourSen = nodes.reduce((s, n) => s + n.labourSen, 0);
+  // Rounded ONCE on the total minutes, like the Products list's Labor column
+  // (per-process amounts are rounded for display and can differ by a sen).
+  const labourSen = Math.round(minutes * LABOUR_RATE_PER_MIN_SEN);
   const materialSen = nodes.reduce((s, n) => s + n.materialSen, 0);
   return {
     labourRatePerMinSen: LABOUR_RATE_PER_MIN_SEN,
@@ -431,4 +433,38 @@ export function marginOn(priceSen: number, costSen: number): { marginSen: number
 export function priceForMargin(costSen: number, marginPct: number): number | null {
   if (!Number.isFinite(marginPct) || marginPct >= 100) return null;
   return Math.round(costSen / (1 - marginPct / 100));
+}
+
+// ---- standard cost (D3) ---------------------------------------------------
+
+/** What is kept with a standard so later prices can be compared line by line. */
+export type StandardSnapshot = {
+  /** material code → unit price (sen) at the time the standard was set. */
+  linePrices: Record<string, number>;
+  /** fabric tier → material total (sen), so a tier switch compares like with like. */
+  tierMaterialSen: Record<string, number>;
+};
+
+export function standardSnapshot(r: CostingResult): StandardSnapshot {
+  const linePrices: Record<string, number> = {};
+  for (const n of r.nodes) {
+    for (const m of n.materials) {
+      if (m.status === "priced" && m.priceSen != null && m.code) linePrices[m.code.toUpperCase()] = m.priceSen;
+    }
+  }
+  const tierMaterialSen: Record<string, number> = {};
+  for (const t of r.tiers) tierMaterialSen[t.level] = t.materialSen;
+  return { linePrices, tierMaterialSen };
+}
+
+/** Today's cost against the standard, at the same fabric tier when there is one. */
+export function compareToStandard(
+  today: Pick<CostingResult, "labourSen" | "materialSen" | "totalSen" | "tier">,
+  std: { labourSen: number; materialSen: number; tierMaterialSen?: Record<string, number> },
+): { stdMaterialSen: number; stdTotalSen: number; diffSen: number; diffPct: number | null } {
+  const stdMaterialSen =
+    today.tier && std.tierMaterialSen && std.tierMaterialSen[today.tier] != null ? std.tierMaterialSen[today.tier] : std.materialSen;
+  const stdTotalSen = std.labourSen + stdMaterialSen;
+  const diffSen = today.totalSen - stdTotalSen;
+  return { stdMaterialSen, stdTotalSen, diffSen, diffPct: stdTotalSen > 0 ? (diffSen / stdTotalSen) * 100 : null };
 }

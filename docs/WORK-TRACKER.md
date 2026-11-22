@@ -327,6 +327,7 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
 ## 🔵 Products costing — BUILD (owner "ok 去吧", 2026-11-22)
+Progress 11-22: (1) #1542 shipped + live — BOM saves now write audit_events with the user's name (seen live: 2 events "Lim Wei Siang"), one-ACTIVE rule live (prod had 0 multi-ACTIVE); supplier-price write path UNTESTED live (no price edited). (2) L1 materials round-trip tested live on draft BOM dcdf3aa1 (1051-(Q)): saved, re-read present, reverted to [] — 0 BOMs carry L1 after. (3) #1543 engine + read API merged; phase 2 page + standard cost in the next PR. Owner 11-22: prices must be effective-dated like customer prices → D15 (costing uses the price in effect today).
 Order agreed: (1) price/BOM audit + one ACTIVE BOM per product (plan D14) → (2) L1-materials save/reload test on one non-production BOM, then revert (owner: Claude tests) → (3) costing phases 1–7 per docs/plans/product-costing.md; the 24 non-ROLL RM 0 PO lines are investigated inside phase 1 (no-price = red, never 0). D13: double-click a product row opens the product page (Overview / BOM / Costing / Customers, Manage Variants + Assign customer inside); the expand dropdown stays exactly as today.
 
 ## 🟡 Products costing page (design, awaiting owner, 2026-11-21/22)

@@ -119,6 +119,7 @@ const CONSUMERS = [
   ["src/pages/rd/detail.tsx", "isUnknownOutcome", '"Project not found."'],
   ["src/pages/products/bom.tsx", "isUnknownOutcome", '"Product not found" (cachedFetchJson path)'],
   ["src/pages/products/documents.tsx", "isUnknownOutcome", '"Product not found." (cachedFetchJson path)'],
+  ["src/pages/products/customers.tsx", "isUnknownOutcome", '"Product not found" (Customers tab, 2026-11-22)'],
   ["src/pages/track/index.tsx", "fetchFailure", 'public QR page headlined "Unit not found"'],
   // --- hung on Loading, never said anything -------------------------------
   ["src/pages/service-cases/detail.tsx", "isUnknownOutcome", "eternal Loading…"],

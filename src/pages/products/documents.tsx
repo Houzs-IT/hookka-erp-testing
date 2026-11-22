@@ -21,6 +21,7 @@
 // Export pack bundles everything into one PDF for onboarding.
 // ---------------------------------------------------------------------------
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ProductTabStrip } from "./product-tabs";
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
@@ -206,10 +207,8 @@ export default function ProductDocumentsPage() {
             <span className="text-[#9CA3AF]"> · Production Docs · {totalDocs} file{totalDocs === 1 ? "" : "s"}</span>
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to={`/products/${product.id}/bom`}>
-            <Button type="button" variant="outline" size="sm"><FileText className="h-3.5 w-3.5" /> BOM</Button>
-          </Link>
+        <div className="flex items-center gap-2 flex-wrap">
+          <ProductTabStrip productId={product.id} active="documents" />
           <Button
             type="button"
             size="sm"
