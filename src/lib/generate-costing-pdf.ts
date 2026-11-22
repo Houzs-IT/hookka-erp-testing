@@ -14,7 +14,7 @@
 // the column header repeats on every page.
 // ---------------------------------------------------------------------------
 import { jsPDF } from "jspdf";
-import autoTable, { type RowInput } from "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 import { drawDocFooter, drawLetterhead, drawSectionLabel, fmtDate, PDF, tableTheme } from "./pdf-utils";
 import { deliverJsPdf, pdfFileName, type PdfOutputMode } from "./pdf-preview";
 import { docPageLabel } from "./pdf-page-label";
@@ -57,55 +57,63 @@ function materialNote(m: CostMaterial): string {
   return m.supplierName ? `${m.supplierName}${m.isMainSupplier ? " (main)" : ""}` : "";
 }
 
-/** The table body: per WIP a tinted, indented header row, then its lines. */
-export function costingRows(input: CostingPdfInput, kind: CostingReportKind): RowInput[] {
-  const rows: RowInput[] = [];
-  const cols = kind === "spec" ? 4 : 5;
-  for (const n of input.costing.nodes) {
-    const indent = Math.max(0, n.level - 1) * 4;
-    const label = n.level === 1 ? "Product level" : `L${n.level}  ${wipLabel(n.label, input.product) || "—"}`;
+export type CostingBlock = {
+  level: number;
+  title: string;
+  meta: string;
+  money: string;
+  head: string[] | null;
+  procRows: string[][];
+  matHead: string[] | null;
+  matRows: { cells: string[]; red: boolean }[];
+  foot: string;
+};
+
+/** One box per WIP (PDF v3, owner-approved design ⑤): processes and raw
+ *  materials are two SEPARATE tables with their own headings, so a material
+ *  never sits in a "minutes" column. Spec = no money; labour = processes. */
+export function costingBlocks(input: CostingPdfInput, kind: CostingReportKind): CostingBlock[] {
+  return input.costing.nodes.map((n) => {
+    const title = n.level === 1 ? "Product level" : wipLabel(n.label, input.product) || "—";
     const meta = n.level === 1 ? "" : `${n.wipType ? `${n.wipType} · ` : ""}× ${n.pcs} PCS`;
-    const money = kind === "spec" ? "" : kind === "labour" ? `Labour ${rm(n.labourSen)}` : `WIP cost ${rm(n.labourSen + n.materialSen)}`;
-    rows.push([
-      {
-        content: `${label}${meta ? `    ${meta}` : ""}${money ? `    ·    ${money}` : ""}`,
-        colSpan: cols,
-        styles: { fontStyle: "bold", fillColor: LEVEL_FILL[Math.min(n.level - 1, LEVEL_FILL.length - 1)], cellPadding: { top: 2, bottom: 2, left: 2 + indent, right: 2 } },
-      },
-    ]);
-    const pad = { top: 1.6, bottom: 1.6, left: 4 + indent, right: 2 };
-    for (const p of n.processes) {
+    const money = kind === "spec" ? "" : kind === "labour" ? rm(n.labourSen) : rm(n.labourSen + n.materialSen);
+    const procRows = n.processes.map((p) => {
       const name = `${p.dept}${p.category ? `  ${p.category}` : ""}`;
-      if (kind === "spec") rows.push([{ content: name, styles: { cellPadding: pad } }, `${qty(p.minutesPerPc)} min / pc`, `× ${p.pcs}`, `${qty(p.minutes)} min`]);
-      else rows.push([{ content: name, styles: { cellPadding: pad } }, `${qty(p.minutesPerPc)} min / pc`, `× ${p.pcs}`, `${qty(p.minutes)} min`, rm(p.labourSen)]);
-    }
-    if (kind === "labour") continue;
-    for (const m of n.materials) {
-      const name = `${m.code || m.name}${m.code && m.name && m.name !== m.code ? ` — ${m.name}` : ""}`;
-      const unit = m.unit || "";
-      const perPc = `${qty(m.qtyPerPc)} ${unit} / pc`.replace(/\s+\//, " /");
-      const q = `${qty(m.qty)} ${unit}`.trim() + (m.wastePct > 0 ? ` (incl. ${m.wastePct}% waste)` : "");
+      return kind === "spec"
+        ? [name, qty(p.minutesPerPc), String(p.pcs), qty(p.minutes)]
+        : [name, qty(p.minutesPerPc), String(p.pcs), qty(p.minutes), rm(p.labourSen)];
+    });
+    const head = n.processes.length
+      ? kind === "spec"
+        ? ["Process", "Min / pc", "× PCS", "Minutes"]
+        : ["Process", "Min / pc", "× PCS", "Minutes", "Labour"]
+      : null;
+    const mats = kind === "labour" ? [] : n.materials;
+    const matRows = mats.map((m) => {
       const fromOrder = m.status === "fabric-tier" || m.status === "from-order";
-      if (kind === "spec") {
-        rows.push([
-          { content: fromOrder && !/from order/i.test(name) ? `${name} (from order)` : name, styles: { cellPadding: pad, fontStyle: "bold" } },
-          perPc,
-          `× ${n.pcs}`,
-          q,
-        ]);
-      } else {
-        const note = materialNote(m);
-        rows.push([
-          { content: `${name}${note ? `\n${note}` : ""}`, styles: { cellPadding: pad, textColor: m.amountSen == null && m.status !== "fabric-tier" ? [185, 28, 28] : PDF.ink } },
-          perPc,
-          q,
-          m.priceSen == null ? "No price" : `${rm(m.priceSen)} / ${m.priceUnit || m.unit || "unit"}`,
-          m.amountSen == null ? "—" : rm(m.amountSen),
-        ]);
-      }
-    }
-  }
-  return rows;
+      const label = `${m.code || m.name}${m.code && m.name && m.name !== m.code ? ` — ${m.name}` : ""}`;
+      const name = fromOrder && !/from order/i.test(label) ? `${label} (from order)` : label;
+      const note = kind === "spec" ? "" : materialNote(m);
+      const per = `${qty(m.qty)}${m.wastePct > 0 ? ` (${m.wastePct}% waste)` : ""}`;
+      const cells =
+        kind === "spec"
+          ? [name, qty(m.qtyPerPc), m.unit || "", per]
+          : [`${name}${note ? `  · ${note}` : ""}`, qty(m.qtyPerPc), m.unit || "", per, m.priceSen == null ? "No price" : rm(m.priceSen), m.amountSen == null ? "—" : rm(m.amountSen)];
+      return { cells, red: kind !== "spec" && m.amountSen == null && m.status !== "fabric-tier" };
+    });
+    const matHead = mats.length
+      ? kind === "spec"
+        ? ["Raw material", "Qty / pc", "UOM", "Per product"]
+        : ["Raw material", "Qty / pc", "UOM", "Per product", "Unit price", "Amount"]
+      : null;
+    const foot =
+      kind === "full"
+        ? `Labour ${rm(n.labourSen)}    Materials ${rm(n.materialSen)}    WIP cost ${rm(n.labourSen + n.materialSen)}`
+        : kind === "labour"
+          ? `Labour ${rm(n.labourSen)}`
+          : "";
+    return { level: n.level, title, meta, money, head, procRows, matHead, matRows, foot };
+  });
 }
 
 export function buildCostingPdf(input: CostingPdfInput, kind: CostingReportKind): jsPDF {
@@ -132,59 +140,162 @@ export function buildCostingPdf(input: CostingPdfInput, kind: CostingReportKind)
   doc.text(`${input.product.code} · ${input.product.category} · ${bomTxt} · ${qty(c.minutes)} min`, m, y);
   y += 6;
 
-  // Summary block (not on the spec sheet — it carries no money).
+  const pageH = doc.internal.pageSize.getHeight();
+  const bottom = pageH - 20;
+
+  // Summary tiles (not on the spec sheet — it carries no money).
   if (kind !== "spec") {
-    y = drawSectionLabel(doc, "Summary", y);
-    const lines: [string, string][] =
+    const tiles: [string, string, string][] =
       kind === "labour"
         ? [
-            ["Total minutes", `${qty(c.minutes)} min`],
-            ["Labour rate", `${rate(c.labourRatePerMinSen)} / min  (RM 2,200 / 26 days / 9 h)`],
-            ["Labour cost", rm(c.labourSen)],
+            ["TOTAL MINUTES", `${qty(c.minutes)} min`, ""],
+            ["LABOUR RATE", `${rate(c.labourRatePerMinSen)} / min`, "RM 2,200 / 26 days / 9 h"],
+            ["LABOUR COST", rm(c.labourSen), ""],
           ]
         : [
-            ["Labour", `${rm(c.labourSen)}   (${qty(c.minutes)} min × ${rate(c.labourRatePerMinSen)}/min)`],
-            ["Raw materials", `${rm(c.materialSen)}${c.tier ? `   (fabric at ${c.tier})` : ""}${c.missingLines ? `   · ${c.missingLines} line(s) without a price — not counted` : ""}`],
-            ["Total cost", rm(c.totalSen)],
-            ...(input.standard ? ([["Standard cost", `${rm(input.standard.totalSen)}   (set ${input.standard.setAt.slice(0, 10)}${input.standard.setBy ? ` by ${input.standard.setBy}` : ""})`]] as [string, string][]) : []),
+            ["LABOUR", rm(c.labourSen), `${qty(c.minutes)} min × ${rate(c.labourRatePerMinSen)}`],
+            ["RAW MATERIALS", rm(c.materialSen), `${c.tier ? `fabric ${c.tier}` : ""}${c.missingLines ? `${c.tier ? " · " : ""}${c.missingLines} no price` : ""}`],
+            ["TOTAL COST", rm(c.totalSen), input.standard ? `standard ${rm(input.standard.totalSen)}` : "labour + materials"],
+            ...((): [string, string, string][] => {
+              const p2 = input.prices.find((x) => x.label === "Price 2")?.sen;
+              if (!p2) return [];
+              const mg = marginOn(p2, c.totalSen);
+              return [["MARGIN AT PRICE 2", `${rm(mg.marginSen)} · ${pct(mg.pct)}`, rm(p2)]];
+            })(),
           ];
-    doc.setFontSize(8.5);
-    for (const [k, v] of lines) {
+    const gap = 3;
+    const w = (pageW - m * 2 - gap * (tiles.length - 1)) / tiles.length;
+    tiles.forEach(([k, v, sub], i) => {
+      const x = m + i * (w + gap);
+      doc.setDrawColor(...PDF.rule);
+      doc.setLineWidth(0.25);
+      doc.roundedRect(x, y, w, 15, 1.5, 1.5, "S");
       doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
       doc.setTextColor(...PDF.muted);
-      doc.text(k, m, y);
+      doc.text(k, x + 3, y + 4.2);
       doc.setFont("helvetica", "bold");
-      doc.setTextColor(...PDF.ink);
-      doc.text(v, m + 34, y);
-      y += 4.6;
-    }
-    y += 2;
+      doc.setFontSize(10);
+      doc.setTextColor(...(k.startsWith("MARGIN") ? (v.startsWith("RM -") ? ([185, 28, 28] as [number, number, number]) : ([21, 128, 61] as [number, number, number])) : PDF.ink));
+      doc.text(v, x + 3, y + 9.4);
+      if (sub) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.5);
+        doc.setTextColor(...(sub.includes("no price") ? ([185, 28, 28] as [number, number, number]) : PDF.muted));
+        doc.text(sub, x + 3, y + 13.2);
+      }
+    });
+    y += 20;
   }
 
-  // WIP table.
+  // WIP boxes with connector lines (PDF v3).
   y = drawSectionLabel(doc, kind === "spec" ? "WIP processes and raw materials" : kind === "labour" ? "Labour by WIP" : "Cost by WIP", y);
-  const head =
-    kind === "spec"
-      ? [["Process / raw material", "Minutes / qty per piece", "Pieces", "Per finished good"]]
-      : kind === "labour"
-        ? [["Process", "Per piece", "Pieces", "Minutes", "Labour"]]
-        : [["Process / raw material", "Per piece", "Pieces / qty", "Minutes / unit price", "Labour / amount"]];
   const theme = tableTheme();
-  autoTable(doc, {
-    startY: y,
-    margin: { left: m, right: m, bottom: 20 },
-    head,
-    body: costingRows(input, kind),
-    ...theme,
-    alternateRowStyles: {},
-    columnStyles:
-      kind === "spec"
-        ? { 0: { cellWidth: 92 }, 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } }
-        : { 0: { cellWidth: 80 }, 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
-    showHead: "everyPage",
-  });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  y = ((doc as any).lastAutoTable?.finalY ?? y) + 6;
+  const INDENT = 6;
+  const lineColor: [number, number, number] = [185, 173, 147];
+  // y of the last header drawn at each level on the current page — the
+  // connector of a child runs up to its parent's header.
+  let anchors: Record<number, number> = {};
+  let page = doc.getNumberOfPages();
+  const blocks = costingBlocks(input, kind);
+  for (const blk of blocks) {
+    const x0 = m + Math.max(0, blk.level - 2) * INDENT;
+    const width = pageW - m - x0;
+    const est = 7 + (blk.head ? 5 + blk.procRows.length * 5 : 0) + (blk.matHead ? 5 + blk.matRows.length * 5.6 : 0) + (blk.foot ? 5 : 0) + 3;
+    if (y + Math.min(est, bottom - 30) > bottom) {
+      doc.addPage();
+      y = 18;
+    }
+    if (doc.getNumberOfPages() !== page) {
+      page = doc.getNumberOfPages();
+      anchors = {};
+    }
+    // connector: vertical from the parent's header down to this header, then right.
+    if (blk.level > 2) {
+      const cx = x0 - INDENT + 2.2;
+      const fromY = anchors[blk.level - 1] ?? 14;
+      doc.setDrawColor(...lineColor);
+      doc.setLineWidth(0.35);
+      doc.line(cx, fromY, cx, y + 3.5);
+      doc.line(cx, y + 3.5, x0, y + 3.5);
+    }
+    // header bar
+    const fill = LEVEL_FILL[Math.min(blk.level - 1, LEVEL_FILL.length - 1)];
+    doc.setFillColor(...fill);
+    doc.setDrawColor(...PDF.rule);
+    doc.setLineWidth(0.25);
+    doc.rect(x0, y, width, 7, "FD");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(...PDF.ink);
+    const badge = blk.level === 1 ? "" : `L${blk.level}  `;
+    doc.text(`${badge}${blk.title}`, x0 + 2.5, y + 4.7, { maxWidth: width - 50 });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...PDF.muted);
+    const right = `${blk.meta}${blk.money ? `    ${blk.money}` : ""}`;
+    doc.text(right, x0 + width - 2.5, y + 4.7, { align: "right" });
+    y += 7;
+    const tableOpts = {
+      margin: { left: x0, right: m, bottom: 20 },
+      tableWidth: width,
+      ...theme,
+      styles: { ...theme.styles, fontSize: 7.4, cellPadding: 1.6 },
+      headStyles: { fillColor: [250, 248, 244] as [number, number, number], textColor: PDF.muted, fontStyle: "bold" as const, fontSize: 6.8, lineColor: PDF.rule, lineWidth: 0.2 },
+      alternateRowStyles: {},
+    };
+    if (blk.head) {
+      autoTable(doc, {
+        ...tableOpts,
+        startY: y,
+        head: [blk.head.map((h, i) => ({ content: h, styles: i === 0 ? {} : { halign: "right" as const } }))],
+        body: blk.procRows,
+        columnStyles: { 0: { cellWidth: width * 0.42 }, 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable?.finalY ?? y;
+    }
+    if (blk.matHead) {
+      autoTable(doc, {
+        ...tableOpts,
+        startY: y,
+        head: [blk.matHead.map((h, i) => ({ content: h, styles: i === 0 || h === "UOM" ? {} : { halign: "right" as const } }))],
+        body: blk.matRows.map((r) => r.cells.map((cell, ci) => ({ content: cell, styles: r.red && ci >= 4 ? { textColor: [185, 28, 28], fontStyle: "bold" } : ci === 0 ? { fontStyle: "bold" } : {} }))),
+        columnStyles:
+          kind === "spec"
+            ? { 0: { cellWidth: width * 0.5 }, 1: { halign: "right" }, 3: { halign: "right" } }
+            : { 0: { cellWidth: width * 0.4 }, 1: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable?.finalY ?? y;
+    }
+    if (!blk.head && !blk.matHead) {
+      doc.setFontSize(7.4);
+      doc.setTextColor(...PDF.faint);
+      doc.rect(x0, y, width, 5, "S");
+      doc.text("No processes or raw materials", x0 + 2.5, y + 3.4);
+      y += 5;
+    }
+    if (blk.foot) {
+      doc.setFillColor(250, 248, 244);
+      doc.setDrawColor(...PDF.rule);
+      doc.rect(x0, y, width, 5, "FD");
+      doc.setFontSize(7.2);
+      doc.setTextColor(...PDF.muted);
+      doc.text(blk.foot, x0 + width - 2.5, y + 3.4, { align: "right" });
+      y += 5;
+    }
+    if (doc.getNumberOfPages() !== page) {
+      page = doc.getNumberOfPages();
+      anchors = {};
+    }
+    // A child's connector starts BELOW its parent's box, so the line never
+    // runs through the parent's own tables; deeper anchors are reset.
+    anchors[blk.level] = y;
+    for (const k of Object.keys(anchors)) if (Number(k) > blk.level) delete anchors[Number(k)];
+    y += 3;
+  }
+  y += 3;
 
   const ensure = (h: number) => {
     if (y + h > doc.internal.pageSize.getHeight() - 22) {
