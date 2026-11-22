@@ -16,7 +16,8 @@
 import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
-import { buildAuditStatement, recordAuditCreatedMetric } from "../lib/audit";
+import { buildAuditStatement, emitAudit, recordAuditCreatedMetric } from "../lib/audit";
+import { demoteOtherActiveBomsStatement, oneActivePerProduct } from "../lib/bom-single-active";
 import {
   previewJobCardMinutesForBomChanges,
   syncJobCardMinutesToBomChanges,
@@ -406,7 +407,7 @@ app.post("/templates", async (c) => {
       changeLog: body.changeLog ?? null,
     };
 
-    await c.var.DB.prepare(
+    const insertTemplate = c.var.DB.prepare(
       `INSERT INTO bom_templates (id, productCode, baseModel, category,
          l1Processes, wipComponents, l1_materials, version, versionStatus, effectiveFrom,
          effectiveTo, changeLog)
@@ -425,8 +426,16 @@ app.post("/templates", async (c) => {
         row.effectiveFrom,
         row.effectiveTo,
         row.changeLog,
-      )
-      .run();
+      );
+    // One ACTIVE BOM per product: creating an ACTIVE one retires the old.
+    if (String(row.versionStatus).toUpperCase() === "ACTIVE") {
+      await c.var.DB.batch([
+        demoteOtherActiveBomsStatement(c.var.DB, row.productCode, id),
+        insertTemplate,
+      ]);
+    } else {
+      await insertTemplate.run();
+    }
 
     const created = await c.var.DB.prepare(
       "SELECT * FROM bom_templates WHERE id = ?",
@@ -439,6 +448,7 @@ app.post("/templates", async (c) => {
         500,
       );
     }
+    await emitAudit(c, { resource: "bom-templates", resourceId: id, action: "create", after: rowToTemplate(created) });
     return c.json({ success: true, data: rowToTemplate(created) }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
@@ -511,6 +521,7 @@ app.put("/templates", async (c) => {
       });
     }
 
+    oneActivePerProduct(sanitized);
     await ensureL1MaterialsColumn(c.var.DB);
     // Single atomic batch: wipe + re-insert.
     const statements = [
@@ -540,6 +551,12 @@ app.put("/templates", async (c) => {
       ),
     ];
     await c.var.DB.batch(statements);
+    await emitAudit(c, {
+      resource: "bom-templates",
+      resourceId: "*",
+      action: "bulk-replace",
+      after: { count: sanitized.length, ids: sanitized.map((t) => t.id) },
+    });
 
     return c.json({ success: true, count: sanitized.length });
   } catch {
@@ -670,6 +687,19 @@ app.put("/templates/:id", async (c) => {
         500,
       );
     }
+    // One ACTIVE BOM per product: this row is ACTIVE now, so any other
+    // ACTIVE row for the same product retires to OBSOLETE.
+    if (String(refreshed.versionStatus ?? "").toUpperCase() === "ACTIVE") {
+      const demoted = await demoteOtherActiveBomsStatement(c.var.DB, refreshed.productCode, id).run();
+      debug.demotedOtherActive = demoted.meta?.changes ?? 0;
+    }
+    await emitAudit(c, {
+      resource: "bom-templates",
+      resourceId: id,
+      action: existing ? "update" : "create",
+      before: existing ? rowToTemplate(existing) : null,
+      after: rowToTemplate(refreshed),
+    });
     const hasMinutesChange = "l1Processes" in patch || "wipComponents" in patch;
     const jobCardMinutes = hasMinutesChange
       ? await syncJobCardMinutesToBomChanges(c, savedActiveBomChanges(existing, refreshed))
@@ -921,14 +951,24 @@ app.post("/templates/bulk-activate", async (c) => {
   }
 
   const draftRows = await c.var.DB.prepare(
-    "SELECT id FROM bom_templates WHERE UPPER(COALESCE(versionStatus, 'DRAFT')) = 'DRAFT'",
-  ).all<{ id: string }>();
-  const draftIds = new Set((draftRows.results ?? []).map((row) => row.id));
-  const activatedIds = requestedIds.filter((id) => draftIds.has(id));
-  const skippedIds = requestedIds.filter((id) => !draftIds.has(id));
+    "SELECT id, productCode FROM bom_templates WHERE UPPER(COALESCE(versionStatus, 'DRAFT')) = 'DRAFT'",
+  ).all<{ id: string; productCode: string }>();
+  const draftProduct = new Map((draftRows.results ?? []).map((row) => [row.id, row.productCode]));
+  // One ACTIVE BOM per product: two drafts of the same product in one request
+  // activate only the first; the rest are reported as skipped.
+  const seenProduct = new Set<string>();
+  const activatedIds = requestedIds.filter((id) => {
+    const product = draftProduct.get(id);
+    if (product === undefined || seenProduct.has(product)) return false;
+    seenProduct.add(product);
+    return true;
+  });
+  const activated = new Set(activatedIds);
+  const skippedIds = requestedIds.filter((id) => !activated.has(id));
 
   const statements: D1PreparedStatement[] = [];
   for (const id of activatedIds) {
+    statements.push(demoteOtherActiveBomsStatement(c.var.DB, String(draftProduct.get(id)), id));
     statements.push(
       c.var.DB.prepare(
         "UPDATE bom_templates SET versionStatus = 'ACTIVE' WHERE id = ? AND UPPER(COALESCE(versionStatus, 'DRAFT')) = 'DRAFT'",

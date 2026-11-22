@@ -105,8 +105,8 @@ Money is integer sen; many product columns are legacy camelCase.
 | `resolveProductPriceAsOf` | `src/api/routes/products.ts:1337` | Master price effective-dated resolver |
 | `app.post("/:productId/prices")` | `src/api/routes/products.ts:1426` | Append master price history row |
 | `resolvePrices` | `src/api/routes/customer-products.ts:95` | Inherit-or-override price resolution |
-| `app.put("/templates")` | `src/api/routes/bom.ts:450` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
-| `app.put("/templates/:id")` | `src/api/routes/bom.ts:561` | Single-template upsert |
+| `app.put("/templates")` | `src/api/routes/bom.ts:460` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
+| `app.put("/templates/:id")` | `src/api/routes/bom.ts:578` | Single-template upsert |
 | `app.put("/:id")` (master) | `src/api/routes/bom-master-templates.ts:127` | Master preset upsert; bulk replace is `app.put("/")` `:217` (clears sibling isDefault) |
 | `resolveMaintenanceConfigAsOf` | `src/api/routes/maintenance-config.ts:66` | Newest-as-of-today config resolver |
 | `app.post("/changes")` | `src/api/routes/maintenance-config.ts:174` | Append effective-dated config row |

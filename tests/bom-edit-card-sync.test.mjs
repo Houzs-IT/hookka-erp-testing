@@ -248,9 +248,12 @@ test("editBomSaveMovesCardsAndAuditsEachChangeAsSystem", async () => {
   assert.equal(status, 200);
   assert.deepEqual(body.jobCardMinutes, { updated: 3, scanned: 5 });
   assert.equal(store.minutesOf("live-15"), 18);
-  assert.equal(store.audits.length, 3);
-  assert.ok(store.audits.every((audit) => audit.includes("sync-minutes-from-bom-edit")));
-  assert.ok(store.audits.every((audit) => audit.includes("system")));
+  // 2026-11-22 (plan D14): the BOM save itself is now audited too.
+  const cardAudits = store.audits.filter((audit) => audit.includes("sync-minutes-from-bom-edit"));
+  assert.equal(cardAudits.length, 3);
+  assert.ok(cardAudits.every((audit) => audit.includes("system")));
+  assert.equal(store.audits.filter((audit) => audit.includes("bom-templates")).length, 1);
+  assert.equal(store.audits.length, 4);
   assertUntouchedOutsideTheWindow(store);
 });
 

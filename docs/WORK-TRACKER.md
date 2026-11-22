@@ -326,6 +326,9 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Products costing — BUILD (owner "ok 去吧", 2026-11-22)
+Order agreed: (1) price/BOM audit + one ACTIVE BOM per product (plan D14) → (2) L1-materials save/reload test on one non-production BOM, then revert (owner: Claude tests) → (3) costing phases 1–7 per docs/plans/product-costing.md; the 24 non-ROLL RM 0 PO lines are investigated inside phase 1 (no-price = red, never 0). D13: double-click a product row opens the product page (Overview / BOM / Costing / Customers, Manage Variants + Assign customer inside); the expand dropdown stays exactly as today.
+
 ## 🟡 Products costing page (design, awaiting owner, 2026-11-21/22)
 Owner: in Products, per product: each WIP's department + minutes -> labour, plus raw-material usage priced from supplier prices -> total cost, margin, price at a target margin; list gets Raw mat. / Total cost / Margin columns; Costing page editable (set WIP, process, minutes, material usage) with "Copy from model" + a popup asking whether to copy WIP time; 3 PDF reports (full / no-money / labour only) + an R&D fill-in form PDF, typed back in first and scanned later. Design canvas: https://claude.ai/artifact/1SHe8xCavQNBcaEwERdKam (private).
 Decided: labour = RM 2,200 / 26 d / 9 h (as today); material price = main supplier latest, else latest of any supplier marked "not main"; materials live in the BOM template (WIPComponent.materials, same data as BOM Builder). Open: standard cost + today-price comparison (recommended) vs always live; design approval; proposed phases: costing page + list columns -> edit/copy -> PDFs -> R&D form manual import -> scan. Facts: 598 active RMs, 101 with no supplier price, 184 priced but no main supplier. BOM Builder Copy From / Load Default copy minutes unconditionally today.

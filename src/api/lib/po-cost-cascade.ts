@@ -364,7 +364,7 @@ async function resolveBomMaterialsRaw(
   if (po.productCode) {
     const tplRow = await db
       .prepare(
-        "SELECT id, wipComponents FROM bom_templates WHERE productCode = ? AND versionStatus = 'ACTIVE' LIMIT 1",
+        "SELECT id, wipComponents FROM bom_templates WHERE productCode = ? AND versionStatus = 'ACTIVE' ORDER BY effectiveFrom DESC LIMIT 1",
       )
       .bind(po.productCode)
       .first<{ id: string; wipComponents: string | null }>();

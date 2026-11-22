@@ -16,6 +16,8 @@ import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import { ensureCnyCurrency } from "../lib/currency-checks";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
 import { getOrgId } from "../lib/tenant";
+import { actorName } from "../lib/actor-name";
+import { emitAudit } from "../lib/audit";
 import { todayYmdMY } from "../../lib/utils";
 import {
   duplicateBindingMessage,
@@ -353,7 +355,7 @@ app.post("/", async (c) => {
           row.currency,
           todayIso(),
           row.effectiveFrom,
-          body.changedBy ?? "System",
+          await actorName(c, body.changedBy),
           "Initial price",
           "APPROVED",
         )
@@ -372,6 +374,7 @@ app.post("/", async (c) => {
         500,
       );
     }
+    await emitAudit(c, { resource: "supplier-materials", resourceId: id, action: "create", after: rowToBinding(created) });
     return c.json({ success: true, data: rowToBinding(created) }, 201);
   } catch (err) {
     // Two creates of the same pair in the same second: the index refuses the
@@ -588,7 +591,7 @@ app.put("/:id", async (c) => {
             merged.currency,
             todayIso(),
             merged.effectiveFrom,
-            body.changedBy ?? "System",
+            await actorName(c, body.changedBy),
             "Price binding updated",
             "APPROVED",
           )
@@ -608,6 +611,13 @@ app.put("/:id", async (c) => {
         500,
       );
     }
+    await emitAudit(c, {
+      resource: "supplier-materials",
+      resourceId: id,
+      action: "update",
+      before: rowToBinding(existing),
+      after: rowToBinding(updated),
+    });
     return c.json({ success: true, data: rowToBinding(updated) });
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -633,6 +643,21 @@ app.delete("/:id", async (c) => {
   if (!existing) {
     return c.json({ success: false, error: "Binding not found" }, 404);
   }
+  // price_histories.bindingId is ON DELETE CASCADE (0001_init), so deleting a
+  // binding used to erase its whole price trail. Snapshot the trail into the
+  // audit journal first, so "what did we pay and who changed it" survives.
+  const trail = await c.var.DB.prepare(
+    "SELECT * FROM price_histories WHERE bindingId = ? ORDER BY changedDate",
+  )
+    .bind(id)
+    .all<Record<string, unknown>>()
+    .catch(() => ({ results: [] as Record<string, unknown>[] }));
+  await emitAudit(c, {
+    resource: "supplier-materials",
+    resourceId: id,
+    action: "delete",
+    before: { binding: rowToBinding(existing), priceHistory: trail.results ?? [] },
+  });
   await c.var.DB.prepare("DELETE FROM supplier_material_bindings WHERE id = ?")
     .bind(id)
     .run();
