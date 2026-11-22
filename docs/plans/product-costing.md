@@ -20,6 +20,8 @@ Owner 2026-11-21/22: "每一次做新的 products，我要自己去算人工多�
 | D10 | PDFs (reporting): Full Costing Report; Production Spec Sheet (no money); Labour Cost Report. WIP hierarchy indented like the BOM UI. | 11-22 |
 | D11 | R&D Spec Form PDF: prints what the BOM has (minutes as "now", materials bold), blank lines for new; qty and unit (UOM) both kept. Filled form comes back by upload + OCR, reviewed, then saved. Manual key-in first. | 11-22 |
 | D12 | Entry point: a Costing button beside View BOM in the expanded product row; list cost cell also opens it. | 11-22 |
+| D13 | Two ways in, both kept: the expand arrow keeps today's dropdown unchanged (Price vs Labour, View BOM, Docs, Manage Variants, Customer Assignments, CNC). DOUBLE-CLICK a row opens the product page with tabs Overview / BOM / Costing / Customers; Manage Variants and Assign customer also live inside it. | 11-22 |
+| D14 | Before costing: every supplier-price and BOM write records the signed-in user (server-side, not the request body), deleting a supplier price keeps its price trail in the audit journal, and a product has at most one ACTIVE BOM (activating one retires the others to OBSOLETE). Prod had 0 multi-ACTIVE products on 11-22. | 11-22 |
 
 ## Phases (each = one PR, verified live, merged)
 

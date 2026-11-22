@@ -33,8 +33,8 @@ function makeDatabase(templates) {
         return boundValues;
       },
       async all() {
-        if (/SELECT id FROM bom_templates WHERE UPPER\(COALESCE\(versionStatus, 'DRAFT'\)\) = 'DRAFT'/.test(sqlText)) {
-          return { results: state.templates.filter(isDraft).map((row) => ({ id: row.id })) };
+        if (/SELECT id, productCode FROM bom_templates WHERE UPPER\(COALESCE\(versionStatus, 'DRAFT'\)\) = 'DRAFT'/.test(sqlText)) {
+          return { results: state.templates.filter(isDraft).map((row) => ({ id: row.id, productCode: row.productCode })) };
         }
         return { results: [] };
       },
@@ -51,6 +51,12 @@ function makeDatabase(templates) {
   async function batch(statements) {
     state.batchCalls += 1;
     for (const statement of statements) {
+      if (/^UPDATE bom_templates SET versionStatus = 'OBSOLETE' WHERE productCode = \? AND id <> \? AND versionStatus = 'ACTIVE'/.test(statement.sqlText)) {
+        const [product, keep] = statement.boundValues;
+        for (const row of state.templates) {
+          if (row.productCode === product && row.id !== keep && row.versionStatus === "ACTIVE") row.versionStatus = "OBSOLETE";
+        }
+      }
       if (/^UPDATE bom_templates SET versionStatus = 'ACTIVE' WHERE id = \?/.test(statement.sqlText)) {
         const row = state.templates.find((template) => template.id === statement.boundValues[0]);
         if (row && isDraft(row)) row.versionStatus = "ACTIVE";
@@ -117,6 +123,24 @@ test("bulkActivateFlipsOnlyDraftTemplatesInOneBatch", async () => {
   assert.deepEqual(
     state.templates.map((row) => [row.id, row.versionStatus]),
     [["t1", "ACTIVE"], ["t2", "ACTIVE"], ["t3", "ACTIVE"], ["t4", "DRAFT"]],
+  );
+});
+
+test("bulkActivateKeepsOneActivePerProduct", async () => {
+  // 2026-11-22 (plan D14): activating a draft retires the product's old
+  // ACTIVE BOM; two drafts of one product in one request activate only one.
+  const { state, database } = makeDatabase([
+    { id: "old", productCode: "P", versionStatus: "ACTIVE" },
+    { id: "d1", productCode: "P", versionStatus: "DRAFT" },
+    { id: "d2", productCode: "P", versionStatus: "DRAFT" },
+  ]);
+  const app = await mountBomApp(database);
+  const json = await (await postBulkActivate(app, { ids: ["d1", "d2"] })).json();
+  assert.deepEqual(json.activatedIds, ["d1"]);
+  assert.deepEqual(json.skippedIds, ["d2"]);
+  assert.deepEqual(
+    state.templates.map((row) => [row.id, row.versionStatus]),
+    [["old", "OBSOLETE"], ["d1", "ACTIVE"], ["d2", "DRAFT"]],
   );
 });
 

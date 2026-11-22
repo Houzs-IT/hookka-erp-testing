@@ -14,6 +14,7 @@ import { requirePermission } from "../lib/rbac";
 import { ensureCnyCurrency } from "../lib/currency-checks";
 import { normaliseCurrencyCode } from "../../lib/currency-code";
 import { todayYmdMY } from "../../lib/utils";
+import { actorName } from "../lib/actor-name";
 
 const app = new Hono<Env>();
 
@@ -136,7 +137,7 @@ app.post("/", async (c) => {
       changedDate,
       // Effective date this price takes effect; default to the change date.
       effectiveFrom: body.effectiveFrom ?? changedDate,
-      changedBy: body.changedBy ?? "System",
+      changedBy: await actorName(c, body.changedBy),
       reason: body.reason ?? "",
       approvalStatus:
         body.approvalStatus === "APPROVED" ||
