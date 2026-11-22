@@ -69,7 +69,8 @@ test("pieces are per finished good and do not compound down the tree", () => {
   assert.equal(ply.qty, 1); // 0.5 × 2, NOT × 4
   assert.equal(ply.amountSen, 6800);
   assert.equal(r.materialSen, 6800);
-  assert.equal(r.labourSen, Math.round(36 * LABOUR_RATE_PER_MIN_SEN) + Math.round(30 * LABOUR_RATE_PER_MIN_SEN));
+  assert.equal(r.labourSen, Math.round(66 * LABOUR_RATE_PER_MIN_SEN)); // once on the total, like the list
+  assert.equal(Math.round(479 * LABOUR_RATE_PER_MIN_SEN), 7506); // Hilton 6FT on prod: list shows RM 75.06
   assert.equal(r.totalSen, r.labourSen + r.materialSen);
   assert.deepEqual(r.byDept.map((d) => [d.deptCode, d.minutes]), [["PACKING", 36], ["WOOD_CUT", 30]]);
 });

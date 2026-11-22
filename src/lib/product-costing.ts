@@ -400,7 +400,9 @@ export function computeCosting(input: CostingInputs, opts: { tier?: string } = {
   walk(bom.wipComponents, 2);
 
   const minutes = nodes.reduce((s, n) => s + n.processes.reduce((a, p) => a + p.minutes, 0), 0);
-  const labourSen = nodes.reduce((s, n) => s + n.labourSen, 0);
+  // Rounded ONCE on the total minutes, like the Products list's Labor column
+  // (per-process amounts are rounded for display and can differ by a sen).
+  const labourSen = Math.round(minutes * LABOUR_RATE_PER_MIN_SEN);
   const materialSen = nodes.reduce((s, n) => s + n.materialSen, 0);
   return {
     labourRatePerMinSen: LABOUR_RATE_PER_MIN_SEN,
