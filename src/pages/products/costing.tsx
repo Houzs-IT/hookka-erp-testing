@@ -20,6 +20,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { ProductTabs } from "./product-tabs";
 import { wipLabel } from "@/lib/wip-label";
+import type { CostingPdfInput } from "@/lib/generate-costing-pdf";
 import { CostingEditor, type EditableTemplate } from "./costing-editor";
 
 type CostingData = {
@@ -197,6 +198,7 @@ export default function ProductCostingPage() {
   const [sellAt, setSellAt] = useState("");
   const [savingStd, setSavingStd] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const { confirm } = useConfirm();
   const { toast } = useToast();
   const [wantPct, setWantPct] = useState("");
@@ -228,6 +230,50 @@ export default function ProductCostingPage() {
   return (
     <div className="space-y-4 max-w-[1400px]">
       <ProductTabs productId={c.product.id} code={c.product.code} name={c.product.name} category={c.product.category} active="costing" extra={statusLabel} />
+
+      {c.bom && !editing && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="relative">
+            <button type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)} className="rounded-md border border-[#D8D1C3] bg-white px-3 py-1.5 text-xs font-semibold">
+              Export PDF ▾
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[#E2DDD8] bg-white p-1 shadow-lg">
+                {([
+                  ["full", "Full Costing Report", "WIP processes, raw materials, time + labour cost, prices and margins"],
+                  ["spec", "Production Spec Sheet", "WIP processes, raw materials and time — no money"],
+                  ["labour", "Labour Cost Report", "minutes and labour cost by WIP and department"],
+                ] as const).map(([kind, title, hint]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={async () => {
+                      setExportOpen(false);
+                      // jsPDF loads only when a report is asked for.
+                      const { generateCostingPdf } = await import("@/lib/generate-costing-pdf");
+                      generateCostingPdf(
+                        {
+                          product: { ...c.product, ...(productResp?.data ?? {}) } as CostingPdfInput["product"],
+                          bom: c.bom,
+                          costing: c,
+                          prices,
+                          customers: (custResp?.data ?? []).map((a) => ({ name: a.customerName, sen: a.basePriceSen ?? null })),
+                          standard: c.standard,
+                        },
+                        kind,
+                      );
+                    }}
+                    className="block w-full rounded px-3 py-2 text-left hover:bg-[#FAF8F4]"
+                  >
+                    <div className="text-sm font-semibold text-[#111827]">{title}</div>
+                    <div className="text-[11px] text-[#6B7280]">{hint}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {!c.bom && <div className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-4 py-3 text-sm text-[#B91C1C]">This product has no BOM yet, so there is nothing to cost. Create its BOM first.</div>}
       {c.bom && c.bom.status !== "ACTIVE" && <div className="rounded-lg border border-[#FCD34D] bg-[#FFFBEB] px-4 py-3 text-sm text-[#92400E]">Costed from a {String(c.bom.status ?? "draft").toLowerCase()} BOM — this product has no active BOM.</div>}
