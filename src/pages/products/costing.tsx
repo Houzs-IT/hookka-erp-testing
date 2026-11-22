@@ -323,7 +323,7 @@ export default function ProductCostingPage() {
       {c.bom && c.bom.status !== "ACTIVE" && <div className="rounded-lg border border-[#FCD34D] bg-[#FFFBEB] px-4 py-3 text-sm text-[#92400E]">Costed from a {String(c.bom.status ?? "draft").toLowerCase()} BOM — this product has no active BOM.</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi label="Labour" value={rm(c.labourSen)} sub={`${qtyText(c.minutes)} min × ${rm(c.labourRatePerMinSen)}/min`} />
+        <Kpi label="Labour" value={rm(c.labourSen)} sub={`${qtyText(c.minutes)} min × RM ${(c.labourRatePerMinSen / 100).toFixed(4)}/min`} />
         <Kpi label="Raw materials" value={rm(c.materialSen)} sub={`${c.materialLines} lines${c.missingLines ? ` · ${c.missingLines} without a price` : ""}${c.tier ? ` · fabric ${c.tier}` : ""}`} tone={c.missingLines ? "bad" : undefined} />
         <Kpi label="Total cost" value={rm(total)} sub="labour + raw materials" />
         <Kpi label={`Margin at Price 2${price2 ? ` (${rm(price2)})` : ""}`} value={m2 ? rm(m2.marginSen) : "—"} sub={m2 ? `${pct(m2.pct)} of price` : "no Price 2"} tone={m2 ? (m2.marginSen >= 0 ? "good" : "bad") : undefined} />
