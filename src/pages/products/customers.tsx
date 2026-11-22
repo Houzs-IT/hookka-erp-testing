@@ -12,6 +12,8 @@ export default function ProductCustomersPage() {
   const { id = "" } = useParams();
   const { data, loading, failure, refresh } = useCachedJson<{ data?: ProductLite; error?: string }>(`/api/products/${encodeURIComponent(id)}`);
   const p = data?.data;
+  // Today's total cost, for the margin beside each customer price.
+  const { data: costResp } = useCachedJson<{ data?: { totalSen: number; materialLines: number } }>(p ? `/api/product-costing/${encodeURIComponent(p.id)}` : null, 60);
   // A failed read is not "not found" — say it could not be loaded.
   if (!p && isUnknownOutcome(failure) && failure) {
     return <RecordLoadError subject="product" failure={failure} onRetry={refresh} backTo="/products" backLabel="Back to Products" />;
@@ -21,7 +23,7 @@ export default function ProductCustomersPage() {
     <div className="space-y-4 w-full">
       <ProductTabs productId={p.id} code={p.code} name={p.name} category={p.category} active="customers" />
       <div className="rounded-lg border border-[#E2DDD8] bg-white p-4">
-        <CustomerAssignmentsSection productId={p.id} active />
+        <CustomerAssignmentsSection productId={p.id} active costSen={costResp?.data?.totalSen ?? null} />
       </div>
     </div>
   );

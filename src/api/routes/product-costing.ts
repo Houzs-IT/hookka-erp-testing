@@ -24,6 +24,7 @@ import { todayYmdMY } from "../../lib/utils";
 import {
   computeCosting,
   normaliseFabricTiers,
+  validateFabricTiers,
   priceInEffect,
   standardSnapshot,
   type BindingIn,
@@ -47,13 +48,24 @@ function parse<T>(raw: unknown, fallback: T): T {
   }
 }
 
-async function loadTiers(db: D1Database) {
+// Stored as { tiers, updatedBy, updatedAt } (a bare array from the first
+// version still reads).
+async function loadTiersWithMeta(db: D1Database) {
   const row = await db
     .prepare("SELECT value FROM kv_config WHERE key = ?")
     .bind(TIERS_KEY)
     .first<{ value: string }>()
     .catch(() => null);
-  return normaliseFabricTiers(parse(row?.value ?? null, null));
+  const v = parse<unknown>(row?.value ?? null, null);
+  const obj = v && !Array.isArray(v) && typeof v === "object" ? (v as { tiers?: unknown; updatedBy?: unknown; updatedAt?: unknown }) : null;
+  return {
+    tiers: normaliseFabricTiers(obj ? obj.tiers : v),
+    updatedBy: obj && typeof obj.updatedBy === "string" ? obj.updatedBy : null,
+    updatedAt: obj && typeof obj.updatedAt === "string" ? obj.updatedAt : null,
+  };
+}
+async function loadTiers(db: D1Database) {
+  return (await loadTiersWithMeta(db)).tiers;
 }
 
 async function loadSheetDefaults(db: D1Database): Promise<Record<string, { length: number; width: number }>> {
@@ -78,7 +90,8 @@ async function loadSheetDefaults(db: D1Database): Promise<Record<string, { lengt
 app.get("/fabric-tiers", async (c) => {
   const denied = await requirePermission(c, "products", "read");
   if (denied) return denied;
-  return c.json({ success: true, data: await loadTiers(c.var.DB) });
+  const m = await loadTiersWithMeta(c.var.DB);
+  return c.json({ success: true, data: m.tiers, updatedBy: m.updatedBy, updatedAt: m.updatedAt });
 });
 
 app.put("/fabric-tiers", async (c) => {
@@ -86,21 +99,21 @@ app.put("/fabric-tiers", async (c) => {
   if (denied) return denied;
   const body = await c.req.json().catch(() => null);
   const incoming = (body as { tiers?: unknown } | null)?.tiers;
-  const tiers = normaliseFabricTiers(incoming);
-  // normalise falls back to the defaults on bad input; refuse instead of
-  // silently saving something the owner did not type.
-  if (!Array.isArray(incoming) || incoming.length !== tiers.length) {
-    return c.json({ success: false, error: "Each tier needs a name and a min ≤ max price (sen) above 0." }, 400);
+  const tiers = validateFabricTiers(incoming);
+  if (!tiers) {
+    return c.json({ success: false, error: "Each level needs a different name and a From ≤ To price above 0 (1–10 levels)." }, 400);
   }
   const before = await loadTiers(c.var.DB);
+  const updatedBy = await actorName(c);
+  const updatedAt = new Date().toISOString();
   await c.var.DB.prepare(
     `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   )
-    .bind(TIERS_KEY, JSON.stringify(tiers), new Date().toISOString())
+    .bind(TIERS_KEY, JSON.stringify({ tiers, updatedBy, updatedAt }), updatedAt)
     .run();
   await emitAudit(c, { resource: "costing-settings", resourceId: TIERS_KEY, action: "update", before, after: tiers });
-  return c.json({ success: true, data: tiers });
+  return c.json({ success: true, data: tiers, updatedBy, updatedAt });
 });
 
 type TemplateRow = {
@@ -333,6 +346,7 @@ app.get("/:productId", async (c) => {
   if (!loaded) return c.json({ success: false, error: "Product not found" }, 404);
   const { product, tpl, fabricTiers, costing } = loaded;
   const standard = await latestStandard(c.var.DB, product.id);
+  const tierMeta = await loadTiersWithMeta(c.var.DB);
   return c.json({
     success: true,
     data: {
@@ -341,6 +355,7 @@ app.get("/:productId", async (c) => {
         ? { id: tpl.id, version: tpl.version, status: tpl.versionStatus, effectiveFrom: tpl.effectiveFrom }
         : null,
       fabricTiers,
+      fabricTiersMeta: { updatedBy: tierMeta.updatedBy, updatedAt: tierMeta.updatedAt },
       standard,
       // The BOM itself, for the costing editor (phase 4) — the same row the
       // BOM page edits; saving goes back through PUT /api/bom/templates/:id.

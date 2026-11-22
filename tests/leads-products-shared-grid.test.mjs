@@ -133,12 +133,13 @@ test("Products: the detail panel keeps every section the expanded row had", () =
   const fn = PRODUCTS.slice(at, PRODUCTS.indexOf("const skuColumns", at));
   for (const part of [
     /\{cfg && <ProductionConfig config=\{cfg\} \/>\}/,
-    /Price vs Labor \(Margin\)/,
+    // Round 2 (owner-approved, 2026-11-22): the labour-only box became cost tiles.
+    /tile\("Total cost"/,
     /Variant Defaults/,
     /to=\{`\/products\/\$\{p\.id\}\/bom`\}/,
     /to=\{`\/products\/\$\{p\.id\}\/documents`\}/,
     /Manage Variants/,
-    /<CustomerAssignmentsSection productId=\{p\.id\} active=\{isExpanded\} \/>/,
+    /<CustomerAssignmentsSection\s+productId=\{p\.id\}\s+active=\{isExpanded\}/,
     /<CncTemplatePanel/,
   ]) assert.match(fn, part);
 });

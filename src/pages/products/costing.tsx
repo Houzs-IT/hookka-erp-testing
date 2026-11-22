@@ -15,13 +15,14 @@ import { useParams } from "react-router-dom";
 import { isUnknownOutcome, useCachedJson } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { bedframePrice3Sen, formatCurrency } from "@/lib/utils";
-import { compareToStandard, marginOn, priceForMargin, type CostMaterial, type CostNode } from "@/lib/product-costing";
+import { compareToStandard, marginOn, priceForMargin, type CostMaterial, type CostNode, type FabricTier } from "@/lib/product-costing";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { ProductTabs } from "./product-tabs";
 import { wipLabel } from "@/lib/wip-label";
-import type { CostingPdfInput } from "@/lib/generate-costing-pdf";
 import { CostingEditor, type EditableTemplate } from "./costing-editor";
+import { FabricTierCard } from "./fabric-tier-card";
+import { CostingExportMenu } from "./costing-export-menu";
 
 type CostingData = {
   product: { id: string; code: string; name: string; category: string };
@@ -39,6 +40,8 @@ type CostingData = {
   missingLines: number;
   fabricFromOrderLines: number;
   template: EditableTemplate | null;
+  fabricTiers?: FabricTier[];
+  fabricTiersMeta?: { updatedBy: string | null; updatedAt: string | null };
   standard: {
     labourSen: number;
     materialSen: number;
@@ -198,7 +201,6 @@ export default function ProductCostingPage() {
   const [sellAt, setSellAt] = useState("");
   const [savingStd, setSavingStd] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   // R&D forms keyed in for this product (plan D11), from the audit journal.
   const { data: auditResp } = useCachedJson<{ data?: { action: string; afterJson?: string | null; after?: unknown; ts?: string; createdAt?: string }[] }>(
     c ? `/api/audit-events?resource=products&resourceId=${encodeURIComponent(c.product.id)}` : null,
@@ -259,63 +261,7 @@ export default function ProductCostingPage() {
 
       {c.bom && !editing && (
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="relative">
-            <button type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((v) => !v)} className="rounded-md border border-[#D8D1C3] bg-white px-3 py-1.5 text-xs font-semibold">
-              Export PDF ▾
-            </button>
-            {exportOpen && (
-              <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[#E2DDD8] bg-white p-1 shadow-lg">
-                {([
-                  ["full", "Full Costing Report", "WIP processes, raw materials, time + labour cost, prices and margins"],
-                  ["spec", "Production Spec Sheet", "WIP processes, raw materials and time — no money"],
-                  ["labour", "Labour Cost Report", "minutes and labour cost by WIP and department"],
-                ] as const).map(([kind, title, hint]) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    onClick={async () => {
-                      setExportOpen(false);
-                      // jsPDF loads only when a report is asked for.
-                      const { generateCostingPdf } = await import("@/lib/generate-costing-pdf");
-                      generateCostingPdf(
-                        {
-                          product: { ...c.product, ...(productResp?.data ?? {}) } as CostingPdfInput["product"],
-                          bom: c.bom,
-                          costing: c,
-                          prices,
-                          customers: (custResp?.data ?? []).map((a) => ({ name: a.customerName, sen: a.basePriceSen ?? null })),
-                          standard: c.standard,
-                        },
-                        kind,
-                      );
-                    }}
-                    className="block w-full rounded px-3 py-2 text-left hover:bg-[#FAF8F4]"
-                  >
-                    <div className="text-sm font-semibold text-[#111827]">{title}</div>
-                    <div className="text-[11px] text-[#6B7280]">{hint}</div>
-                  </button>
-                ))}
-                <div className="my-1 border-t border-[#EFEBE3]" />
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setExportOpen(false);
-                    const { generateRdFormPdf } = await import("@/lib/generate-rd-form-pdf");
-                    generateRdFormPdf({
-                      product: { ...c.product, ...(productResp?.data ?? {}) } as CostingPdfInput["product"],
-                      bom: c.bom,
-                      nodes: c.nodes,
-                      blankLines: 2,
-                    });
-                  }}
-                  className="block w-full rounded px-3 py-2 text-left hover:bg-[#FAF8F4]"
-                >
-                  <div className="text-sm font-semibold text-[#111827]">R&amp;D Spec Form (to fill in)</div>
-                  <div className="text-[11px] text-[#6B7280]">what the BOM has now + empty boxes and lines for R&amp;D; key it back in with Edit costing</div>
-                </button>
-              </div>
-            )}
-          </div>
+          <CostingExportMenu productId={c.product.id} tier={c.tier} />
         </div>
       )}
 
@@ -389,27 +335,18 @@ export default function ProductCostingPage() {
       )}
 
       {c.tiers.length > 0 && (
-        <div className="rounded-lg border border-[#E2DDD8] bg-white p-3">
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <span className="text-sm font-semibold text-[#111827]">Fabric from order — cost by fabric tier</span>
-            <span className="text-[11px] text-[#6B7280]">each tier costed at its top price per metre</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {c.tiers.map((t) => (
-              <button
-                key={t.level}
-                type="button"
-                aria-pressed={c.tier === t.level}
-                onClick={() => setTier(t.level)}
-                className={`text-left rounded-md border px-3 py-2 ${c.tier === t.level ? "border-[#6B5A2E] bg-[#F6F1E6]" : "border-[#E2DDD8] bg-white hover:bg-[#FAF8F4]"}`}
-              >
-                <div className="text-[11px] text-[#6B7280]">{t.level} · up to {rm(t.maxSen)}/m</div>
-                <div className="font-bold tabular-nums">{rm(t.totalSen)}</div>
-                <div className="text-[11px] text-[#6B7280]">materials {rm(t.materialSen)}</div>
-              </button>
-            ))}
-          </div>
-        </div>
+        <FabricTierCard
+          tiers={c.tiers}
+          settings={c.fabricTiers ?? []}
+          selected={c.tier}
+          onSelect={(lv) => setTier(lv)}
+          fabricMetres={c.nodes.flatMap((n) => n.materials).filter((m) => m.status === "fabric-tier").reduce((sum, m) => sum + m.qty, 0)}
+          labourSen={c.labourSen}
+          materialSen={c.materialSen}
+          updatedBy={c.fabricTiersMeta?.updatedBy}
+          updatedAt={c.fabricTiersMeta?.updatedAt}
+          onSaved={() => refresh()}
+        />
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4 items-start">
@@ -428,6 +365,7 @@ export default function ProductCostingPage() {
               template={c.template}
               productId={c.product.id}
               category={c.product.category}
+              labelProduct={productResp?.data}
               tier={c.tier}
               onDone={(saved) => {
                 setEditing(false);

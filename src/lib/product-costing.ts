@@ -34,6 +34,27 @@ export const DEFAULT_FABRIC_TIERS: FabricTier[] = [
   { level: "Lv4", minSen: 2100, maxSen: 2500 },
 ];
 
+/** Strict check for a save: every tier needs a name, 0 ≤ min ≤ max, max > 0,
+ *  unique names; 1–10 tiers. Returns null when anything is off (the caller
+ *  refuses the save rather than storing something the owner did not type). */
+export function validateFabricTiers(raw: unknown): FabricTier[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 10) return null;
+  const out: FabricTier[] = [];
+  const seen = new Set<string>();
+  for (const t of raw) {
+    if (!t || typeof t !== "object") return null;
+    const r = t as Record<string, unknown>;
+    const level = String(r.level ?? "").trim().slice(0, 20);
+    const minSen = Math.round(Number(r.minSen));
+    const maxSen = Math.round(Number(r.maxSen));
+    if (!level || seen.has(level.toUpperCase())) return null;
+    if (!Number.isFinite(minSen) || !Number.isFinite(maxSen) || minSen < 0 || maxSen <= 0 || maxSen < minSen) return null;
+    seen.add(level.toUpperCase());
+    out.push({ level, minSen, maxSen });
+  }
+  return out;
+}
+
 /** Accepts whatever is stored; anything malformed falls back to the defaults. */
 export function normaliseFabricTiers(raw: unknown): FabricTier[] {
   if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_FABRIC_TIERS;

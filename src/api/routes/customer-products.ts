@@ -25,6 +25,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { resolveProductPriceAsOf } from "./products";
 import { todayYmdMY } from "../../lib/utils";
+import { actorName } from "../lib/actor-name";
 
 const app = new Hono<Env>();
 
@@ -520,7 +521,7 @@ app.post("/:customerProductId/prices", async (c) => {
               seatSnap,
               today,
               "Auto-baseline (captured before scheduled change)",
-              body.createdBy ?? null,
+              (await actorName(c, body.createdBy)),
             )
             .run();
         }
@@ -547,7 +548,7 @@ app.post("/:customerProductId/prices", async (c) => {
         seatJson,
         effectiveFrom,
         body.notes ?? null,
-        body.createdBy ?? null,
+        (await actorName(c, body.createdBy)),
       )
       .run();
 

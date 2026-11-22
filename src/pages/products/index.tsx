@@ -15,6 +15,7 @@ import { DEFAULT_EXTRA_WIP_TYPES, BUILT_IN_WIP_TYPES, wipTypeCode, wipTypeAllowe
 import { BOM_PRODUCT_TYPES, VARIANT_FIELDS, DEFAULT_VARIANT_FIELDS } from "@/lib/bom-variant-fields";
 import { MasterPriceHistoryDialog } from "./MasterPriceHistoryDialog";
 import { CustomerAssignmentsSection } from "./customer-assignments";
+import { CostingExportMenu } from "./costing-export-menu";
 import { BatchImportDialog, type ImportColumn } from "@/components/ui/batch-import-dialog";
 import { PRODUCT_IMPORT_COLUMNS } from "@/lib/import-schemas";
 import { exportImportRows } from "@/components/ui/batch-import-dialog";
@@ -3603,151 +3604,45 @@ export default function ProductsPage() {
       <div className="px-4 pb-4 space-y-3">
         {cfg && <ProductionConfig config={cfg} />}
 
-        {/* ---- Price vs Labor (Margin) ----
-            Owner-requested side-by-side: each selling price
-            (Price 2 = company default tier `basePriceSen`,
-            Price 1 = `price1Sen`) against the estimated labor
-            cost, with margin = price − labor in RM and %.
-            Labor here is the flat-average estimate (RM2,200 /
-            26d / 9h / 60 — see LABOR_RATE_PER_MIN_SEN), NOT
-            full landed cost, so "margin" is price-minus-labor
-            only. Existing price labels are kept verbatim. */}
-        <div className="bg-[#FAF9F7] border border-[#E5E7EB] rounded-lg p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-[#374151]">
-              Price vs Labor (Margin)
-            </h4>
-            <span className="text-[10px] text-[#9CA3AF] italic">
-              Labor = est. {formatCurrency(LABOR_RATE_PER_MIN_SEN)}/min × {totalMin} min
-              {" "}(RM 2,200/mo ÷ 26d ÷ 9h)
-            </span>
-          </div>
-          {(() => {
-            // Margin row helper. price in sen; "—" when the
-            // price is unset (0) or minutes unknown so we never
-            // show a fake 100% margin against zero labor.
-            const marginRow = (label: string, priceSen: number) => {
-              const hasPrice = priceSen > 0;
-              const hasLabor = laborCostSen > 0;
-              const marginSen = priceSen - laborCostSen;
-              const marginPct = hasPrice
-                ? (marginSen / priceSen) * 100
-                : null;
-              return (
-                <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                  <div className="text-[10px] font-medium text-[#6B7280] uppercase">{label}</div>
-                  <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
-                    {hasPrice ? formatCurrency(priceSen) : <span className="text-[#9CA3AF]">—</span>}
-                  </div>
-                  <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">
-                    Labor {hasLabor ? formatCurrency(laborCostSen) : "—"}
-                  </div>
-                  <div className="text-[11px] tabular-nums">
-                    {hasPrice && hasLabor ? (
-                      <span className={marginSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
-                        Margin {formatCurrency(marginSen)}
-                        {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
-                      </span>
-                    ) : (
-                      <span className="text-[#9CA3AF]">Margin —</span>
-                    )}
-                  </div>
-                </div>
-              );
-            };
-
-            // Labor-only card — reads even when a SKU has no
-            // price set yet. Shared by both layouts below.
-            const laborCard = (
-              <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                <div className="text-[10px] font-medium text-[#6B7280] uppercase">Labor Cost (est.)</div>
-                <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
-                  {laborCostSen > 0 ? formatCurrency(laborCostSen) : <span className="text-[#9CA3AF]">—</span>}
-                </div>
-                <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">{totalMin} min</div>
-              </div>
-            );
-
-            // Sofas don't carry flat price1Sen/basePriceSen —
-            // their selling prices live in seatHeightPrices[]
-            // per (seat height, tier). Showing the flat Price 2/
-            // Price 1/Margin cards therefore reads "—" even for a
-            // sofa that DOES have prices, which is misleading. So
-            // for sofas we derive a representative price = the
-            // lowest positive seat-height price in the currently
-            // selected tier (sofaTier) and compute the margin
-            // against THAT, labelled "from RM x (seat height …)".
-            if (isSofa) {
-              const tierRep = (p.seatHeightPrices || [])
-                .filter(
-                  (s) => entryTier(s.tier) === sofaTier && s.priceSen > 0,
-                )
-                .sort((a, b) => a.priceSen - b.priceSen)[0];
-              const tierLabel =
-                SOFA_TIERS.find((t) => t.value === sofaTier)?.label ?? "";
-              const repPriceSen = tierRep?.priceSen ?? 0;
-              const hasRep = repPriceSen > 0;
-              const hasLabor = laborCostSen > 0;
-              const marginSen = repPriceSen - laborCostSen;
-              const marginPct = hasRep ? (marginSen / repPriceSen) * 100 : null;
-              const repHeight = tierRep
-                ? String(tierRep.height).replace('"', "")
-                : null;
-              return (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    <div className="bg-white rounded-md px-3 py-2 border border-[#E5E7EB]">
-                      <div className="text-[10px] font-medium text-[#6B7280] uppercase">
-                        Price (from, {tierLabel})
-                      </div>
-                      <div className="mt-0.5 text-sm font-semibold text-[#111827] tabular-nums">
-                        {hasRep ? (
-                          <>
-                            {formatCurrency(repPriceSen)}
-                            {repHeight && (
-                              <span className="ml-1 text-[10px] font-normal text-[#9CA3AF]">
-                                Seat {repHeight}"
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-[#9CA3AF]">—</span>
-                        )}
-                      </div>
-                      <div className="mt-1 text-[11px] text-[#6B7280] tabular-nums">
-                        Labor {hasLabor ? formatCurrency(laborCostSen) : "—"}
-                      </div>
-                      <div className="text-[11px] tabular-nums">
-                        {hasRep && hasLabor ? (
-                          <span className={marginSen >= 0 ? "text-[#4F7C3A]" : "text-[#9A3A2D]"}>
-                            Margin {formatCurrency(marginSen)}
-                            {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
-                          </span>
-                        ) : (
-                          <span className="text-[#9CA3AF]">Margin —</span>
-                        )}
-                      </div>
-                    </div>
-                    {laborCard}
-                  </div>
-                  <p className="mt-2 text-[10px] text-[#9CA3AF] italic">
-                    Sofa price varies by seat height — see each height's price above. Margin here compares against the lowest seat-height price in the current {tierLabel} tier.
-                  </p>
-                </>
-              );
-            }
-
-            // Bedframes / accessories keep the flat-price cards
-            // verbatim — those fields are correct for them.
-            return (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {marginRow("Price 2", basePrice)}
-                {marginRow("Price 1", price1Val)}
-                {laborCard}
-              </div>
-            );
-          })()}
-        </div>
+        {/* ---- Cost tiles (owner 2026-11-22, design "Row dropdown v2") ----
+            The same numbers as the list columns: labour from the BOM
+            minutes, raw materials from the costing summary (fabric at Lv1),
+            total cost, and the margin of Price 2 / Price 1 on that TOTAL
+            cost — the old box compared prices with labour only. Sofas use
+            the lowest seat-height price in the selected tier, as before. */}
+        {(() => {
+          const cs = costMap?.[p.code];
+          const hasMat = !!cs && cs.materialLines > 0;
+          const fabricOnly = hasMat && (cs.otherLines ?? cs.materialLines) === 0;
+          const total = hasMat ? laborCostSen + cs.materialSen : null;
+          const sofaRep = isSofa
+            ? ((p.seatHeightPrices || []).filter((s) => entryTier(s.tier) === sofaTier && s.priceSen > 0).sort((x, y) => x.priceSen - y.priceSen)[0]?.priceSen ?? 0)
+            : 0;
+          const tile = (label: string, value: ReactNode, sub: ReactNode, tone?: "good" | "bad" | "muted") => (
+            <div className="min-w-0 flex-1 rounded-md border border-[#E5E7EB] bg-white px-3 py-2">
+              <div className="text-[10px] font-medium uppercase text-[#6B7280]">{label}</div>
+              <div className={`mt-0.5 text-sm font-semibold tabular-nums ${tone === "good" ? "text-[#15803D]" : tone === "bad" ? "text-[#B91C1C]" : tone === "muted" ? "text-[#9CA3AF]" : "text-[#111827]"}`}>{value}</div>
+              <div className="mt-0.5 text-[11px] text-[#6B7280] tabular-nums">{sub}</div>
+            </div>
+          );
+          const marginTile = (label: string, priceSen: number, sub: string) => {
+            if (!(priceSen > 0)) return tile(label, "—", sub || "no price", "muted");
+            if (total == null) return tile(label, formatCurrency(priceSen), "margin needs materials in the BOM", "muted");
+            const m = priceSen - total;
+            return tile(label, `${formatCurrency(m)} · ${((m / priceSen) * 100).toFixed(1)}%`, sub || formatCurrency(priceSen), m >= 0 ? "good" : "bad");
+          };
+          return (
+            <div className="flex flex-wrap gap-2">
+              {tile("Labour", laborCostSen > 0 ? formatCurrency(laborCostSen) : "—", `${totalMin} min`)}
+              {tile("Raw materials", hasMat ? formatCurrency(cs.materialSen) : "No materials", hasMat ? (fabricOnly ? "fabric only · Lv1" : `${cs.materialLines} lines${cs.missingLines ? ` · ${cs.missingLines} no price` : ""}`) : "BOM has no raw materials", hasMat ? undefined : "muted")}
+              {tile("Total cost", total != null ? formatCurrency(total) : "—", "labour + materials")}
+              {isSofa
+                ? marginTile(`Price (from, ${SOFA_TIERS.find((t) => t.value === sofaTier)?.label ?? ""}) · margin`, sofaRep, sofaRep > 0 ? formatCurrency(sofaRep) : "")
+                : marginTile("Price 2 · margin", basePrice, basePrice > 0 ? formatCurrency(basePrice) : "")}
+              {!isSofa && marginTile("Price 1 · margin", price1Val, price1Val > 0 ? formatCurrency(price1Val) : "")}
+            </div>
+          );
+        })()}
 
         {/* Variant Defaults Summary — flat key/value cards
             for the fields the operator has actually set,
@@ -3807,7 +3702,13 @@ export default function ProductsPage() {
           </div>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to={`/products/${p.id}/costing`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#6B5A2E] border border-[#6B5A2E] rounded-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Open product
+          </Link>
           <Link to={`/products/${p.id}/bom`}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#3E6570] bg-[#E0EDF0] border border-[#A8CAD2] rounded-md hover:bg-[#E0EDF0] transition-colors"
             onClick={(e) => e.stopPropagation()}
@@ -3841,19 +3742,33 @@ export default function ProductsPage() {
             </svg>
             Manage Variants
           </button>
+          <CostingExportMenu productId={p.id} align="left" />
+          <span className="ml-auto text-[11px] text-[#9CA3AF]">Tip: double-click the row to open the product</span>
         </div>
 
-        {/* Customer Assignments */}
-        <CustomerAssignmentsSection productId={p.id} active={isExpanded} />
+        {/* Customer prices — change price here, margin on total cost */}
+        <CustomerAssignmentsSection
+          productId={p.id}
+          active={isExpanded}
+          costSen={(() => {
+            const cs = costMap?.[p.code];
+            return cs && cs.materialLines > 0 ? laborCostSen + cs.materialSen : null;
+          })()}
+        />
 
         {/* CNC Cutting Template — fabric-cutting files for
             the BUYI E-DIGIT cutter, keyed by the bare
             product code (variant suffix stripped) and
             narrowed by this SKU's size. */}
-        <CncTemplatePanel
-          productCode={baseProductCode(p.code)}
-          size={p.sizeLabel}
-        />
+        <details className="rounded-lg border border-[#E5E7EB] bg-white">
+          <summary className="cursor-pointer select-none px-4 py-2 text-sm font-semibold text-[#374151]">CNC cutting template</summary>
+          <div className="px-2 pb-2">
+            <CncTemplatePanel
+              productCode={baseProductCode(p.code)}
+              size={p.sizeLabel}
+            />
+          </div>
+        </details>
       </div>
     );
   };

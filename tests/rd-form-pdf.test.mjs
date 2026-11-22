@@ -52,14 +52,14 @@ test("key-in: editor numbers WIPs like the form and records the form with the sa
   const { readFileSync } = await import("node:fs");
   const editor = readFileSync("src/pages/products/costing-editor.tsx", "utf8");
   assert.match(editor, /#\{no\}<\/span>/);
-  assert.match(editor, /level, \+\+wipNo\)\)/);
-  assert.match(editor, /These changes come from a filled <b>R&amp;D Spec Form<\/b>/);
+  assert.match(editor, /renderLevel\(p, n, level, \+\+wipNo\)/);
+  assert.match(editor, /This came from an R&amp;D Spec Form/);
   assert.match(editor, /\/rd-entry`, \{\s*method: "POST"/);
   const route = readFileSync("src/api/routes/product-costing.ts", "utf8");
   assert.match(route, /app\.post\("\/:productId\/rd-entry"/);
   assert.match(route, /enteredBy: await actorName\(c\)/);
   assert.match(route, /action: "rd-form-entry"/);
   const page = readFileSync("src/pages/products/costing.tsx", "utf8");
-  assert.match(page, /R&amp;D Spec Form \(to fill in\)/);
+  assert.match(readFileSync("src/pages/products/costing-export-menu.tsx", "utf8"), /R&D Spec Form \(to fill in\)/);
   assert.match(page, /\.filter\(\(e\) => e\.action === "rd-form-entry"\)/);
 });
