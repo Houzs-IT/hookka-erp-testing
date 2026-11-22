@@ -307,6 +307,19 @@ app.get("/summary", async (c) => {
   return c.json({ success: true, data });
 });
 
+// POST /preview — cost a BOM that has not been saved (the costing editor's
+// live numbers while you type). Writes nothing.
+app.post("/preview", async (c) => {
+  const denied = await requirePermission(c, "products", "read");
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => null)) as { bom?: BomIn; tier?: string } | null;
+  if (!body || !body.bom || typeof body.bom !== "object") {
+    return c.json({ success: false, error: "bom is required" }, 400);
+  }
+  const inputs = await loadPricingInputs(c.var.DB);
+  return c.json({ success: true, data: computeCosting({ bom: body.bom, ...inputs }, { tier: body.tier }) });
+});
+
 app.get("/:productId", async (c) => {
   const denied = await requirePermission(c, "products", "read");
   if (denied) return denied;
@@ -323,6 +336,9 @@ app.get("/:productId", async (c) => {
         : null,
       fabricTiers,
       standard,
+      // The BOM itself, for the costing editor (phase 4) — the same row the
+      // BOM page edits; saving goes back through PUT /api/bom/templates/:id.
+      template: tpl ? { id: tpl.id, productCode: tpl.productCode, ...bomOf(tpl) } : null,
       ...costing,
     },
   });

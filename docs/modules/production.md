@@ -40,7 +40,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
   - `/production/tracker` → redirect to `/planning?tab=tracker` (`src/dashboard-routes.tsx`). The Master Tracker lives as a TAB of the Planning page; the standalone `production/tracker.tsx` was deleted 2026-08-13 — unreachable since the route became a redirect, imported nowhere. **`PlanningPage` does not read `?tab=` yet** (`activeTab` is local state), so this redirect and the Production page's own "Master Tracker" button both land on Capacity Overview.
   - `/production/scan` → `src/pages/production/scan.tsx` (shop-floor dept scan) · `/production/fg-scan` → `src/pages/production/fg-scan.tsx`
   - `/production/wip-times` → `src/pages/production/wip-times.tsx` (per-dept minute rates)
-  - `/bom` → `src/pages/bom.tsx:6054` (`BOMManagementPage`) · `/cnc-templates` → `src/pages/cnc-templates.tsx`
+  - `/bom` → `src/pages/bom.tsx:5664` (`BOMManagementPage`) · `/cnc-templates` → `src/pages/cnc-templates.tsx`
 - API routes
   - PO / job-card / WIP / scan **handlers** → `src/api/routes/production-orders.ts` (3903 lines); every shared
     function lives in `src/api/routes/production-orders/_helpers.ts` (5799). Mounted `worker.ts:1233`.
@@ -64,7 +64,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 3. **PO status recompute + completion cascade** — `recomputePoStatusAndProgress` (`_helpers.ts:4133`) is the single source of truth for PO `status` + progress. On full completion it fans out to `postProductionOrderCompletion` (`fg-completion.ts`, FG units/batches), `postJobCardLabor` (`po-cost-cascade.ts:953`), and the SO/CO cascades (`cascadePoCompletionToSO` `_helpers.ts:3900` / `cascadeUpholsteryToSO` `:3536` / `cascadeCNCompletionToCO` `:3994`).
 4. **Cost cascade** — on scan/completion: `consumeRawMaterialsForPO` (`po-cost-cascade.ts:803`, RM_ISSUE), `postJobCardLabor` (`:953`, LABOR_POSTED — idempotent via a `cost_ledger` check in the scan handler), `backfillFGBatchCost` (`:1153`), `postWIPCompletionMarker` (`:1276`). All append-only to `cost_ledger`.
 5. **Stock PO create** — `app.post("/stock")` (`production-orders.ts:1187`) builds make-to-stock POs (no SO). Board list read is `app.get("/")` (`:726`) via `fetchFilteredPOs` (`_helpers.ts:1444`); board summary `app.get("/board")` (`:3301`).
-6. **BOM edit** — `bom.tsx` `EditBOMDialog` (`:2979`) → `PUT /templates/:id` (`bom.ts:526`); master templates via `MasterTemplatesDialog` (`bom.tsx:3864`). Per-dept minute rates are edited on `src/pages/production/wip-times.tsx` (backed by `wip-times.ts`) and land in `bom_templates.wipComponents`.
+6. **BOM edit** — `bom.tsx` `EditBOMDialog` (`:2638`) → `PUT /templates/:id` (`bom.ts:526`); master templates via `MasterTemplatesDialog` (`bom.tsx:3864`). Per-dept minute rates are edited on `src/pages/production/wip-times.tsx` (backed by `wip-times.ts`) and land in `bom_templates.wipComponents`.
 
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
@@ -73,8 +73,9 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `filteredOrders` (memo) | `src/pages/production/index.tsx:2974` | Dept-narrow + overdue-set grid filter |
 | `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5826 / 5785` | Packing sticker set (pillow carton = one box per order, owner 2026-11-20; immediate paint → /p/ token upgrade) |
 | `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5676 / 5651` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
-| `BOMManagementPage` | `src/pages/bom.tsx:6054` | BOM page shell (tabs, list) |
-| `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:3028 / 3934` | L1+WIP editor / master variants |
+| `BOMManagementPage` | `src/pages/bom.tsx:5664` | BOM page shell (tabs, list) |
+| `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2638 / 3544` | L1+WIP editor / master variants |
+| `RawMaterialSelect` / `MaterialScalingEditor` | `src/components/bom/material-editor.tsx` | BOM material picker + scaling editor, shared with the product costing editor (`src/pages/products/costing-editor.tsx`); pure helpers in `src/lib/bom-material.ts` |
 | `rowToPO` | `production-orders/_helpers.ts:905` | PO row → API shape (dual-keyed reads) |
 | `applyWipInventoryChange` | `production-orders/_helpers.ts:2574` | WIP inventory change; idempotent ONLY when `orgId` passed |
 | `recomputePoStatusAndProgress` | `production-orders/_helpers.ts:4133` | Single source of truth for PO status/progress |
