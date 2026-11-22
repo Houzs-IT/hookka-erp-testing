@@ -179,6 +179,7 @@ const AdminHealth = lazy(() => import('./pages/admin/health'))
 const AgentConsole = lazy(() => import('./pages/agents'))
 const KpiPage = lazy(() => import('./pages/kpi'))
 const ItSupport = lazy(() => import('./pages/it-support'))
+const Meetings = lazy(() => import('./pages/meetings').then((m) => ({ default: () => <m.Meetings erpName="Hookka ERP" /> })))
 
 // 2FA setup (any authenticated user — soft-prompt destination from /login).
 const Setup2FA = lazy(() => import('./pages/setup-2fa'))
@@ -575,6 +576,12 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
     // session and never takes a user id from the request.
     path: '/it-support',
     element: <S><ItSupport /></S>,
+  },
+  {
+    // Meetings: every login books rooms and sees the shared calendar (the Houzs
+    // IT Hub holds it). Changing rooms is gated on the server (meeting-rooms).
+    path: '/meetings',
+    element: <S><Meetings /></S>,
   },
   {
     path: '/agents',

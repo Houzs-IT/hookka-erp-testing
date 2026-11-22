@@ -19,6 +19,7 @@ import {
   BarChart3,
   Presentation,
   Wrench,
+  CalendarDays,
   PackageOpen,
   Bell,
   Mail,
@@ -363,6 +364,12 @@ const AGENTS_LINK: NavItem = {
 };
 // IT Support: every login, own tickets only (the Houzs IT Hub holds them).
 // The badge counts tickets IT has answered that this person has not opened.
+// Meetings: every login; rooms shared with every company (the Houzs IT Hub).
+const MEETINGS_LINK: NavItem = {
+  name: "Meetings",
+  href: "/meetings",
+  icon: CalendarDays,
+};
 const IT_SUPPORT_LINK: NavItem = {
   name: "IT Support",
   href: "/it-support",
@@ -611,6 +618,7 @@ export function Sidebar({
         ...items.slice(0, at),
         KPI_LINK,
         AGENTS_LINK,
+        MEETINGS_LINK,
         { ...IT_SUPPORT_LINK, badge: itUnread },
         ...items.slice(at),
       ];

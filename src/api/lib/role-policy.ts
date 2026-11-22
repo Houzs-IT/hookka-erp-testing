@@ -135,6 +135,11 @@ export const ALL_RESOURCES = [
   "worker-penalties",
   // Comms & system
   "announcements", "mail-center", "notifications", "settings", "users",
+  // Add and change the meeting rooms every company shares (routes/meetings.ts).
+  // Booking a room needs nothing: every login has the Meetings page. Held back
+  // from every wildcard below, so only an admin or someone ticked for it in the
+  // per-user editor can change the rooms (owner 2026-11-23).
+  "meeting-rooms",
   // Attachments. Registered 2026-08-21, and its ABSENCE is the whole story of
   // BUG-2026-08-21-159: `allExcept()` can only grant what is listed here, so a
   // resource missing from this array is DENIED to every coded role no matter
@@ -157,7 +162,7 @@ export const ALL_RESOURCES = [
 // `files` joins it for a different reason than `users`: not because a wildcard
 // there is dangerous to the org chart, but because DELETE is. Everyone gets
 // create+read explicitly below; removal stays with an admin.
-const NEVER_WILDCARD = ["users", "files"];
+const NEVER_WILDCARD = ["users", "files", "meeting-rooms"];
 
 function allExcept(excluded: string[]): RolePolicy {
   const out: RolePolicy = {};

@@ -1088,6 +1088,27 @@ app.post("/api/mail-center/inbound", async (c) => {
 // it lands in the reporter's top-bar bell. Machine-to-machine, so registered
 // BEFORE authMiddleware and gated on IT_HUB_WEBHOOK_SECRET (x-it-hub-secret),
 // same constant-time pattern as above. Idempotent on the hub's event id.
+// Meetings, guest side: a booking link opened by someone outside the company.
+// Before authMiddleware on purpose; routes/meetings.ts proxies it to the hub as
+// a guest, rate-limited per IP.
+app.route("/api/public/meetings", publicMeetings);
+
+// Meetings staff directory, pushed hourly by .github/workflows/meetings-directory.yml.
+// CRON_SECRET-gated like the other internal endpoints.
+app.post("/api/internal/meetings-directory", async (c) => {
+  const expected = c.env.CRON_SECRET;
+  if (!expected || expected.length < 16) {
+    console.error("[meetings-directory] CRON_SECRET unset or too short — refusing");
+    return c.json({ ok: false, error: "not configured" }, 503);
+  }
+  if ((c.req.header("x-cron-secret") || "") !== expected) return c.json({ ok: false, error: "forbidden" }, 403);
+  try {
+    return c.json({ ok: true, ...(await pushMeetingsDirectory(c.env, c.var.DB as never)) });
+  } catch (e) {
+    return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502);
+  }
+});
+
 app.post("/api/it-support/hub-events", async (c) => {
   const expected = c.env.IT_HUB_WEBHOOK_SECRET;
   if (!expected || expected.length < 16) {
@@ -1294,6 +1315,7 @@ import floorLive from "./routes/floor-live";
 import dashboardFinance from "./routes/dashboard-finance";
 import kpi from "./routes/kpi";
 import itSupport from "./routes/it-support";
+import meetings, { publicMeetings, pushMeetingsDirectory } from "./routes/meetings";
 import connectLogin from "./routes/connect-login";
 // Phase C #4 quick-win — MDM duplicate-detection review queue.
 import mdm from "./routes/mdm";
@@ -1557,6 +1579,7 @@ app.route("/api/kpi", kpi);
 // IT Support: a proxy to the Houzs IT Hub. Self-scoped like /api/kpi/me (the
 // reporter is the session's user), so signed in is the only gate.
 app.route("/api/it-support", itSupport);
+app.route("/api/meetings", meetings);
 // Houzs Connect checking a Hookka account (routes/connect-login.ts).
 app.route("/api/connect", connectLogin);
 // Phase C #4 quick-win — MDM duplicate-detection review queue. Routes
