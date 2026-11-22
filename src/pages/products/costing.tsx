@@ -194,7 +194,14 @@ export default function ProductCostingPage() {
   const [tier, setTier] = useState<string | null>(null);
   const url = `/api/product-costing/${encodeURIComponent(id)}${tier ? `?tier=${encodeURIComponent(tier)}` : ""}`;
   const { data: resp, loading, error, failure, refresh } = useCachedJson<{ success?: boolean; data?: CostingData; error?: string }>(url, 60);
-  const c = resp?.data;
+  // Switching fabric tier changes the URL; until the new tier's reply lands
+  // keep showing the last costing of THIS product instead of blanking the
+  // page to "Loading costing…" (owner 2026-11-22: 「我点不一样level 会闪一下」).
+  const [shown, setShown] = useState<CostingData | undefined>(undefined);
+  if (resp?.data && resp.data !== shown) setShown(resp.data);
+  const sameProduct = (d?: CostingData) => !!d && (d.product.id === id || d.product.code === id);
+  const c = resp?.data ?? (loading && sameProduct(shown) ? shown : undefined);
+  const switchingTier = !resp?.data && !!c;
   // By the product's id from the costing reply: the route param may be a code.
   const { data: productResp } = useCachedJson<{ data?: ProductLite }>(c ? `/api/products/${encodeURIComponent(c.product.id)}` : null);
   const { data: custResp } = useCachedJson<{ data?: Assignment[] }>(c ? `/api/customer-products/by-product/${c.product.id}` : null);
@@ -256,7 +263,7 @@ export default function ProductCostingPage() {
   const statusLabel = c.bom ? `${c.bom.version ? `BOM ${c.bom.version}` : "BOM"} · ${c.bom.status === "ACTIVE" ? "Active" : c.bom.status ?? ""}` : "No BOM";
 
   return (
-    <div className="space-y-4 w-full">
+    <div className={`space-y-4 w-full transition-opacity ${switchingTier ? "opacity-70" : ""}`} aria-busy={switchingTier || undefined}>
       <ProductTabs productId={c.product.id} code={c.product.code} name={c.product.name} category={c.product.category} active="costing" extra={statusLabel} />
 
       {c.bom && !editing && (
@@ -338,7 +345,7 @@ export default function ProductCostingPage() {
         <FabricTierCard
           tiers={c.tiers}
           settings={c.fabricTiers ?? []}
-          selected={c.tier}
+          selected={switchingTier ? tier : c.tier}
           onSelect={(lv) => setTier(lv)}
           fabricMetres={c.nodes.flatMap((n) => n.materials).filter((m) => m.status === "fabric-tier").reduce((sum, m) => sum + m.qty, 0)}
           labourSen={c.labourSen}
