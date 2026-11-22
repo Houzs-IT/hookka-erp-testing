@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 156 mounts, 153 route files in
-`src/api/routes/`, 1131 top-level handler registrations discovered.
+**Counts at generation time:** 157 mounts, 154 route files in
+`src/api/routes/`, 1134 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -62,6 +62,7 @@ offsets pointing past the end of their own file.
 | `/api/mail-center` | `src/api/routes/mail-center.ts` | `GET /threads` <sub>:1067</sub><br>`GET /threads/:id` <sub>:1175</sub><br>`POST /threads/:id/messages/:mid/acknowledge` <sub>:1297</sub><br>`GET /outbox` <sub>:1394</sub><br>`GET /outbox/:id` <sub>:1488</sub><br>`GET /outbox/:id/attachments/:idx/download` <sub>:1543</sub><br>`GET /addresses` <sub>:1626</sub><br>`GET /labels` <sub>:1708</sub><br>`POST /labels` <sub>:1725</sub><br>`PATCH /labels/:id` <sub>:1780</sub><br>`DELETE /labels/:id` <sub>:1851</sub><br>`POST /test-inject` <sub>:1918</sub><br>`POST /addresses` <sub>:1954</sub><br>`PATCH /addresses/:id` <sub>:2032</sub><br>`GET /access` <sub>:2107</sub><br>`POST /access` <sub>:2133</sub><br>`DELETE /access` <sub>:2171</sub><br>`GET /directory` <sub>:2225</sub><br>`GET /visibility` <sub>:2352</sub><br>`GET /scope-levels` <sub>:2398</sub><br>`PUT /scope-level` <sub>:2427</sub><br>`POST /threads/:id/reply` <sub>:2596</sub><br>`POST /compose` <sub>:2840</sub><br>`PATCH /threads/:id` <sub>:3036</sub> | gated |
 | `/api/datagrid-layouts` | `src/api/routes/datagrid-layouts.ts` | `GET /` <sub>:171</sub><br>`PUT /` <sub>:234</sub><br>`DELETE /` <sub>:320</sub><br>`POST /shared` <sub>:395</sub><br>`PUT /shared/:id` <sub>:487</sub><br>`DELETE /shared/:id` <sub>:552</sub> | gated |
 | `/api/bom` | `src/api/routes/bom.ts` | `GET /` <sub>:201</sub><br>`POST /` <sub>:215</sub><br>`GET /templates` <sub>:302</sub><br>`POST /templates` <sub>:373</sub><br>`PUT /templates` <sub>:460</sub><br>`PUT /templates/:id` <sub>:578</sub><br>`POST /templates/bulk-process-edit` <sub>:754</sub><br>`POST /templates/bulk-activate` <sub>:936</sub><br>`POST /resync-job-card-times` <sub>:1029</sub><br>`POST /audit-contamination` <sub>:1403</sub><br>`GET /:id` <sub>:1542</sub><br>`PUT /:id` <sub>:1554</sub> | gated |
+| `/api/product-costing` | `src/api/routes/product-costing.ts` | `GET /fabric-tiers` <sub>:71</sub><br>`PUT /fabric-tiers` <sub>:77</sub><br>`GET /:productId` <sub>:111</sub> | gated |
 | `/api/products` | `src/api/routes/products.ts` | `GET /` <sub>:467</sub><br>`GET /new-models` <sub>:584</sub><br>`GET /setup-incomplete` <sub>:694</sub><br>`POST /` <sub>:712</sub><br>`POST /bulk-import` <sub>:849</sub><br>`GET /:id` <sub>:1060</sub><br>`PUT /:id` <sub>:1069</sub><br>`DELETE /:id` <sub>:1277</sub><br>`GET /:productId/price-history` <sub>:1400</sub><br>`POST /:productId/prices` <sub>:1426</sub><br>`DELETE /price-row/:priceRowId` <sub>:1562</sub> | gated |
 | `/api/search` | `src/api/routes/search.ts` | `GET /` <sub>:97</sub> | gated |
 | `/api/product-configs` | `src/api/routes/product-configs.ts` | `GET /` <sub>:75</sub> | gated |
