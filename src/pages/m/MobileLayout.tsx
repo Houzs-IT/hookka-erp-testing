@@ -84,6 +84,8 @@ const FinanceRoute = lazy(() => import("./screens/finance/FinanceRoute"));
 const EmployeesRoute = lazy(() => import("./screens/employees/EmployeesRoute"));
 // IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
 // ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
+// Meetings reuses the desktop page, which lays itself out for a phone (meetings-route.tsx).
+const MeetingsRoute = lazy(() => import("./meetings-route"));
 const ItSupportPage = lazy(() => import("@/pages/it-support"));
 function ItSupportRoute() {
   return (
@@ -432,6 +434,7 @@ export default function MobileLayout() {
           {/* Old dashboard links: the view moves into ?view=, everything else is kept. */}
           <Route path="dashboard" element={<DashboardRoute legacy />} />
           <Route path="dashboard/:tab" element={<DashboardRoute legacy />} />
+          <Route path="meetings" element={<MeetingsRoute />} />
           <Route path="it-support" element={<ItSupportRoute />} />
           {/* Updates: Notifications | Announcements (?view=). Not a module
               config, so it sits beside the module routes, not inside them. */}

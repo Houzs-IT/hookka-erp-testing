@@ -228,6 +228,9 @@ const EXPECTED_PRE_AUTH_ROUTES = [
   // IT Hub ticket events (added 2026-10-13): the hub pushes IT replies and status
   // changes into the reporter's bell. Gated by IT_HUB_WEBHOOK_SECRET (x-it-hub-secret).
   "POST /api/it-support/hub-events",
+  // Meetings staff list (added 2026-11-23): the hourly workflow sends Hookka's
+  // active staff to the IT Hub. CRON_SECRET-gated (x-cron-secret).
+  "POST /api/internal/meetings-directory",
 ];
 
 test("pre-auth routes (mounted before authMiddleware) are locked in", () => {

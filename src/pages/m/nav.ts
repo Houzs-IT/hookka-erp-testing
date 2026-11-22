@@ -21,6 +21,7 @@ import {
   UserSquare,
   Wrench,
   LifeBuoy,
+  CalendarDays,
   UserPlus,
   Shapes,
   HardHat,
@@ -175,6 +176,7 @@ export const MORE_GROUPS: ModuleGroup[] = [
     title: "System",
     items: [
       { label: "User Management", icon: UserPlus, path: "/m/usermgmt" },
+      { label: "Meetings", icon: CalendarDays, path: "/m/meetings" },
       { label: "IT Support", icon: LifeBuoy, path: "/m/it-support" },
     ],
   },

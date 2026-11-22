@@ -7664,3 +7664,7 @@ Ask (nhzulaikha26): put the two Claude Design handoffs on the phone Floor Live (
 ## 2026-11-21 — Onboarding / offboarding: one employment rule across the system (owner approved 7 points)
 1. IN PROGRESS: plan + batches in `docs/plans/employee-lifecycle-one-rule.md`. Batch 1 (this PR): shared rule `src/lib/employment.ts`; payroll sync on create / join change / last day / reactivate / deactivate (`src/api/lib/worker-payroll-sync.ts`); INACTIVE needs a last working day; join date from the form is kept; INACTIVE paid its last month; test accounts out of the hour docks.
 2. NEXT: batch 2 (counts / dashboards / reports / emails), batch 3 (pickers), batch 4 (data fixes: SOE SHWE Nov/Dec payslips, EMP-039 last day — owner sees the change list first).
+
+## 2026-11-23 — Meetings: shared meeting rooms booked from Hookka ERP (owner approved the plan and prototype)
+1. DONE in this PR: `/meetings` page (Calendar, My meetings, Rooms, Guest links, Email and WhatsApp, Change log) + `/m/meetings`, guest page `/book/:code`, proxy `src/api/routes/meetings.ts` to the Houzs IT Hub (same hub key as IT Support), new resource `meeting-rooms` (only admins / per-user ticks may add or change rooms), hourly staff list `.github/workflows/meetings-directory.yml`. Tests: `tests/meetings.test.mjs`, `tests/meetings-lib.test.mjs`.
+2. WAITING (owner / Google admin): Gmail sending, Meet/Zoom auto links and WhatsApp reminders. Until then reminders are ERP notifications only. Rooms are added by the owner on the Rooms tab.

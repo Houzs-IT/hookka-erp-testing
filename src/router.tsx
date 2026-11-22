@@ -42,6 +42,8 @@ const InviteAccept = lazy(() => import('./pages/InviteAccept'))
 // run before the user has any session. The token in the URL is the only
 // credential needed for /reset-password.
 const ForgotPassword = lazy(() => import('./pages/forgot-password'))
+// A guest's booking link: no login (routes/meetings.ts publicMeetings).
+const MeetingBook = lazy(() => import('./pages/meeting-book').then((m) => ({ default: m.MeetingBook })))
 const ResetPassword = lazy(() => import('./pages/reset-password'))
 
 // Mobile (phone) app — NEW additive UI shell mounted at /m. Reuses the SAME
@@ -95,6 +97,7 @@ export const router = createBrowserRouter([
   { path: '/login', element: <S><Login /></S> },
   // Self-service password reset — PUBLIC (no session required, token is in URL)
   { path: '/forgot-password', element: <S><ForgotPassword /></S> },
+  { path: '/book/:code', element: <S><MeetingBook /></S> },
   { path: '/reset-password', element: <S><ResetPassword /></S> },
 
   // Invite acceptance (standalone, no auth — the token IS the credential)

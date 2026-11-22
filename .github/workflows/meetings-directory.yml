@@ -1,0 +1,45 @@
+name: Meetings staff list
+
+# Sends Hookka's active staff (id, name, email, department) to the Houzs IT Hub
+# once an hour, so colleagues in Houzs ERP can invite Hookka people to a meeting
+# before those people ever open the Meetings page (routes/meetings.ts,
+# pushMeetingsDirectory). The Meetings page also refreshes it on open.
+#
+# Auth: x-cron-secret (the shared CRON_SECRET, same as the other internal crons).
+on:
+  schedule:
+    - cron: '17 * * * *' # hourly, off the hour
+  workflow_dispatch:
+
+concurrency:
+  group: meetings-directory
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/internal/meetings-directory
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repo secret is empty."
+            exit 1
+          fi
+          response=$(curl --silent --show-error --write-out '\nHTTP_STATUS:%{http_code}' \
+            --max-time 60 --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-cron-secret: $CRON_SECRET" \
+            --data '{}' \
+            'https://hookka-erp-testing.pages.dev/api/internal/meetings-directory')
+          status=$(echo "$response" | tail -n1 | sed 's/HTTP_STATUS://')
+          body=$(echo "$response" | sed '$d')
+          echo "Status: $status"
+          # The repo is PUBLIC: print only counts, never names or emails.
+          echo "Body (counts only): $(printf '%s' "$body" | jq -rc 'if type == "object" then [to_entries[] | .key as $k | .value as $v | ($v | type) as $t | "\($k)=" + (if $t == "array" then "\($v | length) items" elif $t == "object" then "{\($v | length) keys}" elif $t == "boolean" or $t == "null" then ($v | tostring) elif $t == "number" and ($k | test("count|processed|skipped|failed|sent|created|updated|deleted|scanned|checked|posted|rebuilt|attempted|replayed|remaining|pending|errors|ms$|^n[A-Z_]"; "i")) and (($k | test("Rm$|Sen$|_rm$|_sen$")) or ($k | test("amount|price|cost|value|balance|total"; "i")) | not) then ($v | tostring) else "<\($t)>" end)] | join(" ") elif type == "array" then "[\(length) items]" else "<\(type)>" end' 2>/dev/null || echo "<${#body} bytes, not JSON>")"
+          if [ "$status" != "200" ]; then
+            echo "::error::meetings-directory returned HTTP $status"
+            exit 1
+          fi
