@@ -25,10 +25,10 @@ const geo = await import(
 
 const FENCE = geo.DEFAULT_FACTORY_GEOFENCE;
 
-test("factory default is the Shah Alam site, 200 m radius", () => {
+test("factory default is the Shah Alam site, 150 m radius (owner 2026-11-23)", () => {
   assert.ok(Math.abs(FENCE.lat - 3.187681) < 0.001, "lat ~ 3.1877");
   assert.ok(Math.abs(FENCE.lng - 101.570928) < 0.001, "lng ~ 101.5709");
-  assert.equal(FENCE.radiusM, 200);
+  assert.equal(FENCE.radiusM, 150);
 });
 
 test("haversineMeters: same point is ~0; ~0.003° lat is a few hundred metres", () => {
@@ -78,20 +78,15 @@ test("punch route adds geo columns at runtime + stamps the punch location", () =
   );
 });
 
-test("worker app captures location but a denial still punches (soft)", () => {
+test("worker app requires a location: no location = no punch (owner 2026-11-23)", () => {
   assert.ok(
     WORKER_HOME.includes("navigator.geolocation.getCurrentPosition"),
     "the worker app must request the punch location",
   );
-  // The punch payload always carries `action` (so a null location still posts);
-  // lat/lng are attached only when a location was actually captured.
-  assert.ok(
-    /const payload[^=]*= \{ action, photo \}/.test(WORKER_HOME) &&
-      /if \(loc\) \{\s*payload\.lat = loc\.lat;\s*payload\.lng = loc\.lng;/.test(
-        WORKER_HOME,
-      ),
-    "a null location must still post the punch (lat/lng only when captured) — soft, never blocks",
-  );
+  // Was soft (a denial still punched). Now a missing location stops the punch
+  // and opens the translated popup; lat/lng always travel with the punch.
+  assert.match(WORKER_HOME, /if \(!loc\) \{[\s\S]{0,200}setLocPopup\(true\);\s*return;/);
+  assert.match(WORKER_HOME, /const payload: Record<string, unknown> = \{ action, photo, lat: loc\.lat, lng: loc\.lng \};/);
 });
 
 const ATT_API = readFileSync(
