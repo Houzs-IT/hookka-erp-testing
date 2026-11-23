@@ -119,7 +119,7 @@ test("the inputs: each supplier's Forecast P&L dues with its name and term, and 
   // Since 2026-11-23: the closed months' unpaid bills + the Forecast P&L from this month on (tests/tf-supplier-flag-actual-bills.test.mjs).
   assert.match(fn, /tfSupplierDues\(\{ ap: ag\.data\.ap, fcMonths, termMonths: termMonthsOf, curYm \}\)/);
   assert.match(fn, /paidSupplierIds,/);
-  assert.match(fn, /\{ id, name: nameOf\.get\(id\) \|\| id, term: supTerm\.get\(id\), dueBy \}/);
+  assert.match(fn, /\{ id, name: nameOf\.get\(id\) \|\| id, term: supTerm\.get\(id\), dueBy, \.\.\.\(actualBySupplier\[id\]/);
   assert.match(fn, /\.\.\.tfFacilityNow\(sec, curYm\)/, "what is owed, drawn and due, as the forecast loader reads it");
   assert.match(fn, /return \{ facilities, forecastSuppliers, eligibleSupplierIds: await loadTfEligibleSupplierIds\(db\) \};/);
   assert.doesNotMatch(fn, /\b(INSERT|UPDATE|DELETE)\b/);

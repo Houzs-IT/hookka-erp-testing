@@ -11995,13 +11995,21 @@ function tfSupplierDues(o: {
   termMonths: (id: string) => number;
   curYm: string;
 }): Record<string, Record<string, number>> {
-  const bills = o.ap.flatMap((r) => r.docs
-    .filter((d) => d.amountSen > 0 && !d.no.endsWith(ADVANCE_DOC_SUFFIX))
-    .map((d) => ({ supplierId: r.supplierId, date: d.date, sen: d.amountSen })));
   return tfMergeDues(
-    tfActualDueBySupplier({ bills, termMonths: o.termMonths, fromYm: o.curYm }),
+    tfActualDuesFromAp(o.ap, o.termMonths, o.curYm),
     tfForecastDueBySupplier({ months: o.fcMonths, termMonths: o.termMonths, fromYm: o.curYm, firstPurchaseYm: o.curYm }),
   );
+}
+// The real-bill part on its own (the popup shades those cells).
+function tfActualDuesFromAp(
+  ap: readonly { supplierId: string; docs: readonly { no: string; date: string; amountSen: number }[] }[],
+  termMonths: (id: string) => number,
+  curYm: string,
+): Record<string, Record<string, number>> {
+  const bills = ap.flatMap((r) => r.docs
+    .filter((d) => d.amountSen > 0 && !d.no.endsWith(ADVANCE_DOC_SUFFIX))
+    .map((d) => ({ supplierId: r.supplierId, date: d.date, sen: d.amountSen })));
+  return tfActualDueBySupplier({ bills, termMonths, fromYm: curYm });
 }
 
 // The suppliers ticked "Can use trade finance" in Supplier maintenance (none
@@ -12081,7 +12089,8 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
   });
   // Every supplier with Forecast P&L dues, with its name and payment term.
   const nameOf = new Map((supRes.results ?? []).map((r) => [String(r.id), String(r.name ?? "").trim()] as const));
-  const forecastSuppliers = Object.entries(dueBySupplier).map(([id, dueBy]) => ({ id, name: nameOf.get(id) || id, term: supTerm.get(id), dueBy }));
+  const actualBySupplier = tfActualDuesFromAp(ag.data.ap, termMonthsOf, curYm);
+  const forecastSuppliers = Object.entries(dueBySupplier).map(([id, dueBy]) => ({ id, name: nameOf.get(id) || id, term: supTerm.get(id), dueBy, ...(actualBySupplier[id] ? { actualBy: actualBySupplier[id] } : {}) }));
   return { facilities, forecastSuppliers, eligibleSupplierIds: await loadTfEligibleSupplierIds(db) };
 }
 
