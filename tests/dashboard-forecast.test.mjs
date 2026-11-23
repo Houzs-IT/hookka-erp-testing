@@ -123,3 +123,42 @@ test("the page: Actual | Forecast detail with a basis switch; faded forecast bar
   assert.match(look, /const \{ x = 0, y = 0, width = 0, height = 0, fill, fillOpacity, index \} = props;/);
   assert.match(look, /fillOpacity=\{fillOpacity\}/);
 });
+
+// ---- Detail grouped by the statement's own groups (owner 2026-11-23 「这里很杂乱，可以整理一下吗？」) ----
+import { dashCashLineGroups } from "../src/lib/dashboard-forecast.ts";
+
+test("Detail: a section with the statement's groups opens to them; actual and forecast lines of one group add up together", () => {
+  const groups = dashCashLineGroups({ rows: [
+    { kind: "group", label: "Raw Materials", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS", values: [] },
+    { kind: "group", label: "PURCHASE - FABRIC", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS>701-0000", values: [] },
+    { kind: "line", label: "B.M-FABR", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS>701-0000", values: [] },
+    { kind: "line", label: "FABRIC", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS>701-0000", values: [] },
+    { kind: "line", label: "Opening creditors — SUNMAT", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS>701-0000", values: [] },
+    { kind: "group", label: "PURCHASE - WOODEN", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS>702-0000", values: [] },
+    { kind: "line", label: "PLYWOOD", section: "RAW_MATERIALS", groupId: "RAW_MATERIALS>702-0000", values: [] },
+    { kind: "line", label: "TRADE DEBTORS", section: "REVENUE_COLLECTION", values: [] },
+  ] });
+  assert.deepEqual(groups["RAW_MATERIALS||FABRIC"], { id: "RAW_MATERIALS>701-0000", label: "PURCHASE - FABRIC" });
+  assert.equal(groups["REVENUE_COLLECTION||TRADE DEBTORS"], undefined, "no sub-group: none");
+  const [rev, raw] = cashDetailSections([
+    {
+      actual: [{ section: "RAW_MATERIALS", label: "B.M-FABR", value: -100 }, { section: "RAW_MATERIALS", label: "PLYWOOD", value: -30 }, { section: "RAW_MATERIALS", label: "Stray", value: -5 }, { section: "REVENUE_COLLECTION", label: "TRADE DEBTORS", value: 500 }],
+      forecast: { "RAW_MATERIALS||FABRIC": -90, "RAW_MATERIALS||Opening creditors — SUNMAT": -20, "RAW_MATERIALS||PLYWOOD": -25 },
+    },
+  ], groups);
+  assert.deepEqual(rev.groups, [], "a section without groups lists its lines");
+  assert.deepEqual(raw.groups.map((g) => [g.label, g.totals[0]]), [
+    ["PURCHASE - FABRIC", { actual: -100, forecast: -110 }],
+    ["PURCHASE - WOODEN", { actual: -30, forecast: -25 }],
+    ["Other", { actual: -5, forecast: 0 }],
+  ]);
+  // Inside a group: the actuals' lines, then the forecast's own, then the per-party catch-alls.
+  assert.deepEqual(raw.groups[0].lines.map((l) => l.label), ["B.M-FABR", "FABRIC", "Opening creditors — SUNMAT"]);
+});
+
+test("Detail row names sit on the left", () => {
+  const page = read("src/pages/finance-dashboard.tsx");
+  assert.match(page, /const tdName = "px-2 py-1 text-left text-\[12px\] whitespace-nowrap";/);
+  assert.match(page, /data-dash-cf-group=""/);
+  assert.match(page, /cashDetailSections\(cfRows\.map[\s\S]*?\}\)\), lineGroups\)/);
+});

@@ -113,7 +113,7 @@ test("motion: the dashboard's switches are the design's pills; revealed rows fad
   const shell = read("src/components/finance/report-shell.tsx");
   assert.match(shell, /rounded-\[9px\] border border-\[#E5E7EB\] bg-\[#F3F4F6\] p-\[3px\]/, "the grey track");
   assert.match(shell, /bg-white font-semibold text-\[#111827\] shadow-\[0_1px_2px_rgba\(17,24,39,\.10\),0_0_0_1px_rgba\(17,24,39,\.06\)\]/, "the chosen one a white pill");
-  assert.equal((page.match(/data-fin-reveal=""/g) ?? []).length, 2);
+  assert.equal((page.match(/data-fin-reveal=""/g) ?? []).length, 4); // +2 Cash Flow Detail group row and its lines (2026-11-23)
   assert.match(read("src/styles/finance-v2.css"), /\[data-fin-ui\] \[data-fin-reveal\] \{\n  animation: fin-reveal \.18s ease-out;\n\}/);
   assert.match(read("src/index.css"), /@keyframes fin-reveal \{\n  from \{ opacity: 0; transform: translateY\(-3px\); \}\n  to \{ opacity: 1; transform: none; \}\n\}/);
 });

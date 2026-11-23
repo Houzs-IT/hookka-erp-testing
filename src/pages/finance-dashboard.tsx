@@ -54,8 +54,8 @@ import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick,
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 // Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
 import {
-  bsForecastByBucket, cashDetailSections, cashForecastByBucket, cashLinesByBucket, dashAheadRows, dashBsForecast, dashCashForecast, dashCashForecastLines,
-  type DashBsFigures, type DashCashForecast, type DashCashLines, type DetailCell,
+  bsForecastByBucket, cashDetailSections, cashForecastByBucket, cashLinesByBucket, dashAheadRows, dashBsForecast, dashCashForecast, dashCashForecastLines, dashCashLineGroups,
+  type DashBsFigures, type DashCashForecast, type DashCashLines, type DashLineGroups, type DetailCell,
 } from "@/lib/dashboard-forecast";
 import type { BsForecastPayload } from "@/lib/forecast-bs";
 import type { BsMonthEntry } from "@/lib/bs-monthly";
@@ -713,6 +713,10 @@ export default function FinanceDashboardPage() {
   const [bsFc, setBsFc] = useState<Record<string, DashBsFigures> | null>(null);
   // The same statement's lines, for the Detail table's Forecast cells.
   const [cashLines, setCashLines] = useState<DashCashLines | null>(null);
+  // The statement's own groups each line sits in (Raw Materials → PURCHASE -
+  // FABRIC …), so the Detail can show comparable groups before the lines.
+  const [lineGroups, setLineGroups] = useState<DashLineGroups>({});
+  const [cfOpenGroup, setCfOpenGroup] = useState<string | null>(null);
   const [cfDetailBasis, setCfDetailBasis] = useState<"pnl" | "docs">("pnl");
   useEffect(() => {
     let cancelled = false;
@@ -729,6 +733,7 @@ export default function FinanceDashboardPage() {
           if (j?.success && j.data) {
             setCashFc(dashCashForecast(j.data));
             setCashLines(dashCashForecastLines(j.data));
+            setLineGroups(dashCashLineGroups(j.data));
           } else setCashFc((prev) => prev ?? {});
           const next = planStaleRetry(run, j);
           // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in this effect's cleanup
@@ -914,8 +919,8 @@ export default function FinanceDashboardPage() {
     () => cashDetailSections(cfRows.map((r) => ({
       actual: r.actual === null || r.actual === undefined ? null : r.cashFlow?.lines ?? [],
       forecast: cashLinesB[r.key]?.[cfDetailBasis] ?? null,
-    }))),
-    [cfRows, cashLinesB, cfDetailBasis],
+    })), lineGroups),
+    [cfRows, cashLinesB, cfDetailBasis, lineGroups],
   );
 
   const bsData = useMemo(
@@ -1088,6 +1093,9 @@ export default function FinanceDashboardPage() {
   );
 
   const td = "px-2 py-1 text-right tabular-nums text-[12px] whitespace-nowrap";
+  // A row name in the Cash Flow Detail: left-aligned (td's text-right won
+  // over an added text-left, so the names sat ragged on the right).
+  const tdName = "px-2 py-1 text-left text-[12px] whitespace-nowrap";
   // Period header (owner 2026-07-29: 「月份能移上去上面…明显一点」) — the
   // months now open every figures table in bold instead of trailing it in grey.
   const periodHead = (labels: string[]) => (
@@ -1570,22 +1578,53 @@ export default function FinanceDashboardPage() {
                           return (
                             <Fragment key={sec.section}>
                               <tr data-fin-reveal="" className="border-b border-[#F0ECE9] bg-[#F7F7F5]">
-                                <td className={`${td} text-left`}>
+                                <td className={tdName}>
                                   <button
                                     onClick={() => setCfOpenSection(open ? null : sec.section)}
                                     className="cursor-pointer font-medium text-[#6B5C32] inline-flex items-center gap-1 whitespace-nowrap"
                                   >
                                     {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                                     {sec.label}
-                                    <span className="text-[10px] font-normal text-[#9CA3AF]">({sec.lines.length})</span>
+                                    <span className="text-[10px] font-normal text-[#9CA3AF]">({sec.groups.length || sec.lines.length})</span>
                                   </button>
                                 </td>
                                 {sec.totals.map((c, i) => <DetailPair key={i} c={c} strong />)}
                               </tr>
-                              {open &&
+                              {/* A section with the statement's own groups opens to
+                                  them (comparable Actual | Forecast), each group
+                                  to its lines; otherwise straight to its lines. */}
+                              {open && sec.groups.length > 0 &&
+                                sec.groups.map((g) => {
+                                  const gOpen = cfOpenGroup === g.id;
+                                  return (
+                                    <Fragment key={g.id}>
+                                      <tr data-fin-reveal="" data-dash-cf-group="" className="border-b border-[#F0ECE9]">
+                                        <td className={`${tdName} pl-6`}>
+                                          <button
+                                            onClick={() => setCfOpenGroup(gOpen ? null : g.id)}
+                                            className="cursor-pointer text-[#374151] inline-flex items-center gap-1 whitespace-nowrap"
+                                          >
+                                            {gOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                            {g.label}
+                                            <span className="text-[10px] font-normal text-[#9CA3AF]">({g.lines.length})</span>
+                                          </button>
+                                        </td>
+                                        {g.totals.map((c, i) => <DetailPair key={i} c={c} />)}
+                                      </tr>
+                                      {gOpen &&
+                                        g.lines.map((l) => (
+                                          <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
+                                            <td className={`${tdName} pl-12 text-[#6B7280]`}>{l.label}</td>
+                                            {l.cells.map((c, i) => <DetailPair key={i} c={c} />)}
+                                          </tr>
+                                        ))}
+                                    </Fragment>
+                                  );
+                                })}
+                              {open && sec.groups.length === 0 &&
                                 sec.lines.map((l) => (
                                   <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
-                                    <td className={`${td} text-left pl-8 text-[#4B5563]`}>{l.label}</td>
+                                    <td className={`${tdName} pl-8 text-[#4B5563]`}>{l.label}</td>
                                     {l.cells.map((c, i) => <DetailPair key={i} c={c} />)}
                                   </tr>
                                 ))}
