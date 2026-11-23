@@ -88,3 +88,38 @@ test("a period ahead is named like the others, with (F): Dec 2026 (F), not 2026-
   assert.equal((page.match(/label: ahead \? `\$\{dashPeriodLabel\(r\.label, false\)\} \(F\)` : dashPeriodLabel\(r\.label, r\.partial\),/g) ?? []).length, 2);
   assert.doesNotMatch(page, /`\$\{r\.label\} \(F\)`/);
 });
+
+// ---- Cash Flow Detail: Actual | Forecast (owner 2026-11-23 「Actual + Forecast」) ----
+import { cashDetailSections, cashLinesByBucket, dashCashForecastLines } from "../src/lib/dashboard-forecast.ts";
+
+test("the forecast's lines per month and basis, keyed as the card's actual lines", () => {
+  const lines = dashCashForecastLines({ columns, rows });
+  assert.deepEqual(lines["2026-12"], { docs: { "CAPEX||Machine": -10, "TRADE_FINANCE||Draws": 30 }, pnl: { "CAPEX||Machine": -10, "TRADE_FINANCE||Draws": 20 } });
+  assert.deepEqual(cashLinesByBucket(lines, "quarter")["2026-Q4"].pnl, { "CAPEX||Machine": -15, "TRADE_FINANCE||Draws": 20 });
+});
+
+test("Detail: sections in the statement's order, each period Actual and Forecast, nothing-anywhere rows dropped", () => {
+  const secs = cashDetailSections([
+    { actual: [{ section: "RAW_MATERIALS", label: "FABRIC", value: -100 }, { section: "REVENUE_COLLECTION", label: "TRADE DEBTORS", value: 500 }], forecast: { "RAW_MATERIALS||FABRIC": -90, "CAPEX||Machine": -10 } },
+    { actual: null, forecast: { "RAW_MATERIALS||FABRIC": -80, "REVENUE_COLLECTION||TRADE DEBTORS": 400, "LOAN||Ghost": 0 } }, // a period ahead
+    { actual: [{ section: "RAW_MATERIALS", label: "FABRIC", value: -70 }], forecast: null }, // the forecast does not reach it
+  ]);
+  assert.deepEqual(secs.map((s) => s.section), ["REVENUE_COLLECTION", "RAW_MATERIALS", "CAPEX"]);
+  assert.equal(secs[0].label, "REVENUE COLLECTION");
+  const raw = secs[1];
+  assert.deepEqual(raw.totals, [{ actual: -100, forecast: -90 }, { actual: null, forecast: -80 }, { actual: -70, forecast: null }]);
+  assert.deepEqual(raw.lines.map((l) => l.label), ["FABRIC"]);
+  assert.deepEqual(secs[2].totals[0], { actual: 0, forecast: -10 }, "a line only the forecast has still shows");
+});
+
+test("the page: Actual | Forecast detail with a basis switch; faded forecast bars really fade", () => {
+  const page = read("src/pages/finance-dashboard.tsx");
+  assert.match(page, /data-dash-cf-detail=""/);
+  assert.match(page, /<thead>\{periodHeadSplit\(cfData\.map\(\(d\) => d\.label\)\)\}<\/thead>/);
+  assert.match(page, /options=\{\[\{ key: "pnl", label: "Forecast P&L" \}, \{ key: "docs", label: "Open documents" \}\]\}/);
+  assert.match(page, /forecast: cashLinesB\[r\.key\]\?\.\[cfDetailBasis\] \?\? null/);
+  assert.match(page, /actual: r\.actual === null \|\| r\.actual === undefined \? null : r\.cashFlow\?\.lines \?\? \[\]/);
+  const look = read("src/components/finance/chart-look.tsx");
+  assert.match(look, /const \{ x = 0, y = 0, width = 0, height = 0, fill, fillOpacity, index \} = props;/);
+  assert.match(look, /fillOpacity=\{fillOpacity\}/);
+});

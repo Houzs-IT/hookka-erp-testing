@@ -42,13 +42,13 @@ export function useChartHover() {
   };
 }
 
-type BarShapeProps = { x?: number; y?: number; width?: number; height?: number; fill?: string; index?: number };
+type BarShapeProps = { x?: number; y?: number; width?: number; height?: number; fill?: string; fillOpacity?: number | string; index?: number };
 
 /** A bar as the design draws it: rounded 3 (a stacked band keeps a 1px white
  *  seam); the pointed period lifts 4px with a shadow, the rest fade to .45. */
 export function liftBar(hover: number | null, opts: { stacked?: boolean } = {}) {
   return function LiftBar(props: BarShapeProps) {
-    const { x = 0, y = 0, width = 0, height = 0, fill, index } = props;
+    const { x = 0, y = 0, width = 0, height = 0, fill, fillOpacity, index } = props;
     if (!width || !height) return <g />;
     const top = height < 0 ? y + height : y;
     const h = Math.abs(height);
@@ -63,6 +63,9 @@ export function liftBar(hover: number | null, opts: { stacked?: boolean } = {}) 
         rx={3}
         ry={3}
         fill={fill}
+        // A forecast-only period's bars come faded (a Cell's fillOpacity, owner
+        // 2026-11-23 「forecast 的是哪里一个？」): the shape used to drop it.
+        fillOpacity={fillOpacity}
         stroke={opts.stacked ? "#FFFFFF" : "none"}
         strokeWidth={opts.stacked ? 1 : 0}
         style={{

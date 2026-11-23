@@ -16,6 +16,7 @@
 import { cashFlowCardMonth, freeCashFlow, type CfStatementRow } from "./cashflow-card";
 import { forecastBsView, type BsForecastPayload } from "./forecast-bs";
 import type { BsMonthEntry } from "./bs-monthly";
+import { SECTION_LABELS, SECTION_ORDER } from "./cashflow-engine";
 
 export type DashCashFigures = { operating: number; investing: number; financing: number; net: number; freeCashFlow: number };
 export type DashCashForecast = Record<string, { pnl?: DashCashFigures; docs?: DashCashFigures }>;
@@ -98,4 +99,92 @@ export function dashAheadRows<T extends { key: string; actual: unknown }>(rows: 
     out.push(r);
   }
   return out;
+}
+
+// ---- Cash Flow Detail: Actual | Forecast per period (owner 2026-11-23,
+// 「这个detail可以整理一下吗？然后detail看没有forecast？还是你这样的table？」 →
+// 「Actual + Forecast」) -------------------------------------------------------
+
+/** "<SECTION>||<label>" → sen, per month and kind: the statement's own LINE
+ *  rows of each fp: / fc: column (the key the card's actual lines use). */
+export type DashCashLines = Record<string, { pnl?: Record<string, number>; docs?: Record<string, number> }>;
+
+export function dashCashForecastLines(cf: { columns: readonly { key: string }[]; rows: readonly CfStatementRow[] }): DashCashLines {
+  const out: DashCashLines = {};
+  cf.columns.forEach((c, idx) => {
+    const m = /^(fp|fc):(\d{4}-\d{2})$/.exec(c.key);
+    if (!m) return;
+    const lines: Record<string, number> = {};
+    for (const r of cf.rows) {
+      if (r.kind !== "line" || !r.section) continue;
+      const v = Number(r.values[idx]) || 0;
+      if (!v) continue;
+      const k = `${r.section}||${r.label}`;
+      lines[k] = (lines[k] ?? 0) + v;
+    }
+    (out[m[2]] ??= {})[m[1] === "fp" ? "pnl" : "docs"] = lines;
+  });
+  return out;
+}
+
+/** The lines by period: a quarter adds up its months. */
+export function cashLinesByBucket(fc: DashCashLines, granularity: "month" | "quarter"): DashCashLines {
+  const out: DashCashLines = {};
+  const add = (into: Record<string, number> | undefined, from: Record<string, number>) => {
+    const o = { ...(into ?? {}) };
+    for (const [k, v] of Object.entries(from)) o[k] = (o[k] ?? 0) + v;
+    return o;
+  };
+  for (const ym of Object.keys(fc).sort()) {
+    const k = dashBucketOf(ym, granularity);
+    const cur = (out[k] ??= {});
+    if (fc[ym].pnl) cur.pnl = add(cur.pnl, fc[ym].pnl!);
+    if (fc[ym].docs) cur.docs = add(cur.docs, fc[ym].docs!);
+  }
+  return out;
+}
+
+export type DetailCell = { actual: number | null; forecast: number | null };
+export type DetailLine = { key: string; label: string; cells: DetailCell[] };
+export type DetailSection = { section: string; label: string; totals: DetailCell[]; lines: DetailLine[] };
+
+/** The Detail table: each section in the statement's order (unknown sections
+ *  after, by name), its lines by label, each period an Actual and a Forecast
+ *  cell. A period ahead has no actual (null); a period the forecast does not
+ *  cover has no forecast (null). A section or line with nothing anywhere goes. */
+export function cashDetailSections(
+  periods: readonly { actual: readonly { section: string; label: string; value: number }[] | null; forecast: Record<string, number> | null }[],
+): DetailSection[] {
+  const keys = new Map<string, { section: string; label: string }>();
+  for (const p of periods) {
+    for (const l of p.actual ?? []) keys.set(`${l.section}||${l.label}`, { section: l.section, label: l.label });
+    for (const k of Object.keys(p.forecast ?? {})) {
+      const [section, ...rest] = k.split("||");
+      keys.set(k, { section, label: rest.join("||") });
+    }
+  }
+  const rank = (s: string) => {
+    const i = (SECTION_ORDER as readonly string[]).indexOf(s);
+    return i < 0 ? SECTION_ORDER.length : i;
+  };
+  const bySection = new Map<string, DetailLine[]>();
+  for (const [key, meta] of keys) {
+    const cells = periods.map((p): DetailCell => ({
+      actual: p.actual ? p.actual.filter((l) => `${l.section}||${l.label}` === key).reduce((t, l) => t + l.value, 0) : null,
+      forecast: p.forecast ? p.forecast[key] ?? 0 : null,
+    }));
+    if (cells.every((c) => !c.actual && !c.forecast)) continue;
+    bySection.set(meta.section, [...(bySection.get(meta.section) ?? []), { key, label: meta.label, cells }]);
+  }
+  return [...bySection.entries()]
+    .sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]))
+    .map(([section, lines]) => ({
+      section,
+      label: (SECTION_LABELS as Record<string, string>)[section]?.toUpperCase() ?? section.replace(/_/g, " "),
+      lines: lines.sort((a, b) => a.label.localeCompare(b.label)),
+      totals: periods.map((p, i): DetailCell => ({
+        actual: p.actual ? lines.reduce((t, l) => t + (l.cells[i].actual ?? 0), 0) : null,
+        forecast: p.forecast ? lines.reduce((t, l) => t + (l.cells[i].forecast ?? 0), 0) : null,
+      })),
+    }));
 }

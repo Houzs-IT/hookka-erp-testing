@@ -54,8 +54,8 @@ import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick,
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 // Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
 import {
-  bsForecastByBucket, cashForecastByBucket, dashAheadRows, dashBsForecast, dashCashForecast,
-  type DashBsFigures, type DashCashForecast,
+  bsForecastByBucket, cashDetailSections, cashForecastByBucket, cashLinesByBucket, dashAheadRows, dashBsForecast, dashCashForecast, dashCashForecastLines,
+  type DashBsFigures, type DashCashForecast, type DashCashLines, type DetailCell,
 } from "@/lib/dashboard-forecast";
 import type { BsForecastPayload } from "@/lib/forecast-bs";
 import type { BsMonthEntry } from "@/lib/bs-monthly";
@@ -515,6 +515,24 @@ function SalaryDeptCard({
 
 // One card = tab strip + chart + the figures table underneath (the stock-app
 // layout the owner asked for).
+// One period of the Cash Flow Detail table: Actual, then Forecast (muted).
+// null = nothing to show for that side (a period ahead has no actual; a period
+// the forecast does not reach has no forecast).
+function DetailPair({ c, strong }: { c: DetailCell; strong?: boolean }) {
+  const cell = (v: number | null, muted: boolean, first: boolean) => (
+    <td className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap text-[12px] ${first ? "border-l border-[#F0ECE9]" : ""} ${strong ? "font-medium" : ""} ${
+      v === null || v === 0 ? "text-[#9CA3AF]" : v < 0 ? "text-[#B4452F]" : muted ? "text-[#5B6270]" : "text-[#2F7A3B]"}`}>
+      {v === null || v === 0 ? "-" : rm(v)}
+    </td>
+  );
+  return (
+    <>
+      {cell(c.actual, false, true)}
+      {cell(c.forecast, true, false)}
+    </>
+  );
+}
+
 function ChartCard({
   title,
   tabs,
@@ -693,13 +711,19 @@ export default function FinanceDashboardPage() {
   // card as it was.
   const [cashFc, setCashFc] = useState<DashCashForecast | null>(null);
   const [bsFc, setBsFc] = useState<Record<string, DashBsFigures> | null>(null);
+  // The same statement's lines, for the Detail table's Forecast cells.
+  const [cashLines, setCashLines] = useState<DashCashLines | null>(null);
+  const [cfDetailBasis, setCfDetailBasis] = useState<"pnl" | "docs">("pnl");
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const r = await fetch("/api/accounting/cashflow-forecast", { cache: "no-store" });
         const j = (await r.json()) as { success?: boolean; data?: { columns: { key: string }[]; rows: CfStatementRow[] } };
-        if (!cancelled && j?.success && j.data) setCashFc(dashCashForecast(j.data));
+        if (!cancelled && j?.success && j.data) {
+          setCashFc(dashCashForecast(j.data));
+          setCashLines(dashCashForecastLines(j.data));
+        }
       } catch { /* the card stays actual-only */ }
     })();
     void (async () => {
@@ -854,32 +878,18 @@ export default function FinanceDashboardPage() {
       }),
     [cfRows, cfTab, cashFcB],
   );
-  // Detail view: every account line the Cash Flow statement prints, one row
-  // per account across the periods (owner 2026-07-30: 「每个科目一行先」).
-  const cfDetailRows = useMemo(() => {
-    const keys = new Map<string, { label: string; section: string }>();
-    for (const r of shownRows) {
-      for (const l of r.cashFlow?.lines ?? []) keys.set(`${l.section}||${l.label}`, { label: l.label, section: l.section });
-    }
-    return [...keys.entries()]
-      .sort((a, b) => a[1].section.localeCompare(b[1].section) || a[1].label.localeCompare(b[1].label))
-      .map(([k, meta]) => ({
-        key: k,
-        ...meta,
-        values: cfRows.map((r) => (r.cashFlow?.lines ?? []).find((l) => `${l.section}||${l.label}` === k)?.value ?? 0),
-      }));
-  }, [shownRows, cfRows]);
-  // …grouped by section, each with its own per-period totals, so Detail opens
-  // as a handful of section rows instead of forty account rows at once.
-  const cfSections = useMemo(() => {
-    const bySec = new Map<string, typeof cfDetailRows>();
-    for (const r of cfDetailRows) bySec.set(r.section, [...(bySec.get(r.section) ?? []), r]);
-    return [...bySec.entries()].map(([name, secRows]) => ({
-      name,
-      rows: secRows,
-      totals: cfRows.map((_, i) => secRows.reduce((s, r) => s + (r.values[i] ?? 0), 0)),
-    }));
-  }, [cfDetailRows, cfRows]);
+  // Detail view (owner 2026-11-23 「这个detail可以整理一下吗？…还是你这样的
+  // table？」 → 「Actual + Forecast」): each section in the Cash Flow
+  // statement's order, each account line under it, every period an Actual and
+  // a Forecast cell — the forecast by the basis picked (P&L or documents).
+  const cashLinesB = useMemo(() => (cashLines ? cashLinesByBucket(cashLines, granularity) : {}), [cashLines, granularity]);
+  const cfSections = useMemo(
+    () => cashDetailSections(cfRows.map((r) => ({
+      actual: r.actual === null || r.actual === undefined ? null : r.cashFlow?.lines ?? [],
+      forecast: cashLinesB[r.key]?.[cfDetailBasis] ?? null,
+    }))),
+    [cfRows, cashLinesB, cfDetailBasis],
+  );
 
   const bsData = useMemo(
     () =>
@@ -1488,7 +1498,7 @@ export default function FinanceDashboardPage() {
                 <div className="mb-2 flex items-center gap-2">
                   <SegmentedSwitch tone="pill" label="Cash flow view" value={cfView} onChange={setCfView}
                     options={[{ key: "summary", label: "Summary" }, { key: "detail", label: "Detail" }]} />
-                  <span className="text-[11px] text-[#9CA3AF]">Detail lists every account that moved cash.</span>
+                  <span className="text-[11px] text-[#9CA3AF]">Detail lists every account, actual beside forecast.</span>
                 </div>
                 <table data-fin-list data-fin-stick className="w-full">
                   <thead>{periodHead(cfData.map((d) => d.label))}</thead>
@@ -1514,40 +1524,50 @@ export default function FinanceDashboardPage() {
                         })}
                       </tr>
                     ))}
-                    {cfView === "detail" &&
-                      cfSections.map((sec) => {
-                        const open = cfOpenSection === sec.name;
-                        return (
-                          <Fragment key={sec.name}>
-                            <tr data-fin-reveal="" className="border-b border-[#F0ECE9] bg-[#F7F7F5]">
-                              <td className={`${td} text-left`}>
-                                <button
-                                  onClick={() => setCfOpenSection(open ? null : sec.name)}
-                                  className="cursor-pointer font-medium text-[#6B5C32] inline-flex items-center gap-1"
-                                >
-                                  {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                                  {sec.name.replace(/_/g, " ")}
-                                  <span className="text-[10px] font-normal text-[#9CA3AF]">({sec.rows.length})</span>
-                                </button>
-                              </td>
-                              {sec.totals.map((v, i) => (
-                                <td key={i} className={`${td} font-medium ${v < 0 ? "text-[#B4452F]" : v > 0 ? "text-[#2F7A3B]" : ""}`}>{v === 0 ? "-" : rm(v)}</td>
-                              ))}
-                            </tr>
-                            {open &&
-                              sec.rows.map((l) => (
-                                <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
-                                  <td className={`${td} text-left pl-8 text-[#4B5563]`}>{l.label}</td>
-                                  {l.values.map((v, i) => (
-                                    <td key={i} className={`${td} ${v < 0 ? "text-[#B4452F]" : v > 0 ? "text-[#2F7A3B]" : ""}`}>{v === 0 ? "-" : rm(v)}</td>
-                                  ))}
-                                </tr>
-                              ))}
-                          </Fragment>
-                        );
-                      })}
                   </tbody>
                 </table>
+                {cfView === "detail" && (
+                  <div className="mt-4 space-y-2" data-dash-cf-detail="">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-semibold text-[#374151]">Forecast from</span>
+                      <SegmentedSwitch tone="pill" label="Detail forecast basis" value={cfDetailBasis} onChange={setCfDetailBasis}
+                        options={[{ key: "pnl", label: "Forecast P&L" }, { key: "docs", label: "Open documents" }]} />
+                      <span className="text-[11px] text-[#9CA3AF]">Sections in the Cash Flow statement's order; open one for its accounts.</span>
+                    </div>
+                    <table data-fin-list data-fin-stick className="w-full">
+                      <thead>{periodHeadSplit(cfData.map((d) => d.label))}</thead>
+                      <tbody>
+                        {cfSections.map((sec) => {
+                          const open = cfOpenSection === sec.section;
+                          return (
+                            <Fragment key={sec.section}>
+                              <tr data-fin-reveal="" className="border-b border-[#F0ECE9] bg-[#F7F7F5]">
+                                <td className={`${td} text-left`}>
+                                  <button
+                                    onClick={() => setCfOpenSection(open ? null : sec.section)}
+                                    className="cursor-pointer font-medium text-[#6B5C32] inline-flex items-center gap-1 whitespace-nowrap"
+                                  >
+                                    {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                    {sec.label}
+                                    <span className="text-[10px] font-normal text-[#9CA3AF]">({sec.lines.length})</span>
+                                  </button>
+                                </td>
+                                {sec.totals.map((c, i) => <DetailPair key={i} c={c} strong />)}
+                              </tr>
+                              {open &&
+                                sec.lines.map((l) => (
+                                  <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
+                                    <td className={`${td} text-left pl-8 text-[#4B5563]`}>{l.label}</td>
+                                    {l.cells.map((c, i) => <DetailPair key={i} c={c} />)}
+                                  </tr>
+                                ))}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </>
             }
           />
