@@ -130,9 +130,21 @@ export async function markNotificationsRead(ids: string[]): Promise<boolean> {
 
 // ── Pop-up (HK-0155) ───────────────────────────────────────────────────────
 
-/** Where a row leads — the bell row, the pop-up card and the OS notification all use it. */
-export function notificationTarget(n: Pick<Notification, "link">): string {
-  return n.link || "/notifications";
+/**
+ * Where a bell row, pop-up card or OS notification leads: the row's details on
+ * /notifications, never straight to its link (HK-0170). The details show the
+ * link at the bottom.
+ */
+export function notificationTarget(n: Pick<Notification, "id">): string {
+  return `/notifications?open=${encodeURIComponent(n.id)}`;
+}
+
+/** Button text for a row's link, shown under its details. */
+export function notificationLinkLabel(link: string): string {
+  const path = link.split("?")[0];
+  if (path === "/production" || path.startsWith("/production/")) return "Open Production Overview";
+  if (path === "/announcements") return "Open Announcements";
+  return "Open";
 }
 
 /**

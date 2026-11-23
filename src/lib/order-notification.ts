@@ -79,6 +79,19 @@ export function orderNoticeLink(orders: { id: string; poNo: string }[]): string 
   return sos.size === 1 && so ? `/production?soId=${encodeURIComponent(`${so}-`)}` : "/production";
 }
 
+/**
+ * HK-0170: where a "worker acknowledged" alert leads — the notice's orders, not
+ * the Announcements form. Reads the stored order_no (", "-joined) / order_id
+ * (sorted, ","-joined) columns. Ids are only paired when there is one order;
+ * with several, orderNoticeLink uses the order numbers alone.
+ */
+export function ackAlertLink(orderNo: string | null | undefined, orderId: string | null | undefined): string {
+  const poNos = String(orderNo ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (poNos.length === 0) return "/announcements";
+  const ids = String(orderId ?? "").split(",").map((s) => s.trim());
+  return orderNoticeLink(poNos.map((poNo, i) => ({ id: ids[i] ?? "", poNo }))).replace(/&po=$/, "");
+}
+
 /** Hard cap per notice - enforced by POST /api/announcements, mirrored in the dialog. */
 export const MAX_NOTICE_ORDERS = 10;
 

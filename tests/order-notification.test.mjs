@@ -73,6 +73,17 @@ test("builder: ticket wording, dd/mm/yyyy date, optional supervisor note", () =>
   assert.ok(m.body.includes("Order No.: PO-1") && m.body.includes("Order No.: PO-2"));
 });
 
+test("HK-0170 ack alert link: the notice's orders, else Announcements", () => {
+  assert.equal(
+    lib.ackAlertLink("SO-2611-351-01", "pord-so-abc-01"),
+    "/production?soId=SO-2611-351-01&po=pord-so-abc-01",
+  );
+  assert.equal(lib.ackAlertLink("SO-2609-295-03, SO-2609-295-01", "a,b"), "/production?soId=SO-2609-295-");
+  assert.equal(lib.ackAlertLink("SO-2611-351-01", null), "/production?soId=SO-2611-351-01");
+  assert.equal(lib.ackAlertLink(null, null), "/announcements");
+  assert.equal(lib.ackAlertLink("", undefined), "/announcements");
+});
+
 test("HK-0155 link: one order -> that order; one SO -> that SO; mixed -> the Overview", () => {
   assert.equal(
     lib.orderNoticeLink([{ id: "pord-so-9d12d0d0-01", poNo: "SO-2611-292-01" }]),
