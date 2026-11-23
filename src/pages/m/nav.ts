@@ -217,3 +217,11 @@ export function visibleModuleGroups(
     .filter((g) => g.items.length > 0);
 }
 
+/** The phone menus' Meetings row carries the unread meeting updates (lib/meetings-unread.ts). */
+export function withMeetingsBadge(groups: ModuleGroup[], unread: number): ModuleGroup[] {
+  if (unread <= 0) return groups;
+  return groups.map((g) => ({
+    ...g,
+    items: g.items.map((i) => (i.path === "/m/meetings" ? { ...i, badge: unread > 99 ? "99+" : unread } : i)),
+  }));
+}

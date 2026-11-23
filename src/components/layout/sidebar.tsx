@@ -63,6 +63,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { prefetchRoute } from "@/dashboard-routes";
 import { markWorkspaceOpenIntent } from "@/lib/workspaceTabs";
+import { useMeetingsUnread } from "@/lib/meetings-unread";
 
 interface NavItem {
   name: string;
@@ -431,6 +432,7 @@ export function Sidebar({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
   const [itUnread, setItUnread] = useState(0);
+  const meetingsUnread = useMeetingsUnread();
   const [orgs, setOrgs] = useState<OrgInfo[]>([]);
   const [activeOrgId, setActiveOrgId] = useState("");
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
@@ -618,7 +620,7 @@ export function Sidebar({
         ...items.slice(0, at),
         KPI_LINK,
         AGENTS_LINK,
-        MEETINGS_LINK,
+        { ...MEETINGS_LINK, badge: meetingsUnread },
         { ...IT_SUPPORT_LINK, badge: itUnread },
         ...items.slice(at),
       ];
