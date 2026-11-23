@@ -54,8 +54,8 @@ import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick,
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 // Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
 import {
-  bsForecastByBucket, cashDetailSections, cashForecastByBucket, cashLinesByBucket, dashAheadRows, dashBsForecast, dashCashForecast, dashCashForecastLines,
-  type DashBsFigures, type DashCashForecast, type DashCashLines, type DetailCell,
+  bsForecastByBucket, cashDetailSections, cashForecastByBucket, cashLinesByBucket, dashAheadRows, dashBsForecast, dashCashForecast, dashCashForecastLines, dashCashLineGroups,
+  type DashBsFigures, type DashCashForecast, type DashCashLines, type DashLineGroups, type DetailCell,
 } from "@/lib/dashboard-forecast";
 import type { BsForecastPayload } from "@/lib/forecast-bs";
 import type { BsMonthEntry } from "@/lib/bs-monthly";
@@ -533,6 +533,10 @@ function DetailPair({ c, strong }: { c: DetailCell; strong?: boolean }) {
   );
 }
 
+// The Cash Flow card's tabs by name: the chart's solid line, its two dashed
+// forecast lines and the table's forecast rows all read the tab picked.
+const CF_TAB_LABEL = { operating: "Operating", investing: "Investing", financing: "Financing", freeCashFlow: "Free cash flow" } as const;
+
 function ChartCard({
   title,
   tabs,
@@ -713,6 +717,10 @@ export default function FinanceDashboardPage() {
   const [bsFc, setBsFc] = useState<Record<string, DashBsFigures> | null>(null);
   // The same statement's lines, for the Detail table's Forecast cells.
   const [cashLines, setCashLines] = useState<DashCashLines | null>(null);
+  // The statement's own groups each line sits in (Raw Materials → PURCHASE -
+  // FABRIC …), so the Detail can show comparable groups before the lines.
+  const [lineGroups, setLineGroups] = useState<DashLineGroups>({});
+  const [cfOpenGroup, setCfOpenGroup] = useState<string | null>(null);
   const [cfDetailBasis, setCfDetailBasis] = useState<"pnl" | "docs">("pnl");
   useEffect(() => {
     let cancelled = false;
@@ -729,6 +737,7 @@ export default function FinanceDashboardPage() {
           if (j?.success && j.data) {
             setCashFc(dashCashForecast(j.data));
             setCashLines(dashCashForecastLines(j.data));
+            setLineGroups(dashCashLineGroups(j.data));
           } else setCashFc((prev) => prev ?? {});
           const next = planStaleRetry(run, j);
           // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in this effect's cleanup
@@ -896,11 +905,11 @@ export default function FinanceDashboardPage() {
           net: ahead ? null : r.cashFlow?.net ?? null,
           inflow: ahead ? null : r.cashFlow?.inflow ?? null,
           outflow: ahead ? null : r.cashFlow?.outflow ?? null,
-          // The selected tab's forecast in the table; the net in the chart, beside Net change.
+          // The tab picked, actual and both forecasts — the chart's lines and
+          // the table's rows read the same figures (owner 2026-11-23 「为什么上下
+          // 两边的数据不一样？」 → 「Both follow the tab」).
           fcPnl: fc?.pnl?.[cfTab] ?? null,
           fcDocs: fc?.docs?.[cfTab] ?? null,
-          fcPnlNet: fc?.pnl?.net ?? null,
-          fcDocsNet: fc?.docs?.net ?? null,
         };
       }),
     [cfRows, cfTab, cashFcB],
@@ -914,8 +923,8 @@ export default function FinanceDashboardPage() {
     () => cashDetailSections(cfRows.map((r) => ({
       actual: r.actual === null || r.actual === undefined ? null : r.cashFlow?.lines ?? [],
       forecast: cashLinesB[r.key]?.[cfDetailBasis] ?? null,
-    }))),
-    [cfRows, cashLinesB, cfDetailBasis],
+    })), lineGroups),
+    [cfRows, cashLinesB, cfDetailBasis, lineGroups],
   );
 
   const bsData = useMemo(
@@ -1088,6 +1097,9 @@ export default function FinanceDashboardPage() {
   );
 
   const td = "px-2 py-1 text-right tabular-nums text-[12px] whitespace-nowrap";
+  // A row name in the Cash Flow Detail: left-aligned (td's text-right won
+  // over an added text-left, so the names sat ragged on the right).
+  const tdName = "px-2 py-1 text-left text-[12px] whitespace-nowrap";
   // Period header (owner 2026-07-29: 「月份能移上去上面…明显一点」) — the
   // months now open every figures table in bold instead of trailing it in grey.
   const periodHead = (labels: string[]) => (
@@ -1515,10 +1527,10 @@ export default function FinanceDashboardPage() {
             data={cfData}
             fadeKey="ahead"
             bars={[{ key: "inflow", name: "Money in", color: CH.in }, { key: "outflow", name: "Money out", color: CH.out }]}
-            line={{ key: "net", name: "Net change", color: CH.net }}
+            line={{ key: "value", name: CF_TAB_LABEL[cfTab], color: CH.net }}
             extraLines={[
-              { key: "fcPnlNet", name: "Forecast net (P&L)", color: CH.fc, dashed: true },
-              { key: "fcDocsNet", name: "Forecast net (documents)", color: CH.teal, dashed: true },
+              { key: "fcPnl", name: `${CF_TAB_LABEL[cfTab]} forecast (P&L)`, color: CH.fc, dashed: true },
+              { key: "fcDocs", name: `${CF_TAB_LABEL[cfTab]} forecast (documents)`, color: CH.teal, dashed: true },
             ]}
             footer={
               <>
@@ -1537,8 +1549,8 @@ export default function FinanceDashboardPage() {
                     <tr className="bg-[#FBF9F6]"><td className={`${td} text-left font-semibold`}>Net change</td>{cfData.map((d) => <td key={d.label} className={`${td} font-semibold ${(d.net as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.net as number)}</td>)}</tr>
                     {/* The two Cash Flow forecasts of the tab picked, and how the
                         actual compares (owner 2026-11-23 「不可以都显示吗？」). */}
-                    <tr data-dash-cf-fc="pnl"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast (P&L)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcPnl)}</td>)}</tr>
-                    <tr data-dash-cf-fc="docs"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast (documents)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcDocs)}</td>)}</tr>
+                    <tr data-dash-cf-fc="pnl"><td className={`${td} text-left font-medium text-[#5B6270]`}>{CF_TAB_LABEL[cfTab]} forecast (P&L)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcPnl)}</td>)}</tr>
+                    <tr data-dash-cf-fc="docs"><td className={`${td} text-left font-medium text-[#5B6270]`}>{CF_TAB_LABEL[cfTab]} forecast (documents)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcDocs)}</td>)}</tr>
                     {(["fcPnl", "fcDocs"] as const).map((k) => (
                       <tr key={k} className="bg-[#FBF9F6]">
                         <td className={`${td} text-left font-semibold`}>vs Forecast ({k === "fcPnl" ? "P&L" : "documents"})</td>
@@ -1570,22 +1582,53 @@ export default function FinanceDashboardPage() {
                           return (
                             <Fragment key={sec.section}>
                               <tr data-fin-reveal="" className="border-b border-[#F0ECE9] bg-[#F7F7F5]">
-                                <td className={`${td} text-left`}>
+                                <td className={tdName}>
                                   <button
                                     onClick={() => setCfOpenSection(open ? null : sec.section)}
                                     className="cursor-pointer font-medium text-[#6B5C32] inline-flex items-center gap-1 whitespace-nowrap"
                                   >
                                     {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                                     {sec.label}
-                                    <span className="text-[10px] font-normal text-[#9CA3AF]">({sec.lines.length})</span>
+                                    <span className="text-[10px] font-normal text-[#9CA3AF]">({sec.groups.length || sec.lines.length})</span>
                                   </button>
                                 </td>
                                 {sec.totals.map((c, i) => <DetailPair key={i} c={c} strong />)}
                               </tr>
-                              {open &&
+                              {/* A section with the statement's own groups opens to
+                                  them (comparable Actual | Forecast), each group
+                                  to its lines; otherwise straight to its lines. */}
+                              {open && sec.groups.length > 0 &&
+                                sec.groups.map((g) => {
+                                  const gOpen = cfOpenGroup === g.id;
+                                  return (
+                                    <Fragment key={g.id}>
+                                      <tr data-fin-reveal="" data-dash-cf-group="" className="border-b border-[#F0ECE9]">
+                                        <td className={`${tdName} pl-6`}>
+                                          <button
+                                            onClick={() => setCfOpenGroup(gOpen ? null : g.id)}
+                                            className="cursor-pointer text-[#374151] inline-flex items-center gap-1 whitespace-nowrap"
+                                          >
+                                            {gOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                            {g.label}
+                                            <span className="text-[10px] font-normal text-[#9CA3AF]">({g.lines.length})</span>
+                                          </button>
+                                        </td>
+                                        {g.totals.map((c, i) => <DetailPair key={i} c={c} />)}
+                                      </tr>
+                                      {gOpen &&
+                                        g.lines.map((l) => (
+                                          <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
+                                            <td className={`${tdName} pl-12 text-[#6B7280]`}>{l.label}</td>
+                                            {l.cells.map((c, i) => <DetailPair key={i} c={c} />)}
+                                          </tr>
+                                        ))}
+                                    </Fragment>
+                                  );
+                                })}
+                              {open && sec.groups.length === 0 &&
                                 sec.lines.map((l) => (
                                   <tr key={l.key} data-fin-reveal="" className="border-b border-[#F0ECE9]">
-                                    <td className={`${td} text-left pl-8 text-[#4B5563]`}>{l.label}</td>
+                                    <td className={`${tdName} pl-8 text-[#4B5563]`}>{l.label}</td>
                                     {l.cells.map((c, i) => <DetailPair key={i} c={c} />)}
                                   </tr>
                                 ))}

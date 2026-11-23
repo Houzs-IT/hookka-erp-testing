@@ -146,14 +146,44 @@ export function cashLinesByBucket(fc: DashCashLines, granularity: "month" | "qua
 
 export type DetailCell = { actual: number | null; forecast: number | null };
 export type DetailLine = { key: string; label: string; cells: DetailCell[] };
-export type DetailSection = { section: string; label: string; totals: DetailCell[]; lines: DetailLine[] };
+export type DetailGroup = { id: string; label: string; totals: DetailCell[]; lines: DetailLine[] };
+export type DetailSection = { section: string; label: string; totals: DetailCell[]; groups: DetailGroup[]; lines: DetailLine[] };
+
+/** The statement's own sub-groups (owner 2026-11-23 「这里很杂乱，可以整理一下
+ *  吗？」, the Raw Materials lines): each LINE row's group under its section —
+ *  "RAW_MATERIALS>701-0000" PURCHASE - FABRIC and so on — keyed as the lines.
+ *  The actuals (item-group codes, B.M-FABR), the P&L forecast (material
+ *  types, FABRIC) and the Docs forecast (opening creditors per supplier) name
+ *  their lines differently but roll up into the same group, so a group's
+ *  Actual and Forecast are comparable where its lines are not. */
+export type DashLineGroups = Record<string, { id: string; label: string }>;
+export function dashCashLineGroups(cf: { rows: readonly (CfStatementRow & { groupId?: string; depth?: number })[] }): DashLineGroups {
+  const groupLabel = new Map<string, string>();
+  for (const r of cf.rows) if (r.kind === "group" && r.groupId && r.groupId.includes(">")) groupLabel.set(r.groupId, r.label);
+  const out: DashLineGroups = {};
+  for (const r of cf.rows) {
+    if (r.kind !== "line" || !r.section || !r.groupId || !groupLabel.has(r.groupId)) continue;
+    out[`${r.section}||${r.label}`] = { id: r.groupId, label: groupLabel.get(r.groupId)! };
+  }
+  return out;
+}
+
+// Within a group: the lines the actuals carry first, then the forecast's own,
+// then the per-party catch-alls (opening creditors, unallocated, overdue).
+const lineRank = (l: DetailLine): number => {
+  if (/^(Opening creditors|Unallocated) —|^Overdue \(past term\)$/.test(l.label)) return 2;
+  return l.cells.some((c) => c.actual) ? 0 : 1;
+};
+const byRankThenLabel = (a: DetailLine, b: DetailLine) => lineRank(a) - lineRank(b) || a.label.localeCompare(b.label);
 
 /** The Detail table: each section in the statement's order (unknown sections
- *  after, by name), its lines by label, each period an Actual and a Forecast
- *  cell. A period ahead has no actual (null); a period the forecast does not
- *  cover has no forecast (null). A section or line with nothing anywhere goes. */
+ *  after, by name); under it the statement's own groups where it has them
+ *  (each with its lines), else its lines; every period an Actual and a
+ *  Forecast cell. A period ahead has no actual (null); a period the forecast
+ *  does not reach has no forecast (null). A line with nothing anywhere goes. */
 export function cashDetailSections(
   periods: readonly { actual: readonly { section: string; label: string; value: number }[] | null; forecast: Record<string, number> | null }[],
+  groupsOf: DashLineGroups = {},
 ): DetailSection[] {
   const keys = new Map<string, { section: string; label: string }>();
   for (const p of periods) {
@@ -167,6 +197,10 @@ export function cashDetailSections(
     const i = (SECTION_ORDER as readonly string[]).indexOf(s);
     return i < 0 ? SECTION_ORDER.length : i;
   };
+  const sum = (lines: readonly DetailLine[]) => periods.map((p, i): DetailCell => ({
+    actual: p.actual ? lines.reduce((t, l) => t + (l.cells[i].actual ?? 0), 0) : null,
+    forecast: p.forecast ? lines.reduce((t, l) => t + (l.cells[i].forecast ?? 0), 0) : null,
+  }));
   const bySection = new Map<string, DetailLine[]>();
   for (const [key, meta] of keys) {
     const cells = periods.map((p): DetailCell => ({
@@ -178,13 +212,29 @@ export function cashDetailSections(
   }
   return [...bySection.entries()]
     .sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]))
-    .map(([section, lines]) => ({
-      section,
-      label: (SECTION_LABELS as Record<string, string>)[section]?.toUpperCase() ?? section.replace(/_/g, " "),
-      lines: lines.sort((a, b) => a.label.localeCompare(b.label)),
-      totals: periods.map((p, i): DetailCell => ({
-        actual: p.actual ? lines.reduce((t, l) => t + (l.cells[i].actual ?? 0), 0) : null,
-        forecast: p.forecast ? lines.reduce((t, l) => t + (l.cells[i].forecast ?? 0), 0) : null,
-      })),
-    }));
+    .map(([section, lines]) => {
+      // Group the lines by the statement's own groups when the section has
+      // any; a line the statement does not place goes under "Other".
+      const grouped = lines.some((l) => groupsOf[l.key]);
+      const groups: DetailGroup[] = [];
+      if (grouped) {
+        const byGroup = new Map<string, { label: string; lines: DetailLine[] }>();
+        for (const l of lines) {
+          const g = groupsOf[l.key] ?? { id: `${section}>other`, label: "Other" };
+          const cur = byGroup.get(g.id) ?? { label: g.label, lines: [] };
+          cur.lines.push(l);
+          byGroup.set(g.id, cur);
+        }
+        for (const [id, g] of [...byGroup.entries()].sort((a, b) => (a[0].endsWith(">other") ? 1 : 0) - (b[0].endsWith(">other") ? 1 : 0) || a[0].localeCompare(b[0]))) {
+          groups.push({ id, label: g.label, lines: g.lines.sort(byRankThenLabel), totals: sum(g.lines) });
+        }
+      }
+      return {
+        section,
+        label: (SECTION_LABELS as Record<string, string>)[section]?.toUpperCase() ?? section.replace(/_/g, " "),
+        lines: lines.sort(byRankThenLabel),
+        groups,
+        totals: sum(lines),
+      };
+    });
 }
