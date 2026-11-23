@@ -335,7 +335,8 @@ Ask (owner, 23 Nov): 「例如10月真实买了这么多货，那么根据term�
 1. 🔵 Supplier maintenance: ☑ Can use trade finance (`suppliers.tf_eligible`, self-applied; form, detail and maintenance pages).
 2. 🔵 Dues per supplier (`tfSupplierDues`): the unpaid bills of the months that have ended (AP aging, by the supplier's term; past due → this month; `tfActualDueBySupplier`), plus the Forecast P&L from this month's purchases on (`firstPurchaseYm`). The Cash Flow forecast and the popup read the same.
 3. 🔵 With any ticked supplier, the trade finance block lists those suppliers only and ticks every month they have an amount (`tfAutoTicks`); a month unticked by hand is kept (`off` in the plan). Without any, the old Fill / ticks work as before.
-4. ⚪ After deploy: tick NLY, Ocean Sky and Meditex (the facility's suppliers so far) on prod, then check the popup and the forecast.
+4. ✅ Done on prod 2026-11-23 (owner: Ocean Sky and Meditex always, NHL from Jan'27, NLY to Dec'26): four suppliers ticked, NHL unticked Nov–Dec, NLY unticked Jan–Dec'27; each month's Drawdown checked against its ticked cells; the Forecast Balance Sheet matches the Cash Flow forecast month by month. Was: After deploy: tick NLY, Ocean Sky and Meditex (the facility's suppliers so far) on prod, then check the popup and the forecast.
+5. 🔵 Owner 2026-11-23 「用真实的background颜色可以不一样吗？」 / 「drawndown的total对吗？」 (feat/tf-real-bill-colour): cells from real unpaid bills shaded blue (`actualBy` per supplier, `tfActualDuesFromAp`), the Forecast P&L's beige; a legend row; this month's Drawdown marked "*" with the amount already drawn (the total was right: Nov = ticked RM 107,239.81 + drawn RM 34,757.16).
 
 ## 🔵 Forecast Balance Sheet: trade finance (fix/forecast-bs-trade-finance, 2026-11-23)
 
