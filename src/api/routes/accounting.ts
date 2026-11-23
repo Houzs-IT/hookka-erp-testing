@@ -9570,6 +9570,8 @@ async function reportSnapshot(
   view: string,
   respond: (c: AccountingCtx) => Promise<Response>,
   live = false,
+  /** Tables a view reads besides the statements' own (its copy rebuilds when they change). */
+  extraSources: readonly string[] = [],
 ): Promise<Response> {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -9604,7 +9606,7 @@ async function reportSnapshot(
   try {
     const payload = await withSnapshot(
       db,
-      { tableName: REPORT_SNAPSHOT_TABLE, sourceTables: reportSnapshotSourceTables() },
+      { tableName: REPORT_SNAPSHOT_TABLE, sourceTables: [...new Set([...reportSnapshotSourceTables(), ...extraSources])] },
       orgId,
       async () => {
         const res = await respond(c);
@@ -11914,7 +11916,20 @@ app.get("/cashflow-drill", async (c) => {
 // Forecast column beside its Actual one, future months as far as documents
 // reach, and what makes up every forecast cell. Read only. `?asOf=` replays
 // an earlier day (a hand check), never a later one.
-app.get("/cashflow-forecast", async (c) => {
+// The Cash Flow forecast and the Forecast Balance Sheet read the agings as at
+// the 1st of every month shown plus today's (a dozen reports each), measured
+// on prod 2026-11-23 at 55–105 s a call — past the page's 30 s, so the
+// Financial Dashboard and the Cash Flow page showed no forecast (owner 「看没有
+// forecast了？」 → 「Do it」). Both are now kept in the reports' own copy
+// (reportSnapshot: served at once, rebuilt behind when a source table moves
+// or after 15 minutes). These are the tables they read besides the statements'.
+const FORECAST_SNAPSHOT_SOURCES: readonly string[] = [
+  "payment_records", "supplier_payments", "credit_notes", "debit_notes", "purchase_credit_notes",
+  "other_party_bills", "other_party_payments", "planned_payments", "customers", "suppliers",
+  "trade_finance_draws", "trade_finance_repay_allocs", "opening_ap_excludes", "document_lifecycle",
+];
+app.get("/cashflow-forecast", (c) => reportSnapshot(c, "cashflow-forecast", cashflowForecastResponse, false, FORECAST_SNAPSHOT_SOURCES));
+async function cashflowForecastResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const realToday = todayMyt();
@@ -11925,7 +11940,7 @@ app.get("/cashflow-forecast", async (c) => {
   const { bankByMonth: _bank, drill: _drill, sources: _sources, forecastMeta, ...statement } =
     await computeCashflowStatement(c.var.DB, period, false, getOrgId(c), { forecast: { today } });
   return c.json({ success: true, data: { period, ...forecastMeta, ...statement } });
-});
+}
 
 // Capex & financing keyed on the Cash Flow page (owner 2026-11-09 「做」, spec
 // 6.4): forecast only — nothing is posted and no document is made. kv
@@ -12106,7 +12121,8 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
 // (`salaryAccount`) and collects the customers' open invoices
 // (`openingReceipts`) up to the trade debtors on that sheet (`arAccounts`;
 // owner 2026-11-11 「就是这个…我不想要显示」 of the debtors left below zero). Read only.
-app.get("/bs-forecast", async (c) => {
+app.get("/bs-forecast", (c) => reportSnapshot(c, "bs-forecast", bsForecastResponse, false, FORECAST_SNAPSHOT_SOURCES));
+async function bsForecastResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const db = c.var.DB;
@@ -12222,7 +12238,7 @@ app.get("/bs-forecast", async (c) => {
     openingReceipts: openingReceiptsByYm(openingDocs, months[0] ?? curYm),
   };
   return c.json({ success: true, data });
-});
+}
 
 app.get("/cashflow-forecast-inputs", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");

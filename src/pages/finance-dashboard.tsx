@@ -716,27 +716,54 @@ export default function FinanceDashboardPage() {
   const [cfDetailBasis, setCfDetailBasis] = useState<"pnl" | "docs">("pnl");
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const r = await fetch("/api/accounting/cashflow-forecast", { cache: "no-store" });
-        const j = (await r.json()) as { success?: boolean; data?: { columns: { key: string }[]; rows: CfStatementRow[] } };
-        if (!cancelled && j?.success && j.data) {
-          setCashFc(dashCashForecast(j.data));
-          setCashLines(dashCashForecastLines(j.data));
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    // Each answer may be the server's older copy while it rebuilds behind
+    // (reportSnapshot): show it, then ask again on the shared schedule until
+    // the new one lands (src/lib/stale-refresh.ts), as the dashboard's own load.
+    const loadCash = (run = NO_STALE_RUN) => {
+      void (async () => {
+        try {
+          const r = await fetch("/api/accounting/cashflow-forecast", { cache: "no-store" });
+          const j = (await r.json()) as { success?: boolean; stale?: unknown; data?: { columns: { key: string }[]; rows: CfStatementRow[] } };
+          if (cancelled) return;
+          if (j?.success && j.data) {
+            setCashFc(dashCashForecast(j.data));
+            setCashLines(dashCashForecastLines(j.data));
+          } else setCashFc((prev) => prev ?? {});
+          const next = planStaleRetry(run, j);
+          // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in this effect's cleanup
+          if (next.retryInMs !== null) timers.push(setTimeout(() => loadCash(next.run), next.retryInMs));
+        } catch {
+          if (!cancelled) setCashFc((prev) => prev ?? {});
         }
-      } catch { /* the card stays actual-only */ }
-    })();
-    void (async () => {
-      try {
-        const r = await fetch("/api/accounting/bs-forecast", { cache: "no-store" });
-        const j = (await r.json()) as { success?: boolean; data?: BsForecastPayload };
-        if (!j?.success || !j.data?.months?.length) return;
-        const o = await fetch(`/api/accounting/pl?period=${j.data.startYm}`);
-        const oj = (await o.json()) as { success?: boolean; data?: { balanceSheet?: BsMonthEntry[] } };
-        if (!cancelled && oj?.success && Array.isArray(oj.data?.balanceSheet)) setBsFc(dashBsForecast(j.data, oj.data.balanceSheet));
-      } catch { /* the card stays actual-only */ }
-    })();
-    return () => { cancelled = true; };
+      })();
+    };
+    const loadBs = (run = NO_STALE_RUN) => {
+      void (async () => {
+        try {
+          const r = await fetch("/api/accounting/bs-forecast", { cache: "no-store" });
+          const j = (await r.json()) as { success?: boolean; stale?: unknown; data?: BsForecastPayload };
+          if (cancelled) return;
+          if (!j?.success || !j.data?.months?.length) { setBsFc((prev) => prev ?? {}); return; }
+          const o = await fetch(`/api/accounting/pl?period=${j.data.startYm}`);
+          const oj = (await o.json()) as { success?: boolean; data?: { balanceSheet?: BsMonthEntry[] } };
+          if (cancelled) return;
+          if (oj?.success && Array.isArray(oj.data?.balanceSheet)) setBsFc(dashBsForecast(j.data, oj.data.balanceSheet));
+          else setBsFc((prev) => prev ?? {});
+          const next = planStaleRetry(run, j);
+          // eslint-disable-next-line no-restricted-syntax -- one-shot retry scheduled from a fetch callback (no hook possible here); cleared in this effect's cleanup
+          if (next.retryInMs !== null) timers.push(setTimeout(() => loadBs(next.run), next.retryInMs));
+        } catch {
+          if (!cancelled) setBsFc((prev) => prev ?? {});
+        }
+      })();
+    };
+    loadCash();
+    loadBs();
+    return () => {
+      cancelled = true;
+      for (const t of timers) clearTimeout(t);
+    };
   }, []);
 
   // The periods drawn: only those that have happened, the last 6 / 12 (or the
@@ -1499,6 +1526,7 @@ export default function FinanceDashboardPage() {
                   <SegmentedSwitch tone="pill" label="Cash flow view" value={cfView} onChange={setCfView}
                     options={[{ key: "summary", label: "Summary" }, { key: "detail", label: "Detail" }]} />
                   <span className="text-[11px] text-[#9CA3AF]">Detail lists every account, actual beside forecast.</span>
+                  {cashFc === null && <span className="text-[11px] text-[#9C6F1E]" data-dash-fc-loading="">Loading forecast…</span>}
                 </div>
                 <table data-fin-list data-fin-stick className="w-full">
                   <thead>{periodHead(cfData.map((d) => d.label))}</thead>
@@ -1588,6 +1616,8 @@ export default function FinanceDashboardPage() {
               bsData.length === 0 ? (
                 <p className="text-xs text-[#9CA3AF]">Balances start at the opening date — nothing before it.</p>
               ) : (
+                <>
+                {bsFc === null && <p className="mb-1 text-[11px] text-[#9C6F1E]" data-dash-fc-loading="">Loading forecast…</p>}
                 <table data-fin-list data-fin-stick className="w-full">
                   <thead>{periodHead(bsData.map((d) => d.label))}</thead>
                   <tbody>
@@ -1603,6 +1633,7 @@ export default function FinanceDashboardPage() {
                     </tfoot>
                   )}
                 </table>
+                </>
               )
             }
           />
