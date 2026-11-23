@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 159 mounts, 155 route files in
-`src/api/routes/`, 1163 top-level handler registrations discovered.
+`src/api/routes/`, 1164 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -57,7 +57,7 @@ offsets pointing past the end of their own file.
 
 | Mount prefix | Route file | Paths registered (with :line) | Auth |
 |---|---|---|---|
-| `/api/public/meetings` | `src/api/routes/meetings.ts` | `GET /links/:code` <sub>:359</sub><br>`GET /links/:code/slots` <sub>:367</sub><br>`POST /links/:code/book` <sub>:377</sub><br>`GET /bookings/:token` <sub>:389</sub><br>`POST /bookings/:token/cancel` <sub>:397</sub> | **public** (mounted before the gate) |
+| `/api/public/meetings` | `src/api/routes/meetings.ts` | `GET /links/:code` <sub>:359</sub><br>`GET /links/:code/slots` <sub>:367</sub><br>`GET /links/:code/day` <sub>:378</sub><br>`POST /links/:code/book` <sub>:388</sub><br>`GET /bookings/:token` <sub>:400</sub><br>`POST /bookings/:token/cancel` <sub>:408</sub> | **public** (mounted before the gate) |
 | `/api/push` | `src/api/routes/push.ts` | `GET /vapid-public-key` <sub>:107</sub><br>`POST /subscribe` <sub>:120</sub><br>`POST /unsubscribe` <sub>:180</sub><br>`POST /clock-reminder` <sub>:210</sub> | **public** (mounted before the gate) |
 | `/api/customers` | `src/api/routes/customers.ts` | `GET /` <sub>:344</sub><br>`POST /` <sub>:380</sub><br>`GET /:id` <sub>:493</sub><br>`POST /_backfill-snapshot-names` <sub>:521</sub><br>`PUT /:id` <sub>:544</sub><br>`DELETE /:id` <sub>:828</sub> | gated |
 | `/api/mail-center` | `src/api/routes/mail-center.ts` | `GET /threads` <sub>:1067</sub><br>`GET /threads/:id` <sub>:1175</sub><br>`POST /threads/:id/messages/:mid/acknowledge` <sub>:1297</sub><br>`GET /outbox` <sub>:1394</sub><br>`GET /outbox/:id` <sub>:1488</sub><br>`GET /outbox/:id/attachments/:idx/download` <sub>:1543</sub><br>`GET /addresses` <sub>:1626</sub><br>`GET /labels` <sub>:1708</sub><br>`POST /labels` <sub>:1725</sub><br>`PATCH /labels/:id` <sub>:1780</sub><br>`DELETE /labels/:id` <sub>:1851</sub><br>`POST /test-inject` <sub>:1918</sub><br>`POST /addresses` <sub>:1954</sub><br>`PATCH /addresses/:id` <sub>:2032</sub><br>`GET /access` <sub>:2107</sub><br>`POST /access` <sub>:2133</sub><br>`DELETE /access` <sub>:2171</sub><br>`GET /directory` <sub>:2225</sub><br>`GET /visibility` <sub>:2352</sub><br>`GET /scope-levels` <sub>:2398</sub><br>`PUT /scope-level` <sub>:2427</sub><br>`POST /threads/:id/reply` <sub>:2596</sub><br>`POST /compose` <sub>:2840</sub><br>`PATCH /threads/:id` <sub>:3036</sub> | gated |
