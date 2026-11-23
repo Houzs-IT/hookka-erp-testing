@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
+import { todayYmdMY } from "@/lib/utils";
 import { usePermissions } from "@/lib/use-permission";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { MobileHeader } from "../../components/MobileHeader";
@@ -26,7 +27,7 @@ import { useNotificationFeed } from "../../lib/use-notification-feed";
 import { visibleModuleGroups } from "../../nav";
 import { M } from "../../theme";
 import {
-  monthLabel, quarterKeyOf, quarterPeriod, widgetPeriod, widgetPeriodLabel, yearsWithData, ymd, type Period,
+  monthLabel, quarterKeyOf, quarterPeriod, widgetPeriod, widgetPeriodLabel, yearsWithData, type Period,
 } from "../../../dashboards/dashboard-shared-lib";
 import { DASHBOARD_NAV_HREF } from "./dashboard-m-lib";
 import { DASHBOARD_FEED_URL } from "./types";
@@ -169,6 +170,11 @@ const OPS_SUB_OPTIONS: readonly (readonly [HomeOpsSub, string])[] = [["overview"
 
 const GLASS_PILL = { background: `linear-gradient(180deg, color-mix(in srgb, ${M.card} 95%, transparent), color-mix(in srgb, ${M.card} 72%, transparent))`, boxShadow: `inset 0 1px 0 ${M.card}, 0 0 0 1px rgba(201,169,97,.22), 0 6px 14px -8px rgba(107,92,50,.45)` } as const;
 const ON_GRADIENT = "linear-gradient(145deg,#8B7A4E,#6B5C32)";
+/** Earliest day the picker offers (the old date field's own limit). */
+const DAY_MIN = "2020-01-01";
+/** Selected cell of the calendar (design: taupe gradient, lit top edge). */
+const CAL_ON = "linear-gradient(145deg,#A08C5B,#6B5C32)";
+const CAL_ON_RING = "inset 0 1px 0 rgba(255,255,255,.25),0 8px 16px -8px rgba(107,92,50,.75)";
 
 function PeriodCalendar({
   period, months, today, onPick, onClose, modes, mode, onMode,
@@ -177,6 +183,8 @@ function PeriodCalendar({
   const [viewYear, setViewYear] = useState(period.month.slice(0, 4));
   const yi = years.indexOf(viewYear);
   const curYm = today.slice(0, 7);
+  // Day mode: a month grid (the design's calendar). The month shown starts on the picked day's month.
+  const [viewM, setViewM] = useState((period.day ?? `${period.month}-01`).slice(0, 7));
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -191,30 +199,63 @@ function PeriodCalendar({
     return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("pointerdown", onDown); };
   }, [onClose]);
 
-  // Selected = taupe gradient, the current period = a gold dot, unavailable = faded (same availability rule as before).
-  const cell = (label: string, sub: string | undefined, on: boolean, dis: boolean, aria: string, go: () => void, h: number, cur: boolean) => (
+  // Design cells: radius 10, a soft white tile with a faint gold ring, the selected one a taupe gradient, the current period a gold dot,
+  // an unavailable one flat and faded (same availability rule as before).
+  const cell = (label: string, sub: string | undefined, on: boolean, dis: boolean, aria: string, go: () => void, h: number, cur: boolean, fs: number) => (
     <button key={aria} type="button" aria-pressed={on} aria-disabled={dis} aria-label={aria} onClick={() => { if (!dis) go(); }}
-      style={{ height: h, border: "none", borderRadius: 12, background: on ? ON_GRADIENT : `color-mix(in srgb, ${M.card} 80%, transparent)`, boxShadow: on ? "0 6px 14px -6px rgba(107,92,50,.6)" : "inset 0 0 0 1px rgba(201,169,97,.25)", color: on ? "#FFFFFF" : dis ? M.faint : M.raisin, fontFamily: "inherit", cursor: dis ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, opacity: dis ? 0.5 : 1 }}>
-      <span style={{ fontSize: 13.5, fontWeight: on ? 700 : 600, ...TNUM }}>{label}</span>
-      {sub ? <span style={{ fontSize: 11, color: on ? "rgba(255,255,255,.85)" : M.muted }}>{sub}</span> : null}
-      <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: "50%", backgroundColor: cur ? "#C9A961" : "transparent" }} />
+      style={{ height: h, border: "none", borderRadius: 10, background: on ? CAL_ON : dis ? "transparent" : `color-mix(in srgb, ${M.card} 75%, transparent)`, boxShadow: on ? CAL_ON_RING : dis ? "none" : `inset 0 1px 0 ${M.card}, 0 0 0 1px rgba(201,169,97,.18)`, color: on ? "#FFFFFF" : dis ? M.faint : M.raisin, fontFamily: "inherit", cursor: dis ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, WebkitTapHighlightColor: "transparent" }}>
+      <span style={{ fontSize: fs, fontWeight: on || cur ? 700 : 500, ...TNUM }}>{label}</span>
+      {sub ? <span style={{ fontSize: 11, color: on ? "#EFE7D3" : M.muted }}>{sub}</span> : null}
+      <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: "50%", backgroundColor: cur && !on ? "#C9A961" : "transparent" }} />
     </button>
   );
   const monthOf = (y: string, m: number) => `${y}-${String(m).padStart(2, "0")}`;
 
   let body: ReactNode;
   if (mode === "day") {
+    const [vy, vm] = viewM.split("-").map(Number);
+    const lead = (new Date(vy, vm - 1, 1).getDay() + 6) % 7; // Monday first
+    const n = new Date(vy, vm, 0).getDate();
+    const ymdOf = (d: number) => `${viewM}-${String(d).padStart(2, "0")}`;
+    const yesterday = new Date(`${today}T00:00:00Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const yest = yesterday.toISOString().slice(0, 10);
+    const pick = (v: string) => { if (v <= today && v >= DAY_MIN) onPick({ mode: "monthly", month: v.slice(0, 7), day: v }); };
     body = (
-      <input type="date" aria-label="Pick a day" value={period.day ?? ""} max={today} min="2020-01-01"
-        onChange={(e) => { const v = e.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v <= today) onPick({ mode: "monthly", month: v.slice(0, 7), day: v }); }}
-        style={{ width: "100%", boxSizing: "border-box", height: 44, padding: "0 12px", borderRadius: 12, border: `1px solid ${M.hairline}`, backgroundColor: M.card, color: M.raisin, fontFamily: "inherit", fontSize: 15 }} />
+      <>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))" }}>
+          {["M", "T", "W", "T", "F", "S", "S"].map((w, i) => <span key={i} style={{ height: 24, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#8B7A4E" }}>{w}</span>)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", gap: 2 }}>
+          {Array.from({ length: lead }, (_, i) => <span key={`b${i}`} aria-hidden="true" style={{ height: 36 }} />)}
+          {Array.from({ length: n }, (_, i) => {
+            const d = i + 1;
+            const v = ymdOf(d);
+            const dis = v > today || v < DAY_MIN;
+            const on = period.day === v;
+            const isToday = v === today;
+            return (
+              <button key={v} type="button" aria-label={`${d} ${monthLabel(viewM)}`} aria-pressed={on} aria-disabled={dis} onClick={() => pick(v)}
+                style={{ height: 36, border: "none", borderRadius: 999, background: on ? CAL_ON : "transparent", boxShadow: on ? CAL_ON_RING : "none", color: on ? "#FFFFFF" : dis ? M.faint : M.raisin, fontFamily: "inherit", cursor: dis ? "default" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, padding: 0, WebkitTapHighlightColor: "transparent" }}>
+                <span style={{ fontSize: 13, fontWeight: on || isToday ? 700 : 500, ...TNUM }}>{d}</span>
+                <span aria-hidden="true" style={{ width: 4, height: 4, borderRadius: "50%", backgroundColor: isToday && !on ? "#C9A961" : "transparent" }} />
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${M.divider}` }}>
+          {([["Today", today], ["Yesterday", yest]] as const).map(([l, v]) => (
+            <button key={l} type="button" onClick={() => pick(v)} style={{ flex: "none", height: 32, padding: "0 12px", borderRadius: 999, border: "none", background: `color-mix(in srgb, ${M.card} 80%, transparent)`, boxShadow: "inset 0 0 0 1px rgba(201,169,97,.25)", color: M.raisin, fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>
+          ))}
+        </div>
+      </>
     );
   } else if (mode === "month") {
     body = (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 6 }}>
         {Array.from({ length: 12 }, (_, i) => {
           const ym = monthOf(viewYear, i + 1);
-          return cell(monthLabel(ym).slice(0, 3), undefined, period.month === ym, !months.includes(ym), `${monthLabel(ym)}`, () => onPick({ mode: "monthly", month: ym }), 44, ym === curYm);
+          return cell(monthLabel(ym).slice(0, 3), undefined, period.month === ym, !months.includes(ym), `${monthLabel(ym)}`, () => onPick({ mode: "monthly", month: ym }), 42, ym === curYm, 13.5);
         })}
       </div>
     );
@@ -226,17 +267,26 @@ function PeriodCalendar({
           const first = monthOf(viewYear, (q - 1) * 3 + 1);
           const has = months.some((m) => quarterKeyOf(m) === key) || key === quarterKeyOf(curYm);
           const on = quarterKeyOf(period.month) === key && periodMode(period) === "quarter";
-          return cell(`Q${q}`, `${monthLabel(first).slice(0, 3)} – ${monthLabel(monthOf(viewYear, q * 3)).slice(0, 3)}`, on, !has, `Q${q} ${viewYear}`, () => onPick(quarterPeriod(key, today)), 56, key === quarterKeyOf(curYm));
+          return cell(`Q${q}`, `${monthLabel(first).slice(0, 3)} – ${monthLabel(monthOf(viewYear, q * 3)).slice(0, 3)}`, on, !has, `Q${q} ${viewYear}`, () => onPick(quarterPeriod(key, today)), 54, key === quarterKeyOf(curYm), 14);
         })}
       </div>
     );
   } else {
     body = (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 6 }}>
-        {years.map((y) => cell(y, y === today.slice(0, 4) ? "Jan – Present" : "Jan – Dec", period.month.startsWith(y), false, y, () => onPick({ mode: "ytd", month: months.filter((m) => m.startsWith(y)).pop() ?? `${y}-01` }), 56, y === today.slice(0, 4)))}
+        {years.map((y) => cell(y, y === today.slice(0, 4) ? "Jan – Present" : "Jan – Dec", period.month.startsWith(y), false, y, () => onPick({ mode: "ytd", month: months.filter((m) => m.startsWith(y)).pop() ?? `${y}-01` }), 54, y === today.slice(0, 4), 14))}
       </div>
     );
   }
+  const monthNav = (dir: -1 | 1) => {
+    const t = new Date(Date.UTC(Number(viewM.slice(0, 4)), Number(viewM.slice(5, 7)) - 1 + dir, 1)).toISOString().slice(0, 7);
+    const ok = dir < 0 ? t >= DAY_MIN.slice(0, 7) : t <= curYm;
+    return (
+      <button type="button" aria-label={dir < 0 ? "Previous month" : "Next month"} aria-disabled={!ok} onClick={() => ok && setViewM(t)} style={{ width: 36, height: 36, border: "none", background: "none", color: ok ? M.raisin : M.faint, cursor: ok ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {dir < 0 ? <ChevronLeft size={18} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={18} strokeWidth={2} aria-hidden="true" />}
+      </button>
+    );
+  };
   const yearNav = (dir: -1 | 1) => {
     const t = years[yi + dir];
     return (
@@ -254,15 +304,24 @@ function PeriodCalendar({
             return <button key={k} type="button" role="tab" aria-selected={on} onClick={() => { if (!on) onMode(k); }} style={{ height: 30, border: "none", borderRadius: 9, backgroundColor: on ? M.card : "transparent", boxShadow: on ? "0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)" : "none", color: on ? M.raisin : M.ink, fontFamily: "inherit", fontSize: 12.5, fontWeight: on ? 700 : 600, cursor: "pointer" }}>{l}</button>;
           })}
         </div>
-        {mode === "month" || mode === "quarter" ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            {yearNav(-1)}
-            <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin, ...TNUM }}>{viewYear}</span>
-            {yearNav(1)}
+        {mode === "day" ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            {monthNav(-1)}
+            <span style={{ fontSize: 14, fontWeight: 700, color: M.raisin, ...TNUM }}>{monthLabel(viewM)}</span>
+            {monthNav(1)}
           </div>
         ) : (
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px 10px" }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin }}>{mode === "day" ? "Day" : "Year"}</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px 10px" }}>
+            {mode === "year" ? (
+              <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin, lineHeight: "36px" }}>YEAR</span>
+            ) : (
+              <span style={{ display: "inline-flex", alignItems: "center", marginLeft: -10 }}>
+                {yearNav(-1)}
+                <span style={{ fontSize: 15, fontWeight: 700, color: M.raisin, ...TNUM }}>{viewYear}</span>
+                {yearNav(1)}
+              </span>
+            )}
+            <span style={{ fontSize: 11.5, color: M.muted }}>{mode === "month" ? "Pick a month" : mode === "quarter" ? "Pick a quarter" : "Pick a year"}</span>
           </div>
         )}
         {body}
@@ -534,7 +593,8 @@ function Dashboard() {
   const ready = periodResolved(period);
   const periodKey = ready ? widgetPeriod(period) : "";
   const periodText = ready ? widgetPeriodLabel(period) : "";
-  const today = ymd(new Date());
+  // Malaysia date, the clock the server uses for "today" (not the phone's own zone).
+  const today = todayYmdMY();
   // No fetch runs off an unresolved period (the month list has not loaded yet).
   const data = useSalesData(periodKey, { ...access, view: access.view && ready });
 

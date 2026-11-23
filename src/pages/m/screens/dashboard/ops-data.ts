@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { cachedFetchJsonResult, useCachedJson, type CachedFetchFailure } from "@/lib/cached-fetch";
 import { useLabourCost } from "../../../dashboards/use-labour-cost";
 import { ymd, type Period } from "../../../dashboards/dashboard-shared-lib";
+import { monthsOf, type DaySplit, type ProductionRevenue } from "../../../dashboards/use-production-revenue";
 import {
   costingMonths, labourPerDay, pnlMaterials, purchasingMonths, sectionStatus, slotStatus,
   type ComplianceData, type CostStructure, type OpsFeed, type OpsOverview, type Pi, type SplitResp, type Status,
@@ -56,6 +57,46 @@ function useMonthlyRevenue(months: readonly string[], enabled: boolean) {
   return { status: (cur?.status ?? "loading") as Status, byDay: cur?.byDay ?? EMPTY_REV, refresh };
 }
 
+/**
+ * Daily production revenue: the same month-by-month reads as useMonthlyRevenue, but keeping the Bedframe / Sofa split and
+ * every department's own daily value (the shape of the desktop's useProductionRevenue). Unlike that hook it reports a
+ * failed or refused read, so the card says "couldn't load" / "not available", never "no production revenue".
+ */
+function useProdRevenueM(months: readonly string[], enabled: boolean) {
+  const key = enabled ? months.join(",") : "";
+  const [tick, setTick] = useState(0);
+  const [st, setSt] = useState<{ key: string; tick: number; status: Status; data: ProductionRevenue | null } | null>(null);
+  useEffect(() => {
+    if (!key) return;
+    let live = true;
+    void Promise.all(key.split(",").map((ym) => cachedFetchJsonResult<SplitResp>(`/api/dashboard/overview/revenue-split?period=${ym}`))).then((rs) => {
+      if (!live) return;
+      const bad = rs.find((r) => !r.ok);
+      if (bad && !bad.ok) {
+        setSt({ key, tick, status: bad.status === 401 || bad.status === 403 ? "denied" : "error", data: null });
+        return;
+      }
+      const byDay = new Map<string, DaySplit>();
+      const dept = new Map<string, Map<string, DaySplit>>();
+      for (const r of rs) {
+        if (!r.ok) continue;
+        const buckets = r.data?.revenue ?? [];
+        buckets.forEach((b) => byDay.set(b.bucket, { total: b.production?.total ?? 0, bedframe: b.production?.bedframe ?? 0, sofa: b.production?.sofa ?? 0 }));
+        for (const d of r.data?.departments ?? []) {
+          const m = dept.get(d.code) ?? new Map<string, DaySplit>();
+          d.byBucket.forEach((s, i) => { const day = buckets[i]?.bucket; if (day) m.set(day, { total: s.total, bedframe: s.bedframe, sofa: s.sofa }); });
+          dept.set(d.code, m);
+        }
+      }
+      setSt({ key, tick, status: "ready", data: { byDay, dept } });
+    });
+    return () => { live = false; };
+  }, [key, tick]);
+  const cur = st && st.key === key && st.tick === tick ? st : null;
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  return { status: (cur?.status ?? "loading") as Status, data: cur?.data ?? null, refresh };
+}
+
 export type LabourState = "denied" | "loading" | "error" | "ready" | "none";
 
 export function useOpsData(a: { periodKey: string; period: Period; sub: "overview" | "production"; access: OpsAccess; today: string }) {
@@ -77,6 +118,10 @@ export function useOpsData(a: { periodKey: string; period: Period; sub: "overvie
   // ---- Department Revenue ---------------------------------------------------
   const split = useCachedJson<SplitResp>(on && overviewSub ? `/api/dashboard/overview/revenue-split?period=${periodKey}` : null);
   const splitS = slotStatus(split as Slot<SplitResp>, on);
+
+  // ---- Daily production revenue (per-day bars; the months the period touches) ----
+  const prodMonths = useMemo(() => monthsOf(period, today), [period, today]);
+  const dailyRev = useProdRevenueM(prodMonths, on && overviewSub);
 
   // ---- Daily Report (compliance.json needs sales-orders:read) ---------------
   const compOn = on && overviewSub && access.salesOrders;
@@ -125,13 +170,14 @@ export function useOpsData(a: { periodKey: string; period: Period; sub: "overvie
   const pisS = slotStatus(pis as Slot<{ data?: Pi[] }>, access.invoices);
 
   const refresh = () => {
-    feed.refresh(); overview.refresh(); split.refresh(); compliance.refresh(); csNow.refresh(); pis.refresh(); revenue.refresh();
+    feed.refresh(); overview.refresh(); split.refresh(); compliance.refresh(); csNow.refresh(); pis.refresh(); revenue.refresh(); dailyRev.refresh();
   };
 
   return {
     feedStatus, feed: feed.data, production, lim, inventory,
     overview: { status: overviewS, data: overview.data },
     split: { status: splitS, data: split.data },
+    dailyRev: { status: dailyRev.status, data: dailyRev.data, retry: dailyRev.refresh },
     compliance: { status: complianceS, data: compliance.data?.data ?? null, retry: compliance.refresh },
     revenue,
     cost: { status: costS, prevStatus: prevS, pnl, sets: [csPrev.data, csNow.data] as (CostStructure | null)[] },

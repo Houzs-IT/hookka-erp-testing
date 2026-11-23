@@ -21,7 +21,7 @@ import {
 } from "../../../dashboards/dashboard-shared-lib";
 import { parseDashPeriod } from "../../../../api/lib/dash-period";
 import { dropIdleSundays } from "../../../../lib/idle-sundays";
-import { formatCurrency } from "../../../../lib/utils";
+import { formatCurrency, mytWallClock } from "../../../../lib/utils";
 import { pickCat, type RevCat, type RevenueSplitResp } from "../../../dashboard-b/revenue-split";
 
 // ---------------------------------------------------------------------------
@@ -197,11 +197,13 @@ export const titleCase = (s: string): string =>
 export const ymLabelShort = (ym: string): string => `${monthLabel(ym).slice(0, 3)} ${ym.slice(2, 4)}`;
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-export function todayLabel(d: Date = new Date()): string {
-  return `${DAYS[d.getDay()]}, ${d.getDate()} ${monthLabel(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`).slice(0, 3)} ${d.getFullYear()}`;
+// The Home date and greeting read the MALAYSIA wall clock (lib/utils mytWallClock: a Date whose UTC fields read Malaysian time), the
+// same clock the server uses for "today", so a phone set to another zone still agrees with the data. Pass such a Date in tests.
+export function todayLabel(d: Date = mytWallClock()): string {
+  return `${DAYS[d.getUTCDay()]}, ${d.getUTCDate()} ${monthLabel(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`).slice(0, 3)} ${d.getUTCFullYear()}`;
 }
-export function greetingWord(d: Date = new Date()): string {
-  const h = d.getHours();
+export function greetingWord(d: Date = mytWallClock()): string {
+  const h = d.getUTCHours();
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 

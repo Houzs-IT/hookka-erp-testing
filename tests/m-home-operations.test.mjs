@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dvColor } from "../src/pages/m/screens/dashboard/ops-dept-colors.ts";
 import {
   DASHBOARD_VIEWS, allowedViews, resolveView, effectivePeriod, periodMode, opsPeriod, switchOpsMode, stepOps, opsPeriodLabel, costingFocusMonth, periodResolved,
 } from "../src/pages/m/screens/dashboard/home-lib.ts";
@@ -16,10 +17,11 @@ import {
   overdueSplit, deptChips, filterOrders, duePill, shortageSummary, pnlMaterials, costingByDay, costingCols, costOf, rollUpMonths, costingMonths, labourPerDay,
   planBars, planCumulative, planTotals, stageRows, fabricRows, fabricTrend, purchasingCalc, purchasingMonths, stockTake, perWorkerMin, completedHead,
   hm as hmFmt, hrs as hrsFmt,
+  drFull, drMoreText, drMoreDetail, drCards, DR_SORT, DR_LIST_HEAD, DR_RULE, DR_FIXED, backlogView, backlogMonthChips, plantFiltered, prodRevenueView, deptWorkDays, deptAvg, hasAccessory,
 } from "../src/pages/m/screens/dashboard/ops-lib.ts";
 
 const read = (p) => readFileSync(new URL(`../src/pages/m/screens/dashboard/${p}`, import.meta.url), "utf8");
-const OPS_FILES = ["OpsView.tsx", "HomeOpsA.tsx", "HomeOpsP.tsx", "HomeOpsB.tsx", "HomeOpsC.tsx", "ops-lib.ts", "ops-data.ts", "ops-ui.tsx"];
+const OPS_FILES = ["OpsView.tsx", "HomeOpsA.tsx", "HomeOpsD.tsx", "HomeOpsP.tsx", "HomeOpsW.tsx", "HomeOpsB.tsx", "HomeOpsC.tsx", "ops-lib.ts", "ops-data.ts", "ops-ui.tsx", "ops-glass.tsx", "ops-glass-style.ts", "ops-dept-colors.ts", "ops-orders.tsx", "use-open-order.ts", "OpsWorklistPage.tsx", "worklist-state.ts"];
 const PROD_TABS = ["sales", "operations", "people", "service"];
 
 // ---- Sales <-> Operations --------------------------------------------------
@@ -151,7 +153,7 @@ const monthSplit = {
     { code: "UPHOLSTERY", label: "Upholstery", period: cat(500, 500, 50), byBucket: [cat(200, 100, 10), cat(300, 400, 40)] },
   ],
 };
-test("Department Revenue keeps the API's department order and offers All / Bedframe / Sofa only", () => {
+test("Department Revenue keeps the API's department order; Accessory is offered only when some department has it", () => {
   const all = deptRevenueRows(monthSplit, "all", undefined);
   assert.deepEqual(all.map((r) => r.code), ["FAB_CUT", "UPHOLSTERY"], "not re-sorted");
   assert.equal(all[1].value, 1050);
@@ -160,8 +162,9 @@ test("Department Revenue keeps the API's department order and offers All / Bedfr
   assert.equal(all[1].frac, 1);
   const src = read("HomeOpsA.tsx");
   assert.match(src, /\["all", "All"\], \["bedframe", "Bedframe"\], \["sofa", "Sofa"\]/);
-  assert.doesNotMatch(src, /"accessory", "Accessory"/);
-  assert.doesNotMatch(src, /Avg RM|\/day`/, "no invented average per day");
+  assert.match(src, /\["accessory", "Accessory"\]/);
+  assert.match(src, /hasAccessory\(data\)/, "the desktop's withAccessory rule: only when accessory value exists");
+  assert.match(src, /deptWorkDays\(data, todayYmdMY\(\)\)/, "the average divides by the desktop's working days, on the Malaysia date");
 });
 
 test("HK-0148: each department row carries its sets, for the picked day or the period, by category", () => {
@@ -171,7 +174,10 @@ test("HK-0148: each department row carries its sets, for the picked day or the p
   assert.equal(deptRevenueRows(d, "bedframe", undefined)[0].sets, 4);
   assert.equal(deptRevenueRows(d, "sofa", "2026-10-02")[0].sets, 1, "picked day = that day's bucket");
   assert.equal(deptRevenueRows(monthSplit, "all", undefined)[0].sets, 0, "a payload without sets reads 0");
-  assert.match(read("HomeOpsA.tsx"), /\{r\.sets\} \{r\.sets === 1 \? "set" : "sets"\}/);
+  const a = read("HomeOpsA.tsx");
+  assert.match(a, /r\.bed\} \$\{r\.bed === 1 \? "unit" : "units"\}/, "bedframe counts are UNITS");
+  assert.match(a, /r\.sofa\} \$\{r\.sofa === 1 \? "set" : "sets"\}/, "sofa counts are SETS");
+  assert.match(a, /Period avg/, "with a day picked the average is labelled as the period's");
 });
 
 test("a picked day reads that day's bucket only in a daily (month) split", () => {
@@ -222,16 +228,140 @@ test("Daily Report item rows use only fields the report returns and never invent
   const o = drRows("overdueOrders", groups)[0];
   assert.deepEqual([o.ref, o.right, o.rightSub, o.link], ["SO-1", "4 d", "CONFIRMED", { kind: "so", id: "so1" }]);
   assert.deepEqual(drRows("doPendingDispatch", groups)[0].link, { kind: "do", id: "d1" });
-  assert.equal(drRows("poNotReceived", groups)[0].link, null, "no mobile PO page is linked");
+  assert.deepEqual(drRows("poNotReceived", groups)[0].link, { kind: "po", id: "p1" }, "the phone has a PO detail at /m/procurement/:id");
   assert.equal(drRows("pricingIssues", groups)[0].rightSub, "ZERO_PRICE");
   assert.deepEqual(drRows("soNoDo", {}), [], "a missing list is empty rows, which the card words as 'not returned'");
-  assert.match(read("HomeOpsA.tsx"), /The list for this check was not returned\./);
+  assert.match(read("HomeOpsSheets.tsx"), /The list for this check was not returned\./);
 });
 
-test("the Daily Report has no '+N more' action and no link to the desktop page", () => {
+test("Daily Report: the four fixed categories always show, in the owner's order, even at zero", () => {
+  assert.deepEqual(DR_FIXED.map((f) => [f.key, f.label]), [["overdueOrders", "Production overdue"], ["doPendingDispatch", "DO pending dispatch"], ["poNotReceived", "PO not received"], ["processSkips", "Process skips"]]);
+  const f = drFull({ counts: { total: 0, checksRun: 15, checksTotal: 15, overdueOrders: 0, doPendingDispatch: 0, poNotReceived: 0, processSkips: 0 }, unavailable: [] });
+  assert.deepEqual(f.tiles.map((t) => t.n), [0, 0, 0, 0], "zero is a number, shown as 0");
+  assert.equal(f.clear, true);
+  assert.equal(drMoreText(f), null);
+  const busy = drFull({ counts: { total: 31, overdueOrders: 7, doPendingDispatch: 3, poNotReceived: 2, processSkips: 1, soNoInvoice: 9, pricingIssues: 4, pendingTimeAdjustments: 5 }, unavailable: [] });
+  assert.deepEqual(busy.tiles.map((t) => t.n), [7, 3, 2, 1], "not re-ranked by count");
+  assert.equal(busy.total, 31, "the full-report total is not the sum of the four");
+  assert.equal(busy.otherIssues, 18, "issue RECORDS outside the four tiles");
+  assert.equal(busy.otherChecks, 3, "other CHECKS (categories) with records: soNoInvoice, pricingIssues, pendingTimeAdjustments");
+  assert.equal(drMoreText(busy), "+18 more issues on the desktop Daily Report", "the footer is one short line");
+  assert.equal(drMoreDetail(busy), "+18 more issues across 3 other checks", "records and other checks stay apart for screen readers");
+  assert.equal(drMoreDetail({ ...busy, otherChecks: 1, otherIssues: 1 }), "+1 more issue across 1 other check");
+  assert.equal(drMoreText({ ...busy, otherChecks: 1, otherIssues: 1 }), "+1 more issue on the desktop Daily Report");
+});
+
+test("Daily Report: a check that did not run is unknown (a dash), never zero, and the total stays a floor", () => {
+  const f = drFull({ counts: { total: 6, checksRun: 13, checksTotal: 15, overdueOrders: 4, poNotReceived: 2, processSkips: null, doPendingDispatch: null }, unavailable: [{ check: "processSkips", message: "x" }, { check: "doPendingDispatch", message: "x" }] });
+  assert.deepEqual(f.tiles.map((t) => t.n), [4, null, 2, null]);
+  assert.equal(f.partial, true);
+  assert.equal(f.failed, 2);
+  assert.equal(f.clear, false);
+  assert.equal(f.otherUnavailable, 0, "both failed checks are among the four tiles");
+  const g = drFull({ counts: { total: 0, checksRun: 12, checksTotal: 15, overdueOrders: 0, doPendingDispatch: 0, poNotReceived: 0, processSkips: 0 }, unavailable: [{ check: "soNoDo", message: "x" }, { check: "rdStalled", message: "x" }, { check: "incompleteBoms", message: "x" }] });
+  assert.equal(g.clear, false, "0 with failed checks is a floor, not a clean day");
+  assert.equal(g.otherUnavailable, 3);
+  assert.equal(drMoreText(g), null, "nothing lies outside the four tiles; the partial strip already says what could not run");
+  assert.equal(drMoreDetail(g), "3 other checks couldn’t run");
+  assert.equal(drMoreText({ ...g, otherIssues: 4, otherChecks: 2 }), "+4+ more issues on the desktop Daily Report", "a partial total says + on the extra records");
+  assert.equal(drMoreDetail({ ...g, otherIssues: 4, otherChecks: 2 }), "+4+ more issues across 2 other checks · 3 other checks couldn’t run");
   const src = read("HomeOpsA.tsx");
-  assert.doesNotMatch(src, /\/daily-report/);
-  assert.doesNotMatch(src, /\+\$\{?\w*\}? more|more issues on the desktop/i);
+  assert.match(src, /\$\{full\.total\}\$\{full\.partial \? "\+" : ""\}/, "N+ headline");
+  assert.match(src, /navigate\("\/daily-report"\)/, "the link to the desktop Daily Report");
+  assert.match(src, /checks couldn’t run — this count is a floor, not a total/);
+});
+
+// ---- Backlog / Plant Load toggles, Daily production revenue, Department Revenue average ----------------
+const byM = (o, b, s) => [{ month: "overdue", sofaMin: o, bedframeMin: 0 }, { month: "2026-12", sofaMin: 0, bedframeMin: b }, { month: "2027-01", sofaMin: s, bedframeMin: 0 }];
+const prodWithMonths = {
+  backlogDays: 6, backlogMin: 3600, dailyCapacityMin: 600, activeJobs: { bedframeUnits: 9, sofaSets: 5, byCustomer: [] }, completedYesterday: { bedframeUnits: 0, sofaSets: 0, byCustomer: [] },
+  completedLast7: [], capacityDays: [], backlogGrandMin: 3600,
+  activeJobsByMonth: [{ customer: "A", month: "overdue", bedframeUnits: 4, sofaSets: 1 }, { customer: "A", month: "2026-12", bedframeUnits: 5, sofaSets: 4 }],
+  backlogByDept: [
+    { dept: "Upholstery", sofaMin: 1800, bedframeMin: 600, totalMin: 2400, dailyCapMin: 600, backlogDays: 4, sofaCapMin: 300, bedframeCapMin: 300, sofaDays: 6, bedframeDays: 2, byMonth: byM(1200, 600, 600) },
+    { dept: "Webbing", sofaMin: 600, bedframeMin: 600, totalMin: 1200, dailyCapMin: 0, backlogDays: null, byMonth: byM(600, 600, 0) },
+  ],
+};
+test("Backlog: the delivery-month chips re-derive each department's days, stalled stays first", () => {
+  const none = { hiddenCat: new Set(), hiddenMonth: new Set() };
+  const all = backlogView(prodWithMonths, none);
+  assert.deepEqual(all.map((r) => [r.dept, r.shown]), [["Webbing", null], ["Upholstery", 4]], "stalled first, then by days");
+  assert.deepEqual(backlogMonthChips(prodWithMonths).map((c) => c.key), ["overdue", "2026-12", "2027-01"]);
+  assert.equal(backlogMonthChips(prodWithMonths)[0].color, "#b42318", "overdue is red, as on the desktop");
+  const noOverdue = backlogView(prodWithMonths, { hiddenCat: new Set(), hiddenMonth: new Set(["overdue"]) });
+  const up = noOverdue.find((r) => r.dept === "Upholstery");
+  assert.equal(up.shown, 2, "(600 + 600) / 600: the overdue 1,200 min no longer count");
+  assert.deepEqual(up.segs.map((x) => x.month), ["2026-12", "2027-01"], "only the visible months are drawn");
+  const sofaOnly = backlogView(prodWithMonths, { hiddenCat: new Set(["Bedframe"]), hiddenMonth: new Set() }).find((r) => r.dept === "Upholstery");
+  assert.equal(sofaOnly.single.label, "Sofa");
+  assert.equal(sofaOnly.shown, 6, "sofa only: 1800 / 300 per day");
+  const noMonths = backlogView({ ...prodWithMonths, backlogByDept: prodWithMonths.backlogByDept.map(({ byMonth, ...r }) => r) }, none);
+  assert.deepEqual(noMonths.map((r) => r.segs.length), [0, 0], "an older feed without byMonth draws the two-colour bar");
+});
+
+test("Plant Load follows the same toggles with the desktop's arithmetic", () => {
+  const none = plantFiltered(prodWithMonths, { hiddenCat: new Set(), hiddenMonth: new Set() });
+  assert.equal(none.filtered, false);
+  assert.equal(none.backlogDays, 6);
+  assert.equal(none.backlogMin, 3600);
+  assert.equal(none.showing, "Sofa + Bedframe · all delivery months");
+  const f = plantFiltered(prodWithMonths, { hiddenCat: new Set(), hiddenMonth: new Set(["overdue"]) });
+  assert.equal(f.filtered, true);
+  assert.equal(f.backlogMin, 1800, "minutes of the visible months only: Upholstery 600 + 600, Webbing 600");
+  assert.equal(f.backlogDays, Math.round((6 * f.backlogMin / 3600) * 10) / 10, "days = the API headline x the visible share of the queue");
+  assert.deepEqual([f.jobs.bedframeUnits, f.jobs.sofaSets], [5, 4], "Active Jobs drop the hidden month");
+  assert.equal(f.showing, "Sofa + Bedframe · Dec 2026, Jan 2027");
+});
+
+test("Daily production revenue: stacked per day, idle Sundays and future days left out, average over working days", () => {
+  const day = (total, bedframe, sofa) => ({ total, bedframe, sofa });
+  const rev = {
+    byDay: new Map([["2026-10-03", day(1000, 600, 300)], ["2026-10-04", day(0, 0, 0)], ["2026-10-05", day(500, 100, 300)], ["2026-10-31", day(900, 900, 0)]]),
+    dept: new Map([["UPHOLSTERY", new Map([["2026-10-03", day(1000, 600, 300)], ["2026-10-05", day(500, 100, 300)]])]]),
+  };
+  const period = { mode: "monthly", month: "2026-10" };
+  const v = prodRevenueView(rev, period, "2026-10-20");
+  assert.deepEqual(v.rows.map((r) => r.key), ["2026-10-03", "2026-10-05"], "Sunday the 4th is idle and off the axis; the 31st is after today");
+  assert.equal(v.total, 1500);
+  assert.equal(v.workDays, 2);
+  assert.equal(v.avg, 750);
+  assert.deepEqual(v.best, ["2026-10-03", 1000]);
+  assert.equal(v.bfShare, Math.round((700 / 1300) * 100));
+  assert.equal(v.rows[0].other, 100, "anything not bedframe or sofa is Other");
+  const y = prodRevenueView(rev, { mode: "ytd", month: "2026-10" }, "2026-10-20");
+  assert.equal(y.byMonth, true);
+  assert.deepEqual(y.rows.map((r) => [r.label, r.total]), [["Oct", 1500]], "a Year rolls up per month");
+  assert.match(read("HomeOpsD.tsx"), /Upholstery cards complete/);
+});
+
+test("Department Revenue: Avg / day divides by working days; a split with none shows a dash, not RM 0", () => {
+  const split = {
+    granularity: "day",
+    revenue: [{ bucket: "2026-10-01", production: cat(1, 1) }, { bucket: "2026-10-02", production: cat(1, 1) }, { bucket: "2026-10-03", production: cat(0, 0) }],
+    departments: [{ code: "UPHOLSTERY", label: "Upholstery", period: cat(300, 100, 50), byBucket: [cat(100, 100), cat(200, 0, 50), cat(0, 0)] }],
+  };
+  assert.equal(deptWorkDays(split, "2026-10-31"), 2, "only days on which some department produced");
+  assert.equal(deptWorkDays(split, "2026-10-01"), 1, "days after today do not count");
+  assert.equal(deptAvg(45000, 2), 22500);
+  assert.equal(deptAvg(45000, 0), null);
+  assert.equal(hasAccessory(split), true);
+  assert.equal(hasAccessory({ ...split, departments: [{ ...split.departments[0], period: cat(300, 100, 0) }] }), false);
+  const weekly = { granularity: "week", revenue: [{ bucket: "2026-10-05" }, { bucket: "2026-10-12" }], departments: [] };
+  assert.equal(deptWorkDays(weekly, "2026-10-14"), 9, "Mon-Sat days elapsed on a weekly split (5-10 Oct = 6, 12-14 Oct = 3)");
+});
+
+test("Overdue / Due soon: three preview cards, then a full-page worklist that Back closes", () => {
+  const w = read("HomeOpsW.tsx");
+  assert.match(w, /OD_ROWS = 3/);
+  assert.match(w, /View all \$\{n0\(list\.length\)\}/);
+  assert.match(w, /View all \$\{n0\(orders\.length\)\}/);
+  const page = read("OpsWorklistPage.tsx");
+  assert.match(page, /createPortal\(/, "the page is a portal into body, never trapped inside a glass card");
+  assert.match(page, /e\.key === "Escape"/);
+  assert.match(page, /document\.body\.style\.overflow = "hidden"/, "the page behind does not scroll");
+  const st = read("worklist-state.ts");
+  assert.match(st, /history\.pushState/);
+  assert.match(st, /addEventListener\("popstate"/, "the phone's Back closes the page");
 });
 
 // ---- Overdue / Due soon ---------------------------------------------------
@@ -247,19 +377,19 @@ test("Overdue: most late first, finished-not-closed counted apart, every departm
   assert.equal(chips.find((c) => c.key === "WEBBING").n, 0);
   assert.equal(filterOrders(s.live, "FRAMING", "").length, 1);
   assert.equal(filterOrders(s.live, "ALL", "upholstery").length, 0, "search matches PO, customer, product only");
-  const src = read("HomeOpsA.tsx");
+  const src = read("HomeOpsW.tsx");
   assert.match(src, /over 60 days late/);
 });
 
 test("Overdue and Due soon rows open the production order: number looked up on the existing board, then /m/production/:id", () => {
-  const src = read("HomeOpsA.tsx");
+  const src = read("use-open-order.ts");
   assert.match(src, /\/api\/production-orders\/board/, "the id comes from the board the mobile Production screen already reads");
   assert.match(src, /navigate\(`\/m\/production\/\$\{encodeURIComponent\(hit\.id\)\}`\)/);
   assert.doesNotMatch(src, /\/m\/production-orders\//, "the wrong route is never used");
   assert.match(src, /hasPermission\("production-orders", "read"\)/, "rows are tappable only with production-orders:read");
   assert.match(src, /Couldn’t find \$\{poNo\} on the production board/, "a missing order is said, not ignored");
   // nothing is fetched until a tap
-  const hook = src.slice(src.indexOf("function useOpenOrder"), src.indexOf("function OrderRow"));
+  const hook = src.slice(src.indexOf("export function useOpenOrder"), src.indexOf("export type OpenOrder"));
   assert.doesNotMatch(hook, /useCachedJson|useEffect/);
 });
 
@@ -425,10 +555,10 @@ test("the Operations view imports no desktop view and writes nothing", () => {
 });
 
 // ---- Visual fidelity to the approved Home Operations HTML (structure guards) -------------------------------
-test("Overview sections are in the approved HTML's order, Output & Cost likewise", () => {
+test("Overview sections follow the Home Operations v3 design order, Output & Cost likewise", () => {
   const src = read("OpsView.tsx");
   const order = (names) => names.map((n) => src.indexOf(`<${n} `)).every((v, i, a) => v >= 0 && (i === 0 || v > a[i - 1]));
-  assert.ok(order(["DailyReportCard", "PlantLoadCard", "DeptBacklogCard", "DeptRevenueCard", "OverdueCard", "DueSoonCard"]), "Overview order");
+  assert.ok(order(["DailyReportCard", "PlantLoadCard", "DeptBacklogCard", "DeptRevenueCard", "DailyProductionRevenueCard", "OverdueCard", "DueSoonCard"]), "Overview order (the Home Operations v3 design)");
   assert.ok(order(["CostingCard", "PlanCard", "PurchasingCard", "FabricCard", "ShortageCard"]), "Output & Cost order");
   assert.doesNotMatch(src, /Refresh/, "no control that is not in the HTML");
 });
@@ -441,14 +571,16 @@ test("the Overview / Output & Cost control is the HTML's pair of pills, not a se
   assert.doesNotMatch(block, /gridTemplateColumns/);
 });
 
-test("the HTML's card anatomy is present: icon tile, state tag, bottleneck alert, plan headline and chart axes", () => {
+test("the HTML's card anatomy is present: icon tile, state tag, backlog filters, plan headline and chart axes", () => {
   const a = read("HomeOpsA.tsx");
-  assert.match(a, /IconTile icon=\{ClipboardCheck\}/, "Daily Report icon tile");
+  assert.match(a, /<ClipboardCheck size=\{16\}/, "Daily Report icon tile");
   const p = read("HomeOpsP.tsx");
-  assert.match(p, /LIVE — NO SNAPSHOT/);
-  assert.match(p, /Bottleneck <b/);
-  assert.match(p, /tap to show \/ hide/);
-  assert.match(p, /tap for detail/);
+  assert.match(p, /no snapshot/, "a figure that is not live keeps a compact tag");
+  assert.doesNotMatch(p, /LiveTag/, "the design has no LIVE tag on Plant Load / Backlog");
+  assert.match(p, /CATEGORY/);
+  assert.match(p, /DELIVERY/);
+  assert.match(p, /toggleBacklogMonth/, "the desktop's delivery-month toggle");
+  assert.match(p, /QUEUE VS 14D/);
   const b = read("HomeOpsB.tsx");
   assert.match(b, /planned<\/span>/, "plan headline");
   assert.match(b, /textAnchor="end"/, "chart y-axis labels");
@@ -461,10 +593,58 @@ test("the HTML's card anatomy is present: icon tile, state tag, bottleneck alert
   assert.doesNotMatch(c, /\["Bedframe", rm\(fc\.bedframe\)\]|\["Sofa", rm\(fc\.sofa\)\]/, "two desktop cost tiles, not three");
 });
 
-test("Daily Report rows keep neutral rails and pills built only from real fields", () => {
+test("Daily Report detail cards: real fields only, a joined read where the report lacks one, never an invented value", () => {
+  const sh = read("HomeOpsSheets.tsx");
+  assert.doesNotMatch(sh, /tier|urgency/i);
+  const over = drCards("overdueOrders", { overdueOrders: [{ salesOrderId: "so1", companySOId: "SO-1", customerName: "ACME", productSummary: "Sofa x2", customerDeliveryDate: "2026-10-18", daysOverdue: 12, status: "IN_PRODUCTION" }] })[0];
+  assert.deepEqual(over.grid, [["Customer", "ACME"], ["Promised", "18 Oct 2026"]]);
+  assert.deepEqual(over.problem, { text: "12 days overdue \u2014 not delivered yet", tone: "danger" });
+  assert.deepEqual([over.statusKind, over.statusRaw], ["so", "IN_PRODUCTION"], "the real order status, coloured by the SO map");
+  const dos = drCards("doPendingDispatch", { doPendingDispatch: [{ id: "d1", doNo: "DO-1", customerName: "ACME", createdAt: "2026-11-20T08:00:00Z", daysWaiting: 3 }] })[0];
+  assert.deepEqual(dos.grid, [["Customer", "ACME"], ["Created", "20 Nov 2026"]]);
+  assert.deepEqual(dos.problem, { text: "Waiting 3 days to dispatch", tone: "warn" });
+  assert.deepEqual(drCards("doPendingDispatch", { doPendingDispatch: [{ id: "d1", doNo: "DO-1", daysWaiting: 1 }] })[0].grid, [], "a field the report did not send is left out");
+  assert.equal(drCards("doPendingDispatch", { doPendingDispatch: [{ id: "d1", doNo: "DO-1", daysWaiting: 1 }] })[0].problem.text, "Waiting 1 day to dispatch");
+});
+
+test("PO Expected date comes only from the PO list; loading, not set and unavailable are said, never filled in", () => {
+  const g = { poNotReceived: [{ id: "p1", poNo: "PO-1", supplierName: "Foam Co", status: "CONFIRMED", orderDate: "2026-10-08", daysOpen: 20, expectedOverdueDays: 8 }] };
+  const exp = (join) => drCards("poNotReceived", g, join)[0].grid.find((r) => r[0] === "Expected")[1];
+  assert.equal(exp({ po: { state: "ready", byId: new Map([["p1", { expectedDate: "2026-10-22", status: "CONFIRMED" }]]) } }), "22 Oct 2026", "the real date");
+  assert.equal(exp({ po: { state: "ready", byId: new Map([["p1", { expectedDate: "", status: "CONFIRMED" }]]) } }), "Not set");
+  assert.equal(exp({ po: { state: "loading", byId: new Map() } }), "\u2026");
+  assert.equal(exp({ po: { state: "unavailable", byId: new Map() } }), "\u2014");
+  assert.equal(exp({}), "\u2014", "no read, no date: the rounded overdue days are never turned into one");
+  const card = drCards("poNotReceived", g)[0];
+  assert.deepEqual(card.problem, { text: "8 days past expected arrival", tone: "warn" });
+  assert.equal(drCards("poNotReceived", { poNotReceived: [{ ...g.poNotReceived[0], expectedOverdueDays: 0 }] })[0].problem.text, "Goods not received yet");
+  assert.deepEqual(card.link, { kind: "po", id: "p1" });
+});
+
+test("Process skips: the order's own status comes from the production board; the stage status is never substituted", () => {
+  const g = { processSkips: [{ productionOrderId: "pr1", poNo: "SO-2610-012-03", salesOrderId: "so9", productName: "Sofa", doneDept: "UPHOLSTERY", blockedByDept: "FRAMING", blockedByStatus: "IN_PROGRESS", days: 3 }] };
+  const withBoard = drCards("processSkips", g, { prod: { state: "ready", byId: new Map([["pr1", { status: "IN_PROGRESS" }]]) } })[0];
+  assert.deepEqual([withBoard.statusKind, withBoard.statusRaw], ["prod", "IN_PROGRESS"]);
+  const noBoard = drCards("processSkips", g, { prod: { state: "unavailable", byId: new Map() } })[0];
+  assert.deepEqual([noBoard.statusKind, noBoard.statusRaw], ["", ""], "no board read, no pill (the blocking stage's status is not the order's)");
+  assert.deepEqual(withBoard.grid, [["Product", "Sofa"], ["Completed", "Upholstery"], ["Unfinished", "Framing \u00b7 In Progress"]]);
+  assert.deepEqual(withBoard.problem, { text: "Upholstery finished before Framing", tone: "danger" });
+  assert.deepEqual(withBoard.link, { kind: "prod", id: "pr1" }, "opens the production order, not the sales order");
+});
+
+test("the four details have the design's sort hints and labels only where the server really sorts that way", () => {
+  assert.deepEqual(DR_SORT, { overdueOrders: "Most overdue first", doPendingDispatch: "Longest waiting first", poNotReceived: "Oldest first" });
+  assert.deepEqual(DR_LIST_HEAD, { overdueOrders: "SALES ORDERS", doPendingDispatch: "DELIVERY ORDERS", poNotReceived: "PURCHASE ORDERS", processSkips: "PRODUCTION ORDERS" });
+  assert.doesNotMatch(DR_RULE.overdueOrders, /every|all undelivered/i);
+  assert.match(DR_RULE.overdueOrders, /still open \(draft, confirmed, in production or on hold\)/, "the rule says what the check really counts");
+});
+
+test("the details read the PO list and the production board only when that list is opened, behind their permissions", () => {
   const a = read("HomeOpsA.tsx");
-  assert.match(a, /neutralRail/);
-  assert.doesNotMatch(a, /tier|urgency/i);
+  assert.match(a, /key === "poNotReceived" && canPo \? "\/api\/purchase-orders" : null/);
+  assert.match(a, /key === "processSkips" && canProd \? "\/api\/production-orders\/board" : null/);
+  assert.match(a, /hasPermission\(DR_NEED\[c\.link\.kind\], "read"\)/, "each Open footer is gated by its own resource");
+  assert.match(read("dr-status.ts"), /STATUS_MAPS\.so/, "pill colours come from the repo's status maps");
 });
 
 test("number formats follow the approved design: '55 h', '7h 05m', 'N days'", () => {
@@ -491,4 +671,62 @@ test("backlog rows: one category on its own capacity, sorted by its days; both =
   const sofa = backlogRows(rows, true, false);
   assert.deepEqual(sofa.map((r) => r.shown), [31.4, 31.4, 28.2]);
   assert.equal(backlogRows([{ ...rows[0], bedframeDays: null }], false, true)[0].shown, null, "no bedframe output = stalled");
+});
+
+test("Department Revenue uses the design's department colours, local to Department Revenue", () => {
+  assert.equal(dvColor("FAB_CUT"), "#2B5797");
+  assert.equal(dvColor("FAB_SEW"), "#D19A32");
+  assert.equal(dvColor("FOAM_CUTTING"), dvColor("FOAM_CUT"), "the API's code and the design's code name the same department");
+  assert.equal(dvColor("NOPE"), "#A8A196");
+  assert.match(read("HomeOpsA.tsx"), /dvColor\(r\.code\)/);
+  assert.match(read("HomeOpsSheets.tsx"), /dvColor\(code\)/, "the drill chart uses the same colour");
+  assert.doesNotMatch(read("ops-style.ts"), /2B5797/, "the shared ops palette (Output & Cost) is untouched");
+});
+
+test("the worklist page uses the same order cards as the Overview and offers search plus the state / lane filters only", () => {
+  const page = read("OpsWorklistPage.tsx");
+  assert.match(page, /<OrderCard /);
+  assert.doesNotMatch(page, /ChipScroll/, "no department chips on the page");
+  assert.match(page, /Reset filters/);
+  assert.match(read("ops-orders.tsx"), /Open \$\{o\.poNo/, "each card opens its production order");
+});
+
+test("the Day picker is the design's month calendar with Today / Yesterday, bounded by today and 2020", () => {
+  const src = read("HomeDashboard.tsx");
+  assert.doesNotMatch(src, /type="date"/);
+  assert.match(src, /\["Today", today\], \["Yesterday", yest\]/);
+  assert.match(src, /v <= today && v >= DAY_MIN/);
+  assert.match(src, /\(new Date\(vy, vm - 1, 1\)\.getDay\(\) \+ 6\) % 7/, "Monday first");
+});
+
+test("Department Revenue rows keep bedframe UNITS and sofa SETS apart, for the picked day or the period", () => {
+  const set = (bedframe, sofa) => ({ bedframe, sofa, total: bedframe + sofa, hbOnly: 0, divanOnly: 0, unknown: 0 });
+  const d = { ...monthSplit, departments: monthSplit.departments.map((x) => ({ ...x, sets: set(120, 70), setsByBucket: [set(4, 1), set(9, 3)] })) };
+  const period = deptRevenueRows(d, "all", undefined)[0];
+  assert.deepEqual([period.bed, period.sofa, period.sets], [120, 70, 190], "sets is the desktop's mixed total; bed and sofa are shown apart");
+  const day = deptRevenueRows(d, "all", "2026-10-02")[0];
+  assert.deepEqual([day.bed, day.sofa], [9, 3], "a picked day reads that day's counts");
+  assert.equal(deptRevenueRows(monthSplit, "all", undefined)[0].bed, 0, "a payload without counts reads 0");
+});
+
+test("Daily Report shows the report's own date from the server, never the selected period", () => {
+  const a = read("HomeOpsA.tsx");
+  assert.match(a, /data\?\.today \? <span/, "nothing is shown until the report says its date");
+  assert.match(a, /dayLabel\(data\.today\)/);
+  assert.doesNotMatch(a, /dayLabel\(todayYmdMY\(\)\)/);
+});
+
+test("Daily production revenue has the design's plain legend toggles and an Avg key, not boxed tiles", () => {
+  const src = read("HomeOpsD.tsx");
+  assert.doesNotMatch(src, /GLegend/);
+  assert.match(src, /textDecoration: on\(s\.key\) \? "none" : "line-through"/);
+  assert.match(src, /borderTop: "1\.5px dashed #3E6570" \}\} \/>Avg/);
+});
+
+test("the calendar's Month / Quarter / Year cells are the design's (radius 10, gold ring, taupe gradient, gold dot)", () => {
+  const src = read("HomeDashboard.tsx");
+  assert.match(src, /borderRadius: 10, background: on \? CAL_ON/);
+  assert.match(src, /Pick a month/);
+  assert.match(src, /42, ym === curYm, 13\.5/);
+  assert.match(src, /54, key === quarterKeyOf\(curYm\), 14/);
 });
