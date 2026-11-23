@@ -1,20 +1,17 @@
 // ---------------------------------------------------------------------------
-// Floating action button that opens the Hookka AI slide-over panel.
+// Edge-peek tab that opens the Hookka AI slide-over panel.
 //
 // Behaviour:
-//   - Only renders for SUPER_ADMIN users (mirrors the API gate on
-//     /api/assistant/chat).
-//   - Bottom-right fixed position, above page content but below modals
-//     (z-40 for the button; the panel itself sits at z-50).
-//   - Click toggles the slide-over open/closed. While open the button
-//     swaps its icon to an X (standard Intercom / Drift pattern) so the
-//     same hit-target is also the "close" affordance — feels less janky
-//     than hiding the button on open.
-//   - Escape inside the panel also closes it (handled in the slide-over).
+//   - Renders for any logged-in user (see gate note below).
+//   - Docked flush to the right edge, vertically centred, as a slim 24px
+//     tab so right-aligned table actions stay clickable. Hover / keyboard
+//     focus widens it to show the full HK badge.
+//   - z-30 keeps it under drawers and modals; the panel itself (z-50) covers
+//     it while open, so closing is the panel's own X button or Escape.
 // ---------------------------------------------------------------------------
 
 import { useState } from "react";
-import { X } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { HookkaAILogo } from "./HookkaAILogo";
 import { AssistantSlideOver } from "./AssistantSlideOver";
@@ -35,12 +32,18 @@ export function FloatingChatButton() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Close Hookka AI" : "Open Hookka AI"}
+        aria-label={open ? "Close HK Assistant" : "Open HK Assistant"}
         aria-expanded={open}
-        title={open ? "Close Hookka AI" : "Hookka AI"}
-        className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-[#1F1D1B] text-white shadow-lg hover:bg-[#3a3633] focus:outline-none focus:ring-2 focus:ring-[#6B5C32] transition-colors flex items-center justify-center"
+        title="HK Assistant"
+        className="group fixed right-0 top-1/2 -translate-y-1/2 z-30 flex w-6 items-center justify-center overflow-hidden rounded-l-xl border-y border-l border-zinc-200 bg-zinc-900/85 py-3 text-white shadow-md backdrop-blur-sm transition-all duration-200 ease-out hover:w-12 hover:bg-zinc-900 focus:outline-none focus-visible:w-12 focus-visible:ring-2 focus-visible:ring-[#6B5C32] dark:border-zinc-800"
       >
-        {open ? <X className="h-6 w-6" /> : <HookkaAILogo size={28} />}
+        <span className="flex flex-col items-center gap-1 group-hover:hidden group-focus-visible:hidden">
+          <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+          <HookkaAILogo variant="sparkle-only" size={12} />
+        </span>
+        <span className="hidden group-hover:block group-focus-visible:block">
+          <HookkaAILogo size={28} />
+        </span>
       </button>
       <AssistantSlideOver open={open} onClose={() => setOpen(false)} />
     </>
