@@ -80,7 +80,7 @@ test("every chart on the page uses them; the cards' colours are the design's", (
   }
   assert.equal((page.match(/<Tooltip cursor=\{false\}/g) ?? []).length, (page.match(/<Tooltip /g) ?? []).length, "no grey hover block");
   assert.match(page, /bars=\{\[\{ key: "actual", name: "Actual", color: CH\.actual \}\]\}\n\s+line=\{\{ key: "forecast", name: "Forecast", color: CH\.fc, dashed: true \}\}/);
-  assert.match(page, /bars=\{\[\{ key: "inflow", name: "Money in", color: CH\.in \}, \{ key: "outflow", name: "Money out", color: CH\.out \}\]\}\n\s+line=\{\{ key: "net", name: "Net change", color: CH\.net \}\}/);
+  assert.match(page, /bars=\{\[\{ key: "inflow", name: "Money in", color: CH\.in \}, \{ key: "outflow", name: "Money out", color: CH\.out \}\]\}\n\s+line=\{\{ key: "value", name: CF_TAB_LABEL\[cfTab\], color: CH\.net \}\}/); // the line follows the tab since 2026-11-23
   assert.match(page, /\{ key: "assets", name: "Total assets", color: CH\.assets \},\n\s+\{ key: "liabilities", name: "Total liabilities", color: CH\.liab \},/);
   assert.match(page, /line=\{\{ key: "debtPct", name: "Debt to assets %", color: CH\.net, axis: "right" \}\}/);
   assert.match(page, /color: CH\.single \}\]\}/);

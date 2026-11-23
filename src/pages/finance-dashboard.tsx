@@ -533,6 +533,10 @@ function DetailPair({ c, strong }: { c: DetailCell; strong?: boolean }) {
   );
 }
 
+// The Cash Flow card's tabs by name: the chart's solid line, its two dashed
+// forecast lines and the table's forecast rows all read the tab picked.
+const CF_TAB_LABEL = { operating: "Operating", investing: "Investing", financing: "Financing", freeCashFlow: "Free cash flow" } as const;
+
 function ChartCard({
   title,
   tabs,
@@ -901,11 +905,11 @@ export default function FinanceDashboardPage() {
           net: ahead ? null : r.cashFlow?.net ?? null,
           inflow: ahead ? null : r.cashFlow?.inflow ?? null,
           outflow: ahead ? null : r.cashFlow?.outflow ?? null,
-          // The selected tab's forecast in the table; the net in the chart, beside Net change.
+          // The tab picked, actual and both forecasts — the chart's lines and
+          // the table's rows read the same figures (owner 2026-11-23 「为什么上下
+          // 两边的数据不一样？」 → 「Both follow the tab」).
           fcPnl: fc?.pnl?.[cfTab] ?? null,
           fcDocs: fc?.docs?.[cfTab] ?? null,
-          fcPnlNet: fc?.pnl?.net ?? null,
-          fcDocsNet: fc?.docs?.net ?? null,
         };
       }),
     [cfRows, cfTab, cashFcB],
@@ -1523,10 +1527,10 @@ export default function FinanceDashboardPage() {
             data={cfData}
             fadeKey="ahead"
             bars={[{ key: "inflow", name: "Money in", color: CH.in }, { key: "outflow", name: "Money out", color: CH.out }]}
-            line={{ key: "net", name: "Net change", color: CH.net }}
+            line={{ key: "value", name: CF_TAB_LABEL[cfTab], color: CH.net }}
             extraLines={[
-              { key: "fcPnlNet", name: "Forecast net (P&L)", color: CH.fc, dashed: true },
-              { key: "fcDocsNet", name: "Forecast net (documents)", color: CH.teal, dashed: true },
+              { key: "fcPnl", name: `${CF_TAB_LABEL[cfTab]} forecast (P&L)`, color: CH.fc, dashed: true },
+              { key: "fcDocs", name: `${CF_TAB_LABEL[cfTab]} forecast (documents)`, color: CH.teal, dashed: true },
             ]}
             footer={
               <>
@@ -1545,8 +1549,8 @@ export default function FinanceDashboardPage() {
                     <tr className="bg-[#FBF9F6]"><td className={`${td} text-left font-semibold`}>Net change</td>{cfData.map((d) => <td key={d.label} className={`${td} font-semibold ${(d.net as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.net as number)}</td>)}</tr>
                     {/* The two Cash Flow forecasts of the tab picked, and how the
                         actual compares (owner 2026-11-23 「不可以都显示吗？」). */}
-                    <tr data-dash-cf-fc="pnl"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast (P&L)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcPnl)}</td>)}</tr>
-                    <tr data-dash-cf-fc="docs"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast (documents)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcDocs)}</td>)}</tr>
+                    <tr data-dash-cf-fc="pnl"><td className={`${td} text-left font-medium text-[#5B6270]`}>{CF_TAB_LABEL[cfTab]} forecast (P&L)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcPnl)}</td>)}</tr>
+                    <tr data-dash-cf-fc="docs"><td className={`${td} text-left font-medium text-[#5B6270]`}>{CF_TAB_LABEL[cfTab]} forecast (documents)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcDocs)}</td>)}</tr>
                     {(["fcPnl", "fcDocs"] as const).map((k) => (
                       <tr key={k} className="bg-[#FBF9F6]">
                         <td className={`${td} text-left font-semibold`}>vs Forecast ({k === "fcPnl" ? "P&L" : "documents"})</td>

@@ -69,8 +69,11 @@ test("the dashboard: two dashed forecast lines and their rows on Cash Flow, the 
   assert.match(page, /fetch\("\/api\/accounting\/cashflow-forecast", \{ cache: "no-store" \}\)/);
   assert.match(page, /fetch\("\/api\/accounting\/bs-forecast", \{ cache: "no-store" \}\)/);
   assert.match(page, /fetch\(`\/api\/accounting\/pl\?period=\$\{j\.data\.startYm\}`\)/);
-  assert.match(page, /\{ key: "fcPnlNet", name: "Forecast net \(P&L\)", color: CH\.fc, dashed: true \}/);
-  assert.match(page, /\{ key: "fcDocsNet", name: "Forecast net \(documents\)", color: CH\.teal, dashed: true \}/);
+  // Since 2026-11-23 「Both follow the tab」: the chart's lines are the tab picked, actual and both forecasts.
+  assert.match(page, /line=\{\{ key: "value", name: CF_TAB_LABEL\[cfTab\], color: CH\.net \}\}/);
+  assert.match(page, /\{ key: "fcPnl", name: `\$\{CF_TAB_LABEL\[cfTab\]\} forecast \(P&L\)`, color: CH\.fc, dashed: true \}/);
+  assert.match(page, /\{ key: "fcDocs", name: `\$\{CF_TAB_LABEL\[cfTab\]\} forecast \(documents\)`, color: CH\.teal, dashed: true \}/);
+  assert.doesNotMatch(page, /fcPnlNet|fcDocsNet/, "no net-only forecast lines left beside a tab's table");
   assert.match(page, /data-dash-cf-fc="pnl"/);
   assert.match(page, /data-dash-cf-fc="docs"/);
   assert.match(page, /vs Forecast \(\{k === "fcPnl" \? "P&L" : "documents"\}\)/);
