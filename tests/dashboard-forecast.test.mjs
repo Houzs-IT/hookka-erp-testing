@@ -165,3 +165,15 @@ test("Detail row names sit on the left", () => {
   assert.match(page, /data-dash-cf-group=""/);
   assert.match(page, /cashDetailSections\(cfRows\.map[\s\S]*?\}\)\), lineGroups\)/);
 });
+
+test("Balance Sheet: this month's actual beside its Forecast Balance Sheet, and the gap (owner 2026-11-23)", () => {
+  const page = read("src/pages/finance-dashboard.tsx");
+  // Only a month that has happened and that the forecast sheet covers; by month only.
+  assert.match(page, /const vs = !ahead && granularity === "month" && f \? f : null;/);
+  assert.match(page, /fcAssets: vs \? vs\.assets : null,/);
+  for (const k of ["fc-assets", "fc-liab", "fc-debt"]) assert.match(page, new RegExp(`data-dash-bs-vs="${k}"`));
+  assert.match(page, /\["assets", "fcAssets", "vs Forecast \(assets\)"\], \["liabilities", "fcLiabilities", "vs Forecast \(liabilities\)"\]/);
+  assert.match(page, /const gap = d\[f\] === null \? null : d\[a\] - \(d\[f\] as number\);/);
+  // A month to date says its forecast is the month-end.
+  assert.match(page, /A month marked \* is to date; its forecast is the month-end/);
+});

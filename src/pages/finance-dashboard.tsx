@@ -935,15 +935,24 @@ export default function FinanceDashboardPage() {
           // A period ahead reads the Forecast Balance Sheet (bars faded, "(F)").
           const ahead = !r.balanceSheet;
           const f = bsFcB[r.key];
+          // This month beside its forecast (owner 2026-11-23 「Balance Sheet 这个
+          // 月先做 real 和 forecast 对比」): a month that has happened and that the
+          // Forecast Balance Sheet also covers — by month only (a quarter's
+          // forecast is its last month-end, not the quarter's latest sheet).
+          const vs = !ahead && granularity === "month" && f ? f : null;
           return {
             label: ahead ? `${dashPeriodLabel(r.label, false)} (F)` : dashPeriodLabel(r.label, r.partial),
             ahead: ahead ? 1 : 0,
+            partial: !ahead && r.partial ? 1 : 0,
             assets: ahead ? f.assets : r.balanceSheet!.assets,
             liabilities: ahead ? f.liabilities : r.balanceSheet!.liabilities,
             debtPct: ahead ? f.debtPct : r.ratios.debtToAssetPct,
+            fcAssets: vs ? vs.assets : null,
+            fcLiabilities: vs ? vs.liabilities : null,
+            fcDebtPct: vs ? vs.debtPct : null,
           };
         }),
-    [bsRows, bsFcB],
+    [bsRows, bsFcB, granularity],
   );
 
   const ratioIsMoney = false;
@@ -1667,11 +1676,29 @@ export default function FinanceDashboardPage() {
                     <tr><td className={`${td} text-left font-medium`}>Total assets</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.assets)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>Total liabilities</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.liabilities)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={td}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
+                    {/* This month: actual beside the Forecast Balance Sheet, and the gap. */}
+                    {bsData.some((d) => d.fcAssets !== null) && (
+                      <>
+                        <tr data-dash-bs-vs="fc-assets"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast total assets</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcAssets)}</td>)}</tr>
+                        <tr data-dash-bs-vs="fc-liab"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast total liabilities</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcLiabilities)}</td>)}</tr>
+                        <tr data-dash-bs-vs="fc-debt"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast debt to assets</td>{bsData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{d.fcDebtPct === null ? "-" : `${d.fcDebtPct.toFixed(2)}%`}</td>)}</tr>
+                        {([["assets", "fcAssets", "vs Forecast (assets)"], ["liabilities", "fcLiabilities", "vs Forecast (liabilities)"]] as const).map(([a, f, name]) => (
+                          <tr key={f} className="bg-[#FBF9F6]" data-dash-bs-vs={`gap-${a}`}>
+                            <td className={`${td} text-left font-semibold`}>{name}</td>
+                            {bsData.map((d) => {
+                              const gap = d[f] === null ? null : d[a] - (d[f] as number);
+                              return <td key={d.label} className={`${td} font-semibold`}>{gap === null ? "-" : `${gap > 0 ? "+" : ""}${rm(gap)}`}</td>;
+                            })}
+                          </tr>
+                        ))}
+                      </>
+                    )}
                   </tbody>
                   {bsData.some((d) => d.ahead) && (
                     <tfoot>
                       <tr><td colSpan={bsData.length + 1} className="px-2 pt-2 text-left text-[11px] text-[#9CA3AF]" data-dash-bs-fc-note="">
                         (F) = the Forecast Balance Sheet: last month-end's sheet moved by the Forecast P&L and the Cash Flow forecast. Faded bars are forecast.
+                        {bsData.some((d) => d.fcAssets !== null && d.partial) && " A month marked * is to date; its forecast is the month-end, so the gap closes as the month runs."}
                       </td></tr>
                     </tfoot>
                   )}
