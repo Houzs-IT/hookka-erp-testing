@@ -22,6 +22,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Bar,
+  Cell,
   ComposedChart,
   LabelList,
   Line,
@@ -51,6 +52,14 @@ import { BarChart3, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
 import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
+// Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
+import {
+  bsForecastByBucket, cashForecastByBucket, dashAheadRows, dashBsForecast, dashCashForecast,
+  type DashBsFigures, type DashCashForecast,
+} from "@/lib/dashboard-forecast";
+import type { BsForecastPayload } from "@/lib/forecast-bs";
+import type { BsMonthEntry } from "@/lib/bs-monthly";
+import type { CfStatementRow } from "@/lib/cashflow-card";
 
 type Slice = {
   sales: number; cogs: number; gross: number; otherIncome: number; expenses: number; net: number;
@@ -514,6 +523,8 @@ function ChartCard({
   data,
   bars,
   line,
+  extraLines,
+  fadeKey,
   footer,
   yFormat,
 }: {
@@ -524,6 +535,10 @@ function ChartCard({
   data: Record<string, number | string | null>[];
   bars: { key: string; name: string; color: string }[];
   line?: { key: string; name: string; color: string; dashed?: boolean; axis?: "left" | "right" };
+  /** More lines on the left axis (the Cash Flow card's two forecasts). */
+  extraLines?: { key: string; name: string; color: string; dashed?: boolean }[];
+  /** A point whose `fadeKey` is truthy draws its bars faded (a forecast-only period). */
+  fadeKey?: string;
   footer: React.ReactNode;
   /** The left axis's labels — money (RM, no decimals) unless a card says
    *  otherwise (Financial Ratios: a percentage or a multiple). */
@@ -531,7 +546,8 @@ function ChartCard({
 }) {
   const { hover, chartProps } = useChartHover();
   const fmtY = yFormat ?? ((v: number) => rm(v));
-  const leftKeys = [...bars.map((b) => b.key), ...(line && line.axis !== "right" ? [line.key] : [])];
+  const leftKeys = [...bars.map((b) => b.key), ...(line && line.axis !== "right" ? [line.key] : []), ...(extraLines ?? []).map((l) => l.key)];
+  const allLines = [...(line ? [line] : []), ...(extraLines ?? [])];
   const leftWidth = yAxisWidthFor(data.flatMap((d) => leftKeys.map((k) => d[k] as number | null)), fmtY);
   return (
     <Card>
@@ -552,9 +568,11 @@ function ChartCard({
               {line?.axis === "right" && (
                 <YAxis yAxisId="right" orientation="right" {...yAxisProps} tick={{ ...yAxisProps.tick, fill: "#6B7280" }} />
               )}
-              <Tooltip cursor={false} content={<ChartTip lineKeys={line ? [line.key] : []} dashKeys={line?.dashed ? [line.key] : []} />} />
+              <Tooltip cursor={false} content={<ChartTip lineKeys={allLines.map((l) => l.key)} dashKeys={allLines.filter((l) => l.dashed).map((l) => l.key)} />} />
               {bars.map((b) => (
-                <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} maxBarSize={38} shape={liftBar(hover)} {...anim} />
+                <Bar key={b.key} dataKey={b.key} name={b.name} fill={b.color} maxBarSize={38} shape={liftBar(hover)} {...anim}>
+                  {fadeKey ? data.map((d, i) => <Cell key={i} fill={b.color} fillOpacity={d[fadeKey] ? 0.4 : 1} />) : null}
+                </Bar>
               ))}
               {line && (
                 <Line
@@ -572,6 +590,22 @@ function ChartCard({
                   {...anim}
                 />
               )}
+              {(extraLines ?? []).map((l) => (
+                <Line
+                  key={l.key}
+                  type="monotone"
+                  dataKey={l.key}
+                  name={l.name}
+                  stroke={l.color}
+                  strokeWidth={2}
+                  strokeDasharray={l.dashed ? FORECAST_DASH : undefined}
+                  strokeLinecap="round"
+                  dot={dotOf(l.color)}
+                  activeDot={activeDotOf(l.color)}
+                  connectNulls
+                  {...anim}
+                />
+              ))}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -653,6 +687,34 @@ export default function FinanceDashboardPage() {
     };
   }, [granularity, fromYm, toYm]);
 
+  // The Cash Flow forecasts and the Forecast Balance Sheet (owner 2026-11-23),
+  // read once: the Cash Flow forecast's statement, and the forecast sheet with
+  // last month-end's sheet under it. A forecast that cannot be read leaves its
+  // card as it was.
+  const [cashFc, setCashFc] = useState<DashCashForecast | null>(null);
+  const [bsFc, setBsFc] = useState<Record<string, DashBsFigures> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch("/api/accounting/cashflow-forecast", { cache: "no-store" });
+        const j = (await r.json()) as { success?: boolean; data?: { columns: { key: string }[]; rows: CfStatementRow[] } };
+        if (!cancelled && j?.success && j.data) setCashFc(dashCashForecast(j.data));
+      } catch { /* the card stays actual-only */ }
+    })();
+    void (async () => {
+      try {
+        const r = await fetch("/api/accounting/bs-forecast", { cache: "no-store" });
+        const j = (await r.json()) as { success?: boolean; data?: BsForecastPayload };
+        if (!j?.success || !j.data?.months?.length) return;
+        const o = await fetch(`/api/accounting/pl?period=${j.data.startYm}`);
+        const oj = (await o.json()) as { success?: boolean; data?: { balanceSheet?: BsMonthEntry[] } };
+        if (!cancelled && oj?.success && Array.isArray(oj.data?.balanceSheet)) setBsFc(dashBsForecast(j.data, oj.data.balanceSheet));
+      } catch { /* the card stays actual-only */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // The periods drawn: only those that have happened, the last 6 / 12 (or the
   // explicit range). Every card reads these; "vs last period" still compares
   // with the month before, shown or not.
@@ -660,6 +722,18 @@ export default function FinanceDashboardPage() {
   const shownRows = useMemo(
     () => dashPeriods(rows ?? [], { span, granularity, explicit: explicitRange }),
     [rows, span, granularity, explicitRange],
+  );
+  // The forecasts by the period picked, and the periods ahead each card adds
+  // (forecast only; none with an explicit From / To).
+  const cashFcB = useMemo(() => (cashFc ? cashForecastByBucket(cashFc, granularity) : {}), [cashFc, granularity]);
+  const bsFcB = useMemo(() => (bsFc ? bsForecastByBucket(bsFc, granularity) : {}), [bsFc, granularity]);
+  const cfRows = useMemo(
+    () => (explicitRange ? shownRows : [...shownRows, ...dashAheadRows(rows ?? [], shownRows, new Set(Object.keys(cashFcB)))]),
+    [rows, shownRows, cashFcB, explicitRange],
+  );
+  const bsRows = useMemo(
+    () => (explicitRange ? shownRows : [...shownRows, ...dashAheadRows(rows ?? [], shownRows, new Set(Object.keys(bsFcB)))]),
+    [rows, shownRows, bsFcB, explicitRange],
   );
   const plData = useMemo(
     () =>
@@ -761,14 +835,24 @@ export default function FinanceDashboardPage() {
 
   const cfData = useMemo(
     () =>
-      shownRows.map((r) => ({
-        label: dashPeriodLabel(r.label, r.partial),
-        value: r.cashFlow?.[cfTab] ?? null,
-        net: r.cashFlow?.net ?? null,
-        inflow: r.cashFlow?.inflow ?? null,
-        outflow: r.cashFlow?.outflow ?? null,
-      })),
-    [shownRows, cfTab],
+      cfRows.map((r) => {
+        const ahead = r.actual === null || r.actual === undefined;
+        const fc = cashFcB[r.key];
+        return {
+          label: ahead ? `${r.label} (F)` : dashPeriodLabel(r.label, r.partial),
+          ahead: ahead ? 1 : 0,
+          value: ahead ? null : r.cashFlow?.[cfTab] ?? null,
+          net: ahead ? null : r.cashFlow?.net ?? null,
+          inflow: ahead ? null : r.cashFlow?.inflow ?? null,
+          outflow: ahead ? null : r.cashFlow?.outflow ?? null,
+          // The selected tab's forecast in the table; the net in the chart, beside Net change.
+          fcPnl: fc?.pnl?.[cfTab] ?? null,
+          fcDocs: fc?.docs?.[cfTab] ?? null,
+          fcPnlNet: fc?.pnl?.net ?? null,
+          fcDocsNet: fc?.docs?.net ?? null,
+        };
+      }),
+    [cfRows, cfTab, cashFcB],
   );
   // Detail view: every account line the Cash Flow statement prints, one row
   // per account across the periods (owner 2026-07-30: 「每个科目一行先」).
@@ -782,9 +866,9 @@ export default function FinanceDashboardPage() {
       .map(([k, meta]) => ({
         key: k,
         ...meta,
-        values: shownRows.map((r) => (r.cashFlow?.lines ?? []).find((l) => `${l.section}||${l.label}` === k)?.value ?? 0),
+        values: cfRows.map((r) => (r.cashFlow?.lines ?? []).find((l) => `${l.section}||${l.label}` === k)?.value ?? 0),
       }));
-  }, [shownRows]);
+  }, [shownRows, cfRows]);
   // …grouped by section, each with its own per-period totals, so Detail opens
   // as a handful of section rows instead of forty account rows at once.
   const cfSections = useMemo(() => {
@@ -793,21 +877,27 @@ export default function FinanceDashboardPage() {
     return [...bySec.entries()].map(([name, secRows]) => ({
       name,
       rows: secRows,
-      totals: shownRows.map((_, i) => secRows.reduce((s, r) => s + (r.values[i] ?? 0), 0)),
+      totals: cfRows.map((_, i) => secRows.reduce((s, r) => s + (r.values[i] ?? 0), 0)),
     }));
-  }, [cfDetailRows, shownRows]);
+  }, [cfDetailRows, cfRows]);
 
   const bsData = useMemo(
     () =>
-      shownRows
-        .filter((r) => r.balanceSheet)
-        .map((r) => ({
-          label: dashPeriodLabel(r.label, r.partial),
-          assets: r.balanceSheet!.assets,
-          liabilities: r.balanceSheet!.liabilities,
-          debtPct: r.ratios.debtToAssetPct,
-        })),
-    [shownRows],
+      bsRows
+        .filter((r) => r.balanceSheet || bsFcB[r.key])
+        .map((r) => {
+          // A period ahead reads the Forecast Balance Sheet (bars faded, "(F)").
+          const ahead = !r.balanceSheet;
+          const f = bsFcB[r.key];
+          return {
+            label: ahead ? `${r.label} (F)` : dashPeriodLabel(r.label, r.partial),
+            ahead: ahead ? 1 : 0,
+            assets: ahead ? f.assets : r.balanceSheet!.assets,
+            liabilities: ahead ? f.liabilities : r.balanceSheet!.liabilities,
+            debtPct: ahead ? f.debtPct : r.ratios.debtToAssetPct,
+          };
+        }),
+    [bsRows, bsFcB],
   );
 
   const ratioIsMoney = false;
@@ -1386,8 +1476,13 @@ export default function FinanceDashboardPage() {
             active={cfTab}
             onTab={(k) => setCfTab(k as typeof cfTab)}
             data={cfData}
+            fadeKey="ahead"
             bars={[{ key: "inflow", name: "Money in", color: CH.in }, { key: "outflow", name: "Money out", color: CH.out }]}
             line={{ key: "net", name: "Net change", color: CH.net }}
+            extraLines={[
+              { key: "fcPnlNet", name: "Forecast net (P&L)", color: CH.fc, dashed: true },
+              { key: "fcDocsNet", name: "Forecast net (documents)", color: CH.teal, dashed: true },
+            ]}
             footer={
               <>
                 <div className="mb-2 flex items-center gap-2">
@@ -1402,6 +1497,23 @@ export default function FinanceDashboardPage() {
                     <tr><td className={`${td} text-left font-medium`}>Money out</td>{cfData.map((d) => <td key={d.label} className={td}>{rm(d.outflow as number)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>{cfTab === "freeCashFlow" ? "Free cash flow" : cfTab[0].toUpperCase() + cfTab.slice(1)}</td>{cfData.map((d) => <td key={d.label} className={`${td} ${(d.value as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.value as number)}</td>)}</tr>
                     <tr className="bg-[#FBF9F6]"><td className={`${td} text-left font-semibold`}>Net change</td>{cfData.map((d) => <td key={d.label} className={`${td} font-semibold ${(d.net as number) < 0 ? "text-[#B4452F]" : ""}`}>{rm(d.net as number)}</td>)}</tr>
+                    {/* The two Cash Flow forecasts of the tab picked, and how the
+                        actual compares (owner 2026-11-23 「不可以都显示吗？」). */}
+                    <tr data-dash-cf-fc="pnl"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast (P&L)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcPnl)}</td>)}</tr>
+                    <tr data-dash-cf-fc="docs"><td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast (documents)</td>{cfData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{rm(d.fcDocs)}</td>)}</tr>
+                    {(["fcPnl", "fcDocs"] as const).map((k) => (
+                      <tr key={k} className="bg-[#FBF9F6]">
+                        <td className={`${td} text-left font-semibold`}>vs Forecast ({k === "fcPnl" ? "P&L" : "documents"})</td>
+                        {cfData.map((d) => {
+                          const gap = d.value !== null && d[k] !== null ? (d.value as number) - (d[k] as number) : null;
+                          return (
+                            <td key={d.label} className={`${td} font-semibold ${(gap ?? 0) < 0 ? "text-[#B4452F]" : "text-[#2F7A3B]"}`}>
+                              {gap === null ? "-" : `${gap > 0 ? "+" : ""}${rm(gap)}`}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
                     {cfView === "detail" &&
                       cfSections.map((sec) => {
                         const open = cfOpenSection === sec.name;
@@ -1446,6 +1558,7 @@ export default function FinanceDashboardPage() {
             active=""
             onTab={() => {}}
             data={bsData}
+            fadeKey="ahead"
             bars={[
               { key: "assets", name: "Total assets", color: CH.assets },
               { key: "liabilities", name: "Total liabilities", color: CH.liab },
@@ -1462,6 +1575,13 @@ export default function FinanceDashboardPage() {
                     <tr><td className={`${td} text-left font-medium`}>Total liabilities</td>{bsData.map((d) => <td key={d.label} className={td}>{rm(d.liabilities)}</td>)}</tr>
                     <tr><td className={`${td} text-left font-medium`}>Debt to assets</td>{bsData.map((d) => <td key={d.label} className={td}>{d.debtPct === null ? "-" : `${d.debtPct.toFixed(2)}%`}</td>)}</tr>
                   </tbody>
+                  {bsData.some((d) => d.ahead) && (
+                    <tfoot>
+                      <tr><td colSpan={bsData.length + 1} className="px-2 pt-2 text-left text-[11px] text-[#9CA3AF]" data-dash-bs-fc-note="">
+                        (F) = the Forecast Balance Sheet: last month-end's sheet moved by the Forecast P&L and the Cash Flow forecast. Faded bars are forecast.
+                      </td></tr>
+                    </tfoot>
+                  )}
                 </table>
               )
             }
