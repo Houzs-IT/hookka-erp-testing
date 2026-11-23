@@ -19276,6 +19276,17 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
     });
   // The ticks in force: with "Can use trade finance" suppliers, theirs but the
   // months unticked; else the ones ticked after Fill from Forecast P&L.
+  // A cell from real unpaid bills (owner 2026-11-23 「用真实的background颜色可以
+  // 不一样吗？」): shaded blue, the Forecast P&L's beige; lighter when unticked.
+  const tfRealSen = (r: TfForecastSupplier, ym: string) => Math.max(0, r.actualBy?.[ym] ?? 0);
+  const tfCellBg = (real: boolean, on: boolean) => (real ? (on ? "bg-[#DCE7F1]" : "bg-[#EEF3F8]") : on ? "bg-[#EFEAE0]" : "");
+  const tfCellTitle = (r: TfForecastSupplier, ym: string) => {
+    const due = r.dueBy[ym] ?? 0;
+    if (!(due > 0)) return undefined;
+    const real = tfRealSen(r, ym);
+    if (!real) return `Forecast P&L ${plDrillAmt(due)}`;
+    return real >= due ? `Real unpaid bills ${plDrillAmt(real)}` : `Real unpaid bills ${plDrillAmt(real)} + Forecast P&L ${plDrillAmt(due - real)}`;
+  };
   const ticksOf = (p: CfTfPlan): TfTicks | undefined =>
     tfAuto ? tfAutoTicks(tfSuppliers, tfEligible, yms, p.off ?? {}) : p.ticks;
   // What Save sends: a ticked plan's months are its drawdowns as the ticks
@@ -19477,7 +19488,13 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                       {yms.map((ym) => (
                         <td key={ym} className="px-1 py-0.5">
                           {ticking ? (
-                            <span title="The ticked amounts below, as far as the limit lets" className="block h-7 w-28 rounded bg-[#F0ECE9] px-2 text-right text-xs leading-7 tabular-nums text-[#1F1D1B]">{amt(planMonths[ym] ?? 0)}</span>
+                            <span data-tf-drawdown={ym}
+                              title={ym === firstYm && f.drawnThisMonthSen > 0
+                                ? `The ticked amounts below (${plDrillAmt(Math.max(0, (planMonths[ym] ?? 0) - f.drawnThisMonthSen))}) plus ${plDrillAmt(f.drawnThisMonthSen)} already drawn this month`
+                                : "The ticked amounts below, as far as the limit lets"}
+                              className="block h-7 w-28 rounded bg-[#F0ECE9] px-2 text-right text-xs leading-7 tabular-nums text-[#1F1D1B]">
+                              {amt(planMonths[ym] ?? 0)}{ym === firstYm && f.drawnThisMonthSen > 0 ? "*" : ""}
+                            </span>
                           ) : (
                             <MoneyInput value={p.months[ym] ? p.months[ym] / 100 : null} onChange={(v) => setTfCell(f.accountCode, ym, v)} className="h-7 w-28 px-2 text-xs tabular-nums" />
                           )}
@@ -19489,6 +19506,17 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                         )}
                       </td>
                     </tr>
+                    {ticking && tickRows.length > 0 && (
+                      <tr className="border-b border-[#F0ECE9]">
+                        <td colSpan={yms.length + 2} className="sticky left-0 px-2 py-1 pl-4 text-[11px] text-[#6B7280]">
+                          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm bg-[#DCE7F1]" data-tf-legend-real="" /> Real unpaid bills (months that have ended), by the supplier's term</span>
+                          <span className="ml-4 inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm bg-[#EFEAE0]" /> Forecast P&L (this month's purchases on)</span>
+                          {f.drawnThisMonthSen > 0 && (
+                            <span className="ml-4" data-tf-drawn-note="">* {cfYmLabel(firstYm)} Drawdown includes {plDrillAmt(f.drawnThisMonthSen)} already drawn this month</span>
+                          )}
+                        </td>
+                      </tr>
+                    )}
                     {ticking && tickRows.length === 0 && (
                       <tr className="border-b border-[#F0ECE9]">
                         <td colSpan={yms.length + 2} className="sticky left-0 px-2 py-1 pl-4 text-[11px] text-[#6B7280]">
@@ -19515,7 +19543,8 @@ function CfForecastInputsDialog({ onClose, onSaved }: { onClose: () => void; onS
                             </label>
                           </td>
                           {yms.map((ym) => (
-                            <td key={ym} className={`px-2 py-0.5 text-right tabular-nums ${on(ym) ? "bg-[#EFEAE0]" : ""}`}>
+                            <td key={ym} data-tf-real={tfRealSen(r, ym) > 0 ? "" : undefined} title={tfCellTitle(r, ym)}
+                              className={`px-2 py-0.5 text-right tabular-nums ${tfCellBg(tfRealSen(r, ym) > 0, on(ym))}`}>
                               {(r.dueBy[ym] ?? 0) > 0 ? (
                                 <label className="inline-flex cursor-pointer items-center justify-end gap-1.5 text-[#1F1D1B]">
                                   <input type="checkbox" checked={on(ym)} onChange={() => (tfAuto ? setOff(f.accountCode, (o) => tfToggleTick(o, r.id, ym)) : setTicks(f.accountCode, (t) => tfToggleTick(t, r.id, ym)))}
