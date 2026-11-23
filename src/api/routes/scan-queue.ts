@@ -62,6 +62,7 @@ import {
   ocrModelFor,
 } from "../lib/scan-engine";
 import { MISSING_ANTHROPIC_KEY_ERROR } from "../lib/claude-fetch";
+import { isReusableRead } from "../lib/scan-reuse";
 
 const app = new Hono<Env>();
 
@@ -520,7 +521,7 @@ async function processOneRow(
                         );
                       }
                       const childFileName = `${next.fileName.replace(/\.pdf$/i, "")}-pi-${child.startPage}-${child.endPage}.pdf`;
-                      if (cacheSource && cacheSource.rawJson != null) {
+                      if (cacheSource && isReusableRead(next.kind, cacheSource.rawJson)) {
                         // Cache HIT — insert as 'cached'; keep child bytes
                         // so the PI link-to-source-doc upload step can grab
                         // them later via /api/scan-queue/:id/bytes.
@@ -834,7 +835,7 @@ app.post("/upload", async (c) => {
     }
 
     const id = genItemId();
-    if (cacheSource && cacheSource.rawJson != null) {
+    if (cacheSource && isReusableRead(kind, cacheSource.rawJson)) {
       // Cache HIT — store the prior raw_json on this row directly so the
       // queue page renders it without an extra hop. Also keep the bytes
       // (owner 2026-06-30) so the source-doc upload at PI creation time

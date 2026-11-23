@@ -168,7 +168,11 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
 
   const afterRead = (rawJson: unknown) => {
     const list = posOfRow(rawJson);
-    if (list.length === 0) { toFail("No purchase order was found in this file."); return; }
+    if (list.length === 0) {
+      const read = (rawJson as { pos?: unknown } | null)?.pos;
+      toFail(Array.isArray(read) && read.length > 0 ? "A purchase order was found, but none of its item lines could be read." : "No purchase order was found in this file.");
+      return;
+    }
     setFound(list);
     if (list.length === 1) reviewPo(list[0]);
     else setStep("choose");
