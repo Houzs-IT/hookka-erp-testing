@@ -12084,7 +12084,17 @@ app.get("/bs-forecast", async (c) => {
   if (!p || !groups || !capture.forecastCash) return c.json({ success: false, error: "The forecast could not be loaded" }, 500);
   // The Forecast P&L from this month on: the actual documents stand for the months before.
   const fcMonths = Object.fromEntries(Object.entries(p.fcMonths).filter(([ym]) => ym >= curYm));
-  const pnl = buildPnlForecastLegs({ ...p, fcMonths, tfPlans: [] });
+  // Trade finance (owner 2026-11-23: the sheet left it out, so the facility
+  // read nil by January while the Cash Flow forecast drew on it): the plans
+  // keyed on the Cash Flow page, from this month on — the draws before it are
+  // in the documents open at the start (repaid by their due dates), and this
+  // month's cell is the month's whole use, what is drawn already included.
+  const tfPlansBs = (p.tfPlans ?? [])
+    .map((f) => ({ ...f, months: Object.fromEntries(Object.entries(f.months).filter(([ym]) => ym >= curYm)) }))
+    .filter((f) => Object.keys(f.months).length);
+  const pnl = buildPnlForecastLegs({ ...p, fcMonths, tfPlans: tfPlansBs });
+  const tfAccounts = [...new Set([...(await getTfSources(db).catch(() => [] as TfSource[])).map((s) => resolveAcct(s.accountCode)), ...tfPlansBs.map((f) => f.accountCode)])];
+  const tfInterestCode = resolveAcct(TF_INTEREST_ACCT.code);
   const mapped = capture.mapped ?? new Set<string>();
   // To the last month the Forecast P&L has figures for: after it a column would only collect and pay.
   const lastFigureYm = Object.keys(fcMonths).filter((ym) => forecastMonthHasFigures(forecastMonthFigures(fcMonths[ym], groups, mapped))).sort().pop() ?? null;
@@ -12102,10 +12112,17 @@ app.get("/bs-forecast", async (c) => {
       salesSen: f.salesSen,
       materialsSen: groups.materials.reduce((t, a) => t + f.amt(a.code), 0),
       salariesSen: salaries.reduce((t, l) => t + l.amtSen, 0),
-      nonCashSen: cash.excluded.reduce((t, e) => t + e.amtSen, 0),
+      // The Forecast P&L's own trade-finance interest is owed to the lender,
+      // not depreciation; with a plan the plan's interest stands for it (as
+      // the Cash Flow forecast does), so it is not counted twice.
+      nonCashSen: cash.excluded.filter((e) => resolveAcct(e.code) !== tfInterestCode).reduce((t, e) => t + e.amtSen, 0),
+      tfInterestSen: tfPlansBs.length ? 0 : cash.excluded.filter((e) => resolveAcct(e.code) === tfInterestCode).reduce((t, e) => t + e.amtSen, 0),
     };
   }
-  const accounts = { ar: FC_AR, receipt: p.arAcct, ap: capture.apAcct ?? resolveAcct("400-0000"), salary: resolveAcct(LABOUR_ACCRUAL_ACCT) };
+  const accounts = {
+    ar: FC_AR, receipt: p.arAcct, ap: capture.apAcct ?? resolveAcct("400-0000"), salary: resolveAcct(LABOUR_ACCRUAL_ACCT),
+    ...(tfAccounts.length ? { tfInterestTo: tfAccounts[0] } : {}),
+  };
   const openingDocs = capture.baselines?.get(curYm) ?? [];
   const deltas = forecastBsDeltas({
     months,
@@ -12116,6 +12133,7 @@ app.get("/bs-forecast", async (c) => {
     openingSalaryPayableSen: 0,
     inputs: Object.fromEntries(months.map((ym) => [ym, capture.inputs?.[ym] ?? {}])),
     salaryLegAccounts: [...salaryLegAccounts],
+    tfAccounts,
   });
   // The name and section of every account a month moves, by the sheet's own rule.
   const accountsOut: Record<string, { name: string; section: string }> = {};

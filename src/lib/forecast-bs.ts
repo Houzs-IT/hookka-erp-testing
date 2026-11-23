@@ -51,7 +51,12 @@ export const FORECAST_BS_LINES: Record<string, { name: string; section: string }
 };
 
 /** One Forecast P&L month's amounts that sit on the sheet before money moves. */
-export type ForecastBsAccrual = { salesSen: number; materialsSen: number; salariesSen: number; nonCashSen: number };
+export type ForecastBsAccrual = {
+  salesSen: number; materialsSen: number; salariesSen: number; nonCashSen: number;
+  /** The Forecast P&L's own trade-finance interest (kept out of nonCashSen):
+   *  the lender adds it to what the facility owes (`accounts.tfInterestTo`). */
+  tfInterestSen?: number;
+};
 
 export type ForecastBsInput = {
   /** The forecast months, oldest first; the first is the current month. */
@@ -69,7 +74,11 @@ export type ForecastBsInput = {
   /** Where debtors move on the sheet (FC_AR: the actual debtors sit on one
    *  account per customer), the account the P&L forecast's receipts carry
    *  (default `ar`), the creditor control, the salary accrual. */
-  accounts: { ar: string; receipt?: string; ap: string; salary: string };
+  accounts: { ar: string; receipt?: string; ap: string; salary: string; tfInterestTo?: string };
+  /** The trade-finance facility accounts (owner 2026-11-23, the Forecast
+   *  Balance Sheet left trade finance out): a planned drawdown, the interest
+   *  owed on it and its repayment settle on the facility, not the profit. */
+  tfAccounts?: readonly string[];
   /** The accounts the P&L forecast's salary legs carry (paid the month after):
    *  their timing is posted here from the accruals, so those legs are skipped. */
   salaryLegAccounts?: readonly string[];
@@ -118,18 +127,24 @@ export function forecastBsDeltas(input: ForecastBsInput): ForecastBsDeltas {
     const next = months[months.indexOf(ym) + 1];
     if (next) post(next, accounts.salary, FC_CASH, a.salariesSen);
     post(ym, FC_PROFIT, FC_DEPN, a.nonCashSen);
+    // Trade-finance interest is owed to the lender, not depreciation.
+    if (accounts.tfInterestTo) post(ym, FC_PROFIT, accounts.tfInterestTo, a.tfInterestSen ?? 0);
   }
 
   // Its money, by the P&L forecast's timing.
   const salaryLegs = new Set(input.salaryLegAccounts ?? [accounts.salary]);
   const receipt = accounts.receipt ?? accounts.ar;
+  const tfAccounts = new Set(input.tfAccounts ?? []);
   for (const l of input.pnlLegs) {
     if (!l.col.startsWith("fp:") || !l.sen) continue;
     if (l.accountCode && salaryLegs.has(l.accountCode)) continue; // posted from the accruals above
     const ym = l.col.slice(3);
-    // Which account the money settles: debtors, creditors, the salary
-    // accrual — or, for a cost or other income paid in its month, the profit.
+    // Which account the money settles: debtors, a trade-finance facility (a
+    // planned drawdown, the interest owed on it, its repayment), creditors,
+    // the salary accrual — or, for a cost or other income paid in its month
+    // (the planned interest's cost among them), the profit.
     const against = l.accountCode === receipt ? accounts.ar
+      : l.accountCode && tfAccounts.has(l.accountCode) ? l.accountCode
       : l.section === "RAW_MATERIALS" ? accounts.ap
       : FC_PROFIT;
     if (l.sen > 0) post(ym, FC_CASH, against, l.sen);
