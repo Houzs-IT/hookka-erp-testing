@@ -438,3 +438,22 @@ export function posOfRow(rawJson: unknown): { po: RawScanPo; docIdx: number }[] 
     .map((po, docIdx) => ({ po, docIdx }))
     .filter(({ po }) => Array.isArray(po?.items) && po.items.length > 0);
 }
+
+/**
+ * A PDF of 3+ pages may be split by the queue into one child row per document; the parent row turns
+ * 'split' and carries no POs. The phone uploads one file per batch, so every other row of the batch is
+ * a child. Returns null while a child is still being read, else each child's POs tagged with its own
+ * row (for /consume and the accuracy sample) and how many children could not be read.
+ */
+export function posOfSplit(
+  items: { id: string; status: string; rawJson: unknown; sampleId?: string | null }[],
+  parentId: string,
+): { found: { po: RawScanPo; docIdx: number; rowId: string; sampleId: string | null }[]; failed: number } | null {
+  const kids = items.filter((i) => i.id !== parentId);
+  const finished = (k: (typeof kids)[number]) => k.status === "failed" || ((k.status === "done" || k.status === "cached") && k.rawJson != null);
+  if (kids.length === 0 || !kids.every(finished)) return null;
+  return {
+    found: kids.flatMap((k) => (k.status === "failed" ? [] : posOfRow(k.rawJson).map((f) => ({ ...f, rowId: k.id, sampleId: k.sampleId ?? null })))),
+    failed: kids.filter((k) => k.status === "failed").length,
+  };
+}
