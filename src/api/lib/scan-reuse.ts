@@ -1,6 +1,7 @@
 // BUG-2026-11-23-543: the scan queue reuses a finished read for the same file bytes. A customer-PO
 // read that found no item lines must not be reused, or every Retry of that file returns the same
 // empty result at once ("No purchase order was found in this file") without reading it again.
+// Same rule as posOfRow (src/pages/m/lib/scan-so.ts): keep the two in sync.
 export function isReusableRead(kind: string, rawJson: unknown): boolean {
   if (rawJson == null) return false;
   if (kind !== "po") return true;
