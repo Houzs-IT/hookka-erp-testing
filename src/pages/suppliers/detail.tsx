@@ -1148,6 +1148,7 @@ export default function SupplierDetailPage() {
             sstRegNo: supplier.sstRegNo ?? "",
             currency: supplier.currency || "MYR",
             bankAccount: supplier.bankAccount ?? "",
+            tfEligible: !!supplier.tfEligible,
           }}
           orgOptions={orgOptions}
           onSave={handleSaveSupplier}

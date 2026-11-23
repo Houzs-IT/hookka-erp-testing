@@ -67,6 +67,7 @@ type Supplier = {
   sstRegNo: string;
   currency: string;
   bankAccount: string;
+  tfEligible: boolean;
 };
 
 // ============================================================
@@ -975,6 +976,7 @@ export default function SupplierMaintenancePage() {
       sstRegNo: String(s.sstRegNo ?? ""),
       currency: String(s.currency ?? "MYR") || "MYR",
       bankAccount: String(s.bankAccount ?? ""),
+      tfEligible: s.tfEligible === true,
     }));
     setSuppliers(mapped);
   }, [suppliersResp]);

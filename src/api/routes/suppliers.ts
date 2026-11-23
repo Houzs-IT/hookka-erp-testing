@@ -93,6 +93,11 @@ type SupplierRow = {
   email_2?: string | null;
   email3?: string | null;
   email_3?: string | null;
+  // Can use trade finance (owner 2026-11-23): the Cash Flow forecast's trade
+  // finance block lists and ticks only these suppliers. snake_case,
+  // self-applied; dual-keyed read.
+  tfEligible?: number | boolean | null;
+  tf_eligible?: number | boolean | null;
 };
 
 // Finance v2 party fields (owner 2026-10-17): the supplier's SST Reg. No. and
@@ -123,6 +128,25 @@ async function ensureSupplierEmailColumns(db: D1Database): Promise<void> {
   } catch (err) {
     console.warn("[suppliers] ensureSupplierEmailColumns:", err instanceof Error ? err.message : err);
   }
+}
+
+// "Can use trade finance" (owner 2026-11-23 「在 Supplier maintenance 打勾的
+// 供应商…自动帮你勾好每个月份」). Same self-apply rule as the fields above.
+let supplierTfColEnsured = false;
+export async function ensureSupplierTfColumn(db: D1Database): Promise<void> {
+  if (supplierTfColEnsured) return;
+  try {
+    await db.prepare("ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS tf_eligible INTEGER NOT NULL DEFAULT 0").run();
+    supplierTfColEnsured = true;
+  } catch (err) {
+    console.warn("[suppliers] ensureSupplierTfColumn:", err instanceof Error ? err.message : err);
+  }
+}
+
+// The trade-finance tick's write, in the same batch; not sent = kept.
+function supplierTfStatement(db: D1Database, id: string, body: Record<string, unknown>): D1PreparedStatement | null {
+  if (body.tfEligible === undefined) return null;
+  return db.prepare("UPDATE suppliers SET tf_eligible = ? WHERE id = ?").bind(body.tfEligible === true || body.tfEligible === 1 ? 1 : 0, id);
 }
 
 // Email 2 / 3 write, in the same batch as the supplier's insert / update. On an
@@ -222,6 +246,7 @@ function rowToSupplier(
     currency: row.currency ?? "MYR",
     sstRegNo: (row.sstRegNo ?? row.sst_reg_no ?? "").trim(),
     bankAccount: (row.bankAccount ?? row.bank_account ?? "").trim(),
+    tfEligible: Number(row.tfEligible ?? row.tf_eligible ?? 0) === 1 || (row.tfEligible ?? row.tf_eligible) === true,
     statementType: row.statementType ?? "OPEN_ITEM",
     agingOn: row.agingOn ?? "INVOICE_DATE",
     creditTerm: row.creditTerm ?? "C.O.D.",
@@ -373,6 +398,7 @@ app.post("/", async (c) => {
   if (denied) return denied;
   await ensureSupplierFinanceColumns(c.var.DB);
   await ensureSupplierEmailColumns(c.var.DB);
+  await ensureSupplierTfColumn(c.var.DB);
   try {
     const body = await c.req.json();
     // Free-text length caps (hardening batch 2026-11-08) — see lib/text-caps.ts.
@@ -470,7 +496,8 @@ app.post("/", async (c) => {
     }
     const financeStmt = supplierFinanceStatement(c.var.DB, id, body, null);
     const emailStmt = supplierEmailStatement(c.var.DB, id, body, null);
-    const finance = [financeStmt, emailStmt].filter((x): x is D1PreparedStatement => x !== null);
+    const tfStmt = supplierTfStatement(c.var.DB, id, body);
+    const finance = [financeStmt, emailStmt, tfStmt].filter((x): x is D1PreparedStatement => x !== null);
     try {
       await c.var.DB.batch([buildInsert(true), ...finance, ...matStmts]);
     } catch (e) {
@@ -565,6 +592,7 @@ app.put("/:id", async (c) => {
   if (denied) return denied;
   await ensureSupplierFinanceColumns(c.var.DB);
   await ensureSupplierEmailColumns(c.var.DB);
+  await ensureSupplierTfColumn(c.var.DB);
   const id = c.req.param("id");
   const existing = await c.var.DB.prepare("SELECT * FROM suppliers WHERE id = ?")
     .bind(id)
@@ -713,6 +741,8 @@ app.put("/:id", async (c) => {
     if (financeStmt) statements.push(financeStmt);
     const emailStmt = supplierEmailStatement(c.var.DB, id, body, existing);
     if (emailStmt) statements.push(emailStmt);
+    const tfStmt = supplierTfStatement(c.var.DB, id, body);
+    if (tfStmt) statements.push(tfStmt);
 
     if (body.materials !== undefined) {
       const materials = sanitizeMaterials(body.materials);

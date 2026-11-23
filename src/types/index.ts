@@ -602,6 +602,8 @@ export type Supplier = {
   currency?: string;
   sstRegNo?: string;
   bankAccount?: string;
+  /** Can use trade finance (owner 2026-11-23). */
+  tfEligible?: boolean;
 };
 
 export type POItem = {
