@@ -59,8 +59,9 @@ export function SendOrderNotificationDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load once on open. HK-0170: this used to re-run on depts.length, so setting the
+  // departments cancelled the same load before workers / ERP users were set.
   useEffect(() => {
-    if (depts.length > 0) return;
     let alive = true;
     (async () => {
       try {
@@ -94,7 +95,7 @@ export function SendOrderNotificationDialog({
     return () => {
       alive = false;
     };
-  }, [depts.length]);
+  }, []);
 
   const shownPeople = useMemo(() => {
     const q = search.trim().toLowerCase();
