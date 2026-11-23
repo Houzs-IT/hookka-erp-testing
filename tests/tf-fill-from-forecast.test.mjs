@@ -66,7 +66,7 @@ test("the facility inputs carry every supplier's Forecast P&L dues and the suppl
   // Since 2026-11-10 the popup ticks them per month (tests/tf-forecast-ticks.test.mjs).
   const fn = api.slice(api.indexOf("async function cfForecastTfFacilities("), api.indexOf('app.get("/cashflow-forecast-inputs"'));
   assert.match(fn, /SELECT id, name, paymentTerms FROM suppliers/);
-  assert.match(fn, /tfForecastDueBySupplier\(\{/);
+  assert.match(fn, /tfSupplierDues\(\{/); // since 2026-11-23: the closed months' unpaid bills + the Forecast P&L
   assert.match(fn, /paidSupplierIds,/);
 });
 

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-23**: Cash Flow trade finance from real bills + supplier tick (branch `feat/tf-supplier-flag-actual-bills`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Forecast Balance Sheet trade finance (branch `fix/forecast-bs-trade-finance`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: MRP port entry added (branch `feat/mrp-port`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-20**: Home Sales v12 phone redesign added (branch `redesign/mobile-dashboard-sales`, not pushed); nothing else re-checked.
@@ -328,11 +329,19 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Cash Flow trade finance: real bills, suppliers that can use it (feat/tf-supplier-flag-actual-bills, 2026-11-23)
+
+Ask (owner, 23 Nov): 「例如10月真实买了这么多货，那么根据term他12月就可以claim trade finance，那么他会replace forecast P&L 的trade finance 数据」; settled: 「月份结束才换成真实单据，之前都用 Forecast P&L」, 「只算还没付的」, a "Can use trade finance" tick in Supplier maintenance, 「打勾的供应商…自动帮你勾好每个月份，你只需要把不要的月份取消」, then 「Merge and build」.
+1. 🔵 Supplier maintenance: ☑ Can use trade finance (`suppliers.tf_eligible`, self-applied; form, detail and maintenance pages).
+2. 🔵 Dues per supplier (`tfSupplierDues`): the unpaid bills of the months that have ended (AP aging, by the supplier's term; past due → this month; `tfActualDueBySupplier`), plus the Forecast P&L from this month's purchases on (`firstPurchaseYm`). The Cash Flow forecast and the popup read the same.
+3. 🔵 With any ticked supplier, the trade finance block lists those suppliers only and ticks every month they have an amount (`tfAutoTicks`); a month unticked by hand is kept (`off` in the plan). Without any, the old Fill / ticks work as before.
+4. ⚪ After deploy: tick NLY, Ocean Sky and Meditex (the facility's suppliers so far) on prod, then check the popup and the forecast.
+
 ## 🔵 Forecast Balance Sheet: trade finance (fix/forecast-bs-trade-finance, 2026-11-23)
 
 Ask (owner, 23 Nov): 「帮我检查…forecast trade finance 那一part」, then 「Fix it」. MEASURED on prod 2026-11-23, read only: the Cash Flow forecast's trade finance ties to the five open draws on 310-0020 (repayments by due month, plan interest ≈1.21 % per 90 days, peak owed ≈RM 557,292.63 in Mar'27, under the RM 600,000 limit). The Forecast Balance Sheet built its legs with `tfPlans: []` and only repaid the draws open at the start, so it left out the 20 Nov draw and every planned drawdown: the facility read nil by Jan'27 and the sheet's cash was short by the same amount (≈RM 557k by Mar'27).
 1. 🔵 GET /bs-forecast passes the Cash Flow page's plans from this month on; `forecastBsDeltas` settles a facility's legs (drawdown, interest owed, repayment) on the facility (`tfAccounts`), the planned interest's cost on the profit. The Forecast P&L's own trade-finance interest is no longer booked as depreciation: with a plan the plan's interest stands for it, without one it is owed to the facility. Tests: `tests/forecast-bs.test.mjs` (three new). ⚪ After deploy: the sheet's 310-0020 and cash month by month against the Cash Flow forecast on prod.
-2. ⚪ Asked, not to be built yet (「先确定，别做」): Cash Flow trade finance driven by the real purchases' due months, replacing the Forecast P&L figures for those months.
+2. ➜ Built after the owner settled it: see the next entry.
 
 ## 🟡 MRP — port from Houzs / Conts ERP, incl. frontend (owner 2026-11-23, design first)
 - **Owner feedback after phase-1 went live (2026-11-23 evening) — page is NOT at Houzs parity:** missing (a) Combined / Per-SO PO modes, (b) Expand all / Collapse all, (c) Lead Times + order-by date (contradicts earlier "no lead time" — asked), (d) Warehouse filter (Hookka RM has no warehouse field — asked), (e) supplier choice per line, (f) date-type selector (delivery / order-by / processing / SO date) + From/To range + Show no-date, (g) per-column filter, sort, Columns picker, Wrap, Export all / Export current tab — use the shared DataGrid (Views/Columns like Production Tracking), (h) multi-select + Proceed PO, (i) dates must use the system standard dd/mm/yyyy (src/lib/utils.ts formatDate) — page used "27 Nov", (j) Production Tracking Stock column still missing (phase 3). Also found live: fabric POs in ROLL counted as MTR → fix in branch fix/mrp-po-unit (BUG-548) + /api/mrp/consume-log audit endpoint.
