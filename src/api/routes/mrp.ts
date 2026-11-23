@@ -31,6 +31,7 @@ import {
 } from "../lib/material-scaling";
 import { computeFabricMetrics } from "../lib/fabric-usage";
 import { buildMrpPlan } from "../lib/mrp-plan";
+import { ensureRmConsumeMarksTable } from "../lib/po-cost-cascade";
 
 const app = new Hono<Env>();
 
@@ -434,6 +435,67 @@ app.get("/plan", async (c) => {
     console.error("[mrp/plan] failed", msg);
     return c.json({ success: false, error: `MRP calculation failed: ${msg}` }, 500);
   }
+});
+
+// GET /api/mrp/consume-log?since=ISO — read-only audit of the per-WIP RM
+// deduction (2026-11-23): every (order, WIP, dept) slice deducted since
+// `since` (default: last 24 h), with the job card that triggered it ("PO" =
+// the PO-completion safety net) and the RM_ISSUE lines on that order. Lets a
+// deduction be checked against the BOM without database access.
+app.get("/consume-log", async (c) => {
+  const denied = await requirePermission(c, "mrp", "read");
+  if (denied) return denied;
+  const db = c.var.DB;
+  await ensureRmConsumeMarksTable(db);
+  const sinceRaw = c.req.query("since");
+  const since =
+    sinceRaw && !Number.isNaN(Date.parse(sinceRaw))
+      ? new Date(sinceRaw).toISOString()
+      : new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const marks = await db
+    .prepare(
+      `SELECT m.po_id, m.wip_key, m.dept_code, m.job_card_id, m.created_at, po.poNo AS po_no, po.productCode AS product_code
+         FROM rm_consume_marks m
+         LEFT JOIN production_orders po ON po.id = m.po_id
+        WHERE m.created_at >= ?
+        ORDER BY m.created_at DESC
+        LIMIT 500`,
+    )
+    .bind(since)
+    .all<Record<string, unknown>>();
+  const rows = marks.results ?? [];
+  const poIds = [...new Set(rows.map((r) => String(r.po_id ?? "")).filter(Boolean))];
+  const issuesByPo = new Map<string, { rmId: string; qty: number; notes: string }[]>();
+  if (poIds.length > 0) {
+    const ph = poIds.map(() => "?").join(",");
+    const issues = await db
+      .prepare(
+        `SELECT refId, itemId, qty, notes FROM cost_ledger
+          WHERE type = 'RM_ISSUE' AND refType = 'PRODUCTION_ORDER' AND refId IN (${ph})`,
+      )
+      .bind(...poIds)
+      .all<Record<string, unknown>>();
+    for (const i of issues.results ?? []) {
+      const k = String(i.refId ?? i.refid ?? "");
+      const arr = issuesByPo.get(k) ?? [];
+      arr.push({ rmId: String(i.itemId ?? i.itemid ?? ""), qty: Number(i.qty) || 0, notes: String(i.notes ?? "") });
+      issuesByPo.set(k, arr);
+    }
+  }
+  return c.json({
+    success: true,
+    since,
+    data: rows.map((r) => ({
+      poId: String(r.po_id ?? ""),
+      poNo: String(r.po_no ?? r.poNo ?? ""),
+      productCode: String(r.product_code ?? r.productCode ?? ""),
+      wipKey: String(r.wip_key ?? ""),
+      dept: String(r.dept_code ?? ""),
+      jobCardId: r.job_card_id == null ? "PO" : String(r.job_card_id),
+      at: String(r.created_at ?? ""),
+      rmIssuesOnOrder: issuesByPo.get(String(r.po_id ?? "")) ?? [],
+    })),
+  });
 });
 
 app.get("/", async (c) => {

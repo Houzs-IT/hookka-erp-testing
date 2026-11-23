@@ -53,6 +53,11 @@ export type MrpMaterialRow = {
   stock: number;
   poOutstanding: number;
   short: number;
+  // Open PO lines for this material ordered in ANOTHER unit (e.g. fabric
+  // ordered in ROLL, stocked in MTR). There is no unit conversion in the
+  // system, so they are NOT netted — shown beside the row instead, so nobody
+  // re-orders what is already on order (BUG-2026-11-23-548).
+  poOtherUnit: { ref: string; eta: string; qty: number; unit: string }[];
   firstNeedBy: string;
   mainSupplier: string | null;
   orders: MrpOrderLine[];
@@ -93,6 +98,19 @@ const num = (r: Record<string, unknown>, ...keys: string[]): number => {
   }
   return 0;
 };
+
+// Unit aliases seen in raw_materials / PO lines. Only spelling variants of
+// the SAME unit are merged — ROLL vs MTR is a real difference (no conversion).
+const UNIT_ALIASES: Record<string, string> = {
+  MTR: "MTR", METER: "MTR", METERS: "MTR", METRE: "MTR", M: "MTR",
+  YRD: "YRD", YARD: "YRD", YARDS: "YRD",
+  PCS: "PCS", PC: "PCS", PIECE: "PCS", PIECES: "PCS",
+  KG: "KG", KGS: "KG",
+};
+export function normUnit(u: string): string {
+  const k = String(u ?? "").trim().toUpperCase();
+  return UNIT_ALIASES[k] ?? k;
+}
 
 // Read-only memo over the few per-PO queries computeRequiredLines still issues
 // when given a cache (leg-SKU config, leg fuzzy match). Identical SQL + binds
@@ -153,7 +171,8 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
                 ) AS code,
                 GREATEST(poi.quantity - COALESCE(poi.receivedQty, 0), 0) AS qty,
                 po.poNo AS ref,
-                po.expectedDate AS eta
+                po.expectedDate AS eta,
+                poi.unit AS unit
            FROM purchase_order_items poi
            INNER JOIN purchase_orders po ON po.id = poi.purchaseOrderId
           WHERE po.status NOT IN ('RECEIVED', 'CANCELLED', 'CLOSED', 'DRAFT')`,
@@ -245,8 +264,11 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     }
   }
 
-  // Open PO supply per RM id.
+  // Open PO supply per RM id. Only lines in the material's own unit are
+  // netted (see poOtherUnit); a blank PO-line unit is taken as the base unit.
+  const rmUnitOf = (rm: Record<string, unknown>) => normUnit(str(rm, "baseUOM", "baseUom", "base_uom"));
   const supplyByRm = new Map<string, MrpSupply[]>();
+  const otherUnitByRm = new Map<string, MrpMaterialRow["poOtherUnit"]>();
   let openPoLinesUnresolved = 0;
   for (const r of poLineRes.results ?? []) {
     const code = str(r, "code");
@@ -258,8 +280,17 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
       continue;
     }
     const rmId = String(rm.id ?? "");
+    const ref = str(r, "ref", "poNo", "po_no");
+    const eta = str(r, "eta", "expectedDate", "expected_date").slice(0, 10);
+    const lineUnit = str(r, "unit");
+    if (lineUnit && normUnit(lineUnit) !== rmUnitOf(rm)) {
+      const other = otherUnitByRm.get(rmId) ?? [];
+      other.push({ ref, eta, qty, unit: lineUnit });
+      otherUnitByRm.set(rmId, other);
+      continue;
+    }
     const arr = supplyByRm.get(rmId) ?? [];
-    arr.push({ rmId, ref: str(r, "ref", "poNo", "po_no"), eta: str(r, "eta", "expectedDate", "expected_date").slice(0, 10), qty });
+    arr.push({ rmId, ref, eta, qty });
     supplyByRm.set(rmId, arr);
   }
 
@@ -304,6 +335,7 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
       stock,
       poOutstanding: supplies.reduce((s, p) => s + p.qty, 0),
       short: orderLines.reduce((s, o) => s + o.shortQty, 0),
+      poOtherUnit: otherUnitByRm.get(rmId) ?? [],
       firstNeedBy: orderLines.map((o) => o.needBy).filter(Boolean).sort()[0] ?? "",
       mainSupplier: mainSupplierByCode.get(code) ?? null,
       orders: orderLines,

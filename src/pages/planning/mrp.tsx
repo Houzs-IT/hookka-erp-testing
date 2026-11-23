@@ -44,6 +44,7 @@ type MaterialRow = {
   stock: number;
   poOutstanding: number;
   short: number;
+  poOtherUnit: { ref: string; eta: string; qty: number; unit: string }[];
   firstNeedBy: string;
   mainSupplier: string | null;
   orders: OrderLine[];
@@ -414,7 +415,14 @@ export default function MRPPage() {
                         <td className="px-1.5 py-2 text-[#6B7280]">{m.uom}</td>
                         <td className="px-1.5 py-2 text-right font-semibold tabular-nums">{fmtQty(m.needed)}</td>
                         <td className="px-1.5 py-2 text-right tabular-nums">{fmtQty(m.stock)}</td>
-                        <td className="px-1.5 py-2 text-right tabular-nums">{fmtQty(m.poOutstanding)}</td>
+                        <td className="px-1.5 py-2 text-right tabular-nums">
+                          {fmtQty(m.poOutstanding)}
+                          {m.poOtherUnit.length > 0 && (
+                            <div className="text-[11px] font-semibold text-[#8A6A12]" title="Ordered in another unit — not counted (no unit conversion)">
+                              {m.poOtherUnit.map((p) => `+${fmtQty(p.qty)} ${p.unit}`).join(", ")}
+                            </div>
+                          )}
+                        </td>
                         <td className={`px-1.5 py-2 text-right font-bold tabular-nums ${isShort ? "text-[#B42318]" : "text-[#9CA3AF]"}`}>
                           {isShort ? fmtQty(m.short) : "—"}
                         </td>
@@ -471,6 +479,14 @@ export default function MRPPage() {
                                 ))}
                               </tbody>
                             </table>
+                            {m.poOtherUnit.length > 0 && (
+                              <div className="mt-1.5 text-[11px] font-semibold text-[#8A6A12]">
+                                Also on order in another unit — not counted, check before ordering more:{" "}
+                                {m.poOtherUnit
+                                  .map((p) => `${p.ref} · ${fmtQty(p.qty)} ${p.unit}${p.eta ? ` · ETA ${fmtDate(p.eta)}` : ""}`)
+                                  .join("; ")}
+                              </div>
+                            )}
                             <div className="mt-1.5 text-[11px] text-[#6B7280]">
                               Earliest need-by takes stock first, then the earliest PO; what is left is short.
                             </div>
@@ -492,6 +508,12 @@ export default function MRPPage() {
               received · a WIP stops counting once its job card is completed (its materials have left stock) · need-by = that
               department&apos;s due date, else the order&apos;s date.
             </div>
+            {plan.materials.some((m) => m.poOtherUnit.length > 0) && (
+              <div className="font-semibold text-[#8A6A12]">
+                Some open POs are in another unit than the stock (e.g. fabric ordered in ROLL, stocked in MTR). There is no
+                conversion, so they are shown in amber under PO outstanding but not counted.
+              </div>
+            )}
             {plan.openPoLinesUnresolved > 0 && (
               <div className="font-semibold text-[#8A6A12]">
                 PO outstanding is a floor: {plan.openPoLinesUnresolved} open PO lines name no known raw material, so they are

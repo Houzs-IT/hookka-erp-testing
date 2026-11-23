@@ -86,3 +86,21 @@ test("a PO deducted under the old whole-PO rule is never deducted again", () => 
   const fifoAt = src.indexOf("await fifoConsumeLines(db, po, claimed)");
   assert.ok(claimAt > 0 && fifoAt > claimAt);
 });
+
+test("BUG-548: an open PO in another unit (ROLL vs MTR) is shown, never netted as metres", async () => {
+  const { normUnit } = await import("../src/api/lib/mrp-plan.ts");
+  assert.equal(normUnit("METER"), "MTR");
+  assert.equal(normUnit("mtr"), "MTR");
+  assert.equal(normUnit("ROLL"), "ROLL");
+  assert.notEqual(normUnit("ROLL"), normUnit("MTR"));
+  const engine = readFileSync(new URL("../src/api/lib/mrp-plan.ts", import.meta.url), "utf8");
+  assert.match(engine, /if \(lineUnit && normUnit\(lineUnit\) !== rmUnitOf\(rm\)\) \{/);
+  const page = readFileSync(new URL("../src/pages/planning/mrp.tsx", import.meta.url), "utf8");
+  assert.match(page, /Also on order in another unit — not counted/);
+});
+
+test("the per-WIP deduction can be audited without DB access", () => {
+  const route = readFileSync(new URL("../src/api/routes/mrp.ts", import.meta.url), "utf8");
+  assert.match(route, /app\.get\("\/consume-log"/);
+  assert.match(route, /FROM rm_consume_marks m/);
+});
