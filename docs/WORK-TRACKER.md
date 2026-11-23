@@ -335,7 +335,7 @@ Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod �
 Ask (owner, 23 Nov): 「dashboard那边的balance sheet 和 cash flow 可以显示forecast的相对应数据」, then 「不可以都显示吗？」 (both Cash Flow forecasts, and the months ahead) → 「Build it」.
 1. 🔵 Cash Flow card: two dashed lines (forecast net, P&L and documents) beside Net change; rows Forecast (P&L), Forecast (documents) and vs each for the tab picked; the periods ahead (forecast only, faded bars, "(F)"). Read off the Cash Flow forecast's statement with the card's own split (`cashFlowCardMonth`).
 2. 🔵 Balance Sheet card: the periods ahead from the Forecast Balance Sheet (on last month-end's sheet, `forecastBsView`), totalled as the card totals the actual sheet. MEASURED on prod 2026-11-23: Oct'26's `/pl` sheet totals equal the dashboard's (assets RM 708,813.64, liabilities RM 672,917.39).
-3. Income Statement card unchanged. `src/lib/dashboard-forecast.ts`, tests `tests/dashboard-forecast.test.mjs`. ⚪ After deploy: open the dashboard on prod and compare with the Cash Flow and Monthly Balance Sheet pages.
+3. Income Statement card unchanged. `src/lib/dashboard-forecast.ts`, tests `tests/dashboard-forecast.test.mjs`. ✅ On prod 2026-11-23 (#1568): both cash forecast lines and rows, the forecast sheet Dec'26–Jun'27, faded bars and the (F) note show. Follow-up (fix/dashboard-forecast-labels): a period ahead was headed "2026-12 (F)" beside "Nov 2026"; now "Dec 2026 (F)".
 
 ## 🔵 Cash Flow trade finance: real bills, suppliers that can use it (feat/tf-supplier-flag-actual-bills, 2026-11-23)
 
