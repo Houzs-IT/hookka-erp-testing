@@ -374,6 +374,17 @@ publicMeetings.get("/links/:code/slots", async (c) => {
   return relay(c, hubFetch(hub, `/public/links/${code}/slots?day=${day}`));
 });
 
+// One day of a link: each room's taken times (no titles, no people), for the guest to pick a room and time.
+publicMeetings.get("/links/:code/day", async (c) => {
+  const code = c.req.param("code");
+  const day = c.req.query("day") ?? "";
+  if (!LINK_CODE.test(code)) return c.json({ error: DEAD }, 404);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: "Pick a day." }, 400);
+  const hub = guestHub(c);
+  if (hub instanceof Response) return hub;
+  return relay(c, hubFetch(hub, `/public/links/${code}/day?day=${day}`));
+});
+
 publicMeetings.post("/links/:code/book", async (c) => {
   const code = c.req.param("code");
   if (!LINK_CODE.test(code)) return c.json({ error: DEAD }, 404);
@@ -381,8 +392,8 @@ publicMeetings.post("/links/:code/book", async (c) => {
   if (hub instanceof Response) return hub;
   const b = await readJson(c);
   if (!b) return c.json({ error: UNREADABLE }, 400);
-  // Only these five fields reach the hub; the guest cannot pick a room or a host.
-  const body = { start: b.start, name: b.name, phone: b.phone, email: b.email, company: b.company };
+  // Only these fields reach the hub. The guest picks the room and the time range; never a host or attendees.
+  const body = { start: b.start, end: b.end, roomId: b.roomId, name: b.name, phone: b.phone, email: b.email, company: b.company, department: b.department, title: b.title, people: b.people };
   return relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body)));
 });
 
