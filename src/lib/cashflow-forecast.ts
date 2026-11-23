@@ -602,7 +602,12 @@ export function tfToggleOffRow(off: TfTicks, row: { id: string; dueBy: Record<st
 
 /** A supplier the Trade finance block can tick: its name, its payment term
  *  and its Forecast P&L dues by month. */
-export type TfForecastSupplier = { id: string; name: string; term?: string; dueBy: Record<string, number> };
+export type TfForecastSupplier = {
+  id: string; name: string; term?: string; dueBy: Record<string, number>;
+  /** The part of `dueBy` from real unpaid bills, by month (owner 2026-11-23
+   *  「用真实的background颜色可以不一样吗？」): the popup shades those cells. */
+  actualBy?: Record<string, number>;
+};
 
 /** The tick grid's rows (owner 2026-11-10, second round): every supplier with
  *  a Forecast P&L amount due in the months shown, biggest total first, then by

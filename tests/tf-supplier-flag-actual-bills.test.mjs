@@ -99,7 +99,7 @@ test("Supplier maintenance: a Can use trade finance tick, stored and sent back",
 test("the forecast and the popup read the dues and the ticks the same way", () => {
   const route = read("src/api/routes/accounting.ts");
   // Real unpaid bills of the closed months + the Forecast P&L from this month on.
-  assert.match(route, /tfActualDueBySupplier\(\{ bills, termMonths: o\.termMonths, fromYm: o\.curYm \}\)/);
+  assert.match(route, /tfActualDueBySupplier\(\{ bills, termMonths, fromYm: curYm \}\)/);
   assert.match(route, /firstPurchaseYm: o\.curYm/);
   assert.match(route, /d\.amountSen > 0 && !d\.no\.endsWith\(ADVANCE_DOC_SUFFIX\)/);
   assert.match(route, /const dueBySupplier = tfSupplierDues\(\{ ap: ag\.data\.ap,/);
@@ -112,4 +112,17 @@ test("the forecast and the popup read the dues and the ticks the same way", () =
   assert.match(page, /tfAuto \? setOff\(f\.accountCode, \(o\) => tfToggleTick\(o, r\.id, ym\)\)/);
   assert.match(page, /tfAuto \? setOff\(f\.accountCode, \(o\) => tfToggleOffRow\(o, r, yms\)\)/);
   assert.match(page, /tfSuppliers\.filter\(\(x\) => tfEligible\.includes\(x\.id\)\)/);
+});
+
+test("the popup shades the cells from real unpaid bills and says what this month's Drawdown includes", () => {
+  const route = read("src/api/routes/accounting.ts");
+  assert.match(route, /const actualBySupplier = tfActualDuesFromAp\(ag\.data\.ap, termMonthsOf, curYm\);/);
+  assert.match(route, /\.\.\.\(actualBySupplier\[id\] \? \{ actualBy: actualBySupplier\[id\] \} : \{\}\)/);
+  assert.match(route, /tfMergeDues\(\n\s+tfActualDuesFromAp\(o\.ap, o\.termMonths, o\.curYm\),/);
+  const page = read("src/pages/accounting/index.tsx");
+  assert.match(page, /const tfCellBg = \(real: boolean, on: boolean\) => \(real \? \(on \? "bg-\[#DCE7F1\]" : "bg-\[#EEF3F8\]"\) : on \? "bg-\[#EFEAE0\]" : ""\);/);
+  assert.match(page, /data-tf-real=\{tfRealSen\(r, ym\) > 0 \? "" : undefined\}/);
+  assert.match(page, /data-tf-legend-real=""/);
+  assert.match(page, /already drawn this month/);
+  assert.match(page, /data-tf-drawn-note=""/);
 });
