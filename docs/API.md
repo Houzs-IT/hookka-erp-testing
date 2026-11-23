@@ -31,7 +31,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
   route module) and is exempt from the rate limiter.
 
 **Counts at generation time:** 159 mounts, 155 route files in
-`src/api/routes/`, 1165 top-level handler registrations discovered.
+`src/api/routes/`, 1169 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -177,7 +177,7 @@ offsets pointing past the end of their own file.
 | `/api/leaves` | `src/api/routes/leaves.ts` | `GET /` <sub>:81</sub><br>`GET /balances` <sub>:113</sub><br>`POST /` <sub>:180</sub><br>`PUT /` <sub>:250</sub><br>`PUT /:id` <sub>:288</sub><br>`DELETE /:id` <sub>:355</sub> | gated |
 | `/api/lorries` | `src/api/routes/lorries.ts` | `GET /` <sub>:50</sub><br>`POST /` <sub>:62</sub><br>`PUT /` <sub>:110</sub><br>`GET /:id` <sub>:165</sub><br>`PUT /:id` <sub>:177</sub><br>`DELETE /:id` <sub>:234</sub> | gated |
 | `/api/maintenance-logs` | `src/api/routes/maintenance-logs.ts` | `GET /` <sub>:51</sub><br>`POST /` <sub>:66</sub><br>`GET /:id` <sub>:121</sub><br>`DELETE /:id` <sub>:138</sub> | gated |
-| `/api/mrp` | `src/api/routes/mrp.ts` | `GET /plan` <sub>:426</sub><br>`GET /consume-log` <sub>:445</sub><br>`GET /` <sub>:501</sub><br>`GET /runs` <sub>:569</sub><br>`GET /runs/:id` <sub>:590</sub><br>`POST /` <sub>:647</sub> | gated |
+| `/api/mrp` | `src/api/routes/mrp.ts` | `GET /plan` <sub>:426</sub><br>`GET /lead-times` <sub>:444</sub><br>`PUT /lead-times` <sub>:450</sub><br>`GET /plan-check` <sub>:487</sub><br>`GET /stock-status` <sub>:521</sub><br>`GET /consume-log` <sub>:547</sub><br>`GET /` <sub>:603</sub><br>`GET /runs` <sub>:671</sub><br>`GET /runs/:id` <sub>:692</sub><br>`POST /` <sub>:749</sub> | gated |
 | `/api/notifications` | `src/api/routes/notifications.ts` | `GET /` <sub>:71</sub><br>`PUT /` <sub>:101</sub> | gated |
 | `/api/payroll` | `src/api/routes/payroll.ts` | `GET /` <sub>:78</sub><br>`POST /` <sub>:125</sub><br>`PUT /` <sub>:145</sub> | gated |
 | `/api/pay-rules` | `src/api/routes/pay-rules.ts` | `GET /` <sub>:49</sub><br>`POST /` <sub>:65</sub><br>`DELETE /:id` <sub>:108</sub> | gated |
