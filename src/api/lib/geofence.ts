@@ -3,7 +3,8 @@
 //
 // "Soft" = we only RECORD the punch location and FLAG punches that fall outside
 // the factory radius (so the operator can spot home-punching). It never blocks a
-// punch, and a phone that denies/can't-get location is simply "no location".
+// punch for being off-site. Since 2026-11-23 a punch WITHOUT a location is
+// refused by POST /api/worker/clock (location is mandatory).
 //
 // The factory centre defaults to Hookka Manufacturing Sdn Bhd, Shah Alam (the
 // coordinates Wei Siang gave on 2026-06-09). It can be overridden per-tenant by
@@ -13,13 +14,14 @@
 
 export type Geofence = { lat: number; lng: number; radiusM: number };
 
-// Hookka Manufacturing Sdn Bhd, Shah Alam. 200 m radius leaves room for the
-// yard / parking / GPS drift in a metal-roofed factory (indoor GPS can wander
-// tens of metres). Override via kv_config 'factory_geofence' to fine-tune.
+// Hookka Manufacturing Sdn Bhd, Shah Alam. Radius 150 m (owner 2026-11-23,
+// was 200 m; "we will shrink it further later"). Indoor GPS under a metal roof
+// can wander tens of metres, so tighten in steps and watch the Off-site flags.
+// Override via kv_config 'factory_geofence' to fine-tune.
 export const DEFAULT_FACTORY_GEOFENCE: Geofence = {
   lat: 3.187681,
   lng: 101.570928,
-  radiusM: 200,
+  radiusM: 150,
 };
 
 interface DbLike {

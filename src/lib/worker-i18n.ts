@@ -1663,10 +1663,16 @@ const dict: Dict = {
     my: 'တည်နေရာ ဖွင့်ပါ',
   },
   'home.locationNeededBody': {
-    en: 'Please allow location so your clock-in records you At factory.',
-    ms: 'Sila benarkan lokasi supaya daftar masuk anda direkod Di kilang.',
-    zh: '请允许定位，这样您的打卡才能记录为「在工厂」。',
-    my: 'အလုပ်ဝင်ချိန် "စက်ရုံတွင်" မှတ်တမ်းတင်နိုင်ရန် တည်နေရာကို ခွင့်ပြုပါ။',
+    en: 'Location is required to clock in and out. Please allow location.',
+    ms: 'Lokasi diperlukan untuk daftar masuk dan keluar. Sila benarkan lokasi.',
+    zh: '打卡上下班必须开启定位，请允许定位。',
+    my: 'အလုပ်ဝင်/ထွက် မှတ်ရန် တည်နေရာ လိုအပ်ပါသည်။ တည်နေရာကို ခွင့်ပြုပါ။',
+  },
+  'home.locationRequired': {
+    en: 'Turn on location to clock in. Your location is needed for every punch.',
+    ms: 'Hidupkan lokasi untuk daftar masuk. Lokasi anda diperlukan untuk setiap daftar.',
+    zh: '请开启定位才能打卡，每次打卡都需要定位。',
+    my: 'အလုပ်ဝင်မှတ်ရန် တည်နေရာ ဖွင့်ပါ။ မှတ်တိုင်း တည်နေရာ လိုအပ်ပါသည်။',
   },
   'home.locationHowTo': {
     en: 'Tap the lock icon in your browser address bar → Location → Allow.',

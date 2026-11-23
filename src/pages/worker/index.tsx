@@ -196,9 +196,10 @@ function fmtDay(iso: string): string {
   if (isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("en-MY", { day: "2-digit", month: "short" });
 }
-// Best-effort punch location for the soft geofence. Resolves to null when the
-// device has no geolocation, the worker denies permission, or it times out — the
-// punch still goes through (soft: location only flags out-of-area, never blocks).
+// Punch location. Resolves to null when the device has no geolocation, the
+// worker denies permission, or it times out — and since 2026-11-23 a null
+// location STOPS the punch (location is mandatory; off-site is still only
+// flagged, not blocked).
 //
 // Permission-aware (BUG-2026-06-27): the punch used to call getCurrentPosition
 // UNCONDITIONALLY on every punch, which on some phones re-surfaces the OS
@@ -227,8 +228,8 @@ async function getPunchLocation(
   return new Promise((resolve) => {
     // enableHighAccuracy:false → uses wifi/cell, not just GPS satellites, so a
     // fix arrives INDOORS (high-accuracy GPS often times out on a factory floor
-    // and left every punch with null location). ±50-100m is plenty for a 200m
-    // factory fence. Longer timeout so a slow first fix still lands.
+    // and left every punch with null location). ±50-100m is usually enough for the
+    // factory fence (150 m). Longer timeout so a slow first fix still lands.
     // maximumAge:60000 → reuse a fix from the last 60s instead of spinning a
     // fresh GPS request on a rapid second punch.
     navigator.geolocation.getCurrentPosition(
@@ -351,8 +352,8 @@ function writeAckAnnouncements(m: Map<string, number>): void {
 // permission prompt for a worker who hasn't decided yet (so their next punch
 // stamps "At factory" instead of "No GPS"). Browsers REMEMBER a hard deny and
 // won't re-prompt, so the realistic UX is: request on open + a persistent nudge
-// banner when not granted. We NEVER block clock-in — the punch still works
-// unstamped (the existing getPunchLocation handles that).
+// banner when not granted. Since 2026-11-23 a punch without a location is
+// refused, so this banner is the worker's way back to a working clock-in.
 type LocationState = "unknown" | "granted" | "denied" | "unavailable";
 
 // PWA permission re-ask suppression. Before ever calling getCurrentPosition
@@ -493,6 +494,9 @@ export default function WorkerHomePage() {
   const [clocking, setClocking] = useState(false);
   // Inline punch feedback (e.g. "take a photo first"). Cleared on next attempt.
   const [clockErr, setClockErr] = useState<string | null>(null);
+  // Punch refused for having no location → a popup in the worker's language
+  // (owner 2026-11-23: 「打卡不到 记得要有弹窗 并且是跟着语言的」).
+  const [locPopup, setLocPopup] = useState(false);
 
   // Dashboard date range — defaults to THIS MONTH (owner 2026-06-12), so the
   // stat cards read as the month-to-date the worker's pay estimate covers.
@@ -688,16 +692,18 @@ export default function WorkerHomePage() {
         setClockErr(t("home.photoRequired"));
         return;
       }
-      // Soft geofence: attach the worker's location if we can get it. Denied /
-      // unavailable / timeout → null → the punch still goes through unstamped.
-      // Pass the state we already probed on mount so a known-'denied' worker is
-      // never re-prompted and a known-'granted' worker skips a redundant probe.
+      // Location is REQUIRED to punch (owner 2026-11-23). Denied / off / no
+      // fix → no punch: say so and show the turn-on-location banner. The server
+      // refuses a coordinate-less punch too (LOCATION_REQUIRED), so this is the
+      // friendly early stop, not the only guard. Pass the state probed on mount
+      // so a known-'denied' worker is not re-prompted.
       const loc = await getPunchLocation(locState);
-      const payload: Record<string, unknown> = { action, photo };
-      if (loc) {
-        payload.lat = loc.lat;
-        payload.lng = loc.lng;
+      if (!loc) {
+        setLocState((s) => (s === "granted" ? "unavailable" : s === "unknown" ? "denied" : s));
+        setLocPopup(true);
+        return;
       }
+      const payload: Record<string, unknown> = { action, photo, lat: loc.lat, lng: loc.lng };
       // Weak-wifi hardening (2026-07-03): the POST previously had no timeout
       // (a dead connection spun forever) and no catch/status check (a failed
       // punch showed NOTHING — the worker walked away believing they'd
@@ -720,6 +726,10 @@ export default function WorkerHomePage() {
         error?: string;
       } | null;
       if (!res.ok || (j && j.success === false)) {
+        if ((j as { code?: string } | null)?.code === "LOCATION_REQUIRED") {
+          setLocPopup(true);
+          return;
+        }
         setClockErr(j?.error || t("home.punchFailed"));
         return;
       }
@@ -946,6 +956,43 @@ export default function WorkerHomePage() {
         </div>
       )}
 
+      {/* Location-required popup — shown when a punch is refused because the
+          phone gave no location. Every string follows the worker's language. */}
+      {locPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="loc-popup-title">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center gap-2 bg-[#9C6F1E] px-4 py-3 text-white">
+              <MapPin className="h-5 w-5 shrink-0" />
+              <span id="loc-popup-title" className="text-base font-bold">{t("home.locationNeededTitle")}</span>
+            </div>
+            <div className="px-4 py-3">
+              <p className="text-base font-semibold text-[#1F1D1B]">{t("home.locationRequired")}</p>
+              <p className="mt-2 text-sm text-[#5A5550]">{t("home.locationHowTo")}</p>
+            </div>
+            <div className="flex gap-2 px-4 pb-4 pt-1">
+              <button
+                type="button"
+                onClick={() => setLocPopup(false)}
+                className="h-12 flex-1 rounded-xl border border-[#D8D1C3] bg-white text-base font-semibold text-[#374151]"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const st = await requestLocationPermission();
+                  setLocState(st);
+                  if (st === "granted") setLocPopup(false);
+                }}
+                className="h-12 flex-1 rounded-xl bg-[#9C6F1E] text-base font-bold text-white active:translate-y-[1px]"
+              >
+                {t("home.locationRetry")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Greeting */}
       <div>
         <p className="text-sm text-[#5A5550]">{t("home.hello")},</p>
@@ -1051,8 +1098,9 @@ export default function WorkerHomePage() {
         </div>
       )}
 
-      {/* Location nudge (Feature B) — shown when location is denied/unavailable
-          so the worker's punch can stamp "At factory". Never blocks clock-in. */}
+      {/* Location nudge (Feature B) — shown when location is denied/unavailable.
+          Location is required to punch (2026-11-23), so this explains how to
+          turn it on. */}
       {showLocNudge && (
         <div className="bg-[#FFF6E9] border border-[#E5C98A] rounded-xl p-3.5">
           <div className="flex items-start gap-2.5">

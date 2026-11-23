@@ -1273,9 +1273,22 @@ app.post("/clock", async (c) => {
     return c.json({ success: false, error: "Invalid action" }, 400);
   }
 
-  // Optional punch location (soft geofence). Absent / denied → null → not stored.
+  // Punch location is REQUIRED (owner 2026-11-23: 「先强制一定要有地点」).
+  // A punch with no coordinates — location denied, off, or no fix — is
+  // refused, so "No GPS" punches can no longer happen. The fence itself stays
+  // soft for now: an off-site punch is recorded and flagged red, not blocked.
   const lat = parseCoord((body as { lat?: unknown }).lat);
   const lng = parseCoord((body as { lng?: unknown }).lng);
+  if (lat == null || lng == null) {
+    return c.json(
+      {
+        success: false,
+        code: "LOCATION_REQUIRED",
+        error: "Location is required to clock in or out. Turn on location and try again.",
+      },
+      400,
+    );
+  }
   // Optional punch selfie (anti-buddy-punching). Absent / cancelled → null.
   const photo =
     typeof (body as { photo?: unknown }).photo === "string"

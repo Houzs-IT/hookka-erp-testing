@@ -16,8 +16,8 @@
 > `src/api/lib/efficiency-allowance.ts`, `src/api/lib/geofence.ts`,
 > `src/api/lib/punch-autofill.ts`, `src/pages/worker/`, `src/pages/employees.tsx`.
 >
-> Spot-checks that held: the 200 m factory fence that flags but never blocks a punch
-> (`geofence.ts:19-22`, `DEFAULT_FACTORY_GEOFENCE.radiusM = 200`); the selfie being
+> Spot-checks that held: the factory fence that flags but never blocks an off-site punch
+> (`geofence.ts`, `DEFAULT_FACTORY_GEOFENCE.radiusM = 150` since 2026-11-23; a punch with NO location is refused); the selfie being
 > mandatory to punch (`src/pages/worker/index.tsx:669`); the per-worker day-rate
 > divisor coming from `workers.workingDaysPerMonth` rather than a hardcoded 26
 > (`src/lib/labor-engine.ts:563-566`, fallback constant `FALLBACK_WORKING_DAYS_PER_MONTH = 26`
@@ -48,9 +48,12 @@ Workers log in with their employee PIN at `/worker`. Pages:
 - One big **Clock In / Clock Out** button. Punching **requires a selfie**
   (front camera opens automatically; cancelling the camera cancels the punch)
   — this is the anti-buddy-punching control.
-- The phone's location is captured softly: inside the 200 m factory fence →
-  **At factory**; outside → **Off-site** (flagged to the office, never blocks
-  the punch); no permission → **No GPS**.
+- Location is **required** to punch (owner 2026-11-23): a phone that gives no
+  location (permission denied, location off, no fix) cannot clock in or out and
+  gets a popup in the worker's language explaining how to turn location on.
+  Inside the **150 m** factory fence (was 200 m) → **At factory**; outside →
+  **Off-site** (flagged to the office, still not blocked). **No GPS** only
+  remains on punches recorded before 2026-11-23.
 - The punch time uses Malaysia time and lands instantly in the office's
   **Attendance** tab (time + location badge + the two selfies) and pre-fills
   the **Working Hours** grid's Punch column.
