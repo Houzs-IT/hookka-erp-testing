@@ -19655,6 +19655,19 @@ function CashFlowTab() {
   );
   const fcData = fcOn && fcResp?.success ? fcResp.data : undefined;
   const fcFailed = fcOn && !fcLoading && !fcData && (!!fcErr || (!!fcResp && !fcResp.success));
+  // The forecast is kept as a stored copy on the server (reportSnapshot, owner
+  // 2026-11-23 「看没有forecast了？」): one served while it rebuilds carries
+  // `stale`; ask again on the shared schedule until the new copy lands.
+  const fcStaleRun = useRef(NO_STALE_RUN);
+  useEffect(() => {
+    if (!fcResp) return;
+    const next = planStaleRetry(fcStaleRun.current, fcResp);
+    fcStaleRun.current = next.run;
+    if (next.retryInMs === null) return;
+    // eslint-disable-next-line no-restricted-syntax -- one-shot retry after a stale copy; cleared on the next answer or unmount
+    const t = setTimeout(() => { invalidateCachePrefix("/api/accounting/cashflow-forecast"); fcRefresh(); }, next.retryInMs);
+    return () => clearTimeout(t);
+  }, [fcResp, fcRefresh]);
   const allCols: CfApiCol[] = (fcData ?? data)?.columns ?? [];
   // Hide past months (owner 2026-11-10 「先按 forecasting，然后再按不显示 past
   // month」, then 「是把 docs forecast 和 P&L forecast hide 起来，actual 要
