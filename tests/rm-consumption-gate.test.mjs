@@ -35,8 +35,9 @@ const src = readFileSync(
 const previewFn = (() => {
   const start = src.indexOf("export async function recordConsumePreview");
   assert.ok(start > -1, "recordConsumePreview must exist");
-  const end = src.indexOf("export async function consumeRawMaterialsForPO", start);
-  assert.ok(end > start, "consumeRawMaterialsForPO must follow recordConsumePreview");
+  // The shared required-lines calculation (2026-11-23) now follows the preview.
+  const end = src.indexOf("export type RequiredLine", start);
+  assert.ok(end > start, "computeRequiredLines must follow recordConsumePreview");
   return src.slice(start, end);
 })();
 
@@ -81,7 +82,8 @@ test("consume gates on mode BEFORE any FIFO/stock work", () => {
   // Search for the LIVE-path bomLines AFTER the gate — recordConsumePreview
   // (defined above) also resolves bomLines, so a from-0 indexOf would find that
   // one and give a false negative.
-  const bomIdx = src.indexOf("const bomLines = await resolveBomMaterials(db, po)", gateIdx);
+  // Live path since 2026-11-23: the shared computeRequiredLines (per-WIP slices).
+  const bomIdx = src.indexOf("const all = await computeRequiredLines(db, po)", gateIdx);
   assert.ok(gateIdx > -1, "consume must branch on mode");
   assert.ok(bomIdx > gateIdx, "the PREVIEW early-return must come BEFORE the live consume path");
   // The PREVIEW branch records a preview and returns, all before the live path.

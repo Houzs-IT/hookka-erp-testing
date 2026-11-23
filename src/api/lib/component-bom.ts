@@ -200,31 +200,19 @@ export type ExplodableLine = {
 // deep: children are NOT themselves re-exploded, so a screw that happens to own
 // a kit won't recurse. The parent line is left untouched (the mechanism still
 // consumes on its own).
-export async function explodeKits<T extends ExplodableLine>(
+// Every kit, keyed by parent SKU — for bulk callers (MRP) that resolve hundreds
+// of BOMs in one request and pass the map to explodeKits as `preloaded`.
+export async function loadAllKits(
   db: D1Database,
-  lines: T[],
-): Promise<T[]> {
-  if (lines.length === 0) return lines;
+): Promise<Map<string, Record<string, unknown>[]>> {
   await ensureComponentBomTable(db);
-  // Distinct candidate parent SKUs present in this BOM.
-  const parents = new Set<string>();
-  for (const l of lines) {
-    const key = (l.inventoryCode || l.code || "").trim();
-    if (key) parents.add(key);
-  }
-  if (parents.size === 0) return lines;
-  const codes = [...parents];
-  const placeholders = codes.map(() => "?").join(", ");
   const res = await db
-    .prepare(
-      `SELECT parent_code, child_code, child_name, qty_per, waste_pct
-         FROM component_bom_lines WHERE parent_code IN (${placeholders})`,
-    )
-    .bind(...codes)
+    .prepare("SELECT parent_code, child_code, child_name, qty_per, waste_pct FROM component_bom_lines")
     .all<Record<string, unknown>>();
-  const rows = res.results ?? [];
-  if (rows.length === 0) return lines;
-  // parent_code → its child rows.
+  return groupKitRows(res.results ?? []);
+}
+
+function groupKitRows(rows: Record<string, unknown>[]): Map<string, Record<string, unknown>[]> {
   const kitByParent = new Map<string, Record<string, unknown>[]>();
   for (const r of rows) {
     const p = str(r, "parentCode", "parent_code");
@@ -233,6 +221,41 @@ export async function explodeKits<T extends ExplodableLine>(
     arr.push(r);
     kitByParent.set(p, arr);
   }
+  return kitByParent;
+}
+
+export async function explodeKits<T extends ExplodableLine>(
+  db: D1Database,
+  lines: T[],
+  preloaded?: Map<string, Record<string, unknown>[]>,
+): Promise<T[]> {
+  if (lines.length === 0) return lines;
+  let kitByParent: Map<string, Record<string, unknown>[]>;
+  if (preloaded) {
+    kitByParent = preloaded;
+  } else {
+    await ensureComponentBomTable(db);
+    // Distinct candidate parent SKUs present in this BOM.
+    const parents = new Set<string>();
+    for (const l of lines) {
+      const key = (l.inventoryCode || l.code || "").trim();
+      if (key) parents.add(key);
+    }
+    if (parents.size === 0) return lines;
+    const codes = [...parents];
+    const placeholders = codes.map(() => "?").join(", ");
+    const res = await db
+      .prepare(
+        `SELECT parent_code, child_code, child_name, qty_per, waste_pct
+           FROM component_bom_lines WHERE parent_code IN (${placeholders})`,
+      )
+      .bind(...codes)
+      .all<Record<string, unknown>>();
+    const rows = res.results ?? [];
+    if (rows.length === 0) return lines;
+    kitByParent = groupKitRows(rows);
+  }
+  if (kitByParent.size === 0) return lines;
   const out: T[] = [];
   for (const line of lines) {
     out.push(line);

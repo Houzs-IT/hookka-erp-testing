@@ -367,3 +367,16 @@ This caught every real regression risk in that session, and its absence produced
 every false one. State plainly which numbers are MEASURED and which are
 PROJECTED; if you could not verify something, say so rather than rounding it up
 to a fact.
+
+## RM leaves stock PER WIP, not per PO (since 2026-11-23)
+
+Each job-card completion (PATCH **and** the worker-scan paths) deducts only the
+BOM lines owned by that card's top-level WIP (`wipKey`) in that card's dept —
+`consumeRawMaterialsForJobCard`. Idempotency is per `(po_id, wip_key, dept_code)`
+in `rm_consume_marks` (runtime-created), claimed before any FIFO write. A PO with
+`RM_ISSUE` rows but no marks was deducted under the OLD whole-PO-at-first-FAB_CUT
+rule and is never touched again. `consumeRawMaterialsForPO` is now "deduct every
+slice not yet deducted" (PO-completion safety net / import tool). Quantities come
+from `computeRequiredLines`, which the MRP also uses — change the calc there,
+never in a copy. Before 2026-11-23 the scan paths deducted nothing at all; stock
+only moved at the PO-completion safety net.

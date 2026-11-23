@@ -58,8 +58,8 @@ test("resolveRmFromBom SELECT * (column-safe) and returns sheet dims", () => {
 
 test("consumption deducts cutArea ÷ sheetArea, guarded, with a plain-qty fallback", () => {
   const src = read(CASCADE);
-  const i = src.indexOf("FILLER (sponge) area-based consumption (owner 2026-07-30): a BOM line");
-  assert.ok(i !== -1, "the area-ratio block must exist in the consume loop");
+  const i = src.indexOf("FILLER (sponge) area-based consumption (owner 2026-07-30): sheets =");
+  assert.ok(i !== -1, "the area-ratio block must exist in computeRequiredLines (shared by consume + MRP)");
   // 1600, not 1100: the cut-growth work (2026-08-21) added comment lines
   // between the anchor and the assertions below, and a fixed character window
   // silently stopped covering them. A window measured in characters will do

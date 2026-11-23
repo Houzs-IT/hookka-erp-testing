@@ -27,7 +27,7 @@ const toast = readFileSync("src/components/ui/toast.tsx", "utf8");
 test("a failed raw-material consume reaches the response", () => {
   assert.match(po, /movementErrors\.push\(`Raw-material consumption failed: \$\{msg\}`\)/);
   // Still caught — the job card stays committed.
-  assert.match(po, /await consumeRawMaterialsForPO\(db, existing\.id\);/);
+  assert.match(po, /await consumeRawMaterialsForJobCard\(db, existing\.id, \{/);
 });
 
 test("a failed intercompany mirror reaches the response", () => {
