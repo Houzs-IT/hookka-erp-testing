@@ -52,7 +52,7 @@ test("it corrects COSTING only — it never touches physical stock", () => {
 test("a raw-material shortage is reported, not thrown away", () => {
   // A shortage is NOT an exception — the consume succeeds and returns the lines
   // it could not satisfy, and every caller was discarding that list.
-  assert.match(poHelpers, /const rm = await consumeRawMaterialsForPO\(db, existing\.id\);/);
+  assert.match(poHelpers, /const rm = await consumeRawMaterialsForJobCard\(db, existing\.id, \{/);
   assert.match(poHelpers, /for \(const sh of rm\.shortages \?\? \[\]\)/);
   assert.match(poHelpers, /so this job is under-costed/);
 });

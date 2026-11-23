@@ -1,945 +1,521 @@
-import { useState, useMemo } from "react";
+// ---------------------------------------------------------------------------
+// MRP — raw materials (owner 2026-11-23, ported from the Houzs / Conts MRP).
+//
+// One table of raw materials needed by open production orders, netted against
+// RM stock and open POs (GET /api/mrp/plan — recomputed live on every load).
+// Tabs = merged material groups (src/lib/mrp-groups.ts: sofa + bedframe
+// together; a new RM category gets its own tab). Expand a row to see each
+// production order and what covers it (Stock / PO / Short). Deliberately no
+// KPI tiles and no banner (owner: 「这些不需要」). Create PO is the next step.
+// ---------------------------------------------------------------------------
+import { Fragment, useMemo, useState } from "react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
-import { useToast } from "@/components/ui/toast";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Layers,
-  RefreshCw,
-  Loader2,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  Factory,
-  Package,
-  ShoppingCart,
-  ArrowDownUp,
-  Filter,
-} from "lucide-react";
-import type { MaterialRequirement, MRPRun } from "@/types";
+import { Layers, RefreshCw, Loader2, Download, ChevronRight, ChevronDown } from "lucide-react";
+import type { RowKind, StyledSheet } from "@/lib/styled-xlsx";
 
-type Tab = "DASHBOARD" | "REQUIREMENTS" | "FABRIC";
-type StatusFilter = "ALL" | "SUFFICIENT" | "LOW" | "SHORTAGE";
-type Horizon = "1w" | "2w" | "1m" | "all";
-const HORIZONS: { key: Horizon; label: string }[] = [
-  { key: "1w", label: "This Week" },
-  { key: "2w", label: "2 Weeks" },
-  { key: "1m", label: "1 Month" },
-  { key: "all", label: "All" },
-];
+type Cover =
+  | { source: "STOCK"; qty: number }
+  | { source: "PO"; ref: string; eta: string; qty: number };
 
-type FabricDetail = {
-  id: string;
+type OrderLine = {
+  productionOrderId: string;
+  poNo: string;
+  productCode: string;
+  quantity: number;
+  jobCardId: string | null;
+  dept: string;
+  wipKey: string;
+  required: number;
+  needBy: string;
+  covers: Cover[];
+  shortQty: number;
+  status: "READY" | "WAITING_PO" | "SHORT";
+};
+
+type MaterialRow = {
+  rmId: string;
   code: string;
-  name: string;
-  category: string;
-  sohMeters: number;
+  description: string;
+  itemGroup: string;
+  group: string;
+  uom: string;
+  needed: number;
+  stock: number;
   poOutstanding: number;
-  weeklyUsage: number;
-  twoWeekUsage: number;
-  monthlyUsage: number;
-  shortage: boolean;
+  short: number;
+  firstNeedBy: string;
+  mainSupplier: string | null;
+  orders: OrderLine[];
 };
 
-// BUG-2026-08-13-144 coverage. `onOrderUnresolvedLines` = open purchase-order
-// lines that resolve to no material code at all, so their inbound quantity was
-// credited to nothing. `null` = a run persisted before the count existed, which
-// is NOT "zero unresolved"; both cases are stated on the page rather than
-// letting "On Order" look complete.
-type MRPMeta = {
-  matchedPOs?: number;
-  unmatchedPOs?: number;
-  onOrderUnresolvedLines?: number | null;
+type Plan = {
+  calculatedAt: string;
+  groups: string[];
+  materials: MaterialRow[];
+  productionOrders: { open: number; counted: number; alreadyDeducted: number; noBom: number };
+  unresolved: { poNo: string; productCode: string; material: string; required: number }[];
+  openPoLinesUnresolved: number;
 };
 
-type MRPPostResponse = {
-  success?: boolean;
-  data?: MRPRun;
-  fabricDetail?: FabricDetail[];
-  meta?: MRPMeta;
-};
-
-const TABS: { key: Tab; label: string }[] = [
-  { key: "DASHBOARD", label: "MRP Dashboard" },
-  { key: "REQUIREMENTS", label: "Material Requirements" },
-  { key: "FABRIC", label: "Fabric Planning" },
+type Win = "1w" | "2w" | "1m" | "all";
+const WINDOWS: { key: Win; label: string; days: number | null }[] = [
+  { key: "1w", label: "This week", days: 7 },
+  { key: "2w", label: "2 weeks", days: 14 },
+  { key: "1m", label: "1 month", days: 31 },
+  { key: "all", label: "All", days: null },
 ];
 
-function statusBadgeColor(status: string) {
-  switch (status) {
-    case "SUFFICIENT":
-      return "bg-[#EEF3E4] text-[#4F7C3A] border-[#C6DBA8]";
-    case "LOW":
-      return "bg-[#FAEFCB] text-[#9C6F1E] border-[#E8D597]";
-    case "SHORTAGE":
-      return "bg-[#F9E1DA] text-[#9A3A2D] border-[#E8B2A1]";
-    default:
-      return "bg-gray-100 text-gray-600 border-gray-300";
-  }
+const DEPT_LABEL: Record<string, string> = {
+  FAB_CUT: "Fab Cut",
+  FAB_SEW: "Fab Sew",
+  WOOD_CUT: "Wood Cut",
+  FOAM_CUTTING: "Foam Cutting",
+  FOAM: "Foam",
+  FIBRE: "Fibre",
+  FRAMING: "Framing",
+  WEBBING: "Webbing",
+  UPHOLSTERY: "Upholstery",
+  PACKING: "Packing",
+};
+
+const fmtQty = (n: number): string =>
+  Math.abs(n) < 1e-9
+    ? "—"
+    : n.toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+const fmtDate = (d: string): string => {
+  if (!d) return "—";
+  const dt = new Date(`${d.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+};
+
+const fmtTime = (iso: string): string => {
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+};
+
+const coverLabel = (c: Cover, uom: string): string =>
+  c.source === "STOCK"
+    ? `Stock ${fmtQty(c.qty)} ${uom}`
+    : `${c.ref}${c.eta ? ` · ETA ${fmtDate(c.eta)}` : ""} · ${fmtQty(c.qty)} ${uom}`;
+
+function cutoffFor(win: Win): string | null {
+  const w = WINDOWS.find((x) => x.key === win);
+  if (!w || w.days == null) return null;
+  const d = new Date();
+  d.setDate(d.getDate() + w.days);
+  return d.toISOString().slice(0, 10);
 }
 
-function statusDotColor(status: string) {
-  switch (status) {
-    case "SUFFICIENT":
-      return "bg-[#4F7C3A]";
-    case "LOW":
-      return "bg-[#9C6F1E]";
-    case "SHORTAGE":
-      return "bg-[#9A3A2D]";
-    default:
-      return "bg-gray-400";
-  }
+// The row as seen through the need-by window: only order lines due by the
+// cutoff count toward Needed / Short. An order with no date only shows in All.
+function windowed(m: MaterialRow, cutoff: string | null): MaterialRow | null {
+  if (!cutoff) return m;
+  const orders = m.orders.filter((o) => o.needBy && o.needBy <= cutoff);
+  if (orders.length === 0) return null;
+  return {
+    ...m,
+    orders,
+    needed: orders.reduce((s, o) => s + o.required, 0),
+    short: orders.reduce((s, o) => s + o.shortQty, 0),
+  };
 }
 
 export default function MRPPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("DASHBOARD");
-  // mrpDataLocal is set ONLY by the runMRP() POST handler. The cached GET
-  // response feeds mrpDataFromServer via useMemo; we render whichever is
-  // newer so the user sees their just-completed run without a refetch.
-  const [mrpDataLocal, setMrpDataLocal] = useState<MRPRun | null>(null);
-  // Paired with mrpDataLocal — the meta belongs to the run being displayed, so
-  // a fresh POST must replace BOTH or the page would show a new run's numbers
-  // under the old run's coverage caveat.
-  const [mrpMetaLocal, setMrpMetaLocal] = useState<MRPMeta | null>(null);
-  const [fabricData, setFabricData] = useState<FabricDetail[]>([]);
-  const [running, setRunning] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
-  const [sortDesc, setSortDesc] = useState(true);
-  const [horizon, setHorizon] = useState<Horizon>("all");
-
-  const { data: mrpResp, loading } = useCachedJson<{
+  const { data: resp, loading, error } = useCachedJson<{
     success?: boolean;
-    data?: unknown;
-    meta?: MRPMeta;
-  }>("/api/mrp");
+    data?: Plan;
+    error?: string;
+  }>("/api/mrp/plan");
+  // Recalculate = a fresh GET (the plan is never stored). The fresh answer
+  // replaces the cached one on screen; a failure is shown, never swallowed.
+  const [fresh, setFresh] = useState<Plan | null>(null);
+  const [recalcError, setRecalcError] = useState<string | null>(null);
+  const [recalculating, setRecalculating] = useState(false);
+  const plan = fresh ?? (resp?.success ? resp.data : undefined);
 
-  const mrpDataFromServer: MRPRun | null = useMemo(() => {
-    const json = mrpResp;
-    const d = json?.data;
-    if (
-      json?.success &&
-      d &&
-      typeof d === "object" &&
-      !Array.isArray(d) &&
-      ("requirements" in (d as object) || "runDate" in (d as object))
-    ) {
-      return d as MRPRun;
-    }
-    return null;
-  }, [mrpResp]);
-  const mrpData = mrpDataLocal ?? mrpDataFromServer;
-  // Meta follows whichever run is on screen, so the caveat always describes the
-  // numbers beside it.
-  const mrpMeta: MRPMeta | null = mrpDataLocal ? mrpMetaLocal : (mrpResp?.meta ?? null);
-
-  const runMRP = async (h?: Horizon) => {
-    const selectedHorizon = h ?? horizon;
-    setRunning(true);
+  const recalculate = async () => {
+    setRecalculating(true);
+    setRecalcError(null);
     try {
-      const res = await fetch(`/api/mrp?horizon=${selectedHorizon}`, { method: "POST" });
-      const json = (await res.json()) as MRPPostResponse;
+      const res = await fetch("/api/mrp/plan", { cache: "no-store" });
+      const json = (await res.json()) as { success?: boolean; data?: Plan; error?: string };
       if (json.success && json.data) {
-        setMrpDataLocal(json.data);
-        setMrpMetaLocal(json.meta ?? null);
-        if (json.fabricDetail) {
-          setFabricData(json.fabricDetail);
-        }
-        invalidateCachePrefix("/api/mrp");
+        setFresh(json.data);
+        invalidateCachePrefix("/api/mrp/plan");
+      } else {
+        setRecalcError(json.error || `MRP calculation failed (HTTP ${res.status}).`);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      setRecalcError(err instanceof Error ? err.message : String(err));
     } finally {
-      setRunning(false);
+      setRecalculating(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="h-8 w-8 animate-spin text-[#6B5C32]" />
-        <span className="ml-3 text-[#6B7280]">Loading MRP data...</span>
-      </div>
-    );
-  }
+  const [tab, setTab] = useState<string>("ALL");
+  const [win, setWin] = useState<Win>("all");
+  const [onlyShort, setOnlyShort] = useState(false);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [showGaps, setShowGaps] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
-  const requirements = mrpData?.requirements ?? [];
-  const shortages = requirements.filter((r) => r.status === "SHORTAGE");
-  const lowItems = requirements.filter((r) => r.status === "LOW");
-  const sufficientItems = requirements.filter((r) => r.status === "SUFFICIENT");
-
-  // Filtered & sorted requirements for tab 2
-  const filteredRequirements = requirements
-    .filter((r) => statusFilter === "ALL" || r.status === statusFilter)
-    .sort((a, b) =>
-      sortDesc
-        ? b.netRequired - a.netRequired
-        : a.netRequired - b.netRequired
-    );
-
-  // Fabric items for tab 3 (filter requirements to fabric categories)
-  const fabricCategories = ["BM_FABRIC", "SM_FABRIC"];
-  const fabricRequirements = requirements.filter((r) =>
-    fabricCategories.includes(r.materialCategory)
+  const cutoff = cutoffFor(win);
+  const inWindow = useMemo(
+    () => (plan?.materials ?? []).map((m) => windowed(m, cutoff)).filter((m): m is MaterialRow => !!m),
+    [plan, cutoff],
   );
 
+  const tabs = useMemo(() => {
+    const groups = plan?.groups ?? [];
+    const used = groups.filter((g) => inWindow.some((m) => m.group === g));
+    const unused = groups.filter((g) => !used.includes(g));
+    // A group present in the plan but missing from the live list (should not
+    // happen) still gets a tab rather than hiding its rows.
+    const extra = [...new Set(inWindow.map((m) => m.group))].filter((g) => !groups.includes(g));
+    return ["ALL", ...used, ...extra, ...unused].map((g) => {
+      const rows = inWindow.filter((m) => g === "ALL" || m.group === g);
+      return { key: g, label: g === "ALL" ? "All" : g, count: rows.length, short: rows.filter((m) => m.short > 0).length };
+    });
+  }, [plan, inWindow]);
+
+  const needle = q.trim().toLowerCase();
+  const rows = inWindow.filter(
+    (m) =>
+      (tab === "ALL" || m.group === tab) &&
+      (!onlyShort || m.short > 0) &&
+      (!needle || m.code.toLowerCase().includes(needle) || m.description.toLowerCase().includes(needle)),
+  );
+
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const exportExcel = async () => {
+    if (!plan) return;
+    setExporting(true);
+    try {
+      const { exportStyledWorkbookXlsx } = await import("@/lib/styled-xlsx");
+      const stamp = `Calculated ${fmtTime(plan.calculatedAt)} · need-by ${WINDOWS.find((w) => w.key === win)?.label ?? "All"}${tab === "ALL" ? "" : ` · ${tab}`}`;
+      const matAoa: (string | number)[][] = [
+        ["MRP — raw materials"],
+        [stamp],
+        [],
+        ["Code", "Description", "Material", "RM category", "UOM", "Needed", "Stock", "PO outstanding", "Short", "First need-by", "Main supplier", "Orders"],
+      ];
+      const matKinds: RowKind[] = ["title", "meta", "blank", "header"];
+      const ordAoa: (string | number)[][] = [
+        ["MRP — production orders per material"],
+        [stamp],
+        [],
+        ["Code", "Production order", "Product", "Qty", "Dept", "Needs", "UOM", "Need-by", "Covered by", "Short", "Status"],
+      ];
+      const ordKinds: RowKind[] = ["title", "meta", "blank", "header"];
+      for (const m of rows) {
+        matAoa.push([m.code, m.description, m.group, m.itemGroup, m.uom, m.needed, m.stock, m.poOutstanding, m.short, m.firstNeedBy, m.mainSupplier ?? "", m.orders.length]);
+        matKinds.push("item");
+        for (const o of m.orders) {
+          ordAoa.push([
+            m.code,
+            o.poNo,
+            o.productCode,
+            o.quantity,
+            DEPT_LABEL[o.dept] ?? o.dept,
+            o.required,
+            m.uom,
+            o.needBy,
+            o.covers.map((c) => coverLabel(c, m.uom)).join("; "),
+            o.shortQty,
+            o.status === "READY" ? "Ready" : o.status === "WAITING_PO" ? "Waiting PO" : "Short",
+          ]);
+          ordKinds.push("item");
+        }
+      }
+      const sheets: StyledSheet[] = [
+        { name: "Materials", aoa: matAoa, kinds: matKinds, cols: [18, 34, 12, 12, 7, 11, 11, 13, 11, 12, 22, 8], numCols: [5, 6, 7, 8, 11] },
+        { name: "Orders", aoa: ordAoa, kinds: ordKinds, cols: [18, 18, 18, 6, 12, 10, 7, 12, 40, 10, 11], numCols: [3, 5, 9] },
+      ];
+      await exportStyledWorkbookXlsx(`MRP-${plan.calculatedAt.slice(0, 10)}.xlsx`, sheets);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const failed = !loading && !plan;
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-[#1F1D1B] flex items-center gap-2">
             <Layers className="h-7 w-7 text-[#6B5C32]" />
-            Material Requirements Planning
+            MRP — Raw Materials
           </h1>
           <p className="text-xs text-[#6B7280] mt-0.5">
-            Plan material needs based on active production orders and BOM
+            Open production orders × BOM against raw-material stock and open POs.
+            {plan ? ` Calculated ${fmtTime(plan.calculatedAt)}.` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Planning Horizon Selector */}
-          <div className="flex items-center gap-1 bg-[#F0ECE9] rounded-lg p-0.5">
-            {HORIZONS.map((h) => (
-              <button
-                key={h.key}
-                onClick={() => { setHorizon(h.key); runMRP(h.key); }}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                  horizon === h.key
-                    ? "bg-white text-[#6B5C32] shadow-sm"
-                    : "text-[#6B7280] hover:text-[#1F1D1B]"
-                }`}
-              >
-                {h.label}
-              </button>
-            ))}
-          </div>
-          <Button
-            variant="primary"
-            onClick={() => runMRP()}
-            disabled={running}
-          >
-            {running ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Running MRP...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="h-4 w-4" />
-                Run MRP
-              </>
-            )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={recalculate} disabled={recalculating || loading}>
+            {recalculating || loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Recalculate
+          </Button>
+          <Button variant="outline" onClick={exportExcel} disabled={!plan || exporting || rows.length === 0}>
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Export Excel
           </Button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-[#E2DDD8]">
-        <nav className="flex gap-0 -mb-px">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
-                activeTab === tab.key
-                  ? "border-[#6B5C32] text-[#6B5C32]"
-                  : "border-transparent text-[#6B7280] hover:text-[#1F1D1B] hover:border-[#E2DDD8]"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {/* Tab Content */}
-      {activeTab === "DASHBOARD" && (
-        <DashboardTab
-          mrpData={mrpData}
-          shortages={shortages}
-          lowItems={lowItems}
-          sufficientItems={sufficientItems}
-        />
+      {loading && !plan && (
+        <div className="flex items-center justify-center h-64 text-[#6B7280]">
+          <Loader2 className="h-6 w-6 animate-spin text-[#6B5C32]" />
+          <span className="ml-3">Calculating MRP…</span>
+        </div>
       )}
 
-      {activeTab === "REQUIREMENTS" && (
-        <RequirementsTab
-          requirements={filteredRequirements}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          sortDesc={sortDesc}
-          setSortDesc={setSortDesc}
-          allRequirements={requirements}
-          meta={mrpMeta}
-        />
+      {recalcError && (
+        <div className="rounded-lg border border-[#EBC6BF] bg-[#FDF1EF] p-3 text-sm text-[#9A3A2D]">
+          Recalculate failed: {recalcError}
+        </div>
       )}
 
-      {activeTab === "FABRIC" && (
-        <FabricTab
-          fabricRequirements={fabricRequirements}
-          fabricData={fabricData}
-          mrpData={mrpData}
-        />
+      {failed && (
+        <div className="rounded-lg border border-[#EBC6BF] bg-[#FDF1EF] p-4 text-sm text-[#9A3A2D]">
+          {resp?.error || error || "The MRP could not be calculated."} Press Recalculate to try again.
+        </div>
       )}
-    </div>
-  );
-}
 
-// ===============================================
-// Tab 1: MRP Dashboard
-// ===============================================
-function DashboardTab({
-  mrpData,
-  shortages,
-  lowItems,
-  sufficientItems,
-}: {
-  mrpData: MRPRun | null;
-  shortages: MaterialRequirement[];
-  lowItems: MaterialRequirement[];
-  sufficientItems: MaterialRequirement[];
-}) {
-  const kpis = [
-    {
-      label: "Last Run Date",
-      value: mrpData
-        ? new Date(mrpData.runDate).toLocaleDateString("en-MY", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : "Never",
-      icon: Clock,
-      color: "text-[#6B5C32]",
-    },
-    {
-      label: "Production Orders",
-      value: mrpData?.productionOrderCount ?? 0,
-      icon: Factory,
-      color: "text-[#3E6570]",
-    },
-    {
-      label: "Materials Checked",
-      value: mrpData?.totalMaterials ?? 0,
-      icon: Package,
-      color: "text-[#3E6570]",
-    },
-    {
-      label: "Shortages Found",
-      value: mrpData?.shortageCount ?? 0,
-      icon: AlertTriangle,
-      color: shortages.length > 0 ? "text-[#9A3A2D]" : "text-[#4F7C3A]",
-    },
-  ];
-
-  return (
-    <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((kpi) => (
-          <Card key={kpi.label}>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280] font-medium uppercase tracking-wide">
-                    {kpi.label}
-                  </p>
-                  <p className="text-xl font-bold text-[#1F1D1B] mt-1">
-                    {kpi.value}
-                  </p>
-                </div>
-                <kpi.icon className={`h-8 w-8 ${kpi.color} opacity-70`} />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Material Status Overview */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Material Status Overview</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-[#EEF3E4] border border-[#C6DBA8]">
-              <CheckCircle2 className="h-8 w-8 text-[#4F7C3A]" />
-              <div>
-                <p className="text-2xl font-bold text-[#4F7C3A]">
-                  {sufficientItems.length}
-                </p>
-                <p className="text-xs text-[#4F7C3A] font-medium">Sufficient</p>
-              </div>
+      {plan && (
+        <div className="rounded-xl border border-[#E2DDD8] bg-white">
+          <div className="flex flex-wrap items-center gap-3 border-b border-[#EFEBE3] px-3.5 py-2.5">
+            <div className="flex items-center gap-1 rounded-lg bg-[#F0ECE9] p-0.5" role="group" aria-label="Need-by window">
+              {WINDOWS.map((w) => (
+                <button
+                  key={w.key}
+                  type="button"
+                  onClick={() => setWin(w.key)}
+                  aria-pressed={win === w.key}
+                  className={`h-7 rounded-md px-2.5 text-xs font-semibold cursor-pointer ${
+                    win === w.key ? "bg-white text-[#1F1D1B] shadow-sm" : "text-[#6B7280] hover:text-[#1F1D1B]"
+                  }`}
+                >
+                  {w.label}
+                </button>
+              ))}
             </div>
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-[#FAEFCB] border border-[#E8D597]">
-              <AlertTriangle className="h-8 w-8 text-[#9C6F1E]" />
-              <div>
-                <p className="text-2xl font-bold text-[#9C6F1E]">
-                  {lowItems.length}
-                </p>
-                <p className="text-xs text-[#9C6F1E] font-medium">Low Stock</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-4 rounded-lg bg-[#F9E1DA] border border-[#E8B2A1]">
-              <AlertTriangle className="h-8 w-8 text-[#9A3A2D]" />
-              <div>
-                <p className="text-2xl font-bold text-[#9A3A2D]">
-                  {shortages.length}
-                </p>
-                <p className="text-xs text-[#9A3A2D] font-medium">Shortage</p>
-              </div>
-            </div>
+            <label className="flex items-center gap-1.5 text-xs text-[#374151] cursor-pointer">
+              <input type="checkbox" checked={onlyShort} onChange={(e) => setOnlyShort(e.target.checked)} />
+              Only shortages
+            </label>
+            <label className="ml-auto flex items-center gap-1.5 text-xs text-[#6B7280]">
+              Search
+              <input
+                type="text"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Code or description"
+                className="h-8 w-48 rounded-lg border border-[#D8D1C3] px-2.5 text-[13px] text-[#1F1D1B]"
+              />
+            </label>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* Shortage Summary */}
-      {shortages.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-[#9A3A2D]" />
-              Material Shortages
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {shortages.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-4 rounded-lg bg-[#F9E1DA] border border-[#E8B2A1]"
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-[#EFEBE3] px-3.5 py-2.5">
+            <span className="mr-1 text-xs text-[#6B7280]">Material</span>
+            {tabs.map((t) => {
+              const on = tab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setTab(t.key)}
+                  aria-pressed={on}
+                  className={`h-[30px] whitespace-nowrap rounded-full border px-2.5 text-xs cursor-pointer ${
+                    on
+                      ? "border-[#6B5C32] bg-[#6B5C32] font-bold text-white"
+                      : t.count
+                        ? "border-[#E2DDD8] bg-white font-semibold text-[#374151]"
+                        : "border-[#E2DDD8] bg-[#F7F5F1] font-semibold text-[#9CA3AF]"
+                  }`}
                 >
-                  <p className="font-semibold text-[#9A3A2D] text-sm">
-                    {item.materialName}
-                  </p>
-                  <p className="text-xs text-[#9A3A2D] mt-0.5">
-                    {item.materialCategory}
-                  </p>
-                  <div className="mt-2 flex items-center justify-between text-xs">
-                    <span className="text-[#9A3A2D]">
-                      Need: <strong>{item.grossRequired}</strong> {item.unit}
-                    </span>
-                    <span className="text-[#9A3A2D]">
-                      Have: <strong>{item.onHand}</strong> {item.unit}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-xs text-[#9A3A2D] font-medium">
-                    Shortage: {item.netRequired} {item.unit}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Low Stock Warning */}
-      {lowItems.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-[#9C6F1E]" />
-              Low Stock Warnings
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {lowItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-4 rounded-lg bg-[#FAEFCB] border border-[#E8D597]"
-                >
-                  <p className="font-semibold text-[#9C6F1E] text-sm">
-                    {item.materialName}
-                  </p>
-                  <p className="text-xs text-[#9C6F1E] mt-0.5">
-                    {item.materialCategory}
-                  </p>
-                  <div className="mt-2 flex items-center justify-between text-xs">
-                    <span className="text-[#9C6F1E]">
-                      Need: <strong>{item.grossRequired}</strong> {item.unit}
-                    </span>
-                    <span className="text-[#9C6F1E]">
-                      Have: <strong>{item.onHand}</strong> {item.unit}
-                    </span>
-                  </div>
-                  {item.suggestedPOQty > 0 && (
-                    <div className="mt-1 text-xs text-[#9C6F1E] font-medium">
-                      Suggested PO: {item.suggestedPOQty} {item.unit}
-                    </div>
+                  {t.label} <span className="ml-0.5 text-[11px] opacity-75">{t.count}</span>
+                  {t.short > 0 && (
+                    <span className="ml-1 rounded-full bg-[#B42318] px-1.5 py-px text-[11px] font-bold text-white">{t.short}</span>
                   )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
+                </button>
+              );
+            })}
+          </div>
 
-// ===============================================
-// Tab 2: Material Requirements Table
-// ===============================================
-function RequirementsTab({
-  requirements,
-  statusFilter,
-  setStatusFilter,
-  sortDesc,
-  setSortDesc,
-  allRequirements,
-  meta,
-}: {
-  requirements: MaterialRequirement[];
-  statusFilter: StatusFilter;
-  setStatusFilter: (f: StatusFilter) => void;
-  sortDesc: boolean;
-  setSortDesc: (d: boolean) => void;
-  allRequirements: MaterialRequirement[];
-  meta: MRPMeta | null;
-}) {
-  const { toast } = useToast();
-  // BUG-2026-08-13-144 coverage, published beside the figures it qualifies.
-  // `undefined` (old client / no meta) and `null` (run predates the count) are
-  // both "nobody counted", which is a different statement from "none" — the
-  // banner says which of the two it is instead of implying full coverage.
-  const unresolvedOnOrderLines = meta?.onOrderUnresolvedLines;
-  const onOrderCoverageUnknown =
-    meta != null && (unresolvedOnOrderLines === null || unresolvedOnOrderLines === undefined);
-  const filters: { key: StatusFilter; label: string; count: number }[] = [
-    { key: "ALL", label: "All", count: allRequirements.length },
-    {
-      key: "SHORTAGE",
-      label: "Shortage",
-      count: allRequirements.filter((r) => r.status === "SHORTAGE").length,
-    },
-    {
-      key: "LOW",
-      label: "Low",
-      count: allRequirements.filter((r) => r.status === "LOW").length,
-    },
-    {
-      key: "SUFFICIENT",
-      label: "Sufficient",
-      count: allRequirements.filter((r) => r.status === "SUFFICIENT").length,
-    },
-  ];
-
-  return (
-    <div className="space-y-4">
-      {/* Filters */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-[#6B7280]" />
-          {filters.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setStatusFilter(f.key)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors cursor-pointer ${
-                statusFilter === f.key
-                  ? "bg-[#6B5C32] text-white border-[#6B5C32]"
-                  : "bg-white text-[#6B7280] border-[#E2DDD8] hover:bg-[#F0ECE9]"
-              }`}
-            >
-              {f.label} ({f.count})
-            </button>
-          ))}
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setSortDesc(!sortDesc)}
-        >
-          <ArrowDownUp className="h-3.5 w-3.5" />
-          Net Req {sortDesc ? "High-Low" : "Low-High"}
-        </Button>
-      </div>
-
-      {/* On-Order coverage. Every "On Order" below is a floor when some open
-          PO lines resolve to no material code — the shortage beside it is then
-          an over-statement, and the page has to say so rather than let the
-          column read as a complete count (BUG-2026-08-13-096's shape). */}
-      {typeof unresolvedOnOrderLines === "number" && unresolvedOnOrderLines > 0 && (
-        <div className="rounded-md border border-[#E8D597] bg-[#FAEFCB]/60 px-3 py-2 text-xs text-[#7A5A15]">
-          <span className="font-semibold">{unresolvedOnOrderLines}</span> open purchase-order
-          line{unresolvedOnOrderLines === 1 ? "" : "s"} carry no material code, so their
-          inbound quantity is credited to nothing. <strong>On Order below is a floor</strong>,
-          and any shortage it feeds may be overstated.
-        </div>
-      )}
-      {onOrderCoverageUnknown && (
-        <div className="rounded-md border border-[#E2DDD8] bg-[#F5F2ED] px-3 py-2 text-xs text-[#6B7280]">
-          On-Order coverage for this saved run is <span className="font-semibold">—</span> — it
-          was computed before unresolved purchase-order lines were counted. Re-run MRP to
-          measure it.
-        </div>
-      )}
-
-      {/* Table */}
-      <Card>
-        <CardContent className="p-0">
-          {/* Frozen header + first column (owner 2026-11-08). The table is 15
-              columns wide and often hundreds of rows long; the box scrolls on
-              both axes so the column names and the material name stay in view.
-              Sticky cells need OPAQUE backgrounds, so the tinted bucket colours
-              are pre-blended over the header colour rather than /alpha. */}
+          {/* Header row and the material column stay put while scrolling. */}
           <div className="max-h-[70vh] overflow-auto" data-testid="mrp-requirements-scroll">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[1080px] border-collapse text-[13px]">
               <thead className="sticky top-0 z-20">
-                <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                  <th className="sticky left-0 z-10 text-left p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_-1px_-1px_0_#E2DDD8]">Material</th>
-                  <th className="text-left p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Category</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Unit</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#ECF1F2] shadow-[inset_0_-1px_0_#E2DDD8]">This Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F0F3F3] shadow-[inset_0_-1px_0_#E2DDD8]">Next Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F2F3F3] shadow-[inset_0_-1px_0_#E2DDD8]">2-4 Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F5F4F4] shadow-[inset_0_-1px_0_#E2DDD8]">4+ Wk</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Total Req</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">On Hand</th>
-                  {/* BUG-2026-08-13-144. This column did not exist while the
-                      server hard-coded `onOrder = 0`, so the operator could
-                      not see that Net Req was ignoring every open PO. The
-                      number is now real, and visible where it is subtracted. */}
-                  <th
-                    className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]"
-                    title="Outstanding quantity on open purchase orders (status not RECEIVED / CANCELLED / CLOSED), per line: ordered − received. Same definition as the Fabric tab's PO Outstanding."
-                  >
-                    On Order
-                  </th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Net Req</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Status</th>
-                  <th className="text-right p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Sugg. PO</th>
-                  <th className="text-left p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Supplier</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Order By</th>
-                  <th className="text-center p-3 font-medium text-[#6B7280] bg-[#F7F5F4] shadow-[inset_0_-1px_0_#E2DDD8]">Action</th>
+                <tr className="bg-[#FAF8F4] text-left text-[11px] uppercase tracking-wide text-[#6B7280]">
+                  <th className="sticky left-0 z-10 bg-[#FAF8F4] px-2.5 py-2">Raw material</th>
+                  <th className="px-1.5 py-2">Material</th>
+                  <th className="px-1.5 py-2">UOM</th>
+                  <th className="px-1.5 py-2 text-right">Needed</th>
+                  <th className="px-1.5 py-2 text-right">Stock</th>
+                  <th className="px-1.5 py-2 text-right">PO outstanding</th>
+                  <th className="px-1.5 py-2 text-right">Short</th>
+                  <th className="px-1.5 py-2">First need-by</th>
+                  <th className="px-1.5 py-2">Main supplier</th>
+                  <th className="px-2.5 py-2 text-right">Orders</th>
                 </tr>
               </thead>
               <tbody>
-                {requirements.map((req) => {
-                  const buckets = req.byBucket;
-                  // `?? null` — NOT `|| 14`. An absent lead time is a fact
-                  // about the supplier binding, and the row must state it as
-                  // one (BUG-2026-08-13-145).
-                  const leadTime = req.leadTimeDays ?? null;
-                  const moq = req.moq ?? null;
-                  const orderBy = req.suggestedOrderDate;
-                  const supplierName = req.preferredSupplierName;
-                  const tw = buckets?.THIS_WEEK || 0;
-                  const nw = buckets?.NEXT_WEEK || 0;
-                  const w34 = buckets?.WEEK_3_4 || 0;
-                  const beyond = buckets?.BEYOND || 0;
-                  return (
-                  <tr
-                    key={req.id}
-                    className={`border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/30 transition-colors ${
-                      req.status === "SHORTAGE" ? "bg-[#F9E1DA]/30" : ""
-                    }`}
-                  >
-                    <td className="sticky left-0 z-[5] bg-white p-3 shadow-[inset_-1px_0_0_#E2DDD8]">
-                      <div className="flex items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${statusDotColor(req.status)}`} />
-                        <span className="font-medium text-[#1F1D1B]">{req.materialName}</span>
-                      </div>
-                    </td>
-                    <td className="p-3 text-[#6B7280] text-xs">{req.materialCategory}</td>
-                    <td className="p-3 text-center text-[#6B7280]">{req.unit}</td>
-                    <td className={`p-3 text-right bg-[#E0EDF0]/50 ${tw > 0 ? "font-bold text-[#9A3A2D]" : "text-[#6B7280]"}`}>{tw || "-"}</td>
-                    <td className={`p-3 text-right bg-[#E0EDF0]/30 ${nw > 0 ? "font-medium text-[#9C6F1E]" : "text-[#6B7280]"}`}>{nw || "-"}</td>
-                    <td className={`p-3 text-right bg-[#E0EDF0]/20 ${w34 > 0 ? "text-[#1F1D1B]" : "text-[#6B7280]"}`}>{w34 || "-"}</td>
-                    <td className="p-3 text-right bg-[#E0EDF0]/10 text-[#6B7280]">{beyond || "-"}</td>
-                    <td className="p-3 text-right font-medium">{req.grossRequired}</td>
-                    <td className="p-3 text-right">{req.onHand}</td>
-                    <td className={`p-3 text-right ${req.onOrder > 0 ? "text-[#3E6570] font-medium" : "text-[#6B7280]"}`}>
-                      {req.onOrder > 0 ? req.onOrder : "-"}
-                    </td>
-                    <td className={`p-3 text-right font-bold ${req.netRequired > 0 ? "text-[#9A3A2D]" : "text-[#4F7C3A]"}`}>{req.netRequired}</td>
-                    <td className="p-3 text-center">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${statusBadgeColor(req.status)}`}>{req.status}</span>
-                    </td>
-                    <td
-                      className="p-3 text-right font-medium"
-                      title={
-                        req.suggestedPOQty > 0
-                          ? moq == null
-                            ? "Exactly the shortage — this supplier binding states no MOQ, so nothing was rounded up"
-                            : `Shortage rounded up to the supplier's stated MOQ of ${moq}`
-                          : undefined
-                      }
-                    >
-                      {req.suggestedPOQty > 0 ? `${req.suggestedPOQty}` : "-"}
-                      {req.suggestedPOQty > 0 && (
-                        <span className="block text-[10px] font-normal text-[#9CA3AF]">
-                          {moq == null ? "MOQ —" : `MOQ ${moq}`}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 text-left text-xs text-[#6B7280]">
-                      {supplierName || "-"}
-                      {/* An em dash, not a hidden row and not "14d". The lead
-                          time sits under the supplier's NAME, so a literal
-                          here reads as something the supplier told us. */}
-                      <span
-                        className="block text-[10px] text-[#9CA3AF]"
-                        title={
-                          leadTime == null
-                            ? "This supplier binding states no lead time — no order-by date can be computed"
-                            : undefined
-                        }
-                      >
-                        {leadTime == null ? "lead time —" : `${leadTime}d lead`}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center text-xs">
-                      {orderBy ? (
-                        <span className={`font-medium ${new Date(orderBy) <= new Date() ? "text-[#9A3A2D]" : "text-[#6B7280]"}`}>
-                          {new Date(orderBy).toLocaleDateString("en-MY", { day: "2-digit", month: "short" })}
-                        </span>
-                      ) : req.netRequired > 0 && leadTime == null ? (
-                        <span className="text-[#9CA3AF]" title="No lead time on the supplier binding — a deadline cannot be computed">
-                          —
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="p-3 text-center">
-                      {req.status === "SHORTAGE" && (
-                        <Button variant="outline" size="sm" onClick={() => toast.info(`PO suggestion for ${req.materialName} — ${req.suggestedPOQty} ${req.unit}`)}>
-                          <ShoppingCart className="h-3.5 w-3.5" />
-                          PO
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                  );
-                })}
-                {requirements.length === 0 && (
+                {rows.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={16}
-                      className="p-8 text-center text-[#6B7280]"
-                    >
-                      No material requirements found. Run MRP to generate.
+                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-[#6B7280]">
+                      {plan.materials.length === 0
+                        ? "No raw materials are needed by open production orders."
+                        : "Nothing matches these filters."}
                     </td>
                   </tr>
                 )}
+                {rows.map((m) => {
+                  const isOpen = open.has(m.rmId);
+                  const isShort = m.short > 1e-9;
+                  return (
+                    <Fragment key={m.rmId}>
+                      <tr className={`border-t border-[#EFEBE3] ${isShort ? "bg-[#FFFBFA]" : "bg-white"}`}>
+                        <td className={`sticky left-0 z-[5] px-2.5 py-2 ${isShort ? "bg-[#FFFBFA]" : "bg-white"}`}>
+                          <button
+                            type="button"
+                            onClick={() => toggle(m.rmId)}
+                            aria-expanded={isOpen}
+                            aria-label={`${isOpen ? "Hide" : "Show"} orders for ${m.code}`}
+                            className="flex items-start gap-1.5 text-left cursor-pointer"
+                          >
+                            {isOpen ? (
+                              <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-[#6B7280]" />
+                            ) : (
+                              <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#6B7280]" />
+                            )}
+                            <span>
+                              <b>{m.code}</b> <span className="text-[#6B7280]">{m.description}</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td className="px-1.5 py-2 whitespace-nowrap">
+                          <span className="rounded bg-[#F3EFE6] px-1.5 py-0.5 text-[11px] text-[#5B4D27]">{m.group}</span>{" "}
+                          <span className="text-[10px] text-[#9CA3AF]">{m.itemGroup}</span>
+                        </td>
+                        <td className="px-1.5 py-2 text-[#6B7280]">{m.uom}</td>
+                        <td className="px-1.5 py-2 text-right font-semibold tabular-nums">{fmtQty(m.needed)}</td>
+                        <td className="px-1.5 py-2 text-right tabular-nums">{fmtQty(m.stock)}</td>
+                        <td className="px-1.5 py-2 text-right tabular-nums">{fmtQty(m.poOutstanding)}</td>
+                        <td className={`px-1.5 py-2 text-right font-bold tabular-nums ${isShort ? "text-[#B42318]" : "text-[#9CA3AF]"}`}>
+                          {isShort ? fmtQty(m.short) : "—"}
+                        </td>
+                        <td className="px-1.5 py-2 tabular-nums">{fmtDate(m.firstNeedBy)}</td>
+                        <td className={`px-1.5 py-2 ${m.mainSupplier ? "text-[#374151]" : "text-[#8A6A12]"}`}>{m.mainSupplier ?? "Not set"}</td>
+                        <td className="px-2.5 py-2 text-right tabular-nums">{m.orders.length}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr className="bg-[#FCFBF8]">
+                          <td colSpan={10} className="px-8 pb-3 pt-1">
+                            <table className="w-full border-collapse rounded-lg border border-[#EFEBE3] bg-white text-xs">
+                              <thead>
+                                <tr className="text-left text-[11px] text-[#6B7280]">
+                                  <th className="px-2.5 py-1.5">Production order</th>
+                                  <th className="px-1.5 py-1.5">Product</th>
+                                  <th className="px-1.5 py-1.5 text-right">Qty</th>
+                                  <th className="px-1.5 py-1.5">Used at</th>
+                                  <th className="px-1.5 py-1.5 text-right">Needs</th>
+                                  <th className="px-1.5 py-1.5">Need-by</th>
+                                  <th className="px-2.5 py-1.5">Covered by</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {m.orders.map((o, i) => (
+                                  <tr key={`${o.productionOrderId}-${o.wipKey}-${o.dept}-${i}`} className="border-t border-[#F3F0EA]">
+                                    <td className="px-2.5 py-1.5 font-semibold text-[#6B5A2E]">{o.poNo}</td>
+                                    <td className="px-1.5 py-1.5">{o.productCode}</td>
+                                    <td className="px-1.5 py-1.5 text-right">{o.quantity}</td>
+                                    <td className="px-1.5 py-1.5 text-[#6B7280]">{DEPT_LABEL[o.dept] ?? o.dept}</td>
+                                    <td className="px-1.5 py-1.5 text-right tabular-nums">
+                                      {fmtQty(o.required)} {m.uom}
+                                    </td>
+                                    <td className="px-1.5 py-1.5 tabular-nums">{fmtDate(o.needBy)}</td>
+                                    <td className="px-2.5 py-1.5">
+                                      <span className="flex flex-wrap gap-1">
+                                        {o.covers.map((c, j) => (
+                                          <span
+                                            key={j}
+                                            className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                                              c.source === "STOCK" ? "bg-[#E7F3EC] text-[#1E6B3F]" : "bg-[#E8F0F8] text-[#1F4E6B]"
+                                            }`}
+                                          >
+                                            {coverLabel(c, m.uom)}
+                                          </span>
+                                        ))}
+                                        {o.shortQty > 1e-9 && (
+                                          <span className="rounded bg-[#FDECEA] px-1.5 py-0.5 text-[11px] font-semibold text-[#B42318]">
+                                            Short {fmtQty(o.shortQty)} {m.uom}
+                                          </span>
+                                        )}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            <div className="mt-1.5 text-[11px] text-[#6B7280]">
+                              Earliest need-by takes stock first, then the earliest PO; what is left is short.
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
-// ===============================================
-// Tab 3: Fabric Planning (Fab Maint)
-// ===============================================
-function FabricTab({
-  fabricRequirements,
-  fabricData,
-  mrpData: _mrpData,
-}: {
-  fabricRequirements: MaterialRequirement[];
-  fabricData: FabricDetail[];
-  mrpData: MRPRun | null;
-}) {
-  // If we have detailed fabric data from a POST run, use it
-  // Otherwise, build from requirements
-  const hasFabricDetail = fabricData.length > 0;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-[#6B7280]">
-          Fabric-specific planning based on BOM usage from active production
-          orders. Replicates the Fab Maint sheet view.
-        </p>
-      </div>
-
-      {hasFabricDetail ? (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">
-              Fabric Inventory & Usage Planning
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                    <th className="text-left p-3 font-medium text-[#6B7280]">
-                      Fabric Code
-                    </th>
-                    <th className="text-left p-3 font-medium text-[#6B7280]">
-                      Description
-                    </th>
-                    <th className="text-left p-3 font-medium text-[#6B7280]">
-                      Category
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      SOH (m)
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      PO Outstanding
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      1 Week Usage
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      2 Week Usage
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      1 Month Usage
-                    </th>
-                    <th className="text-center p-3 font-medium text-[#6B7280]">
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fabricData.map((fab) => (
-                    <tr
-                      key={fab.id}
-                      className={`border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/30 transition-colors ${
-                        fab.shortage ? "bg-[#F9E1DA]/40" : ""
-                      }`}
-                    >
-                      <td className="p-3 font-mono font-medium text-[#1F1D1B]">
-                        {fab.code}
-                      </td>
-                      <td className="p-3 text-[#1F1D1B]">{fab.name}</td>
-                      <td className="p-3">
-                        <Badge>{fab.category.replace("_", " ")}</Badge>
-                      </td>
-                      <td className="p-3 text-right font-medium">
-                        {fab.sohMeters}
-                      </td>
-                      <td className="p-3 text-right text-[#6B7280]">
-                        {fab.poOutstanding}
-                      </td>
-                      <td className="p-3 text-right">{fab.weeklyUsage}</td>
-                      <td className="p-3 text-right">{fab.twoWeekUsage}</td>
-                      <td className="p-3 text-right">{fab.monthlyUsage}</td>
-                      <td className="p-3 text-center">
-                        {fab.shortage ? (
-                          <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border bg-[#F9E1DA] text-[#9A3A2D] border-[#E8B2A1]">
-                            SHORTAGE
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border bg-[#EEF3E4] text-[#4F7C3A] border-[#C6DBA8]">
-                            OK
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="space-y-1 border-t border-[#EFEBE3] px-3.5 py-2.5 text-xs text-[#6B7280]">
+            <div>
+              {rows.length} raw materials shown · {plan.productionOrders.counted} of {plan.productionOrders.open} open production
+              orders still need materials ({plan.productionOrders.alreadyDeducted} already deducted,{" "}
+              {plan.productionOrders.noBom} with no BOM materials) · stock = RM balance now · PO outstanding = ordered, not yet
+              received · a WIP stops counting once its job card is completed (its materials have left stock) · need-by = that
+              department&apos;s due date, else the order&apos;s date.
             </div>
-          </CardContent>
-        </Card>
-      ) : (
-        /* Fallback: show fabric requirements from MRP data */
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">
-              Fabric Requirements Summary
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2DDD8] bg-[#F0ECE9]/50">
-                    <th className="text-left p-3 font-medium text-[#6B7280]">
-                      Fabric Material
-                    </th>
-                    <th className="text-left p-3 font-medium text-[#6B7280]">
-                      Category
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      SOH (m)
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      Gross Required
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      Net Required
-                    </th>
-                    <th className="text-center p-3 font-medium text-[#6B7280]">
-                      Status
-                    </th>
-                    <th className="text-right p-3 font-medium text-[#6B7280]">
-                      Sugg. PO Qty
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fabricRequirements.length > 0 ? (
-                    fabricRequirements.map((req) => (
-                      <tr
-                        key={req.id}
-                        className={`border-b border-[#E2DDD8] hover:bg-[#F0ECE9]/30 transition-colors ${
-                          req.status === "SHORTAGE" ? "bg-[#F9E1DA]/40" : ""
-                        }`}
-                      >
-                        <td className="p-3 font-medium text-[#1F1D1B]">
-                          {req.materialName}
-                        </td>
-                        <td className="p-3">
-                          <Badge>
-                            {req.materialCategory.replace("_", " ")}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-right">{req.onHand}</td>
-                        <td className="p-3 text-right font-medium">
-                          {req.grossRequired}
-                        </td>
-                        <td
-                          className={`p-3 text-right font-bold ${
-                            req.netRequired > 0
-                              ? "text-[#9A3A2D]"
-                              : "text-[#4F7C3A]"
-                          }`}
-                        >
-                          {req.netRequired}
-                        </td>
-                        <td className="p-3 text-center">
-                          <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${statusBadgeColor(
-                              req.status
-                            )}`}
-                          >
-                            {req.status}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right font-medium">
-                          {req.suggestedPOQty > 0
-                            ? `${req.suggestedPOQty} ${req.unit}`
-                            : "-"}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="p-8 text-center text-[#6B7280]"
-                      >
-                        No fabric data available. Click &quot;Run MRP&quot; to
-                        generate detailed fabric planning data.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+            {plan.openPoLinesUnresolved > 0 && (
+              <div className="font-semibold text-[#8A6A12]">
+                PO outstanding is a floor: {plan.openPoLinesUnresolved} open PO lines name no known raw material, so they are
+                not counted as coming in.
+              </div>
+            )}
+            {plan.unresolved.length > 0 && (
+              <div>
+                <button type="button" onClick={() => setShowGaps((v) => !v)} className="font-semibold text-[#8A6A12] underline cursor-pointer">
+                  {plan.unresolved.length} BOM lines name a material that is not in Raw Materials — not planned
+                </button>
+                {showGaps && (
+                  <ul className="mt-1 max-h-48 list-disc overflow-y-auto pl-5">
+                    {plan.unresolved.map((u, i) => (
+                      <li key={i}>
+                        {u.poNo} · {u.productCode} · {u.material} ({fmtQty(u.required)})
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

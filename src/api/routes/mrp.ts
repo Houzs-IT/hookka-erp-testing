@@ -30,6 +30,7 @@ import {
   type ProductionDimensions,
 } from "../lib/material-scaling";
 import { computeFabricMetrics } from "../lib/fabric-usage";
+import { buildMrpPlan } from "../lib/mrp-plan";
 
 const app = new Hono<Env>();
 
@@ -418,6 +419,23 @@ function rowsToMRPRun(
 // GET /api/mrp — return the most recent persisted run for this org so the FE
 // lands on something useful instead of an empty dashboard. Phase A1.1
 // (2026-05-09) replaces the prior data=null stub.
+// GET /api/mrp/plan — the raw-material MRP (owner 2026-11-23). Recomputed
+// live on every call from open production orders × BOM against RM stock and
+// open POs; nothing is stored. See src/api/lib/mrp-plan.ts.
+app.get("/plan", async (c) => {
+  const denied = await requirePermission(c, "mrp", "read");
+  if (denied) return denied;
+  try {
+    const plan = await buildMrpPlan(c.var.DB);
+    return c.json({ success: true, data: plan });
+  } catch (err) {
+    // Never a silent empty plan: a failed calculation must look failed.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[mrp/plan] failed", msg);
+    return c.json({ success: false, error: `MRP calculation failed: ${msg}` }, 500);
+  }
+});
+
 app.get("/", async (c) => {
   await ensurePendingMigrations(c.var.DB);
   const orgId = getOrgId(c);

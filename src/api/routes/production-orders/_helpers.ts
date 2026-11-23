@@ -12,7 +12,7 @@ import type { Env } from "../../worker";
 import { postProductionOrderCompletion } from "../../lib/fg-completion";
 import { archiveUnionSource } from "../../lib/archive-union";
 import {
-  consumeRawMaterialsForPO,
+  consumeRawMaterialsForJobCard,
   postJobCardLabor,
 } from "../../lib/po-cost-cascade";
 import {
@@ -4987,21 +4987,25 @@ export async function applyPoUpdate(
         });
       }
 
-      // F1 — RM consumption at FAB_CUT JC completion (moved here from PO
-      // completion on 2026-05-07). Fabric (and any other raw material the
-      // BOM authors on FC nodes) is deducted from raw_materials.balanceQty
-      // the moment ANY FAB_CUT JC of this PO flips done — matches physical
-      // reality (meters leave the roll when cutting happens, not weeks
-      // later). The consume is keyed on PO + BOM template (productCode):
-      // first FAB_CUT JC trips the consume for the whole PO, subsequent
-      // FAB_CUT JCs (e.g. STOOL with split Cushion / Base FCs) see the
-      // existing RM_ISSUE row and short-circuit via idempotency check
-      // inside consumeRawMaterialsForPO (refType='PRODUCTION_ORDER').
-      // Other JC dept completions (FAB_SEW, WOOD_CUT, etc.) are pure WIP
-      // transformations — no RM consume.
-      if (updated.departmentCode === "FAB_CUT") {
+      // F1 — RM consumption, PER WIP (owner 2026-11-23: 「完成了就扣 每个wip
+      // 完成的就扣」). Every JC completion deducts only the BOM lines owned by
+      // ITS top-level WIP (wipKey) in ITS department — fabric at FAB_CUT, fibre
+      // at FOAM / FIBRE, wood at WOOD_CUT, as the BOM authors them. Idempotent
+      // per (PO, wipKey, dept) via rm_consume_marks; POs already deducted under
+      // the old whole-PO-at-first-FAB_CUT rule are left alone. History: whole PO
+      // at PO completion → whole PO at first FAB_CUT (2026-05-07) → per WIP.
+      {
         try {
-          const rm = await consumeRawMaterialsForPO(db, existing.id);
+          const wipKey = String(
+            (updated as { wipKey?: unknown; wipkey?: unknown }).wipKey ??
+              (updated as { wipkey?: unknown }).wipkey ??
+              "",
+          );
+          const rm = await consumeRawMaterialsForJobCard(db, existing.id, {
+            id: updated.id,
+            wipKey,
+            departmentCode: updated.departmentCode,
+          });
           // A SHORTAGE is not an exception — the consume succeeds and returns
           // the lines it could not satisfy, and every caller was throwing that
           // list away. Those metres were cut but never left the roll in the
@@ -5015,7 +5019,7 @@ export async function applyPoUpdate(
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error("[consumeRawMaterialsForPO@FAB_CUT] cascade failed", {
+          console.error("[consumeRawMaterialsForJobCard] cascade failed", {
             poId: id,
             jobCardId: updated.id,
             dept: updated.departmentCode,
