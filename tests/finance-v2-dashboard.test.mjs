@@ -44,7 +44,7 @@ test("the tooltip: three aligned columns, the Total in bold, lines under a rule"
   assert.match(tip, /border-dashed/);
   // Which series are lines, which charts stack.
   assert.match(src, /<ChartTip shares stackTotal lineKeys=\{\["__cardfc__", "perHead", "perUnit"\]\} \/>/);
-  assert.match(src, /<ChartTip lineKeys=\{line \? \[line\.key\] : \[\]\} dashKeys=\{line\?\.dashed \? \[line\.key\] : \[\]\} \/>/);
+  assert.match(src, /<ChartTip lineKeys=\{allLines\.map\(\(l\) => l\.key\)\} dashKeys=\{allLines\.filter\(\(l\) => l\.dashed\)\.map\(\(l\) => l\.key\)\} \/>/ /* since 2026-11-23 the card's extra forecast lines are lines too */);
   assert.match(src, /<ChartTip shares stackTotal lineKeys=\{\["__fctotal__"\]\} \/>/);
 });
 

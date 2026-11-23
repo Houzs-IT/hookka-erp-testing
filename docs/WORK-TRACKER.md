@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-23**: Financial Dashboard Cash Flow / Balance Sheet forecasts (branch `feat/dashboard-cf-bs-forecast`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Cash Flow trade finance from real bills + supplier tick (branch `feat/tf-supplier-flag-actual-bills`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Forecast Balance Sheet trade finance (branch `fix/forecast-bs-trade-finance`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: MRP port entry added (branch `feat/mrp-port`, to `main`); nothing else re-checked.
@@ -328,6 +329,13 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 Financial Dashboard: Cash Flow and Balance Sheet forecasts (feat/dashboard-cf-bs-forecast, 2026-11-23)
+
+Ask (owner, 23 Nov): 「dashboard那边的balance sheet 和 cash flow 可以显示forecast的相对应数据」, then 「不可以都显示吗？」 (both Cash Flow forecasts, and the months ahead) → 「Build it」.
+1. 🔵 Cash Flow card: two dashed lines (forecast net, P&L and documents) beside Net change; rows Forecast (P&L), Forecast (documents) and vs each for the tab picked; the periods ahead (forecast only, faded bars, "(F)"). Read off the Cash Flow forecast's statement with the card's own split (`cashFlowCardMonth`).
+2. 🔵 Balance Sheet card: the periods ahead from the Forecast Balance Sheet (on last month-end's sheet, `forecastBsView`), totalled as the card totals the actual sheet. MEASURED on prod 2026-11-23: Oct'26's `/pl` sheet totals equal the dashboard's (assets RM 708,813.64, liabilities RM 672,917.39).
+3. Income Statement card unchanged. `src/lib/dashboard-forecast.ts`, tests `tests/dashboard-forecast.test.mjs`. ⚪ After deploy: open the dashboard on prod and compare with the Cash Flow and Monthly Balance Sheet pages.
 
 ## 🔵 Cash Flow trade finance: real bills, suppliers that can use it (feat/tf-supplier-flag-actual-bills, 2026-11-23)
 
