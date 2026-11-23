@@ -158,8 +158,9 @@ test("the MRP requirements table freezes its header row and first column", () =>
   const src = read("src/pages/planning/mrp.tsx");
   assert.match(src, /max-h-\[70vh\] overflow-auto" data-testid="mrp-requirements-scroll"/);
   assert.match(src, /<thead className="sticky top-0 z-20">/);
-  assert.match(src, /<th className="sticky left-0 z-10[^"]*">Raw material<\/th>/);
-  assert.match(src, /<td className=\{`sticky left-0 z-\[5\] [^`]*bg-white/);
+  // Full Houzs-parity page (2026-11-23): the material column is the frozen one.
+  assert.match(src, /\$\{c\.key === "code" \? "sticky left-0 z-10 " : ""\}whitespace-nowrap border-l border-\[#EFEBE3\] bg-\[#FAF8F4\]/);
+  assert.match(src, /className=\{`\$\{base\} sticky left-0 z-\[5\] \$\{bg\}`\}/);
   // Sticky header cells must be opaque — no /alpha backgrounds left in the header.
   const head = src.slice(src.indexOf('data-testid="mrp-requirements-scroll"'), src.indexOf("</thead>", src.indexOf('data-testid="mrp-requirements-scroll"')));
   assert.doesNotMatch(head, /<th[^>]*bg-\[#[0-9A-Fa-f]{6}\]\/\d+/);

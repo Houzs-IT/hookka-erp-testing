@@ -37,6 +37,10 @@ export type MrpOrderLine = {
   wipKey: string;
   required: number;
   needBy: string;
+  // Customer's requested delivery date and the SO date (from the sales order;
+  // "" for consignment / stock orders) — the page's date-type filter.
+  due: string;
+  soDate: string;
   covers: MrpCover[];
   shortQty: number;
   status: MrpStockStatus;
@@ -60,7 +64,20 @@ export type MrpMaterialRow = {
   poOtherUnit: { ref: string; eta: string; qty: number; unit: string }[];
   firstNeedBy: string;
   mainSupplier: string | null;
+  mainSupplierId: string | null;
+  // Every supplier bound to this material (price list), main first.
+  suppliers: MrpBoundSupplier[];
   orders: MrpOrderLine[];
+};
+
+export type MrpBoundSupplier = {
+  supplierId: string;
+  name: string;
+  code: string;
+  unitPriceSen: number;
+  leadTimeDays: number; // 0 = not stated on the binding
+  moq: number; // 0 = not stated
+  isMain: boolean;
 };
 
 export type MrpPlan = {
@@ -74,7 +91,32 @@ export type MrpPlan = {
   // credited to nothing, so PO outstanding is a FLOOR — published, never
   // silently dropped (BUG-2026-08-13-096 / -144).
   openPoLinesUnresolved: number;
+  // All suppliers (for picking one on an unbound material) and the per-
+  // supplier lead-time defaults (days) set on the MRP page.
+  allSuppliers: { id: string; name: string; code: string }[];
+  leadTimes: Record<string, number>;
 };
+
+export const LEAD_TIMES_KV_KEY = "mrp_lead_times";
+
+export async function loadLeadTimes(db: D1Database): Promise<Record<string, number>> {
+  try {
+    const row = await db.prepare("SELECT value FROM kv_config WHERE key = ?").bind(LEAD_TIMES_KV_KEY).first<{ value: string }>();
+    if (!row?.value) return {};
+    let v: unknown = JSON.parse(row.value);
+    if (typeof v === "string") v = JSON.parse(v);
+    const out: Record<string, number> = {};
+    if (v && typeof v === "object") {
+      for (const [k, d] of Object.entries(v as Record<string, unknown>)) {
+        const n = Number(d);
+        if (k && Number.isFinite(n) && n >= 0) out[k] = Math.round(n);
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 type JcRow = {
   id: string;
@@ -179,9 +221,9 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
       )
       .all<Record<string, unknown>>(),
     db
-      .prepare("SELECT supplierId, materialCode, isMainSupplier FROM supplier_material_bindings")
+      .prepare("SELECT supplierId, materialCode, isMainSupplier, unitPrice, leadTimeDays, moq FROM supplier_material_bindings")
       .all<Record<string, unknown>>(),
-    db.prepare("SELECT id, name FROM suppliers").all<Record<string, unknown>>(),
+    db.prepare("SELECT * FROM suppliers").all<Record<string, unknown>>(),
   ]);
 
   const orders = poRes.results ?? [];
@@ -191,6 +233,24 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     db,
     orders.map((o) => o.id),
   );
+
+  // Sales-order dates (customer due, SO date) for the date-type filter.
+  const soIds = [...new Set(orders.map((o) => str(o as Record<string, unknown>, "salesOrderId", "sales_order_id")).filter(Boolean))];
+  const soDates = new Map<string, { due: string; soDate: string }>();
+  for (let i = 0; i < soIds.length; i += 300) {
+    const ids = soIds.slice(i, i + 300);
+    const res = await db
+      .prepare(`SELECT id, customerDeliveryDate, companySODate FROM sales_orders WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .bind(...ids)
+      .all<Record<string, unknown>>();
+    for (const r of res.results ?? []) {
+      soDates.set(str(r, "id"), {
+        due: str(r, "customerDeliveryDate", "customer_delivery_date").slice(0, 10),
+        soDate: str(r, "companySODate", "company_so_date").slice(0, 10),
+      });
+    }
+  }
+  const leadTimes = await loadLeadTimes(db);
 
   // Job cards per PO for need-by + the consuming card id.
   const jcsByPo = new Map<string, JcRow[]>();
@@ -233,6 +293,7 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     counted++;
     const jcs = jcsByPo.get(po.id) ?? [];
     const target = String((po as Record<string, unknown>).targetEndDate ?? (po as Record<string, unknown>).target_end_date ?? "").slice(0, 10);
+    const sod = soDates.get(str(po as Record<string, unknown>, "salesOrderId", "sales_order_id"));
     for (const l of remaining) {
       if (!l.rm) {
         unresolved.push({ poNo: po.poNo, productCode: po.productCode ?? "", material: l.name || l.code, required: l.required });
@@ -257,6 +318,8 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
         jobCardId: card?.id ?? null,
         dept: l.consumeDept,
         wipKey: l.wipKey,
+        due: sod?.due || target || "",
+        soDate: sod?.soDate || "",
       };
       const arr = demandsByRm.get(l.rm.id) ?? [];
       arr.push(d);
@@ -294,16 +357,31 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     supplyByRm.set(rmId, arr);
   }
 
-  // Main supplier per material code.
-  const supplierName = new Map<string, string>();
-  for (const s of supRes.results ?? []) supplierName.set(str(s, "id"), str(s, "name"));
-  const mainSupplierByCode = new Map<string, string>();
-  for (const b of bindRes.results ?? []) {
-    if (num(b, "isMainSupplier", "is_main_supplier") !== 1) continue;
-    const code = str(b, "materialCode", "material_code");
-    const name = supplierName.get(str(b, "supplierId", "supplier_id"));
-    if (code && name && !mainSupplierByCode.has(code)) mainSupplierByCode.set(code, name);
+  // Suppliers bound to each material (price list), main first.
+  const supplierById = new Map<string, { id: string; name: string; code: string }>();
+  for (const r of supRes.results ?? []) {
+    const id = str(r, "id");
+    if (id) supplierById.set(id, { id, name: str(r, "name"), code: str(r, "code") });
   }
+  const boundByCode = new Map<string, MrpBoundSupplier[]>();
+  for (const b of bindRes.results ?? []) {
+    const code = str(b, "materialCode", "material_code");
+    const sup = supplierById.get(str(b, "supplierId", "supplier_id"));
+    if (!code || !sup) continue;
+    const arr = boundByCode.get(code) ?? [];
+    if (arr.some((x) => x.supplierId === sup.id)) continue;
+    arr.push({
+      supplierId: sup.id,
+      name: sup.name,
+      code: sup.code,
+      unitPriceSen: Math.round(num(b, "unitPrice", "unit_price")),
+      leadTimeDays: Math.max(0, Math.round(num(b, "leadTimeDays", "lead_time_days"))),
+      moq: Math.max(0, num(b, "moq")),
+      isMain: num(b, "isMainSupplier", "is_main_supplier") === 1,
+    });
+    boundByCode.set(code, arr);
+  }
+  for (const arr of boundByCode.values()) arr.sort((x, y) => Number(y.isMain) - Number(x.isMain) || x.name.localeCompare(y.name));
 
   // Index RM rows by id once.
   const rmById = new Map<string, Record<string, unknown>>();
@@ -337,7 +415,9 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
       short: orderLines.reduce((s, o) => s + o.shortQty, 0),
       poOtherUnit: otherUnitByRm.get(rmId) ?? [],
       firstNeedBy: orderLines.map((o) => o.needBy).filter(Boolean).sort()[0] ?? "",
-      mainSupplier: mainSupplierByCode.get(code) ?? null,
+      mainSupplier: (boundByCode.get(code) ?? []).find((x) => x.isMain)?.name ?? null,
+      mainSupplierId: (boundByCode.get(code) ?? []).find((x) => x.isMain)?.supplierId ?? null,
+      suppliers: boundByCode.get(code) ?? [],
       orders: orderLines,
     });
   }
@@ -357,5 +437,7 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     productionOrders: { open: orders.length, counted, alreadyDeducted, noBom },
     unresolved,
     openPoLinesUnresolved,
+    allSuppliers: [...supplierById.values()].sort((x, y) => x.name.localeCompare(y.name)),
+    leadTimes,
   };
 }
