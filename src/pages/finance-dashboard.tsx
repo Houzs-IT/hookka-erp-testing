@@ -839,7 +839,7 @@ export default function FinanceDashboardPage() {
         const ahead = r.actual === null || r.actual === undefined;
         const fc = cashFcB[r.key];
         return {
-          label: ahead ? `${r.label} (F)` : dashPeriodLabel(r.label, r.partial),
+          label: ahead ? `${dashPeriodLabel(r.label, false)} (F)` : dashPeriodLabel(r.label, r.partial),
           ahead: ahead ? 1 : 0,
           value: ahead ? null : r.cashFlow?.[cfTab] ?? null,
           net: ahead ? null : r.cashFlow?.net ?? null,
@@ -890,7 +890,7 @@ export default function FinanceDashboardPage() {
           const ahead = !r.balanceSheet;
           const f = bsFcB[r.key];
           return {
-            label: ahead ? `${r.label} (F)` : dashPeriodLabel(r.label, r.partial),
+            label: ahead ? `${dashPeriodLabel(r.label, false)} (F)` : dashPeriodLabel(r.label, r.partial),
             ahead: ahead ? 1 : 0,
             assets: ahead ? f.assets : r.balanceSheet!.assets,
             liabilities: ahead ? f.liabilities : r.balanceSheet!.liabilities,

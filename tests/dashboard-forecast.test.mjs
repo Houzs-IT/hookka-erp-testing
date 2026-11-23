@@ -82,3 +82,9 @@ test("the dashboard: two dashed forecast lines and their rows on Cash Flow, the 
   // The Income Statement card is as it was: it still reads only the periods that have happened.
   assert.match(page, /const plData = useMemo\(\n\s+\(\) =>\n\s+shownRows\.map\(/);
 });
+
+test("a period ahead is named like the others, with (F): Dec 2026 (F), not 2026-12 (F)", () => {
+  const page = read("src/pages/finance-dashboard.tsx");
+  assert.equal((page.match(/label: ahead \? `\$\{dashPeriodLabel\(r\.label, false\)\} \(F\)` : dashPeriodLabel\(r\.label, r\.partial\),/g) ?? []).length, 2);
+  assert.doesNotMatch(page, /`\$\{r\.label\} \(F\)`/);
+});
