@@ -41,6 +41,7 @@ import {
 import { sendPushToSubscribers } from "./push";
 import {
   MAX_NOTICE_ORDERS,
+  ackAlertLink,
   buildOrderNotice,
   mytDayStartIso,
   orderNoticeCategory,
@@ -1413,7 +1414,7 @@ worker.post("/:id/ack", async (c) => {
         text: `${who} tapped "Got it".`,
         priority: null,
         orderId: null,
-        link: "/announcements",
+        link: ackAlertLink(row.orderNo ?? row.order_no, row.orderId ?? row.order_id),
       });
     } catch (e) {
       // Best-effort: the ack is already saved; a bell failure must not fail it.

@@ -210,10 +210,24 @@ test("nothing new → no pop-up", () => {
   assert.deepEqual(feed.newArrivals(new Set(["a"]), list), []);
 });
 
-test("a tapped pop-up opens the same link the bell row opens", () => {
-  assert.equal(feed.notificationTarget({ link: "/production?order=SO-1" }), "/production?order=SO-1");
-  assert.equal(feed.notificationTarget({ link: undefined }), "/notifications");
-  assert.equal(feed.notificationTarget({ link: "" }), "/notifications");
+test("HK-0170: a tapped bell row / pop-up opens the row's details, not its link", () => {
+  assert.equal(feed.notificationTarget({ id: "ntf-1" }), "/notifications?open=ntf-1");
+  assert.equal(feed.notificationTarget({ id: "a b&c" }), "/notifications?open=a%20b%26c");
+});
+
+test("HK-0170: the link under the details names where it goes", () => {
+  assert.equal(feed.notificationLinkLabel("/production"), "Open Production Overview");
+  assert.equal(feed.notificationLinkLabel("/production?soId=SO-1-01&po=p1"), "Open Production Overview");
+  assert.equal(feed.notificationLinkLabel("/announcements"), "Open Announcements");
+  assert.equal(feed.notificationLinkLabel("/production-orders"), "Open");
+});
+
+test("HK-0170: clicking a row on /notifications marks it read and opens its details", () => {
+  const src = readFileSync("src/pages/notifications.tsx", "utf8");
+  assert.match(src, /onClick=\{\(\) => toggleOpen\(notif\)\}/);
+  assert.match(src, /if \(!n\.isRead\) void markAsRead\(\[n\.id\]\)/);
+  assert.match(src, /params\.get\("open"\)/);
+  assert.match(src, /!n\.isRead \|\| n\.id === openId/, "an opened row must not vanish under the Unread filter");
 });
 
 test("seen ids only grow — an older, slower response cannot make a row pop twice", () => {

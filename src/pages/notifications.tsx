@@ -1,7 +1,11 @@
 import { useState, useMemo } from "react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { useNavigate } from "react-router-dom";
-import { markNotificationsRead, parseNotificationList } from "@/lib/notifications-feed";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  markNotificationsRead,
+  notificationLinkLabel,
+  parseNotificationList,
+} from "@/lib/notifications-feed";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -118,6 +122,9 @@ export default function NotificationsPage() {
   // an effect that copies from notifResp).
   const [locallyRead, setLocallyRead] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<FilterValue>("ALL");
+  // HK-0170: a click opens the row's details (the bell links here with ?open=<id>).
+  const [params, setParams] = useSearchParams();
+  const openId = params.get("open");
 
   const { data: notifResp, loading } = useCachedJson<unknown>("/api/notifications");
 
@@ -140,6 +147,11 @@ export default function NotificationsPage() {
     });
   }
 
+  function toggleOpen(n: Notification) {
+    if (!n.isRead) void markAsRead([n.id]);
+    setParams(openId === n.id ? {} : { open: n.id }, { replace: true });
+  }
+
   function markAllRead() {
     const unreadIds = notifications.filter((n) => !n.isRead).map((n) => n.id);
     if (unreadIds.length > 0) markAsRead(unreadIds);
@@ -156,7 +168,7 @@ export default function NotificationsPage() {
     filter === "ALL"
       ? notifications
       : filter === "UNREAD"
-        ? notifications.filter((n) => !n.isRead)
+        ? notifications.filter((n) => !n.isRead || n.id === openId) // the row just opened (and marked read) stays
         : notifications.filter((n) => n.type === filter);
 
   // Group by date
@@ -277,14 +289,24 @@ export default function NotificationsPage() {
               {group.label}
             </h2>
             <div className="space-y-2">
-              {group.items.map((notif) => (
+              {group.items.map((notif) => {
+                const isOpen = openId === notif.id;
+                return (
                 <div
                   key={notif.id}
-                  onClick={() => notif.link && navigate(notif.link)}
-                  className={`flex items-start gap-3 p-4 rounded-lg border border-l-4 transition-colors
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isOpen}
+                  onClick={() => toggleOpen(notif)}
+                  onKeyDown={(e) => {
+                    if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                      e.preventDefault();
+                      toggleOpen(notif);
+                    }
+                  }}
+                  className={`flex items-start gap-3 p-4 rounded-lg border border-l-4 transition-colors cursor-pointer hover:bg-[#F0ECE9]
                     ${getSeverityBorder(notif.severity)}
-                    ${notif.isRead ? "bg-white border-[#E2DDD8]" : "bg-[#FAF9F7] border-[#E2DDD8]"}
-                    ${notif.link ? "cursor-pointer hover:bg-[#F0ECE9]" : ""}`}
+                    ${notif.isRead ? "bg-white border-[#E2DDD8]" : "bg-[#FAF9F7] border-[#E2DDD8]"}`}
                 >
                   {/* Type icon */}
                   <div className="shrink-0 mt-0.5 p-2 rounded-md bg-[#F0ECE9] text-[#6B5C32]">
@@ -305,13 +327,30 @@ export default function NotificationsPage() {
                         {notif.title}
                       </h3>
                     </div>
-                    <p className="text-sm text-[#6B7280] line-clamp-2">{notif.message}</p>
+                    <p
+                      className={`text-sm text-[#6B7280] ${isOpen ? "whitespace-pre-line break-words" : "line-clamp-2"}`}
+                    >
+                      {notif.message}
+                    </p>
                     <div className="flex items-center gap-2 mt-2">
                       <Badge>{notif.type}</Badge>
                       <span className="text-xs text-[#9CA3AF]">
                         {relativeTime(notif.createdAt)}
                       </span>
                     </div>
+                    {isOpen && notif.link && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(notif.link!);
+                        }}
+                      >
+                        {notificationLinkLabel(notif.link)}
+                      </Button>
+                    )}
                   </div>
 
                   {/* Mark as read button */}
@@ -332,7 +371,8 @@ export default function NotificationsPage() {
                     <span className="shrink-0 text-xs text-[#9CA3AF] mt-1">Read</span>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))
