@@ -87,8 +87,8 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `app.post("/packing-rack-tokens")` | `production-orders.ts:1642` | Authed /p/ piece-token mint (batched) |
 | `GET /overdue-counts` | `production-orders.ts:393` | Server overdue set behind the grid chips |
 | `deriveTopLevelWipKey` / `breakBomIntoWips` | `src/api/lib/bom-wip-breakdown.ts:125 / 350` | THE wipKey formula / BOM → job-card WIPs |
-| `consumeRawMaterialsForJobCard` / `consumeRawMaterialsForPO` / `postJobCardLabor` | `src/api/lib/po-cost-cascade.ts:1271 / 1294 / 1322` | RM deducted per WIP at each job-card completion (2026-11-23) / whole-PO safety net at PO completion / labour GL posting |
-| `computeRequiredLines` | `src/api/lib/po-cost-cascade.ts:926` | THE required-qty calculation shared by RM deduction and the MRP |
+| `consumeRawMaterialsForJobCard` / `consumeRawMaterialsForPO` / `postJobCardLabor` | `src/api/lib/po-cost-cascade.ts:1279 / 1302 / 1330` | RM deducted per WIP at each job-card completion (2026-11-23) / whole-PO safety net at PO completion / labour GL posting |
+| `computeRequiredLines` | `src/api/lib/po-cost-cascade.ts:934` | THE required-qty calculation shared by RM deduction and the MRP |
 | `applyPackingRack` | `src/api/lib/packing-rack-write.ts:71` | Rack set/clear + rack_items occupancy mirror |
 | `PUT /templates/:id` / `POST /templates/bulk-process-edit` | `src/api/routes/bom.ts:578 / 754` | BOM template update / batch process edit |
 | `GET /:id/events` | `src/api/routes/job-cards.ts:430` | Job-card event timeline |
