@@ -171,6 +171,9 @@ test("Production Tracking keeps its columns and only ADDS a Stock column", () =>
   assert.match(prod, /\}>\("\/api\/mrp\/stock-status"\);/);
   assert.match(prod, /key: "stockStatus",\s*label: "Stock",/);
   assert.match(prod, /stockStatus\[`\$\{row\.poId\}\|\$\{row\.wipKey \?\? ""\}`\] \?\? stockStatus\[`\$\{row\.poId\}\|`\]/);
+  // BUG-2026-11-25-556: a merged Fab Cut row reads its order's FAB_CUT status.
+  assert.match(prod, /\(row\.wipKey \?\? ""\)\.endsWith\("::FAB_CUT"\)\n\s+\? stockStatus\[`\$\{row\.poId\}\|@FAB_CUT`\]/);
+  assert.match(route(), /const dk = `\$\{o\.productionOrderId\}\|@\$\{o\.dept\}`;/);
   assert.match(route(), /app\.get\("\/stock-status"/);
 });
 

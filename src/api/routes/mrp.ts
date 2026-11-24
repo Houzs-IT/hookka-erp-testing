@@ -514,7 +514,7 @@ app.get("/plan-check", async (c) => {
 // key has nothing left to issue (no BOM materials, or already deducted).
 type StockStatusBody = { calculatedAt: string; data: Record<string, "READY" | "WAITING_PO" | "SHORT"> };
 const STOCK_STATUS_TTL_S = 600;
-const STOCK_STATUS_KV_KEY = "mrp:stock-status:v1";
+const STOCK_STATUS_KV_KEY = "mrp:stock-status:v2";
 let stockStatusMemo: { at: number; body: StockStatusBody } | null = null;
 let stockStatusInflight: Promise<StockStatusBody> | null = null;
 
@@ -701,6 +701,13 @@ app.get("/stock-status", async (c) => {
             const k = `${o.productionOrderId}|${o.wipKey}`;
             const cur = byWip[k];
             if (!cur || rank[o.status] > rank[cur]) byWip[k] = o.status;
+            // Per order per consuming dept ("poId|@FAB_CUT"): the Fab Cut sheet's
+            // merged rows carry their own wipKey ("poId::model::fabric::FAB_CUT"),
+            // which never equals a BOM WIP key, so every Fab Cut row showed "—"
+            // (owner 2026-11-25 「stocks全部是-？」).
+            const dk = `${o.productionOrderId}|@${o.dept}`;
+            const dcur = byWip[dk];
+            if (!dcur || rank[o.status] > rank[dcur]) byWip[dk] = o.status;
           }
         }
         return { calculatedAt: plan.calculatedAt, data: byWip };
