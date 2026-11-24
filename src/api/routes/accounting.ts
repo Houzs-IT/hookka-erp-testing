@@ -313,9 +313,9 @@ function rowToCoa(r: CoaRow) {
 let _pendingCoaEstimateCol: Promise<void> | null = null;
 function ensureCoaEstimateColumn(db: Env["Variables"]["DB"]): Promise<void> {
   return memoizeSelfApply(() => _pendingCoaEstimateCol, (p) => { _pendingCoaEstimateCol = p; }, async () => {
-    await db
-      .prepare("ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS estimate_monthly INTEGER DEFAULT 0")
-      .run();
+    await runSelfApply(db, "accounting.coa-estimate", [
+      "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS estimate_monthly INTEGER DEFAULT 0",
+    ]);
   });
 }
 async function estimateMonthlyCodes(db: Env["Variables"]["DB"]): Promise<Set<string>> {
@@ -1526,7 +1526,7 @@ app.get("/system-journals", async (c) => {
 let _pendingJournalRefCol: Promise<void> | null = null;
 function ensureJournalReferenceColumn(db: Env["Variables"]["DB"]): Promise<void> {
   return memoizeSelfApply(() => _pendingJournalRefCol, (p) => { _pendingJournalRefCol = p; }, async () => {
-    await db.prepare("ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT").run();
+    await runSelfApply(db, "accounting.journal-reference", ["ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT"]);
   });
 }
 
@@ -12735,13 +12735,16 @@ function validateDocLines(
 let _pendingPvApprovalCols: Promise<void> | null = null;
 function ensurePvApprovalCols(db: Env["Variables"]["DB"]): Promise<void> {
   return memoizeSelfApply(() => _pendingPvApprovalCols, (p) => { _pendingPvApprovalCols = p; }, async () => {
-    for (const col of [
+    // Through runSelfApply so a column already there sends no ALTER (each one
+    // takes an ACCESS EXCLUSIVE lock, BUG-2026-11-24-556). Failures stay
+    // swallowed, as before.
+    await runSelfApply(db, "accounting.pv-approval", [
       "approval_state TEXT", "prepared_at TEXT", "prepared_by TEXT",
       "checked_at TEXT", "checked_by TEXT", "approved_at TEXT",
       "approved_by TEXT", "reject_reason TEXT",
-    ]) {
-      await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
-    }
+    ].map((col) => `ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`)).catch(() => {});
+    // Row locks only (no ACCESS EXCLUSIVE), and it matches nothing once
+    // backfilled — no guard needed.
     await db.prepare(
       "UPDATE payment_vouchers SET approval_state = 'APPROVED' WHERE approval_state IS NULL",
     ).run().catch(() => {});
@@ -12750,10 +12753,17 @@ function ensurePvApprovalCols(db: Env["Variables"]["DB"]): Promise<void> {
     // constraint on prod (2026-09-22, same class as BUG-2026-09-18-001 —
     // the PCN 'CANCELLED' void). Re-create the check with DRAFT allowed.
     // Postgres names the auto constraint payment_vouchers_status_check.
-    await db.prepare("ALTER TABLE payment_vouchers DROP CONSTRAINT IF EXISTS payment_vouchers_status_check").run().catch(() => {});
-    await db.prepare(
-      "ALTER TABLE payment_vouchers ADD CONSTRAINT payment_vouchers_status_check CHECK (status IN ('POSTED','VOID','DRAFT'))",
-    ).run().catch(() => {});
+    // Rebuilt only when it does not already admit DRAFT: the DROP + ADD lock
+    // the table and re-check every row (BUG-2026-11-24-556).
+    const chk = await db.prepare(
+      "SELECT pg_get_constraintdef(oid) AS \"def\" FROM pg_constraint WHERE conname = 'payment_vouchers_status_check' AND conrelid = 'payment_vouchers'::regclass",
+    ).first<{ def: string }>().catch(() => null);
+    if (!chk?.def?.includes("'DRAFT'")) {
+      await db.prepare("ALTER TABLE payment_vouchers DROP CONSTRAINT IF EXISTS payment_vouchers_status_check").run().catch(() => {});
+      await db.prepare(
+        "ALTER TABLE payment_vouchers ADD CONSTRAINT payment_vouchers_status_check CHECK (status IN ('POSTED','VOID','DRAFT'))",
+      ).run().catch(() => {});
+    }
   });
 }
 
@@ -12857,9 +12867,10 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
     // that currency at this rate (Currency & FX step 3, owner 2026-10-20);
     // fx_bank_confirmed_at / _by: when Finance keyed the RM the bank actually
     // debited, and who (step 4 — the rate is then the actual one).
-    for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"]) {
-      await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
-    }
+    // Through runSelfApply so a column already there sends no ALTER
+    // (BUG-2026-11-24-556). Failures stay swallowed, as before.
+    await runSelfApply(db, "accounting.pv-ap", ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"]
+      .map((col) => `ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`)).catch(() => {});
     await db.prepare(
       `CREATE TABLE IF NOT EXISTS payment_voucher_allocs (
          id TEXT PRIMARY KEY,
@@ -12870,13 +12881,15 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
          line_order INTEGER NOT NULL DEFAULT 0
        )`,
     ).run();
-    await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)").run().catch(() => {});
-    await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)").run().catch(() => {});
-    // A foreign-currency bill: the amount paid in its own currency and
-    // whether it settles all that is left (amount_sen = the booked RM).
-    for (const col of ["foreign_sen INTEGER", "full_pay INTEGER"]) {
-      await db.prepare(`ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
-    }
+    // foreign_sen / full_pay: a foreign-currency bill — the amount paid in
+    // its own currency and whether it settles all that is left (amount_sen =
+    // the booked RM).
+    await runSelfApply(db, "accounting.pv-ap", [
+      "CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)",
+      "CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)",
+      "ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS foreign_sen INTEGER",
+      "ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS full_pay INTEGER",
+    ]).catch(() => {});
   });
 }
 

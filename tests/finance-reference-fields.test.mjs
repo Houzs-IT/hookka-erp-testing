@@ -44,7 +44,7 @@ test("an AP Payment hands its settlement the Reference; an older voucher settles
 });
 
 test("the voucher stores its Reference on every write path", () => {
-  assert.match(api, /"tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"\]\) \{/, "self-applied before the first write");
+  assert.match(api, /"tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"\]\s*\.map\(\(col\) => `ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS \$\{col\}`\)/, "self-applied before the first write");
   assert.match(api, /reference: normaliseReference\(body\.reference\) \};\n\}/, "the form's fields include it");
   const post = slice(api, 'app.post("/payment-vouchers", async (c) => {', 'app.put("/payment-vouchers/:id"');
   // AP Payment: two fields; a client that sends only the description (the
@@ -70,7 +70,7 @@ test("the voucher stores its Reference on every write path", () => {
 });
 
 test("a journal keeps a Reference of its own (create, draft edit, read)", () => {
-  assert.match(api, /db\.prepare\("ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT"\)\.run\(\)/);
+  assert.match(api, /runSelfApply\(db, "accounting\.journal-reference", \["ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT"\]\)/);
   const post = slice(api, 'app.post("/journals", async (c) => {', 'app.get("/journals/:id"');
   assert.match(post, /await ensureJournalReferenceColumn\(c\.var\.DB\);/);
   assert.match(post, /INSERT INTO journal_entries \(id, entryNo, date, description, reference, status, createdBy, orgId\)/);
