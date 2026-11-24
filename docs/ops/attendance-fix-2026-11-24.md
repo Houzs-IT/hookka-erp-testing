@@ -1,4 +1,5 @@
 # Attendance correction — 24/11/2026 (outage day)
+> **Last verified: 2026-11-24**: 36 clock-ins re-read at 08:00 after the correction.
 
 **Why:** production was down 05:40–10:51 MYT (BUG-2026-11-24-549, Hyperdrive host change). Workers could not punch in until the system came back; 34 workers punched between 10:55 and 11:09.
 
