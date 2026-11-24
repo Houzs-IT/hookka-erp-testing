@@ -183,7 +183,9 @@ test("past months beside a forecast worked out from the month-end before (owner 
   // ?start=YYYY-MM before this month: that one month, as it would have been then.
   assert.match(api, /const past = \/\^\\d\{4\}-\(0\[1-9\]\|1\[0-2\]\)\$\/\.test\(startQ\) && startQ < realToday\.slice\(0, 7\) \? startQ : null;/);
   assert.match(api, /const today = past \? `\$\{past\}-01` : realToday;/);
-  assert.match(api, /const months = past \? monthsAll\.filter\(\(ym\) => ym === past\) : monthsAll;/);
+  assert.match(api, /const months = past \? \(pastHasPnl \? monthsAll\.filter\(\(ym\) => ym === past\) : \[\]\) : monthsAll;/);
+  // A past month with no Forecast P&L figures gets no forecast: the dashboard shows "-".
+  assert.match(api, /const pastHasPnl = past \? !!fcMonths\[past\] && forecastMonthHasFigures\(forecastMonthFigures\(fcMonths\[past\], groups, mapped\)\) : true;/);
   const page = read("src/pages/finance-dashboard.tsx");
   // Only shown months that happened and that the forward forecast does not cover; one at a time.
   assert.match(page, /shownRows\.filter\(\(r\) => r\.balanceSheet && !bsFc\[r\.key\]\)\.map\(\(r\) => r\.key\)/);
