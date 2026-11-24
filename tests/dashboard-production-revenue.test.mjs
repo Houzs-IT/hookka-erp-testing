@@ -75,9 +75,9 @@ test("cost structure: SALES REVENUE, then PRODUCTION REVENUE, then the materials
   // (in the module the page and the phone share since 2026-10-19)
   assert.match(UI, /const csLineProdRev = \(r: Row\): number \| null => csLineProdRevOf\(r, csLine\);/);
   assert.match(read("src/lib/finance-dashboard-calc.ts"), /line === "bedframe" \? p\.bedframe : p\.sofa \+ p\.accessory/);
-  assert.match(UI, /point\[`__ppct__\$\{cat\}`\] = pctOf\(amt, prod\);/);
+  assert.match(UI, /point\[`__ppct__\$\{cat\}`\] = csAhead \? null : pctOf\(amt, prod\);/);
   // The total sums every material in the table, not just the ones drawn.
-  assert.match(UI, /for \(const cat of csCats\) \{\n\s*sum \+= point\[cat\] as number;/);
+  assert.match(UI, /for \(const cat of csCats\) \{\n\s*sum \+= \(point\[cat\] as number \| null\) \?\? 0;/);
   assert.match(UI, /<td className=\{`\$\{td\} text-left`\}>TOTAL<\/td>/);
 });
 
