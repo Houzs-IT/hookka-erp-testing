@@ -19,7 +19,7 @@
 // look.ts, src/components/finance/chart-look.tsx), only the periods that have
 // happened, 6 months by default (from July) or 12.
 // ---------------------------------------------------------------------------
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bar,
   Cell,
@@ -54,7 +54,7 @@ import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, dashRowLab
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 // Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
 import {
-  bsForecastByBucket, cashDetailSections, dashForecastRatios, cashForecastByBucket, cashLinesByBucket, dashBsForecast, dashCashForecast, dashCashForecastLines, dashCashLineGroups,
+  bsForecastByBucket, cashDetailSections, dashForecastRatios, quarterActualPlusForecast, cashForecastByBucket, cashLinesByBucket, dashBsForecast, dashCashForecast, dashCashForecastLines, dashCashLineGroups,
   type DashBsFigures, type DashCashForecast, type DashCashLines, type DashLineGroups, type DetailCell,
 } from "@/lib/dashboard-forecast";
 import type { BsForecastPayload } from "@/lib/forecast-bs";
@@ -711,6 +711,24 @@ export default function FinanceDashboardPage() {
     };
   }, [granularity, fromYm, toYm]);
 
+  // Quarterly view: the monthly rows, so the running quarter can read
+  // "actual so far + forecast for the rest" (A+F) (owner 2026-11-24).
+  const [monthRows, setMonthRows] = useState<Row[]>([]);
+  useEffect(() => {
+    if (granularity !== "quarter") return;
+    let cancelled = false;
+    fetch("/api/accounting/dashboard?granularity=month&periods=12")
+      .then((r) => r.json() as Promise<{ success?: boolean; data?: { rows: Row[] } }>)
+      .then((j) => { if (!cancelled && j?.success && j.data) setMonthRows(j.data.rows); })
+      .catch(() => { /* the quarter keeps its actual-to-date figures */ });
+    return () => { cancelled = true; };
+  }, [granularity]);
+  const afOf = useCallback(
+    (r: Row): Slice | null =>
+      granularity === "quarter" && r.actual ? quarterActualPlusForecast<Slice>(r.key, monthRows as never) : null,
+    [granularity, monthRows],
+  );
+
   // The Cash Flow forecasts and the Forecast Balance Sheet (owner 2026-11-23),
   // read once: the Cash Flow forecast's statement, and the forecast sheet with
   // last month-end's sheet under it. A forecast that cannot be read leaves its
@@ -848,11 +866,14 @@ export default function FinanceDashboardPage() {
         const share = (v: number | null, base: number | null) =>
           v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
         const ahead = cur === null || cur === undefined;
+        const af = afOf(r);
         return {
-          label: dashRowLabel(r),
+          label: af ? `${dashPeriodLabel(r.label, false)} (A+F)` : dashRowLabel(r),
           ahead: ahead ? 1 : 0,
-          // The bar: actual, or the forecast (faded) for a period ahead.
-          bar: ahead ? pick(r.forecast) : a,
+          // The bar: actual, the running quarter's actual + rest-of-quarter
+          // forecast (A+F), or the forecast (faded) for a period ahead.
+          bar: ahead ? pick(r.forecast) : af ? pick(af) : a,
+          af: af ? pick(af) : null,
           actual: a,
           forecast: pick(r.forecast),
           pctOfRevenue: share(a, sales),
@@ -860,7 +881,7 @@ export default function FinanceDashboardPage() {
           mom: a !== null && p !== null && p !== 0 ? Math.round(((a - p) / Math.abs(p)) * 10000) / 100 : null,
         };
       }),
-    [rows, shownRows, plTab],
+    [rows, shownRows, plTab, afOf],
   );
 
   // Production Salary card. The wage bill against its two denominators — the
@@ -1001,16 +1022,21 @@ export default function FinanceDashboardPage() {
       shownRows.map((r) => {
         const ahead = r.actual === null || r.actual === undefined;
         // Owner 2026-11-24: future periods get forecast ratios too.
-        const value = ahead ? dashForecastRatios(r.forecast, bsFcB[r.key])[ratioTab] : r.ratios[ratioTab];
+        const af = afOf(r);
+        const value = ahead
+          ? dashForecastRatios(r.forecast, bsFcB[r.key])[ratioTab]
+          : af
+            ? dashForecastRatios(af, bsFcB[r.key] ?? null)[ratioTab]
+            : r.ratios[ratioTab];
         // A month that has happened beside its forecast and the gap (owner
         // 2026-11-24 「financial ratio 也可以放 forecast的进去」 → 「Build it」),
         // as the Balance Sheet card: this month's Forecast Balance Sheet or the
         // past month's worked out from the month-end before it. Months only.
         const fcBs = bsFcB[r.key] ?? pastBs[r.key] ?? null;
         const fc = !ahead && granularity === "month" ? dashForecastRatios(r.forecast, fcBs)[ratioTab] : null;
-        return { label: dashRowLabel(r), ahead: ahead ? 1 : 0, value, fc };
+        return { label: af ? `${dashPeriodLabel(r.label, false)} (A+F)` : dashRowLabel(r), ahead: ahead ? 1 : 0, value, fc };
       }),
-    [shownRows, ratioTab, bsFcB, pastBs, granularity],
+    [shownRows, ratioTab, bsFcB, pastBs, granularity, afOf],
   );
 
   // ---- Cost structure (owner 2026-07-29) --------------------------------
@@ -1318,6 +1344,14 @@ export default function FinanceDashboardPage() {
                       </td>
                     ))}
                   </tr>
+                  {plData.some((d) => d.af !== null) && (
+                    <tr data-dash-af="">
+                      <td className={`${td} text-left font-medium text-[#8A6A12]`}>Actual + Forecast</td>
+                      {plData.map((d) => (
+                        <td key={d.label} className={`${td} text-[#8A6A12]`}>{d.af === null ? "-" : rm(d.af as number)}</td>
+                      ))}
+                    </tr>
+                  )}
                   <tr>
                     <td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast</td>
                     {plData.map((d) => (
