@@ -6,7 +6,7 @@
 
 **Done:** clock-in set to **08:00** for the 34 workers below via the normal `POST /api/attendance` (`action: CLOCK_IN`, `date: 2026-11-24`, `time: 08:00`), run as the owner's session. Re-read afterwards: 34 at 08:00, 0 failures. Clock-out untouched.
 
-**Not changed (owner to decide):** AUNG THEIN WIN 14:02, ANN 11:51 — punched well after recovery. No punch today (not touched): Chee, Lim, Violet, Laphii, YH Test, OUTSOURCE - OHN MAR SHEIN, OUTSOURCE - CHAU, OUTSOURCE - SAW.
+**Also changed (owner 「是的」, same day):** AUNG THEIN WIN 14:02 → 08:00, ANN 11:51 → 08:00 — re-read: all 36 punches today at 08:00. No punch today (not touched): Chee, Lim, Violet, Laphii, YH Test, OUTSOURCE - OHN MAR SHEIN, OUTSOURCE - CHAU, OUTSOURCE - SAW.
 
 To undo one: `POST /api/attendance` with the original time below.
 
@@ -46,3 +46,5 @@ To undo one: `POST /api/attendance` with the original time below.
 | PHYU SIN MOE | worker-f4c48fea | 10:56 |
 | AUNG KO MYINT | worker-f80272a0 | 10:56 |
 | ZAW LIN | worker-f8ad8074 | 10:56 |
+| AUNG THEIN WIN | worker-180ac843 | 14:02 |
+| ANN | worker-d636133a | 11:51 |
