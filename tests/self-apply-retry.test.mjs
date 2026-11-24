@@ -117,7 +117,7 @@ test("a successful round still runs exactly once per isolate", async () => {
       },
     );
   // Concurrent cold callers each run their own (idempotent) round: sharing the
-  // in-flight promise across requests is BUG-2026-11-24-552.
+  // in-flight promise across requests is BUG-2026-11-24-553.
   await Promise.all([call(), call(), call()]);
   assert.equal(attempt, 3, "no caller awaits another caller's in-flight round");
   await call();

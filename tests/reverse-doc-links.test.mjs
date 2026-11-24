@@ -153,7 +153,7 @@ test("the note-index ensure is memoised via memoizeSelfApply (a failed round is 
   // statement and memoizeSelfApply lets the next request retry.
   assert.match(INV_ROUTE, /let _invNoteIndexMig: Promise<void> \| null = null/);
   // memoizeSelfApply sets the memo only after a round lands, so a failed
-  // round leaves it unset and the next request retries (BUG-2026-11-24-552).
+  // round leaves it unset and the next request retries (BUG-2026-11-24-553).
   assert.match(INV_ROUTE, /memoizeSelfApply\(\s*\(\) => _invNoteIndexMig,/);
   assert.match(INV_ROUTE, /runSelfApply\(/);
 });

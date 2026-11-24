@@ -65,7 +65,7 @@ export function ensureInventoryPerfIndexes(
       }
     }
     // Only a clean round is remembered, and only once it has settled: an
-    // in-flight promise must never be shared across requests (BUG-2026-11-24-552).
+    // in-flight promise must never be shared across requests (BUG-2026-11-24-553).
     if (!hadFailure) inventoryPerfIndexPromise = SELF_APPLY_DONE;
   })();
 }

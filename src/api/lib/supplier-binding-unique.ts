@@ -146,7 +146,7 @@ export type IndexOutcome = "created" | "skipped-duplicates" | "failed";
 // the index lands on its own once the owner has cleaned the pairs up.
 // The SETTLED outcome, never the in-flight promise: a pending promise belongs
 // to the request that made it, and a later request awaiting it fails once that
-// request ends (BUG-2026-11-24-552). Two cold requests may each run the check.
+// request ends (BUG-2026-11-24-553). Two cold requests may each run the check.
 let indexOutcome: IndexOutcome | null = null;
 
 /** Test hook: forget the memo. */

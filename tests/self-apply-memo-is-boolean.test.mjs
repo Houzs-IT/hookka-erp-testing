@@ -38,7 +38,7 @@
 // not: while the round is in flight the promise is shared, and if the request
 // that made it ends first the runtime drops the settle — every other request
 // fails with "This promise was created by a request that has since ended" and
-// the catch that would clear the memo never runs (BUG-2026-11-24-552, Purchase
+// the catch that would clear the memo never runs (BUG-2026-11-24-553, Purchase
 // Invoice create from the scan flow, prod).
 //
 // This test exists because the class had already been "closed" once: #222 swept
@@ -99,7 +99,7 @@ test("no runtime migration shares an in-flight promise across requests", () => {
       (m) =>
         `${m.file}: \`${m.name}\` is a cached Promise not handled by memoizeSelfApply.\n` +
         `    While in flight it is shared across requests; if its request ends first,\n` +
-        `    every waiter fails and the memo never clears (BUG-2026-11-24-552).\n` +
+        `    every waiter fails and the memo never clears (BUG-2026-11-24-553).\n` +
         `    Use a boolean memo (src/api/lib/payment-columns.ts) or memoizeSelfApply.`,
     );
   assert.deepEqual(bad, [], `\n\n${bad.join("\n\n")}\n`);
@@ -185,7 +185,7 @@ test("memoizeSelfApply never hands out an in-flight promise", async () => {
 
 test("no module-level Map caches promises across requests", () => {
   // The same hazard keyed by name: archive-union.ts held `Map<string, Promise>`
-  // of in-flight DDL + SQL builds (BUG-2026-11-24-552 review). A Map handed to
+  // of in-flight DDL + SQL builds (BUG-2026-11-24-553 review). A Map handed to
   // memoizeSelfApply is fine; data caches with the same shape are listed below
   // as known follow-ups so they cannot be copied silently.
   const KNOWN = new Set([

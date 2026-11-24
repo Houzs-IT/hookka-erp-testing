@@ -250,7 +250,7 @@ export const SELF_APPLY_DONE: Promise<void> = Promise.resolve();
  * Workers runtime drops the settle, so every other request awaiting it fails
  * with "This promise was created by a request that has since ended" — and its
  * own `.catch` that would clear the memo never runs, so the isolate stays stuck
- * (BUG-2026-11-24-552, Purchase Invoice create from the scan flow, prod). Two
+ * (BUG-2026-11-24-553, Purchase Invoice create from the scan flow, prod). Two
  * cold requests now each run the round; every statement is IF NOT EXISTS, so
  * that costs a few catalog reads. A failed round leaves the memo unset.
  *

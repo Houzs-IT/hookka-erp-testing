@@ -39,7 +39,7 @@ type ColInfo = { name: string; ord: number; dataType: string };
 // One SQL string per (hot|archive) pair per isolate, reusable across requests.
 // The SETTLED string, never the in-flight promise: a pending promise belongs to
 // the request that made it, and if that request ends first every other request
-// awaiting it fails (BUG-2026-11-24-552). A failed build (null) is not cached.
+// awaiting it fails (BUG-2026-11-24-553). A failed build (null) is not cached.
 const specCache = new Map<string, string>();
 
 async function introspect(db: D1Database, table: string): Promise<ColInfo[]> {
