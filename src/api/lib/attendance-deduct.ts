@@ -31,6 +31,7 @@ import {
 } from "../../lib/attendance-rules";
 import { resolvePayRulesAsOf, toAttendanceRules } from "../../lib/pay-rules";
 import { loadPayRuleVersions } from "./pay-rules-store";
+import { memoizeSelfApply } from "./self-apply";
 
 // D1-compat shape (the SupabaseAdapter installed as c.var.DB). Declared locally
 // so this stays pure + unit-testable with a mock DB.
@@ -62,15 +63,13 @@ const MIN_DOCK_HOURS = 0.05; // 3 minutes
 // it runs at most once per isolate. Mirrors migrations-postgres/0155.
 let _sourceColMig: Promise<void> | null = null;
 export function ensureDeductionSourceColumn(db: DeductDbLike): Promise<void> {
-  if (_sourceColMig) return _sourceColMig;
-  _sourceColMig = (async () => {
+  return memoizeSelfApply(() => _sourceColMig, (p) => { _sourceColMig = p; }, async () => {
     await db
       .prepare(
         "ALTER TABLE payroll_hour_deductions ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'MANUAL'",
       )
       .run();
-  })();
-  return _sourceColMig;
+  });
 }
 
 /** For tests only — reset the module-level migration cache between cases. */

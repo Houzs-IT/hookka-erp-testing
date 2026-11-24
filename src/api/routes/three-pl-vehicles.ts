@@ -14,7 +14,7 @@
 // frontend's provider edit dialog and DO create dialog can scope.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { normalizePlate, findPlateCollisions } from "../../lib/plate-no";
@@ -37,8 +37,7 @@ const app = new Hono<Env>();
 // ---------------------------------------------------------------------------
 let pendingMigrations: Promise<void> | null = null;
 function ensurePendingMigrations(db: D1Database): Promise<void> {
-  if (pendingMigrations) return pendingMigrations;
-  pendingMigrations = (async () => {
+  return memoizeSelfApply(() => pendingMigrations, (p) => { pendingMigrations = p; }, async () => {
     const stmts = [
       // 0159 — cargo box L/W/H in feet. Unquoted camelCase folds to lowercase.
       "ALTER TABLE three_pl_vehicles ADD COLUMN IF NOT EXISTS boxLengthFt DOUBLE PRECISION",
@@ -59,14 +58,7 @@ function ensurePendingMigrations(db: D1Database): Promise<void> {
       "CREATE INDEX IF NOT EXISTS idx_three_pl_vehicles_plate_norm ON three_pl_vehicles (plate_norm)",
     ];
     await runSelfApply(db, "three-pl-vehicles", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    pendingMigrations = null;
-    throw err;
   });
-  return pendingMigrations;
 }
 
 // ---------------------------------------------------------------------------

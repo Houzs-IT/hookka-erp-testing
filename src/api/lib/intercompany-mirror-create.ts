@@ -41,7 +41,7 @@ import {
   DEFAULT_COMPANY_CODE,
 } from "../../lib/intercompany-mirror";
 import { normalizeCompanyName } from "../../lib/company-name-match";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { mytYymm } from "../../lib/doc-number";
 
 export type MirrorResult =
@@ -57,8 +57,7 @@ let mirrorLogPromise: Promise<void> | null = null;
  * (deploy does not replay migration files).
  */
 export function ensureMirrorLog(db: D1Database): Promise<void> {
-  if (mirrorLogPromise) return mirrorLogPromise;
-  mirrorLogPromise = (async () => {
+  return memoizeSelfApply(() => mirrorLogPromise, (p) => { mirrorLogPromise = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS intercompany_mirror_log (
          id text PRIMARY KEY,
@@ -75,14 +74,7 @@ export function ensureMirrorLog(db: D1Database): Promise<void> {
          ON intercompany_mirror_log (source_type, source_id)`,
     ];
     await runSelfApply(db, "intercompany-mirror-create", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    mirrorLogPromise = null;
-    throw err;
   });
-  return mirrorLogPromise;
 }
 
 type GroupOrgRow = { code: string; name: string };

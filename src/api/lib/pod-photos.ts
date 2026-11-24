@@ -14,6 +14,7 @@
 // on deploy) — awaited before the first read or write.
 // ---------------------------------------------------------------------------
 import type { D1Database } from "@cloudflare/workers-types";
+import { memoizeSelfApply } from "./self-apply";
 
 /** At most this many photos per POD (the POD has always kept five). */
 export const MAX_POD_PHOTOS = 5;
@@ -24,30 +25,24 @@ let podPhotosTable: Promise<void> | null = null;
 
 /** Create the draft-photo table once per worker (awaited by every caller). */
 export function ensurePodPhotosTable(db: D1Database): Promise<void> {
-  if (!podPhotosTable) {
-    podPhotosTable = (async () => {
-      await db
-        .prepare(
-          `CREATE TABLE IF NOT EXISTS delivery_pod_photos (
-             id          TEXT PRIMARY KEY,
-             org_id      TEXT,
-             do_id       TEXT NOT NULL,
-             data_url    TEXT NOT NULL,
-             server_at   TEXT NOT NULL,
-             created_by  TEXT,
-             size_chars  INTEGER NOT NULL DEFAULT 0
-           )`,
-        )
-        .run();
-      await db
-        .prepare("CREATE INDEX IF NOT EXISTS idx_delivery_pod_photos_do_id ON delivery_pod_photos (do_id)")
-        .run();
-    })().catch((err) => {
-      podPhotosTable = null; // retry on the next request
-      throw err;
-    });
-  }
-  return podPhotosTable;
+  return memoizeSelfApply(() => podPhotosTable, (p) => { podPhotosTable = p; }, async () => {
+    await db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS delivery_pod_photos (
+           id          TEXT PRIMARY KEY,
+           org_id      TEXT,
+           do_id       TEXT NOT NULL,
+           data_url    TEXT NOT NULL,
+           server_at   TEXT NOT NULL,
+           created_by  TEXT,
+           size_chars  INTEGER NOT NULL DEFAULT 0
+         )`,
+      )
+      .run();
+    await db
+      .prepare("CREATE INDEX IF NOT EXISTS idx_delivery_pod_photos_do_id ON delivery_pod_photos (do_id)")
+      .run();
+  });
 }
 
 function b64Head(b64: string, n: number): number[] {

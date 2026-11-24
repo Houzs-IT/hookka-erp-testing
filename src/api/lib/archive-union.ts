@@ -36,10 +36,11 @@ import { DEFAULT_ORG_ID } from "./tenant";
 
 type ColInfo = { name: string; ord: number; dataType: string };
 
-// One flight per (hot|archive) pair per isolate. The resolved value is just a
-// SQL string, reusable across requests regardless of which request's `db`
-// binding warmed the cache.
-const specCache = new Map<string, Promise<string | null>>();
+// One SQL string per (hot|archive) pair per isolate, reusable across requests.
+// The SETTLED string, never the in-flight promise: a pending promise belongs to
+// the request that made it, and if that request ends first every other request
+// awaiting it fails (BUG-2026-11-24-553). A failed build (null) is not cached.
+const specCache = new Map<string, string>();
 
 async function introspect(db: D1Database, table: string): Promise<ColInfo[]> {
   // information_schema column/table identifiers are NOT in the rename map, so
@@ -113,7 +114,7 @@ export async function archiveUnionSource(
   const hit = specCache.get(key);
   if (hit) return hit;
 
-  const p = (async (): Promise<string | null> => {
+  const sql = await (async (): Promise<string | null> => {
     let hotCols: ColInfo[];
     let archCols: ColInfo[];
     try {
@@ -183,6 +184,6 @@ export async function archiveUnionSource(
     );
   })();
 
-  specCache.set(key, p);
-  return p;
+  if (sql) specCache.set(key, sql);
+  return sql;
 }

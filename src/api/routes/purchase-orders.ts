@@ -10,7 +10,7 @@
 // mapper handles the rename.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -1232,8 +1232,7 @@ app.put("/:id", async (c) => {
 // behaviour.
 let pendingMigrations: Promise<void> | null = null;
 function ensurePendingMigrations(db: D1Database): Promise<void> {
-  if (pendingMigrations) return pendingMigrations;
-  pendingMigrations = (async () => {
+  return memoizeSelfApply(() => pendingMigrations, (p) => { pendingMigrations = p; }, async () => {
     // A unit price is a RATE with four decimals of sen. Shared with the PI and
     // GRN routes so the three cannot drift apart again.
     await ensureUnitPricePrecision(db);
@@ -1259,31 +1258,21 @@ function ensurePendingMigrations(db: D1Database): Promise<void> {
       "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS group_org_code TEXT NOT NULL DEFAULT ''",
     ];
     await runSelfApply(db, "purchase-orders", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    pendingMigrations = null;
-    throw err;
   });
-  return pendingMigrations;
 }
 
 // Review H2-8 — supplier delivery dates (Date 1, revised 2/3/4). Own memo so
 // the four columns land even when the main self-apply round already ran.
 let supplierDateColumnsEnsured: Promise<void> | null = null;
 export function ensureSupplierDateColumns(db: D1Database): Promise<void> {
-  if (supplierDateColumnsEnsured) return supplierDateColumnsEnsured;
-  supplierDateColumnsEnsured = runSelfApply(db, "purchase-orders:supplier-dates", [
-    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_1 TEXT",
-    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_2 TEXT",
-    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_3 TEXT",
-    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_4 TEXT",
-  ]).catch((err) => {
-    supplierDateColumnsEnsured = null;
-    throw err;
-  });
-  return supplierDateColumnsEnsured;
+  return memoizeSelfApply(() => supplierDateColumnsEnsured, (p) => { supplierDateColumnsEnsured = p; }, () =>
+    runSelfApply(db, "purchase-orders:supplier-dates", [
+      "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_1 TEXT",
+      "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_2 TEXT",
+      "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_3 TEXT",
+      "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_date_4 TEXT",
+    ]),
+  );
 }
 
 // POST /api/purchase-orders/:id/supplier-date — review H2-8. Body

@@ -1,4 +1,5 @@
 import type { Env } from "../worker";
+import { SELF_APPLY_DONE } from "./self-apply";
 
 // ---------------------------------------------------------------------------
 // ensure-finance-org.ts — Multi-company finance foundation (Phase 1).
@@ -50,8 +51,8 @@ const FINANCE_ORG_STATEMENTS: readonly string[] = [
 let financeOrgPromise: Promise<void> | null = null;
 
 export function ensureFinanceOrgColumns(db: Env["Variables"]["DB"]): Promise<void> {
-  if (financeOrgPromise) return financeOrgPromise;
-  financeOrgPromise = (async () => {
+  if (financeOrgPromise) return SELF_APPLY_DONE;
+  return (async () => {
     let hadFailure = false;
     for (const sql of FINANCE_ORG_STATEMENTS) {
       try {
@@ -62,9 +63,8 @@ export function ensureFinanceOrgColumns(db: Env["Variables"]["DB"]): Promise<voi
         hadFailure = true;
       }
     }
-    // Self-heal: if a transient DDL reject occurred, clear the memo so the next
-    // request retries rather than caching a partial-apply as "done".
-    if (hadFailure) financeOrgPromise = null;
+    // Only a clean round is remembered, and only once it has settled: an
+    // in-flight promise must never be shared across requests (BUG-2026-11-24-553).
+    if (!hadFailure) financeOrgPromise = SELF_APPLY_DONE;
   })();
-  return financeOrgPromise;
 }
