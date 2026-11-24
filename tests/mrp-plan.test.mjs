@@ -104,3 +104,63 @@ test("the per-WIP deduction can be audited without DB access", () => {
   assert.match(route, /app\.get\("\/consume-log"/);
   assert.match(route, /FROM rm_consume_marks m/);
 });
+
+// ---- Full Houzs-parity MRP (owner 2026-11-23 「可以了 去做吧」) ----
+const page = () => readFileSync(new URL("../src/pages/planning/mrp.tsx", import.meta.url), "utf8");
+const route = () => readFileSync(new URL("../src/api/routes/mrp.ts", import.meta.url), "utf8");
+
+test("Proceed PO creates REAL POs, Combined per supplier or Per SO per supplier per order", () => {
+  const src = page();
+  assert.match(src, /const gk = mode === "combined" \? p\.line\.supplierId : `\$\{p\.line\.supplierId\}\|\$\{p\.line\.productionOrderId\}`;/);
+  assert.match(src, /status: "CONFIRMED",/);
+  assert.match(src, /"Idempotency-Key": `mrp-\$\{plan\.calculatedAt\}-\$\{g\.key\}`/);
+});
+
+test("the stale-plan check runs BEFORE any PO or binding is written", () => {
+  const src = page();
+  const chk = src.indexOf("/api/mrp/plan-check?asOf=");
+  const bind = src.indexOf('fetch("/api/supplier-materials"');
+  const po = src.indexOf('fetch("/api/purchase-orders"');
+  assert.ok(chk > 0 && bind > chk && po > bind);
+  assert.match(route(), /app\.get\("\/plan-check"/);
+  assert.match(route(), /WHERE po\.created_at > \?/);
+});
+
+test("a supplier picked for an unbound material is bound to it (owner option 2)", () => {
+  const src = page();
+  assert.match(src, /<optgroup label="Other suppliers \(will be bound\)">/);
+  assert.match(src, /if \(!res\.ok && res\.status !== 409\)/);
+});
+
+test("Lead Times are saved per supplier and drive the order-by date", () => {
+  assert.match(route(), /app\.put\("\/lead-times"/);
+  assert.match(route(), /n < 0 \|\| n > 365/);
+  assert.match(page(), /orderBy: minusDays\(o\.needBy, lead\)/);
+});
+
+test("dates follow the system standard dd/mm/yyyy", () => {
+  assert.match(page(), /const dmy = \(iso: string\): string => \(iso && iso\.length >= 10 \? `\$\{iso\.slice\(8, 10\)\}\/\$\{iso\.slice\(5, 7\)\}\/\$\{iso\.slice\(0, 4\)\}` : "—"\);/);
+  assert.doesNotMatch(page(), /month: "short"/);
+});
+
+test("Houzs toolbar: date type, From/To, no-date, shortages, export all / current tab, wrap, columns, filters", () => {
+  const src = page();
+  for (const s of ['value="orderBy"', 'value="due"', 'value="soDate"', "SHOW NO-DATE", "ONLY SHORTAGES", "EXPORT ALL", "EXPORT CURRENT TAB", "WRAP", "FILTERS", "Columns ·", "COMBINED", "PER SO", "COLLAPSE", "EXPAND", "LEAD TIMES", "Proceed PO ("]) {
+    assert.ok(src.includes(s), `missing ${s}`);
+  }
+});
+
+test("Production Tracking keeps its columns and only ADDS a Stock column", () => {
+  const prod = readFileSync(new URL("../src/pages/production/index.tsx", import.meta.url), "utf8");
+  assert.match(prod, /\}>\("\/api\/mrp\/stock-status"\);/);
+  assert.match(prod, /key: "stockStatus",\s*label: "Stock",/);
+  assert.match(prod, /stockStatus\[`\$\{row\.poId\}\|\$\{row\.wipKey \?\? ""\}`\] \?\? stockStatus\[`\$\{row\.poId\}\|`\]/);
+  assert.match(route(), /app\.get\("\/stock-status"/);
+});
+
+test("stock-status is cached + single-flight so Production Tracking never stacks MRP builds (2026-11-24)", () => {
+  const src = route();
+  assert.match(src, /const STOCK_STATUS_TTL_S = 600;/);
+  assert.match(src, /if \(!stockStatusInflight\) \{/);
+  assert.match(src, /kv\.put\(STOCK_STATUS_KV_KEY, JSON\.stringify\(body\), \{ expirationTtl: STOCK_STATUS_TTL_S \}\)/);
+});

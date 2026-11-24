@@ -176,8 +176,8 @@ test("a reloaded MRP run reports UNCOUNTED coverage as null, never 0", () => {
 // same truthfulness guarantees are re-asserted against the new page + engine.
 test("the PO outstanding figure is rendered where it is netted", () => {
   const src = mrpPage();
-  assert.ok(/>PO outstanding</.test(src), "the column must exist");
-  assert.ok(/\{fmtQty\(m\.poOutstanding\)\}/.test(src), "the row prints the real per-material outstanding qty");
+  assert.ok(/\{ key: "po", label: "PO Outstanding", num: true \}/.test(src), "the column must exist");
+  assert.ok(/\{fmtQty\(r\.poOutstanding\)\}/.test(src), "the row prints the real per-material outstanding qty");
 });
 
 test("the page states its PO coverage instead of implying completeness", () => {
@@ -247,10 +247,14 @@ test("no lead time means no deadline — the red 'Order By' date cannot be guess
   );
 });
 
-test("the MRP page invents no MOQ or lead time (owner 2026-11-23: no lead-time engine)", () => {
+test("the MRP page invents no MOQ or lead time — lead time comes from the binding or the owner's Lead Times", () => {
+  // Owner 2026-11-23 asked for Houzs-style Lead Times (order-by date). Still no
+  // invented number: the binding's own lead time, else the Lead Times setting,
+  // else 0 (order-by = need-by). MOQ is a minimum, 0 = not stated.
   const src = mrpPage();
-  assert.ok(!/leadTime/i.test(src), "the raw-material MRP has no lead-time column or deadline");
-  assert.ok(!/leadTimeDays\s*\?\?\s*\d/.test(src) && !/moq\s*\?\?\s*\d/i.test(src), "no numeric fallback may appear on the page");
+  assert.ok(/bound && bound\.leadTimeDays > 0 \? bound\.leadTimeDays : \(leadTimes\[supplierId\] \?\? 0\)/.test(src));
+  assert.ok(/Math\.max\(qty, bound\?\.moq \?\? 0\)/.test(src));
+  assert.ok(!/leadTimeDays\s*\?\?\s*[1-9]/.test(src) && !/moq\s*\?\?\s*[1-9]/i.test(src), "no numeric fallback may appear on the page");
 });
 
 test("the shared MRP type carries null, so a fallback cannot be typed away", () => {
