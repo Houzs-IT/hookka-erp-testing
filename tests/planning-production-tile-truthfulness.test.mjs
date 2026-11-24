@@ -253,7 +253,8 @@ test("the MRP page invents no MOQ or lead time — lead time comes from the bind
   // else 0 (order-by = need-by). MOQ is a minimum, 0 = not stated.
   const src = mrpPage();
   assert.ok(/bound && bound\.leadTimeDays > 0 \? bound\.leadTimeDays : \(leadTimes\[supplierId\] \?\? 0\)/.test(src));
-  assert.ok(/Math\.max\(qty, bound\?\.moq \?\? 0\)/.test(src));
+  // MOQ rounding moved server-side with Proceed PO (2026-11-24): src/api/routes/mrp.ts
+  assert.ok(/Math\.max\(qty, bound\?\.moq \?\? 0\)/.test(readFileSync(new URL("../src/api/routes/mrp.ts", import.meta.url), "utf8")));
   assert.ok(!/leadTimeDays\s*\?\?\s*[1-9]/.test(src) && !/moq\s*\?\?\s*[1-9]/i.test(src), "no numeric fallback may appear on the page");
 });
 

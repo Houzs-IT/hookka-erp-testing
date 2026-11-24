@@ -376,97 +376,55 @@ export default function MRPPage() {
     if (!plan) return;
     setBusy(true);
     try {
-      // 1. Stale-plan guard — a PO raised for these materials after the plan
-      //    was calculated means the shortage may already be covered.
-      const codes = [...new Set(picks.map((p) => p.row.code))];
-      const chk = await fetch(`/api/mrp/plan-check?asOf=${encodeURIComponent(plan.calculatedAt)}&codes=${encodeURIComponent(codes.join(","))}`);
-      const chkJson = (await chk.json()) as { success?: boolean; stale?: boolean; data?: { poNo: string; code: string }[]; error?: string };
-      if (!chkJson.success) throw new Error(chkJson.error || `Plan check failed (HTTP ${chk.status})`);
-      if (chkJson.stale) {
-        const list = (chkJson.data ?? []).map((h) => `${h.poNo} (${h.code})`).join(", ");
+      // ONE server call (owner 2026-11-24 「开 PO 改成服务器一次开完」): the
+      // server re-checks the plan is not stale, orders each line's CURRENT
+      // shortage (never twice), binds new suppliers and creates every PO in one
+      // database batch — all or nothing. The browser only says which lines and
+      // which supplier. A double click replays the same answer (Idempotency-Key).
+      const lines = picks.map((p) => ({
+        rmId: p.row.rmId,
+        productionOrderId: p.line.productionOrderId,
+        wipKey: p.line.wipKey,
+        dept: p.line.dept,
+        supplierId: p.line.supplierId,
+      }));
+      const selKey = lines.map((l) => `${l.rmId}:${l.productionOrderId}:${l.wipKey}:${l.dept}:${l.supplierId}`).sort().join(",");
+      let hash = 0;
+      for (let i = 0; i < selKey.length; i++) hash = (hash * 31 + selKey.charCodeAt(i)) | 0;
+      const res = await fetch("/api/mrp/proceed-po", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": `mrp-${plan.calculatedAt}-${mode}-${(hash >>> 0).toString(36)}`.slice(0, 120) },
+        body: JSON.stringify({ asOf: plan.calculatedAt, mode: mode === "combined" ? "combined" : "perso", expectedDate: expectedAt || "", lines }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        code?: string;
+        error?: string;
+        data?: { created?: { poNo: string; supplierName: string; lines: number }[]; mirrorErrors?: string[] } | { poNo: string; code: string }[] | string[];
+      };
+      if (j.code === "MRP_PLAN_STALE") {
+        const list = ((j.data as { poNo: string; code: string }[]) ?? []).map((h) => `${h.poNo} (${h.code})`).join(", ");
         setDialog({ kind: "stale", body: `${list} was raised after this plan was calculated (${dmyTime(plan.calculatedAt)}). Refresh and tick again, so nothing is ordered twice.` });
         return;
       }
-      // 2. Bind a supplier picked for a material it is not bound to yet
-      //    (owner option 2). A duplicate (409) means it is already bound.
-      const boundNow = new Set<string>();
-      for (const p of picks) {
-        const bk = `${p.line.supplierId}|${p.row.code}`;
-        if (boundNow.has(bk) || p.row.suppliers.some((s) => s.supplierId === p.line.supplierId)) continue;
-        const res = await fetch("/api/supplier-materials", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            supplierId: p.line.supplierId,
-            materialCode: p.row.code,
-            materialName: p.row.description || p.row.code,
-            supplierSku: p.row.code,
-            unitPrice: 0,
-          }),
-        });
-        if (!res.ok && res.status !== 409) {
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(`Could not bind ${p.line.supplierName} to ${p.row.code}: ${j.error ?? res.status}`);
-        }
-        boundNow.add(bk);
+      if (j.code === "MRP_LINE_COVERED") {
+        setDialog({ kind: "stale", body: `These lines are no longer short — already ordered or now in stock:\n${((j.data as string[]) ?? []).map((x) => `• ${x}`).join("\n")}\nRefresh and tick again. Nothing was ordered.` });
+        return;
       }
-      // 3. Group: Combined = one PO per supplier; Per SO = per supplier per order.
-      type G = { supplierId: string; supplierName: string; key: string; orders: Set<string>; needBy: string; items: Map<string, { row: ViewRow; qty: number }> };
-      const groups = new Map<string, G>();
-      for (const p of picks) {
-        const gk = mode === "combined" ? p.line.supplierId : `${p.line.supplierId}|${p.line.productionOrderId}`;
-        const g = groups.get(gk) ?? { supplierId: p.line.supplierId, supplierName: p.line.supplierName, key: gk, orders: new Set<string>(), needBy: p.line.needBy, items: new Map() };
-        g.orders.add(p.line.poNo);
-        if (p.line.needBy && (!g.needBy || p.line.needBy < g.needBy)) g.needBy = p.line.needBy;
-        const it = g.items.get(p.row.rmId) ?? { row: p.row, qty: 0 };
-        it.qty += p.line.shortQty;
-        g.items.set(p.row.rmId, it);
-        groups.set(gk, g);
-      }
-      const created: string[] = [];
-      const failed: string[] = [];
-      for (const g of groups.values()) {
-        const items = [...g.items.values()].map(({ row, qty }) => {
-          const bound = row.suppliers.find((s) => s.supplierId === g.supplierId);
-          // MOQ is a MINIMUM order quantity; 0 = not stated.
-          const quantity = Math.round(Math.max(qty, bound?.moq ?? 0) * 100) / 100;
-          return {
-            materialCategory: row.itemGroup,
-            materialCode: row.code,
-            materialName: `${row.code} - ${row.description}`,
-            supplierSKU: row.code,
-            quantity,
-            unitPriceSen: bound?.unitPriceSen ?? 0,
-            unit: row.uom,
-          };
-        });
-        const res = await fetch("/api/purchase-orders", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Idempotency-Key": `mrp-${plan.calculatedAt}-${g.key}`.slice(0, 120) },
-          body: JSON.stringify({
-            supplierId: g.supplierId,
-            supplierName: g.supplierName,
-            status: "CONFIRMED",
-            expectedDate: expectedAt || g.needBy || "",
-            notes: `From MRP (${mode === "combined" ? "Combined" : "Per SO"}) — for ${[...g.orders].join(", ")}`,
-            items,
-          }),
-        });
-        const j = (await res.json().catch(() => ({}))) as { success?: boolean; data?: { poNo?: string }; error?: string };
-        if (res.ok && j.success) created.push(`${j.data?.poNo ?? "PO"} ${g.supplierName} (${items.length} line${items.length === 1 ? "" : "s"})`);
-        else failed.push(`${g.supplierName}: ${j.error ?? `HTTP ${res.status}`}`);
-      }
+      if (!res.ok || !j.success) throw new Error(j.error || `HTTP ${res.status}`);
+      const out = (j.data ?? {}) as { created?: { poNo: string; supplierName: string; lines: number }[]; mirrorErrors?: string[] };
+      const created = (out.created ?? []).map((c) => `${c.poNo} ${c.supplierName} (${c.lines} line${c.lines === 1 ? "" : "s"})`);
       invalidateCachePrefix("/api/purchase-orders");
       setSel(new Set());
       setDialog({
         kind: "created",
         body:
-          (created.length ? `${created.length} purchase order${created.length === 1 ? "" : "s"} created (CONFIRMED): ${created.join("; ")}.` : "No purchase order was created.") +
-          (failed.length ? `\nFailed: ${failed.join("; ")}` : ""),
+          `${created.length} purchase order${created.length === 1 ? "" : "s"} created (CONFIRMED): ${created.join("; ")}.` +
+          ((out.mirrorErrors ?? []).length ? `\n${(out.mirrorErrors ?? []).join("; ")}` : ""),
       });
       await refresh();
     } catch (err) {
-      setDialog({ kind: "info", title: "Proceed PO failed", body: err instanceof Error ? err.message : String(err) });
+      setDialog({ kind: "info", title: "Proceed PO failed — nothing was ordered", body: err instanceof Error ? err.message : String(err) });
     } finally {
       setBusy(false);
     }

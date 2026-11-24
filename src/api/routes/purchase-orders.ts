@@ -10,6 +10,7 @@
 // mapper handles the rename.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
@@ -1393,5 +1394,153 @@ app.delete("/:id", async (c) => {
   });
   return c.json({ success: true, data: existing });
 });
+
+// ---------------------------------------------------------------------------
+// createPurchaseOrdersAtomic — several POs in ONE database batch (owner
+// 2026-11-24, MRP Proceed PO 「开 PO 改成服务器一次开完」, as Houzs' /from-sos):
+// every PO, every line and the caller's extra statements (supplier bindings)
+// commit together or not at all — never "half the suppliers got a PO".
+// Same validation, line units and PO numbering as POST / ; consecutive numbers
+// in the month, re-scanned on a unique collision. Audit + inter-company mirror
+// run per PO after the commit, as POST / does.
+export type AtomicPoDraft = {
+  supplierId: string;
+  supplierName: string;
+  status: string;
+  expectedDate: string;
+  notes: string;
+  items: Array<{ materialCategory: string; materialCode: string; materialName: string; supplierSKU: string; quantity: number; unitPriceSen: number; unit: string }>;
+};
+export type AtomicPoResult =
+  | { ok: true; created: Array<{ id: string; poNo: string; supplierName: string; lines: number }>; mirrorErrors: string[] }
+  | { ok: false; error: string };
+export async function createPurchaseOrdersAtomic(
+  c: Context<Env>,
+  drafts: AtomicPoDraft[],
+  extraStatements: D1PreparedStatement[] = [],
+): Promise<AtomicPoResult> {
+  const db = c.var.DB;
+  await ensurePoItemLineNo(db);
+  await ensurePendingMigrations(db);
+  if (drafts.length === 0) return { ok: false, error: "Nothing to order" };
+  const orgId = getOrgId(c);
+  const allItems = drafts.flatMap((d) => d.items) as unknown as Array<Record<string, unknown>>;
+  const { uom: rmUom, inactive: rmInactive } = await rmBaseUoms(db, orgId, allItems);
+  const inactiveNew = inactiveNewMaterials(rmInactive, allItems);
+  if (inactiveNew.length > 0) return { ok: false, error: inactiveMaterialError(inactiveNew) };
+  type PreparedItem = AtomicPoDraft["items"][number] & { id: string; totalSen: number };
+  type Prepared = { id: string; d: AtomicPoDraft; supplier: Record<string, unknown>; purchaseOrgCode: string; items: PreparedItem[]; subtotalSen: number };
+  const prepared: Prepared[] = [];
+  // Every supplier in one read (no query per PO).
+  const supIds = [...new Set(drafts.map((d) => d.supplierId).filter(Boolean))];
+  const supRes = supIds.length
+    ? await db.prepare(`SELECT * FROM suppliers WHERE id IN (${supIds.map(() => "?").join(",")})`).bind(...supIds).all<Record<string, unknown>>()
+    : { results: [] as Record<string, unknown>[] };
+  const supById = new Map((supRes.results ?? []).map((r) => [String(r.id), r]));
+  for (const d of drafts) {
+    if (!d.supplierId || !d.supplierName || d.items.length === 0) return { ok: false, error: "Each PO needs a supplier and at least one line" };
+    const supplier = supById.get(d.supplierId);
+    if (!supplier) return { ok: false, error: `Supplier not found: ${d.supplierName}` };
+    const orgCode = (supplier.purchaseOrgCode ?? supplier.purchase_org_code ?? null) as string | null;
+    const items: PreparedItem[] = [];
+    for (let i = 0; i < d.items.length; i++) {
+      const it = d.items[i];
+      const quantity = Number(it.quantity);
+      const unitPriceSen = Number(it.unitPriceSen);
+      if (!Number.isFinite(quantity) || quantity <= 0) return { ok: false, error: `${d.supplierName} line ${i + 1}: quantity must be more than 0` };
+      if (!Number.isFinite(unitPriceSen) || unitPriceSen < 0) return { ok: false, error: `${d.supplierName} line ${i + 1}: price must be 0 or more` };
+      items.push({ ...it, id: genItemId(), quantity, unitPriceSen, totalSen: quantity * unitPriceSen, unit: poLineUnit(rmUom, it.materialCode, it.unit) });
+    }
+    prepared.push({
+      id: genPoId(),
+      d,
+      supplier,
+      purchaseOrgCode: orgCode && String(orgCode).trim() ? String(orgCode).trim() : "HOOKKA",
+      items,
+      subtotalSen: items.reduce((a, x) => a + x.totalSen, 0),
+    });
+  }
+  const now = new Date().toISOString();
+  const today = now.split("T")[0];
+  let first = await generatePoNo(db);
+  let poNos: string[] = [];
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < PO_NO_RETRY_LIMIT; attempt++) {
+    const prefix = first.slice(0, first.lastIndexOf("-") + 1);
+    const seq0 = Number(first.split("-").pop());
+    poNos = prepared.map((_, i) => `${prefix}${String(seq0 + i).padStart(3, "0")}`);
+    const statements: D1PreparedStatement[] = [...extraStatements];
+    prepared.forEach((p, i) => {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO purchase_orders (id, poNo, supplierId, supplierName,
+               subtotalSen, totalSen, status, orderDate, expectedDate, receivedDate,
+               notes, purchase_org_code, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(p.id, poNos[i], p.d.supplierId, p.d.supplierName, p.subtotalSen, p.subtotalSen, p.d.status, today, p.d.expectedDate ?? "", null, p.d.notes ?? "", p.purchaseOrgCode, now, now),
+        ...p.items.map((it, idx) =>
+          db
+            .prepare(
+              `INSERT INTO purchase_order_items (id, purchaseOrderId,
+                 materialCategory, material_code, materialName, supplierSKU, quantity,
+                 unitPriceSen, totalSen, receivedQty, unit, line_no)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(it.id, p.id, it.materialCategory, it.materialCode, it.materialName, it.supplierSKU, it.quantity, it.unitPriceSen, it.totalSen, 0, it.unit, idx + 1),
+        ),
+      );
+    });
+    try {
+      await db.batch(statements);
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (!isPoNoUniqueViolation(err)) throw err;
+      first = await generatePoNo(db);
+    }
+  }
+  if (lastErr) throw new Error("PO number generation failed after 5 retries — concurrent insert storm");
+
+  const mirrorErrors: string[] = [];
+  const created: Array<{ id: string; poNo: string; supplierName: string; lines: number }> = [];
+  const cfgRow = await db
+    .prepare("SELECT auto_create_mirror_docs FROM inter_company_config WHERE id = 1")
+    .first<{ auto_create_mirror_docs?: number | boolean | null }>()
+    .catch(() => null);
+  const autoCreateMirrorDocs = cfgRow?.auto_create_mirror_docs === 1 || cfgRow?.auto_create_mirror_docs === true;
+  for (let i = 0; i < prepared.length; i++) {
+    const p = prepared[i];
+    created.push({ id: p.id, poNo: poNos[i], supplierName: p.d.supplierName, lines: p.items.length });
+    // The after-state as written (the batch above), without a re-read per PO.
+    const after = { id: p.id, poNo: poNos[i], supplierId: p.d.supplierId, supplierName: p.d.supplierName, status: p.d.status, orderDate: today, expectedDate: p.d.expectedDate ?? "", notes: p.d.notes ?? "", subtotalSen: p.subtotalSen, totalSen: p.subtotalSen, purchaseOrgCode: p.purchaseOrgCode, items: p.items };
+    await emitAudit(c, { resource: "purchase-orders", resourceId: p.id, action: "create", after });
+    if (!autoCreateMirrorDocs) continue;
+    try {
+      const s = p.supplier;
+      await createPurchaseOrderMirror(
+        db,
+        {
+          id: p.id,
+          poNo: poNos[i],
+          orderDate: today,
+          purchaseOrgCode: p.purchaseOrgCode,
+          supplier: {
+            isGroupCompany: s.isGroupCompany === 1 || s.isGroupCompany === true || s.is_group_company === 1 || s.is_group_company === true,
+            groupOrgCode: (s.groupOrgCode ?? s.group_org_code ?? null) as string | null,
+            name: (s.name as string | null) ?? p.d.supplierName,
+          },
+          items: p.items.map((it) => ({ materialCode: it.materialCode, materialName: it.materialName, quantity: it.quantity, unitPriceSen: it.unitPriceSen })),
+        },
+        { autoCreateMirrorDocs },
+      );
+    } catch (mirrorErr) {
+      mirrorErrors.push(`${poNos[i]}: intercompany mirror not created: ${mirrorErr instanceof Error ? mirrorErr.message : String(mirrorErr)}`);
+    }
+  }
+  return { ok: true, created, mirrorErrors };
+}
 
 export default app;
