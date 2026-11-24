@@ -22,6 +22,8 @@ import {
 } from "../../../lib/supplier-material-candidates";
 import { allocateLinesToPos, headerPoId, type AllocPo } from "../../../lib/po-line-allocate";
 import { resolvePoLink, splitPoRefs } from "../../../lib/po-ref-match";
+import { scanPiLineUnit } from "../../../lib/scan-pi-line-uom";
+import { ALL_RM_UOMS } from "../../../lib/material-variants";
 import { allocateDiscountSen, lineTotalSen, roundUnitPriceSen } from "../../../lib/unit-price";
 import { bestMatch } from "../../../lib/party-fuzzy-match";
 import { resolveAlias } from "../../../lib/party-alias-client";
@@ -30,7 +32,7 @@ import { resolveAlias } from "../../../lib/party-alias-client";
 export type PiSupplier = { id: string; name: string; code: string; purchaseOrgCode?: string | null };
 export type PiMaterial = MaterialLike & { itemCode: string; description?: string | null };
 export type PiBinding = BindingLike & { supplierDescription?: string | null };
-export type PiPoItem = { id: string; materialCode?: string | null; materialName?: string | null; supplierSKU?: string | null; quantity?: number | null; receivedQty?: number | null; unitPriceSen?: number | null };
+export type PiPoItem = { id: string; materialCode?: string | null; materialName?: string | null; supplierSKU?: string | null; quantity?: number | null; receivedQty?: number | null; unitPriceSen?: number | null; unit?: string | null };
 export type PiPo = CandPo & AllocPo & { id: string; poNo?: string | null; supplierId?: string | null; status?: string | null; items?: PiPoItem[] | null };
 export type PiOrg = { code: string; name: string; isActive?: boolean };
 
@@ -42,6 +44,8 @@ export type PiContext = {
   orgs: PiOrg[];
   /** Taught aliases: normalised OCR name → supplierId. */
   aliases: Record<string, string>;
+  /** HK-0169: the RM unit list (variants config); the built-in list when not loaded. */
+  units?: string[];
 };
 
 /** One doc of a queue row's rawJson.docs[] (scan-engine SupplierDoc). */
@@ -91,6 +95,8 @@ export type PiCardLine = {
    * stores no PO-line link and falls back to matching by material code. Null / absent = none.
    */
   poItemId?: string | null;
+  /** HK-0169: billed in another unit than the PO line, how many PO units it covers (typed). */
+  poQty?: string;
   autoMatched: boolean;
   matchTier: CandidateTier | null;
   matchVia: "sku" | "code" | "text" | null;
@@ -426,6 +432,14 @@ export function poOrderedFor(line: { materialCode: string; poId: string | null }
   return found ? { poNo: str(po.poNo), ordered } : null;
 }
 
+/** HK-0169: the PO line's unit, and the unit + PO-unit cover this line saves (the desktop wizard's rule). */
+export function piLineUnit(line: PiCardLine, ctx: PiContext) {
+  const items: PiPoItem[] = ctx.purchaseOrders.find((p) => p.id === line.poId)?.items ?? [];
+  const poUnit = line.poItemId ? items.find((it) => it.id === line.poItemId)?.unit ?? null : null;
+  const cover = str(line.poQty) === "" ? null : num(line.poQty);
+  return { poUnit, ...scanPiLineUnit({ uom: line.uom, poQty: cover }, poUnit, ctx.units ?? ALL_RM_UOMS) };
+}
+
 // ---- money -----------------------------------------------------------------------------------------------------------
 const grossSen = (l: PiCardLine): number => lineTotalSen(num(l.qty), roundUnitPriceSen(num(l.unitPriceRm) * 100));
 const discountSplit = (card: PiCard): number[] => allocateDiscountSen(card.lines.map(grossSen), Math.round(num(card.discountRm) * 100));
@@ -465,6 +479,10 @@ export function piBlockers(card: PiCard, ctx: PiContext, now = Date.now()): stri
   if (valid.length === 0) out.push("Add at least one line.");
   const unbound = valid.filter((l) => !l.materialCode.trim());
   if (unbound.length > 0) out.push(`${unbound.length} line${unbound.length === 1 ? "" : "s"} not matched to a catalogue item — pick the internal code.`);
+  for (const l of valid) {
+    const u = piLineUnit(l, ctx);
+    if (u.missingPoQty) out.push(`${l.materialCode || "A line"} is billed in ${u.uom} — enter how many ${u.poUnit} of the PO it covers (more than 0).`);
+  }
   if (isFutureInvoiceDate(card.invoiceDate, now)) out.push(`Invoice date ${card.invoiceDate} is in the future — check the supplier's invoice.`);
   return out;
 }
@@ -499,6 +517,8 @@ export function piDraftBody(card: PiCard, ctx: PiContext, fileName: string, sour
       poId: l.poId ?? null,
       // The PO line it bills, so the server's ceiling and the PI's auto stock-in do not have to guess it from the material code.
       ...(l.poItemId ? { poItemId: l.poItemId } : {}),
+      // HK-0169: billed in another unit than the PO line — that unit, and how many PO units it covers.
+      ...((u) => (u.uom ? { uom: u.uom, poQty: u.poQty } : {}))(piLineUnit(l, ctx)),
       // The catalogue tier is the scanner reading text with nothing to corroborate it: it may fill the field, it may not teach a binding.
       unverifiedMatch: l.autoMatched === true && l.matchTier === "catalog",
     })),
@@ -554,7 +574,7 @@ export function piContextFrom(raw: { suppliers?: unknown; orgs?: unknown; materi
     bindings: arr(raw.bindings).map((r) => ({ supplierId: str(r.supplierId), materialCode: str(r.materialCode), supplierSku: r.supplierSku == null ? null : str(r.supplierSku), supplierDescription: r.supplierDescription == null ? null : str(r.supplierDescription) })),
     purchaseOrders: arr(raw.purchaseOrders).map((r) => ({
       id: str(r.id), poNo: str(r.poNo), supplierId: str(r.supplierId), status: str(r.status),
-      items: arr(r.items).map((it) => ({ id: str(it.id), materialCode: it.materialCode == null ? null : str(it.materialCode), materialName: it.materialName == null ? null : str(it.materialName), supplierSKU: it.supplierSKU == null ? null : str(it.supplierSKU), quantity: num(it.quantity), receivedQty: num(it.receivedQty), unitPriceSen: num(it.unitPriceSen) })),
+      items: arr(r.items).map((it) => ({ id: str(it.id), materialCode: it.materialCode == null ? null : str(it.materialCode), materialName: it.materialName == null ? null : str(it.materialName), supplierSKU: it.supplierSKU == null ? null : str(it.supplierSKU), quantity: num(it.quantity), receivedQty: num(it.receivedQty), unitPriceSen: num(it.unitPriceSen), unit: it.unit == null ? null : str(it.unit) })),
     })),
     aliases,
   };
