@@ -50,11 +50,11 @@ import {
 } from "@/lib/finance-dashboard-calc";
 import { BarChart3, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
-import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
+import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, dashRowLabel, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 // Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
 import {
-  bsForecastByBucket, cashDetailSections, cashForecastByBucket, cashLinesByBucket, dashAheadRows, dashBsForecast, dashCashForecast, dashCashForecastLines, dashCashLineGroups,
+  bsForecastByBucket, cashDetailSections, dashForecastRatios, cashForecastByBucket, cashLinesByBucket, dashBsForecast, dashCashForecast, dashCashForecastLines, dashCashLineGroups,
   type DashBsFigures, type DashCashForecast, type DashCashLines, type DashLineGroups, type DetailCell,
 } from "@/lib/dashboard-forecast";
 import type { BsForecastPayload } from "@/lib/forecast-bs";
@@ -119,6 +119,8 @@ type Row = {
   };
 };
 
+const ratioCell = (v: number | null | undefined, isPct: boolean) =>
+  v === null || v === undefined ? "-" : `${v.toFixed(2)}${isPct ? "%" : ""}`;
 const rm = (sen: number | null | undefined) =>
   sen === null || sen === undefined ? "-" : (sen / 100).toLocaleString("en-MY", { maximumFractionDigits: 0 });
 const rm2 = (sen: number | null | undefined) =>
@@ -820,12 +822,14 @@ export default function FinanceDashboardPage() {
     return () => { cancelled = true; };
   }, [pastBsKeysJoined]);
   const cfRows = useMemo(
-    () => (explicitRange ? shownRows : [...shownRows, ...dashAheadRows(rows ?? [], shownRows, new Set(Object.keys(cashFcB)))]),
-    [rows, shownRows, cashFcB, explicitRange],
+    // Owner 2026-11-24: 6 / 12 months = actual only; a future period shows
+    // only when it is picked in From / To (it is then in shownRows).
+    () => shownRows,
+    [shownRows],
   );
   const bsRows = useMemo(
-    () => (explicitRange ? shownRows : [...shownRows, ...dashAheadRows(rows ?? [], shownRows, new Set(Object.keys(bsFcB)))]),
-    [rows, shownRows, bsFcB, explicitRange],
+    () => shownRows,
+    [shownRows],
   );
   const plData = useMemo(
     () =>
@@ -843,8 +847,12 @@ export default function FinanceDashboardPage() {
         const fcSales = r.forecast?.sales ?? null;
         const share = (v: number | null, base: number | null) =>
           v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
+        const ahead = cur === null || cur === undefined;
         return {
-          label: dashPeriodLabel(r.label, r.partial),
+          label: dashRowLabel(r),
+          ahead: ahead ? 1 : 0,
+          // The bar: actual, or the forecast (faded) for a period ahead.
+          bar: ahead ? pick(r.forecast) : a,
           actual: a,
           forecast: pick(r.forecast),
           pctOfRevenue: share(a, sales),
@@ -872,7 +880,7 @@ export default function FinanceDashboardPage() {
         const share = (v: number | null, base: number | null) =>
           v !== null && base !== null && base !== 0 ? Math.round((v / base) * 10000) / 100 : null;
         return {
-          label: dashPeriodLabel(r.label, r.partial),
+          label: dashRowLabel(r),
           amount,
           forecast,
           pct: share(amount, sales),
@@ -989,8 +997,20 @@ export default function FinanceDashboardPage() {
 
   const ratioIsMoney = false;
   const ratioData = useMemo(
-    () => shownRows.map((r) => ({ label: dashPeriodLabel(r.label, r.partial), value: r.ratios[ratioTab] })),
-    [shownRows, ratioTab],
+    () =>
+      shownRows.map((r) => {
+        const ahead = r.actual === null || r.actual === undefined;
+        // Owner 2026-11-24: future periods get forecast ratios too.
+        const value = ahead ? dashForecastRatios(r.forecast, bsFcB[r.key])[ratioTab] : r.ratios[ratioTab];
+        // A month that has happened beside its forecast and the gap (owner
+        // 2026-11-24 「financial ratio 也可以放 forecast的进去」 → 「Build it」),
+        // as the Balance Sheet card: this month's Forecast Balance Sheet or the
+        // past month's worked out from the month-end before it. Months only.
+        const fcBs = bsFcB[r.key] ?? pastBs[r.key] ?? null;
+        const fc = !ahead && granularity === "month" ? dashForecastRatios(r.forecast, fcBs)[ratioTab] : null;
+        return { label: dashRowLabel(r), ahead: ahead ? 1 : 0, value, fc };
+      }),
+    [shownRows, ratioTab, bsFcB, pastBs, granularity],
   );
 
   // ---- Cost structure (owner 2026-07-29) --------------------------------
@@ -1032,7 +1052,7 @@ export default function FinanceDashboardPage() {
   const csData = useMemo(
     () =>
       shownRows.map((r) => {
-        const point: Record<string, number | string | null> = { label: dashPeriodLabel(r.label, r.partial) };
+        const point: Record<string, number | string | null> = { label: dashRowLabel(r) };
         const sales = csLineSales(r);
         point.__sales__ = sales;
         const prod = csLineProdRev(r);
@@ -1115,7 +1135,7 @@ export default function FinanceDashboardPage() {
         const fc = csMeasure === "spend" ? csForecastAmt(r, csFocusEff) : null;
         const fcSales = csForecastSales(r);
         return {
-          label: dashPeriodLabel(r.label, r.partial),
+          label: dashRowLabel(r),
           amount: amt,
           // The base both percentages divide by (owner 2026-08-06: 「帮我把
           // revenue 显示出来」). Showing it is what let him catch the forecast
@@ -1247,13 +1267,41 @@ export default function FinanceDashboardPage() {
         <Card><CardContent className="py-16 text-center text-[#6B7280] text-sm">No data yet.</CardContent></Card>
       ) : (
         <>
+          {(() => {
+            // What the cards show (owner 2026-11-24 design): actual, forecast, or both.
+            const ahead = shownRows.filter((r) => r.actual === null || r.actual === undefined).length;
+            const mode = ahead === 0 ? "actual" : ahead === shownRows.length ? "forecast" : "mixed";
+            const chip =
+              mode === "actual"
+                ? "bg-[#E3F3EC] text-[#1B7F5A] border border-[#9ED3BC]"
+                : mode === "forecast"
+                  ? "bg-[#EEF0F4] text-[#3D4452] border border-dashed border-[#8A8F98]"
+                  : "bg-[#FFF4DE] text-[#8A6A12] border border-[#E8C77A]";
+            return (
+              <div data-dash-mode={mode} className="flex flex-wrap items-center gap-2.5 rounded-lg border border-[#E6E0D9] bg-white px-3.5 py-2">
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${chip}`}>
+                  {mode === "actual" ? "Actual · live" : mode === "forecast" ? "Forecast" : "Actual + Forecast"}
+                </span>
+                <span className="text-xs text-[#4B5563]">
+                  {mode === "actual"
+                    ? explicitRange
+                      ? "Your range holds no future month, so only live actual figures show."
+                      : "6 / 12 months show live actual figures only. Pick a future month in Period to see the forecast."
+                    : mode === "forecast"
+                      ? "Every card shows the forecast for the months picked (F): Forecast P&L, Cash Flow forecast, Forecast Balance Sheet and the ratios worked out from them."
+                      : "Months that have happened show live actual figures; future months show the forecast, marked (F) with faded bars."}
+                </span>
+              </div>
+            );
+          })()}
           <ChartCard
             title="Income Statement"
             tabs={PL_TABS.map((t) => ({ key: String(t.key), label: t.label }))}
             active={String(plTab)}
             onTab={(k) => setPlTab(k as keyof Slice)}
             data={plData}
-            bars={[{ key: "actual", name: "Actual", color: CH.actual }]}
+            bars={[{ key: "bar", name: "Actual", color: CH.actual }]}
+            fadeKey="ahead"
             line={{ key: "forecast", name: "Forecast", color: CH.fc, dashed: true }}
             footer={
               <table data-fin-list data-fin-stick className="w-full">
@@ -1754,7 +1802,9 @@ export default function FinanceDashboardPage() {
             active={ratioTab}
             onTab={(k) => setRatioTab(k as typeof ratioTab)}
             data={ratioData}
+            fadeKey="ahead"
             bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: CH.single }]}
+            extraLines={ratioData.some((d) => d.fc !== null) ? [{ key: "fc", name: "Forecast", color: CH.fc, dashed: true }] : []}
             yFormat={(v) => ratioTick(v, /Pct$/.test(ratioTab))}
             footer={
               <table data-fin-list data-fin-stick className="w-full">
@@ -1764,11 +1814,34 @@ export default function FinanceDashboardPage() {
                     <td className={`${td} text-left font-medium`}>{/Pct$/.test(ratioTab) ? "Percent" : "Ratio"}</td>
                     {ratioData.map((d) => (
                       <td key={d.label} className={`${td} ${(d.value ?? 0) < 0 ? "text-[#B4452F]" : ""}`}>
-                        {d.value === null ? "-" : `${(d.value as number).toFixed(2)}${/Pct$/.test(ratioTab) ? "%" : ""}`}
+                        {ratioCell(d.value, /Pct$/.test(ratioTab))}
                       </td>
                     ))}
                   </tr>
+                  {/* A period that has happened beside its forecast, and the gap. */}
+                  {ratioData.some((d) => d.fc !== null) && (
+                    <>
+                      <tr data-dash-ratio-vs="fc">
+                        <td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast</td>
+                        {ratioData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{ratioCell(d.fc, /Pct$/.test(ratioTab))}</td>)}
+                      </tr>
+                      <tr className="bg-[#FBF9F6]" data-dash-ratio-vs="gap">
+                        <td className={`${td} text-left font-semibold`}>vs Forecast</td>
+                        {ratioData.map((d) => {
+                          const gap = d.fc === null || d.value === null ? null : Math.round((d.value - d.fc) * 100) / 100;
+                          return <td key={d.label} className={`${td} font-semibold`}>{gap === null ? "-" : `${gap > 0 ? "+" : ""}${ratioCell(gap, /Pct$/.test(ratioTab))}`}</td>;
+                        })}
+                      </tr>
+                    </>
+                  )}
                 </tbody>
+                {ratioData.some((d) => d.ahead || d.fc !== null) && (
+                  <tfoot>
+                    <tr><td colSpan={ratioData.length + 1} className="px-2 pt-2 text-left text-[11px] text-[#9CA3AF]" data-dash-ratio-fc-note="">
+                      (F) and Forecast = the ratio worked out from the Forecast P&L and the Forecast Balance Sheet. Faded bars are forecast. A month with no Forecast P&L shows "-".
+                    </td></tr>
+                  </tfoot>
+                )}
               </table>
             }
           />

@@ -60,7 +60,7 @@ type MaterialRow = {
   needed: number;
   stock: number;
   poOutstanding: number;
-  poOtherUnit: { ref: string; eta: string; qty: number; unit: string }[];
+  poOtherUnit: { ref: string; eta: string; qty: number; unit: string; estMtr?: number }[];
   short: number;
   firstNeedBy: string;
   mainSupplier: string | null;
@@ -121,6 +121,8 @@ const fmtQty = (n: number): string =>
 
 // System date standard: dd/mm/yyyy, read straight off the ISO string (no
 // timezone shift).
+// Dropdown value that opens the full supplier list for one line.
+const OTHER_SUPPLIER = "__other__";
 const dmy = (iso: string): string => (iso && iso.length >= 10 ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "—");
 
 const dmyTime = (iso: string): string => {
@@ -211,6 +213,8 @@ export default function MRPPage() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [supPick, setSupPick] = useState<Record<string, string>>({});
+  // Lines whose dropdown shows the full "other suppliers" list (see OTHER_SUPPLIER).
+  const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
   const [leadEdit, setLeadEdit] = useState<Record<string, number> | null>(null);
   const [leadOverride, setLeadOverride] = useState<Record<string, number> | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -522,7 +526,7 @@ export default function MRPPage() {
       for (const r of which) {
         mat.push([
           r.code, r.description, r.group, r.itemGroup, r.uom, r.wNeed, r.stock, r.poOutstanding,
-          r.poOtherUnit.map((p) => `${p.ref} ${p.qty} ${p.unit}`).join("; "), r.wShort, dmy(r.wFirstNeed),
+          r.poOtherUnit.map((p) => `${p.ref} ${p.qty} ${p.unit}${p.estMtr != null ? ` (≈${p.estMtr} MTR est.)` : ""}`).join("; "), r.wShort, dmy(r.wFirstNeed),
           r.wShort > EPS ? dmy(r.wFirstOrderBy) : "", r.mainSupplier ?? "", r.lines.length, r.statusLabel,
         ]);
         mk.push("item");
@@ -647,10 +651,8 @@ export default function MRPPage() {
             <label className={`${lbl} flex items-center gap-1.5 cursor-pointer`}>
               <input type="checkbox" checked={onlyShort} onChange={(e) => setOnlyShort(e.target.checked)} /> ONLY SHORTAGES
             </label>
-            <span className={lbl}>WAREHOUSE</span>
-            <select className={`${input} w-44`} disabled title="Raw materials have no warehouse yet" aria-label="Warehouse">
-              <option>All warehouses</option>
-            </select>
+            {/* No Warehouse filter: Hookka keeps raw materials in one warehouse
+                (owner 2026-11-24 「我们好像只有一个warehouse」). */}
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -807,12 +809,13 @@ export default function MRPPage() {
                               );
                             if (c.key === "po")
                               return (
-                                <td key={c.key} className={base}>
+                                <td key={c.key} className={`${base} whitespace-nowrap`}>
                                   {fmtQty(r.poOutstanding)}
+                                  {/* Same line as the figure so every row keeps one height (owner 2026-11-24 「排版好像有点乱」). */}
                                   {r.poOtherUnit.length > 0 && (
-                                    <div className="text-[11px] font-semibold text-[#8A6A12]" title="Ordered in another unit — not counted (no unit conversion)">
+                                    <span className="ml-1.5 text-[11px] font-semibold text-[#8A6A12]" title="ROLL lines are counted at 55 MTR per roll until the goods receipt confirms the metres; other units are not counted">
                                       {r.poOtherUnit.map((p) => `+${fmtQty(p.qty)} ${p.unit}`).join(", ")}
-                                    </div>
+                                    </span>
                                   )}
                                 </td>
                               );
@@ -888,7 +891,14 @@ export default function MRPPage() {
                                               <select
                                                 className="h-7 max-w-[240px] rounded border border-[#D8D1C3] bg-white px-1 text-[11px]"
                                                 value={l.supplierId}
-                                                onChange={(e) => setSupPick((p) => ({ ...p, [l.key]: e.target.value }))}
+                                                onChange={(e) => {
+                                                  const v = e.target.value;
+                                                  if (v === OTHER_SUPPLIER) {
+                                                    setOtherOpen((o) => ({ ...o, [l.key]: true }));
+                                                    return;
+                                                  }
+                                                  setSupPick((p) => ({ ...p, [l.key]: v }));
+                                                }}
                                                 aria-label={`Supplier for ${l.poNo} ${r.code}`}
                                               >
                                                 <option value="">— choose supplier —</option>
@@ -901,11 +911,19 @@ export default function MRPPage() {
                                                     ))}
                                                   </optgroup>
                                                 )}
-                                                <optgroup label="Other suppliers (will be bound)">
-                                                  {plan.allSuppliers.filter((s) => !bound.has(s.id)).map((s) => (
-                                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                                  ))}
-                                                </optgroup>
+                                                {/* Speed (owner 2026-11-24 「很卡顿」): EXPAND drew every
+                                                    supplier into every line's dropdown (474 dropdowns, 20,301
+                                                    options). The full list now renders only for the one line
+                                                    where "Other supplier…" was picked. */}
+                                                {otherOpen[l.key] || (l.supplierId && !bound.has(l.supplierId)) ? (
+                                                  <optgroup label="Other suppliers (will be bound)">
+                                                    {plan.allSuppliers.filter((s) => !bound.has(s.id)).map((s) => (
+                                                      <option key={s.id} value={s.id}>{s.name}</option>
+                                                    ))}
+                                                  </optgroup>
+                                                ) : (
+                                                  <option value={OTHER_SUPPLIER}>Other supplier… (will be bound)</option>
+                                                )}
                                               </select>
                                             ) : (
                                               <span className="text-[#9CA3AF]">—</span>
@@ -917,10 +935,16 @@ export default function MRPPage() {
                                   </tbody>
                                 </table>
                               </div>
-                              {r.poOtherUnit.length > 0 && (
+                              {r.poOtherUnit.some((p) => p.estMtr != null) && (
+                                <div className="mt-1.5 text-[11px] font-semibold text-[#8A6A12]">
+                                  On order in ROLL — counted at 55 MTR per roll (estimate until the goods receipt confirms the metres):{" "}
+                                  {r.poOtherUnit.filter((p) => p.estMtr != null).map((p) => `${p.ref} · ${fmtQty(p.qty)} ROLL ≈ ${fmtQty(p.estMtr ?? 0)} MTR${p.eta ? ` · ETA ${dmy(p.eta)}` : ""}`).join("; ")}
+                                </div>
+                              )}
+                              {r.poOtherUnit.some((p) => p.estMtr == null) && (
                                 <div className="mt-1.5 text-[11px] font-semibold text-[#8A6A12]">
                                   Also on order in another unit — not counted, check before ordering more:{" "}
-                                  {r.poOtherUnit.map((p) => `${p.ref} · ${fmtQty(p.qty)} ${p.unit}${p.eta ? ` · ETA ${dmy(p.eta)}` : ""}`).join("; ")}
+                                  {r.poOtherUnit.filter((p) => p.estMtr == null).map((p) => `${p.ref} · ${fmtQty(p.qty)} ${p.unit}${p.eta ? ` · ETA ${dmy(p.eta)}` : ""}`).join("; ")}
                                 </div>
                               )}
                             </td>
@@ -941,8 +965,8 @@ export default function MRPPage() {
               </div>
               {plan.materials.some((m) => m.poOtherUnit.length > 0) && (
                 <div className="font-semibold text-[#8A6A12]">
-                  Some open POs are in another unit than the stock (e.g. fabric ordered in ROLL, stocked in MTR). There is no conversion, so
-                  they are shown in amber under PO Outstanding but not counted.
+                  Some open POs are in another unit than the stock. Fabric ordered in ROLL and stocked in MTR is counted at 55 MTR per roll
+                  (an estimate until the goods receipt confirms the real metres); any other unit is shown in amber but not counted.
                 </div>
               )}
               {plan.openPoLinesUnresolved > 0 && (

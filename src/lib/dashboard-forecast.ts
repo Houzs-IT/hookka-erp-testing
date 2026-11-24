@@ -20,7 +20,12 @@ import { SECTION_LABELS, SECTION_ORDER } from "./cashflow-engine";
 
 export type DashCashFigures = { operating: number; investing: number; financing: number; net: number; freeCashFlow: number };
 export type DashCashForecast = Record<string, { pnl?: DashCashFigures; docs?: DashCashFigures }>;
-export type DashBsFigures = { assets: number; liabilities: number; debtPct: number | null };
+export type DashBsFigures = {
+  assets: number; liabilities: number; debtPct: number | null;
+  // For the forecast ratios (owner 2026-11-24): split the same way the
+  // dashboard route splits an actual month-end (sections; 330-x = stock).
+  currentAssets?: number; currentLiabilities?: number; inventory?: number; equity?: number;
+};
 
 /** Each month's two Cash Flow forecasts, from the statement's fp: / fc: columns. */
 export function dashCashForecast(cf: { columns: readonly { key: string }[]; rows: readonly CfStatementRow[] }): DashCashForecast {
@@ -44,11 +49,20 @@ const debtPctOf = (assets: number, liabilities: number): number | null =>
 export function bsTotals(entries: readonly BsMonthEntry[]): DashBsFigures {
   let assets = 0;
   let liabilities = 0;
+  let currentAssets = 0;
+  let currentLiabilities = 0;
+  let inventory = 0;
   for (const e of entries) {
-    if (isAsset(e.category)) assets += e.balance;
-    else if (isLiability(e.category)) liabilities += e.balance;
+    if (isAsset(e.category)) {
+      assets += e.balance;
+      if (e.category === "CURRENT_ASSET") currentAssets += e.balance;
+      if (/^33\d/.test(e.accountCode)) inventory += e.balance;
+    } else if (isLiability(e.category)) {
+      liabilities += e.balance;
+      if (e.category === "CURRENT_LIABILITY") currentLiabilities += e.balance;
+    }
   }
-  return { assets, liabilities, debtPct: debtPctOf(assets, liabilities) };
+  return { assets, liabilities, debtPct: debtPctOf(assets, liabilities), currentAssets, currentLiabilities, inventory, equity: assets - liabilities };
 }
 
 /** Each forecast month-end's totals, from last month-end's sheet (`opening`). */
@@ -237,4 +251,24 @@ export function cashDetailSections(
         totals: sum(lines),
       };
     });
+}
+
+/** A period's ratios from the Forecast P&L and the Forecast Balance Sheet —
+ *  the same formulas the dashboard route uses for an actual period. */
+export function dashForecastRatios(
+  pl: { sales: number; gross: number; net: number } | null | undefined,
+  bs: DashBsFigures | null | undefined,
+): Record<"grossMarginPct" | "netMarginPct" | "currentRatio" | "quickRatio" | "roePct" | "roaPct", number | null> {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const pct = (a: number, b: number) => (b ? r2((a / b) * 100) : null);
+  const cl = bs?.currentLiabilities ?? 0;
+  const eq = bs?.equity ?? 0;
+  return {
+    grossMarginPct: pl ? pct(pl.gross, pl.sales) : null,
+    netMarginPct: pl ? pct(pl.net, pl.sales) : null,
+    currentRatio: bs && cl > 0 && bs.currentAssets !== undefined ? r2(bs.currentAssets / cl) : null,
+    quickRatio: bs && cl > 0 && bs.currentAssets !== undefined ? r2((bs.currentAssets - (bs.inventory ?? 0)) / cl) : null,
+    roePct: bs && pl && eq > 0 ? pct(pl.net, eq) : null,
+    roaPct: bs && pl && bs.assets > 0 ? pct(pl.net, bs.assets) : null,
+  };
 }
