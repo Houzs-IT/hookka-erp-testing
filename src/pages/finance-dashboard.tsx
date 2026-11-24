@@ -990,6 +990,9 @@ export default function FinanceDashboardPage() {
           net: ahead ? null : r.cashFlow?.net ?? null,
           inflow: ahead ? fin : r.cashFlow?.inflow ?? null,
           outflow: ahead ? fout : r.cashFlow?.outflow ?? null,
+          // Money out drawn UPWARDS beside money in (owner 2026-11-24 「bar 不要倒反
+          // 我要两个都一起向上 好对比」); the table keeps the signed figure.
+          outflowUp: (() => { const v = ahead ? fout : r.cashFlow?.outflow ?? null; return v === null ? null : Math.abs(v); })(),
           // The tab picked, actual and both forecasts — the chart's lines and
           // the table's rows read the same figures (owner 2026-11-23 「为什么上下
           // 两边的数据不一样？」 → 「Both follow the tab」).
@@ -1682,7 +1685,7 @@ export default function FinanceDashboardPage() {
             onTab={(k) => setCfTab(k as typeof cfTab)}
             data={cfData}
             fadeKey="ahead"
-            bars={[{ key: "inflow", name: "Money in", color: CH.in }, { key: "outflow", name: "Money out", color: CH.out }]}
+            bars={[{ key: "inflow", name: "Money in", color: CH.in }, { key: "outflowUp", name: "Money out", color: CH.out }]}
             line={{ key: "value", name: CF_TAB_LABEL[cfTab], color: CH.net }}
             extraLines={[
               { key: "fcPnl", name: `${CF_TAB_LABEL[cfTab]} forecast (P&L)`, color: CH.fc, dashed: true },
