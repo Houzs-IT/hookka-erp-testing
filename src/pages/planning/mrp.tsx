@@ -60,7 +60,7 @@ type MaterialRow = {
   needed: number;
   stock: number;
   poOutstanding: number;
-  poOtherUnit: { ref: string; eta: string; qty: number; unit: string }[];
+  poOtherUnit: { ref: string; eta: string; qty: number; unit: string; estMtr?: number }[];
   short: number;
   firstNeedBy: string;
   mainSupplier: string | null;
@@ -522,7 +522,7 @@ export default function MRPPage() {
       for (const r of which) {
         mat.push([
           r.code, r.description, r.group, r.itemGroup, r.uom, r.wNeed, r.stock, r.poOutstanding,
-          r.poOtherUnit.map((p) => `${p.ref} ${p.qty} ${p.unit}`).join("; "), r.wShort, dmy(r.wFirstNeed),
+          r.poOtherUnit.map((p) => `${p.ref} ${p.qty} ${p.unit}${p.estMtr != null ? ` (≈${p.estMtr} MTR est.)` : ""}`).join("; "), r.wShort, dmy(r.wFirstNeed),
           r.wShort > EPS ? dmy(r.wFirstOrderBy) : "", r.mainSupplier ?? "", r.lines.length, r.statusLabel,
         ]);
         mk.push("item");
@@ -810,8 +810,8 @@ export default function MRPPage() {
                                 <td key={c.key} className={base}>
                                   {fmtQty(r.poOutstanding)}
                                   {r.poOtherUnit.length > 0 && (
-                                    <div className="text-[11px] font-semibold text-[#8A6A12]" title="Ordered in another unit — not counted (no unit conversion)">
-                                      {r.poOtherUnit.map((p) => `+${fmtQty(p.qty)} ${p.unit}`).join(", ")}
+                                    <div className="text-[11px] font-semibold text-[#8A6A12]" title="ROLL lines are counted at 55 MTR per roll until the goods receipt confirms the metres; other units are not counted">
+                                      {r.poOtherUnit.map((p) => `+${fmtQty(p.qty)} ${p.unit}${p.estMtr != null ? ` ≈${fmtQty(p.estMtr)} MTR` : ""}`).join(", ")}
                                     </div>
                                   )}
                                 </td>
@@ -917,10 +917,16 @@ export default function MRPPage() {
                                   </tbody>
                                 </table>
                               </div>
-                              {r.poOtherUnit.length > 0 && (
+                              {r.poOtherUnit.some((p) => p.estMtr != null) && (
+                                <div className="mt-1.5 text-[11px] font-semibold text-[#8A6A12]">
+                                  On order in ROLL — counted at 55 MTR per roll (estimate until the goods receipt confirms the metres):{" "}
+                                  {r.poOtherUnit.filter((p) => p.estMtr != null).map((p) => `${p.ref} · ${fmtQty(p.qty)} ROLL ≈ ${fmtQty(p.estMtr ?? 0)} MTR${p.eta ? ` · ETA ${dmy(p.eta)}` : ""}`).join("; ")}
+                                </div>
+                              )}
+                              {r.poOtherUnit.some((p) => p.estMtr == null) && (
                                 <div className="mt-1.5 text-[11px] font-semibold text-[#8A6A12]">
                                   Also on order in another unit — not counted, check before ordering more:{" "}
-                                  {r.poOtherUnit.map((p) => `${p.ref} · ${fmtQty(p.qty)} ${p.unit}${p.eta ? ` · ETA ${dmy(p.eta)}` : ""}`).join("; ")}
+                                  {r.poOtherUnit.filter((p) => p.estMtr == null).map((p) => `${p.ref} · ${fmtQty(p.qty)} ${p.unit}${p.eta ? ` · ETA ${dmy(p.eta)}` : ""}`).join("; ")}
                                 </div>
                               )}
                             </td>
@@ -941,8 +947,8 @@ export default function MRPPage() {
               </div>
               {plan.materials.some((m) => m.poOtherUnit.length > 0) && (
                 <div className="font-semibold text-[#8A6A12]">
-                  Some open POs are in another unit than the stock (e.g. fabric ordered in ROLL, stocked in MTR). There is no conversion, so
-                  they are shown in amber under PO Outstanding but not counted.
+                  Some open POs are in another unit than the stock. Fabric ordered in ROLL and stocked in MTR is counted at 55 MTR per roll
+                  (an estimate until the goods receipt confirms the real metres); any other unit is shown in amber but not counted.
                 </div>
               )}
               {plan.openPoLinesUnresolved > 0 && (
