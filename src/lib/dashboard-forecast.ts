@@ -20,7 +20,11 @@ import { SECTION_LABELS, SECTION_ORDER } from "./cashflow-engine";
 
 export type DashCashFigures = { operating: number; investing: number; financing: number; net: number; freeCashFlow: number };
 export type DashCashForecast = Record<string, { pnl?: DashCashFigures; docs?: DashCashFigures }>;
-export type DashBsFigures = { assets: number; liabilities: number; debtPct: number | null };
+export type DashBsFigures = {
+  assets: number; liabilities: number; debtPct: number | null;
+  /** For the Financial Ratios' forecast (owner 2026-11-24 「financial ratio 也可以放 forecast的进去」). */
+  currentAssets?: number; currentLiabilities?: number; inventory?: number;
+};
 
 /** Each month's two Cash Flow forecasts, from the statement's fp: / fc: columns. */
 export function dashCashForecast(cf: { columns: readonly { key: string }[]; rows: readonly CfStatementRow[] }): DashCashForecast {
@@ -44,11 +48,49 @@ const debtPctOf = (assets: number, liabilities: number): number | null =>
 export function bsTotals(entries: readonly BsMonthEntry[]): DashBsFigures {
   let assets = 0;
   let liabilities = 0;
+  let currentAssets = 0;
+  let currentLiabilities = 0;
+  let inventory = 0;
   for (const e of entries) {
-    if (isAsset(e.category)) assets += e.balance;
-    else if (isLiability(e.category)) liabilities += e.balance;
+    if (isAsset(e.category)) {
+      assets += e.balance;
+      if (e.category === "CURRENT_ASSET") currentAssets += e.balance;
+      if (/^33\d/.test(e.accountCode)) inventory += e.balance; // 330-x stock, as the dashboard route counts it
+    } else if (isLiability(e.category)) {
+      liabilities += e.balance;
+      if (e.category === "CURRENT_LIABILITY") currentLiabilities += e.balance;
+    }
   }
-  return { assets, liabilities, debtPct: debtPctOf(assets, liabilities) };
+  return { assets, liabilities, debtPct: debtPctOf(assets, liabilities), currentAssets, currentLiabilities, inventory };
+}
+
+// ---- Financial Ratios with their forecast (owner 2026-11-24 「financial ratio
+// 也可以放 forecast的进去」 → 「Build it」): the six ratios worked out the way the
+// dashboard route works out the actual ones, from the Forecast P&L (sales,
+// gross, net) and the Forecast Balance Sheet. A ratio that needs a side the
+// forecast does not have is null ("-").
+
+export type DashRatioKey = "grossMarginPct" | "netMarginPct" | "currentRatio" | "quickRatio" | "roePct" | "roaPct";
+export type DashRatios = Record<DashRatioKey, number | null>;
+
+const pct2 = (num: number, den: number): number | null => (den > 0 ? Math.round((num / den) * 10000) / 100 : null);
+const times2 = (num: number, den: number): number | null => (den > 0 ? Math.round((num / den) * 100) / 100 : null);
+
+export function dashForecastRatios(
+  pl: { sales: number; gross: number; net: number } | null | undefined,
+  bs: DashBsFigures | null | undefined,
+): DashRatios {
+  const equity = bs ? bs.assets - bs.liabilities : 0; // net assets, as the route's actual equity
+  const curL = bs?.currentLiabilities ?? 0;
+  const curA = bs?.currentAssets ?? 0;
+  return {
+    grossMarginPct: pl ? pct2(pl.gross, pl.sales) : null,
+    netMarginPct: pl ? pct2(pl.net, pl.sales) : null,
+    currentRatio: bs && bs.currentAssets !== undefined ? times2(curA, curL) : null,
+    quickRatio: bs && bs.currentAssets !== undefined ? times2(curA - (bs.inventory ?? 0), curL) : null,
+    roePct: pl && bs ? pct2(pl.net, equity) : null,
+    roaPct: pl && bs ? pct2(pl.net, bs.assets) : null,
+  };
 }
 
 /** Each forecast month-end's totals, from last month-end's sheet (`opening`). */
