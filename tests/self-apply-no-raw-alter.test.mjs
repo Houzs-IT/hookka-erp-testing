@@ -70,6 +70,16 @@ test("PV approval round rebuilds the status CHECK only when DRAFT is not allowed
   assert.ok(body.indexOf("ADD CONSTRAINT payment_vouchers_status_check") > guard);
 });
 
+test("organisations round drops organisations_code_check only while it exists", () => {
+  const src = readFileSync("src/api/routes/organisations.ts", "utf8");
+  const start = src.indexOf("function ensureOrganisationRegistry(");
+  const end = src.indexOf("\n}\n", start);
+  assert.ok(start > 0 && end > start, "ensureOrganisationRegistry found");
+  const body = src.slice(start, end);
+  assert.match(body, /FROM pg_constraint WHERE conname = 'organisations_code_check'/);
+  assert.match(body, /runSelfApply\(db, "organisations", chk \? stmts : stmts\.filter\(\(sql\) => !sql\.includes\("DROP CONSTRAINT"\)\)\)/);
+});
+
 /** A db whose catalog already has `table.column`; records every statement run. */
 function fakeDb(table, column) {
   const ran = [];

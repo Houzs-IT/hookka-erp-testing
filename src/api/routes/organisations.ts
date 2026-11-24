@@ -317,7 +317,13 @@ function ensureOrganisationRegistry(db: D1Database): Promise<void> {
       "CREATE UNIQUE INDEX IF NOT EXISTS organisations_code_per_org_uniq ON organisations (org_id, code)",
       "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS purchase_org_code text NOT NULL DEFAULT 'HOOKKA'",
     ];
-    await runSelfApply(db, "organisations", stmts);
+    // runSelfApply cannot see constraints, so the DROP would lock the table on
+    // every cold request (BUG-2026-11-24-556). Skip it once the CHECK is gone;
+    // a failed read keeps it, as before.
+    const chk = await db.prepare(
+      "SELECT 1 AS \"x\" FROM pg_constraint WHERE conname = 'organisations_code_check' AND conrelid = 'organisations'::regclass",
+    ).first().catch(() => ({ x: 1 }));
+    await runSelfApply(db, "organisations", chk ? stmts : stmts.filter((sql) => !sql.includes("DROP CONSTRAINT")));
   });
 }
 
