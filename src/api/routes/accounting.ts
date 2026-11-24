@@ -12884,7 +12884,7 @@ function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
     // foreign_sen / full_pay: a foreign-currency bill — the amount paid in
     // its own currency and whether it settles all that is left (amount_sen =
     // the booked RM).
-    await runSelfApply(db, "accounting.pv-ap", [
+    await runSelfApply(db, "accounting.pv-allocs", [
       "CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)",
       "CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)",
       "ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS foreign_sen INTEGER",

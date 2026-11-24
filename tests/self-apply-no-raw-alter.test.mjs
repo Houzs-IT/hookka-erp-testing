@@ -60,7 +60,9 @@ test("no memoized round sends a raw ALTER TABLE … ADD COLUMN", () => {
 test("PV approval round rebuilds the status CHECK only when DRAFT is not allowed yet", () => {
   const src = readFileSync("src/api/routes/accounting.ts", "utf8");
   const start = src.indexOf("function ensurePvApprovalCols(");
-  const body = src.slice(start, src.indexOf("\nconst PV_DRAFT_PREFIX", start));
+  const end = src.indexOf("\nconst PV_DRAFT_PREFIX", start);
+  assert.ok(start > 0 && end > start, "ensurePvApprovalCols found");
+  const body = src.slice(start, end);
   const read = body.indexOf("pg_get_constraintdef(oid)");
   const guard = body.indexOf(`if (!chk?.def?.includes("'DRAFT'")) {`);
   assert.ok(read > 0 && guard > read, "reads pg_constraint, then guards");
