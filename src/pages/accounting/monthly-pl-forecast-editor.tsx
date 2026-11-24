@@ -22,7 +22,7 @@ import { Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { HidePastMonthsToggle, PeriodStepper, ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
+import { DetailLevels, HidePastMonthsToggle, PeriodStepper, ReportFrame, ReportToolbar } from "@/components/finance/report-shell";
 import { caretEdges, nextCell, type CellPos } from "@/lib/grid-keys";
 import { buildTsv, extendFocus, isBlockText, isMultiCell, parsePasteBlock, pastedSel, placePaste, selRange, type GridPos, type GridSel } from "@/lib/forecast-sheet-clipboard";
 import { COMPANY } from "@/lib/constants";
@@ -163,6 +163,10 @@ export function MonthlyPlForecastEditor({
   // the stock detail under it (opening / purchase / closing per stock group)
   // stays folded until Show detail.
   const [showDetail, setShowDetail] = useState(false);
+  // Detail level L1..Ln, as the Monthly P&L (owner 2026-11-24 「forecast 的pNL
+  // 没有L1，L2那些？」): level L folds every group at depth >= L-1. null = all
+  // open (the sheet as it always opened).
+  const [level, setLevel] = useState<number | null>(null);
   // Who each actual purchase was from (owner 2026-11-11 「我看不到actual 的fabric
   // … 是从谁买」): month → material type → supplier → sen, for the
   // supplier rows' Actual cells (GET /forecast/supplier-actuals).
@@ -537,7 +541,12 @@ export function MonthlyPlForecastEditor({
   };
   const tagOf = (c: PlForecastColumn) => `${c.accum ? " acc" : ""}${c.forecast ? " fc fp" : ""}`;
   const keyMonth = (c: PlForecastColumn) => (c.forecast && !c.accum && c.ym ? c.ym : null);
-  const shown = foldStatementRows(matrix.rows, new Set());
+  // Detail level: deepest row depth + 1 levels (P&L depth 0..3 → L1..L4).
+  const maxLevel = matrix.rows.reduce((m, r) => Math.max(m, r.depth), 0) + 1;
+  const folded = new Set(
+    level === null ? [] : matrix.rows.filter((r) => r.kind === "group" && r.groupId && r.depth >= level - 1).map((r) => r.groupId!),
+  );
+  const shown = foldStatementRows(matrix.rows, folded);
   const rowsShown = showDetail ? shown : foldMaterialDetail(shown);
   const lastGrand = matrix.rows.filter((r) => r.kind === "grandtotal").pop();
 
@@ -759,6 +768,9 @@ export function MonthlyPlForecastEditor({
     <div className="space-y-3">
       <ReportToolbar>
         {period && <PeriodStepper value={anchor} options={period.options} onChange={(ym) => void stepPeriod(ym)} />}
+        {maxLevel > 1 && (
+          <DetailLevels levels={Array.from({ length: maxLevel }, (_, i) => i + 1)} value={level ?? maxLevel} onChange={(L) => setLevel(L >= maxLevel ? null : L)} />
+        )}
         <span className="text-[12px] font-semibold text-[#6B5C32]">Edit forecast</span>
         <select
           aria-label="Add month"
@@ -874,15 +886,16 @@ export function MonthlyPlForecastEditor({
               }
               const k = plEditKey(r, groups);
               if (r.kind === "group") {
-                // An open group shows its figures on its total line; a keyed
-                // group (Sales, a material) takes its boxes on this heading.
+                // An open group shows its figures on its total line, a folded
+                // one (detail level) on this heading; a keyed group (Sales, a
+                // material) takes its boxes on this heading.
                 return (
                   <Fragment key={i}>
                     <tr data-row={r.depth === 0 ? "sec" : "grp"}>
                       <td data-cell="stick" className="uppercase" style={pad}>{k ? opener(k, r.label) : r.label}</td>
-                      {k ? editCells(r, k, false) : vis.map(([c, j]) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, false))}
+                      {k ? editCells(r, k, !!(r.groupId && folded.has(r.groupId))) : vis.map(([c, j]) => figure(c, r.values[j] ?? 0, r.pctValues[j] ?? 0, !!(r.groupId && folded.has(r.groupId))))}
                     </tr>
-                    {k && details(k, r.depth + 1)}
+                    {k && !(r.groupId && folded.has(r.groupId)) && details(k, r.depth + 1)}
                   </Fragment>
                 );
               }
