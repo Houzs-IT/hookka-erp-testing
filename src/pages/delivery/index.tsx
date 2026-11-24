@@ -1352,7 +1352,12 @@ export default function DeliveryPage() {
   // 335 records" read as "loads everything every time"). Same 50-row page and
   // the same footer as the DO tabs; bypassed while searching, so a term always
   // spans the whole list (search-safe rule).
-  const searching = !!search.trim();
+  // HK-0174: a column filter / sort (e.g. Expected DO = overdue) is bypassed
+  // the same way — it only filters the rows it is handed, so on a 50-row page
+  // it found 32 overdue rows on page 1 and 5 on page 2, and one DO for all of
+  // them meant selecting page by page.
+  const [poColumnView, setPoColumnView] = useState(false);
+  const searching = !!search.trim() || poColumnView;
   const planningPage = useMemo(
     () => pageSlice(planningPOs, page, LIST_PAGE_SIZE, searching),
     [planningPOs, page, searching],
@@ -5053,9 +5058,10 @@ export default function DeliveryPage() {
               autoGroup={false}
               initialSearch={search}
               onSearchChange={setSearch}
+              onColumnViewChange={setPoColumnView}
               alwaysSearchKeys={PO_SEARCH_KEYS}
             />
-            {!search.trim() && (
+            {!searching && (
               <PagerFooter
                 total={planningPOs.length}
                 noun="production order"
@@ -5133,6 +5139,7 @@ export default function DeliveryPage() {
               onDoubleClick={(row) => { if (row.salesOrderId) navigate(`/sales/${row.salesOrderId}`); }}
               initialSearch={search}
               onSearchChange={setSearch}
+              onColumnViewChange={setPoColumnView}
               alwaysSearchKeys={PO_SEARCH_KEYS}
               onSelectionChange={(rows) =>
                 // Drop incomplete SOFA sets defensively — even if the user
@@ -5149,7 +5156,7 @@ export default function DeliveryPage() {
                 }
               }
             />
-            {!search.trim() && (
+            {!searching && (
               <PagerFooter
                 total={readyPOs.length}
                 noun="production order"
