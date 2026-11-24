@@ -45,7 +45,10 @@ test("it quotes the real numbers", () => {
 });
 
 test("the PI wizard measures billed qty, the GRN wizard received qty", () => {
-  assert.match(SRC, /const billed = Number\(line\.qty\) \|\| 0;/);
+  // HK-0169: a line billed in another unit draws its PO-unit cover, not its qty.
+  assert.match(SRC, /const billed = scanLineBilledForPo\(line, purchaseOrders\);/);
+  assert.match(SRC, /return unit\.uom \? unit\.poQty \?\? 0 : Number\(line\.qty\) \|\| 0;/);
+  assert.match(SRC, /return po \? scanLineBilledForPo\(l, purchaseOrders\) > po\.ordered : false;/);
   assert.match(SRC, /const billed = Number\(line\.receivedQty\) \|\| 0;/);
 });
 

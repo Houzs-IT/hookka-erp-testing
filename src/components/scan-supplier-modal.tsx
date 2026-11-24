@@ -54,6 +54,10 @@ import {
 import { bestMatch } from "@/lib/party-fuzzy-match";
 import { roundUnitPriceSen, lineTotalSen, allocateDiscountSen } from "@/lib/unit-price";
 import { resolvePoLink, splitPoRefs } from "@/lib/po-ref-match";
+import { PiLineUomCell } from "@/components/pi-line-uom-cell";
+import { scanPiLineUnit } from "@/lib/scan-pi-line-uom";
+import { rmUnitsFrom } from "@/lib/material-variants";
+import { getVariantsConfigSync } from "@/lib/kv-config";
 import {
   allocateLinesToPos,
   allocatedPoIds,
@@ -284,6 +288,26 @@ function poOrderedFor(
     found = true;
   }
   return found ? { poNo: po.poNo, ordered } : null;
+}
+
+/** HK-0169: the PO line's unit, and the unit (and PO-unit cover) this scanned line saves. */
+function scanLineUnitFor(
+  line: { uom?: string | null; poQty?: number | null; poId?: string | null; poItemId?: string | null },
+  purchaseOrders: PurchaseOrder[],
+) {
+  const poUnit = line.poItemId
+    ? purchaseOrders.find((p) => p.id === line.poId)?.items?.find((it) => it.id === line.poItemId)?.unit ?? null
+    : null;
+  return { poUnit, ...scanPiLineUnit(line, poUnit, rmUnitsFrom(getVariantsConfigSync())) };
+}
+
+/** What a scanned PI line draws from its PO, in the PO unit: the cover when billed in another unit (HK-0169). */
+function scanLineBilledForPo(
+  line: { qty: number; uom?: string | null; poQty?: number | null; poId?: string | null; poItemId?: string | null },
+  purchaseOrders: PurchaseOrder[],
+): number {
+  const unit = scanLineUnitFor(line, purchaseOrders);
+  return unit.uom ? unit.poQty ?? 0 : Number(line.qty) || 0;
 }
 
 /**
@@ -1038,6 +1062,8 @@ type PreviewLine = {
   poId?: string | null;
   /** ...and the PO LINE (T-006 R8), so a line with no material code is still capped. */
   poItemId?: string | null;
+  /** HK-0169: billed in another unit than the PO line, how much of the PO line it covers (PO unit). */
+  poQty?: number | null;
 };
 
 type PreviewCard = {
@@ -2080,6 +2106,17 @@ function CreatePIWizard({
             });
             return;
           }
+          // HK-0169: a line billed in another unit must say how much of its PO line it covers.
+          const noCover = validLines
+            .map((l) => ({ l, u: scanLineUnitFor(l, purchaseOrders) }))
+            .find(({ u }) => u.missingPoQty);
+          if (noCover) {
+            patchCard(card.id, {
+              creating: false,
+              createError: `${noCover.l.materialCode} is billed in ${noCover.u.uom}: fill in how many ${noCover.u.poUnit} of the PO it covers (more than 0)`,
+            });
+            return;
+          }
           // Fix A (owner 2026-06-30): final price-fill sweep before POST.
           // Catches the case where the operator picked / changed the Linked
           // PO after buildCard ran, OR where a price was still missing on
@@ -2125,11 +2162,15 @@ function CreatePIWizard({
                 allocated += lineTaxSen;
               }
             }
+            const unit = scanLineUnitFor(l, purchaseOrders);
             return {
               materialCode: l.materialCode.trim() || null,
               materialName: (l.materialName || l.description).trim(),
               supplierSku: l.supplierSku.trim() || null,
               qty: Number(l.qty) || 0,
+              // HK-0169: the billed unit when it differs from the PO line's, and the PO-unit cover.
+              uom: unit.uom,
+              poQty: unit.poQty,
               // A RATE, not an amount: keep the sub-cent digits. Math.round here
               // turned the supplier's RM 0.055 into RM 0.06 before it ever
               // reached the (now NUMERIC(14,4)) column.
@@ -2893,7 +2934,7 @@ function PreviewStep({
       !c.createdPiNo &&
       c.lines.some((l) => {
         const po = poOrderedFor(l, purchaseOrders);
-        return po ? (Number(l.qty) || 0) > po.ordered : false;
+        return po ? scanLineBilledForPo(l, purchaseOrders) > po.ordered : false;
       }),
   );
   // Queue-state split: which uploads are still being read by Claude?
@@ -3519,6 +3560,7 @@ function PICard({
                   !!card.supplierId &&
                   !line.supplierSku &&
                   !resolveBindingForMaterial(card.supplierId, line.materialCode);
+                const unit = scanLineUnitFor(line, purchaseOrders);
                 return (
                 <React.Fragment key={i}>
                 <tr className="border-t border-[#EFEAE6] align-top">
@@ -3602,12 +3644,25 @@ function PICard({
                     />
                   </td>
                   <td className="px-1 py-1">
-                    <Input
-                      className="h-8 text-xs"
-                      value={line.uom}
-                      onChange={(e) => onPatchLine(i, { uom: e.target.value })}
-                      disabled={!!card.createdPiNo}
-                    />
+                    {unit.poUnit ? (
+                      // HK-0169: same Unit select + "for __ ROLL" box as the PI form.
+                      <PiLineUomCell
+                        uom={unit.uom ?? unit.poUnit}
+                        poUnit={unit.poUnit}
+                        editable={!card.createdPiNo}
+                        onChange={(u) => onPatchLine(i, { uom: u })}
+                        poQty={unit.poQty}
+                        defaultPoQty={Number(line.qty) || 0}
+                        onPoQtyChange={(q) => onPatchLine(i, { poQty: q })}
+                      />
+                    ) : (
+                      <Input
+                        className="h-8 text-xs"
+                        value={line.uom}
+                        onChange={(e) => onPatchLine(i, { uom: e.target.value })}
+                        disabled={!!card.createdPiNo}
+                      />
+                    )}
                   </td>
                   <td className="px-1 py-1">
                     {/* A RATE, not an amount — suppliers quote piece prices at
@@ -3677,7 +3732,7 @@ function PICard({
                 )}
                 {(() => {
                   const po = poOrderedFor(line, purchaseOrders);
-                  const billed = Number(line.qty) || 0;
+                  const billed = scanLineBilledForPo(line, purchaseOrders);
                   if (!po || billed <= po.ordered) return null;
                   return (
                     <tr className="bg-[#FFF5F0]">
