@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-25**: Fab Cut Stock column fix added (branch `fix/fabcut-stock-column`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-24**: Financial Dashboard Cash Flow / Balance Sheet forecasts (branch `feat/dashboard-cf-bs-forecast`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Cash Flow trade finance from real bills + supplier tick (branch `feat/tf-supplier-flag-actual-bills`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Forecast Balance Sheet trade finance (branch `fix/forecast-bs-trade-finance`, to `main`); nothing else re-checked.
@@ -7740,3 +7741,6 @@ Ask (nhzulaikha26): put the two Claude Design handoffs on the phone Floor Live (
 ## 2026-11-23 — Meetings: shared meeting rooms booked from Hookka ERP (owner approved the plan and prototype)
 1. DONE in this PR: `/meetings` page (Calendar, My meetings, Rooms, Guest links, Email and WhatsApp, Change log) + `/m/meetings`, guest page `/book/:code`, proxy `src/api/routes/meetings.ts` to the Houzs IT Hub (same hub key as IT Support), new resource `meeting-rooms` (only admins / per-user ticks may add or change rooms), hourly staff list `.github/workflows/meetings-directory.yml`. Tests: `tests/meetings.test.mjs`, `tests/meetings-lib.test.mjs`.
 2. WAITING (owner / Google admin): Gmail sending, Meet/Zoom auto links and WhatsApp reminders. Until then reminders are ERP notifications only. Rooms are added by the owner on the Rooms tab.
+
+## 2026-11-25 — Fab Cut Stock column all "—" (owner 「stocks全部是-？」)
+1. DONE (this PR): Fab Cut rows read the order's FAB_CUT material status (`poId|@FAB_CUT`); see `docs/bugs/BUG-2026-11-25-556.md`.

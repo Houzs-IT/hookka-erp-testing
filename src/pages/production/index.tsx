@@ -4138,7 +4138,12 @@ export default function ProductionPage({
       align: "center",
       render: (_v, row) => {
         if (!stockStatus) return <span className="text-[11px] text-[#9CA3AF]">…</span>;
-        const st = stockStatus[`${row.poId}|${row.wipKey ?? ""}`] ?? stockStatus[`${row.poId}|`];
+        // A Fab Cut row is one merged cut per order + fabric (its wipKey is not a
+        // BOM WIP key): read the order's FAB_CUT status ("poId|@FAB_CUT").
+        const st =
+          (row.wipKey ?? "").endsWith("::FAB_CUT")
+            ? stockStatus[`${row.poId}|@FAB_CUT`]
+            : stockStatus[`${row.poId}|${row.wipKey ?? ""}`] ?? stockStatus[`${row.poId}|`];
         if (!st) {
           return (
             <span className="text-[11px] text-[#9CA3AF]" title="Nothing left to issue — no BOM materials, or already deducted">
