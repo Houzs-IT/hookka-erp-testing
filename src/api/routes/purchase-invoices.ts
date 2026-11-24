@@ -47,6 +47,7 @@ import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules"
 import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
 import { autoReceivePiStock, backfillAutoGrnLinks, previewPiAutoGrn } from "../lib/pi-auto-grn";
 import { resolvePiLineUoms } from "../lib/pi-line-uom";
+import { rmUnitMap } from "../../lib/material-variants";
 import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -333,6 +334,8 @@ export type PurchaseInvoiceItem = {
   poQty: number | null;
   /** The PO line's unit, read live with poUnitPriceSen (display only). */
   poUnit?: string | null;
+  /** The raw material's baseUOM, read live (display/export only). */
+  materialUnit?: string | null;
   /** The PO line's unit price, read live on the detail view only (Houzs
    *  review 2026-11-08) so the operator sees billed vs ordered price. */
   poUnitPriceSen?: number | null;
@@ -719,6 +722,37 @@ export async function attachPoPrices(db: D1Database, items: PurchaseInvoiceItem[
   }
 }
 
+// The material's base unit, for lines with no billed unit and no PO line unit
+// (the PI detail export's last UOM fallback). Display only.
+export async function attachMaterialUnits(
+  db: D1Database,
+  orgId: string,
+  items: PurchaseInvoiceItem[],
+): Promise<PurchaseInvoiceItem[]> {
+  const codes = [...new Set(items.map((i) => (i.materialCode ?? "").trim().toUpperCase()).filter(Boolean))];
+  if (codes.length === 0) return items;
+  try {
+    // D1 caps bound parameters at 100 per statement: orgId + 90 codes per query.
+    const chunks: string[][] = [];
+    for (let i = 0; i < codes.length; i += 90) chunks.push(codes.slice(i, i + 90));
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        db
+          .prepare(
+            `SELECT itemCode, baseUOM FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
+          )
+          .bind(orgId, ...chunk)
+          .all<{ itemCode: string | null; baseUOM: string | null }>(),
+      ),
+    );
+    const units = rmUnitMap(results.flatMap((r) => r.results ?? []));
+    return items.map((it) => ({ ...it, materialUnit: units.get((it.materialCode ?? "").trim().toUpperCase()) ?? null }));
+  } catch (e) {
+    console.warn("[purchase-invoices] material unit lookup failed:", e instanceof Error ? e.message : e);
+    return items;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Convert-chain RESTORE: build the UPDATE statements that decrement
 // grn_items.invoiced_qty for every PI line that was sourced from a GRN line.
@@ -1075,7 +1109,9 @@ app.get("/:id", async (c) => {
   if (!row) return c.json({ success: false, error: "PI not found" }, 404);
   const projected = rowToPI(row);
   const [items, linkedPayments, linkedGRNs] = await Promise.all([
-    loadItemsForPI(db, id).then((its) => attachPoPrices(db, its)),
+    loadItemsForPI(db, id)
+      .then((its) => attachPoPrices(db, its))
+      .then((its) => attachMaterialUnits(db, getOrgId(c), its)),
     (async () => {
       const res = await db
         .prepare(
