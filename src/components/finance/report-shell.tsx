@@ -299,6 +299,7 @@ function FullScreenToggle() {
   const ref = useRef<HTMLButtonElement>(null);
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [full, setFull] = useState(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- runs after every render on purpose, to find the frame once it mounts; setTarget is guarded by el !== target
   useEffect(() => {
     let el = ref.current?.parentElement ?? null;
     while (el && !el.querySelector("[data-fin-frame]")) el = el.parentElement;

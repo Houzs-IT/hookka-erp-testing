@@ -50,6 +50,7 @@ function whenIdle(cb: () => void): void {
     requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
   };
   if (typeof w.requestIdleCallback === "function") w.requestIdleCallback(cb, { timeout: 4000 });
+  // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; fallback where requestIdleCallback is missing
   else window.setTimeout(cb, 500);
 }
 

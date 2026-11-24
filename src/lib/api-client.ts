@@ -107,6 +107,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     }
     const controller = new AbortController();
     if (!NO_TIMEOUT_PATH.test(pathOf(url))) {
+      // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; fetch timeout is cleared when the request ends
       timeoutId = setTimeout(() => {
         aborted = true;
         controller.abort();

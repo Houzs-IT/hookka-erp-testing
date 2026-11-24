@@ -111,6 +111,7 @@ export function ResourceDocuments({
     // Deferred one tick: `load` flips `loading` synchronously, and doing that
     // inside the effect body triggers a cascading render (react-refresh rule).
     let cancelled = false;
+    // eslint-disable-next-line no-restricted-syntax -- inside an effect that clears it in its cleanup
     const t = setTimeout(() => {
       if (!cancelled) void load();
     }, 0);

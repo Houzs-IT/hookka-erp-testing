@@ -199,6 +199,7 @@ function armStuckTimer(): void {
   markRouteAlive();
   stuckRoute = currentRoute();
   stuckStartMs = performance.now();
+  // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; stuck-route timer is cleared on route change
   stuckTimer = setTimeout(() => {
     // Only emit if still on the same route. If user navigated away while
     // the timer was running, the original route was abandoned, not stuck.

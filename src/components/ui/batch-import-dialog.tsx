@@ -45,6 +45,7 @@ export type { ImportColumn, ImportColumnType, ImportRow } from "@/lib/table-impo
 // call this directly with their own filtered row set, wired to a separate
 // "Export" button — a page passing the unfiltered array here is the caller's
 // bug, not this function's.
+// eslint-disable-next-line react-refresh/only-export-components -- the export twin of this dialog, kept beside it (see above); HMR penalty is acceptable
 export async function exportImportRows(
   columns: ImportColumn[],
   rows: ImportRow[],
