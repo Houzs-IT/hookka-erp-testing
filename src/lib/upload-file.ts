@@ -43,6 +43,7 @@ export async function uploadFileAsset(opts: {
   fd.append("resourceId", resourceId);
 
   const controller = new AbortController();
+  // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; the timer is cleared when the upload ends
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
@@ -97,6 +98,7 @@ async function verifyReadable(fileId: string): Promise<boolean> {
     } catch {
       /* transient network error — retry */
     }
+    // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; retry backoff between attempts
     await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
   }
   return false;
