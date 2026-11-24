@@ -317,6 +317,8 @@ export type PiDetailItem = {
   uom?: string | null;
   /** The PO line's unit, attached by GET /api/purchase-invoices/:id. */
   poUnit?: string | null;
+  /** The raw material's baseUOM, attached by GET /api/purchase-invoices/:id. */
+  materialUnit?: string | null;
   unitPriceSen?: number | null;
   discountSen?: number | null;
   taxSen?: number | null;
@@ -359,7 +361,7 @@ export function buildPiDetailListingAoa(docs: PiDetailDoc[], supplierCodes?: Par
             itemCode: it.materialCode,
             description: it.materialName,
             qty: num(it.qty),
-            uom: it.uom || it.poUnit || "", // same rule as the PI detail page
+            uom: it.uom || it.poUnit || it.materialUnit || "", // billed unit, else PO line unit, else material base unit
             unitPriceSen: it.unitPriceSen ?? 0,
             discountSen: it.discountSen ?? 0,
             lineTotalSen: it.lineTotalSen ?? 0,
