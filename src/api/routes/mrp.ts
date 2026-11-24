@@ -518,21 +518,63 @@ app.get("/plan-check", async (c) => {
 // stock) / WAITING_PO (rest on an open PO) / SHORT. Keyed "poId|wipKey"; key
 // "poId|" holds lines not tied to one WIP (legacy BOM shapes). A WIP with no
 // key has nothing left to issue (no BOM materials, or already deducted).
+type StockStatusBody = { calculatedAt: string; data: Record<string, "READY" | "WAITING_PO" | "SHORT"> };
+const STOCK_STATUS_TTL_S = 600;
+const STOCK_STATUS_KV_KEY = "mrp:stock-status:v1";
+let stockStatusMemo: { at: number; body: StockStatusBody } | null = null;
+let stockStatusInflight: Promise<StockStatusBody> | null = null;
 app.get("/stock-status", async (c) => {
   const denied = await requirePermission(c, "mrp", "read");
   if (denied) return denied;
   try {
-    const plan = await buildMrpPlan(c.var.DB);
-    const rank = { READY: 0, WAITING_PO: 1, SHORT: 2 } as const;
-    const byWip: Record<string, "READY" | "WAITING_PO" | "SHORT"> = {};
-    for (const m of plan.materials) {
-      for (const o of m.orders) {
-        const k = `${o.productionOrderId}|${o.wipKey}`;
-        const cur = byWip[k];
-        if (!cur || rank[o.status] > rank[cur]) byWip[k] = o.status;
+    // Load guard (2026-11-24): Production Tracking calls this on every sheet
+    // load, and a full MRP build is heavy. Serve a cached result (per isolate,
+    // then KV) for STOCK_STATUS_TTL_S and let only ONE build run at a time per
+    // isolate, so many open tabs never stack full MRP builds on the database.
+    const now = Date.now();
+    if (stockStatusMemo && now - stockStatusMemo.at < STOCK_STATUS_TTL_S * 1000) {
+      return c.json({ success: true, cached: true, ...stockStatusMemo.body });
+    }
+    const kv = c.env.SESSION_CACHE;
+    if (kv) {
+      try {
+        const hit = await kv.get(STOCK_STATUS_KV_KEY, "json");
+        if (hit) {
+          stockStatusMemo = { at: now, body: hit as StockStatusBody };
+          return c.json({ success: true, cached: true, ...(hit as StockStatusBody) });
+        }
+      } catch {
+        /* KV miss / outage → compute */
       }
     }
-    return c.json({ success: true, calculatedAt: plan.calculatedAt, data: byWip });
+    if (!stockStatusInflight) {
+      const db = c.var.DB;
+      stockStatusInflight = (async (): Promise<StockStatusBody> => {
+        const plan = await buildMrpPlan(db);
+        const rank = { READY: 0, WAITING_PO: 1, SHORT: 2 } as const;
+        const byWip: Record<string, "READY" | "WAITING_PO" | "SHORT"> = {};
+        for (const m of plan.materials) {
+          for (const o of m.orders) {
+            const k = `${o.productionOrderId}|${o.wipKey}`;
+            const cur = byWip[k];
+            if (!cur || rank[o.status] > rank[cur]) byWip[k] = o.status;
+          }
+        }
+        return { calculatedAt: plan.calculatedAt, data: byWip };
+      })().finally(() => {
+        stockStatusInflight = null;
+      });
+    }
+    const body = await stockStatusInflight;
+    stockStatusMemo = { at: Date.now(), body };
+    if (kv) {
+      try {
+        await kv.put(STOCK_STATUS_KV_KEY, JSON.stringify(body), { expirationTtl: STOCK_STATUS_TTL_S });
+      } catch {
+        /* best effort */
+      }
+    }
+    return c.json({ success: true, ...body });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ success: false, error: `Stock status failed: ${msg}` }, 500);

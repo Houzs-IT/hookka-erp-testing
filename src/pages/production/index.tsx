@@ -3764,7 +3764,7 @@ export default function ProductionPage({
     _field: "dueDate" | "completedDate",
     value: string,
     onChange: (v: string) => void,
-    placeholder = "— Set —",
+    placeholder = "— Set —",
   ) => {
     const has = !!value;
     return (
@@ -3778,7 +3778,7 @@ export default function ProductionPage({
         title="Click to edit date"
       >
         <span
-          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full ${
+          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full min-w-[64px] ${
             has
               ? "bg-[#F5F2EE] text-[#1F1D1B]"
               : "text-[#BDB4A8] border border-dashed border-[#E6E0D9] hover:bg-[#FFF8E6]"
@@ -3892,7 +3892,7 @@ export default function ProductionPage({
     renderDateCell(row, "dueDate", row.dueDate, (v) => applyDueDateBound(row, v));
 
   // Clickable completion date cell. Shows the stamped date in a cyan
-  // pill when present, or a subtle "— Set —" placeholder when empty. The
+  // pill when present, or a subtle "— Set —" placeholder (non-breaking spaces) when empty. The
   // full cell area is a native date picker, matching the dept column pill
   // UX so the user can fill/clear from one place.
   //
@@ -3936,7 +3936,7 @@ export default function ProductionPage({
         }
       >
         <span
-          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full ${
+          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full min-w-[64px] ${
             has
               ? "bg-[#E0EDF0] text-[#3E6570]"
               : isPartial
@@ -3948,7 +3948,7 @@ export default function ProductionPage({
             ? fmtShortDate(row.completedDate)
             : isPartial
             ? `${done}/${total}`
-            : "— Set —"}
+            : "— Set —"}
         </span>
       </div>
     );

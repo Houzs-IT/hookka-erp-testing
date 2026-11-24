@@ -157,3 +157,10 @@ test("Production Tracking keeps its columns and only ADDS a Stock column", () =>
   assert.match(prod, /stockStatus\[`\$\{row\.poId\}\|\$\{row\.wipKey \?\? ""\}`\] \?\? stockStatus\[`\$\{row\.poId\}\|`\]/);
   assert.match(route(), /app\.get\("\/stock-status"/);
 });
+
+test("stock-status is cached + single-flight so Production Tracking never stacks MRP builds (2026-11-24)", () => {
+  const src = route();
+  assert.match(src, /const STOCK_STATUS_TTL_S = 600;/);
+  assert.match(src, /if \(!stockStatusInflight\) \{/);
+  assert.match(src, /kv\.put\(STOCK_STATUS_KV_KEY, JSON\.stringify\(body\), \{ expirationTtl: STOCK_STATUS_TTL_S \}\)/);
+});
