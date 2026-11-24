@@ -259,3 +259,20 @@ test("owner 2026-11-24: a picked future range shows its periods; ratios get fore
   assert.equal(dashForecastRatios(null, null).currentRatio, null);
   assert.equal(dashForecastRatios({ sales: 1, gross: 1, net: 1 }, { assets: 1, liabilities: 2, debtPct: 200, currentAssets: 1, currentLiabilities: 2, inventory: 0, equity: -1 }).roePct, null);
 });
+
+test("owner 2026-11-24: the running quarter reads actual so far + forecast for the rest (A+F)", async () => {
+  const { quarterActualPlusForecast } = await import("../src/lib/dashboard-forecast.ts");
+  const rows = [
+    { key: "2026-10", actual: { sales: 100, net: 10 }, forecast: { sales: 90, net: 9 } },
+    { key: "2026-11", actual: { sales: 80, net: 5 }, forecast: { sales: 120, net: 12 } },
+    { key: "2026-12", actual: null, forecast: { sales: 150, net: 20 } },
+    { key: "2027-01", actual: null, forecast: { sales: 70, net: 3 } },
+  ];
+  assert.deepEqual(quarterActualPlusForecast("2026-Q4", rows), { sales: 330, net: 35 });
+  assert.equal(quarterActualPlusForecast("2027-Q1", rows), null, "no month has happened → plain forecast");
+  assert.equal(quarterActualPlusForecast("2026-Q3", rows), null, "no month ahead → plain actual");
+  assert.equal(quarterActualPlusForecast("2026-Q4", rows.map((r) => (r.key === "2026-12" ? { ...r, forecast: null } : r))), null, "a month ahead without a forecast → actual only");
+  const page = readFileSync(new URL("../src/pages/finance-dashboard.tsx", import.meta.url), "utf8");
+  assert.match(page, /label: af \? `\$\{dashPeriodLabel\(r\.label, false\)\} \(A\+F\)` : dashRowLabel\(r\)/);
+  assert.match(page, /data-dash-af=""/);
+});

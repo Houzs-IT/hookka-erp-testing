@@ -272,3 +272,40 @@ export function dashForecastRatios(
     roaPct: bs && pl && bs.assets > 0 ? pct(pl.net, bs.assets) : null,
   };
 }
+
+/** The running quarter as "actual so far + forecast for the rest" (owner
+ *  2026-11-24, design (A+F)): each month of quarter `qKey` that has happened
+ *  reads its actual, each month ahead its forecast, summed key by key.
+ *  null when the quarter has no month ahead (all actual), no month that has
+ *  happened (all forecast), or a month ahead has no forecast to read. */
+export function quarterActualPlusForecast<S extends Record<string, number>>(
+  qKey: string,
+  monthRows: readonly { key: string; actual: S | null | undefined; forecast: S | null | undefined }[],
+): S | null {
+  const q = /^(\d{4})-Q([1-4])$/.exec(qKey);
+  if (!q) return null;
+  const y = q[1];
+  const first = (Number(q[2]) - 1) * 3 + 1;
+  const months = [0, 1, 2].map((i) => `${y}-${String(first + i).padStart(2, "0")}`);
+  const happened = monthRows.filter((r) => r.actual !== null && r.actual !== undefined).map((r) => r.key).sort();
+  const current = happened[happened.length - 1];
+  if (!current) return null;
+  const past = months.filter((m) => m <= current);
+  const ahead = months.filter((m) => m > current);
+  if (past.length === 0 || ahead.length === 0) return null;
+  const byKey = new Map(monthRows.map((r) => [r.key, r]));
+  const parts: S[] = [];
+  for (const m of past) {
+    const a = byKey.get(m)?.actual;
+    if (a) parts.push(a);
+  }
+  for (const m of ahead) {
+    const f = byKey.get(m)?.forecast;
+    if (!f) return null;
+    parts.push(f);
+  }
+  if (parts.length === 0) return null;
+  const out = {} as Record<string, number>;
+  for (const p of parts) for (const [k, v] of Object.entries(p)) if (typeof v === "number") out[k] = (out[k] ?? 0) + v;
+  return out as S;
+}
