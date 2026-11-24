@@ -23,8 +23,10 @@ import { FOLLOW_ORDER, failedKeys, hasOpenFollowUps, runFollowUps } from "../../
 import { DOC_FOLLOW_LABEL, loadDocs, newDocRecord, saveDocs, sameScanDoc, upsertDoc, type DocRecord } from "../../lib/scan-doc-recovery";
 import {
   blankLine, buildPiCard, cardTotals, changeSupplier, correctedExtraction, docsOfRow, isFutureInvoiceDate, matchTierHint, materialOptions, openPosFor, pickMaterial,
-  piBlockers, piDraftBody, poOrderedFor, relinkToPos, todayIso, type PiCard, type PiCardLine, type PiContext, type SupplierDoc,
+  piBlockers, piDraftBody, piLineUnit, poOrderedFor, relinkToPos, todayIso, type PiCard, type PiCardLine, type PiContext, type SupplierDoc,
 } from "../../lib/scan-pi";
+import { fetchVariantsConfig } from "@/lib/kv-config";
+import { ALL_RM_UOMS, rmUnitsFrom } from "@/lib/material-variants";
 import { Sheet } from "../../components";
 import { SheetFrame } from "../dashboard/home-ui";
 import { TNUM } from "../dashboard/home-style";
@@ -124,6 +126,8 @@ export function ScanPiSheet({ open, onClose }: { open: boolean; onClose: () => v
       prepRef.current = (async () => {
         const { ctx: next, error } = await loadSupplierContext(hasPermission("purchase-orders", "read"));
         if (!next) return error;
+        // HK-0169: the unit list a line billed in another unit may pick from (built-ins if it fails to load).
+        next.units = rmUnitsFrom(await fetchVariantsConfig().catch(() => null));
         ctxRef.current = next;
         setCtx(next);
         return null;
@@ -488,7 +492,10 @@ export function ScanPiSheet({ open, onClose }: { open: boolean; onClose: () => v
             {c.lines.map((l, idx) => {
               const n = idx + 1;
               const ordered = poOrderedFor(l, ctx.purchaseOrders);
-              const over = ordered && num(l.qty) > ordered.ordered;
+              const u = piLineUnit(l, ctx);
+              // Billed in another unit, the PO counts the PO-unit cover, not the qty (HK-0169).
+              const over = ordered && (u.uom ? u.poQty ?? 0 : num(l.qty)) > ordered.ordered;
+              const shownUnit = u.poUnit ? u.uom ?? u.poUnit : l.uom;
               return (
                 <div key={l.key} style={{ padding: "10px 0", borderTop: idx ? `1px solid ${M.divider}` : "none" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -509,10 +516,22 @@ export function ScanPiSheet({ open, onClose }: { open: boolean; onClose: () => v
                   </div>
                   <div style={{ marginTop: 6 }}><Mini label="SUPPLIER CODE" value={l.supplierSku} onChange={(v) => patchLine(l.key, { supplierSku: v })} aria={`Line ${n} supplier code`} mode="text" /></div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, marginTop: 6 }}>
-                    <Mini label={`QTY${l.uom ? ` (${l.uom})` : ""}`} value={l.qty} onChange={(v) => patchLine(l.key, { qty: v })} aria={`Line ${n} quantity`} flag={num(l.qty) > 0 ? undefined : "missing"} />
+                    <Mini label={`QTY${shownUnit ? ` (${shownUnit})` : ""}`} value={l.qty} onChange={(v) => patchLine(l.key, { qty: v })} aria={`Line ${n} quantity`} flag={num(l.qty) > 0 ? undefined : "missing"} />
                     <Mini label="UNIT PRICE (RM)" value={l.unitPriceRm} onChange={(v) => patchLine(l.key, { unitPriceRm: v })} aria={`Line ${n} unit price`} flag={num(l.unitPriceRm) > 0 ? undefined : "check"} />
                     <Mini label="TAX (RM)" value={l.taxRm} onChange={(v) => patchLine(l.key, { taxRm: v })} aria={`Line ${n} tax`} />
                   </div>
+                  {u.poUnit ? (
+                    // HK-0169: the supplier may bill in another unit than the PO line (ROLL ordered, MTR billed).
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8, marginTop: 6 }}>
+                      <label style={{ display: "block" }}>
+                        <span style={miniLabel}>UNIT (PO: {u.poUnit})</span>
+                        <select value={shownUnit.toUpperCase()} onChange={(e) => patchLine(l.key, { uom: e.target.value })} aria-label={`Line ${n} unit`} style={{ ...input(), marginTop: 3, height: 38 }}>
+                          {[...new Set([u.poUnit.toUpperCase(), ...(ctx.units ?? ALL_RM_UOMS)])].map((x) => <option key={x} value={x}>{x}</option>)}
+                        </select>
+                      </label>
+                      {u.uom ? <Mini label={`FOR (${u.poUnit})`} value={l.poQty ?? ""} onChange={(v) => patchLine(l.key, { poQty: v })} aria={`Line ${n} ${u.poUnit} covered`} flag={u.missingPoQty ? "missing" : undefined} /> : null}
+                    </div>
+                  ) : null}
                   {l.autoMatched ? <div style={{ fontSize: 11.5, color: M_ACCENT.warning.fg, marginTop: 5 }}>{matchTierHint(l.matchTier, l.matchVia)}</div> : null}
                   {ordered ? <div style={{ fontSize: 11.5, color: over ? M_ACCENT.danger.fg : M.muted, marginTop: 5 }}>{ordered.poNo} · ordered {ordered.ordered}{over ? " — this line bills more than was ordered; the server will refuse an over-billed line." : ""}</div> : null}
                   {num(l.unitPriceRm) > 0 ? null : <div style={{ fontSize: 11.5, color: M_ACCENT.warning.fg, marginTop: 5 }}>Price not read — enter it, or link the order it belongs to.</div>}
