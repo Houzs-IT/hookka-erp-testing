@@ -79,7 +79,7 @@ test("every chart on the page uses them; the cards' colours are the design's", (
     assert.match(l, /\{\.\.\.anim\}/, l);
   }
   assert.equal((page.match(/<Tooltip cursor=\{false\}/g) ?? []).length, (page.match(/<Tooltip /g) ?? []).length, "no grey hover block");
-  assert.match(page, /bars=\{\[\{ key: "actual", name: "Actual", color: CH\.actual \}\]\}\n\s+line=\{\{ key: "forecast", name: "Forecast", color: CH\.fc, dashed: true \}\}/);
+  assert.match(page, /bars=\{\[\{ key: "bar", name: "Actual", color: CH\.actual \}\]\}\n\s+fadeKey="ahead"\n\s+line=\{\{ key: "forecast", name: "Forecast", color: CH\.fc, dashed: true \}\}/);
   assert.match(page, /bars=\{\[\{ key: "inflow", name: "Money in", color: CH\.in \}, \{ key: "outflow", name: "Money out", color: CH\.out \}\]\}\n\s+line=\{\{ key: "value", name: CF_TAB_LABEL\[cfTab\], color: CH\.net \}\}/); // the line follows the tab since 2026-11-23
   assert.match(page, /\{ key: "assets", name: "Total assets", color: CH\.assets \},\n\s+\{ key: "liabilities", name: "Total liabilities", color: CH\.liab \},/);
   assert.match(page, /line=\{\{ key: "debtPct", name: "Debt to assets %", color: CH\.net, axis: "right" \}\}/);
@@ -103,7 +103,12 @@ test("months read as the design labels them", () => {
   assert.equal(look.dashPeriodLabel("2026-10", true), "Oct 2026 *");
   assert.equal(look.dashPeriodLabel("2026/Q3", true), "2026/Q3 *");
   assert.doesNotMatch(page, /r\.label \+ \(r\.partial \? " \*" : ""\)/, "every card names its periods the one way");
-  assert.equal((page.match(/dashPeriodLabel\(r\.label, r\.partial\)/g) ?? []).length, 7);
+  // Every card names a period through dashRowLabel ("(F)" ahead, owner 2026-11-24);
+  // the Cash Flow / Balance Sheet cards keep their own "ahead" test.
+  assert.equal((page.match(/dashPeriodLabel\(r\.label, r\.partial\)/g) ?? []).length, 2);
+  assert.ok((page.match(/dashRowLabel\(r\)/g) ?? []).length >= 5);
+  assert.equal(look.dashRowLabel({ label: "2026-12", partial: false, actual: null }), "Dec 2026 (F)");
+  assert.equal(look.dashRowLabel({ label: "2026-11", partial: true, actual: {} }), "Nov 2026 *");
 });
 
 test("motion: the dashboard's switches are the design's pills; revealed rows fade in", () => {
