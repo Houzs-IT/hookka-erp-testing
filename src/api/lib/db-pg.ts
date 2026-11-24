@@ -82,9 +82,13 @@ const columnFrom = (col: string): string =>
  * prepare off (same reason — transaction pooler can't keep
  * prepared-statement state).
  */
+// Hyperdrive's binding host was `<id>.hyperdrive.local`; it is now `<id>.workers.alt`.
+export function isHyperdriveUrl(databaseUrl: string): boolean {
+  return /hyperdrive\.local|\.workers\.alt[:/]/i.test(databaseUrl)
+}
+
 export function getSql(databaseUrl: string): Sql {
-  const isHyperdrive = /hyperdrive\.local/i.test(databaseUrl)
-  return isHyperdrive
+  return isHyperdriveUrl(databaseUrl)
     ? postgres(databaseUrl, {
         // max:1 — one socket per request, Hyperdrive handles origin-side
         // pooling.  Higher values risk "Cannot perform I/O on behalf of a
