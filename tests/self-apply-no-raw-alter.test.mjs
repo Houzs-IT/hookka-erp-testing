@@ -41,15 +41,10 @@ function rounds(src) {
   return out;
 }
 
-// Follow-up, not yet converted: its ALTERs are on a small table and each one
-// carries its own retry flag, so it needs its own change.
-const KNOWN = new Set(["src/api/routes/announcements.ts"]);
-
 test("no memoized round sends a raw ALTER TABLE … ADD COLUMN", () => {
   const bad = [];
   for (const file of walk("src/api")) {
     const rel = file.replace(/\\/g, "/");
-    if (KNOWN.has(rel)) continue;
     for (const r of rounds(readFileSync(file, "utf8"))) {
       if (/\.prepare\(\s*[`"']\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN/i.test(r.body)) bad.push(`${rel}:${r.line}`);
     }
