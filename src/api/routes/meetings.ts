@@ -220,6 +220,13 @@ app.post("/notifications/read", async (c) => {
   return relay(c, hubFetch(hub, "/notifications/read", { method: "POST" }));
 });
 
+// A new Google Meet link for the booking window (the hub creates it).
+app.post("/meet-link", async (c) => {
+  const hub = await hubFor(c);
+  if (hub instanceof Response) return hub;
+  return relay(c, hubFetch(hub, "/meet-link", { method: "POST" }));
+});
+
 app.get("/meetings/:id", async (c) => {
   const hub = await hubFor(c);
   if (hub instanceof Response) return hub;
