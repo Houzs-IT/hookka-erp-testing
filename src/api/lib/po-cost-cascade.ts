@@ -386,6 +386,14 @@ async function resolveBomMaterialsRaw(
       .bind(po.productId)
       .first<BomVersionRow>();
   }
+  // A version found by productId must ALSO be for this product code
+  // (BUG-2026-11-24-552): 2025 demo bom_versions rows (bom-v-1..3) share
+  // productIds with real products — prod-5 is 1003(A)-(K) but bom-v-3 is a
+  // 5530-1A sofa — so the order picked up the sofa's materials instead of its
+  // own BOM template. The MRP, RM deduction and costing all follow the BOM.
+  if (version && version.productCode && po.productCode && version.productCode !== po.productCode) {
+    version = cache ? cache.versionsByProductCode.get(po.productCode) ?? null : null;
+  }
   if (!cache && !version && po.productCode) {
     version = await db
       .prepare(
