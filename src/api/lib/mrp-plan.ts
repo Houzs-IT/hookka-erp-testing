@@ -84,6 +84,8 @@ export type MrpBoundSupplier = {
 };
 
 export type MrpPlan = {
+  /** Open PO number → the supplier it was placed with. */
+  poSupplier: Record<string, string>;
   calculatedAt: string;
   groups: string[];
   materials: MrpMaterialRow[];
@@ -221,6 +223,7 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
                 GREATEST(poi.quantity - COALESCE(poi.receivedQty, 0), 0) AS qty,
                 po.poNo AS ref,
                 po.expectedDate AS eta,
+                po.supplierName AS sup,
                 poi.unit AS unit
            FROM purchase_order_items poi
            INNER JOIN purchase_orders po ON po.id = poi.purchaseOrderId
@@ -340,6 +343,7 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
   const supplyByRm = new Map<string, MrpSupply[]>();
   const otherUnitByRm = new Map<string, MrpMaterialRow["poOtherUnit"]>();
   let openPoLinesUnresolved = 0;
+  const poSupplier: Record<string, string> = {};
   for (const r of poLineRes.results ?? []) {
     const code = str(r, "code");
     const qty = num(r, "qty");
@@ -351,6 +355,8 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     }
     const rmId = String(rm.id ?? "");
     const ref = str(r, "ref", "poNo", "po_no");
+    // Owner 2026-11-24 「已经下了的PO 要show 我们下去给了什么supplier」 (as Houzs).
+    if (ref && !poSupplier[ref]) poSupplier[ref] = str(r, "sup", "supplierName", "supplier_name").replace(/^\S+ - /, "");
     const eta = str(r, "eta", "expectedDate", "expected_date").slice(0, 10);
     const lineUnit = str(r, "unit");
     if (lineUnit && normUnit(lineUnit) !== rmUnitOf(rm)) {
@@ -455,6 +461,7 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     productionOrders: { open: orders.length, counted, alreadyDeducted, noBom },
     unresolved,
     openPoLinesUnresolved,
+    poSupplier,
     allSuppliers: [...supplierById.values()].sort((x, y) => x.name.localeCompare(y.name)),
     leadTimes,
   };

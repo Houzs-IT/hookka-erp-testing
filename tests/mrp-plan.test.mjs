@@ -161,7 +161,7 @@ test("dates follow the system standard dd/mm/yyyy", () => {
 
 test("Houzs toolbar: date type, From/To, no-date, shortages, export all / current tab, wrap, columns, filters", () => {
   const src = page();
-  for (const s of ['value="orderBy"', 'value="due"', 'value="soDate"', "SHOW NO-DATE", "ONLY SHORTAGES", "EXPORT ALL", "EXPORT CURRENT TAB", "WRAP", "FILTERS", "Columns ·", "COMBINED", "PER SO", "COLLAPSE", "EXPAND", "LEAD TIMES", "Proceed PO ("]) {
+  for (const s of ['value="due"', 'value="soDate"', "SHOW NO-DATE", "ONLY SHORTAGES", "EXPORT ALL", "EXPORT CURRENT TAB", "WRAP", "FILTERS", "Columns ·", "COMBINED", "PER SO", "COLLAPSE", "EXPAND", "LEAD TIMES", "Proceed PO ("]) {
     assert.ok(src.includes(s), `missing ${s}`);
   }
 });
@@ -196,4 +196,13 @@ test("owner 2026-11-24 「很卡顿」: EXPAND no longer draws every supplier in
   assert.match(src, /\{otherOpen\[l\.key\] \|\| \(l\.supplierId && !bound\.has\(l\.supplierId\)\) \? \(/);
   assert.match(src, /<option value=\{OTHER_SUPPLIER\}>Other supplier… \(will be bound\)<\/option>/);
   assert.doesNotMatch(src, /All warehouses/, "one warehouse — no Warehouse filter");
+});
+
+test("owner 2026-11-24: no Order-by column; a line covered by a PO shows the supplier it went to", () => {
+  const src = page();
+  assert.doesNotMatch(src, /\{ key: "orderBy", label: "Order-by" \}/);
+  assert.doesNotMatch(src, /<th className="px-1\.5 py-1\.5">Order-by<\/th>/);
+  assert.match(src, /const poSup = useCallback\(\(ref: string\): string => plan\?\.poSupplier\?\.\[ref\] \?\? "", \[plan\]\);/);
+  const engine = readFileSync(new URL("../src/api/lib/mrp-plan.ts", import.meta.url), "utf8");
+  assert.match(engine, /po\.supplierName AS sup,/);
 });

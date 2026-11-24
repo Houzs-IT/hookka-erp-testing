@@ -12,7 +12,7 @@
 // Tabs = merged material groups (src/lib/mrp-groups.ts). Dates dd/mm/yyyy.
 // No KPI tiles (owner: 「这些不需要」).
 // ---------------------------------------------------------------------------
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { RefreshCw, Loader2, Download, ChevronRight, ChevronDown, Clock, ShoppingCart, Columns3, WrapText, Filter } from "lucide-react";
@@ -78,6 +78,8 @@ type Plan = {
   openPoLinesUnresolved: number;
   allSuppliers: { id: string; name: string; code: string }[];
   leadTimes: Record<string, number>;
+  /** Open PO number → the supplier it was placed with. */
+  poSupplier?: Record<string, string>;
 };
 
 // ---- helpers --------------------------------------------------------------
@@ -94,7 +96,6 @@ const COLS: { key: ColKey; label: string; num?: boolean }[] = [
   { key: "po", label: "PO Outstanding", num: true },
   { key: "short", label: "Short", num: true },
   { key: "needBy", label: "Need-by" },
-  { key: "orderBy", label: "Order-by" },
   { key: "sup", label: "Main supplier" },
   { key: "orders", label: "Orders", num: true },
   { key: "status", label: "Status" },
@@ -223,6 +224,8 @@ export default function MRPPage() {
   const [exporting, setExporting] = useState(false);
 
   const leadTimes = useMemo(() => leadOverride ?? plan?.leadTimes ?? {}, [leadOverride, plan]);
+  // The supplier an open PO was placed with (owner 2026-11-24, as Houzs).
+  const poSup = useCallback((ref: string): string => plan?.poSupplier?.[ref] ?? "", [plan]);
   const supplierName = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of plan?.allSuppliers ?? []) m.set(s.id, s.name);
@@ -471,29 +474,29 @@ export default function MRPPage() {
         ["MRP · Raw Material Stock Status"],
         [stamp],
         [],
-        ["Code", "Description", "Material", "RM category", "UOM", "Needed", "Stock", "PO outstanding", "Other-unit PO", "Short", "Need-by", "Order-by", "Main supplier", "Orders", "Status"],
+        ["Code", "Description", "Material", "RM category", "UOM", "Needed", "Stock", "PO outstanding", "Other-unit PO", "Short", "Need-by", "Main supplier", "Orders", "Status"],
       ];
       const mk: RowKind[] = ["title", "meta", "blank", "header"];
       const ord: (string | number)[][] = [
         ["MRP · production orders per material"],
         [stamp],
         [],
-        ["Code", "Production order", "Product", "Qty", "Used at", "Needs", "UOM", "Need-by", "Order-by", "Customer due", "SO date", "Covered by", "Short", "Supplier", "Status"],
+        ["Code", "Production order", "Product", "Qty", "Used at", "Needs", "UOM", "Need-by", "Customer due", "SO date", "Covered by", "Short", "Supplier", "Status"],
       ];
       const ok: RowKind[] = ["title", "meta", "blank", "header"];
       for (const r of which) {
         mat.push([
           r.code, r.description, r.group, r.itemGroup, r.uom, r.wNeed, r.stock, r.poOutstanding,
           r.poOtherUnit.map((p) => `${p.ref} ${p.qty} ${p.unit}${p.estMtr != null ? ` (≈${p.estMtr} MTR est.)` : ""}`).join("; "), r.wShort, dmy(r.wFirstNeed),
-          r.wShort > EPS ? dmy(r.wFirstOrderBy) : "", r.mainSupplier ?? "", r.lines.length, r.statusLabel,
+          r.mainSupplier ?? "", r.lines.length, r.statusLabel,
         ]);
         mk.push("item");
         for (const l of r.lines) {
           ord.push([
             r.code, l.poNo, l.productCode, l.quantity, DEPT_LABEL[l.dept] ?? l.dept, l.required, r.uom, dmy(l.needBy),
-            l.shortQty > EPS ? dmy(l.orderBy) : "", dmy(l.due), dmy(l.soDate),
-            l.covers.map((c) => (c.source === "STOCK" ? `Stock ${fmtQty(c.qty)}` : `${c.ref} ${fmtQty(c.qty)}`)).join("; "),
-            l.shortQty, l.supplierName, l.status === "READY" ? "Ready" : l.status === "WAITING_PO" ? "Waiting PO" : "Short",
+            dmy(l.due), dmy(l.soDate),
+            l.covers.map((c) => (c.source === "STOCK" ? `Stock ${fmtQty(c.qty)}` : `${c.ref} ${poSup(c.ref)} ${fmtQty(c.qty)}`)).join("; "),
+            l.shortQty, l.shortQty > EPS ? l.supplierName : [...new Set(l.covers.filter((c) => c.source === "PO").map((c) => poSup(c.source === "PO" ? c.ref : "")))].join(", "), l.status === "READY" ? "Ready" : l.status === "WAITING_PO" ? "Waiting PO" : "Short",
           ]);
           ok.push("item");
         }
@@ -595,7 +598,6 @@ export default function MRPPage() {
             <span className={lbl}>DATE</span>
             <select className={`${input} w-44 font-semibold`} value={dateType} onChange={(e) => setDateType(e.target.value as DateType)} aria-label="Date type">
               <option value="needBy">Need-by date</option>
-              <option value="orderBy">Order-by date</option>
               <option value="due">Customer due date</option>
               <option value="soDate">SO date</option>
             </select>
@@ -807,7 +809,6 @@ export default function MRPPage() {
                                       <th className="px-1.5 py-1.5">Used at</th>
                                       <th className="px-1.5 py-1.5 text-right">Needs</th>
                                       <th className="px-1.5 py-1.5">Need-by</th>
-                                      <th className="px-1.5 py-1.5">Order-by</th>
                                       <th className="px-1.5 py-1.5">Covered by</th>
                                       <th className="px-1.5 py-1.5">Supplier</th>
                                     </tr>
@@ -815,7 +816,6 @@ export default function MRPPage() {
                                   <tbody>
                                     {r.lines.map((l) => {
                                       const lShort = l.shortQty > EPS;
-                                      const lLate = lShort && !!l.orderBy && l.orderBy < today;
                                       return (
                                         <tr key={l.key} className="border-t border-[#F3F0EA]">
                                           <td className="px-2 py-1.5">
@@ -829,14 +829,11 @@ export default function MRPPage() {
                                           <td className="px-1.5 py-1.5 text-[#6B7280]">{DEPT_LABEL[l.dept] ?? l.dept}</td>
                                           <td className="px-1.5 py-1.5 text-right tabular-nums">{fmtQty(l.required)} {r.uom}</td>
                                           <td className="px-1.5 py-1.5 tabular-nums">{dmy(l.needBy)}</td>
-                                          <td className={`px-1.5 py-1.5 tabular-nums ${lLate ? "font-bold text-[#B42318]" : ""}`}>
-                                            {lShort ? `${dmy(l.orderBy)}${lLate ? " · late" : ""}` : "—"}
-                                          </td>
                                           <td className="px-1.5 py-1.5">
                                             <span className="flex flex-wrap gap-1">
                                               {l.covers.map((c, j) => (
                                                 <span key={j} className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${c.source === "STOCK" ? "bg-[#E7F3EC] text-[#1E6B3F]" : "bg-[#E8F0F8] text-[#1F4E6B]"}`}>
-                                                  {c.source === "STOCK" ? `Stock ${fmtQty(c.qty)} ${r.uom}` : `${c.ref}${c.eta ? ` · ETA ${dmy(c.eta)}` : ""} · ${fmtQty(c.qty)} ${r.uom}`}
+                                                  {c.source === "STOCK" ? `Stock ${fmtQty(c.qty)} ${r.uom}` : `${c.ref}${poSup(c.ref) ? ` · ${poSup(c.ref)}` : ""}${c.eta ? ` · ETA ${dmy(c.eta)}` : ""} · ${fmtQty(c.qty)} ${r.uom}`}
                                                 </span>
                                               ))}
                                               {lShort && (
@@ -884,7 +881,10 @@ export default function MRPPage() {
                                                 )}
                                               </select>
                                             ) : (
-                                              <span className="text-[#9CA3AF]">—</span>
+                                              // Covered by a PO already placed: the supplier it went to (owner 2026-11-24, as Houzs).
+                                              <span className="text-[12px] text-[#374151]">
+                                                {[...new Set(l.covers.filter((c) => c.source === "PO").map((c) => poSup(c.source === "PO" ? c.ref : "")).filter(Boolean))].join(", ") || "—"}
+                                              </span>
                                             )}
                                           </td>
                                         </tr>
