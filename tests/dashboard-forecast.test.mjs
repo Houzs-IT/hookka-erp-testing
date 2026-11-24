@@ -47,13 +47,13 @@ const entry = (accountCode, category, balance) => ({ accountCode, accountName: a
 
 test("the Forecast Balance Sheet's totals, added up as the card adds up the actual sheet", () => {
   const opening = [entry("200-1", "FIXED_ASSET", 1_000), entry("310-1", "CURRENT_ASSET", 500), entry("400-0000", "CURRENT_LIABILITY", 600), entry("500-1", "EQUITY", 900)];
-  assert.deepEqual(bsTotals(opening), { assets: 1_500, liabilities: 600, debtPct: 40 });
+  assert.deepEqual(bsTotals(opening), { assets: 1_500, liabilities: 600, debtPct: 40, currentAssets: 500, currentLiabilities: 600, inventory: 0, equity: 900 });
   // November: 200 cash paid to the creditors.
   const fc = {
     startYm: "2026-10", months: ["2026-11"], deltas: { "2026-11": { "400-0000": 200, [FC_CASH]: -200 } },
     accounts: {}, salaryAccount: "410-0010", arAccounts: [], bankAccounts: [], stockAccounts: [], openingReceipts: {},
   };
-  assert.deepEqual(dashBsForecast(fc, opening), { "2026-11": { assets: 1_300, liabilities: 400, debtPct: 30.77 } });
+  assert.deepEqual(dashBsForecast(fc, opening), { "2026-11": { assets: 1_300, liabilities: 400, debtPct: 30.77, currentAssets: 300, currentLiabilities: 400, inventory: 0, equity: 900 } });
 });
 
 test("the periods ahead: those not yet happened that a forecast covers, in order, up to the first gap", () => {
@@ -77,8 +77,9 @@ test("the dashboard: two dashed forecast lines and their rows on Cash Flow, the 
   assert.match(page, /data-dash-cf-fc="pnl"/);
   assert.match(page, /data-dash-cf-fc="docs"/);
   assert.match(page, /vs Forecast \(\{k === "fcPnl" \? "P&L" : "documents"\}\)/);
-  assert.match(page, /dashAheadRows\(rows \?\? \[\], shownRows, new Set\(Object\.keys\(cashFcB\)\)\)/);
-  assert.match(page, /dashAheadRows\(rows \?\? \[\], shownRows, new Set\(Object\.keys\(bsFcB\)\)\)/);
+  // Owner 2026-11-24: 6 / 12 months = actual only — no forecast periods
+  // appended; a future period shows only when picked in From / To.
+  assert.doesNotMatch(page, /dashAheadRows\(/);
   assert.match(page, /fadeKey="ahead"/);
   assert.match(page, /fillOpacity=\{d\[fadeKey\] \? 0\.4 : 1\}/);
   assert.match(page, /data-dash-bs-fc-note=""/);
@@ -193,4 +194,21 @@ test("past months beside a forecast worked out from the month-end before (owner 
   assert.match(page, /fetch\(`\/api\/accounting\/bs-forecast\?start=\$\{ym\}`, \{ cache: "no-store" \}\)/);
   assert.match(page, /const vs = !ahead && granularity === "month" \? \(f \?\? pastBs\[r\.key\] \?\? null\) : null;/);
   assert.match(page, /A past month's forecast is worked out from the month-end before it with that month's Forecast P&L\./);
+});
+
+test("owner 2026-11-24: a picked future range shows its periods; ratios get forecast values", async () => {
+  const look = await import("../src/lib/finance-chart-look.ts");
+  const rows = [
+    { key: "2026-10", actual: {}, forecast: {} },
+    { key: "2026-11", actual: {}, forecast: {} },
+    { key: "2026-12", actual: null, forecast: {} },
+    { key: "2027-01", actual: null, forecast: null },
+  ];
+  assert.deepEqual(look.dashPeriods(rows, { span: 6, granularity: "month", explicit: true }).map((r) => r.key), ["2026-10", "2026-11", "2026-12"]);
+  assert.deepEqual(look.dashPeriods(rows, { span: 6, granularity: "month", explicit: false }).map((r) => r.key), ["2026-10", "2026-11"]);
+  const { dashForecastRatios } = await import("../src/lib/dashboard-forecast.ts");
+  const r = dashForecastRatios({ sales: 1000, gross: 300, net: 100 }, { assets: 2000, liabilities: 1500, debtPct: 75, currentAssets: 1800, currentLiabilities: 1200, inventory: 300, equity: 500 });
+  assert.deepEqual(r, { grossMarginPct: 30, netMarginPct: 10, currentRatio: 1.5, quickRatio: 1.25, roePct: 20, roaPct: 5 });
+  assert.equal(dashForecastRatios(null, null).currentRatio, null);
+  assert.equal(dashForecastRatios({ sales: 1, gross: 1, net: 1 }, { assets: 1, liabilities: 2, debtPct: 200, currentAssets: 1, currentLiabilities: 2, inventory: 0, equity: -1 }).roePct, null);
 });
