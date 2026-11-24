@@ -35,7 +35,7 @@
 // ---------------------------------------------------------------------------
 
 import { resolveStateCode } from "../../lib/malaysia-states";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { loadHubStateMap } from "../routes/delivery-orders";
 import { loadDoValueMap } from "./do-value";
 import { askAgentBrain } from "./agent-brain";
@@ -57,8 +57,7 @@ interface DbLike {
 
 let _agentMig: Promise<void> | null = null;
 export function ensureDeliveryAgentTables(db: DbLike): Promise<void> {
-  if (_agentMig) return _agentMig;
-  _agentMig = (async () => {
+  return memoizeSelfApply(() => _agentMig, (p) => { _agentMig = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS delivery_proposals (
          id TEXT PRIMARY KEY,
@@ -106,14 +105,7 @@ export function ensureDeliveryAgentTables(db: DbLike): Promise<void> {
          ON delivery_briefs(date, taken_at DESC)`,
     ];
     await runSelfApply(db, "delivery-agent", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _agentMig = null;
-    throw err;
   });
-  return _agentMig;
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────

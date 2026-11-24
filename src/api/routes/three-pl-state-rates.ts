@@ -26,7 +26,7 @@
 // untouched); wiring the DO cost lookup to the state card is Phase 2.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
@@ -41,8 +41,7 @@ const app = new Hono<Env>();
 // exists) never poisons the cached promise.
 let pendingMigrations: Promise<void> | null = null;
 export function ensureThreePlStateRatesSchema(db: D1Database): Promise<void> {
-  if (pendingMigrations) return pendingMigrations;
-  pendingMigrations = (async () => {
+  return memoizeSelfApply(() => pendingMigrations, (p) => { pendingMigrations = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS three_pl_state_rates (
          id TEXT PRIMARY KEY,
@@ -60,14 +59,7 @@ export function ensureThreePlStateRatesSchema(db: D1Database): Promise<void> {
          ON three_pl_state_rates(provider_id)`,
     ];
     await runSelfApply(db, "three-pl-state-rates", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    pendingMigrations = null;
-    throw err;
   });
-  return pendingMigrations;
 }
 
 type StateRateRow = {

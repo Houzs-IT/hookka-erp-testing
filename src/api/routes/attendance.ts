@@ -36,7 +36,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 
 const app = new Hono<Env>();
 
@@ -66,16 +66,9 @@ const NULLABLE_METRIC_DDL = [
 
 let _pendingNullableMetrics: Promise<void> | null = null;
 export function ensureAttendanceMetricsNullable(db: D1Database): Promise<void> {
-  if (_pendingNullableMetrics) return _pendingNullableMetrics;
-  _pendingNullableMetrics = (async () => {
+  return memoizeSelfApply(() => _pendingNullableMetrics, (p) => { _pendingNullableMetrics = p; }, async () => {
     await runSelfApply(db, "attendance", NULLABLE_METRIC_DDL);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — dropping the memo lets
-    // the next punch retry (same contract as every other self-apply here).
-    _pendingNullableMetrics = null;
-    throw err;
   });
-  return _pendingNullableMetrics;
 }
 
 /**

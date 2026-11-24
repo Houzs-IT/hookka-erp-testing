@@ -238,26 +238,32 @@ export async function selfApplyForRead(label: string, run: () => Promise<void>):
   }
 }
 
+/** The memo value once a round has landed. Made at module load, outside any request. */
+export const SELF_APPLY_DONE: Promise<void> = Promise.resolve();
+
 /**
- * The memo wrapper the call sites need: run once per isolate, but DROP the memo
- * if the round failed so the next request tries again.
+ * The memo wrapper the call sites need: run once per isolate, and remember it
+ * only once the round has LANDED.
+ *
+ * The memo is never the in-flight promise. A pending promise belongs to the
+ * request that made it: if that request ends first (the client gave up), the
+ * Workers runtime drops the settle, so every other request awaiting it fails
+ * with "This promise was created by a request that has since ended" — and its
+ * own `.catch` that would clear the memo never runs, so the isolate stays stuck
+ * (BUG-2026-11-24-552, Purchase Invoice create from the scan flow, prod). Two
+ * cold requests now each run the round; every statement is IF NOT EXISTS, so
+ * that costs a few catalog reads. A failed round leaves the memo unset.
  *
  * `getMemo`/`setMemo` rather than an internal map because the existing call
- * sites export their promise (tests and other modules await it), and changing
- * that binding is a bigger blast radius than this fix is worth.
+ * sites export their memo (tests and other modules read it).
  */
 export function memoizeSelfApply(
   getMemo: () => Promise<void> | null,
   setMemo: (p: Promise<void> | null) => void,
   run: () => Promise<void>,
 ): Promise<void> {
-  const hit = getMemo();
-  if (hit) return hit;
-  const p = run().catch((err) => {
-    // The failed round must not be remembered as done — that is the entire bug.
-    setMemo(null);
-    throw err;
+  if (getMemo()) return SELF_APPLY_DONE;
+  return run().then(() => {
+    setMemo(SELF_APPLY_DONE);
   });
-  setMemo(p);
-  return p;
 }

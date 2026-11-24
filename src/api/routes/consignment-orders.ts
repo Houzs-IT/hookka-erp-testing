@@ -19,7 +19,7 @@
 // CO) — see PR 3.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
 import { createProductionOrdersForOrder } from "./_shared/production-builder";
 import {
@@ -627,40 +627,31 @@ app.get("/", async (c) => {
 // reason / who / when triple; snake_case so no column-rename-map entry needed.
 let _coDiscountColMig: Promise<void> | null = null;
 function ensureDiscountColumn(db: D1Database): Promise<void> {
-  if (!_coDiscountColMig) {
-    _coDiscountColMig = (async () => {
-      const stmts = [
-        "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS discount_sen INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS hold_reason TEXT",
-        "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS held_by TEXT",
-        "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS held_at TEXT",
-        // 0209 — the fifth price component. The column is already present in
-        // prod (self-applied by the SO helper, which this route never awaits),
-        // so this ALTER is a no-op there. It is here because THIS is the
-        // handler that writes it, and "a migration file alone is inert" cuts
-        // both ways: a column you write must be ensured on the path that
-        // writes it, not on a neighbour's path that happens to run first.
-        "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS total_height_price_sen INTEGER NOT NULL DEFAULT 0",
-        // Where a hold came FROM (BUG-2026-08-13-041). NEW column — the CO PUT
-        // below is the only writer of ON_HOLD on this table, and it names this
-        // column in its UPDATE, so the ALTER must land before that statement
-        // runs or the whole save 500s. It does: this is awaited at the top of
-        // both the POST and the PUT. Migration files are inert on deploy here;
-        // this line is the thing that actually creates the column in prod.
-        "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS pre_hold_status TEXT",
-        // HK-0123 "Other (custom)" specials — written by the POST and PUT.
-        "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS custom_specials TEXT",
-      ];
-      await runSelfApply(db, "consignment-orders", stmts);
-    })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _coDiscountColMig = null;
-    throw err;
+  return memoizeSelfApply(() => _coDiscountColMig, (p) => { _coDiscountColMig = p; }, async () => {
+    const stmts = [
+      "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS discount_sen INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS hold_reason TEXT",
+      "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS held_by TEXT",
+      "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS held_at TEXT",
+      // 0209 — the fifth price component. The column is already present in
+      // prod (self-applied by the SO helper, which this route never awaits),
+      // so this ALTER is a no-op there. It is here because THIS is the
+      // handler that writes it, and "a migration file alone is inert" cuts
+      // both ways: a column you write must be ensured on the path that
+      // writes it, not on a neighbour's path that happens to run first.
+      "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS total_height_price_sen INTEGER NOT NULL DEFAULT 0",
+      // Where a hold came FROM (BUG-2026-08-13-041). NEW column — the CO PUT
+      // below is the only writer of ON_HOLD on this table, and it names this
+      // column in its UPDATE, so the ALTER must land before that statement
+      // runs or the whole save 500s. It does: this is awaited at the top of
+      // both the POST and the PUT. Migration files are inert on deploy here;
+      // this line is the thing that actually creates the column in prod.
+      "ALTER TABLE consignment_orders ADD COLUMN IF NOT EXISTS pre_hold_status TEXT",
+      // HK-0123 "Other (custom)" specials — written by the POST and PUT.
+      "ALTER TABLE consignment_order_items ADD COLUMN IF NOT EXISTS custom_specials TEXT",
+    ];
+    await runSelfApply(db, "consignment-orders", stmts);
   });
-  }
-  return _coDiscountColMig;
 }
 
 app.post("/", async (c) => {

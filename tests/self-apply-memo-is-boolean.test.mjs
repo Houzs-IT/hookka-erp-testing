@@ -31,8 +31,15 @@
 // acceptable and both are checked for below:
 //
 //   * `let _x = false;` … set true only after the DDL actually lands.
-//   * a Promise memo that is CLEARED on failure — either explicitly
-//     (`_x = null` inside a catch) or through memoizeSelfApply, which does it.
+//   * a Promise memo handled by memoizeSelfApply, which sets it only after the
+//     round lands and never hands out the in-flight promise.
+//
+// "Cleared on failure" (`_x = null` in a catch) used to count as fixed. It is
+// not: while the round is in flight the promise is shared, and if the request
+// that made it ends first the runtime drops the settle — every other request
+// fails with "This promise was created by a request that has since ended" and
+// the catch that would clear the memo never runs (BUG-2026-11-24-552, Purchase
+// Invoice create from the scan flow, prod).
 //
 // This test exists because the class had already been "closed" once: #222 swept
 // 26 sites on the morning of 2026-08-02 and 38 more were still live that
@@ -65,26 +72,33 @@ function promiseMemos() {
       found.push({
         file,
         name,
-        // Reset anywhere after the declaration — the explicit form.
-        clearsExplicitly: new RegExp(`${name}\\s*=\\s*null`).test(after),
-        // …or handed to the helper, which clears it for you.
+        // Handed to the helper, which sets it only once the round lands.
         viaHelper: new RegExp(
           `memoizeSelfApply\\([\\s\\S]{0,300}?${name}`,
         ).test(src),
+        // …or only ever set to SELF_APPLY_DONE (or reset to null), never to a
+        // promise of its own: the shape for rounds that swallow their errors.
+        doneOnly:
+          new RegExp(`\\b${name}\\s*=\\s*SELF_APPLY_DONE`).test(after) &&
+          !new RegExp(`\\b${name}\\s*=(?!=)(?!\\s*(?:SELF_APPLY_DONE|null)\\b)`).test(after),
       });
     }
   }
   return found;
 }
 
-test("no runtime migration caches a promise it can never retry", () => {
+// Not a schema memo: a data single-flight (#1582). Same cross-request hazard,
+// tracked as its own follow-up; listed here so it cannot be copied silently.
+const NOT_SELF_APPLY = new Set(["stockStatusInflight"]);
+
+test("no runtime migration shares an in-flight promise across requests", () => {
   const bad = promiseMemos()
-    .filter((m) => !m.clearsExplicitly && !m.viaHelper)
+    .filter((m) => !m.viaHelper && !m.doneOnly && !NOT_SELF_APPLY.has(m.name))
     .map(
       (m) =>
-        `${m.file}: \`${m.name}\` is a cached Promise that is never cleared.\n` +
-        `    A rejected round is remembered as done for the life of the isolate,\n` +
-        `    and a pending one shares a socket across requests (see db-pg.ts).\n` +
+        `${m.file}: \`${m.name}\` is a cached Promise not handled by memoizeSelfApply.\n` +
+        `    While in flight it is shared across requests; if its request ends first,\n` +
+        `    every waiter fails and the memo never clears (BUG-2026-11-24-552).\n` +
         `    Use a boolean memo (src/api/lib/payment-columns.ts) or memoizeSelfApply.`,
     );
   assert.deepEqual(bad, [], `\n\n${bad.join("\n\n")}\n`);
@@ -140,4 +154,30 @@ test("the sweep actually happened — boolean memos exist in numbers", () => {
     n >= 30,
     `expected the converted boolean memos to still be there, found ${n}`,
   );
+});
+
+test("memoizeSelfApply never hands out an in-flight promise", async () => {
+  const { memoizeSelfApply, SELF_APPLY_DONE } = await import("../src/api/lib/self-apply.ts");
+  let memo = null;
+  const get = () => memo;
+  const set = (p) => { memo = p; };
+  let runs = 0;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const run = async () => { runs++; await gate; };
+
+  const a = memoizeSelfApply(get, set, run);
+  const b = memoizeSelfApply(get, set, run);
+  assert.equal(memo, null, "nothing is remembered while the round is in flight");
+  assert.notEqual(a, b, "a second request must not await the first request's promise");
+  assert.equal(runs, 2, "each cold request runs its own (idempotent) round");
+  release();
+  await Promise.all([a, b]);
+  assert.equal(memo, SELF_APPLY_DONE, "remembered only once the round landed");
+  assert.equal(await memoizeSelfApply(get, set, run), undefined);
+  assert.equal(runs, 2, "a landed round is not run again");
+
+  memo = null;
+  await assert.rejects(memoizeSelfApply(get, set, async () => { throw new Error("ddl blip"); }), /ddl blip/);
+  assert.equal(memo, null, "a failed round is not remembered");
 });

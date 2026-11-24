@@ -7,7 +7,7 @@
 import type { Context } from "hono";
 import { canAdvanceToReadyToShip, READY_TO_SHIP_FROM_SQL } from "../../lib/ready-to-ship-guard";
 import { cardsBeforePackingDone, isPillow } from "../../../lib/delivery-pipeline";
-import { runSelfApply } from "../../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../../lib/self-apply";
 import type { Env } from "../../worker";
 import { postProductionOrderCompletion } from "../../lib/fg-completion";
 import { archiveUnionSource } from "../../lib/archive-union";
@@ -110,8 +110,7 @@ import { mytYymm } from "../../../lib/doc-number";
 // stop double-printing the same sheet.
 export let pendingMigrations: Promise<void> | null = null;
 export function ensurePendingMigrations(db: D1Database): Promise<void> {
-  if (pendingMigrations) return pendingMigrations;
-  pendingMigrations = (async () => {
+  return memoizeSelfApply(() => pendingMigrations, (p) => { pendingMigrations = p; }, async () => {
     const stmts = [
       "ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS distributedAt TEXT",
       // ON HOLD reason columns (BUG-2026-06-24-008). The production list READ
@@ -202,14 +201,7 @@ export function ensurePendingMigrations(db: D1Database): Promise<void> {
          ON wip_cascade_log (org_id, job_card_id, applied_at DESC)`,
     ];
     await runSelfApply(db, "production-orders", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    pendingMigrations = null;
-    throw err;
   });
-  return pendingMigrations;
 }
 
 // Local helper — push one JC row to the matching dept tab on the live

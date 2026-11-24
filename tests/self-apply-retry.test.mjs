@@ -116,9 +116,12 @@ test("a successful round still runs exactly once per isolate", async () => {
         attempt += 1;
       },
     );
+  // Concurrent cold callers each run their own (idempotent) round: sharing the
+  // in-flight promise across requests is BUG-2026-11-24-552.
   await Promise.all([call(), call(), call()]);
+  assert.equal(attempt, 3, "no caller awaits another caller's in-flight round");
   await call();
-  assert.equal(attempt, 1, "the memo must still collapse concurrent callers");
+  assert.equal(attempt, 3, "a landed round is not run again");
 });
 
 test("the canonical call site uses the helper", async () => {

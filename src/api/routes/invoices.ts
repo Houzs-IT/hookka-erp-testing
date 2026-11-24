@@ -20,7 +20,7 @@
 import { Hono } from "hono";
 import { allWordsClause } from "../lib/search-words-sql";
 import type { Context } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { customerScopeSql } from "../lib/customer-scope";
@@ -1631,22 +1631,13 @@ async function ensureDiscountColumn(db: D1Database): Promise<void> {
 // invoice detail page down with it.
 let _invNoteIndexMig: Promise<void> | null = null;
 function ensureInvoiceNoteIndexes(db: D1Database): Promise<void> {
-  if (!_invNoteIndexMig) {
-    _invNoteIndexMig = (async () => {
-      const stmts = [
-        `CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice_id ON credit_notes (invoice_id)`,
-        `CREATE INDEX IF NOT EXISTS idx_debit_notes_invoice_id ON debit_notes (invoice_id)`,
-      ];
-      await runSelfApply(db, "invoices", stmts);
-    })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _invNoteIndexMig = null;
-    throw err;
+  return memoizeSelfApply(() => _invNoteIndexMig, (p) => { _invNoteIndexMig = p; }, async () => {
+    const stmts = [
+      `CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice_id ON credit_notes (invoice_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_debit_notes_invoice_id ON debit_notes (invoice_id)`,
+    ];
+    await runSelfApply(db, "invoices", stmts);
   });
-  }
-  return _invNoteIndexMig;
 }
 
 // Shared row shape for both note tables — identical columns in 0001_init.

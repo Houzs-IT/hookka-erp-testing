@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Context } from "hono";
-import { runSelfApply } from "../../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../../lib/self-apply";
 import { isPillow } from "../../../lib/delivery-pipeline";
 import type { Env } from "../../worker";
 import {
@@ -4120,21 +4120,13 @@ export async function computeDoPrintExtras(
 // ---------------------------------------------------------------------------
 export let notifyEmailColumns: Promise<void> | null = null;
 export function ensureNotifyEmailColumns(db: D1Database): Promise<void> {
-  if (notifyEmailColumns) return notifyEmailColumns;
-  notifyEmailColumns = (async () => {
+  return memoizeSelfApply(() => notifyEmailColumns, (p) => { notifyEmailColumns = p; }, async () => {
     const stmts = [
       "ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS dispatchEmailAt TEXT",
       "ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS deliveredEmailAt TEXT",
     ];
     await runSelfApply(db, "delivery-orders", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    notifyEmailColumns = null;
-    throw err;
   });
-  return notifyEmailColumns;
 }
 
 // ---------------------------------------------------------------------------

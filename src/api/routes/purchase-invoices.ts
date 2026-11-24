@@ -12,7 +12,7 @@
 // DELETE is gated to DRAFT only — once confirmed we keep the row for audit.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission, requireFinance } from "../lib/rbac";
@@ -62,8 +62,7 @@ import { todayYmdMY } from "../../lib/utils";
 // ---------------------------------------------------------------------------
 let piMigrationPromise: Promise<void> | null = null;
 function ensurePiMigrations(db: D1Database): Promise<void> {
-  if (piMigrationPromise) return piMigrationPromise;
-  piMigrationPromise = (async () => {
+  return memoizeSelfApply(() => piMigrationPromise, (p) => { piMigrationPromise = p; }, async () => {
     // A unit price is a RATE with four decimals of sen. Shared with the PO and
     // GRN routes so the three cannot drift apart again.
     await ensureUnitPricePrecision(db);
@@ -152,14 +151,7 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
         `ALTER TABLE grn_items ADD CONSTRAINT ${GRN_INVOICED_QTY_CHECK} CHECK (invoiced_qty >= 0 AND invoiced_qty <= accepted_qty) NOT VALID`,
       ]);
     }
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    piMigrationPromise = null;
-    throw err;
   });
-  return piMigrationPromise;
 }
 
 const AP_CONTROL = "400-0000"; // Trade Creditors

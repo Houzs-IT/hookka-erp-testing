@@ -22,7 +22,7 @@
 // so it can also be invoked from tests / scripts.
 // ---------------------------------------------------------------------------
 
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { claudeFetch, MISSING_ANTHROPIC_KEY_ERROR } from "./claude-fetch";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
@@ -33,21 +33,13 @@ const CLAUDE_MODEL = "claude-sonnet-4-6";
 // Supabase stays forward-compatible without a separate deploy step.
 let distillColumnsPromise: Promise<void> | null = null;
 function ensureDistillColumns(db: DistillDb): Promise<void> {
-  if (distillColumnsPromise) return distillColumnsPromise;
-  distillColumnsPromise = (async () => {
+  return memoizeSelfApply(() => distillColumnsPromise, (p) => { distillColumnsPromise = p; }, async () => {
     const stmts = [
       "ALTER TABLE customers ADD COLUMN IF NOT EXISTS ocrPromptRules TEXT",
       "ALTER TABLE po_scan_samples ADD COLUMN IF NOT EXISTS isGold INTEGER NOT NULL DEFAULT 0",
     ];
     await runSelfApply(db, "ocr-distill", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    distillColumnsPromise = null;
-    throw err;
   });
-  return distillColumnsPromise;
 }
 
 // Minimal structural DB surface — mirrors the DBLike/DBQuery types in
@@ -371,8 +363,7 @@ export async function distillAllCustomerRules(
 // mirrors ensureDistillColumns). Idempotent + best-effort.
 let supplierDistillSchemaPromise: Promise<void> | null = null;
 function ensureSupplierDistillSchema(db: DistillDb): Promise<void> {
-  if (supplierDistillSchemaPromise) return supplierDistillSchemaPromise;
-  supplierDistillSchemaPromise = (async () => {
+  return memoizeSelfApply(() => supplierDistillSchemaPromise, (p) => { supplierDistillSchemaPromise = p; }, async () => {
     const stmts = [
       "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS ocrPromptRules TEXT",
       `CREATE TABLE IF NOT EXISTS supplier_scan_samples (
@@ -390,14 +381,7 @@ function ensureSupplierDistillSchema(db: DistillDb): Promise<void> {
        )`,
     ];
     await runSelfApply(db, "ocr-distill", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    supplierDistillSchemaPromise = null;
-    throw err;
   });
-  return supplierDistillSchemaPromise;
 }
 
 const SUPPLIER_DISTILL_META_PROMPT = `You are reviewing operator-confirmed correct extractions of SUPPLIER documents (delivery notes / invoices) for a furniture manufacturer (Hookka). These documents drive Goods Received Notes (GRN) and Purchase Invoices. Your task is to write a concise supplier-specific OCR rule block that captures the patterns unique to THIS supplier's documents so a future OCR call applies them automatically.

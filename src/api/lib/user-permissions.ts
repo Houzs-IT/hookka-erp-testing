@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 import type { Context } from "hono";
 import type { Env } from "../worker";
+import { memoizeSelfApply } from "./self-apply";
 
 type PermSet = Set<string>;
 
@@ -27,8 +28,7 @@ let _tableReady: Promise<void> | null = null;
 
 /** Self-apply; awaited by the WRITE paths only. The read path tolerates absence. */
 export function ensureUserPermissionsTable(db: D1Database): Promise<void> {
-  if (_tableReady) return _tableReady;
-  _tableReady = (async () => {
+  return memoizeSelfApply(() => _tableReady, (p) => { _tableReady = p; }, async () => {
     await db
       .prepare(
         `CREATE TABLE IF NOT EXISTS user_permissions (
@@ -39,11 +39,7 @@ export function ensureUserPermissionsTable(db: D1Database): Promise<void> {
          )`,
       )
       .run();
-  })().catch((err) => {
-    _tableReady = null;
-    throw err;
   });
-  return _tableReady;
 }
 
 export function _resetUserPermissionsForTests(): void {

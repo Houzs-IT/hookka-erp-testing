@@ -1,4 +1,5 @@
 import type { Env } from "../worker";
+import { SELF_APPLY_DONE } from "./self-apply";
 
 // ---------------------------------------------------------------------------
 // ensure-inventory-perf-indexes.ts — fg-stock hot-path indexes.
@@ -51,8 +52,8 @@ let inventoryPerfIndexPromise: Promise<void> | null = null;
 export function ensureInventoryPerfIndexes(
   db: Env["Variables"]["DB"],
 ): Promise<void> {
-  if (inventoryPerfIndexPromise) return inventoryPerfIndexPromise;
-  inventoryPerfIndexPromise = (async () => {
+  if (inventoryPerfIndexPromise) return SELF_APPLY_DONE;
+  return (async () => {
     let hadFailure = false;
     for (const sql of INVENTORY_PERF_INDEX_STATEMENTS) {
       try {
@@ -63,9 +64,8 @@ export function ensureInventoryPerfIndexes(
         hadFailure = true;
       }
     }
-    // Self-heal: a transient DDL reject clears the memo so the next request
-    // retries rather than caching a partial-apply as "done".
-    if (hadFailure) inventoryPerfIndexPromise = null;
+    // Only a clean round is remembered, and only once it has settled: an
+    // in-flight promise must never be shared across requests (BUG-2026-11-24-552).
+    if (!hadFailure) inventoryPerfIndexPromise = SELF_APPLY_DONE;
   })();
-  return inventoryPerfIndexPromise;
 }

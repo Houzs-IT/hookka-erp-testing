@@ -25,7 +25,7 @@
 //   • routes/public-rack-write.ts  GET/POST /:token…          (public resolve)
 // ---------------------------------------------------------------------------
 
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 
 export function newJobCardQrToken(): string {
   return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "");
@@ -37,21 +37,13 @@ export function newJobCardQrToken(): string {
 // on prod (deploys do NOT replay migrations-postgres/*.sql).
 let jobCardQrColumnEnsured: Promise<void> | null = null;
 export function ensureJobCardQrTokenColumn(db: D1Database): Promise<void> {
-  if (jobCardQrColumnEnsured) return jobCardQrColumnEnsured;
-  jobCardQrColumnEnsured = (async () => {
+  return memoizeSelfApply(() => jobCardQrColumnEnsured, (p) => { jobCardQrColumnEnsured = p; }, async () => {
     const stmts = [
       "ALTER TABLE job_cards ADD COLUMN IF NOT EXISTS qr_token TEXT",
       "CREATE INDEX IF NOT EXISTS ix_job_cards_qr_token ON job_cards (qr_token)",
     ];
     await runSelfApply(db, "jobcard-qr-token", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    jobCardQrColumnEnsured = null;
-    throw err;
   });
-  return jobCardQrColumnEnsured;
 }
 
 // Create-if-missing, atomically claimed (UPDATE … WHERE qr_token IS NULL) so two
