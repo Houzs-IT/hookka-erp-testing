@@ -23,6 +23,9 @@ import { employedDuring } from "../../lib/employment";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { makeInProcessGet, type InProcessResult } from "./in-process-get";
+import { dashBsForecast, type DashBsFigures } from "../../lib/dashboard-forecast";
+import type { BsForecastPayload } from "../../lib/forecast-bs";
+import type { BsMonthEntry } from "../../lib/bs-monthly";
 import { hasPermission } from "./rbac";
 import { getOrgId } from "./tenant";
 import { buildServiceSlice } from "./dashboard-service-slice";
@@ -170,7 +173,26 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     }
   })();
 
-  const [dashboard, plMonthly, plCur, plPrev, cashflow, cashForecast, ov, revCur, revPrev, newModels, stockTake, defectsR, workforceR, notesR] = await Promise.all([
+  // The Forecast Balance Sheet (owner 2026-11-24 「board report 跟着原本的改」):
+  // the report month (worked out from the month-end before it with that
+  // month's Forecast P&L) and the months ahead (from last month-end). Same
+  // reads and maths as the Financial Dashboard's Balance Sheet card.
+  const bsForecast = guarded<Record<string, DashBsFigures>>(async () => {
+    const out: Record<string, DashBsFigures> = {};
+    const one = async (q: string) => {
+      const fc = dataOf(await get<{ data?: BsForecastPayload }>(accounting, `/bs-forecast${q}`));
+      if (!fc.ok || !fc.data?.months) return;
+      const op = dataOf(await get<{ data?: { balanceSheet?: BsMonthEntry[] } }>(accounting, `/pl?period=${fc.data.startYm}`));
+      if (!op.ok || !Array.isArray(op.data?.balanceSheet)) return;
+      const figs = dashBsForecast(fc.data, op.data.balanceSheet);
+      for (const [ym, f] of Object.entries(figs)) if (!out[ym]) out[ym] = f;
+    };
+    await one(`?start=${month}`);
+    await one("");
+    return Object.keys(out).length ? { ok: true, data: out } : { ok: false, error: "No Forecast Balance Sheet" };
+  });
+
+  const [dashboard, plMonthly, plCur, plPrev, cashflow, cashForecast, ov, revCur, revPrev, newModels, stockTake, defectsR, workforceR, notesR, bsForecastR] = await Promise.all([
     get<{ data?: DashPayload }>(accounting, `/dashboard?granularity=month&from=${w.dashFrom}&to=${w.dashTo}`).then(dataOf),
     get<{ data?: PlMonthlyPayload }>(accounting, `/pl-monthly?anchor=${month}`).then(dataOf),
     get<{ data?: PlPayload }>(accounting, `/pl?period=${month}`).then(dataOf),
@@ -185,6 +207,7 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     defects,
     workforce,
     notes,
+    bsForecast,
   ]);
   const headcountR = await headcount;
 
@@ -204,5 +227,6 @@ export async function loadBoardSources(c: Context<Env>, month: string, todayYmd:
     stockTake,
     headcount: headcountR,
     notes: notesR,
+    bsForecast: bsForecastR,
   };
 }

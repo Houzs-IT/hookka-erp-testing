@@ -258,6 +258,16 @@ export function OutlookPage({ r }: P) {
               {/* Owner review 2026-11-15: GP % beside the net margin. */}
               <tr><td>GP %</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.forecast ? pct(m.forecast.gross, m.forecast.sales) : null)}</td>)}</tr>
               <tr><td>Net margin</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.forecast ? pct(m.forecast.net, m.forecast.sales) : null)}</td>)}</tr>
+              {d.months.some((m) => m.bs) && (
+                <>
+                  {/* Forecast Balance Sheet (owner 2026-11-24): month-end totals and ratios. */}
+                  <tr className="strong"><td>Total assets</td>{d.months.map((m) => <td key={m.ym}><Money v={m.bs?.assets ?? null} /></td>)}</tr>
+                  <tr><td>Total liabilities</td>{d.months.map((m) => <td key={m.ym}><Money v={m.bs?.liabilities ?? null} /></td>)}</tr>
+                  <tr><td>Current ratio</td>{d.months.map((m) => <td key={m.ym}>{m.bs?.currentRatio == null ? "-" : `${m.bs.currentRatio.toFixed(2)}x`}</td>)}</tr>
+                  <tr><td>Quick ratio</td>{d.months.map((m) => <td key={m.ym}>{m.bs?.quickRatio == null ? "-" : `${m.bs.quickRatio.toFixed(2)}x`}</td>)}</tr>
+                  <tr><td>Debt to assets</td>{d.months.map((m) => <td key={m.ym}>{pctText(m.bs?.debtPct ?? null)}</td>)}</tr>
+                </>
+              )}
             </tbody>
           </table>
           {d.quarter && (
