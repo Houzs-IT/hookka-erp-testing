@@ -121,6 +121,8 @@ const fmtQty = (n: number): string =>
 
 // System date standard: dd/mm/yyyy, read straight off the ISO string (no
 // timezone shift).
+// Dropdown value that opens the full supplier list for one line.
+const OTHER_SUPPLIER = "__other__";
 const dmy = (iso: string): string => (iso && iso.length >= 10 ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "—");
 
 const dmyTime = (iso: string): string => {
@@ -211,6 +213,8 @@ export default function MRPPage() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [supPick, setSupPick] = useState<Record<string, string>>({});
+  // Lines whose dropdown shows the full "other suppliers" list (see OTHER_SUPPLIER).
+  const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
   const [leadEdit, setLeadEdit] = useState<Record<string, number> | null>(null);
   const [leadOverride, setLeadOverride] = useState<Record<string, number> | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -647,10 +651,8 @@ export default function MRPPage() {
             <label className={`${lbl} flex items-center gap-1.5 cursor-pointer`}>
               <input type="checkbox" checked={onlyShort} onChange={(e) => setOnlyShort(e.target.checked)} /> ONLY SHORTAGES
             </label>
-            <span className={lbl}>WAREHOUSE</span>
-            <select className={`${input} w-44`} disabled title="Raw materials have no warehouse yet" aria-label="Warehouse">
-              <option>All warehouses</option>
-            </select>
+            {/* No Warehouse filter: Hookka keeps raw materials in one warehouse
+                (owner 2026-11-24 「我们好像只有一个warehouse」). */}
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -807,12 +809,13 @@ export default function MRPPage() {
                               );
                             if (c.key === "po")
                               return (
-                                <td key={c.key} className={base}>
+                                <td key={c.key} className={`${base} whitespace-nowrap`}>
                                   {fmtQty(r.poOutstanding)}
+                                  {/* Same line as the figure so every row keeps one height (owner 2026-11-24 「排版好像有点乱」). */}
                                   {r.poOtherUnit.length > 0 && (
-                                    <div className="text-[11px] font-semibold text-[#8A6A12]" title="ROLL lines are counted at 55 MTR per roll until the goods receipt confirms the metres; other units are not counted">
-                                      {r.poOtherUnit.map((p) => `+${fmtQty(p.qty)} ${p.unit}${p.estMtr != null ? ` ≈${fmtQty(p.estMtr)} MTR` : ""}`).join(", ")}
-                                    </div>
+                                    <span className="ml-1.5 text-[11px] font-semibold text-[#8A6A12]" title="ROLL lines are counted at 55 MTR per roll until the goods receipt confirms the metres; other units are not counted">
+                                      {r.poOtherUnit.map((p) => `+${fmtQty(p.qty)} ${p.unit}`).join(", ")}
+                                    </span>
                                   )}
                                 </td>
                               );
@@ -888,7 +891,14 @@ export default function MRPPage() {
                                               <select
                                                 className="h-7 max-w-[240px] rounded border border-[#D8D1C3] bg-white px-1 text-[11px]"
                                                 value={l.supplierId}
-                                                onChange={(e) => setSupPick((p) => ({ ...p, [l.key]: e.target.value }))}
+                                                onChange={(e) => {
+                                                  const v = e.target.value;
+                                                  if (v === OTHER_SUPPLIER) {
+                                                    setOtherOpen((o) => ({ ...o, [l.key]: true }));
+                                                    return;
+                                                  }
+                                                  setSupPick((p) => ({ ...p, [l.key]: v }));
+                                                }}
                                                 aria-label={`Supplier for ${l.poNo} ${r.code}`}
                                               >
                                                 <option value="">— choose supplier —</option>
@@ -901,11 +911,19 @@ export default function MRPPage() {
                                                     ))}
                                                   </optgroup>
                                                 )}
-                                                <optgroup label="Other suppliers (will be bound)">
-                                                  {plan.allSuppliers.filter((s) => !bound.has(s.id)).map((s) => (
-                                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                                  ))}
-                                                </optgroup>
+                                                {/* Speed (owner 2026-11-24 「很卡顿」): EXPAND drew every
+                                                    supplier into every line's dropdown (474 dropdowns, 20,301
+                                                    options). The full list now renders only for the one line
+                                                    where "Other supplier…" was picked. */}
+                                                {otherOpen[l.key] || (l.supplierId && !bound.has(l.supplierId)) ? (
+                                                  <optgroup label="Other suppliers (will be bound)">
+                                                    {plan.allSuppliers.filter((s) => !bound.has(s.id)).map((s) => (
+                                                      <option key={s.id} value={s.id}>{s.name}</option>
+                                                    ))}
+                                                  </optgroup>
+                                                ) : (
+                                                  <option value={OTHER_SUPPLIER}>Other supplier… (will be bound)</option>
+                                                )}
                                               </select>
                                             ) : (
                                               <span className="text-[#9CA3AF]">—</span>

@@ -173,3 +173,11 @@ test("owner 2026-11-24: an open ROLL line on a MTR fabric is netted at 55 MTR pe
   assert.match(engine, /arr\.push\(\{ rmId, ref, eta, qty: estMtr \}\);/);
   assert.match(page(), /counted at 55 MTR per roll/);
 });
+
+test("owner 2026-11-24 「很卡顿」: EXPAND no longer draws every supplier into every line's dropdown", () => {
+  const src = page();
+  assert.match(src, /const OTHER_SUPPLIER = "__other__";/);
+  assert.match(src, /\{otherOpen\[l\.key\] \|\| \(l\.supplierId && !bound\.has\(l\.supplierId\)\) \? \(/);
+  assert.match(src, /<option value=\{OTHER_SUPPLIER\}>Other supplier… \(will be bound\)<\/option>/);
+  assert.doesNotMatch(src, /All warehouses/, "one warehouse — no Warehouse filter");
+});
