@@ -430,6 +430,11 @@ export type DataGridProps<T> = {
   // total row "loaded rows only". Omit on a grid that holds the whole list.
   totalRows?: number;
   onLoadAll?: () => void;
+  // Rows the column-filter popup lists its values and chip counts from
+  // (default: `data`). A page that hands the grid one client-side page passes
+  // its whole list here, or "Overdue (8)" counts page 1 while the applied
+  // filter finds 18 (HK-0174).
+  filterValuesData?: T[];
   // Rows the total row leaves out (still listed) — the cancelled documents
   // on a document list (review G4, Houzs#5415). The footer says "1 cancelled
   // not counted"; `totalsSkipNoun` swaps the word. Display only.
@@ -2046,6 +2051,7 @@ export function DataGrid<T extends Record<string, any>>({
   onColumnViewChange,
   totalRows,
   onLoadAll,
+  filterValuesData,
   totalsSkipRow,
   totalsSkipNoun,
   error,
@@ -4799,7 +4805,7 @@ export function DataGrid<T extends Record<string, any>>({
       {filterDropdown && (() => {
         const dropdownKey = filterDropdown.key;
         // Apply all filters except the current dropdown's column.
-        let scopedData = data;
+        let scopedData = filterValuesData ?? data;
         const scopeWords = searchWords(searchText);
         if (scopeWords.length > 0) {
           const scopeKeys = visibleColumns.map((col) => col.key);

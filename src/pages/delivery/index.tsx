@@ -5045,6 +5045,7 @@ export default function DeliveryPage() {
             <DataGrid<ReadyPORow>
               columns={planningColumns}
               data={planningPage}
+              filterValuesData={planningPOs}
               keyField="id"
               // Its own id: a different row type and a different column set
               // from the DO list, so it cannot share that layout.
@@ -5126,6 +5127,7 @@ export default function DeliveryPage() {
             <DataGrid<ReadyPORow>
               columns={pendingDeliveryColumns}
               data={readyPage}
+              filterValuesData={readyPOs}
               keyField="id"
               gridId="delivery-pending-delivery-pos"
               loading={loading}
