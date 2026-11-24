@@ -164,3 +164,12 @@ test("stock-status is cached + single-flight so Production Tracking never stacks
   assert.match(src, /if \(!stockStatusInflight\) \{/);
   assert.match(src, /kv\.put\(STOCK_STATUS_KV_KEY, JSON\.stringify\(body\), \{ expirationTtl: STOCK_STATUS_TTL_S \}\)/);
 });
+
+test("owner 2026-11-24: an open ROLL line on a MTR fabric is netted at 55 MTR per roll (estimate until GRN)", async () => {
+  const { ROLL_TO_MTR_DEFAULT } = await import("../src/api/lib/mrp-plan.ts");
+  assert.equal(ROLL_TO_MTR_DEFAULT, 55);
+  const engine = readFileSync(new URL("../src/api/lib/mrp-plan.ts", import.meta.url), "utf8");
+  assert.match(engine, /if \(normUnit\(lineUnit\) === "ROLL" && rmUnitOf\(rm\) === "MTR"\) \{/);
+  assert.match(engine, /arr\.push\(\{ rmId, ref, eta, qty: estMtr \}\);/);
+  assert.match(page(), /counted at 55 MTR per roll/);
+});

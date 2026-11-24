@@ -61,7 +61,10 @@ export type MrpMaterialRow = {
   // ordered in ROLL, stocked in MTR). There is no unit conversion in the
   // system, so they are NOT netted — shown beside the row instead, so nobody
   // re-orders what is already on order (BUG-2026-11-23-548).
-  poOtherUnit: { ref: string; eta: string; qty: number; unit: string }[];
+  // estMtr: a ROLL line on a MTR material IS netted at the default
+  // ROLL_TO_MTR_DEFAULT metres per roll (owner 2026-11-24) — an estimate
+  // until the goods receipt confirms the real metres. Other units: not netted.
+  poOtherUnit: { ref: string; eta: string; qty: number; unit: string; estMtr?: number }[];
   firstNeedBy: string;
   mainSupplier: string | null;
   mainSupplierId: string | null;
@@ -149,6 +152,10 @@ const UNIT_ALIASES: Record<string, string> = {
   PCS: "PCS", PC: "PCS", PIECE: "PCS", PIECES: "PCS",
   KG: "KG", KGS: "KG",
 };
+// Default metres per roll for netting open ROLL purchase lines against MTR
+// stock (owner 2026-11-24 「default 1roll=55meter 先，东西到了才confirm」).
+export const ROLL_TO_MTR_DEFAULT = 55;
+
 export function normUnit(u: string): string {
   const k = String(u ?? "").trim().toUpperCase();
   return UNIT_ALIASES[k] ?? k;
@@ -348,6 +355,17 @@ export async function buildMrpPlan(db: D1Database): Promise<MrpPlan> {
     const lineUnit = str(r, "unit");
     if (lineUnit && normUnit(lineUnit) !== rmUnitOf(rm)) {
       const other = otherUnitByRm.get(rmId) ?? [];
+      // Owner 2026-11-24: count an open ROLL line as ROLL_TO_MTR_DEFAULT
+      // metres each until it is received (the GRN records the real metres).
+      if (normUnit(lineUnit) === "ROLL" && rmUnitOf(rm) === "MTR") {
+        const estMtr = Math.round(qty * ROLL_TO_MTR_DEFAULT * 100) / 100;
+        other.push({ ref, eta, qty, unit: lineUnit, estMtr });
+        otherUnitByRm.set(rmId, other);
+        const arr = supplyByRm.get(rmId) ?? [];
+        arr.push({ rmId, ref, eta, qty: estMtr });
+        supplyByRm.set(rmId, arr);
+        continue;
+      }
       other.push({ ref, eta, qty, unit: lineUnit });
       otherUnitByRm.set(rmId, other);
       continue;
