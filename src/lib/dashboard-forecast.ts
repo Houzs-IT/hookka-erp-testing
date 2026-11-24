@@ -22,8 +22,9 @@ export type DashCashFigures = { operating: number; investing: number; financing:
 export type DashCashForecast = Record<string, { pnl?: DashCashFigures; docs?: DashCashFigures }>;
 export type DashBsFigures = {
   assets: number; liabilities: number; debtPct: number | null;
-  /** For the Financial Ratios' forecast (owner 2026-11-24 「financial ratio 也可以放 forecast的进去」). */
-  currentAssets?: number; currentLiabilities?: number; inventory?: number;
+  // For the forecast ratios (owner 2026-11-24): split the same way the
+  // dashboard route splits an actual month-end (sections; 330-x = stock).
+  currentAssets?: number; currentLiabilities?: number; inventory?: number; equity?: number;
 };
 
 /** Each month's two Cash Flow forecasts, from the statement's fp: / fc: columns. */
@@ -55,42 +56,13 @@ export function bsTotals(entries: readonly BsMonthEntry[]): DashBsFigures {
     if (isAsset(e.category)) {
       assets += e.balance;
       if (e.category === "CURRENT_ASSET") currentAssets += e.balance;
-      if (/^33\d/.test(e.accountCode)) inventory += e.balance; // 330-x stock, as the dashboard route counts it
+      if (/^33\d/.test(e.accountCode)) inventory += e.balance;
     } else if (isLiability(e.category)) {
       liabilities += e.balance;
       if (e.category === "CURRENT_LIABILITY") currentLiabilities += e.balance;
     }
   }
-  return { assets, liabilities, debtPct: debtPctOf(assets, liabilities), currentAssets, currentLiabilities, inventory };
-}
-
-// ---- Financial Ratios with their forecast (owner 2026-11-24 「financial ratio
-// 也可以放 forecast的进去」 → 「Build it」): the six ratios worked out the way the
-// dashboard route works out the actual ones, from the Forecast P&L (sales,
-// gross, net) and the Forecast Balance Sheet. A ratio that needs a side the
-// forecast does not have is null ("-").
-
-export type DashRatioKey = "grossMarginPct" | "netMarginPct" | "currentRatio" | "quickRatio" | "roePct" | "roaPct";
-export type DashRatios = Record<DashRatioKey, number | null>;
-
-const pct2 = (num: number, den: number): number | null => (den > 0 ? Math.round((num / den) * 10000) / 100 : null);
-const times2 = (num: number, den: number): number | null => (den > 0 ? Math.round((num / den) * 100) / 100 : null);
-
-export function dashForecastRatios(
-  pl: { sales: number; gross: number; net: number } | null | undefined,
-  bs: DashBsFigures | null | undefined,
-): DashRatios {
-  const equity = bs ? bs.assets - bs.liabilities : 0; // net assets, as the route's actual equity
-  const curL = bs?.currentLiabilities ?? 0;
-  const curA = bs?.currentAssets ?? 0;
-  return {
-    grossMarginPct: pl ? pct2(pl.gross, pl.sales) : null,
-    netMarginPct: pl ? pct2(pl.net, pl.sales) : null,
-    currentRatio: bs && bs.currentAssets !== undefined ? times2(curA, curL) : null,
-    quickRatio: bs && bs.currentAssets !== undefined ? times2(curA - (bs.inventory ?? 0), curL) : null,
-    roePct: pl && bs ? pct2(pl.net, equity) : null,
-    roaPct: pl && bs ? pct2(pl.net, bs.assets) : null,
-  };
+  return { assets, liabilities, debtPct: debtPctOf(assets, liabilities), currentAssets, currentLiabilities, inventory, equity: assets - liabilities };
 }
 
 /** Each forecast month-end's totals, from last month-end's sheet (`opening`). */
@@ -279,4 +251,24 @@ export function cashDetailSections(
         totals: sum(lines),
       };
     });
+}
+
+/** A period's ratios from the Forecast P&L and the Forecast Balance Sheet —
+ *  the same formulas the dashboard route uses for an actual period. */
+export function dashForecastRatios(
+  pl: { sales: number; gross: number; net: number } | null | undefined,
+  bs: DashBsFigures | null | undefined,
+): Record<"grossMarginPct" | "netMarginPct" | "currentRatio" | "quickRatio" | "roePct" | "roaPct", number | null> {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const pct = (a: number, b: number) => (b ? r2((a / b) * 100) : null);
+  const cl = bs?.currentLiabilities ?? 0;
+  const eq = bs?.equity ?? 0;
+  return {
+    grossMarginPct: pl ? pct(pl.gross, pl.sales) : null,
+    netMarginPct: pl ? pct(pl.net, pl.sales) : null,
+    currentRatio: bs && cl > 0 && bs.currentAssets !== undefined ? r2(bs.currentAssets / cl) : null,
+    quickRatio: bs && cl > 0 && bs.currentAssets !== undefined ? r2((bs.currentAssets - (bs.inventory ?? 0)) / cl) : null,
+    roePct: bs && pl && eq > 0 ? pct(pl.net, eq) : null,
+    roaPct: bs && pl && bs.assets > 0 ? pct(pl.net, bs.assets) : null,
+  };
 }
