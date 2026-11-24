@@ -12127,7 +12127,15 @@ async function bsForecastResponse(c: AccountingCtx) {
   if (denied) return denied;
   const db = c.var.DB;
   const orgId = getOrgId(c);
-  const today = todayMyt();
+  // ?start=YYYY-MM, a month before this one (owner 2026-11-24 「要补」 — the
+  // dashboard's past months beside a forecast): that one month worked out as
+  // it would have been then — from the month-end before it (its documents open
+  // at the 1st, its terms from the three months before) and that month's
+  // Forecast P&L. Absent = from this month on, as before.
+  const realToday = todayMyt();
+  const startQ = c.req.query("start") ?? "";
+  const past = /^\d{4}-(0[1-9]|1[0-2])$/.test(startQ) && startQ < realToday.slice(0, 7) ? startQ : null;
+  const today = past ? `${past}-01` : realToday;
   const curYm = today.slice(0, 7);
   const [resolveAcct, dc, sgOverride, bsOverride, coaRes] = await Promise.all([
     loadAccountResolver(db),
@@ -12166,7 +12174,8 @@ async function bsForecastResponse(c: AccountingCtx) {
   const mapped = capture.mapped ?? new Set<string>();
   // To the last month the Forecast P&L has figures for: after it a column would only collect and pay.
   const lastFigureYm = Object.keys(fcMonths).filter((ym) => forecastMonthHasFigures(forecastMonthFigures(fcMonths[ym], groups, mapped))).sort().pop() ?? null;
-  const months = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
+  const monthsAll = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
+  const months = past ? monthsAll.filter((ym) => ym === past) : monthsAll;
   const salaryLegAccounts = new Set<string>();
   const accruals: Record<string, ForecastBsAccrual> = {};
   for (const ym of months) {

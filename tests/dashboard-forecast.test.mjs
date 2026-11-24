@@ -169,11 +169,26 @@ test("Detail row names sit on the left", () => {
 test("Balance Sheet: this month's actual beside its Forecast Balance Sheet, and the gap (owner 2026-11-23)", () => {
   const page = read("src/pages/finance-dashboard.tsx");
   // Only a month that has happened and that the forecast sheet covers; by month only.
-  assert.match(page, /const vs = !ahead && granularity === "month" && f \? f : null;/);
+  assert.match(page, /const vs = !ahead && granularity === "month" \? \(f \?\? pastBs\[r\.key\] \?\? null\) : null;/); // + past months since 2026-11-24
   assert.match(page, /fcAssets: vs \? vs\.assets : null,/);
   for (const k of ["fc-assets", "fc-liab", "fc-debt"]) assert.match(page, new RegExp(`data-dash-bs-vs="${k}"`));
   assert.match(page, /\["assets", "fcAssets", "vs Forecast \(assets\)"\], \["liabilities", "fcLiabilities", "vs Forecast \(liabilities\)"\]/);
   assert.match(page, /const gap = d\[f\] === null \? null : d\[a\] - \(d\[f\] as number\);/);
   // A month to date says its forecast is the month-end.
   assert.match(page, /A month marked \* is to date; its forecast is the month-end/);
+});
+
+test("past months beside a forecast worked out from the month-end before (owner 2026-11-24 「要补」)", () => {
+  const api = read("src/api/routes/accounting.ts");
+  // ?start=YYYY-MM before this month: that one month, as it would have been then.
+  assert.match(api, /const past = \/\^\\d\{4\}-\(0\[1-9\]\|1\[0-2\]\)\$\/\.test\(startQ\) && startQ < realToday\.slice\(0, 7\) \? startQ : null;/);
+  assert.match(api, /const today = past \? `\$\{past\}-01` : realToday;/);
+  assert.match(api, /const months = past \? monthsAll\.filter\(\(ym\) => ym === past\) : monthsAll;/);
+  const page = read("src/pages/finance-dashboard.tsx");
+  // Only shown months that happened and that the forward forecast does not cover; one at a time.
+  assert.match(page, /shownRows\.filter\(\(r\) => r\.balanceSheet && !bsFc\[r\.key\]\)\.map\(\(r\) => r\.key\)/);
+  assert.match(page, /for \(const ym of want\) \{/);
+  assert.match(page, /fetch\(`\/api\/accounting\/bs-forecast\?start=\$\{ym\}`, \{ cache: "no-store" \}\)/);
+  assert.match(page, /const vs = !ahead && granularity === "month" \? \(f \?\? pastBs\[r\.key\] \?\? null\) : null;/);
+  assert.match(page, /A past month's forecast is worked out from the month-end before it with that month's Forecast P&L\./);
 });

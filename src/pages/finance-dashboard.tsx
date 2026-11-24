@@ -787,6 +787,38 @@ export default function FinanceDashboardPage() {
   // (forecast only; none with an explicit From / To).
   const cashFcB = useMemo(() => (cashFc ? cashForecastByBucket(cashFc, granularity) : {}), [cashFc, granularity]);
   const bsFcB = useMemo(() => (bsFc ? bsForecastByBucket(bsFc, granularity) : {}), [bsFc, granularity]);
+  // Past months beside a forecast (owner 2026-11-24 「要补」): each shown month
+  // that has happened and that the Forecast Balance Sheet does not cover
+  // (before this month) is worked out as it would have been then — from the
+  // month-end before it with that month's Forecast P&L (GET /bs-forecast?start=).
+  // One month at a time, so the database is not asked for them all at once;
+  // the server keeps each as a stored copy.
+  const [pastBs, setPastBs] = useState<Record<string, DashBsFigures>>({});
+  const pastBsKeys = useMemo(
+    () => (granularity === "month" && bsFc ? shownRows.filter((r) => r.balanceSheet && !bsFc[r.key]).map((r) => r.key) : []),
+    [granularity, bsFc, shownRows],
+  );
+  const pastBsKeysJoined = pastBsKeys.join(",");
+  useEffect(() => {
+    let cancelled = false;
+    const want = pastBsKeysJoined ? pastBsKeysJoined.split(",") : [];
+    void (async () => {
+      for (const ym of want) {
+        if (cancelled) return;
+        try {
+          const r = await fetch(`/api/accounting/bs-forecast?start=${ym}`, { cache: "no-store" });
+          const j = (await r.json()) as { success?: boolean; data?: BsForecastPayload };
+          if (!j?.success || !j.data?.months?.includes(ym)) continue;
+          const o = await fetch(`/api/accounting/pl?period=${j.data.startYm}`);
+          const oj = (await o.json()) as { success?: boolean; data?: { balanceSheet?: BsMonthEntry[] } };
+          if (cancelled || !oj?.success || !Array.isArray(oj.data?.balanceSheet)) continue;
+          const fig = dashBsForecast(j.data, oj.data.balanceSheet)[ym];
+          if (fig) setPastBs((prev) => ({ ...prev, [ym]: fig }));
+        } catch { /* that month stays without a forecast */ }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pastBsKeysJoined]);
   const cfRows = useMemo(
     () => (explicitRange ? shownRows : [...shownRows, ...dashAheadRows(rows ?? [], shownRows, new Set(Object.keys(cashFcB)))]),
     [rows, shownRows, cashFcB, explicitRange],
@@ -939,7 +971,7 @@ export default function FinanceDashboardPage() {
           // 月先做 real 和 forecast 对比」): a month that has happened and that the
           // Forecast Balance Sheet also covers — by month only (a quarter's
           // forecast is its last month-end, not the quarter's latest sheet).
-          const vs = !ahead && granularity === "month" && f ? f : null;
+          const vs = !ahead && granularity === "month" ? (f ?? pastBs[r.key] ?? null) : null;
           return {
             label: ahead ? `${dashPeriodLabel(r.label, false)} (F)` : dashPeriodLabel(r.label, r.partial),
             ahead: ahead ? 1 : 0,
@@ -952,7 +984,7 @@ export default function FinanceDashboardPage() {
             fcDebtPct: vs ? vs.debtPct : null,
           };
         }),
-    [bsRows, bsFcB, granularity],
+    [bsRows, bsFcB, granularity, pastBs],
   );
 
   const ratioIsMoney = false;
@@ -1699,6 +1731,7 @@ export default function FinanceDashboardPage() {
                       <tr><td colSpan={bsData.length + 1} className="px-2 pt-2 text-left text-[11px] text-[#9CA3AF]" data-dash-bs-fc-note="">
                         (F) = the Forecast Balance Sheet: last month-end's sheet moved by the Forecast P&L and the Cash Flow forecast. Faded bars are forecast.
                         {bsData.some((d) => d.fcAssets !== null && d.partial) && " A month marked * is to date; its forecast is the month-end, so the gap closes as the month runs."}
+                        {bsData.some((d) => d.fcAssets !== null && !d.partial && !d.ahead) && " A past month's forecast is worked out from the month-end before it with that month's Forecast P&L."}
                       </td></tr>
                     </tfoot>
                   )}
