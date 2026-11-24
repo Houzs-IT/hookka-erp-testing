@@ -31,6 +31,8 @@ import {
 } from "../lib/material-scaling";
 import { computeFabricMetrics } from "../lib/fabric-usage";
 import { buildMrpPlan, loadLeadTimes, LEAD_TIMES_KV_KEY } from "../lib/mrp-plan";
+import { idempotent } from "../lib/idempotency";
+import { createPurchaseOrdersAtomic, type AtomicPoDraft } from "./purchase-orders";
 import { ensureRmConsumeMarksTable } from "../lib/po-cost-cascade";
 
 const app = new Hono<Env>();
@@ -515,6 +517,155 @@ const STOCK_STATUS_TTL_S = 600;
 const STOCK_STATUS_KV_KEY = "mrp:stock-status:v1";
 let stockStatusMemo: { at: number; body: StockStatusBody } | null = null;
 let stockStatusInflight: Promise<StockStatusBody> | null = null;
+
+// POST /api/mrp/proceed-po — Proceed PO in ONE server call (owner 2026-11-24
+// 「开 PO 改成服务器一次开完」, as Houzs' /from-sos). The browser sends only
+// WHICH shortage lines and which supplier; the server:
+//   1. refuses a stale plan — a PO raised for these materials after `asOf`
+//      (409 MRP_PLAN_STALE), checked here, not in a separate earlier request;
+//   2. recomputes the plan and orders each line's CURRENT shortage, never more
+//      — a line already covered (by another PO or stock) is refused
+//      (409 MRP_LINE_COVERED), so the same shortage cannot be ordered twice;
+//   3. binds a supplier picked for a material it is not bound to (option 2);
+//   4. creates every PO and binding in ONE database batch — all or nothing.
+// Idempotency-Key replays return the first answer (double click / retry).
+type ProceedLine = { rmId: string; productionOrderId: string; wipKey: string; dept: string; supplierId: string };
+app.post("/proceed-po", idempotent(), async (c) => {
+  const denied = await requirePermission(c, "purchase-orders", "create");
+  if (denied) return denied;
+  const db = c.var.DB;
+  try {
+    const body = (await c.req.json()) as { asOf?: string; mode?: string; expectedDate?: string; lines?: ProceedLine[] };
+    const asOf = String(body.asOf ?? "");
+    const mode = body.mode === "perso" ? "perso" : "combined";
+    const rawLines = Array.isArray(body.lines) ? body.lines.slice(0, 2000) : [];
+    if (!asOf || Number.isNaN(Date.parse(asOf)) || rawLines.length === 0) {
+      return c.json({ success: false, error: "asOf and lines are required" }, 400);
+    }
+    // de-duplicate the selection (a line ticked twice is one line)
+    const seen = new Set<string>();
+    const lines: ProceedLine[] = [];
+    for (const l of rawLines) {
+      const k = `${l.rmId}|${l.productionOrderId}|${l.wipKey ?? ""}|${l.dept ?? ""}`;
+      if (!l.rmId || !l.productionOrderId || seen.has(k)) continue;
+      if (!l.supplierId) return c.json({ success: false, code: "MRP_NO_SUPPLIER", error: "Every line needs a supplier" }, 400);
+      seen.add(k);
+      lines.push({ rmId: String(l.rmId), productionOrderId: String(l.productionOrderId), wipKey: String(l.wipKey ?? ""), dept: String(l.dept ?? ""), supplierId: String(l.supplierId) });
+    }
+
+    const plan = await buildMrpPlan(db);
+    const matById = new Map(plan.materials.map((m) => [m.rmId, m]));
+    const codes = [...new Set(lines.map((l) => matById.get(l.rmId)?.code).filter((x): x is string => !!x))];
+
+    // 1. stale plan
+    if (codes.length > 0) {
+      const ph = codes.map(() => "?").join(",");
+      const res = await db
+        .prepare(
+          `SELECT DISTINCT po.poNo AS po_no,
+                  COALESCE(NULLIF(TRIM(poi.material_code), ''), TRIM(SPLIT_PART(poi.materialName, ' - ', 1))) AS code
+             FROM purchase_order_items poi
+             INNER JOIN purchase_orders po ON po.id = poi.purchaseOrderId
+            WHERE po.created_at > ?
+              AND po.status <> 'CANCELLED'
+              AND COALESCE(NULLIF(TRIM(poi.material_code), ''), TRIM(SPLIT_PART(poi.materialName, ' - ', 1))) IN (${ph})`,
+        )
+        .bind(new Date(asOf).toISOString(), ...codes)
+        .all<Record<string, unknown>>();
+      const hits = (res.results ?? []).map((r) => ({ poNo: String(r.po_no ?? r.poNo ?? ""), code: String(r.code ?? "") }));
+      if (hits.length > 0) return c.json({ success: false, code: "MRP_PLAN_STALE", data: hits, error: "A PO for these materials was raised after this plan was calculated" }, 409);
+    }
+
+    // 2. each line's CURRENT shortage
+    type Pick = { line: ProceedLine; mat: (typeof plan.materials)[number]; shortQty: number; poNo: string; needBy: string };
+    const picks: Pick[] = [];
+    const covered: string[] = [];
+    for (const l of lines) {
+      const mat = matById.get(l.rmId);
+      const o = mat?.orders.find((x) => x.productionOrderId === l.productionOrderId && x.wipKey === l.wipKey && x.dept === l.dept);
+      if (!mat || !o || !(o.shortQty > 0)) {
+        covered.push(`${mat?.code ?? l.rmId} for ${o?.poNo ?? l.productionOrderId}`);
+        continue;
+      }
+      picks.push({ line: l, mat, shortQty: o.shortQty, poNo: o.poNo, needBy: o.needBy });
+    }
+    if (covered.length > 0) {
+      return c.json({ success: false, code: "MRP_LINE_COVERED", data: covered, error: "These lines are no longer short (already ordered or in stock)" }, 409);
+    }
+
+    // 3. group + bindings
+    const supName = new Map(plan.allSuppliers.map((s) => [s.id, s.name]));
+    const orgId = getOrgId(c);
+    const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+    const bindStatements: D1PreparedStatement[] = [];
+    const boundPairs = new Set<string>();
+    type Group = { supplierId: string; orders: Set<string>; needBy: string; items: Map<string, { mat: Pick["mat"]; qty: number }> };
+    const groups = new Map<string, Group>();
+    for (const p of picks) {
+      const sid = p.line.supplierId;
+      if (!supName.has(sid)) return c.json({ success: false, error: `Unknown supplier ${sid}` }, 400);
+      const pair = `${sid}|${p.mat.code}`;
+      if (!boundPairs.has(pair) && !p.mat.suppliers.some((s) => s.supplierId === sid)) {
+        bindStatements.push(
+          db
+            .prepare(
+              `INSERT INTO supplier_material_bindings (id, orgId, supplierId, materialCode,
+                 materialName, supplierSku, supplierDescription, unitPrice, currency, leadTimeDays,
+                 paymentTerms, moq, effectiveFrom, priceValidFrom, isMainSupplier)
+               SELECT ?, ?, ?, ?, ?, ?, '', 0, 'MYR', 0, 'NET30', 0, ?, ?, 0
+                WHERE NOT EXISTS (SELECT 1 FROM supplier_material_bindings WHERE orgId = ? AND supplierId = ? AND materialCode = ?)`,
+            )
+            .bind(`smb-${crypto.randomUUID().slice(0, 8)}`, orgId, sid, p.mat.code, p.mat.description || p.mat.code, p.mat.code, today, today, orgId, sid, p.mat.code),
+        );
+      }
+      boundPairs.add(pair);
+      const gk = mode === "combined" ? sid : `${sid}|${p.line.productionOrderId}`;
+      const g = groups.get(gk) ?? { supplierId: sid, orders: new Set<string>(), needBy: p.needBy, items: new Map() };
+      g.orders.add(p.poNo);
+      if (p.needBy && (!g.needBy || p.needBy < g.needBy)) g.needBy = p.needBy;
+      const it = g.items.get(p.mat.rmId) ?? { mat: p.mat, qty: 0 };
+      it.qty += p.shortQty;
+      g.items.set(p.mat.rmId, it);
+      groups.set(gk, g);
+    }
+    const drafts: AtomicPoDraft[] = [...groups.values()].map((g) => ({
+      supplierId: g.supplierId,
+      supplierName: supName.get(g.supplierId) ?? "",
+      status: "CONFIRMED",
+      expectedDate: body.expectedDate || g.needBy || "",
+      notes: `From MRP (${mode === "combined" ? "Combined" : "Per SO"}) — for ${[...g.orders].join(", ")}`,
+      items: [...g.items.values()].map(({ mat, qty }) => {
+        const bound = mat.suppliers.find((s) => s.supplierId === g.supplierId);
+        // MOQ is a MINIMUM order quantity; 0 = not stated.
+        const quantity = Math.round(Math.max(qty, bound?.moq ?? 0) * 100) / 100;
+        return {
+          materialCategory: mat.itemGroup,
+          materialCode: mat.code,
+          materialName: `${mat.code} - ${mat.description}`,
+          supplierSKU: mat.code,
+          quantity,
+          unitPriceSen: bound?.unitPriceSen ?? 0,
+          unit: mat.uom,
+        };
+      }),
+    }));
+
+    // 4. all or nothing
+    const r = await createPurchaseOrdersAtomic(c, drafts, bindStatements);
+    if (!r.ok) return c.json({ success: false, error: r.error }, 400);
+    // The Production Tracking Stock column must see the new POs at once.
+    stockStatusMemo = null;
+    try {
+      await c.env.SESSION_CACHE?.delete(STOCK_STATUS_KV_KEY);
+    } catch {
+      /* best effort */
+    }
+    return c.json({ success: true, data: { created: r.created, mirrorErrors: r.mirrorErrors } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ success: false, error: `Proceed PO failed: ${msg}` }, 500);
+  }
+});
 app.get("/stock-status", async (c) => {
   const denied = await requirePermission(c, "mrp", "read");
   if (denied) return denied;

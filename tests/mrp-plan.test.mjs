@@ -109,27 +109,43 @@ test("the per-WIP deduction can be audited without DB access", () => {
 const page = () => readFileSync(new URL("../src/pages/planning/mrp.tsx", import.meta.url), "utf8");
 const route = () => readFileSync(new URL("../src/api/routes/mrp.ts", import.meta.url), "utf8");
 
-test("Proceed PO creates REAL POs, Combined per supplier or Per SO per supplier per order", () => {
+test("Proceed PO creates REAL POs in ONE server call, Combined per supplier or Per SO per supplier per order (owner 2026-11-24)", () => {
+  const r = route();
+  assert.match(r, /app\.post\("\/proceed-po", idempotent\(\), async \(c\) => \{/);
+  assert.match(r, /const gk = mode === "combined" \? sid : `\$\{sid\}\|\$\{p\.line\.productionOrderId\}`;/);
+  assert.match(r, /status: "CONFIRMED",/);
   const src = page();
-  assert.match(src, /const gk = mode === "combined" \? p\.line\.supplierId : `\$\{p\.line\.supplierId\}\|\$\{p\.line\.productionOrderId\}`;/);
-  assert.match(src, /status: "CONFIRMED",/);
-  assert.match(src, /"Idempotency-Key": `mrp-\$\{plan\.calculatedAt\}-\$\{g\.key\}`/);
+  assert.match(src, /fetch\("\/api\/mrp\/proceed-po", \{/);
+  assert.match(src, /"Idempotency-Key": `mrp-\$\{plan\.calculatedAt\}-\$\{mode\}-/);
+  // the browser no longer loops POST /api/purchase-orders one group at a time
+  assert.doesNotMatch(src, /fetch\("\/api\/purchase-orders"/);
+  assert.doesNotMatch(src, /fetch\("\/api\/supplier-materials"/);
 });
 
-test("the stale-plan check runs BEFORE any PO or binding is written", () => {
-  const src = page();
-  const chk = src.indexOf("/api/mrp/plan-check?asOf=");
-  const bind = src.indexOf('fetch("/api/supplier-materials"');
-  const po = src.indexOf('fetch("/api/purchase-orders"');
-  assert.ok(chk > 0 && bind > chk && po > bind);
-  assert.match(route(), /app\.get\("\/plan-check"/);
-  assert.match(route(), /WHERE po\.created_at > \?/);
+test("the server refuses a stale plan and an already-covered line BEFORE writing anything", () => {
+  const r = route();
+  const stale = r.indexOf('code: "MRP_PLAN_STALE"');
+  const covered = r.indexOf('code: "MRP_LINE_COVERED"');
+  const write = r.indexOf("await createPurchaseOrdersAtomic(c, drafts, bindStatements)");
+  assert.ok(stale > 0 && covered > stale && write > covered);
+  assert.match(r, /WHERE po\.created_at > \?/);
+  // orders the line's CURRENT shortage from a fresh plan, never the browser's number
+  assert.match(r, /const plan = await buildMrpPlan\(db\);/);
+  assert.match(r, /if \(!mat \|\| !o \|\| !\(o\.shortQty > 0\)\) \{/);
 });
 
-test("a supplier picked for an unbound material is bound to it (owner option 2)", () => {
+test("a supplier picked for an unbound material is bound to it, in the same batch (owner option 2)", () => {
   const src = page();
   assert.match(src, /<optgroup label="Other suppliers \(will be bound\)">/);
-  assert.match(src, /if \(!res\.ok && res\.status !== 409\)/);
+  const r = route();
+  assert.match(r, /WHERE NOT EXISTS \(SELECT 1 FROM supplier_material_bindings WHERE orgId = \? AND supplierId = \? AND materialCode = \?\)/);
+});
+
+test("all POs and bindings commit in ONE db.batch — all or nothing", () => {
+  const po = readFileSync(new URL("../src/api/routes/purchase-orders.ts", import.meta.url), "utf8");
+  const fn = po.slice(po.indexOf("export async function createPurchaseOrdersAtomic("));
+  assert.match(fn, /const statements: D1PreparedStatement\[\] = \[\.\.\.extraStatements\];/);
+  assert.equal((fn.slice(0, fn.indexOf("const mirrorErrors")).match(/await db\.batch\(/g) ?? []).length, 1);
 });
 
 test("Lead Times are saved per supplier and drive the order-by date", () => {
