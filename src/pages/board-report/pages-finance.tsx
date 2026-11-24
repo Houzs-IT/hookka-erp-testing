@@ -461,15 +461,15 @@ export function BalancePage({ r }: P) {
         <>
           <div className="brp-tiles five">
             {d.ratios.map((x) => (
-              <Tile key={x.label} label={x.label} value={x.cur === null ? "-" : x.unit === "x" ? `${x.cur.toFixed(2)}x` : pctText(x.cur)} sub={<>last month {x.prev === null ? "-" : x.unit === "x" ? `${x.prev.toFixed(2)}x` : pctText(x.prev)}</>} />
+              <Tile key={x.label} label={x.label} value={x.cur === null ? "-" : x.unit === "x" ? `${x.cur.toFixed(2)}x` : pctText(x.cur)} sub={<>last month {x.prev === null ? "-" : x.unit === "x" ? `${x.prev.toFixed(2)}x` : pctText(x.prev)}{d.hasForecast && <> · forecast {x.forecast === null || x.forecast === undefined ? "-" : x.unit === "x" ? `${x.forecast.toFixed(2)}x` : pctText(x.forecast)}</>}</>} />
             ))}
           </div>
           <table className="brp-table">
-            <thead><tr><th>RM, month end</th><th>This month</th><th>Last month</th><th>Change</th><th>Three months ago</th></tr></thead>
+            <thead><tr><th>RM, month end</th><th>This month</th>{d.hasForecast && <th>Forecast</th>}<th>Last month</th><th>Change</th><th>Three months ago</th></tr></thead>
             <tbody>
               {d.rows.map((x) => (
                 <tr key={x.label} className={x.strong ? "strong" : x.label.startsWith("of which") ? "depth-1" : ""}>
-                  <td>{x.label}</td><td><Money v={x.cur} /></td><td><Money v={x.prev} /></td><td><Money v={x.change} /></td><td><Money v={x.quarterAgo} /></td>
+                  <td>{x.label}</td><td><Money v={x.cur} /></td>{d.hasForecast && <td><Money v={x.forecast ?? null} /></td>}<td><Money v={x.prev} /></td><td><Money v={x.change} /></td><td><Money v={x.quarterAgo} /></td>
                 </tr>
               ))}
             </tbody>
@@ -491,7 +491,7 @@ export function BalancePage({ r }: P) {
                 series={[{ key: "a", label: "Total assets", color: CAT[0], type: "bar" }, { key: "l", label: "Total liabilities", color: CAT[1], type: "bar" }, { key: "e", label: "Equity", color: C.ink, type: "line" }]} />
             )}
           </Elastic>
-          <p className="brp-small">Stock is the P&L&apos;s closing stock; equity includes this year&apos;s un-closed earnings. Months before the books opened (no balance sheet) are left off the chart. No balance-sheet forecast is kept in the ERP, so none is drawn. Source: Forecasting › Dashboard balance sheet (Finance › Balance Sheet).</p>
+          <p className="brp-small">Stock is the P&L&apos;s closing stock; equity includes this year&apos;s un-closed earnings. Months before the books opened (no balance sheet) are left off the chart. Forecast = the Forecast Balance Sheet (the month-end before, moved by this month&apos;s Forecast P&amp;L and Cash Flow forecast). Source: Forecasting › Dashboard balance sheet (Finance › Balance Sheet).</p>
         </>
       ))}
     </BrPage>
