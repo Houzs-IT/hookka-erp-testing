@@ -105,9 +105,9 @@ Owns the buy-side document chain: **Purchase Orders** (PO) → **Goods Receipt N
 | `resolveRmForGRNItem` | `src/api/routes/grn.ts:532` | Resolve GRN line → raw_material |
 | `app.post("/")` (GRN create) | `src/api/routes/grn.ts:1463` | GRN create; status derived from arrival |
 | `app.put("/:id/arrival")` | `src/api/routes/grn.ts:2487` | Arrival state transition (gate) |
-| `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1404` | PI create + convert-chain + GL post |
-| `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:2290` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
-| `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:879` | Ceiling on re-synced invoiced_qty |
+| `app.post("/")` (PI create) | `src/api/routes/purchase-invoices.ts:1440` | PI create + convert-chain + GL post |
+| `app.put("/:id")` (PI edit) | `src/api/routes/purchase-invoices.ts:2326` | PI edit (DRAFT/CONFIRMED/legacy APPROVED) + GL correction |
+| `checkInvoicedQtyCeilingAfterEdit` | `src/api/routes/purchase-invoices.ts:913` | Ceiling on re-synced invoiced_qty |
 | `mapPurchaseLinesToAccounts` | `src/api/routes/purchase-invoices.ts:221` | PI lines → GL account buckets |
 | `autoReceivePiStock` | `src/api/lib/pi-auto-grn.ts:336` | PI confirm → system GRN → stock in |
 | `planPiAutoGrn` | `src/api/lib/pi-auto-grn.ts:90` | Which PI lines match which PO line, how many |
