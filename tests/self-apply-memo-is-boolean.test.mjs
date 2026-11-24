@@ -73,9 +73,10 @@ function promiseMemos() {
         file,
         name,
         // Handed to the helper, which sets it only once the round lands.
-        viaHelper: new RegExp(
-          `memoizeSelfApply\\([\\s\\S]{0,300}?${name}`,
-        ).test(src),
+        viaHelper:
+          new RegExp(`memoizeSelfApply\\([\\s\\S]{0,300}?${name}`).test(src) &&
+          // …and not ALSO assigned an in-flight promise somewhere else.
+          !new RegExp(`\\b${name}\\s*=(?!=)(?!\\s*(?:SELF_APPLY_DONE|null|p)\\b)`).test(after),
         // …or only ever set to SELF_APPLY_DONE (or reset to null), never to a
         // promise of its own: the shape for rounds that swallow their errors.
         doneOnly:
@@ -180,4 +181,25 @@ test("memoizeSelfApply never hands out an in-flight promise", async () => {
   memo = null;
   await assert.rejects(memoizeSelfApply(get, set, async () => { throw new Error("ddl blip"); }), /ddl blip/);
   assert.equal(memo, null, "a failed round is not remembered");
+});
+
+test("no module-level Map caches promises across requests", () => {
+  // The same hazard keyed by name: archive-union.ts held `Map<string, Promise>`
+  // of in-flight DDL + SQL builds (BUG-2026-11-24-552 review). A Map handed to
+  // memoizeSelfApply is fine; data caches with the same shape are listed below
+  // as known follow-ups so they cannot be copied silently.
+  const KNOWN = new Set([
+    "src/api/lib/snapshot.ts:inFlightComputes",
+    "src/api/lib/worker-perf.ts:effMemo",
+  ]);
+  const bad = [];
+  for (const file of walk("src/api")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/^(?:export\s+)?const\s+(\w+)\s*=\s*new Map<[^>]*Promise</gm)) {
+      const id = `${file.split("\\").join("/")}:${m[1]}`;
+      if (KNOWN.has(id) || /memoizeSelfApply\(/.test(src)) continue;
+      bad.push(`${id} caches promises in a module-level Map; cache the settled value instead.`);
+    }
+  }
+  assert.deepEqual(bad, [], `\n${bad.join("\n")}\n`);
 });
