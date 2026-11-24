@@ -94,7 +94,13 @@ test("the periods: 6 / 12 months beside the range, every card reads the shown pe
   assert.match(page, /\(\[6, 12\] as const\)\.map\(\(n, i\) => \{/);
   assert.doesNotMatch(page, /\(rows \?\? \[\]\)\.map\(/, "no card reads the unfiltered rows");
   // "vs last period" still compares with the month before, shown or not.
-  assert.match(page, /const at = all\.indexOf\(r\);\n\s+const prev = at > 0 \? all\[at - 1\]\.actual : null;/);
+  // Owner 2026-11-24: a period ahead compares its forecast; the period before
+  // an explicit From is fetched (dashPeriodBefore) but not drawn.
+  assert.match(page, /const at = all\.indexOf\(r\);\n\s+const prevRow = at > 0 \? all\[at - 1\] : null;\n\s+const prev = prevRow \? prevRow\.actual \?\? prevRow\.forecast \?\? null : null;/);
+  assert.match(page, /&from=\$\{dashPeriodBefore\(fromYm, granularity\)\}&to=\$\{toYm\}/);
+  assert.equal(look.dashPeriodBefore("2026-11", "month"), "2026-10");
+  assert.equal(look.dashPeriodBefore("2027-01", "month"), "2026-12");
+  assert.equal(look.dashPeriodBefore("2026-11", "quarter"), "2026-07");
 });
 
 test("months read as the design labels them", () => {

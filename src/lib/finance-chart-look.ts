@@ -91,6 +91,24 @@ export function dashPeriodLabel(label: string, partial: boolean): string {
 
 /** The first month of a period key — a month "2026-07" is itself; a quarter
  *  "2026-Q3" starts in "2026-07". */
+/** The first month of the period (month or calendar quarter) holding `ym`. */
+export function dashBucketStartYm(ym: string, granularity: "month" | "quarter"): string {
+  if (granularity === "month") return ym.slice(0, 7);
+  const m = Number(ym.slice(5, 7));
+  return `${ym.slice(0, 4)}-${String(Math.floor((m - 1) / 3) * 3 + 1).padStart(2, "0")}`;
+}
+
+/** The first month of the period BEFORE the one holding `ym` — fetched so the
+ *  first column of an explicit range still has a "vs last period". */
+export function dashPeriodBefore(ym: string, granularity: "month" | "quarter"): string {
+  const start = dashBucketStartYm(ym, granularity);
+  const y = Number(start.slice(0, 4));
+  const m = Number(start.slice(5, 7)) - (granularity === "quarter" ? 3 : 1);
+  const yy = m <= 0 ? y - 1 : y;
+  const mm = m <= 0 ? m + 12 : m;
+  return `${yy}-${String(mm).padStart(2, "0")}`;
+}
+
 export function periodStartYm(key: string): string {
   const q = /^(\d{4})-Q([1-4])$/.exec(key);
   if (q) return `${q[1]}-${String((Number(q[2]) - 1) * 3 + 1).padStart(2, "0")}`;

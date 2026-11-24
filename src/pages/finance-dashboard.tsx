@@ -50,7 +50,7 @@ import {
 } from "@/lib/finance-dashboard-calc";
 import { BarChart3, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { NO_STALE_RUN, planStaleRetry } from "@/lib/stale-refresh";
-import { CH, CS_COLOURS, FORECAST_DASH, dashPeriodLabel, dashPeriods, dashRowLabel, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
+import { CH, CS_COLOURS, FORECAST_DASH, dashBucketStartYm, dashPeriodBefore, dashPeriodLabel, dashPeriods, dashRowLabel, periodStartYm, ratioTick, yAxisWidthFor, type DashSpan } from "@/lib/finance-chart-look";
 import { activeDotOf, anim, dotOf, gridProps, liftBar, useChartHover, xAxisProps, yAxisProps } from "@/components/finance/chart-look";
 // Cash Flow and Balance Sheet forecasts on their cards (owner 2026-11-23).
 import {
@@ -305,14 +305,20 @@ function SalaryDeptCard({
         let amt: number | null = null;
         let fc: number | null = null;
         let drawn = 0;
+        const ahead = rec.__ahead__ === 1;
+        const bars: Record<string, number | null> = {};
         for (const d of depts) {
           const v = rec[d];
           if (typeof v === "number") {
             amt = (amt ?? 0) + v;
-            if (!hidden.has(d)) drawn += v;
+            if (!hidden.has(d) && !ahead) drawn += v;
           }
           const f = rec[`__fc__${d}`];
           if (typeof f === "number") fc = (fc ?? 0) + f;
+          // The bar: the actual, or for a period ahead the forecast (faded).
+          const b = ahead ? (typeof f === "number" ? f : null) : typeof v === "number" ? v : null;
+          bars[`__bar__${d}`] = b;
+          if (ahead && b !== null && !hidden.has(d)) drawn += b;
         }
         const b = base[i];
         const amount = amt === null && fc === null ? (b?.amount ?? null) : amt;
@@ -320,6 +326,7 @@ function SalaryDeptCard({
         const prod = (rec.__prod__ as number | null) ?? null;
         return {
           ...rec,
+          ...bars,
           __cardamt__: amount,
           __cardfc__: forecast,
           __cardpct__: pctOf(amount, sales),
@@ -358,8 +365,9 @@ function SalaryDeptCard({
               ) : (
                 depts.map((dept, i) =>
                   hidden.has(dept) ? null : (
-                    <Bar key={dept} yAxisId="amt" dataKey={dept} name={dept} stackId="sal" maxBarSize={38}
+                    <Bar key={dept} yAxisId="amt" dataKey={`__bar__${dept}`} name={dept} stackId="sal" maxBarSize={38}
                       fill={CS_COLOURS[i % CS_COLOURS.length]} shape={liftBar(hover, { stacked: true })} {...anim}>
+                      {rowsData.map((r, k) => <Cell key={k} fillOpacity={r.__ahead__ === 1 ? 0.4 : 1} />)}
                       {shownCount === 1 && (
                         <LabelList dataKey="__drawnpct__" position="top" offset={6}
                           formatter={(v: unknown) => (typeof v === "number" ? `${v.toFixed(2)}%` : "")}
@@ -682,7 +690,7 @@ export default function FinanceDashboardPage() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let run = NO_STALE_RUN;
-    const range = fromYm && toYm && fromYm <= toYm ? `&from=${fromYm}&to=${toYm}` : "";
+    const range = fromYm && toYm && fromYm <= toYm ? `&from=${dashPeriodBefore(fromYm, granularity)}&to=${toYm}` : "";
     const url = `/api/accounting/dashboard?granularity=${granularity}&periods=${granularity === "quarter" ? 8 : 12}${range}`;
     const load = () => {
       fetch(url)
@@ -800,8 +808,12 @@ export default function FinanceDashboardPage() {
   // with the month before, shown or not.
   const explicitRange = !!(fromYm && toYm && fromYm <= toYm);
   const shownRows = useMemo(
-    () => dashPeriods(rows ?? [], { span, granularity, explicit: explicitRange }),
-    [rows, span, granularity, explicitRange],
+    () =>
+      dashPeriods(rows ?? [], { span, granularity, explicit: explicitRange }).filter(
+        // the period fetched before From only feeds "vs last period"
+        (r) => !explicitRange || periodStartYm(r.key) >= dashBucketStartYm(fromYm, granularity),
+      ),
+    [rows, span, granularity, explicitRange, fromYm],
   );
   // The forecasts by the period picked, and the periods ahead each card adds
   // (forecast only; none with an explicit From / To).
@@ -854,7 +866,8 @@ export default function FinanceDashboardPage() {
       shownRows.map((r) => {
         const all = rows ?? [];
         const at = all.indexOf(r);
-        const prev = at > 0 ? all[at - 1].actual : null;
+        const prevRow = at > 0 ? all[at - 1] : null;
+        const prev = prevRow ? prevRow.actual ?? prevRow.forecast ?? null : null;
         const cur = r.actual;
         const pick = (s: Slice | null) => (s ? s[plTab] : null);
         const a = pick(cur);
@@ -878,7 +891,10 @@ export default function FinanceDashboardPage() {
           forecast: pick(r.forecast),
           pctOfRevenue: share(a, sales),
           forecastPctOfRevenue: share(pick(r.forecast), fcSales),
-          mom: a !== null && p !== null && p !== 0 ? Math.round(((a - p) / Math.abs(p)) * 10000) / 100 : null,
+          mom: (() => {
+            const shownV = ahead ? pick(r.forecast) : a;
+            return shownV !== null && p !== null && p !== 0 ? Math.round(((shownV - p) / Math.abs(p)) * 10000) / 100 : null;
+          })(),
         };
       }),
     [rows, shownRows, plTab, afOf],
@@ -926,6 +942,7 @@ export default function FinanceDashboardPage() {
         const sales = r.actual?.sales ?? null;
         const fcSales = r.forecast?.sales ?? null;
         const rec: Record<string, number | string | null> = { ...base };
+        rec.__ahead__ = r.actual === null || r.actual === undefined ? 1 : 0;
         rec.__sales__ = sales;
         rec.__fcsales__ = fcSales;
         const prod = r.productionRevenue?.total ?? null;
@@ -954,18 +971,25 @@ export default function FinanceDashboardPage() {
     [labourData],
   );
 
+  const cashLinesB = useMemo(() => (cashLines ? cashLinesByBucket(cashLines, granularity) : {}), [cashLines, granularity]);
   const cfData = useMemo(
     () =>
       cfRows.map((r) => {
         const ahead = r.actual === null || r.actual === undefined;
         const fc = cashFcB[r.key];
+        // Money in / out for a period ahead (owner 2026-11-24 「money in out 的
+        // 全部没有？」): the forecast statement's lines, receipts vs payments.
+        const fl = ahead ? cashLinesB[r.key]?.[cfDetailBasis] ?? null : null;
+        let fin: number | null = null;
+        let fout: number | null = null;
+        if (fl) for (const v of Object.values(fl)) { if (v > 0) fin = (fin ?? 0) + v; else if (v < 0) fout = (fout ?? 0) + v; }
         return {
           label: ahead ? `${dashPeriodLabel(r.label, false)} (F)` : dashPeriodLabel(r.label, r.partial),
           ahead: ahead ? 1 : 0,
           value: ahead ? null : r.cashFlow?.[cfTab] ?? null,
           net: ahead ? null : r.cashFlow?.net ?? null,
-          inflow: ahead ? null : r.cashFlow?.inflow ?? null,
-          outflow: ahead ? null : r.cashFlow?.outflow ?? null,
+          inflow: ahead ? fin : r.cashFlow?.inflow ?? null,
+          outflow: ahead ? fout : r.cashFlow?.outflow ?? null,
           // The tab picked, actual and both forecasts — the chart's lines and
           // the table's rows read the same figures (owner 2026-11-23 「为什么上下
           // 两边的数据不一样？」 → 「Both follow the tab」).
@@ -973,13 +997,12 @@ export default function FinanceDashboardPage() {
           fcDocs: fc?.docs?.[cfTab] ?? null,
         };
       }),
-    [cfRows, cfTab, cashFcB],
+    [cfRows, cfTab, cashFcB, cashLinesB, cfDetailBasis],
   );
   // Detail view (owner 2026-11-23 「这个detail可以整理一下吗？…还是你这样的
   // table？」 → 「Actual + Forecast」): each section in the Cash Flow
   // statement's order, each account line under it, every period an Actual and
   // a Forecast cell — the forecast by the basis picked (P&L or documents).
-  const cashLinesB = useMemo(() => (cashLines ? cashLinesByBucket(cashLines, granularity) : {}), [cashLines, granularity]);
   const cfSections = useMemo(
     () => cashDetailSections(cfRows.map((r) => ({
       actual: r.actual === null || r.actual === undefined ? null : r.cashFlow?.lines ?? [],
@@ -1079,17 +1102,21 @@ export default function FinanceDashboardPage() {
     () =>
       shownRows.map((r) => {
         const point: Record<string, number | string | null> = { label: dashRowLabel(r) };
+        const csAhead = r.actual === null || r.actual === undefined;
+        point.__ahead__ = csAhead ? 1 : 0;
         const sales = csLineSales(r);
-        point.__sales__ = sales;
+        point.__sales__ = csAhead ? null : sales;
         const prod = csLineProdRev(r);
         point.__prod__ = prod;
         for (const cat of csCats) {
           const amt = csAmount(r, cat);
-          point[cat] = amt;
-          point[`__pct__${cat}`] = sales > 0 ? Math.round((amt / sales) * 10000) / 100 : null;
-          point[`__ppct__${cat}`] = pctOf(amt, prod);
+          point[cat] = csAhead ? null : amt;
+          point[`__pct__${cat}`] = !csAhead && sales > 0 ? Math.round((amt / sales) * 10000) / 100 : null;
+          point[`__ppct__${cat}`] = csAhead ? null : pctOf(amt, prod);
           const fc = csMeasure === "spend" ? csForecastAmt(r, cat) : null; // targets are spend-side
           point[`__fc__${cat}`] = fc;
+          // The bar: actual, or for a period ahead the planned spend (faded).
+          point[`__bar__${cat}`] = csAhead ? fc : amt;
           const fcSales = csForecastSales(r);
           point[`__fcpct__${cat}`] =
             fc !== null && fcSales !== null && fcSales > 0
@@ -1123,7 +1150,7 @@ export default function FinanceDashboardPage() {
         let drawn: number | null = null;
         for (const cat of csCats) {
           if (csHidden.has(cat)) continue;
-          const v = point[cat] as number | null;
+          const v = point[`__bar__${cat}`] as number | null;
           if (v !== null) drawn = (drawn ?? 0) + v;
         }
         point.__drawn__ = drawn;
@@ -1135,13 +1162,13 @@ export default function FinanceDashboardPage() {
         let sum = 0;
         let fcSum: number | null = null;
         for (const cat of csCats) {
-          sum += point[cat] as number;
+          sum += (point[cat] as number | null) ?? 0;
           const f = point[`__fc__${cat}`] as number | null;
           if (f !== null) fcSum = (fcSum ?? 0) + f;
         }
-        point.__sum__ = sum;
-        point.__sumpct__ = pctOf(sum, sales);
-        point.__sumppct__ = pctOf(sum, prod);
+        point.__sum__ = csAhead ? null : sum;
+        point.__sumpct__ = csAhead ? null : pctOf(sum, sales);
+        point.__sumppct__ = csAhead ? null : pctOf(sum, prod);
         point.__fcsum__ = fcSum;
         point.__fcsumpct__ = pctOf(fcSum, csForecastSales(r));
         return point;
@@ -1156,20 +1183,24 @@ export default function FinanceDashboardPage() {
   const csTrend = useMemo(
     () =>
       shownRows.map((r) => {
+        const trAhead = r.actual === null || r.actual === undefined;
         const amt = csAmount(r, csFocusEff);
         const sales = csLineSales(r);
         const fc = csMeasure === "spend" ? csForecastAmt(r, csFocusEff) : null;
         const fcSales = csForecastSales(r);
         return {
           label: dashRowLabel(r),
-          amount: amt,
+          ahead: trAhead ? 1 : 0,
+          // A period ahead has no actual: "-", and its bar is the plan (faded).
+          bar: trAhead ? fc : amt,
+          amount: trAhead ? null : amt,
           // The base both percentages divide by (owner 2026-08-06: 「帮我把
           // revenue 显示出来」). Showing it is what let him catch the forecast
           // percentage dividing by the wrong one this morning — a share is only
           // checkable when its denominator is on screen.
-          sales,
+          sales: trAhead ? null : sales,
           forecastSales: csForecastSales(r),
-          pct: sales > 0 ? Math.round((amt / sales) * 10000) / 100 : null,
+          pct: !trAhead && sales > 0 ? Math.round((amt / sales) * 10000) / 100 : null,
           forecast: fc,
           // Same rule as the table above: a forecast share divides by forecast
           // revenue. This row read the same 121.30% for the same reason.
@@ -1451,8 +1482,9 @@ export default function FinanceDashboardPage() {
                       <Tooltip cursor={false} content={<ChartTip shares stackTotal lineKeys={["__fctotal__"]} />} />
                       {csCats.map((cat, i) =>
                         csHidden.has(cat) ? null : (
-                          <Bar key={cat} dataKey={cat} name={cat} stackId="cs" maxBarSize={44}
+                          <Bar key={cat} dataKey={`__bar__${cat}`} name={cat} stackId="cs" maxBarSize={44}
                             fill={CS_COLOURS[i % CS_COLOURS.length]} shape={liftBar(csHover.hover, { stacked: true })} {...anim}>
+                            {csData.map((pt, k) => <Cell key={k} fillOpacity={pt.__ahead__ === 1 ? 0.4 : 1} />)}
                             {/* The share printed ON the stack, but only while a
                                 single material is drawn — a dozen labels stacked
                                 inside one bar is unreadable, and the tooltip
@@ -1585,7 +1617,8 @@ export default function FinanceDashboardPage() {
               active={csFocusEff}
               onTab={(k) => setCsFocus(k)}
               data={csTrend}
-              bars={[{ key: "amount", name: csMeasure === "spend" ? "Spend" : csMeasure === "purchase" ? "Purchase" : "Closing stock", color: CH.actual }]}
+              fadeKey="ahead"
+              bars={[{ key: "bar", name: csMeasure === "spend" ? "Spend" : csMeasure === "purchase" ? "Purchase" : "Closing stock", color: CH.actual }]}
               line={{ key: "forecast", name: "Forecast", color: CH.fc, dashed: true }}
               footer={
                 /* Split per month like the Cost Structure table above (owner

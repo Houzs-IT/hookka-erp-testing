@@ -276,3 +276,15 @@ test("owner 2026-11-24: the running quarter reads actual so far + forecast for t
   assert.match(page, /label: af \? `\$\{dashPeriodLabel\(r\.label, false\)\} \(A\+F\)` : dashRowLabel\(r\)/);
   assert.match(page, /data-dash-af=""/);
 });
+
+test("owner 2026-11-24 「全部有资料的都补齐」: every card draws a period ahead from its forecast", () => {
+  const page = readFileSync(new URL("../src/pages/finance-dashboard.tsx", import.meta.url), "utf8");
+  // salary cards, cost structure: bars read __bar__ (actual, or forecast ahead), faded
+  assert.match(page, /dataKey=\{`__bar__\$\{dept\}`\}/);
+  assert.match(page, /dataKey=\{`__bar__\$\{cat\}`\}/);
+  assert.match(page, /point\[`__bar__\$\{cat\}`\] = csAhead \? fc : amt;/);
+  // material trend: actual "-" ahead, bar = plan
+  assert.match(page, /amount: trAhead \? null : amt,/);
+  // cash flow: money in / out ahead from the forecast statement lines
+  assert.match(page, /inflow: ahead \? fin : r\.cashFlow\?\.inflow \?\? null,/);
+});
