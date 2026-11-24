@@ -12175,7 +12175,11 @@ async function bsForecastResponse(c: AccountingCtx) {
   // To the last month the Forecast P&L has figures for: after it a column would only collect and pay.
   const lastFigureYm = Object.keys(fcMonths).filter((ym) => forecastMonthHasFigures(forecastMonthFigures(fcMonths[ym], groups, mapped))).sort().pop() ?? null;
   const monthsAll = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
-  const months = past ? monthsAll.filter((ym) => ym === past) : monthsAll;
+  // A past month with no Forecast P&L figures has no forecast (owner 2026-11-24
+  // 「那就改成「-」吧」): only its bills would move the sheet, never its sales,
+  // so the figure would read far too low.
+  const pastHasPnl = past ? !!fcMonths[past] && forecastMonthHasFigures(forecastMonthFigures(fcMonths[past], groups, mapped)) : true;
+  const months = past ? (pastHasPnl ? monthsAll.filter((ym) => ym === past) : []) : monthsAll;
   const salaryLegAccounts = new Set<string>();
   const accruals: Record<string, ForecastBsAccrual> = {};
   for (const ym of months) {
