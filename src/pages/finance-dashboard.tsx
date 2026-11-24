@@ -119,6 +119,8 @@ type Row = {
   };
 };
 
+const ratioCell = (v: number | null | undefined, isPct: boolean) =>
+  v === null || v === undefined ? "-" : `${v.toFixed(2)}${isPct ? "%" : ""}`;
 const rm = (sen: number | null | undefined) =>
   sen === null || sen === undefined ? "-" : (sen / 100).toLocaleString("en-MY", { maximumFractionDigits: 0 });
 const rm2 = (sen: number | null | undefined) =>
@@ -1000,9 +1002,15 @@ export default function FinanceDashboardPage() {
         const ahead = r.actual === null || r.actual === undefined;
         // Owner 2026-11-24: future periods get forecast ratios too.
         const value = ahead ? dashForecastRatios(r.forecast, bsFcB[r.key])[ratioTab] : r.ratios[ratioTab];
-        return { label: dashRowLabel(r), ahead: ahead ? 1 : 0, value };
+        // A month that has happened beside its forecast and the gap (owner
+        // 2026-11-24 「financial ratio 也可以放 forecast的进去」 → 「Build it」),
+        // as the Balance Sheet card: this month's Forecast Balance Sheet or the
+        // past month's worked out from the month-end before it. Months only.
+        const fcBs = bsFcB[r.key] ?? pastBs[r.key] ?? null;
+        const fc = !ahead && granularity === "month" ? dashForecastRatios(r.forecast, fcBs)[ratioTab] : null;
+        return { label: dashRowLabel(r), ahead: ahead ? 1 : 0, value, fc };
       }),
-    [shownRows, ratioTab, bsFcB],
+    [shownRows, ratioTab, bsFcB, pastBs, granularity],
   );
 
   // ---- Cost structure (owner 2026-07-29) --------------------------------
@@ -1794,8 +1802,9 @@ export default function FinanceDashboardPage() {
             active={ratioTab}
             onTab={(k) => setRatioTab(k as typeof ratioTab)}
             data={ratioData}
-            bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: CH.single }]}
             fadeKey="ahead"
+            bars={[{ key: "value", name: /Pct$/.test(ratioTab) ? "%" : "Ratio", color: CH.single }]}
+            extraLines={ratioData.some((d) => d.fc !== null) ? [{ key: "fc", name: "Forecast", color: CH.fc, dashed: true }] : []}
             yFormat={(v) => ratioTick(v, /Pct$/.test(ratioTab))}
             footer={
               <table data-fin-list data-fin-stick className="w-full">
@@ -1805,11 +1814,34 @@ export default function FinanceDashboardPage() {
                     <td className={`${td} text-left font-medium`}>{/Pct$/.test(ratioTab) ? "Percent" : "Ratio"}</td>
                     {ratioData.map((d) => (
                       <td key={d.label} className={`${td} ${(d.value ?? 0) < 0 ? "text-[#B4452F]" : ""}`}>
-                        {d.value === null ? "-" : `${(d.value as number).toFixed(2)}${/Pct$/.test(ratioTab) ? "%" : ""}`}
+                        {ratioCell(d.value, /Pct$/.test(ratioTab))}
                       </td>
                     ))}
                   </tr>
+                  {/* A period that has happened beside its forecast, and the gap. */}
+                  {ratioData.some((d) => d.fc !== null) && (
+                    <>
+                      <tr data-dash-ratio-vs="fc">
+                        <td className={`${td} text-left font-medium text-[#5B6270]`}>Forecast</td>
+                        {ratioData.map((d) => <td key={d.label} className={`${td} text-[#5B6270]`}>{ratioCell(d.fc, /Pct$/.test(ratioTab))}</td>)}
+                      </tr>
+                      <tr className="bg-[#FBF9F6]" data-dash-ratio-vs="gap">
+                        <td className={`${td} text-left font-semibold`}>vs Forecast</td>
+                        {ratioData.map((d) => {
+                          const gap = d.fc === null || d.value === null ? null : Math.round((d.value - d.fc) * 100) / 100;
+                          return <td key={d.label} className={`${td} font-semibold`}>{gap === null ? "-" : `${gap > 0 ? "+" : ""}${ratioCell(gap, /Pct$/.test(ratioTab))}`}</td>;
+                        })}
+                      </tr>
+                    </>
+                  )}
                 </tbody>
+                {ratioData.some((d) => d.ahead || d.fc !== null) && (
+                  <tfoot>
+                    <tr><td colSpan={ratioData.length + 1} className="px-2 pt-2 text-left text-[11px] text-[#9CA3AF]" data-dash-ratio-fc-note="">
+                      (F) and Forecast = the ratio worked out from the Forecast P&L and the Forecast Balance Sheet. Faded bars are forecast. A month with no Forecast P&L shows "-".
+                    </td></tr>
+                  </tfoot>
+                )}
               </table>
             }
           />
