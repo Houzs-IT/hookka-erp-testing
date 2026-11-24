@@ -98,3 +98,16 @@ test("PI detail: shared block + PI columns", () => {
   assert.equal(at(aoa, 1, "Due Date"), "2026-06-03");
   assert.equal(at(aoa, 1, "Tax"), 60);
 });
+
+test("PI detail: UOM is the billed unit, else the PO line's unit", () => {
+  const aoa = d.buildPiDetailListingAoa([
+    { piNo: "PI-2", items: [
+      { id: "a", poUnit: "PCS" },
+      { id: "b", uom: "ROLL", poUnit: "MTR" },
+      { id: "c" },
+    ] },
+  ]);
+  assert.equal(at(aoa, 1, "UOM"), "PCS");
+  assert.equal(at(aoa, 2, "UOM"), "ROLL");
+  assert.equal(at(aoa, 3, "UOM"), "");
+});
