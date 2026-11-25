@@ -50,6 +50,14 @@ let appRef: FetchApp | null = null;
 export function setMcpApp(a: FetchApp): void {
   appRef = a;
 }
+/** For the Super Admin leak check (routes/mcp-admin.ts): the app's routes and a way in. */
+export function mcpAppRoutes(): { method: string; path: string }[] {
+  return appRef?.routes ?? [];
+}
+export function mcpAppFetch(req: Request, env: unknown, ctx?: unknown): Promise<Response> {
+  if (!appRef) throw new Error("MCP app not initialised");
+  return Promise.resolve(appRef.fetch(req, env, ctx));
+}
 
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 export const MAX_RESULT_CHARS = 60_000;

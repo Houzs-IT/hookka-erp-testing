@@ -14,7 +14,9 @@ import { requireSuperAdmin } from "../lib/rbac";
 import { emitAudit } from "../lib/audit";
 import { DEFAULT_ORG_ID } from "../lib/tenant";
 import { ensureNotificationsUserColumn } from "./it-support";
-import { appLabel, ensureMcpTables, hasMcpAccess, randomToken, revokeToken, revokeUserTokens } from "../lib/mcp-store";
+import { appLabel, ensureMcpTables, hasMcpAccess, issueTokens, randomToken, revokeToken, revokeUserTokens } from "../lib/mcp-store";
+import { analyseToolText, leakCheckPaths, type LeakRow } from "../lib/mcp-leak-check";
+import { mcpAppFetch, mcpAppRoutes } from "./mcp";
 
 const app = new Hono<Env>();
 
@@ -319,6 +321,73 @@ app.post("/admin/revoke", async (c) => {
   else return c.json({ success: false, error: "tokenId or userId required" }, 400);
   await emitAudit(c, { resource: "ai-connector", resourceId: String(body.tokenId ?? body.userId), action: "delete", after: { disconnected: revoked } });
   return c.json({ success: true, data: { revoked } });
+});
+
+// ── leak check (Super Admin) ────────────────────────────────────────────────
+// Runs the connector's real read path AS the chosen account over every list
+// endpoint, a page at a time (the page loops `offset` until `done`). Field
+// names and outcomes only, never values. See lib/mcp-leak-check.ts.
+const LEAK_CLIENT_ID = "mcpc_leak_check";
+const LEAK_PAGE = 20;
+
+app.post("/admin/leak-check", async (c) => {
+  const denied = requireSuperAdmin(c);
+  if (denied) return denied;
+  const db = c.var.DB;
+  await ensureMcpTables(db);
+  const body = (await c.req.json().catch(() => ({}))) as { userId?: unknown; offset?: unknown };
+  const userId = typeof body.userId === "string" ? body.userId : "";
+  const offset = Math.max(0, Number(body.offset) || 0);
+  const u = userId ? await db.prepare("SELECT id, role, isActive, displayName, email FROM users WHERE id = ?").bind(userId).first<Record<string, unknown>>() : null;
+  if (!u) return c.json({ success: false, error: "User not found" }, 404);
+  const r = s(u, "role").toUpperCase();
+  if (r === "SUPER_ADMIN" || r === "ADMIN") return c.json({ success: false, error: "Admins see everything — pick a staff account." }, 400);
+  if (n(u, "isActive", "isactive") !== 1) return c.json({ success: false, error: "That account is inactive." }, 400);
+  if (!(await hasMcpAccess(db, userId, r))) return c.json({ success: false, error: "Approve this account for AI Connector first (it needs access to be checked)." }, 400);
+
+  await db
+    .prepare("INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES (?, 'Leak check', '[]', ?) ON CONFLICT (client_id) DO NOTHING")
+    .bind(LEAK_CLIENT_ID, new Date().toISOString())
+    .run();
+  const paths = leakCheckPaths(mcpAppRoutes());
+  const page = paths.slice(offset, offset + LEAK_PAGE);
+  const tok = await issueTokens(db, userId, LEAK_CLIENT_ID);
+  const rows: LeakRow[] = [];
+  let ctx: unknown;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  try {
+    const origin = new URL(c.req.url).origin;
+    const one = (path: string, i: number): Promise<LeakRow> =>
+      mcpAppFetch(
+        new Request(`${origin}/api/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${tok.accessToken}` },
+          body: JSON.stringify({ jsonrpc: "2.0", id: i + 1, method: "tools/call", params: { name: "erp_get", arguments: { path, query: { limit: 5, page: 1 } } } }),
+        }),
+        c.env,
+        ctx,
+      )
+        .then((res) => res.json() as Promise<{ result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } }>)
+        .then((j) => analyseToolText(path, j.result?.content?.[0]?.text ?? j.error?.message ?? "", !!j.result?.isError || !!j.error))
+        .catch((e) => ({ path, outcome: "error" as const, status: e instanceof Error ? e.message : String(e), hidden: [], kept: [], keptExpected: false }));
+    // 4 at a time: stays under the per-user rate limit and the database's comfort.
+    // These are in-process tool calls (no query of their own) — the one entry in
+    // tests/no-query-in-loop.baseline.json for this file.
+    for (let i = 0; i < page.length; i += 4) {
+      rows.push(...(await Promise.all(page.slice(i, i + 4).map((p, j) => one(p, i + j)))));
+    }
+  } finally {
+    await revokeToken(db, tok.tokenId);
+  }
+  if (offset === 0) await emitAudit(c, { resource: "ai-connector", resourceId: userId, action: "update", after: { leakCheck: true, endpoints: paths.length } });
+  return c.json({
+    success: true,
+    data: { person: s(u, "displayName", "displayname", "email"), role: r, total: paths.length, offset, next: offset + page.length, done: offset + page.length >= paths.length, rows },
+  });
 });
 
 export default app;

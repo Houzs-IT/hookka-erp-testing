@@ -19,6 +19,7 @@
   "jobcard-sync.ts": 2,
   "kpi.ts": 3,
   "mail-center.ts": 4,
+  "mcp-admin.ts": 1,
   "mrp.ts": 1,
   "ocr-accuracy.ts": 1,
   "org-chart.ts": 1,

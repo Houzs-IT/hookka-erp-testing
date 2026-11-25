@@ -155,6 +155,122 @@ function HowTo({ url }: { url: string }) {
   );
 }
 
+
+type LeakRow = { path: string; outcome: "opened" | "refused" | "error"; status: string; hidden: string[]; kept: string[]; keptExpected: boolean };
+
+/** Super Admin: run the AI's read path as one approved account, field names only. */
+function LeakCheck({ people }: { people: { userId: string; name: string; role: string }[] }) {
+  const [who, setWho] = useState("");
+  const [rows, setRows] = useState<LeakRow[]>([]);
+  const [prog, setProg] = useState<{ done: number; total: number } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const staff = people.filter((p) => !["SUPER_ADMIN", "ADMIN"].includes((p.role || "").toUpperCase()));
+
+  const run = async () => {
+    setRunning(true);
+    setErr(null);
+    setRows([]);
+    setProg(null);
+    try {
+      let offset = 0;
+      const all: LeakRow[] = [];
+      for (let guard = 0; guard < 200; guard++) {
+        const d = await api<{ total: number; next: number; done: boolean; rows: LeakRow[] }>("/api/mcp-admin/admin/leak-check", {
+          method: "POST",
+          body: JSON.stringify({ userId: who, offset }),
+        });
+        all.push(...d.rows);
+        setRows([...all]);
+        setProg({ done: d.next, total: d.total });
+        if (d.done) break;
+        offset = d.next;
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const opened = rows.filter((r) => r.outcome === "opened");
+  const refused = rows.filter((r) => r.outcome === "refused").length;
+  const errors = rows.filter((r) => r.outcome === "error").length;
+  const review = opened.filter((r) => r.kept.length > 0 && !r.keptExpected);
+
+  return (
+    <section className={`${CARD} overflow-hidden`} aria-labelledby="leak">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFEBE2] px-5 py-4">
+        <div>
+          <h2 id="leak" className="text-base font-bold">Leak check</h2>
+          <p className="text-[13px] text-[#55534E]">Runs what the AI would read as this person over every module. Shows field names only, never values.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="leakwho" className="sr-only">Account</label>
+          <select id="leakwho" value={who} onChange={(e) => setWho(e.target.value)} className={`h-9 rounded-lg border border-[#D9D4C7] bg-white px-2 text-sm ${FOCUS}`}>
+            <option value="">Choose an approved staff account…</option>
+            {staff.map((p) => (
+              <option key={p.userId} value={p.userId}>{p.name} · {p.role}</option>
+            ))}
+          </select>
+          <button type="button" className={PRIMARY} disabled={!who || running} onClick={() => void run()}>
+            {running ? "Checking…" : "Run check"}
+          </button>
+        </div>
+      </div>
+      {err && <p className="px-5 py-3 text-sm text-[#B42318]">{err}</p>}
+      {prog && (
+        <div className="grid grid-cols-2 gap-3 px-5 py-4 sm:grid-cols-4">
+          {[
+            ["Checked", `${prog.done} / ${prog.total}`, ""],
+            ["Opened", String(opened.length), ""],
+            ["Refused", String(refused), "no permission — correct"],
+            ["To review", String(review.length), "money / people fields kept outside a money module"],
+          ].map(([l, v, sub]) => (
+            <div key={l} className="rounded-lg border border-[#EFEBE2] bg-[#FAF8F3] p-3">
+              <div className="text-xs text-[#6B6B66]">{l}</div>
+              <div className={`text-xl font-bold ${l === "To review" && v !== "0" ? "text-[#B42318]" : ""}`}>{v}</div>
+              {sub && <div className="text-[11px] text-[#6B6B66]">{sub}</div>}
+            </div>
+          ))}
+          {errors > 0 && <div className="col-span-full text-xs text-[#6B6B66]">{errors} endpoint(s) answered with an error (usually a missing filter) — not a leak.</div>}
+        </div>
+      )}
+      {opened.length > 0 && (
+        <div className="overflow-x-auto border-t border-[#EFEBE2]">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
+            <thead>
+              <tr className="bg-[#FAF8F3]">
+                <th className={TH}>Endpoint (opened)</th>
+                <th className={TH}>Hidden from this person</th>
+                <th className={TH}>Money / people fields still shown</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opened.map((r) => (
+                <tr key={r.path} className="border-t border-[#EFEBE2]">
+                  <td className={`${TD} font-mono text-[12px]`}>{r.path}</td>
+                  <td className={`${TD} text-[#55534E]`}>{r.hidden.join(", ") || "—"}</td>
+                  <td className={TD}>
+                    {r.kept.length === 0 ? (
+                      <span className="text-[#6B6B66]">—</span>
+                    ) : (
+                      <span className={r.keptExpected ? "text-[#55534E]" : "font-semibold text-[#B42318]"}>
+                        {r.kept.join(", ")}
+                        {r.keptExpected ? " (money document — expected)" : ""}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function AiConnectorPage() {
   const { toast } = useToast();
   const [me, setMe] = useState<Me | null>(null);
@@ -369,6 +485,8 @@ export default function AiConnectorPage() {
               </div>
             )}
           </section>
+
+          <LeakCheck people={ov.allowed} />
 
           <section className={`${CARD} overflow-hidden`}>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFEBE2] px-5 py-4">

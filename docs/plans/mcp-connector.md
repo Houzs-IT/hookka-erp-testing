@@ -1,6 +1,6 @@
 # Hookka ERP MCP connector — plan
 
-> **Last verified: 2026-11-25** — plan written; build in progress on `feat/mcp-server`.
+> **Last verified: 2026-11-25** — v1 live (#1610); leak check on `feat/mcp-leak-check-main`.
 
 Owner 2026-11-25: 「我的全套系统都要有mcp」, staff (non-IT) should ask Claude / ChatGPT
 questions about the ERP the way the owner asks in this session; 「按员工自己的权限」 —
@@ -74,6 +74,10 @@ stock status, orders, delivery, invoices, payroll for those allowed, …).
 2. **v1.1:** richer catalog descriptions per module from what staff actually ask (read
    `mcp_calls`).
 3. **Later, only if the owner asks:** any write tool (each one separately approved).
+
+## 6b. Leak check (before any staff use)
+
+`POST /api/mcp-admin/admin/leak-check` (Super Admin; `src/api/lib/mcp-leak-check.ts`, card on the AI Connector page): runs `tools/call erp_get` through the real `/api/mcp` as a chosen APPROVED staff account over every GET list endpoint of every readable module (side-effect-looking GETs skipped), 20 per request, 4 at a time, with a token issued for the run and revoked after. Reports only outcomes and field NAMES: opened / refused, the families hidden, and money / people keys still present (flagged unless the module is a money document). Never values.
 
 ## 7. Known limits / decisions
 

@@ -1739,7 +1739,8 @@ Staff ask Claude / ChatGPT about the ERP with their OWN login, read-only (plan +
 | Admin + staff page | `src/api/routes/mcp-admin.ts`, `src/pages/settings/AiConnector.tsx` (`/settings/ai-connector`, sidebar SYSTEM › AI Connector) | `/me`, `/me/request`, `/me/revoke`; Super Admin: `/admin/overview`, `/admin/requests/:id/:decision`, `/admin/access`, `/admin/revoke`. Request → bell for every Super Admin. |
 | Discovery on Pages | `functions/.well-known/oauth-protected-resource/[[path]].ts`, `functions/.well-known/oauth-authorization-server/[[path]].ts` | root paths would otherwise get the SPA shell. |
 | Login return | `src/pages/login.tsx` `goTo` | `?next=/api/mcp/oauth/authorize?…` is a server page → full load. |
-| Tests | `tests/mcp-connector.test.mjs` | gate, redaction, PKCE, read-only branch, mounting, Super-Admin-only admin. |
+| Leak check | `src/api/lib/mcp-leak-check.ts`, `POST /api/mcp-admin/admin/leak-check`, `LeakCheck` card | the AI's real read path as an approved staff account over every list endpoint; field names only; run token revoked. |
+| Tests | `tests/mcp-connector.test.mjs` | gate, redaction, PKCE, read-only branch, mounting, Super-Admin-only admin, leak check. |
 
 ## Previously unmapped modules (added 2026-08-13)
 

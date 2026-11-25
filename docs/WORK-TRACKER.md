@@ -1,5 +1,5 @@
 # Hookka ERP — Work Tracker
-> **Last verified: 2026-11-25**: AI Connector (MCP) v1 added (branch `feat/mcp-server`, to `main`); nothing else re-checked.
+> **Last verified: 2026-11-25**: AI Connector leak check added (branch `feat/mcp-leak-check-main`); AI Connector (MCP) v1 added (branch `feat/mcp-server`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-25**: Stock column per own department added (branch `fix/stock-column-own-dept`); Fab Cut Stock column fix added (branch `fix/fabcut-stock-column`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-24**: Financial Dashboard Cash Flow / Balance Sheet forecasts (branch `feat/dashboard-cf-bs-forecast`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Cash Flow trade finance from real bills + supplier tick (branch `feat/tf-supplier-flag-actual-bills`, to `main`); nothing else re-checked.
@@ -7750,5 +7750,5 @@ Ask (nhzulaikha26): put the two Claude Design handoffs on the phone Floor Live (
 ## 2026-11-25 — AI Connector (MCP): staff ask Claude / ChatGPT about the ERP (owner 「我的全套系统都要有mcp」)
 1. DONE (design): owner approved the prototype (admin page, how-to, Allow page, staff page; approvals by Super Admin only).
 2. IN PROGRESS (this PR, `feat/mcp-server`): v1 — read-only connector over every module, own permissions, module gate + field redaction, approvals / disconnect / question log, DO + invoice PDFs as 15-minute links. Plan: `docs/plans/mcp-connector.md`.
-3. BEFORE STAFF USE: leak audit with a low-permission test account over every module (report to owner), and an end-to-end connect from real Claude and ChatGPT on prod.
+3. LIVE 2026-11-25 (#1610). Leak check tool added (this PR, `feat/mcp-leak-check-main`): Settings › AI Connector › Leak check runs the AI's read path as an approved staff account over every list endpoint, field names only. BEFORE STAFF USE: leak audit with a low-permission test account over every module (report to owner), and an end-to-end connect from real Claude and ChatGPT on prod.
 4. NEXT (owner asked): SO / PO PDFs from their existing templates server-side; the same connector for the owner's other ERPs (Houzs ERP confirmed by name? — ask; Conts / Laphii's systems only if the owner says so).
