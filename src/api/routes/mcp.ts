@@ -123,7 +123,7 @@ async function sessionUser(c: Context<Env>): Promise<SessionUser | null> {
   return {
     userId: String(r.userId ?? r.userid),
     role: String(r.role ?? "").toUpperCase(),
-    name: String(r.displayName ?? r.displayname ?? r.email ?? "your account"),
+    name: String(r.displayName || r.display_name || r.displayname || r.email || "your account"),
     orgId: (r.orgId ?? r.orgid ?? null) as string | null,
   };
 }
@@ -524,7 +524,7 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
       const u = await c.var.DB.prepare("SELECT displayName, email, role FROM users WHERE id = ?").bind(id.userId).first<Record<string, unknown>>();
       const mods: string[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push(m.prefix);
-      result = text(JSON.stringify({ name: u?.displayName ?? u?.displayname ?? u?.email ?? "", role: id.role, readableModules: mods.length, readOnly: true }));
+      result = text(JSON.stringify({ name: String(u?.displayName || u?.display_name || u?.displayname || u?.email || ""), role: id.role, readableModules: mods.length, readOnly: true }));
     } else if (name === "list_modules") {
       const mods: { prefix: string; module: string }[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push({ prefix: m.prefix, module: m.resources[0] });

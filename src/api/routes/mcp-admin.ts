@@ -23,7 +23,8 @@ const app = new Hono<Env>();
 const uid = (c: Context<Env>): string => String((c as unknown as { get: (k: string) => unknown }).get("userId") ?? "");
 const role = (c: Context<Env>): string => String((c as unknown as { get: (k: string) => unknown }).get("userRole") ?? "").toUpperCase();
 const s = (r: Record<string, unknown>, ...k: string[]): string => {
-  for (const key of k) if (r[key] !== undefined && r[key] !== null) return String(r[key]);
+  // Empty strings fall through too: a blank display name should show the email, not nothing.
+  for (const key of k) if (r[key] !== undefined && r[key] !== null && r[key] !== "") return String(r[key]);
   return "";
 };
 const n = (r: Record<string, unknown>, ...k: string[]): number => Number(s(r, ...k)) || 0;
@@ -113,7 +114,7 @@ app.post("/me/request", async (c) => {
   try {
     await ensureNotificationsUserColumn(db);
     const who = await db.prepare("SELECT displayName, email, orgId FROM users WHERE id = ?").bind(me).first<Record<string, unknown>>();
-    const name = who ? s(who, "displayName", "displayname", "email") : me;
+    const name = who ? s(who, "display_name", "displayName", "displayname", "email") : me;
     const admins = await db.prepare("SELECT id, orgId FROM users WHERE role = 'SUPER_ADMIN' AND isActive = 1").all<Record<string, unknown>>();
     const stmts = (admins.results ?? []).map((a) =>
       db
@@ -386,7 +387,7 @@ app.post("/admin/leak-check", async (c) => {
   if (offset === 0) await emitAudit(c, { resource: "ai-connector", resourceId: userId, action: "update", after: { leakCheck: true, endpoints: paths.length } });
   return c.json({
     success: true,
-    data: { person: s(u, "displayName", "displayname", "email"), role: r, total: paths.length, offset, next: offset + page.length, done: offset + page.length >= paths.length, rows },
+    data: { person: s(u, "display_name", "displayName", "displayname", "email"), role: r, total: paths.length, offset, next: offset + page.length, done: offset + page.length >= paths.length, rows },
   });
 });
 
