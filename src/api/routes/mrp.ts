@@ -514,7 +514,7 @@ app.get("/plan-check", async (c) => {
 // key has nothing left to issue (no BOM materials, or already deducted).
 type StockStatusBody = { calculatedAt: string; data: Record<string, "READY" | "WAITING_PO" | "SHORT"> };
 const STOCK_STATUS_TTL_S = 600;
-const STOCK_STATUS_KV_KEY = "mrp:stock-status:v2";
+const STOCK_STATUS_KV_KEY = "mrp:stock-status:v3";
 let stockStatusMemo: { at: number; body: StockStatusBody } | null = null;
 let stockStatusInflight: Promise<StockStatusBody> | null = null;
 
@@ -698,7 +698,10 @@ app.get("/stock-status", async (c) => {
         const byWip: Record<string, "READY" | "WAITING_PO" | "SHORT"> = {};
         for (const m of plan.materials) {
           for (const o of m.orders) {
-            const k = `${o.productionOrderId}|${o.wipKey}`;
+            // Per WIP per consuming dept: a department's row shows only the
+            // materials THAT department issues (owner 2026-11-25 chose 「只看自己
+            // 部门的料」 — before, Wood Cut rows showed the WIP's fabric status).
+            const k = `${o.productionOrderId}|${o.wipKey}|@${o.dept}`;
             const cur = byWip[k];
             if (!cur || rank[o.status] > rank[cur]) byWip[k] = o.status;
             // Per order per consuming dept ("poId|@FAB_CUT"): the Fab Cut sheet's

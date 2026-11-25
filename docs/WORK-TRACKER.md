@@ -1,5 +1,5 @@
 # Hookka ERP — Work Tracker
-> **Last verified: 2026-11-25**: Fab Cut Stock column fix added (branch `fix/fabcut-stock-column`, to `main`); nothing else re-checked.
+> **Last verified: 2026-11-25**: Stock column per own department added (branch `fix/stock-column-own-dept`); Fab Cut Stock column fix added (branch `fix/fabcut-stock-column`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-24**: Financial Dashboard Cash Flow / Balance Sheet forecasts (branch `feat/dashboard-cf-bs-forecast`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Cash Flow trade finance from real bills + supplier tick (branch `feat/tf-supplier-flag-actual-bills`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-23**: Forecast Balance Sheet trade finance (branch `fix/forecast-bs-trade-finance`, to `main`); nothing else re-checked.
@@ -7743,4 +7743,5 @@ Ask (nhzulaikha26): put the two Claude Design handoffs on the phone Floor Live (
 2. WAITING (owner / Google admin): Gmail sending, Meet/Zoom auto links and WhatsApp reminders. Until then reminders are ERP notifications only. Rooms are added by the owner on the Rooms tab.
 
 ## 2026-11-25 — Fab Cut Stock column all "—" (owner 「stocks全部是-？」)
-1. DONE (this PR): Fab Cut rows read the order's FAB_CUT material status (`poId|@FAB_CUT`); see `docs/bugs/BUG-2026-11-25-556.md`.
+1. DONE (#1607): Fab Cut rows read the order's FAB_CUT material status (`poId|@FAB_CUT`); see `docs/bugs/BUG-2026-11-25-556.md`.
+2. DONE (this PR): other departments show only the materials they issue (owner chose 「只看自己部门的料」); "—" until their BOM materials exist.
