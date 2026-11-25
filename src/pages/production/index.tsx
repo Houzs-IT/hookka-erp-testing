@@ -4126,7 +4126,8 @@ export default function ProductionPage({
         );
       },
     },
-    // Stock (MRP, 2026-11-23): are this WIP's raw materials covered? READY =
+    // Stock (MRP, 2026-11-23): are the raw materials THIS department issues for
+    // this WIP covered (per dept since 2026-11-25)? READY =
     // all from stock, WAITING PO = the rest is on an open PO, SHORT = not
     // covered. "—" = nothing left to issue (no BOM materials, or already
     // deducted when the WIP's job card completed). Toggle it in Columns.
@@ -4138,12 +4139,13 @@ export default function ProductionPage({
       align: "center",
       render: (_v, row) => {
         if (!stockStatus) return <span className="text-[11px] text-[#9CA3AF]">…</span>;
-        // A Fab Cut row is one merged cut per order + fabric (its wipKey is not a
-        // BOM WIP key): read the order's FAB_CUT status ("poId|@FAB_CUT").
+        // Only the materials THIS department issues (owner 2026-11-25). A Fab
+        // Cut row is one merged cut per order + fabric (its wipKey is not a BOM
+        // WIP key): it reads the order's FAB_CUT status ("poId|@FAB_CUT").
         const st =
           (row.wipKey ?? "").endsWith("::FAB_CUT")
             ? stockStatus[`${row.poId}|@FAB_CUT`]
-            : stockStatus[`${row.poId}|${row.wipKey ?? ""}`] ?? stockStatus[`${row.poId}|`];
+            : stockStatus[`${row.poId}|${row.wipKey ?? ""}|@${activeTab}`];
         if (!st) {
           return (
             <span className="text-[11px] text-[#9CA3AF]" title="Nothing left to issue — no BOM materials, or already deducted">

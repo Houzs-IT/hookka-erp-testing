@@ -170,9 +170,11 @@ test("Production Tracking keeps its columns and only ADDS a Stock column", () =>
   const prod = readFileSync(new URL("../src/pages/production/index.tsx", import.meta.url), "utf8");
   assert.match(prod, /\}>\("\/api\/mrp\/stock-status"\);/);
   assert.match(prod, /key: "stockStatus",\s*label: "Stock",/);
-  assert.match(prod, /stockStatus\[`\$\{row\.poId\}\|\$\{row\.wipKey \?\? ""\}`\] \?\? stockStatus\[`\$\{row\.poId\}\|`\]/);
+  // Owner 2026-11-25 「只看自己部门的料」: a row reads its own dept's materials only.
+  assert.match(prod, /: stockStatus\[`\$\{row\.poId\}\|\$\{row\.wipKey \?\? ""\}\|@\$\{activeTab\}`\];/);
+  assert.match(route(), /const k = `\$\{o\.productionOrderId\}\|\$\{o\.wipKey\}\|@\$\{o\.dept\}`;/);
   // BUG-2026-11-25-556: a merged Fab Cut row reads its order's FAB_CUT status.
-  assert.match(prod, /\(row\.wipKey \?\? ""\)\.endsWith\("::FAB_CUT"\)\n\s+\? stockStatus\[`\$\{row\.poId\}\|@FAB_CUT`\]/);
+  assert.match(prod, /\(row\.wipKey \?\? ""\)\.endsWith\("::FAB_CUT"\)\s+\? stockStatus\[`\$\{row\.poId\}\|@FAB_CUT`\]/);
   assert.match(route(), /const dk = `\$\{o\.productionOrderId\}\|@\$\{o\.dept\}`;/);
   assert.match(route(), /app\.get\("\/stock-status"/);
 });
