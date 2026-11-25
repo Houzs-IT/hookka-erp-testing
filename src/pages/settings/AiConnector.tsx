@@ -9,9 +9,10 @@ import { useToast } from "@/components/ui/toast";
 
 type Conn = { tokenId: string; userId: string; name: string; role: string; app: string; connectedAt: string; lastUsedAt: string | null; callsWeek?: number };
 type Call = { at: string; userId: string; name: string; app: string; tool: string; target: string; ok: boolean; status: number; note: string };
-type Me = { allowed: boolean; isSuperAdmin: boolean; connectorUrl: string; connections: Conn[]; calls: Call[]; pendingRequestAt: string | null };
+type Me = { allowed: boolean; isSuperAdmin: boolean; actionsEnabled?: boolean; connectorUrl: string; connections: Conn[]; calls: Call[]; pendingRequestAt: string | null };
 type Overview = {
   connectorUrl: string;
+  actionsEnabled?: boolean;
   stats: { allowed: number; connectedPeople: number; connectedApps: Record<string, number>; callsToday: number; refusedToday: number };
   connections: Conn[];
   allowed: { userId: string; name: string; role: string; approvedAt: string }[];
@@ -52,9 +53,16 @@ function lookedUp(c: Call): string {
   if (c.tool === "search") return `Searched ${c.target.replace(/^\/api\/search\?q=/, "“").replace(/$/, "”")}`;
   if (c.tool === "get_pdf") return `PDF ${c.target.replace(/^pdf:/, "").replace(":", " ")}`;
   if (c.tool === "erp_link") return `Link to ${c.target.replace(":", " ")}`;
+  if (c.tool === "document_flow") return `Document flow of ${c.target.replace(/^flow:/, "")}`;
+  // AI actions (meetings, email): the log names who / what about, never an email body.
+  if (c.tool === "propose_meeting" || c.tool === "propose_email") return `Proposed ${c.target.replace(/^propose:/, "")}`;
+  if (c.tool === "confirm_action") return `Confirmed ${c.target.replace(/^confirm:/, "")}`;
+  if (c.tool === "cancel_action") return "Cancelled a proposal";
   return c.target || c.tool;
 }
 function result(c: Call): { label: string; cls: string } {
+  if (c.ok && c.tool === "confirm_action") return { label: "Done", cls: "bg-[#E7F3EC] text-[#1E6B3F]" };
+  if (c.ok && (c.tool === "propose_meeting" || c.tool === "propose_email")) return { label: "Waiting for yes", cls: "bg-[#F3EEDF] text-[#6B5A2E]" };
   if (c.ok) return { label: c.note ? "Answered (fields hidden)" : "Answered", cls: "bg-[#E7F3EC] text-[#1E6B3F]" };
   if (c.status === 403) return { label: "No permission", cls: "bg-[#FDECEA] text-[#B42318]" };
   return { label: "Failed", cls: "bg-[#F3F4F6] text-[#55534E]" };
@@ -337,7 +345,7 @@ export default function AiConnectorPage() {
     <div className="mx-auto max-w-[1216px] space-y-5 p-4 sm:p-6">
       <PageHeader
         title={me.isSuperAdmin ? "AI Connector" : "My AI connections"}
-        subtitle="Ask Claude or ChatGPT about Hookka ERP in your own words. Read-only, and each person sees only what their ERP permissions allow."
+        subtitle="Ask Claude or ChatGPT about Hookka ERP in your own words. Each person sees only what their ERP permissions allow."
       />
 
       <section className={`${CARD} flex flex-wrap items-center justify-between gap-4 p-5`}>
@@ -357,7 +365,7 @@ export default function AiConnectorPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-bold">
-          <span className="rounded-full bg-[#E7F3EC] px-3 py-1.5 text-[#1E6B3F]">READ-ONLY</span>
+          <span className="rounded-full bg-[#E7F3EC] px-3 py-1.5 text-[#1E6B3F]">{me.actionsEnabled ? "READS + CONFIRMED ACTIONS" : "READ-ONLY"}</span>
           <span className="rounded-full bg-[#E8F0F8] px-3 py-1.5 text-[#1F4E6B]">OWN PERMISSIONS</span>
           <span className="rounded-full bg-[#F3EEDF] px-3 py-1.5 text-[#6B5A2E]">EVERY QUESTION LOGGED</span>
         </div>
@@ -379,6 +387,29 @@ export default function AiConnectorPage() {
               </div>
             ))}
           </div>
+
+          <section className={`${CARD} flex flex-wrap items-center justify-between gap-4 p-5`}>
+            <div className="min-w-0 flex-1 basis-[420px] space-y-1">
+              <h2 className="text-base font-bold">Allow AI actions (meetings, email)</h2>
+              <p className="text-[13px] text-[#55534E]">
+                When on, a connected AI can book a meeting or send an email for the person — it shows them each one first and does it only after they confirm. Up to 30 a day per person, as that person, logged below. Never orders, money, stock, approvals or deletes.
+              </p>
+            </div>
+            <label className="flex items-center gap-3 text-sm font-semibold">
+              <span>{ov.actionsEnabled ? "On" : "Off"}</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!!ov.actionsEnabled}
+                aria-label="Allow AI actions (meetings, email)"
+                disabled={busy}
+                onClick={() => act(() => api("/api/mcp-admin/admin/actions", { method: "POST", body: JSON.stringify({ enabled: !ov.actionsEnabled }) }), ov.actionsEnabled ? "AI actions switched off" : "AI actions switched on")}
+                className={`relative h-7 w-12 rounded-full transition-colors disabled:opacity-50 ${FOCUS} ${ov.actionsEnabled ? "bg-[#6B5C32]" : "bg-[#D9D4C7]"}`}
+              >
+                <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${ov.actionsEnabled ? "left-[22px]" : "left-0.5"}`} />
+              </button>
+            </label>
+          </section>
 
           <section id="approve" className="overflow-hidden rounded-xl border border-[#EADFC2] bg-white">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFEBE2] bg-[#FBF7EC] px-5 py-4">
@@ -564,7 +595,10 @@ export default function AiConnectorPage() {
       )}
 
       <p className="text-xs text-[#6B6B66]">
-        The AI can only read — it cannot create, change or delete anything. Your admin can see which ERP data it looked up; the chat itself stays in Claude / ChatGPT.
+        {me.actionsEnabled
+          ? "The AI reads with your permissions. It can book a meeting or send an email only after you confirm each one; it cannot change orders, money, stock or approvals, or delete anything."
+          : "The AI can only read — it cannot create, change or delete anything."}{" "}
+        Your admin can see what it looked up and did; the chat itself stays in Claude / ChatGPT.
       </p>
     </div>
   );

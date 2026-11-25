@@ -17,6 +17,13 @@
 // accepts it ONLY for that inner call, and only for GET), so every route runs
 // its own permission check against the real person; mcp-access.ts then gates
 // the module and strips cost / salary / price fields the person may not see.
+//
+// The one exception (owner 2026-11-26 「先确认再做」): propose_meeting /
+// propose_email store a pending action; confirm_action — after the person said
+// yes — makes ONE POST to the ERP's own create-meeting or Mail Center compose
+// route, as the person (innerAction). The fence is mcp-inner.ts
+// ACTION_ALLOWLIST + takeConfirmedAction, checked in auth-middleware.ts; the
+// owner's switch (default off) and the storage are lib/mcp-actions.ts.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -24,7 +31,27 @@ import type { Env } from "../worker";
 import { hasPermission } from "../lib/rbac";
 import { readCookie, SESSION_COOKIE, CSRF_COOKIE } from "../lib/auth-middleware";
 import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from "../lib/mcp-access";
-import { MCP_INNER_HEADER, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
+import { MCP_ACTION_HEADER, MCP_INNER_HEADER, allowlistedAction, armConfirmedAction, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
+import {
+  ACTIONS_OFF_MESSAGE,
+  ACTIONS_PER_DAY,
+  actionsEnabled,
+  buildEmailProposal,
+  buildMeetingProposal,
+  cancelPendingAction,
+  confirmedSince,
+  consumePendingAction,
+  createPendingAction,
+  describeOutcome,
+  finishPendingAction,
+  meetingBusyWarnings,
+  myDayStartIso,
+  readBootstrap,
+  readMailboxes,
+  actionTarget,
+  type ActionKind,
+} from "../lib/mcp-actions";
+import { FLOW_API, parseAnchorId, pickFlowAnchor, shapeFlow, soRefsFromDoc, type FlowKind } from "../lib/mcp-flow";
 import { docTitle, FETCH_API, myToday, normalisePeriod, parseFetchId, pickFields, PROMPTS, promptText, sameDaysPrevMonth, searchResults, summariseOrders, summariseProduction, summariseReceivables, summariseSales, summariseShortages, validRange } from "../lib/mcp-quick";
 import { renderServerPdf, uploadPdfAndSign, SERVER_PDF_KINDS, type PdfKind } from "../lib/mcp-pdf";
 import {
@@ -244,10 +271,11 @@ app.get("/oauth/authorize", async (c) => {
   const hidden = (n: string, v: string) => `<input type="hidden" name="${n}" value="${esc(v)}">`;
   return page(
     "Allow AI to read Hookka ERP",
-    `<h1>${app_} wants to read Hookka ERP as you</h1>
+    `<h1>${app_} wants to use Hookka ERP as you</h1>
 <p>Signed in as <b>${esc(who.name)}</b></p>
 <ul>
-<li><span class="tick" aria-hidden="true">✓</span><span><b>Read only.</b> It can look things up; it cannot create, change or delete anything.</span></li>
+<li><span class="tick" aria-hidden="true">✓</span><span><b>Looks things up.</b> It cannot change orders, money, stock or approvals, and cannot delete anything.</span></li>
+<li><span class="tick" aria-hidden="true">✓</span><span><b>Meetings and email only after you say yes.</b> If your admin allows AI actions, it can book a meeting or send an email for you — it shows you each one first and does it only when you confirm.</span></li>
 <li><span class="tick" aria-hidden="true">✓</span><span><b>Only what you can see.</b> The same pages and figures your ERP login shows you — nothing more.</span></li>
 <li><span class="tick" aria-hidden="true">✓</span><span><b>Logged.</b> Your admin can see which ERP data was looked up and when.</span></li>
 <li><span class="tick" aria-hidden="true" style="color:#6B5A2E">i</span><span>Data it reads is sent to the AI app to answer you. Stop any time in Settings › AI Connector.</span></li>
@@ -336,7 +364,7 @@ app.post("/oauth/token", async (c) => {
 type RpcReq = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 
 const INSTRUCTIONS = `You are connected to Hookka ERP (a furniture manufacturer's ERP: sales, production, MRP, warehouse, delivery, procurement, finance, HR) as the signed-in staff member.
-Everything is READ-ONLY and limited to what this person may see in the ERP; fields they may not see (cost, salary, price) are removed — never guess them.
+Reading is limited to what this person may see in the ERP; fields they may not see (cost, salary, price) are removed — never guess them.
 ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - Sales (this month, a month, quarter or year; by customer, top products, daily, trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"}.
 - Production (production revenue, by department, daily, top products, units completed, workforce, backlog; compared with the same days last month): production_summary {from, to} (default: this month to today).
@@ -344,7 +372,9 @@ ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - A document by number or a customer / product name: search {query}, then fetch {id} for the full record.
 Only when no quick answer fits: list_modules → list_endpoints → erp_get. With erp_get pass "fields" (only the keys you need) and query filters (from/to YYYY-MM-DD, page/limit, search) to keep replies small.
 Money in the ERP is integer sen (RM × 100) unless a field says RM. Dates are Malaysia time.
-For a PDF: find the document id, then get_pdf (delivery orders and invoices come back as a 15-minute download link; sales and purchase orders as a link to the ERP page). Give the person the link.
+A document's chain (sales order → production orders → job cards → delivery orders → invoices → payments, or back from any of them): document_flow {number_or_id}.
+For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
+ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. Nothing else can be changed: no orders, money, stock, approvals or deletes.
 If a call says "not available to your role", tell the user they do not have permission for that data.`;
 
 const TOOLS = [
@@ -418,7 +448,7 @@ const TOOLS = [
   {
     name: "get_pdf",
     title: "Get a document's PDF",
-    description: "The PDF of a delivery order or invoice — the same file the ERP's Download PDF button makes — as a download link valid for 15 minutes. For a sales order or purchase order it returns a link to the ERP page instead (press PDF there). Get the document's id first (erp_get / search).",
+    description: "The PDF of a sales order, delivery order or invoice — the same file the ERP's Download PDF button makes — as a download link valid for 15 minutes. For a purchase order it returns a link to the ERP page instead (press PDF there). Get the document's id first (erp_get / search).",
     inputSchema: {
       type: "object",
       properties: {
@@ -479,6 +509,69 @@ const TOOLS = [
     description: "The full record for an id returned by search (e.g. \"sales_order:abc123\"): a sales order with its lines, an invoice, a customer…",
     inputSchema: { type: "object", properties: { id: { type: "string", description: "An id from search" } }, required: ["id"], additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "document_flow",
+    title: "Document flow (SO → production → DO → invoice → payment)",
+    description: "The whole chain around one document, in ONE call: its sales order, production orders and job cards, delivery orders, invoices and payments — each with number, status, date, amount (RM) and its ERP link. Give a sales order, production order, delivery order or invoice number (or an id from search).",
+    inputSchema: {
+      type: "object",
+      properties: { number_or_id: { type: "string", description: "e.g. SO-2611-376, DO-2611-102, INV-2611-088, or sales_order:abc123 from search" } },
+      required: ["number_or_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "propose_meeting",
+    title: "Propose a meeting (needs the person's yes)",
+    description: "Prepare a meeting booking in Meetings as the signed-in person. Nothing is booked yet: it checks everything a real booking checks and returns a summary and a confirmationId. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        start: { type: "string", description: "Malaysia time, e.g. 2026-11-27T15:00 (or ISO with an offset)" },
+        end: { type: "string", description: "Malaysia time. Default: one hour after start." },
+        attendees: { type: "array", items: { type: "string" }, description: "Colleagues by full name or email; an outside email gets an invitation by email." },
+        room: { type: "string", description: "Meeting room name (optional)" },
+        notes: { type: "string" },
+      },
+      required: ["title", "start"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "propose_email",
+    title: "Propose an email (needs the person's yes)",
+    description: "Prepare an email from the person's Mail Center mailbox. Nothing is sent yet: it checks the recipients and the mailbox like the Send button does and returns a summary and a confirmationId. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "array", items: { type: "string" } },
+        cc: { type: "array", items: { type: "string" } },
+        subject: { type: "string" },
+        body: { type: "string", description: "Plain text" },
+        from_mailbox: { type: "string", description: "Which of the person's mailboxes to send from, if they have more than one" },
+      },
+      required: ["to", "subject", "body"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "confirm_action",
+    title: "Do a confirmed meeting / email",
+    description: "Book the meeting or send the email from propose_meeting / propose_email. ONLY after the person has seen the summary and explicitly said yes. Each confirmationId works once and only for 10 minutes.",
+    inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "cancel_action",
+    title: "Cancel a proposed meeting / email",
+    description: "Drop a proposal the person said no to (or wants changed).",
+    inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ];
 
@@ -597,6 +690,171 @@ function quickResult(summary: unknown, reads: ReadValue[]): { result: ToolResult
   return { result: text(head + JSON.stringify(summary)), status: 200, note: [...hidden].join(",") };
 }
 
+type Step = { result: ToolResult; status: number; target: string; note: string };
+
+const errText = (body: unknown): string =>
+  body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "";
+
+const SAFE_REF = /^[A-Za-z0-9._-]{1,80}$/;
+
+/** document_flow: the anchor → its sales order(s) → each chain, every read AS THE PERSON through readValue. */
+async function documentFlow(c: Context<Env>, token: string, raw: string): Promise<Step> {
+  const q = raw.trim();
+  const target = `flow:${q}`;
+  const fail = (message: string, status: number, note = ""): Step => ({ result: text(message, true), status, target, note });
+  if (!q || q.length > 80) return fail("Give a sales order, production order, delivery order or invoice number.", 400);
+  let anchor: { kind: FlowKind; id: string } | null = parseAnchorId(q);
+  if (!anchor) {
+    const sr = await readValue(c, token, "/api/search", { q, limit: 8 });
+    if (!sr.ok) return fail(sr.message, sr.status, sr.note);
+    anchor = pickFlowAnchor(sr.value, q);
+    if (!anchor) return fail(`No sales order, production order, delivery order or invoice matches "${q}".`, 404);
+  }
+  let refs: string[] = [];
+  if (anchor.kind === "sales_order" || anchor.kind === "service_order") {
+    refs = [anchor.id];
+  } else {
+    if (!SAFE_REF.test(anchor.id)) return fail("That document id cannot be read.", 400);
+    const d = await readValue(c, token, `${FLOW_API[anchor.kind]}/${anchor.id}`, undefined);
+    if (!d.ok) return fail(d.message, d.status, d.note);
+    let r = soRefsFromDoc(anchor.kind, anchor.id, d.value);
+    if (!r.refs.length && r.viaDo && SAFE_REF.test(r.viaDo)) {
+      const dd = await readValue(c, token, `/api/delivery-orders/${r.viaDo}`, undefined);
+      if (dd.ok) r = soRefsFromDoc("delivery_order", r.viaDo, dd.value);
+    }
+    refs = r.refs;
+  }
+  refs = refs.filter((x) => SAFE_REF.test(x));
+  if (!refs.length) return fail(`This ${anchor.kind.replace(/_/g, " ")} is not linked to a sales order, so there is no chain to show.`, 404);
+  const chains = await Promise.all(
+    refs.map(async (ref) => {
+      const [det, fp] = await Promise.all([
+        readValue(c, token, `/api/sales-orders/${ref}`, undefined),
+        readValue(c, token, `/api/sales-orders/${ref}/footprint`, undefined),
+      ]);
+      return { det, fp };
+    }),
+  );
+  const okChains = chains.filter((x) => x.det.ok);
+  if (!okChains.length) {
+    const f = chains[0].det;
+    return f.ok ? fail("Nothing to show.", 404) : fail(f.message, f.status, f.note);
+  }
+  const hidden = new Set<string>();
+  for (const x of okChains) if (x.det.ok) for (const k of x.det.removed) hidden.add(k);
+  const flows = okChains.map((x) => shapeFlow(x.det.ok ? x.det.value : null, x.fp.ok ? x.fp.value : null, originOf(c)));
+  const head = hidden.size ? `Fields hidden for this person: ${[...hidden].join(", ")}.\n` : "";
+  return {
+    result: text(head + JSON.stringify({ from: `${anchor.kind}:${anchor.id}`, flows, tip: "Amounts are RM; null means not shown to this person. Give the person the links." })),
+    status: 200,
+    target,
+    note: [...hidden].join(","),
+  };
+}
+
+/** propose_meeting / propose_email: validate like the real submit, store one pending action. Nothing is done yet. */
+async function proposeAction(c: Context<Env>, id: McpIdentity, token: string, kind: ActionKind, args: Record<string, unknown>): Promise<Step> {
+  let target = `propose:${kind}`;
+  const fail = (message: string, status: number): Step => ({ result: text(message, true), status, target, note: "" });
+  if (!(await actionsEnabled(c.var.DB))) return fail(ACTIONS_OFF_MESSAGE, 403);
+  let p: ReturnType<typeof buildMeetingProposal> | ReturnType<typeof buildEmailProposal>;
+  if (kind === "meeting") {
+    const bootRes = await innerGet(c, token, "/api/meetings/bootstrap");
+    const bootJson = (await bootRes.json().catch(() => null)) as unknown;
+    if (bootRes.status >= 400 || !bootJson) return fail(errText(bootJson) || "Meetings could not be reached. Please try again in a moment.", bootRes.status >= 400 ? bootRes.status : 502);
+    const boot = readBootstrap(bootJson);
+    const mp = buildMeetingProposal(args, boot);
+    if (mp.ok) {
+      // Early warning only — the hub decides clashes when the person confirms (409).
+      const calRes = await innerGet(c, token, `/api/meetings/calendar?from=${encodeURIComponent(mp.body.start)}&to=${encodeURIComponent(mp.body.end)}`);
+      if (calRes.ok) mp.warnings.push(...meetingBusyWarnings(mp.body, await calRes.json().catch(() => null), boot.people));
+    }
+    p = mp;
+  } else {
+    // The compose route's own gate, asked up front so the person hears it before saying yes.
+    if (!(await hasPermission(c, "mail-center", "create"))) return fail("Sending email is not available to your role.", 403);
+    const mbRes = await innerGet(c, token, "/api/mail-center/addresses");
+    const mbJson = (await mbRes.json().catch(() => null)) as unknown;
+    if (mbRes.status >= 400 || !mbJson) return fail(errText(mbJson) || "Mail Center could not be read.", mbRes.status >= 400 ? mbRes.status : 502);
+    p = buildEmailProposal(args, readMailboxes(mbJson), id.userId);
+  }
+  if (!p.ok) return fail(p.error, 400);
+  target = p.target;
+  const pend = await createPendingAction(c.var.DB, { tokenId: id.tokenId, userId: id.userId, kind, payload: p.body, summary: p.summary });
+  return {
+    result: text(
+      JSON.stringify({
+        confirmationId: pend.id,
+        summary: p.summary,
+        warnings: p.warnings,
+        expiresInMinutes: 10,
+        next: "Nothing has been done yet. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes; otherwise call cancel_action.",
+      }),
+    ),
+    status: 200,
+    target,
+    note: "",
+  };
+}
+
+/**
+ * The ONE write an MCP token can make: the ERP's own create-meeting / compose
+ * route, in-process, as the person. Armed for this token + method + path just
+ * before the call; auth-middleware.ts takes the arm once (mcp-inner.ts).
+ */
+async function innerAction(c: Context<Env>, id: McpIdentity, token: string, actionId: string, kind: ActionKind, body: unknown): Promise<{ status: number; body: unknown }> {
+  if (!appRef) throw new Error("MCP app not initialised");
+  const route = allowlistedAction(kind);
+  if (!route) throw new Error(`Not an allowed action: ${kind}`);
+  let ctx: unknown;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  armConfirmedAction(actionId, id.tokenId, route.method, route.path);
+  const res = await appRef.fetch(
+    new Request(originOf(c) + route.path, {
+      method: route.method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        [MCP_INNER_HEADER]: mcpInnerSecret(),
+        [MCP_ACTION_HEADER]: actionId,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    }),
+    c.env,
+    ctx,
+  );
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+/** confirm_action: switch on, under the daily cap, single-use claim, then the real route. */
+async function confirmAction(c: Context<Env>, id: McpIdentity, token: string, raw: string): Promise<Step> {
+  const cid = raw.trim();
+  let target = `confirm:${cid}`;
+  const fail = (message: string, status: number): Step => ({ result: text(message, true), status, target, note: "" });
+  if (!/^mcpa_[a-f0-9]{24}$/.test(cid)) return fail("Give the confirmationId from propose_meeting or propose_email.", 400);
+  if (!(await actionsEnabled(c.var.DB))) return fail(ACTIONS_OFF_MESSAGE, 403);
+  if ((await confirmedSince(c.var.DB, id.userId, myDayStartIso())) >= ACTIONS_PER_DAY) {
+    return fail(`You have reached today's limit of ${ACTIONS_PER_DAY} AI actions. Do it in the ERP instead, or try again tomorrow.`, 429);
+  }
+  const act = await consumePendingAction(c.var.DB, cid, id.tokenId, id.userId);
+  if (!act) return fail("That confirmation is unknown, already used, cancelled, expired (10 minutes) or not yours. Propose it again.", 404);
+  target = actionTarget(act.kind, act.payload);
+  let out: { status: number; body: unknown };
+  try {
+    out = await innerAction(c, id, token, cid, act.kind, act.payload);
+  } catch (e) {
+    out = { status: 502, body: { error: e instanceof Error ? e.message : String(e) } };
+  }
+  const d = describeOutcome(act.kind, out.status, out.body);
+  await finishPendingAction(c.var.DB, cid, out.status, d.text);
+  return { result: text(d.text, !d.ok), status: out.status, target, note: "" };
+}
+
 async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const t0 = Date.now();
   let status = 200;
@@ -607,7 +865,8 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
     if (name === "whoami") {
       const mods: string[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push(m.prefix);
-      result = text(JSON.stringify({ name: id.name, role: id.role, readableModules: mods.length, readOnly: true }));
+      const actions = await actionsEnabled(c.var.DB);
+      result = text(JSON.stringify({ name: id.name, role: id.role, readableModules: mods.length, readOnly: !actions, actions: actions ? "meetings and email, after the person confirms" : "switched off" }));
     } else if (name === "list_modules") {
       const mods: { prefix: string; module: string }[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push({ prefix: m.prefix, module: m.resources[0] });
@@ -629,7 +888,7 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
           .sort();
         result = text(JSON.stringify({ prefix: d.path, endpoints: paths.slice(0, 200) }));
       }
-    } else if (name === "get_pdf" && (args.type === "delivery-order" || args.type === "invoice")) {
+    } else if (name === "get_pdf" && (args.type === "delivery-order" || args.type === "invoice" || args.type === "sales-order")) {
       const kind = args.type as PdfKind;
       const docId = String(args.id ?? "").trim();
       target = `pdf:${kind}:${docId}`;
@@ -650,8 +909,15 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
             status = docRes.status;
           } else {
             const doc = (docJson.success && docJson.data ? docJson.data : docJson) as Record<string, unknown>;
-            const exRes = await innerGet(c, token, `${spec.api}/${encodeURIComponent(docId)}/print-extras`);
-            const exJson = (await exRes.json().catch(() => null)) as { success?: boolean; data?: Record<string, unknown> } | null;
+            // The page's second input: a DO / invoice's print-extras; a sales order's customer (its "Bill To").
+            const exPath =
+              kind === "sales-order"
+                ? doc.customerId
+                  ? `/api/customers/${encodeURIComponent(String(doc.customerId))}`
+                  : null
+                : `${spec.api}/${encodeURIComponent(docId)}/print-extras`;
+            const exRes = exPath ? await innerGet(c, token, exPath) : null;
+            const exJson = exRes ? ((await exRes.json().catch(() => null)) as { success?: boolean; data?: Record<string, unknown> } | null) : null;
             const extras = exJson?.success && exJson.data ? exJson.data : undefined;
             const { bytes, filename } = await renderServerPdf(kind, doc, extras, c.env, c.req.url);
             const url = await uploadPdfAndSign(c.env, id.orgId || "hookka", filename, bytes);
@@ -777,6 +1043,29 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
           note = [...r.removed].join(",");
         }
       }
+    } else if (name === "document_flow") {
+      const r = await documentFlow(c, token, String(args.number_or_id ?? args.number ?? args.id ?? ""));
+      result = r.result;
+      status = r.status;
+      note = r.note;
+      target = r.target;
+    } else if (name === "propose_meeting" || name === "propose_email") {
+      const r = await proposeAction(c, id, token, name === "propose_meeting" ? "meeting" : "email", args);
+      result = r.result;
+      status = r.status;
+      target = r.target;
+    } else if (name === "confirm_action") {
+      const r = await confirmAction(c, id, token, String(args.confirmationId ?? ""));
+      result = r.result;
+      status = r.status;
+      target = r.target;
+      note = r.note;
+    } else if (name === "cancel_action") {
+      const cid = String(args.confirmationId ?? "").trim();
+      target = `cancel:${cid}`;
+      const ok = /^mcpa_[a-f0-9]{24}$/.test(cid) && (await cancelPendingAction(c.var.DB, cid, id.tokenId, id.userId));
+      result = ok ? text("Cancelled. Nothing was booked or sent.") : text("Nothing to cancel: that confirmation is unknown, already used or not yours.", true);
+      status = ok ? 200 : 404;
     } else if (name === "erp_get") {
       const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).map(String).filter(Boolean).slice(0, 40) : [];
       const r = await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown>) ?? undefined, fields);

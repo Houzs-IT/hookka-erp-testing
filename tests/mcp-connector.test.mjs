@@ -70,13 +70,16 @@ test("OAuth helpers: PKCE S256 = base64url(sha256(verifier)) and redirect URIs",
   assert.equal(store.appLabel("ChatGPT"), "ChatGPT");
 });
 
-test("an MCP token is read-only and only accepted on the connector's own in-process call", () => {
+test("an MCP token is read-only (except a confirmed, allowlisted action) and only accepted on the connector's own in-process call", () => {
   const mw = read("src/api/lib/auth-middleware.ts");
   const at = mw.indexOf("if (!cookieToken && token.startsWith(MCP_TOKEN_PREFIX)) {");
   assert.ok(at > 0);
   const block = mw.slice(at, mw.indexOf("return next();", at));
   assert.match(block, /if \(!isMcpInner\(c\.req\.header\(MCP_INNER_HEADER\)\)\) \{\n\s+return c\.json\(\{ success: false, error: "AI connector tokens are only accepted through \/api\/mcp" \}, 403\);/);
-  assert.match(block, /if \(c\.req\.method !== "GET" && c\.req\.method !== "HEAD"\) \{\n\s+return c\.json\(\{ success: false, error: "The AI connector is read-only" \}, 403\);/);
+  // A non-GET needs the action header AND the one-shot armed action for this token / method / path
+  // (mcp-inner.ts takeConfirmedAction, which also checks ACTION_ALLOWLIST) — tests/mcp-actions.test.mjs.
+  assert.match(block, /const mcpWrite = c\.req\.method !== "GET" && c\.req\.method !== "HEAD";\n\s+if \(mcpWrite && !c\.req\.header\(MCP_ACTION_HEADER\)\) \{\n\s+return c\.json\(\{ success: false, error: "The AI connector is read-only" \}, 403\);/);
+  assert.match(block, /if \(mcpWrite && !takeConfirmedAction\(c\.req\.header\(MCP_ACTION_HEADER\), id\.tokenId, c\.req\.method, path\)\) \{\n\s+return c\.json\(\{ success: false, error: "The AI connector is read-only" \}, 403\);/);
   assert.ok(at < mw.indexOf("// -------- CSRF: double-submit cookie"), "checked before the session lookup");
   // a password reset / deactivation also kills the AI app's tokens
   assert.match(mw, /await revokeUserTokens\(db, userId\);/);
@@ -85,12 +88,14 @@ test("an MCP token is read-only and only accepted on the connector's own in-proc
   assert.doesNotMatch(mcp, /method: "(POST|PUT|PATCH|DELETE)"/);
 });
 
-test("every tool is read-only; every call is logged; module gate + redaction run before the reply", () => {
+test("every tool but the four confirmed-action tools is read-only; every call is logged; module gate + redaction run before the reply", () => {
   const mcp = read("src/api/routes/mcp.ts");
   const tools = mcp.slice(mcp.indexOf("const TOOLS = ["), mcp.indexOf("];", mcp.indexOf("const TOOLS = [")));
   const names = [...tools.matchAll(/name: "([a-z_]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(names.sort(), ["erp_get", "erp_link", "fetch", "get_pdf", "list_endpoints", "list_modules", "material_shortages", "order_backlog", "production_summary", "receivables_summary", "sales_summary", "search", "whoami"]);
-  assert.equal((tools.match(/readOnlyHint: true/g) ?? []).length, names.length);
+  assert.deepEqual(names.sort(), ["cancel_action", "confirm_action", "document_flow", "erp_get", "erp_link", "fetch", "get_pdf", "list_endpoints", "list_modules", "material_shortages", "order_backlog", "production_summary", "propose_email", "propose_meeting", "receivables_summary", "sales_summary", "search", "whoami"]);
+  const actionTools = ["cancel_action", "confirm_action", "propose_email", "propose_meeting"];
+  assert.equal((tools.match(/readOnlyHint: true/g) ?? []).length, names.length - actionTools.length);
+  assert.equal((tools.match(/readOnlyHint: false/g) ?? []).length, actionTools.length);
   // Every read — erp_get and the quick answers — goes through readValue.
   const rd = mcp.slice(mcp.indexOf("async function readValue("));
   const gate = rd.indexOf("if (!(await canAny(c, d.resources))) {");

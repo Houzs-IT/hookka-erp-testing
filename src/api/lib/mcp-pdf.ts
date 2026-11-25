@@ -8,18 +8,22 @@
 // is the one they would download. Uploaded to private storage and returned as a
 // signed link that expires after PDF_LINK_TTL_S.
 //
-// v1: delivery orders and invoices (the documents whose page already uses this
-// generator). Sales / purchase orders still print through browser-only jsPDF
-// templates; the connector answers those with a link to the ERP page until
-// their templates run server-side (docs/plans/mcp-connector.md §6).
+// Delivery orders, invoices and (2026-11-26) sales orders — the SO page's
+// Download PDF already renders through this same pdf-lib generator
+// (generate-so-pdf.ts → renderUnifiedSalesOrderBytes), so the server builds it
+// with the very same functions, fed GET /api/sales-orders/:id and the
+// customer's company address (the page's "Bill To", GET /api/customers/:id).
+// Purchase orders still print through a browser-only jsPDF + autotable
+// template (generate-purchase-order-pdf.ts); the connector answers those with
+// a link to the ERP page — not a clean port, see docs/plans/mcp-connector.md.
 // Known difference: a DO's POD photo pages (browser-only) are not appended.
 // ---------------------------------------------------------------------------
 import { buildUnifiedDocPdf } from "./unified-do-invoice-pdf";
-import { buildUnifiedDoData, buildUnifiedInvoiceData } from "../../lib/build-unified-doc-data";
+import { buildUnifiedDoData, buildUnifiedInvoiceData, buildUnifiedSalesOrderData } from "../../lib/build-unified-doc-data";
 import { HOOKKA_LOGO_PNG_BASE64 } from "./hookka-logo-base64";
 import { workerCjkFontLoader } from "./worker-cjk-font";
 import { isCancelledStatus } from "../../lib/pdf-cancelled-stamp";
-import { doInputFromOrder, invoiceInputFromInvoice } from "../../lib/unified-doc-download";
+import { doInputFromOrder, invoiceInputFromInvoice, salesOrderInputFromOrder } from "../../lib/unified-doc-download";
 import { putFile, signedDownloadUrl } from "./supabase-storage";
 import { pdfFileName } from "../../lib/pdf-preview";
 
@@ -27,10 +31,11 @@ export const PDF_LINK_TTL_S = 15 * 60;
 export const PDF_BUCKET = "hookka-files";
 export const PDF_PREFIX = "mcp-exports";
 
-export type PdfKind = "delivery-order" | "invoice";
+export type PdfKind = "delivery-order" | "invoice" | "sales-order";
 export const SERVER_PDF_KINDS: Record<PdfKind, { api: string; label: string }> = {
   "delivery-order": { api: "/api/delivery-orders", label: "DO" },
   invoice: { api: "/api/invoices", label: "INV" },
+  "sales-order": { api: "/api/sales-orders", label: "SO" },
 };
 
 type Rec = Record<string, unknown>;
@@ -43,6 +48,15 @@ export async function renderServerPdf(
   requestUrl: string,
 ): Promise<{ bytes: Uint8Array; filename: string }> {
   const opts = { loadCjkFont: workerCjkFontLoader(env, requestUrl) };
+  if (kind === "sales-order") {
+    // extras = the customer record; its companyAddress is the page's "Bill To".
+    const billAddress = typeof extras?.companyAddress === "string" && extras.companyAddress ? extras.companyAddress : undefined;
+    const bytes = await buildUnifiedDocPdf(
+      { ...buildUnifiedSalesOrderData(salesOrderInputFromOrder(doc as never, billAddress), HOOKKA_LOGO_PNG_BASE64), cancelled: isCancelledStatus(doc.status as string) },
+      opts,
+    );
+    return { bytes, filename: pdfFileName(doc.companySOId as string, doc.customerName as string, "SO") };
+  }
   if (kind === "delivery-order") {
     const bytes = await buildUnifiedDocPdf(
       { ...buildUnifiedDoData(doInputFromOrder(doc as never, extras as never), HOOKKA_LOGO_PNG_BASE64), cancelled: isCancelledStatus(doc.status as string) },
