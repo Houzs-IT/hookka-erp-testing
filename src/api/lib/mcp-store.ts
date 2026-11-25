@@ -292,7 +292,7 @@ export async function refreshTokens(db: Db, refreshToken: string, clientId: stri
   return { accessToken, refreshToken: newRefresh, expiresIn: Math.floor(ACCESS_TTL_MS / 1000), tokenId: str(r, "id") };
 }
 
-export type McpIdentity = { tokenId: string; userId: string; clientId: string; role: string; orgId: string | null };
+export type McpIdentity = { tokenId: string; userId: string; clientId: string; role: string; orgId: string | null; name: string };
 
 /**
  * The person behind an MCP access token — or null when the token is unknown,
@@ -304,7 +304,8 @@ export async function resolveAccessToken(db: Db, token: string): Promise<McpIden
   const r = await db
     .prepare(
       `SELECT t.id AS token_id, t.user_id AS user_id, t.client_id AS client_id, t.last_used_at AS last_used_at,
-              u.role AS role, u.isActive AS isActive, u.orgId AS orgId
+              u.role AS role, u.isActive AS isActive, u.orgId AS orgId,
+              u.displayName AS display_name, u.email AS email
          FROM mcp_tokens t
          JOIN users u ON u.id = t.user_id
         WHERE t.access_hash = ? AND t.revoked_at IS NULL AND t.access_expires_at > ?
@@ -320,6 +321,9 @@ export async function resolveAccessToken(db: Db, token: string): Promise<McpIden
     clientId: str(r, "client_id"),
     role: str(r, "role").toUpperCase(),
     orgId: str(r, "orgId", "orgid", "org_id") || null,
+    // Read on the same row that authenticated the token (whoami used a second
+    // query that came back without the person's name — BUG-2026-11-25-558).
+    name: str(r, "display_name", "displayName", "displayname").trim() || str(r, "email"),
   };
   if (!(await hasMcpAccess(db, id.userId, id.role))) return null;
   // last-used, at most once a minute per token
