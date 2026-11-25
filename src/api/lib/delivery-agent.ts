@@ -83,11 +83,11 @@ export function ensureDeliveryAgentTables(db: DbLike): Promise<void> {
       // try/catches so "duplicate column" is skipped silently). due_date drives
       // the auto-expire; do_count/drop_count/driver/recipients feed the new
       // "one truck run" proposal card.
-      `ALTER TABLE delivery_proposals ADD COLUMN due_date TEXT`,
-      `ALTER TABLE delivery_proposals ADD COLUMN do_count INTEGER NOT NULL DEFAULT 0`,
-      `ALTER TABLE delivery_proposals ADD COLUMN drop_count INTEGER NOT NULL DEFAULT 0`,
-      `ALTER TABLE delivery_proposals ADD COLUMN driver TEXT`,
-      `ALTER TABLE delivery_proposals ADD COLUMN recipients TEXT`,
+      `ALTER TABLE delivery_proposals ADD COLUMN IF NOT EXISTS due_date TEXT`,
+      `ALTER TABLE delivery_proposals ADD COLUMN IF NOT EXISTS do_count INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE delivery_proposals ADD COLUMN IF NOT EXISTS drop_count INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE delivery_proposals ADD COLUMN IF NOT EXISTS driver TEXT`,
+      `ALTER TABLE delivery_proposals ADD COLUMN IF NOT EXISTS recipients TEXT`,
       `CREATE INDEX IF NOT EXISTS idx_delivery_proposals_status
          ON delivery_proposals(status, generated_at DESC)`,
       `CREATE INDEX IF NOT EXISTS idx_delivery_proposals_kind

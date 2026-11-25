@@ -31,7 +31,7 @@ import {
 } from "../../lib/attendance-rules";
 import { resolvePayRulesAsOf, toAttendanceRules } from "../../lib/pay-rules";
 import { loadPayRuleVersions } from "./pay-rules-store";
-import { memoizeSelfApply } from "./self-apply";
+import { memoizeSelfApply, runSelfApply } from "./self-apply";
 
 // D1-compat shape (the SupabaseAdapter installed as c.var.DB). Declared locally
 // so this stays pure + unit-testable with a mock DB.
@@ -64,11 +64,10 @@ const MIN_DOCK_HOURS = 0.05; // 3 minutes
 let _sourceColMig: Promise<void> | null = null;
 export function ensureDeductionSourceColumn(db: DeductDbLike): Promise<void> {
   return memoizeSelfApply(() => _sourceColMig, (p) => { _sourceColMig = p; }, async () => {
-    await db
-      .prepare(
-        "ALTER TABLE payroll_hour_deductions ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'MANUAL'",
-      )
-      .run();
+    // runSelfApply skips it once the column is there (BUG-2026-11-24-556).
+    await runSelfApply(db, "attendance-deduct.source", [
+      "ALTER TABLE payroll_hour_deductions ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'MANUAL'",
+    ]);
   });
 }
 

@@ -20,7 +20,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
-import { memoizeSelfApply } from "../lib/self-apply";
+import { memoizeSelfApply, runSelfApply } from "../lib/self-apply";
 import { removeStoredFile } from "./files";
 import {
   personKey,
@@ -70,12 +70,12 @@ export function _resetOrgReportingMigForTests(): void {
 let _photoMig: Promise<void> | null = null;
 function ensureOrgPhotoColumns(db: D1Database): Promise<void> {
   return memoizeSelfApply(() => _photoMig, (p) => { _photoMig = p; }, async () => {
-    await db
-      .prepare('ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_file_id TEXT')
-      .run();
-    await db
-      .prepare('ALTER TABLE workers ADD COLUMN IF NOT EXISTS photo_file_id TEXT')
-      .run();
+    // runSelfApply skips a column already there — no ACCESS EXCLUSIVE lock on
+    // users / workers per cold request (BUG-2026-11-24-556).
+    await runSelfApply(db, "org-chart.photo", [
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_file_id TEXT',
+      'ALTER TABLE workers ADD COLUMN IF NOT EXISTS photo_file_id TEXT',
+    ]);
   });
 }
 
