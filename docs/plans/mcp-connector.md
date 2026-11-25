@@ -42,6 +42,20 @@ the page's figures.
 | `search` | Global search across SO / customers / products / POs … | `GET /api/search` |
 | `whoami` | Who I am connected as, my role, what I may read | `/api/auth/me/permissions` |
 
+**Quick answers (2026-11-25, owner: "search 资料有点慢").** `sales_summary {period}` and
+`production_summary {from, to}` answer the commonest questions in ONE call with a summary of a
+few hundred characters (before: list_modules → list_endpoints → erp_get, and a 24–60k-character
+reply). They read the same endpoints the Dashboard reads, as the person, through `readValue`, so
+the module gate and redaction are unchanged. `erp_get` also takes `fields` to keep only the keys
+needed, and its cap dropped to 30k. The instructions now tell the AI to try a quick answer first.
+
+**search / fetch (2026-11-25).** ChatGPT outside Developer Mode only accepts a connector with a
+`search` and a `fetch` tool, and deep research uses only those two
+(https://developers.openai.com/api/docs/mcp). `search {query}` returns `{results:[{id,title,url}]}`
+from `/api/search` (id = `<kind>:<row id>`); `fetch {id}` opens the record at the kind's detail
+endpoint (`FETCH_API`) through `readValue`. **Prompts:** `prompts/list` offers three ready-made
+questions (monthly sales review, production vs last month, find a document).
+
 "The whole system" = every module's GET endpoints, through `erp_get`; the catalog tells the
 model which endpoint answers which question (production revenue, department output, MRP /
 stock status, orders, delivery, invoices, payroll for those allowed, …).

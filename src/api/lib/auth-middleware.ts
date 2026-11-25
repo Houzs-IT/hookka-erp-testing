@@ -23,8 +23,8 @@
 // ---------------------------------------------------------------------------
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../worker";
-import { MCP_TOKEN_PREFIX, resolveAccessToken, revokeUserTokens } from "./mcp-store";
-import { MCP_INNER_HEADER, isMcpInner } from "./mcp-inner";
+import { MCP_TOKEN_PREFIX, resolveAccessToken, revokeUserTokens, type McpIdentity } from "./mcp-store";
+import { MCP_INNER_HEADER, isMcpInner, recallVerified } from "./mcp-inner";
 
 // Exact-match endpoints that always bypass the dashboard auth gate.
 export const PUBLIC_PATHS = [
@@ -421,7 +421,8 @@ export const authMiddleware: MiddlewareHandler<Env> = async (c, next) => {
     if (c.req.method !== "GET" && c.req.method !== "HEAD") {
       return c.json({ success: false, error: "The AI connector is read-only" }, 403);
     }
-    const id = await resolveAccessToken(c.var.DB, token).catch(() => null);
+    // Verified at the door of this same request (routes/mcp.ts); else check now.
+    const id = recallVerified<McpIdentity>(token) ?? (await resolveAccessToken(c.var.DB, token).catch(() => null));
     if (!id) return c.json({ success: false, error: "Unauthorized" }, 401);
     const setVar = (c as unknown as { set: (k: string, v: unknown) => void }).set;
     setVar.call(c, "userId", id.userId);

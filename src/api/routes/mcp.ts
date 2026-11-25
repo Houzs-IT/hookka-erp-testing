@@ -24,7 +24,8 @@ import type { Env } from "../worker";
 import { hasPermission } from "../lib/rbac";
 import { readCookie, SESSION_COOKIE, CSRF_COOKIE } from "../lib/auth-middleware";
 import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from "../lib/mcp-access";
-import { MCP_INNER_HEADER, mcpInnerSecret } from "../lib/mcp-inner";
+import { MCP_INNER_HEADER, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
+import { docTitle, FETCH_API, myToday, normalisePeriod, parseFetchId, pickFields, PROMPTS, promptText, sameDaysPrevMonth, searchResults, summariseProduction, summariseSales, validRange } from "../lib/mcp-quick";
 import { renderServerPdf, uploadPdfAndSign, SERVER_PDF_KINDS, type PdfKind } from "../lib/mcp-pdf";
 import {
   consumeCode,
@@ -60,7 +61,7 @@ export function mcpAppFetch(req: Request, env: unknown, ctx?: unknown): Promise<
 }
 
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
-export const MAX_RESULT_CHARS = 60_000;
+export const MAX_RESULT_CHARS = 30_000;
 const SERVER_INFO = { name: "hookka-erp", title: "Hookka ERP", version: "1.0.0" };
 
 const originOf = (c: Context<Env>): string => new URL(c.req.url).origin;
@@ -336,13 +337,41 @@ type RpcReq = { jsonrpc?: string; id?: string | number | null; method?: string; 
 
 const INSTRUCTIONS = `You are connected to Hookka ERP (a furniture manufacturer's ERP: sales, production, MRP, warehouse, delivery, procurement, finance, HR) as the signed-in staff member.
 Everything is READ-ONLY and limited to what this person may see in the ERP; fields they may not see (cost, salary, price) are removed — never guess them.
-Start with list_modules or list_endpoints to find the right endpoint, then erp_get. Use query parameters (from/to dates YYYY-MM-DD, page/limit, search) to keep answers small.
-Money in the ERP is integer sen (RM × 100) unless a field says otherwise. Dates are Malaysia time.
-Useful endpoints: /api/working-hour-entries/production-revenue?from=&to= (production revenue + byDeptCategory department output), /api/mrp/plan and /api/mrp/stock-status (materials short / waiting PO / ready), /api/production-orders, /api/sales-orders, /api/delivery-orders, /api/search?q=.
+ANSWER FAST — use a quick answer first, it is one call and already summarised:
+- Sales (this month, a month, quarter or year; by customer, top products, daily, trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"}.
+- Production (production revenue, by department, daily, top products, units completed, workforce, backlog; compared with the same days last month): production_summary {from, to} (default: this month to today).
+- A document by number or a customer / product name: search {query}, then fetch {id} for the full record.
+Only when no quick answer fits: list_modules → list_endpoints → erp_get. With erp_get pass "fields" (only the keys you need) and query filters (from/to YYYY-MM-DD, page/limit, search) to keep replies small.
+Money in the ERP is integer sen (RM × 100) unless a field says RM. Dates are Malaysia time.
 For a PDF: find the document id, then get_pdf (delivery orders and invoices come back as a 15-minute download link; sales and purchase orders as a link to the ERP page). Give the person the link.
 If a call says "not available to your role", tell the user they do not have permission for that data.`;
 
 const TOOLS = [
+  {
+    name: "sales_summary",
+    title: "Sales summary (quick answer)",
+    description: "Sales for a month, quarter or year in ONE call: sales orders, delivered and invoiced (RM), change vs the previous month, units sold, by customer, top bedframes and sofa models, daily figures and a 6-month trend. Same numbers as the Dashboard.",
+    inputSchema: {
+      type: "object",
+      properties: { period: { type: "string", description: "YYYY-MM, YYYY-Qn or YYYY. Default: this month." } },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "production_summary",
+    title: "Production summary (quick answer)",
+    description: "Production for a date range in ONE call: production revenue (RM) by category and by department, compared with the same days last month, daily figures, top products, units completed, workforce and today's backlog. Default range: this month to today.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "YYYY-MM-DD. Default: the 1st of this month." },
+        to: { type: "string", description: "YYYY-MM-DD. Default: today." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
   {
     name: "whoami",
     title: "Who am I connected as",
@@ -378,6 +407,7 @@ const TOOLS = [
       properties: {
         path: { type: "string", description: "Endpoint path without query string, e.g. /api/working-hour-entries/production-revenue" },
         query: { type: "object", description: "Query parameters, e.g. {\"from\":\"2026-11-01\",\"to\":\"2026-11-24\"}", additionalProperties: { type: ["string", "number", "boolean"] } },
+        fields: { type: "array", items: { type: "string" }, description: "Only keep these keys (at any depth), e.g. [\"soNo\",\"customerName\",\"totalSen\"]. Makes big replies small and fast." },
       },
       required: ["path"],
       additionalProperties: false,
@@ -417,8 +447,15 @@ const TOOLS = [
   {
     name: "search",
     title: "Search the ERP",
-    description: "Global search across sales orders, customers, products, production and purchase orders.",
-    inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"], additionalProperties: false },
+    description: "Find sales orders, delivery orders, invoices, purchase orders, production orders, customers, products, suppliers and more by number or name. Returns ids to open with fetch.",
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "A document number, customer, product or supplier name" } }, required: ["query"], additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "fetch",
+    title: "Open a search result",
+    description: "The full record for an id returned by search (e.g. \"sales_order:abc123\"): a sales order with its lines, an invoice, a customer…",
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "An id from search" } }, required: ["id"], additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
 ];
@@ -468,15 +505,14 @@ async function innerGet(c: Context<Env>, token: string, pathWithQuery: string): 
   );
 }
 
-async function readEndpoint(
-  c: Context<Env>,
-  id: McpIdentity,
-  token: string,
-  rawPath: string,
-  query: Record<string, unknown> | undefined,
-): Promise<{ result: ToolResult; status: number; note: string; target: string }> {
+type ReadValue =
+  | { ok: true; status: number; value: unknown; removed: Set<string>; target: string }
+  | { ok: false; status: number; message: string; note: string; target: string };
+
+/** Read one endpoint as the person: gated, then redacted. Shared by erp_get and the quick answers. */
+async function readValue(c: Context<Env>, token: string, rawPath: string, query: Record<string, unknown> | undefined): Promise<ReadValue> {
   const d = classifyPath(rawPath);
-  if (!d.ok) return { result: text(d.reason, true), status: 400, note: "blocked path", target: rawPath };
+  if (!d.ok) return { ok: false, status: 400, message: d.reason, note: "blocked path", target: rawPath };
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v === undefined || v === null) continue;
@@ -485,32 +521,58 @@ async function readEndpoint(
   }
   const target = d.path + (qs.toString() ? `?${qs.toString()}` : "");
   if (!(await canAny(c, d.resources))) {
-    return { result: text(`Not available to your role: you do not have read permission for ${d.resources.join(" / ")}.`, true), status: 403, note: "no permission", target };
+    return { ok: false, status: 403, message: `Not available to your role: you do not have read permission for ${d.resources.join(" / ")}.`, note: "no permission", target };
   }
   const res = await innerGet(c, token, target);
   const ctype = res.headers.get("content-type") ?? "";
   if (!ctype.includes("json")) {
-    return { result: text(`This endpoint returns a file (${ctype || "unknown type"}), not data. Open it in the ERP instead.`, true), status: res.status, note: "non-json", target };
+    return { ok: false, status: res.status, message: `This endpoint returns a file (${ctype || "unknown type"}), not data. Open it in the ERP instead.`, note: "non-json", target };
   }
-  const body = (await res.json().catch(() => null)) as unknown;
-  if (res.status === 403) return { result: text("Not available to your role.", true), status: 403, note: "no permission", target };
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch (e) {
+    return { ok: false, status: 502, message: `The ERP sent a reply that could not be read (HTTP ${res.status}).`, note: `unreadable: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120), target };
+  }
+  if (res.status === 403) return { ok: false, status: 403, message: "Not available to your role.", note: "no permission", target };
   if (res.status >= 400) {
     const msg = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : `HTTP ${res.status}`;
-    return { result: text(`The ERP answered: ${msg}`, true), status: res.status, note: msg.slice(0, 120), target };
+    return { ok: false, status: res.status, message: `The ERP answered: ${msg}`, note: msg.slice(0, 120), target };
   }
   const redact = makeRedactor(await permLookup(c), d.resources);
   const { value, removed } = redact(body);
-  let out = JSON.stringify(value);
+  return { ok: true, status: res.status, value, removed, target };
+}
+
+async function readEndpoint(
+  c: Context<Env>,
+  token: string,
+  rawPath: string,
+  query: Record<string, unknown> | undefined,
+  fields: string[] = [],
+): Promise<{ result: ToolResult; status: number; note: string; target: string }> {
+  const r = await readValue(c, token, rawPath, query);
+  if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target: r.target };
+  let out = JSON.stringify(pickFields(r.value, fields));
   let cut = false;
   if (out.length > MAX_RESULT_CHARS) {
     out = out.slice(0, MAX_RESULT_CHARS);
     cut = true;
   }
   const notes: string[] = [];
-  if (removed.size) notes.push(`Fields hidden for this person: ${[...removed].join(", ")}.`);
-  if (cut) notes.push(`Reply cut at ${MAX_RESULT_CHARS} characters — narrow it with query parameters (dates, page/limit, search).`);
-  void id;
-  return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: res.status, note: [...removed].join(","), target };
+  if (r.removed.size) notes.push(`Fields hidden for this person: ${[...r.removed].join(", ")}.`);
+  if (cut) notes.push(`Reply cut at ${MAX_RESULT_CHARS} characters — pass "fields" and narrow it with query parameters (dates, page/limit, search), or use a quick answer.`);
+  return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: r.status, note: [...r.removed].join(","), target: r.target };
+}
+
+/** A quick answer: the summary as JSON, or the first refusal / error in plain words. */
+function quickResult(summary: unknown, reads: ReadValue[]): { result: ToolResult; status: number; note: string } {
+  const failed = reads.find((x) => !x.ok);
+  if (failed && !failed.ok) return { result: text(failed.message, true), status: failed.status, note: failed.note };
+  const hidden = new Set<string>();
+  for (const x of reads) if (x.ok) for (const k of x.removed) hidden.add(k);
+  const head = hidden.size ? `Fields hidden for this person: ${[...hidden].join(", ")}.\n` : "";
+  return { result: text(head + JSON.stringify(summary)), status: 200, note: [...hidden].join(",") };
 }
 
 async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -585,7 +647,7 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
         status = 400;
       } else {
         // Same rule as reading it: check the document opens for this person.
-        const r = await readEndpoint(c, id, token, `${spec.api}/${docId}`, undefined);
+        const r = await readEndpoint(c, token, `${spec.api}/${docId}`, undefined);
         if (r.result.isError) {
           result = r.result;
           status = r.status;
@@ -593,11 +655,85 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
           result = text(JSON.stringify({ url: `${originOf(c)}${spec.page}/${encodeURIComponent(docId)}`, how: "Open the link (sign in if asked) and press PDF / Print on the page." }));
         }
       }
-    } else if (name === "erp_get" || name === "search") {
-      const r =
-        name === "search"
-          ? await readEndpoint(c, id, token, "/api/search", { q: String(args.q ?? "") })
-          : await readEndpoint(c, id, token, String(args.path ?? ""), (args.query as Record<string, unknown>) ?? undefined);
+    } else if (name === "sales_summary") {
+      const period = normalisePeriod(args.period, myToday());
+      target = `sales:${period}`;
+      const ov = await readValue(c, token, "/api/dashboard/overview", { period });
+      const q = quickResult(ov.ok ? summariseSales(ov.value, period) : null, [ov]);
+      result = q.result;
+      status = q.status;
+      note = q.note;
+    } else if (name === "production_summary") {
+      const today = myToday();
+      const range = validRange(args.from ?? `${today.slice(0, 7)}-01`, args.to ?? today);
+      if (!range) {
+        result = text("Give from and to as YYYY-MM-DD (from before to, at most 400 days).", true);
+        status = 400;
+      } else {
+        target = `production:${range.from}..${range.to}`;
+        const prevRange = sameDaysPrevMonth(range.from, range.to);
+        const sameMonth = range.from.slice(0, 7) === range.to.slice(0, 7);
+        const [cur, prev, ov] = await Promise.all([
+          readValue(c, token, "/api/working-hour-entries/production-revenue", range),
+          readValue(c, token, "/api/working-hour-entries/production-revenue", prevRange),
+          // The Dashboard's live block (units completed, workforce, backlog) covers one month.
+          sameMonth ? readValue(c, token, "/api/dashboard/overview", { period: range.from.slice(0, 7) }) : Promise.resolve(null),
+        ]);
+        // Only the range itself must succeed; the comparison and the live block are extras.
+        const q = quickResult(
+          cur.ok ? summariseProduction(range, cur.value, prevRange, prev.ok ? prev.value : null, ov && ov.ok ? ov.value : null) : null,
+          [cur],
+        );
+        result = q.result;
+        status = q.status;
+        note = q.note;
+      }
+    } else if (name === "search") {
+      const q = String(args.query ?? args.q ?? "").trim();
+      target = `search:${q}`;
+      const r = await readValue(c, token, "/api/search", { q, limit: 8 });
+      if (!r.ok) {
+        result = text(r.message, true);
+        status = r.status;
+        note = r.note;
+      } else {
+        result = text(JSON.stringify({ results: searchResults(r.value, originOf(c)) }));
+      }
+    } else if (name === "fetch") {
+      const f = parseFetchId(args.id);
+      target = `fetch:${String(args.id ?? "")}`;
+      const api = f ? FETCH_API[f.kind] : undefined;
+      if (!f) {
+        result = text("Give an id from search, e.g. sales_order:abc123.", true);
+        status = 400;
+      } else if (!api) {
+        result = text(`A ${f.kind.replace(/_/g, " ")} has no detail record to open here; use its link from search.`, true);
+        status = 400;
+      } else {
+        const r = await readValue(c, token, `${api}/${encodeURIComponent(f.rowId)}`, undefined);
+        if (!r.ok) {
+          result = text(r.message, true);
+          status = r.status;
+          note = r.note;
+        } else {
+          let body = JSON.stringify(r.value);
+          if (body.length > MAX_RESULT_CHARS) body = body.slice(0, MAX_RESULT_CHARS);
+          const link = DOC_LINKS[f.kind.replace(/_/g, "-")]?.page;
+          result = text(
+            JSON.stringify({
+              id: `${f.kind}:${f.rowId}`,
+              title: docTitle(f.kind, r.value),
+              text: body,
+              url: link ? `${originOf(c)}${link}/${encodeURIComponent(f.rowId)}` : originOf(c),
+              metadata: { kind: f.kind, hiddenFields: [...r.removed] },
+            }),
+          );
+          note = [...r.removed].join(",");
+        }
+      }
+    } else if (name === "erp_get") {
+      const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).map(String).filter(Boolean).slice(0, 40) : [];
+      const r = await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown>) ?? undefined, fields);
       result = r.result;
       status = r.status;
       note = r.note;
@@ -627,7 +763,7 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     case "initialize": {
       const asked = String(m.params?.protocolVersion ?? "");
       const protocolVersion = MCP_PROTOCOL_VERSIONS.includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
-      return reply({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+      return reply({ protocolVersion, capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
     }
     case "ping":
       return reply({});
@@ -641,7 +777,13 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     case "resources/list":
       return reply({ resources: [] });
     case "prompts/list":
-      return reply({ prompts: [] });
+      return reply({ prompts: PROMPTS });
+    case "prompts/get": {
+      const pname = String(m.params?.name ?? "");
+      const ptext = promptText(pname, (m.params?.arguments as Record<string, unknown> | undefined) ?? {});
+      if (ptext === null) return fail(-32602, `Unknown prompt: ${pname}`);
+      return reply({ description: PROMPTS.find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
+    }
     default:
       if (isNotification || (m.method ?? "").startsWith("notifications/")) return null;
       return fail(-32601, `Method not found: ${m.method}`);
@@ -657,6 +799,9 @@ app.post("/", async (c) => {
       "WWW-Authenticate": `Bearer realm="hookka-erp", resource_metadata="${originOf(c)}/.well-known/oauth-protected-resource/api/mcp"${token ? ', error="invalid_token"' : ""}`,
     });
   }
+  // The inner calls of this request reuse this check instead of repeating it
+  // (auth-middleware.ts recallVerified) — one token lookup per lookup, not two.
+  rememberVerified(token, id);
   // Run every tool call as this person (rbac / tenant read these).
   const set = c as unknown as { set: (k: string, v: unknown) => void };
   set.set("userId", id.userId);
