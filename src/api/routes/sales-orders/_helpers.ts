@@ -467,7 +467,9 @@ export async function findIncompleteBomProducts(
   const names = new Map<string, string>();
   for (const item of items) {
     const productCode = item.productCode ?? "";
-    if (!item.productId || !productCode || names.has(productCode)) continue;
+    // A line with no productId (code not in the catalog) is checked too: the
+    // builder still makes a PO for it from the code alone (HK-0177).
+    if (!productCode || names.has(productCode)) continue;
     names.set(productCode, item.productName ?? productCode);
   }
   const empty = await findEmptyWipProducts(db, [...names.keys()]);
