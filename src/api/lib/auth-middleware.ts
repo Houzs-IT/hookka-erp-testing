@@ -24,7 +24,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../worker";
 import { MCP_TOKEN_PREFIX, resolveAccessToken, revokeUserTokens, type McpIdentity } from "./mcp-store";
-import { MCP_INNER_HEADER, isMcpInner, recallVerified } from "./mcp-inner";
+import { MCP_ACTION_HEADER, MCP_INNER_HEADER, isMcpInner, recallVerified, takeConfirmedAction } from "./mcp-inner";
 
 // Exact-match endpoints that always bypass the dashboard auth gate.
 export const PUBLIC_PATHS = [
@@ -414,16 +414,24 @@ export const authMiddleware: MiddlewareHandler<Env> = async (c, next) => {
   // and ONLY for GET: the connector is read-only by construction, and the
   // token cannot be replayed straight at /api/* to skip its module gate and
   // field redaction (owner 2026-11-25 「确保安全性问题」).
+  // The ONE exception to GET-only (owner 2026-11-26 「先确认再做」): a meeting
+  // or an email the person confirmed — inner secret + action header + an action
+  // armed for this token/method/path in this request + ACTION_ALLOWLIST, all in
+  // mcp-inner.ts takeConfirmedAction. Anything else stays 403.
   if (!cookieToken && token.startsWith(MCP_TOKEN_PREFIX)) {
     if (!isMcpInner(c.req.header(MCP_INNER_HEADER))) {
       return c.json({ success: false, error: "AI connector tokens are only accepted through /api/mcp" }, 403);
     }
-    if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    const mcpWrite = c.req.method !== "GET" && c.req.method !== "HEAD";
+    if (mcpWrite && !c.req.header(MCP_ACTION_HEADER)) {
       return c.json({ success: false, error: "The AI connector is read-only" }, 403);
     }
     // Verified at the door of this same request (routes/mcp.ts); else check now.
     const id = recallVerified<McpIdentity>(token) ?? (await resolveAccessToken(c.var.DB, token).catch(() => null));
     if (!id) return c.json({ success: false, error: "Unauthorized" }, 401);
+    if (mcpWrite && !takeConfirmedAction(c.req.header(MCP_ACTION_HEADER), id.tokenId, c.req.method, path)) {
+      return c.json({ success: false, error: "The AI connector is read-only" }, 403);
+    }
     const setVar = (c as unknown as { set: (k: string, v: unknown) => void }).set;
     setVar.call(c, "userId", id.userId);
     setVar.call(c, "userRole", id.role);

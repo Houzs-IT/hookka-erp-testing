@@ -5,7 +5,8 @@
 // up for me; Request access; Disconnect my own app.
 // Super Admin only (owner 2026-11-25 「谁有approval」 → only the owner for now):
 // overview, approve / reject requests, give / remove access, disconnect anyone,
-// the question log.
+// the question log, and the "Allow AI actions (meetings, email)" switch
+// (owner 2026-11-26, default OFF — lib/mcp-actions.ts).
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -17,6 +18,7 @@ import { ensureNotificationsUserColumn } from "./it-support";
 import { appLabel, ensureMcpTables, hasMcpAccess, issueTokens, randomToken, revokeToken, revokeUserTokens } from "../lib/mcp-store";
 import { analyseToolText, leakCheckPaths, type LeakRow } from "../lib/mcp-leak-check";
 import { mcpAppRoutes, runToolAs } from "./mcp";
+import { actionsEnabled, setActionsEnabled } from "../lib/mcp-actions";
 
 const app = new Hono<Env>();
 
@@ -87,6 +89,7 @@ app.get("/me", async (c) => {
     data: {
       allowed,
       isSuperAdmin: role(c) === "SUPER_ADMIN",
+      actionsEnabled: await actionsEnabled(db),
       connectorUrl: `${new URL(c.req.url).origin}/api/mcp`,
       connections: (toks.results ?? []).map(tokenRow),
       calls: (calls.results ?? []).map(callRow),
@@ -201,6 +204,7 @@ app.get("/admin/overview", async (c) => {
       .all<Record<string, unknown>>(),
   ]);
   const weekBy = new Map((week.results ?? []).map((r) => [s(r, "user_id", "userId"), n(r, "n")]));
+  const actionsOn = await actionsEnabled(db);
   const connections = (conns.results ?? []).map((r) => ({ ...tokenRow(r), callsWeek: weekBy.get(s(r, "user_id", "userId")) ?? 0 }));
   const apps: Record<string, number> = {};
   for (const x of connections) apps[x.app] = (apps[x.app] ?? 0) + 1;
@@ -208,6 +212,7 @@ app.get("/admin/overview", async (c) => {
     success: true,
     data: {
       connectorUrl: `${new URL(c.req.url).origin}/api/mcp`,
+      actionsEnabled: actionsOn,
       stats: {
         allowed: (allowedRows.results ?? []).length,
         connectedPeople: new Set(connections.map((x) => x.userId)).size,
@@ -322,6 +327,18 @@ app.post("/admin/revoke", async (c) => {
   else return c.json({ success: false, error: "tokenId or userId required" }, 400);
   await emitAudit(c, { resource: "ai-connector", resourceId: String(body.tokenId ?? body.userId), action: "delete", after: { disconnected: revoked } });
   return c.json({ success: true, data: { revoked } });
+});
+
+// "Allow AI actions (meetings, email)". Off by default; while off, propose_* and
+// confirm_action answer "AI actions are switched off by your admin".
+app.post("/admin/actions", async (c) => {
+  const denied = requireSuperAdmin(c);
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  if (typeof body.enabled !== "boolean") return c.json({ success: false, error: "enabled (true / false) required" }, 400);
+  await setActionsEnabled(c.var.DB, body.enabled, uid(c));
+  await emitAudit(c, { resource: "ai-connector", resourceId: "actions", action: "update", after: { actionsEnabled: body.enabled } });
+  return c.json({ success: true, data: { actionsEnabled: body.enabled } });
 });
 
 // ── leak check (Super Admin) ────────────────────────────────────────────────
