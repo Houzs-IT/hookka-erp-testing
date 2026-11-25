@@ -16,7 +16,7 @@ import { DEFAULT_ORG_ID } from "../lib/tenant";
 import { ensureNotificationsUserColumn } from "./it-support";
 import { appLabel, ensureMcpTables, hasMcpAccess, issueTokens, randomToken, revokeToken, revokeUserTokens } from "../lib/mcp-store";
 import { analyseToolText, leakCheckPaths, type LeakRow } from "../lib/mcp-leak-check";
-import { mcpAppFetch, mcpAppRoutes } from "./mcp";
+import { mcpAppRoutes, runToolAs } from "./mcp";
 
 const app = new Hono<Env>();
 
@@ -339,7 +339,7 @@ app.post("/admin/leak-check", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { userId?: unknown; offset?: unknown };
   const userId = typeof body.userId === "string" ? body.userId : "";
   const offset = Math.max(0, Number(body.offset) || 0);
-  const u = userId ? await db.prepare("SELECT id, role, isActive, displayName, email FROM users WHERE id = ?").bind(userId).first<Record<string, unknown>>() : null;
+  const u = userId ? await db.prepare("SELECT id, role, isActive, displayName, email, orgId FROM users WHERE id = ?").bind(userId).first<Record<string, unknown>>() : null;
   if (!u) return c.json({ success: false, error: "User not found" }, 404);
   const r = s(u, "role").toUpperCase();
   if (r === "SUPER_ADMIN" || r === "ADMIN") return c.json({ success: false, error: "Admins see everything — pick a staff account." }, 400);
@@ -354,32 +354,28 @@ app.post("/admin/leak-check", async (c) => {
   const page = paths.slice(offset, offset + LEAK_PAGE);
   const tok = await issueTokens(db, userId, LEAK_CLIENT_ID);
   const rows: LeakRow[] = [];
-  let ctx: unknown;
+  // The staff member's identity, exactly as the door would build it. Each call
+  // runs in THIS request with their role on the context (runToolAs) — no second
+  // trip through /api/mcp, which refused these tokens on prod (BUG-2026-11-25-559).
+  const who = {
+    tokenId: tok.tokenId,
+    userId,
+    clientId: LEAK_CLIENT_ID,
+    role: r,
+    orgId: s(u, "orgId", "orgid", "org_id") || null,
+    name: s(u, "display_name", "displayName", "displayname", "email"),
+  };
   try {
-    ctx = c.executionCtx;
-  } catch {
-    ctx = undefined;
-  }
-  try {
-    const origin = new URL(c.req.url).origin;
-    const one = (path: string, i: number): Promise<LeakRow> =>
-      mcpAppFetch(
-        new Request(`${origin}/api/mcp`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${tok.accessToken}` },
-          body: JSON.stringify({ jsonrpc: "2.0", id: i + 1, method: "tools/call", params: { name: "erp_get", arguments: { path, query: { limit: 5, page: 1 } } } }),
-        }),
-        c.env,
-        ctx,
-      )
-        .then((res) => res.json() as Promise<{ result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } }>)
-        .then((j) => analyseToolText(path, j.result?.content?.[0]?.text ?? j.error?.message ?? "", !!j.result?.isError || !!j.error))
-        .catch((e) => ({ path, outcome: "error" as const, status: e instanceof Error ? e.message : String(e), hidden: [], kept: [], keptExpected: false }));
-    // 4 at a time: stays under the per-user rate limit and the database's comfort.
-    // These are in-process tool calls (no query of their own) — the one entry in
-    // tests/no-query-in-loop.baseline.json for this file.
-    for (let i = 0; i < page.length; i += 4) {
-      rows.push(...(await Promise.all(page.slice(i, i + 4).map((p, j) => one(p, i + j)))));
+    // One at a time: the calls share this request's context (the person's role
+    // is set on it for each call). In-process tool calls, no query of their own
+    // — the one entry in tests/no-query-in-loop.baseline.json for this file.
+    for (const path of page) {
+      try {
+        const res = await runToolAs(c, who, tok.accessToken, "erp_get", { path, query: { limit: 5, page: 1 } });
+        rows.push(analyseToolText(path, res.content[0]?.text ?? "", !!res.isError));
+      } catch (e) {
+        rows.push({ path, outcome: "error", status: e instanceof Error ? e.message : String(e), hidden: [], kept: [], keptExpected: false });
+      }
     }
   } finally {
     await revokeToken(db, tok.tokenId);
