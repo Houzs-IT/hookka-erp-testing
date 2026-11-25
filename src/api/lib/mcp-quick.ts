@@ -247,3 +247,104 @@ export function pickFields(v: unknown, fields: string[]): unknown {
   };
   return walk(v, 0);
 }
+
+// ── search / fetch (the shape ChatGPT requires) ─────────────────────────────
+// ChatGPT outside Developer Mode only accepts a connector with a `search` and a
+// `fetch` tool, and deep research uses only those two: search returns
+// {results:[{id,title,url}]}, fetch returns one {id,title,text,url,metadata}.
+
+/** Search kind → its detail endpoint (fetch reads the document there). */
+export const FETCH_API: Record<string, string> = {
+  sales_order: "/api/sales-orders",
+  service_order: "/api/sales-orders",
+  delivery_order: "/api/delivery-orders",
+  invoice: "/api/invoices",
+  purchase_order: "/api/purchase-orders",
+  purchase_invoice: "/api/purchase-invoices",
+  grn: "/api/grn",
+  production_order: "/api/production-orders",
+  customer: "/api/customers",
+  product: "/api/products",
+  supplier: "/api/suppliers",
+  service_case: "/api/service-cases",
+  delivery_return: "/api/delivery-returns",
+};
+
+export type SearchHit = { id: string; title: string; url: string; text: string };
+
+/** /api/search's grouped reply → flat ChatGPT results; id = "<kind>:<row id>". */
+export function searchResults(body: unknown, origin: string): SearchHit[] {
+  const groups = arr(obj(obj(body).data).groups);
+  const out: SearchHit[] = [];
+  for (const g of groups) {
+    const kind = String(g.kind ?? "");
+    for (const it of arr(g.items)) {
+      const rid = String(it.id ?? "");
+      if (!kind || !rid) continue;
+      const href = String(it.href ?? "");
+      const sub = Array.isArray(it.sub) ? (it.sub as unknown[]).map(String).filter(Boolean) : [];
+      out.push({
+        id: `${kind}:${rid}`,
+        title: `${String(g.group ?? kind)}: ${String(it.label ?? rid)}`,
+        url: href.startsWith("/") ? origin + href : href || origin,
+        text: sub.join(" · "),
+      });
+    }
+  }
+  return out;
+}
+
+/** "sales_order:abc" → { kind, rowId } (null for anything else). */
+export function parseFetchId(raw: unknown): { kind: string; rowId: string } | null {
+  const m = /^([a-z_]{2,40}):([A-Za-z0-9._-]{1,80})$/.exec(String(raw ?? "").trim());
+  return m ? { kind: m[1], rowId: m[2] } : null;
+}
+
+/** A readable title for a fetched document. */
+export function docTitle(kind: string, doc: unknown): string {
+  const d = obj(obj(doc).data ?? doc);
+  const no = d.soNo ?? d.doNo ?? d.invoiceNo ?? d.poNo ?? d.piNo ?? d.grnNo ?? d.code ?? d.productCode ?? d.name ?? d.customerName ?? d.id;
+  return `${kind.replace(/_/g, " ")} ${String(no ?? "")}`.trim();
+}
+
+// ── prompts (ready-made questions shown in the AI app) ──────────────────────
+
+export const PROMPTS = [
+  {
+    name: "monthly_sales_review",
+    title: "Monthly sales review",
+    description: "Sales for a month: total vs last month, customers, top products, notable days.",
+    arguments: [{ name: "period", description: "YYYY-MM (default this month)", required: false }],
+  },
+  {
+    name: "production_vs_last_month",
+    title: "Production vs last month",
+    description: "Production revenue for a range against the same days last month, by department, with workforce and backlog.",
+    arguments: [
+      { name: "from", description: "YYYY-MM-DD (default 1st of this month)", required: false },
+      { name: "to", description: "YYYY-MM-DD (default today)", required: false },
+    ],
+  },
+  {
+    name: "find_document",
+    title: "Find a document",
+    description: "Find a sales order, delivery order, invoice, PO or customer by number or name and summarise it.",
+    arguments: [{ name: "number", description: "Document number, customer or product name", required: true }],
+  },
+];
+
+/** The message a prompt expands to (prompts/get). Unknown name → null. */
+export function promptText(name: string, a: Record<string, unknown>): string | null {
+  const v = (k: string) => (typeof a[k] === "string" && (a[k] as string).trim() ? (a[k] as string).trim() : "");
+  if (name === "monthly_sales_review") {
+    return `Review our sales for ${v("period") || "this month"} using sales_summary. Give the total against last month (RM and %), the top customers and products, and anything unusual in the daily figures. Keep it short, in plain language.`;
+  }
+  if (name === "production_vs_last_month") {
+    const range = v("from") && v("to") ? `from ${v("from")} to ${v("to")}` : "this month to date";
+    return `Using production_summary, compare production revenue ${range} with the same days last month. Explain the change by department and by category, and relate it to workforce (workers, outsourcing) and the backlog. Plain language, short.`;
+  }
+  if (name === "find_document") {
+    return `Find "${v("number")}" with search, open the best match with fetch, and summarise it: status, customer, items, amounts and dates. Give the ERP link.`;
+  }
+  return null;
+}

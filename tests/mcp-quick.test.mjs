@@ -12,6 +12,12 @@ import {
   summariseProduction,
   summariseSales,
   validRange,
+  searchResults,
+  parseFetchId,
+  promptText,
+  PROMPTS,
+  FETCH_API,
+  docTitle,
 } from "../src/api/lib/mcp-quick.ts";
 import { recallVerified, rememberVerified } from "../src/api/lib/mcp-inner.ts";
 
@@ -105,4 +111,22 @@ test("a verified token is reused briefly, then forgotten", () => {
   assert.deepEqual(recallVerified("hkmcp_x", 5_000), { userId: "u1" });
   assert.equal(recallVerified("hkmcp_x", 20_000), null);
   assert.equal(recallVerified("hkmcp_never", 1_000), null);
+});
+
+test("search results in the shape ChatGPT requires, and fetch ids round-trip", () => {
+  const body = { success: true, data: { groups: [{ kind: "sales_order", group: "Sales Orders", items: [{ id: "so1", label: "SO-2611-001", sub: ["Houzs Century", ""], href: "/sales/so1" }] }] } };
+  const r = searchResults(body, "https://erp.hookka.com");
+  assert.deepEqual(r, [{ id: "sales_order:so1", title: "Sales Orders: SO-2611-001", url: "https://erp.hookka.com/sales/so1", text: "Houzs Century" }]);
+  assert.deepEqual(parseFetchId(r[0].id), { kind: "sales_order", rowId: "so1" });
+  assert.equal(parseFetchId("../etc"), null);
+  assert.equal(parseFetchId("sales_order:a/b"), null);
+  assert.equal(FETCH_API.sales_order, "/api/sales-orders");
+  assert.equal(docTitle("sales_order", { data: { soNo: "SO-1" } }), "sales order SO-1");
+});
+
+test("prompts expand to a question; unknown prompt is refused", () => {
+  assert.equal(PROMPTS.length, 3);
+  assert.match(promptText("monthly_sales_review", { period: "2026-10" }), /2026-10.*sales_summary/);
+  assert.match(promptText("find_document", { number: "SO-2611-001" }), /SO-2611-001/);
+  assert.equal(promptText("nope", {}), null);
 });

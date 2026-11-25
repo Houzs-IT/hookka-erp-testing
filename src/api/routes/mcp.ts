@@ -25,7 +25,7 @@ import { hasPermission } from "../lib/rbac";
 import { readCookie, SESSION_COOKIE, CSRF_COOKIE } from "../lib/auth-middleware";
 import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from "../lib/mcp-access";
 import { MCP_INNER_HEADER, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
-import { myToday, normalisePeriod, pickFields, sameDaysPrevMonth, summariseProduction, summariseSales, validRange } from "../lib/mcp-quick";
+import { docTitle, FETCH_API, myToday, normalisePeriod, parseFetchId, pickFields, PROMPTS, promptText, sameDaysPrevMonth, searchResults, summariseProduction, summariseSales, validRange } from "../lib/mcp-quick";
 import { renderServerPdf, uploadPdfAndSign, SERVER_PDF_KINDS, type PdfKind } from "../lib/mcp-pdf";
 import {
   consumeCode,
@@ -340,7 +340,7 @@ Everything is READ-ONLY and limited to what this person may see in the ERP; fiel
 ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - Sales (this month, a month, quarter or year; by customer, top products, daily, trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"}.
 - Production (production revenue, by department, daily, top products, units completed, workforce, backlog; compared with the same days last month): production_summary {from, to} (default: this month to today).
-- A document by number or a customer / product name: search {q}.
+- A document by number or a customer / product name: search {query}, then fetch {id} for the full record.
 Only when no quick answer fits: list_modules → list_endpoints → erp_get. With erp_get pass "fields" (only the keys you need) and query filters (from/to YYYY-MM-DD, page/limit, search) to keep replies small.
 Money in the ERP is integer sen (RM × 100) unless a field says RM. Dates are Malaysia time.
 For a PDF: find the document id, then get_pdf (delivery orders and invoices come back as a 15-minute download link; sales and purchase orders as a link to the ERP page). Give the person the link.
@@ -447,8 +447,15 @@ const TOOLS = [
   {
     name: "search",
     title: "Search the ERP",
-    description: "Global search across sales orders, customers, products, production and purchase orders.",
-    inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"], additionalProperties: false },
+    description: "Find sales orders, delivery orders, invoices, purchase orders, production orders, customers, products, suppliers and more by number or name. Returns ids to open with fetch.",
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "A document number, customer, product or supplier name" } }, required: ["query"], additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "fetch",
+    title: "Open a search result",
+    description: "The full record for an id returned by search (e.g. \"sales_order:abc123\"): a sales order with its lines, an invoice, a customer…",
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "An id from search" } }, required: ["id"], additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
 ];
@@ -681,12 +688,52 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
         status = q.status;
         note = q.note;
       }
-    } else if (name === "erp_get" || name === "search") {
+    } else if (name === "search") {
+      const q = String(args.query ?? args.q ?? "").trim();
+      target = `search:${q}`;
+      const r = await readValue(c, token, "/api/search", { q, limit: 8 });
+      if (!r.ok) {
+        result = text(r.message, true);
+        status = r.status;
+        note = r.note;
+      } else {
+        result = text(JSON.stringify({ results: searchResults(r.value, originOf(c)) }));
+      }
+    } else if (name === "fetch") {
+      const f = parseFetchId(args.id);
+      target = `fetch:${String(args.id ?? "")}`;
+      const api = f ? FETCH_API[f.kind] : undefined;
+      if (!f) {
+        result = text("Give an id from search, e.g. sales_order:abc123.", true);
+        status = 400;
+      } else if (!api) {
+        result = text(`A ${f.kind.replace(/_/g, " ")} has no detail record to open here; use its link from search.`, true);
+        status = 400;
+      } else {
+        const r = await readValue(c, token, `${api}/${encodeURIComponent(f.rowId)}`, undefined);
+        if (!r.ok) {
+          result = text(r.message, true);
+          status = r.status;
+          note = r.note;
+        } else {
+          let body = JSON.stringify(r.value);
+          if (body.length > MAX_RESULT_CHARS) body = body.slice(0, MAX_RESULT_CHARS);
+          const link = DOC_LINKS[f.kind.replace(/_/g, "-")]?.page;
+          result = text(
+            JSON.stringify({
+              id: `${f.kind}:${f.rowId}`,
+              title: docTitle(f.kind, r.value),
+              text: body,
+              url: link ? `${originOf(c)}${link}/${encodeURIComponent(f.rowId)}` : originOf(c),
+              metadata: { kind: f.kind, hiddenFields: [...r.removed] },
+            }),
+          );
+          note = [...r.removed].join(",");
+        }
+      }
+    } else if (name === "erp_get") {
       const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).map(String).filter(Boolean).slice(0, 40) : [];
-      const r =
-        name === "search"
-          ? await readEndpoint(c, token, "/api/search", { q: String(args.q ?? "") })
-          : await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown>) ?? undefined, fields);
+      const r = await readEndpoint(c, token, String(args.path ?? ""), (args.query as Record<string, unknown>) ?? undefined, fields);
       result = r.result;
       status = r.status;
       note = r.note;
@@ -716,7 +763,7 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     case "initialize": {
       const asked = String(m.params?.protocolVersion ?? "");
       const protocolVersion = MCP_PROTOCOL_VERSIONS.includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
-      return reply({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+      return reply({ protocolVersion, capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
     }
     case "ping":
       return reply({});
@@ -730,7 +777,13 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     case "resources/list":
       return reply({ resources: [] });
     case "prompts/list":
-      return reply({ prompts: [] });
+      return reply({ prompts: PROMPTS });
+    case "prompts/get": {
+      const pname = String(m.params?.name ?? "");
+      const ptext = promptText(pname, (m.params?.arguments as Record<string, unknown> | undefined) ?? {});
+      if (ptext === null) return fail(-32602, `Unknown prompt: ${pname}`);
+      return reply({ description: PROMPTS.find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
+    }
     default:
       if (isNotification || (m.method ?? "").startsWith("notifications/")) return null;
       return fail(-32601, `Method not found: ${m.method}`);

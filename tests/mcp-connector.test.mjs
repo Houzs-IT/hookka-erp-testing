@@ -89,7 +89,7 @@ test("every tool is read-only; every call is logged; module gate + redaction run
   const mcp = read("src/api/routes/mcp.ts");
   const tools = mcp.slice(mcp.indexOf("const TOOLS = ["), mcp.indexOf("];", mcp.indexOf("const TOOLS = [")));
   const names = [...tools.matchAll(/name: "([a-z_]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(names.sort(), ["erp_get", "erp_link", "get_pdf", "list_endpoints", "list_modules", "production_summary", "sales_summary", "search", "whoami"]);
+  assert.deepEqual(names.sort(), ["erp_get", "erp_link", "fetch", "get_pdf", "list_endpoints", "list_modules", "production_summary", "sales_summary", "search", "whoami"]);
   assert.equal((tools.match(/readOnlyHint: true/g) ?? []).length, names.length);
   // Every read — erp_get and the quick answers — goes through readValue.
   const rd = mcp.slice(mcp.indexOf("async function readValue("));
