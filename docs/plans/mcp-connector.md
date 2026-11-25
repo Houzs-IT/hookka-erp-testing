@@ -42,6 +42,13 @@ the page's figures.
 | `search` | Global search across SO / customers / products / POs … | `GET /api/search` |
 | `whoami` | Who I am connected as, my role, what I may read | `/api/auth/me/permissions` |
 
+**Quick answers (2026-11-25, owner: "search 资料有点慢").** `sales_summary {period}` and
+`production_summary {from, to}` answer the commonest questions in ONE call with a summary of a
+few hundred characters (before: list_modules → list_endpoints → erp_get, and a 24–60k-character
+reply). They read the same endpoints the Dashboard reads, as the person, through `readValue`, so
+the module gate and redaction are unchanged. `erp_get` also takes `fields` to keep only the keys
+needed, and its cap dropped to 30k. The instructions now tell the AI to try a quick answer first.
+
 "The whole system" = every module's GET endpoints, through `erp_get`; the catalog tells the
 model which endpoint answers which question (production revenue, department output, MRP /
 stock status, orders, delivery, invoices, payroll for those allowed, …).

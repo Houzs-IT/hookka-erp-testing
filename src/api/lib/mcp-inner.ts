@@ -27,3 +27,29 @@ export function isMcpInner(headerValue: string | undefined | null): boolean {
   for (let i = 0; i < secret.length; i++) diff |= headerValue.charCodeAt(i) ^ secret.charCodeAt(i);
   return diff === 0;
 }
+
+// ── one token check per lookup ──────────────────────────────────────────────
+// routes/mcp.ts verifies the token at the door (resolveAccessToken: expiry,
+// revocation, active account, AI access) and then makes one or more inner GETs
+// for the same tool call. Those inner GETs reuse that answer for a few seconds
+// instead of querying the token again. Every new request from the AI app is
+// still checked at the door, so Disconnect / Remove stop the NEXT request.
+const VERIFIED_TTL_MS = 15_000;
+const verified = new Map<string, { id: unknown; exp: number }>();
+
+export function rememberVerified(token: string, id: unknown, now = Date.now()): void {
+  if (verified.size > 500) {
+    for (const [k, v] of verified) if (v.exp <= now) verified.delete(k);
+  }
+  verified.set(token, { id, exp: now + VERIFIED_TTL_MS });
+}
+
+export function recallVerified<T>(token: string, now = Date.now()): T | null {
+  const e = verified.get(token);
+  if (!e) return null;
+  if (e.exp <= now) {
+    verified.delete(token);
+    return null;
+  }
+  return e.id as T;
+}
