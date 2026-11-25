@@ -521,10 +521,9 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
   let result: ToolResult;
   try {
     if (name === "whoami") {
-      const u = await c.var.DB.prepare("SELECT displayName, email, role FROM users WHERE id = ?").bind(id.userId).first<Record<string, unknown>>();
       const mods: string[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push(m.prefix);
-      result = text(JSON.stringify({ name: String(u?.displayName || u?.display_name || u?.displayname || u?.email || ""), role: id.role, readableModules: mods.length, readOnly: true }));
+      result = text(JSON.stringify({ name: id.name, role: id.role, readableModules: mods.length, readOnly: true }));
     } else if (name === "list_modules") {
       const mods: { prefix: string; module: string }[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push({ prefix: m.prefix, module: m.resources[0] });
