@@ -266,7 +266,7 @@ export default function LoginPage() {
   // Already signed-in? Send them to their own home, not everyone's.
   useEffect(() => {
     if (isAuthenticated()) {
-      void landingPage().then((to) => navigate(to, { replace: true }));
+      void landingPage().then((to) => goTo(to));
     }
   }, [navigate]);
 
@@ -292,6 +292,17 @@ export default function LoginPage() {
    * role's front door alongside its permissions; ask it rather than guessing
    * here, so the landing page cannot disagree with the menu.
    */
+  // The AI Connector's sign-in step (docs/plans/mcp-connector.md) sends people
+  // here with ?next=/api/mcp/oauth/authorize?… — a SERVER page, not an app
+  // route, so it needs a full page load. Only that exact same-origin path.
+  function goTo(to: string): void {
+    if (to.startsWith("/api/mcp/oauth/authorize?")) {
+      window.location.assign(to);
+      return;
+    }
+    navigate(to, { replace: true });
+  }
+
   async function landingPage(): Promise<string> {
     const explicit = getRedirectTarget();
     if (explicit) return explicit;
@@ -410,7 +421,7 @@ export default function LoginPage() {
         // wiring it now keeps this PR focused.
       }
 
-      navigate(await landingPage(), { replace: true });
+      goTo(await landingPage());
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Network error. Please try again.",

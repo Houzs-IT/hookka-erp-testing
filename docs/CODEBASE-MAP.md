@@ -1,4 +1,5 @@
 # Hookka ERP — Codebase Map (the single authoritative map)
+> **Last verified: 2026-11-25 on branch `feat/mcp-server` (to `main`)**: the new "AI Connector (MCP)" section, read from `src/api/routes/mcp.ts`, `mcp-admin.ts`, `src/api/lib/mcp-store.ts` / `mcp-access.ts` / `mcp-inner.ts` / `mcp-pdf.ts`, the `hkmcp_` branch in `auth-middleware.ts`, `functions/.well-known/*`, `src/pages/settings/AiConnector.tsx`. Nothing else re-checked.
 > **Last verified: 2026-11-11 on branch `feat/mobile-modules-to-main` (to `main`)**: the Service Orders row (`screens/orders/`) and the New SV note on the Service Cases row of the "Mobile redesign" section, read from `src/pages/m/screens/orders/` and the commit that added it; nothing else re-checked.
 > **Last verified: 2026-11-11 on branch `feat/mobile-modules-to-main` (to `main`)**: the new "Mobile redesign" section at the end, read from the `src/pages/m` file tree and the imports in `Home.tsx`, `delivery/`, `invoice-pdf.ts`, `production-ui.ts`; nothing else on this page re-checked.
 > **Last verified: 2026-10-21 on branch `feat/bs-parent-accounts` (to `main`)**: the Balance Sheet's parent accounts — `src/lib/bs-groups.ts` (`groupBsEntries`), `BalanceSheetTab` (`renderBSSection`, levels, `buildExport`) in `src/pages/accounting/index.tsx`, `plBalanceSheetResponse` (parentCode / parentName) and `REPORT_SNAPSHOT_V` in `src/api/routes/accounting.ts`, the PDF row kind `group` in `src/lib/export-report.ts`. Nothing else re-checked.
@@ -1724,6 +1725,22 @@ the payload's `sales.orders[0].totalSen` is non-zero.
 
 **Start here:** For QC work open `src/api/routes/qc-pending.ts` + `src/pages/quality.tsx`; for warehouse/stock-scan work open `src/api/routes/public-rack-qr.ts` (the auth-bypassed stock-in flow) and `src/pages/warehouse.tsx`; for platform/admin work start at `src/api/routes/admin-health.ts`.
 
+
+## AI Connector (MCP) — added 2026-11-25
+
+Staff ask Claude / ChatGPT about the ERP with their OWN login, read-only (plan + rules: `docs/plans/mcp-connector.md`).
+
+| Piece | File | Notes |
+| --- | --- | --- |
+| MCP endpoint + OAuth | `src/api/routes/mcp.ts` | `POST /api/mcp` (JSON-RPC, stateless; tools `whoami`, `list_modules`, `list_endpoints`, `erp_get`, `search`, `get_pdf`, `erp_link`); `/api/mcp/oauth/{register,authorize,approve,token}`; `wellKnown` mounted at `/.well-known`. Registered BEFORE `authMiddleware` (own auth). A tool call re-enters the whole app as a GET with the caller's token (`innerGet`). |
+| Module gate + field redaction | `src/api/lib/mcp-access.ts` | `MCP_BLOCKED_PREFIXES` (never readable), `MCP_PREFIX_RESOURCES` (path → RBAC resource, longest prefix, unknown = closed), `makeRedactor` strips cost / salary / price keys the person lacks permission for (a key belongs to its first family). |
+| Tokens, codes, clients, access, log | `src/api/lib/mcp-store.ts` | tables `mcp_access`, `mcp_access_requests`, `mcp_oauth_clients`, `mcp_oauth_codes`, `mcp_tokens` (hashes only; access 24 h, refresh 90 d rotating), `mcp_calls`. Self-applied. |
+| Inner-call proof | `src/api/lib/mcp-inner.ts` + `auth-middleware.ts` | an `hkmcp_` bearer is honoured only with the per-isolate `x-hookka-mcp-inner` secret and only for GET/HEAD; `purgeUserSessions` also revokes MCP tokens. |
+| PDFs | `src/api/lib/mcp-pdf.ts` | DO / invoice through the same pdf-lib generator as the Download button (no POD pages), uploaded to `hookka-files/mcp-exports/<org>/`, 15-minute signed link. SO / PO (browser jsPDF) → link to the ERP page. |
+| Admin + staff page | `src/api/routes/mcp-admin.ts`, `src/pages/settings/AiConnector.tsx` (`/settings/ai-connector`, sidebar SYSTEM › AI Connector) | `/me`, `/me/request`, `/me/revoke`; Super Admin: `/admin/overview`, `/admin/requests/:id/:decision`, `/admin/access`, `/admin/revoke`. Request → bell for every Super Admin. |
+| Discovery on Pages | `functions/.well-known/oauth-protected-resource/[[path]].ts`, `functions/.well-known/oauth-authorization-server/[[path]].ts` | root paths would otherwise get the SPA shell. |
+| Login return | `src/pages/login.tsx` `goTo` | `?next=/api/mcp/oauth/authorize?…` is a server page → full load. |
+| Tests | `tests/mcp-connector.test.mjs` | gate, redaction, PKCE, read-only branch, mounting, Super-Admin-only admin. |
 
 ## Previously unmapped modules (added 2026-08-13)
 

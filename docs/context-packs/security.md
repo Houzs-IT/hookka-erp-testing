@@ -1,5 +1,7 @@
 # Context Pack: Security, Auth, and RBAC
 
+> **Last verified: 2026-11-25** (branch `feat/mcp-server`, to `main`): the "AI Connector (MCP)" section below — `src/api/routes/mcp.ts`, `src/api/lib/mcp-access.ts` / `mcp-store.ts` / `mcp-inner.ts`, the `hkmcp_` branch in `auth-middleware.ts`. Nothing else re-checked.
+
 > **Last verified: 2026-11-09** (branch `fix/security-batch`, to `main`): the "Hardening batch 2026-11-08" section below — `src/api/lib/rbac.ts` default-deny paths, `src/api/lib/user-sessions.ts` + `src/api/routes/auth-sessions.ts` (mounted `/api/auth/sessions` in `src/api/worker.ts`), `src/api/lib/text-caps.ts`, `tests/no-query-in-loop.test.mjs`. Nothing else re-checked.
 
 > **Last verified: 2026-08-13** against `src/api/lib/auth-middleware.ts` (`PUBLIC_PATHS`/`PUBLIC_PREFIXES` + 4 regex-opened paths), `rbac.ts`, `tenant.ts`, `routes/auth.ts`, `auth-oauth.ts`, `auth-totp.ts`, `users.ts` (`requireSuperAdmin`, 9 call sites), `worker-auth.ts`, `worker.ts`, and the named tests (`security-permission-matrix`, `security-public-endpoints`, `security-route-coverage`, `permissions`, `tenant-isolation`). All present.
@@ -78,3 +80,12 @@ rg -n "PUBLIC|public|worker-auth|worker token|org_id|tenant" src/api/lib src/api
 - `tests/rbac-default-deny.test.mjs` / `tests/rbac-fail-closed.test.mjs`
 - `tests/user-sessions.test.mjs`
 - Auth, session, and worker portal tests matching the changed route.
+
+
+## AI Connector (MCP) — 2026-11-25
+
+- A third credential: `hkmcp_` bearer tokens issued by `/api/mcp/oauth/token` (OAuth 2.1, PKCE S256, dynamic client registration, public clients). Only SHA-256 hashes are stored (`mcp_tokens`).
+- `authMiddleware` accepts an `hkmcp_` token ONLY on the in-process call `routes/mcp.ts` makes (header `x-hookka-mcp-inner` = per-isolate random secret, `mcp-inner.ts`) and ONLY for GET/HEAD. Replaying the token at `/api/*` from outside gets 403.
+- Every tool call runs as the person (userId / role / orgId from the token), so each route's own `requirePermission`, user overrides, tenant and customer scope apply; on top, `mcp-access.ts` refuses blocked / unmapped paths, requires `<resource>:read` for the path's module, and strips cost / salary / price keys unless the person holds the unlocking permission (owner worry: a field the page only hides in the browser).
+- Who may connect: Super Admin always; anyone else only after approval (`mcp_access`, Super Admin only). Deactivation, password reset, role change (`purgeUserSessions`) and removing access revoke the tokens.
+- The Allow page needs the ERP session cookie and a double-submit CSRF field; redirect URIs must be registered (https, or http loopback) and match exactly.

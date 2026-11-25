@@ -1,0 +1,680 @@
+// ---------------------------------------------------------------------------
+// /api/mcp — the Hookka ERP MCP connector (docs/plans/mcp-connector.md).
+//
+// Owner 2026-11-25 「我的全套系统都要有mcp」. Registered BEFORE authMiddleware in
+// worker.ts: every handler here does its own auth.
+//
+//   POST /api/mcp                    MCP Streamable HTTP (JSON-RPC, stateless),
+//                                    Bearer hkmcp_… access token.
+//   POST /api/mcp/oauth/register     OAuth dynamic client registration.
+//   GET  /api/mcp/oauth/authorize    ERP login → "Allow" page (session cookie).
+//   POST /api/mcp/oauth/approve      the Allow / Cancel form (cookie + CSRF).
+//   POST /api/mcp/oauth/token        authorization_code (PKCE S256) / refresh_token.
+//   GET  /.well-known/oauth-*        discovery (wellKnown, mounted at the root).
+//
+// Read-only and own-permissions by construction: a tool call re-enters the
+// whole app as a GET carrying the caller's MCP token (auth-middleware.ts
+// accepts it ONLY for that inner call, and only for GET), so every route runs
+// its own permission check against the real person; mcp-access.ts then gates
+// the module and strips cost / salary / price fields the person may not see.
+// ---------------------------------------------------------------------------
+import { Hono } from "hono";
+import type { Context } from "hono";
+import type { Env } from "../worker";
+import { hasPermission } from "../lib/rbac";
+import { readCookie, SESSION_COOKIE, CSRF_COOKIE } from "../lib/auth-middleware";
+import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from "../lib/mcp-access";
+import { MCP_INNER_HEADER, mcpInnerSecret } from "../lib/mcp-inner";
+import { renderServerPdf, uploadPdfAndSign, SERVER_PDF_KINDS, type PdfKind } from "../lib/mcp-pdf";
+import {
+  consumeCode,
+  createCode,
+  getClient,
+  hasMcpAccess,
+  issueTokens,
+  logCall,
+  pkceS256,
+  refreshTokens,
+  registerClient,
+  resolveAccessToken,
+  validRedirectUri,
+  type McpIdentity,
+} from "../lib/mcp-store";
+
+const app = new Hono<Env>();
+
+// The full app, for in-process tool calls. Set by worker.ts once routes exist
+// (importing worker.ts here would be circular).
+type FetchApp = { fetch: (req: Request, env: unknown, ctx?: unknown) => Response | Promise<Response>; routes?: { method: string; path: string }[] };
+let appRef: FetchApp | null = null;
+export function setMcpApp(a: FetchApp): void {
+  appRef = a;
+}
+
+export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+export const MAX_RESULT_CHARS = 60_000;
+const SERVER_INFO = { name: "hookka-erp", title: "Hookka ERP", version: "1.0.0" };
+
+const originOf = (c: Context<Env>): string => new URL(c.req.url).origin;
+
+const esc = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+// ── discovery (also mounted at /.well-known by worker.ts) ───────────────────
+
+export function protectedResourceMetadata(origin: string) {
+  return {
+    resource: `${origin}/api/mcp`,
+    authorization_servers: [origin],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["erp.read"],
+    resource_name: "Hookka ERP",
+  };
+}
+
+export function authorizationServerMetadata(origin: string) {
+  return {
+    issuer: origin,
+    authorization_endpoint: `${origin}/api/mcp/oauth/authorize`,
+    token_endpoint: `${origin}/api/mcp/oauth/token`,
+    registration_endpoint: `${origin}/api/mcp/oauth/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"],
+    scopes_supported: ["erp.read"],
+  };
+}
+
+export const wellKnown = new Hono<Env>();
+wellKnown.get("/oauth-protected-resource", (c) => c.json(protectedResourceMetadata(originOf(c))));
+wellKnown.get("/oauth-protected-resource/*", (c) => c.json(protectedResourceMetadata(originOf(c))));
+wellKnown.get("/oauth-authorization-server", (c) => c.json(authorizationServerMetadata(originOf(c))));
+wellKnown.get("/oauth-authorization-server/*", (c) => c.json(authorizationServerMetadata(originOf(c))));
+
+// ── session (the ERP login) for the authorize page ──────────────────────────
+
+type SessionUser = { userId: string; role: string; name: string; orgId: string | null };
+
+async function sessionUser(c: Context<Env>): Promise<SessionUser | null> {
+  const token = readCookie(c.req.header("cookie"), SESSION_COOKIE);
+  if (!token) return null;
+  const r = await c.var.DB.prepare(
+    `SELECT s.userId AS userId, s.expiresAt AS expiresAt, u.role AS role, u.isActive AS isActive,
+            u.orgId AS orgId, u.displayName AS displayName, u.email AS email
+       FROM user_sessions s
+       JOIN users u ON u.id = s.userId
+      WHERE s.token = ?
+      LIMIT 1`,
+  )
+    .bind(token)
+    .first<Record<string, unknown>>();
+  if (!r) return null;
+  if (Number(r.isActive ?? r.isactive) !== 1) return null;
+  if (new Date(String(r.expiresAt ?? r.expiresat ?? 0)).getTime() <= Date.now()) return null;
+  return {
+    userId: String(r.userId ?? r.userid),
+    role: String(r.role ?? "").toUpperCase(),
+    name: String(r.displayName ?? r.displayname ?? r.email ?? "your account"),
+    orgId: (r.orgId ?? r.orgid ?? null) as string | null,
+  };
+}
+
+// ── OAuth: register ─────────────────────────────────────────────────────────
+
+app.post("/oauth/register", async (c) => {
+  let body: { client_name?: unknown; redirect_uris?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_client_metadata", error_description: "JSON body required" }, 400);
+  }
+  const uris = Array.isArray(body.redirect_uris) ? body.redirect_uris.map(String) : [];
+  if (uris.length === 0 || uris.length > 5 || uris.some((u) => u.length > 500 || !validRedirectUri(u))) {
+    return c.json({ error: "invalid_redirect_uri", error_description: "1–5 https redirect URIs required" }, 400);
+  }
+  const cl = await registerClient(c.var.DB, typeof body.client_name === "string" ? body.client_name : "AI app", uris);
+  return c.json(
+    {
+      client_id: cl.clientId,
+      client_name: cl.clientName,
+      redirect_uris: cl.redirectUris,
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      client_id_issued_at: Math.floor(Date.now() / 1000),
+    },
+    201,
+  );
+});
+
+// ── OAuth: authorize (HTML) ─────────────────────────────────────────────────
+
+type AuthParams = { clientId: string; redirectUri: string; state: string; challenge: string; method: string };
+
+function readAuthParams(get: (k: string) => string | undefined): AuthParams {
+  return {
+    clientId: get("client_id") ?? "",
+    redirectUri: get("redirect_uri") ?? "",
+    state: get("state") ?? "",
+    challenge: get("code_challenge") ?? "",
+    method: get("code_challenge_method") ?? "",
+  };
+}
+
+function page(title: string, inner: string, status = 200): Response {
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+body{margin:0;background:#F6F4EF;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#1F1D1A}
+.wrap{min-height:100vh;box-sizing:border-box;padding:48px 16px;display:flex;justify-content:center;align-items:flex-start}
+.card{width:100%;max-width:480px;background:#fff;border:1px solid #E6E1D6;border-radius:16px;padding:32px;box-sizing:border-box;box-shadow:0 8px 24px rgba(31,29,26,.06)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.logo{width:44px;height:44px;border-radius:10px;background:#1F1D1A;color:#E9D9A6;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+h1{margin:0 0 8px;font-size:22px;line-height:1.3}
+p{margin:0 0 12px;font-size:14px;color:#55534E;line-height:1.5}
+ul{margin:16px 0;padding:0;list-style:none}
+li{display:flex;gap:10px;font-size:14px;line-height:1.5;margin-bottom:12px}
+li b{color:#1F1D1A}
+.tick{flex:0 0 20px;color:#1E6B3F;font-weight:700}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
+button,.btn{flex:1 1 140px;height:46px;border-radius:10px;font:600 15px Inter,system-ui,sans-serif;cursor:pointer;text-align:center;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
+.primary{border:0;background:#6B5A2E;color:#fff}
+.secondary{border:1px solid #D9D4C7;background:#fff;color:#1F1D1A}
+.small{font-size:12px;color:#6B6B66;margin-top:16px}
+a{color:#6B5A2E}
+</style></head><body><main class="wrap"><div class="card">
+<div class="brand"><div class="logo" aria-hidden="true">H</div><div><div style="font-weight:700">Hookka ERP</div></div></div>
+${inner}
+</div></main></body></html>`;
+  return new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'",
+      "Referrer-Policy": "no-referrer",
+    },
+  });
+}
+
+async function checkAuthParams(c: Context<Env>, p: AuthParams): Promise<{ ok: true; clientName: string } | { ok: false; res: Response }> {
+  if (!p.clientId || !p.redirectUri) return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>Missing client or redirect address.</p>`, 400) };
+  const cl = await getClient(c.var.DB, p.clientId);
+  if (!cl) return { ok: false, res: page("Unknown app", `<h1>Unknown app</h1><p>This AI app is not registered. Remove the connector and add it again.</p>`, 400) };
+  if (!cl.redirectUris.includes(p.redirectUri)) return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>The return address does not match this app.</p>`, 400) };
+  if (!p.challenge || p.method !== "S256") return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>This app must use PKCE (S256).</p>`, 400) };
+  return { ok: true, clientName: cl.clientName };
+}
+
+app.get("/oauth/authorize", async (c) => {
+  const p = readAuthParams((k) => c.req.query(k));
+  const chk = await checkAuthParams(c, p);
+  if (!chk.ok) return chk.res;
+  if (c.req.query("response_type") !== "code") return page("Invalid request", `<h1>Invalid request</h1><p>Only response_type=code is supported.</p>`, 400);
+
+  const who = await sessionUser(c);
+  if (!who) {
+    const here = new URL(c.req.url);
+    return c.redirect(`/login?next=${encodeURIComponent(here.pathname + here.search)}`, 302);
+  }
+  if (!(await hasMcpAccess(c.var.DB, who.userId, who.role))) {
+    return page(
+      "Not turned on",
+      `<h1>AI Connector is not turned on for your account</h1>
+<p>Signed in as <b>${esc(who.name)}</b>. Ask your admin to approve AI Connector for you.</p>
+<div class="row"><a class="btn primary" href="/settings/ai-connector">Request access</a></div>
+<p class="small">Not you? <a href="/login">Sign in with another account</a>.</p>`,
+      403,
+    );
+  }
+  const csrf = readCookie(c.req.header("cookie"), CSRF_COOKIE);
+  if (!csrf) return page("Sign in again", `<h1>Please sign in again</h1><p><a href="/login?next=${encodeURIComponent(new URL(c.req.url).pathname + new URL(c.req.url).search)}">Sign in</a> and try connecting again.</p>`, 400);
+  const app_ = esc(chk.clientName);
+  const hidden = (n: string, v: string) => `<input type="hidden" name="${n}" value="${esc(v)}">`;
+  return page(
+    "Allow AI to read Hookka ERP",
+    `<h1>${app_} wants to read Hookka ERP as you</h1>
+<p>Signed in as <b>${esc(who.name)}</b></p>
+<ul>
+<li><span class="tick" aria-hidden="true">✓</span><span><b>Read only.</b> It can look things up; it cannot create, change or delete anything.</span></li>
+<li><span class="tick" aria-hidden="true">✓</span><span><b>Only what you can see.</b> The same pages and figures your ERP login shows you — nothing more.</span></li>
+<li><span class="tick" aria-hidden="true">✓</span><span><b>Logged.</b> Your admin can see which ERP data was looked up and when.</span></li>
+<li><span class="tick" aria-hidden="true" style="color:#6B5A2E">i</span><span>Data it reads is sent to the AI app to answer you. Stop any time in Settings › AI Connector.</span></li>
+</ul>
+<form method="post" action="/api/mcp/oauth/approve">
+${hidden("client_id", p.clientId)}${hidden("redirect_uri", p.redirectUri)}${hidden("state", p.state)}${hidden("code_challenge", p.challenge)}${hidden("code_challenge_method", p.method)}${hidden("csrf", csrf)}
+<div class="row"><button class="primary" type="submit" name="decision" value="allow">Allow</button><button class="secondary" type="submit" name="decision" value="deny">Cancel</button></div>
+</form>
+<p class="small">Not you? <a href="/login">Sign in with your own account</a>.</p>`,
+  );
+});
+
+app.post("/oauth/approve", async (c) => {
+  const origin = c.req.header("origin");
+  if (origin && origin !== originOf(c)) return page("Refused", `<h1>Refused</h1><p>Cross-site request.</p>`, 403);
+  const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  const get = (k: string) => (typeof form[k] === "string" ? (form[k] as string) : undefined);
+  const csrfCookie = readCookie(c.req.header("cookie"), CSRF_COOKIE);
+  if (!csrfCookie || get("csrf") !== csrfCookie) return page("Refused", `<h1>Refused</h1><p>Your session changed. Start connecting again from the AI app.</p>`, 403);
+  const p = readAuthParams(get);
+  const chk = await checkAuthParams(c, p);
+  if (!chk.ok) return chk.res;
+  const who = await sessionUser(c);
+  if (!who) return page("Sign in again", `<h1>Please sign in again</h1><p>Start connecting again from the AI app.</p>`, 401);
+  const back = new URL(p.redirectUri);
+  if (p.state) back.searchParams.set("state", p.state);
+  if (get("decision") !== "allow") {
+    back.searchParams.set("error", "access_denied");
+    return c.redirect(back.toString(), 302);
+  }
+  if (!(await hasMcpAccess(c.var.DB, who.userId, who.role))) return page("Not turned on", `<h1>AI Connector is not turned on for your account</h1>`, 403);
+  const code = await createCode(c.var.DB, { clientId: p.clientId, userId: who.userId, redirectUri: p.redirectUri, codeChallenge: p.challenge });
+  back.searchParams.set("code", code);
+  return c.redirect(back.toString(), 302);
+});
+
+// ── OAuth: token ────────────────────────────────────────────────────────────
+
+app.post("/oauth/token", async (c) => {
+  const ct = c.req.header("content-type") ?? "";
+  let f: Record<string, string> = {};
+  try {
+    if (ct.includes("application/json")) {
+      const j = (await c.req.json()) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(j)) if (typeof v === "string") f[k] = v;
+    } else {
+      const b = await c.req.parseBody();
+      for (const [k, v] of Object.entries(b)) if (typeof v === "string") f[k] = v;
+    }
+  } catch {
+    f = {};
+  }
+  const err = (error: string, desc: string, status: 400 | 401 = 400) =>
+    c.json({ error, error_description: desc }, status, { "Cache-Control": "no-store" });
+  const clientId = f.client_id ?? "";
+  if (!clientId || !(await getClient(c.var.DB, clientId))) return err("invalid_client", "Unknown client", 401);
+
+  let issued: Awaited<ReturnType<typeof issueTokens>> | null = null;
+  if (f.grant_type === "authorization_code") {
+    if (!f.code || !f.code_verifier) return err("invalid_request", "code and code_verifier are required");
+    const rec = await consumeCode(c.var.DB, f.code);
+    if (!rec || rec.clientId !== clientId) return err("invalid_grant", "Code is invalid, used or expired");
+    if (f.redirect_uri && f.redirect_uri !== rec.redirectUri) return err("invalid_grant", "redirect_uri mismatch");
+    if ((await pkceS256(f.code_verifier)) !== rec.codeChallenge) return err("invalid_grant", "PKCE check failed");
+    const u = await c.var.DB.prepare("SELECT role, isActive FROM users WHERE id = ?").bind(rec.userId).first<Record<string, unknown>>();
+    if (!u || Number(u.isActive ?? u.isactive) !== 1 || !(await hasMcpAccess(c.var.DB, rec.userId, String(u.role ?? "")))) {
+      return err("invalid_grant", "This account may not use the AI connector");
+    }
+    issued = await issueTokens(c.var.DB, rec.userId, clientId);
+  } else if (f.grant_type === "refresh_token") {
+    if (!f.refresh_token) return err("invalid_request", "refresh_token is required");
+    issued = await refreshTokens(c.var.DB, f.refresh_token, clientId);
+    if (!issued) return err("invalid_grant", "Refresh token is invalid, revoked or expired");
+  } else {
+    return err("unsupported_grant_type", "Use authorization_code or refresh_token");
+  }
+  return c.json(
+    { access_token: issued.accessToken, token_type: "Bearer", expires_in: issued.expiresIn, refresh_token: issued.refreshToken, scope: "erp.read" },
+    200,
+    { "Cache-Control": "no-store", Pragma: "no-cache" },
+  );
+});
+
+// ── MCP endpoint ────────────────────────────────────────────────────────────
+
+type RpcReq = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
+
+const INSTRUCTIONS = `You are connected to Hookka ERP (a furniture manufacturer's ERP: sales, production, MRP, warehouse, delivery, procurement, finance, HR) as the signed-in staff member.
+Everything is READ-ONLY and limited to what this person may see in the ERP; fields they may not see (cost, salary, price) are removed — never guess them.
+Start with list_modules or list_endpoints to find the right endpoint, then erp_get. Use query parameters (from/to dates YYYY-MM-DD, page/limit, search) to keep answers small.
+Money in the ERP is integer sen (RM × 100) unless a field says otherwise. Dates are Malaysia time.
+Useful endpoints: /api/working-hour-entries/production-revenue?from=&to= (production revenue + byDeptCategory department output), /api/mrp/plan and /api/mrp/stock-status (materials short / waiting PO / ready), /api/production-orders, /api/sales-orders, /api/delivery-orders, /api/search?q=.
+For a PDF: find the document id, then get_pdf (delivery orders and invoices come back as a 15-minute download link; sales and purchase orders as a link to the ERP page). Give the person the link.
+If a call says "not available to your role", tell the user they do not have permission for that data.`;
+
+const TOOLS = [
+  {
+    name: "whoami",
+    title: "Who am I connected as",
+    description: "The ERP account this connection uses, its role, and which modules it may read.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "list_modules",
+    title: "List ERP modules",
+    description: "The ERP modules this person may read, each with its API path prefix. Start here.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "list_endpoints",
+    title: "List read endpoints",
+    description: "Every readable GET endpoint under a module prefix (e.g. /api/production-orders), with :id style placeholders.",
+    inputSchema: {
+      type: "object",
+      properties: { prefix: { type: "string", description: "Module prefix from list_modules, e.g. /api/mrp" } },
+      required: ["prefix"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "erp_get",
+    title: "Read from the ERP",
+    description: "Read one ERP endpoint as the signed-in person (GET only) and return its JSON. Large replies are cut; narrow them with query parameters.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Endpoint path without query string, e.g. /api/working-hour-entries/production-revenue" },
+        query: { type: "object", description: "Query parameters, e.g. {\"from\":\"2026-11-01\",\"to\":\"2026-11-24\"}", additionalProperties: { type: ["string", "number", "boolean"] } },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "get_pdf",
+    title: "Get a document's PDF",
+    description: "The PDF of a delivery order or invoice — the same file the ERP's Download PDF button makes — as a download link valid for 15 minutes. For a sales order or purchase order it returns a link to the ERP page instead (press PDF there). Get the document's id first (erp_get / search).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["delivery-order", "invoice", "sales-order", "purchase-order"] },
+        id: { type: "string", description: "The document's id from the ERP" },
+      },
+      required: ["type", "id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "erp_link",
+    title: "Link to a document (for its PDF)",
+    description: "A link that opens a sales order, purchase order, delivery order or invoice in the ERP, where the person can download its PDF. Get the document's id first (erp_get / search). The person must be logged in and allowed to see it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["sales-order", "purchase-order", "delivery-order", "invoice"] },
+        id: { type: "string", description: "The document's id from the ERP (not necessarily its number)" },
+      },
+      required: ["type", "id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "search",
+    title: "Search the ERP",
+    description: "Global search across sales orders, customers, products, production and purchase orders.",
+    inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"], additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+];
+
+/** Document → its ERP page (where the PDF is made) and its read API. */
+export const DOC_LINKS: Record<string, { page: string; api: string }> = {
+  "sales-order": { page: "/sales", api: "/api/sales-orders" },
+  "purchase-order": { page: "/procurement", api: "/api/purchase-orders" },
+  "delivery-order": { page: "/delivery", api: "/api/delivery-orders" },
+  invoice: { page: "/invoices", api: "/api/invoices" },
+};
+
+type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
+
+async function canAny(c: Context<Env>, resources: string[]): Promise<boolean> {
+  for (const r of resources) if (await hasPermission(c, r, "read")) return true;
+  return false;
+}
+
+/** Permission answers for the redactor, looked up once per call. */
+async function permLookup(c: Context<Env>): Promise<(perm: string) => boolean> {
+  const perms = ["payroll:read", "payslips:read", "cost-ledger:read", "accounting:read", "product-pricing:read", "revenue-figures:read"];
+  const got = new Map<string, boolean>();
+  for (const p of perms) {
+    const [r, a] = p.split(":");
+    got.set(p, await hasPermission(c, r, a));
+  }
+  return (p) => got.get(p) === true;
+}
+
+async function innerGet(c: Context<Env>, token: string, pathWithQuery: string): Promise<Response> {
+  if (!appRef) throw new Error("MCP app not initialised");
+  let ctx: unknown;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  return appRef.fetch(
+    new Request(originOf(c) + pathWithQuery, {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}`, [MCP_INNER_HEADER]: mcpInnerSecret(), accept: "application/json" },
+    }),
+    c.env,
+    ctx,
+  );
+}
+
+async function readEndpoint(
+  c: Context<Env>,
+  id: McpIdentity,
+  token: string,
+  rawPath: string,
+  query: Record<string, unknown> | undefined,
+): Promise<{ result: ToolResult; status: number; note: string; target: string }> {
+  const d = classifyPath(rawPath);
+  if (!d.ok) return { result: text(d.reason, true), status: 400, note: "blocked path", target: rawPath };
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === "object") continue;
+    qs.set(k, String(v));
+  }
+  const target = d.path + (qs.toString() ? `?${qs.toString()}` : "");
+  if (!(await canAny(c, d.resources))) {
+    return { result: text(`Not available to your role: you do not have read permission for ${d.resources.join(" / ")}.`, true), status: 403, note: "no permission", target };
+  }
+  const res = await innerGet(c, token, target);
+  const ctype = res.headers.get("content-type") ?? "";
+  if (!ctype.includes("json")) {
+    return { result: text(`This endpoint returns a file (${ctype || "unknown type"}), not data. Open it in the ERP instead.`, true), status: res.status, note: "non-json", target };
+  }
+  const body = (await res.json().catch(() => null)) as unknown;
+  if (res.status === 403) return { result: text("Not available to your role.", true), status: 403, note: "no permission", target };
+  if (res.status >= 400) {
+    const msg = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : `HTTP ${res.status}`;
+    return { result: text(`The ERP answered: ${msg}`, true), status: res.status, note: msg.slice(0, 120), target };
+  }
+  const redact = makeRedactor(await permLookup(c), d.resources);
+  const { value, removed } = redact(body);
+  let out = JSON.stringify(value);
+  let cut = false;
+  if (out.length > MAX_RESULT_CHARS) {
+    out = out.slice(0, MAX_RESULT_CHARS);
+    cut = true;
+  }
+  const notes: string[] = [];
+  if (removed.size) notes.push(`Fields hidden for this person: ${[...removed].join(", ")}.`);
+  if (cut) notes.push(`Reply cut at ${MAX_RESULT_CHARS} characters — narrow it with query parameters (dates, page/limit, search).`);
+  void id;
+  return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: res.status, note: [...removed].join(","), target };
+}
+
+async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const t0 = Date.now();
+  let status = 200;
+  let note = "";
+  let target = "";
+  let result: ToolResult;
+  try {
+    if (name === "whoami") {
+      const u = await c.var.DB.prepare("SELECT displayName, email, role FROM users WHERE id = ?").bind(id.userId).first<Record<string, unknown>>();
+      const mods: string[] = [];
+      for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push(m.prefix);
+      result = text(JSON.stringify({ name: u?.displayName ?? u?.displayname ?? u?.email ?? "", role: id.role, readableModules: mods.length, readOnly: true }));
+    } else if (name === "list_modules") {
+      const mods: { prefix: string; module: string }[] = [];
+      for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push({ prefix: m.prefix, module: m.resources[0] });
+      result = text(JSON.stringify({ readOnly: true, modules: mods, tip: "Call list_endpoints with a prefix to see its endpoints, then erp_get." }));
+    } else if (name === "list_endpoints") {
+      const prefix = String(args.prefix ?? "");
+      target = prefix;
+      const d = classifyPath(prefix);
+      if (!d.ok) {
+        result = text(d.reason, true);
+        status = 400;
+      } else if (!(await canAny(c, d.resources))) {
+        result = text("Not available to your role.", true);
+        status = 403;
+      } else {
+        const paths = [...new Set((appRef?.routes ?? []).filter((r) => r.method === "GET" && (r.path === d.path || r.path.startsWith(d.path + "/"))).map((r) => r.path))]
+          .filter((p) => !p.includes("*"))
+          .filter((p) => classifyPath(p.replace(/:[^/]+/g, "x")).ok)
+          .sort();
+        result = text(JSON.stringify({ prefix: d.path, endpoints: paths.slice(0, 200) }));
+      }
+    } else if (name === "get_pdf" && (args.type === "delivery-order" || args.type === "invoice")) {
+      const kind = args.type as PdfKind;
+      const docId = String(args.id ?? "").trim();
+      target = `pdf:${kind}:${docId}`;
+      if (!/^[A-Za-z0-9._-]{1,80}$/.test(docId)) {
+        result = text("Give the document id.", true);
+        status = 400;
+      } else {
+        const spec = SERVER_PDF_KINDS[kind];
+        const d = classifyPath(`${spec.api}/${docId}`);
+        if (!d.ok || !(await canAny(c, d.resources))) {
+          result = text("Not available to your role.", true);
+          status = 403;
+        } else {
+          const docRes = await innerGet(c, token, `${spec.api}/${encodeURIComponent(docId)}`);
+          const docJson = (await docRes.json().catch(() => null)) as { success?: boolean; data?: Record<string, unknown> } | null;
+          if (docRes.status >= 400 || !docJson) {
+            result = text(docRes.status === 403 ? "Not available to your role." : docRes.status === 404 ? "Document not found." : `The ERP answered HTTP ${docRes.status}.`, true);
+            status = docRes.status;
+          } else {
+            const doc = (docJson.success && docJson.data ? docJson.data : docJson) as Record<string, unknown>;
+            const exRes = await innerGet(c, token, `${spec.api}/${encodeURIComponent(docId)}/print-extras`);
+            const exJson = (await exRes.json().catch(() => null)) as { success?: boolean; data?: Record<string, unknown> } | null;
+            const extras = exJson?.success && exJson.data ? exJson.data : undefined;
+            const { bytes, filename } = await renderServerPdf(kind, doc, extras, c.env, c.req.url);
+            const url = await uploadPdfAndSign(c.env, id.orgId || "hookka", filename, bytes);
+            result = text(JSON.stringify({ filename, downloadUrl: url, expiresInMinutes: 15, note: "Give the person this link; it downloads the PDF and stops working after 15 minutes." }));
+          }
+        }
+      }
+    } else if (name === "erp_link" || name === "get_pdf") {
+      const kind = String(args.type ?? "");
+      const docId = String(args.id ?? "").trim();
+      const spec = DOC_LINKS[kind];
+      target = `${kind}:${docId}`;
+      if (!spec || !/^[A-Za-z0-9._-]{1,80}$/.test(docId)) {
+        result = text("Give type (sales-order, purchase-order, delivery-order, invoice) and the document id.", true);
+        status = 400;
+      } else {
+        // Same rule as reading it: check the document opens for this person.
+        const r = await readEndpoint(c, id, token, `${spec.api}/${docId}`, undefined);
+        if (r.result.isError) {
+          result = r.result;
+          status = r.status;
+        } else {
+          result = text(JSON.stringify({ url: `${originOf(c)}${spec.page}/${encodeURIComponent(docId)}`, how: "Open the link (sign in if asked) and press PDF / Print on the page." }));
+        }
+      }
+    } else if (name === "erp_get" || name === "search") {
+      const r =
+        name === "search"
+          ? await readEndpoint(c, id, token, "/api/search", { q: String(args.q ?? "") })
+          : await readEndpoint(c, id, token, String(args.path ?? ""), (args.query as Record<string, unknown>) ?? undefined);
+      result = r.result;
+      status = r.status;
+      note = r.note;
+      target = r.target;
+    } else {
+      result = text(`Unknown tool: ${name}`, true);
+      status = 400;
+    }
+  } catch (e) {
+    result = text(`Failed: ${e instanceof Error ? e.message : String(e)}`, true);
+    status = 500;
+  }
+  const done = logCall(c.var.DB, { tokenId: id.tokenId, userId: id.userId, clientId: id.clientId, tool: name, target, status, ok: !result.isError, note, ms: Date.now() - t0 });
+  try {
+    c.executionCtx.waitUntil(done);
+  } catch {
+    await done;
+  }
+  return result;
+}
+
+async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: RpcReq): Promise<unknown | null> {
+  const reply = (result: unknown) => ({ jsonrpc: "2.0", id: m.id ?? null, result });
+  const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: m.id ?? null, error: { code, message } });
+  const isNotification = m.id === undefined || m.id === null;
+  switch (m.method) {
+    case "initialize": {
+      const asked = String(m.params?.protocolVersion ?? "");
+      const protocolVersion = MCP_PROTOCOL_VERSIONS.includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
+      return reply({ protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+    }
+    case "ping":
+      return reply({});
+    case "tools/list":
+      return reply({ tools: TOOLS });
+    case "tools/call": {
+      const name = String(m.params?.name ?? "");
+      const args = (m.params?.arguments as Record<string, unknown>) ?? {};
+      return reply(await callTool(c, id, token, name, args));
+    }
+    case "resources/list":
+      return reply({ resources: [] });
+    case "prompts/list":
+      return reply({ prompts: [] });
+    default:
+      if (isNotification || (m.method ?? "").startsWith("notifications/")) return null;
+      return fail(-32601, `Method not found: ${m.method}`);
+  }
+}
+
+app.post("/", async (c) => {
+  const auth = c.req.header("authorization") ?? "";
+  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  const id = token ? await resolveAccessToken(c.var.DB, token) : null;
+  if (!id) {
+    return c.json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized" } }, 401, {
+      "WWW-Authenticate": `Bearer realm="hookka-erp", resource_metadata="${originOf(c)}/.well-known/oauth-protected-resource/api/mcp"${token ? ', error="invalid_token"' : ""}`,
+    });
+  }
+  // Run every tool call as this person (rbac / tenant read these).
+  const set = c as unknown as { set: (k: string, v: unknown) => void };
+  set.set("userId", id.userId);
+  set.set("userRole", id.role);
+  if (id.orgId) set.set("orgId", id.orgId);
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
+  }
+  const msgs = Array.isArray(body) ? (body as RpcReq[]) : [body as RpcReq];
+  const out: unknown[] = [];
+  for (const m of msgs) {
+    const r = await handleRpc(c, id, token, m);
+    if (r) out.push(r);
+  }
+  if (out.length === 0) return c.body(null, 202);
+  return c.json(Array.isArray(body) ? out : out[0]);
+});
+
+// No server-initiated stream: GET/DELETE are not supported (stateless server).
+app.get("/", (c) => c.json({ error: "Use POST (MCP Streamable HTTP)." }, 405, { Allow: "POST" }));
+app.delete("/", (c) => c.body(null, 405, { Allow: "POST" }));
+
+export { MCP_PREFIX_RESOURCES };
+export default app;

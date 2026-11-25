@@ -324,6 +324,9 @@ export const navigationGroups: NavGroup[] = [
     label: "SYSTEM",
     items: [
       { name: "Organisations", href: "/settings/organisations", icon: Building2 },
+      // Ask Claude / ChatGPT about the ERP (MCP connector, owner 2026-11-25).
+      // Every login: their own connections; Super Admin also approves here.
+      { name: "AI Connector", href: "/settings/ai-connector", icon: Bot },
       // "User Management" is injected below (SUPER_ADMIN only) at render time
       { name: "Settings", href: "/settings", icon: Settings },
     ],
