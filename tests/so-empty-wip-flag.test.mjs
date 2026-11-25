@@ -87,10 +87,14 @@ test("confirm is blocked for an empty WIP tab even when L1 has steps", async () 
     { productId: "p2", productCode: "1003-(Q)", productName: "HILTON" },
     { productId: "p3", productCode: "SERVICE CHARGE ", productName: "SERVICE CHARGE" },
     { productId: "p4", productCode: "NOBOM", productName: "No BOM" },
+    // HK-0177 (BUG-2026-11-25-557): a line with no productId (code not in
+    // the catalog) must be checked too, not skipped into the cascade.
     { productId: "", productCode: "UNLINKED", productName: "Unlinked line" },
   ]);
   assert.deepEqual(out, [
     { productCode: "SB02", productName: "SANDBACK 02", reason: "BOM has no WIP components" },
     { productCode: "NOBOM", productName: "No BOM", reason: "BOM has no WIP components" },
+    { productCode: "UNLINKED", productName: "Unlinked line", reason: "BOM has no WIP components" },
   ]);
 });
+
