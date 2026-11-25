@@ -755,6 +755,29 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
   return result;
 }
 
+/**
+ * The leak check (routes/mcp-admin.ts): run ONE tool exactly as the staff member
+ * would, in this request, without going through the door. The person's role and
+ * org are put on the context for the call (the module gate and redaction read
+ * them) and restored afterwards; the inner GETs find the identity through
+ * rememberVerified. The token must be a real one issued for that person.
+ */
+export async function runToolAs(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const ctx = c as unknown as { get: (k: string) => unknown; set: (k: string, v: unknown) => void };
+  const saved = { userId: ctx.get("userId"), userRole: ctx.get("userRole"), orgId: ctx.get("orgId") };
+  rememberVerified(token, id);
+  ctx.set("userId", id.userId);
+  ctx.set("userRole", id.role);
+  if (id.orgId) ctx.set("orgId", id.orgId);
+  try {
+    return await callTool(c, id, token, name, args);
+  } finally {
+    ctx.set("userId", saved.userId);
+    ctx.set("userRole", saved.userRole);
+    ctx.set("orgId", saved.orgId);
+  }
+}
+
 async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: RpcReq): Promise<unknown | null> {
   const reply = (result: unknown) => ({ jsonrpc: "2.0", id: m.id ?? null, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: m.id ?? null, error: { code, message } });
