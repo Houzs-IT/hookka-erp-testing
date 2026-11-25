@@ -1725,6 +1725,22 @@ the payload's `sales.orders[0].totalSen` is non-zero.
 **Start here:** For QC work open `src/api/routes/qc-pending.ts` + `src/pages/quality.tsx`; for warehouse/stock-scan work open `src/api/routes/public-rack-qr.ts` (the auth-bypassed stock-in flow) and `src/pages/warehouse.tsx`; for platform/admin work start at `src/api/routes/admin-health.ts`.
 
 
+## AI Connector (MCP) — added 2026-11-25
+
+Staff ask Claude / ChatGPT about the ERP with their OWN login, read-only (plan + rules: `docs/plans/mcp-connector.md`).
+
+| Piece | File | Notes |
+| --- | --- | --- |
+| MCP endpoint + OAuth | `src/api/routes/mcp.ts` | `POST /api/mcp` (JSON-RPC, stateless; tools `whoami`, `list_modules`, `list_endpoints`, `erp_get`, `search`, `get_pdf`, `erp_link`); `/api/mcp/oauth/{register,authorize,approve,token}`; `wellKnown` mounted at `/.well-known`. Registered BEFORE `authMiddleware` (own auth). A tool call re-enters the whole app as a GET with the caller's token (`innerGet`). |
+| Module gate + field redaction | `src/api/lib/mcp-access.ts` | `MCP_BLOCKED_PREFIXES` (never readable), `MCP_PREFIX_RESOURCES` (path → RBAC resource, longest prefix, unknown = closed), `makeRedactor` strips cost / salary / price keys the person lacks permission for (a key belongs to its first family). |
+| Tokens, codes, clients, access, log | `src/api/lib/mcp-store.ts` | tables `mcp_access`, `mcp_access_requests`, `mcp_oauth_clients`, `mcp_oauth_codes`, `mcp_tokens` (hashes only; access 24 h, refresh 90 d rotating), `mcp_calls`. Self-applied. |
+| Inner-call proof | `src/api/lib/mcp-inner.ts` + `auth-middleware.ts` | an `hkmcp_` bearer is honoured only with the per-isolate `x-hookka-mcp-inner` secret and only for GET/HEAD; `purgeUserSessions` also revokes MCP tokens. |
+| PDFs | `src/api/lib/mcp-pdf.ts` | DO / invoice through the same pdf-lib generator as the Download button (no POD pages), uploaded to `hookka-files/mcp-exports/<org>/`, 15-minute signed link. SO / PO (browser jsPDF) → link to the ERP page. |
+| Admin + staff page | `src/api/routes/mcp-admin.ts`, `src/pages/settings/AiConnector.tsx` (`/settings/ai-connector`, sidebar SYSTEM › AI Connector) | `/me`, `/me/request`, `/me/revoke`; Super Admin: `/admin/overview`, `/admin/requests/:id/:decision`, `/admin/access`, `/admin/revoke`. Request → bell for every Super Admin. |
+| Discovery on Pages | `functions/.well-known/oauth-protected-resource/[[path]].ts`, `functions/.well-known/oauth-authorization-server/[[path]].ts` | root paths would otherwise get the SPA shell. |
+| Login return | `src/pages/login.tsx` `goTo` | `?next=/api/mcp/oauth/authorize?…` is a server page → full load. |
+| Tests | `tests/mcp-connector.test.mjs` | gate, redaction, PKCE, read-only branch, mounting, Super-Admin-only admin. |
+
 ## Previously unmapped modules (added 2026-08-13)
 
 These sections cover ~35,000 lines of routes and pages that this map had never
@@ -2548,7 +2564,7 @@ and gets it right — cite it in the fix.
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:1002`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
 `src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:29`),
-`tenantMiddleware` (`src/api/worker.ts:1164`) and `apiRateLimit` (`src/api/worker.ts:1179`)
+`tenantMiddleware` (`src/api/worker.ts:1189`) and `apiRateLimit` (`src/api/worker.ts:1204`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 

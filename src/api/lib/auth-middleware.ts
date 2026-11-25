@@ -23,6 +23,8 @@
 // ---------------------------------------------------------------------------
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../worker";
+import { MCP_TOKEN_PREFIX, resolveAccessToken, revokeUserTokens } from "./mcp-store";
+import { MCP_INNER_HEADER, isMcpInner } from "./mcp-inner";
 
 // Exact-match endpoints that always bypass the dashboard auth gate.
 export const PUBLIC_PATHS = [
@@ -299,6 +301,13 @@ export async function purgeUserSessions(
   if (kv && tokens.length > 0) {
     await Promise.all(tokens.map((t) => invalidateSessionCache(kv, t)));
   }
+  // The AI connector's tokens go with the sessions (deactivate / delete /
+  // password reset / role change): an AI app must not outlive the login.
+  try {
+    await revokeUserTokens(db, userId);
+  } catch (err) {
+    console.warn("[auth] MCP token revoke failed:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 // Parse a single cookie value out of the Cookie header, RFC-6265-lite.
@@ -397,6 +406,29 @@ export const authMiddleware: MiddlewareHandler<Env> = async (c, next) => {
   if (!token) {
     if (isPublic) return next();
     return c.json({ success: false, error: "Unauthorized" }, 401);
+  }
+
+  // -------- MCP connector token (docs/plans/mcp-connector.md) ----------
+  // An AI app's `hkmcp_` token is honoured ONLY on the in-process call the
+  // MCP tool runner makes (routes/mcp.ts innerGet, proven by MCP_INNER_HEADER)
+  // and ONLY for GET: the connector is read-only by construction, and the
+  // token cannot be replayed straight at /api/* to skip its module gate and
+  // field redaction (owner 2026-11-25 「确保安全性问题」).
+  if (!cookieToken && token.startsWith(MCP_TOKEN_PREFIX)) {
+    if (!isMcpInner(c.req.header(MCP_INNER_HEADER))) {
+      return c.json({ success: false, error: "AI connector tokens are only accepted through /api/mcp" }, 403);
+    }
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+      return c.json({ success: false, error: "The AI connector is read-only" }, 403);
+    }
+    const id = await resolveAccessToken(c.var.DB, token).catch(() => null);
+    if (!id) return c.json({ success: false, error: "Unauthorized" }, 401);
+    const setVar = (c as unknown as { set: (k: string, v: unknown) => void }).set;
+    setVar.call(c, "userId", id.userId);
+    setVar.call(c, "userRole", id.role);
+    if (id.orgId) setVar.call(c, "orgId", id.orgId);
+    setVar.call(c, "mcpTokenId", id.tokenId);
+    return next();
   }
 
   // -------- CSRF: double-submit cookie ---------------------------------
