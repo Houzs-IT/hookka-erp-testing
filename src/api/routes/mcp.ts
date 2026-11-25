@@ -25,7 +25,7 @@ import { hasPermission } from "../lib/rbac";
 import { readCookie, SESSION_COOKIE, CSRF_COOKIE } from "../lib/auth-middleware";
 import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from "../lib/mcp-access";
 import { MCP_INNER_HEADER, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
-import { docTitle, FETCH_API, myToday, normalisePeriod, parseFetchId, pickFields, PROMPTS, promptText, sameDaysPrevMonth, searchResults, summariseProduction, summariseSales, validRange } from "../lib/mcp-quick";
+import { docTitle, FETCH_API, myToday, normalisePeriod, parseFetchId, pickFields, PROMPTS, promptText, sameDaysPrevMonth, searchResults, summariseOrders, summariseProduction, summariseReceivables, summariseSales, summariseShortages, validRange } from "../lib/mcp-quick";
 import { renderServerPdf, uploadPdfAndSign, SERVER_PDF_KINDS, type PdfKind } from "../lib/mcp-pdf";
 import {
   consumeCode,
@@ -340,6 +340,7 @@ Everything is READ-ONLY and limited to what this person may see in the ERP; fiel
 ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - Sales (this month, a month, quarter or year; by customer, top products, daily, trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"}.
 - Production (production revenue, by department, daily, top products, units completed, workforce, backlog; compared with the same days last month): production_summary {from, to} (default: this month to today).
+- Orders in the pipeline, what is overdue: order_backlog. Who owes us money: receivables_summary. Which materials are short: material_shortages.
 - A document by number or a customer / product name: search {query}, then fetch {id} for the full record.
 Only when no quick answer fits: list_modules → list_endpoints → erp_get. With erp_get pass "fields" (only the keys you need) and query filters (from/to YYYY-MM-DD, page/limit, search) to keep replies small.
 Money in the ERP is integer sen (RM × 100) unless a field says RM. Dates are Malaysia time.
@@ -442,6 +443,27 @@ const TOOLS = [
       required: ["type", "id"],
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "order_backlog",
+    title: "Order backlog (quick answer)",
+    description: "Sales orders by status with their value (RM), what is in production, ready to ship and not yet delivered, today's production backlog in days and overdue production by customer. ONE call.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "receivables_summary",
+    title: "Receivables / debtor ageing (quick answer)",
+    description: "Who owes us and for how long: total owed (RM) by age (current, 30, 60, 90, over 90), the customers owing most and the oldest unpaid invoices. Same as Accounting > Debtor Aging. ONE call.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "material_shortages",
+    title: "Material shortages (quick answer)",
+    description: "Raw materials short for open production orders, from the MRP page's calculation: how many are short, the 15 needed soonest (short, stock, on order, need-by date, main supplier) and BOM gaps. ONE call.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -688,6 +710,30 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
         status = q.status;
         note = q.note;
       }
+    } else if (name === "order_backlog") {
+      target = "order_backlog";
+      const [st, ov] = await Promise.all([
+        readValue(c, token, "/api/sales-orders/stats", undefined),
+        readValue(c, token, "/api/dashboard/overview", { period: myToday().slice(0, 7) }),
+      ]);
+      const q = quickResult(st.ok ? summariseOrders(st.value, ov.ok ? ov.value : null) : null, [st]);
+      result = q.result;
+      status = q.status;
+      note = q.note;
+    } else if (name === "receivables_summary") {
+      target = "receivables";
+      const ag = await readValue(c, token, "/api/accounting/aging", undefined);
+      const q = quickResult(ag.ok ? summariseReceivables(ag.value) : null, [ag]);
+      result = q.result;
+      status = q.status;
+      note = q.note;
+    } else if (name === "material_shortages") {
+      target = "material_shortages";
+      const pl = await readValue(c, token, "/api/mrp/plan", undefined);
+      const q = quickResult(pl.ok ? summariseShortages(pl.value) : null, [pl]);
+      result = q.result;
+      status = q.status;
+      note = q.note;
     } else if (name === "search") {
       const q = String(args.query ?? args.q ?? "").trim();
       target = `search:${q}`;

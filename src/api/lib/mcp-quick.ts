@@ -348,3 +348,94 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   return null;
 }
+
+// ── orders / receivables / materials (owner 2026-11-26: "快捷查询继续") ─────
+
+/** Order backlog from /api/sales-orders/stats + the Dashboard's production block. */
+export function summariseOrders(stats: unknown, overview: unknown) {
+  const s = obj(stats);
+  const byStatus = obj(s.byStatus);
+  const rev = obj(s.revenueByStatus);
+  const prod = obj(obj(overview).production);
+  const overdue = arr(prod.activeJobsByMonth)
+    .filter((r) => String(r.month) === "overdue")
+    .map((r) => ({ customer: String(r.customer ?? ""), bedframeUnits: num(r.bedframeUnits), sofaSets: num(r.sofaSets) }))
+    .filter((r) => r.bedframeUnits || r.sofaSets);
+  const order = ["DRAFT", "CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP", "SHIPPED", "DELIVERED", "INVOICED", "CLOSED", "CANCELLED"];
+  const idx = (st: string) => (order.includes(st) ? order.indexOf(st) : 99);
+  const statuses = Object.keys(byStatus).sort((a, b) => idx(a) - idx(b));
+  return {
+    note: "Money in RM. Counts are sales orders (stock orders and service orders excluded, as on the Sales list).",
+    byStatus: statuses.map((st) => ({ status: st, orders: num(byStatus[st]), rm: rm(rev[st]) })),
+    inProductionRm: rm(rev.IN_PRODUCTION),
+    readyToShipRm: rm(rev.READY_TO_SHIP),
+    notYetDeliveredRm: rm(s.outstandingItemsSen),
+    ...(Object.keys(prod).length
+      ? {
+          production: {
+            backlogDays: num(prod.backlogDays),
+            activeBedframeUnits: num(obj(prod.activeJobs).bedframeUnits),
+            activeSofaSets: num(obj(prod.activeJobs).sofaSets),
+            overdueByCustomer: overdue,
+          },
+        }
+      : {}),
+  };
+}
+
+/** Debtor ageing from /api/accounting/aging (the AR half only). */
+export function summariseReceivables(aging: unknown) {
+  const ar = arr(obj(obj(aging).data ?? aging).ar);
+  const buckets = ["currentSen", "days30Sen", "days60Sen", "days90Sen", "over90Sen"] as const;
+  const total = (r: Obj) => buckets.reduce((t, b) => t + num(r[b]), 0);
+  const sum = (b: (typeof buckets)[number]) => ar.reduce((t, r) => t + num(r[b]), 0);
+  const oldest = ar
+    .flatMap((r) => arr(r.docs).map((d) => ({ customer: String(r.customerName ?? ""), invoice: String(d.no ?? ""), date: String(d.date ?? ""), months: num(d.mo), rm: rm(d.amountSen) })))
+    .filter((d) => d.months >= 2 && d.rm > 0)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 10);
+  return {
+    note: "Money in RM. Ageing by invoice month (current = this month, 30 = last month, …), same as Accounting › Debtor Aging.",
+    totalOwedRm: rm(ar.reduce((t, r) => t + total(r), 0)),
+    byAgeRm: { current: rm(sum("currentSen")), days30: rm(sum("days30Sen")), days60: rm(sum("days60Sen")), days90: rm(sum("days90Sen")), over90: rm(sum("over90Sen")) },
+    customers: ar
+      .map((r) => ({
+        customer: String(r.customerName ?? ""),
+        owedRm: rm(total(r)),
+        over60Rm: rm(num(r.days60Sen) + num(r.days90Sen) + num(r.over90Sen)),
+        invoices: arr(r.docs).length,
+      }))
+      .filter((c) => c.owedRm)
+      .sort((a, b) => b.owedRm - a.owedRm)
+      .slice(0, 10),
+    oldestUnpaid: oldest,
+  };
+}
+
+/** Material shortages from /api/mrp/plan (the MRP page's own calculation). */
+export function summariseShortages(plan: unknown) {
+  const p = obj(obj(plan).data ?? plan);
+  const mats = arr(p.materials);
+  const short = mats.filter((m) => num(m.short) > 0).sort((a, b) => String(a.firstNeedBy ?? "9").localeCompare(String(b.firstNeedBy ?? "9")) || num(b.short) - num(a.short));
+  const po = obj(p.productionOrders);
+  return {
+    note: "Short = needed by open production orders − stock − open PO quantity (the MRP page's rule). Sorted by the date first needed.",
+    calculatedAt: String(p.calculatedAt ?? ""),
+    materialsShort: short.length,
+    materialsPlanned: mats.length,
+    shortages: short.slice(0, 15).map((m) => ({
+      code: String(m.code ?? ""),
+      description: String(m.description ?? ""),
+      uom: String(m.uom ?? ""),
+      short: num(m.short),
+      needed: num(m.needed),
+      stock: num(m.stock),
+      onOrder: num(m.poOutstanding),
+      firstNeedBy: String(m.firstNeedBy ?? ""),
+      mainSupplier: m.mainSupplier ? String(m.mainSupplier) : null,
+      ordersAffected: arr(m.orders).length,
+    })),
+    productionOrders: { open: num(po.open), withoutBom: num(po.noBom) },
+    bomLinesNotMapped: arr(p.unresolved).length,
+  };
+}

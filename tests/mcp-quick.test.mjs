@@ -12,6 +12,9 @@ import {
   summariseProduction,
   summariseSales,
   validRange,
+  summariseOrders,
+  summariseReceivables,
+  summariseShortages,
   searchResults,
   parseFetchId,
   promptText,
@@ -129,4 +132,40 @@ test("prompts expand to a question; unknown prompt is refused", () => {
   assert.match(promptText("monthly_sales_review", { period: "2026-10" }), /2026-10.*sales_summary/);
   assert.match(promptText("find_document", { number: "SO-2611-001" }), /SO-2611-001/);
   assert.equal(promptText("nope", {}), null);
+});
+
+test("order backlog from sales-orders/stats and the Dashboard's production block", () => {
+  const stats = { byStatus: { DELIVERED: 885, IN_PRODUCTION: 303, DRAFT: 2 }, revenueByStatus: { DELIVERED: 101736331, IN_PRODUCTION: 45916768, DRAFT: 282000 }, outstandingItemsSen: 42484370 };
+  const ov = { production: { backlogDays: 16.5, activeJobs: { bedframeUnits: 283, sofaSets: 147 }, activeJobsByMonth: [{ customer: "Houzs Century", month: "overdue", bedframeUnits: 13, sofaSets: 9 }, { customer: "X", month: "2026-12", bedframeUnits: 1, sofaSets: 0 }] } };
+  const o = summariseOrders(stats, ov);
+  assert.deepEqual(o.byStatus.map((x) => x.status), ["DRAFT", "IN_PRODUCTION", "DELIVERED"]);
+  assert.equal(o.inProductionRm, 459167.68);
+  assert.equal(o.notYetDeliveredRm, 424843.7);
+  assert.deepEqual(o.production.overdueByCustomer, [{ customer: "Houzs Century", bedframeUnits: 13, sofaSets: 9 }]);
+});
+
+test("receivables: totals by age, customers owing most, oldest unpaid", () => {
+  const aging = { success: true, data: { ar: [
+    { customerName: "A", currentSen: 100, days30Sen: 200, days60Sen: 0, days90Sen: 0, over90Sen: 0, docs: [{ no: "I1", date: "2026-11-01", mo: 0, amountSen: 100 }] },
+    { customerName: "B", currentSen: 0, days30Sen: 0, days60Sen: 0, days90Sen: 125000, over90Sen: 5500, docs: [{ no: "I9", date: "2026-07-14", mo: 4, amountSen: 5500 }, { no: "I8", date: "2026-08-12", mo: 3, amountSen: 125000 }] },
+  ], ap: [{ supplierName: "S", currentSen: 999 }] } };
+  const r = summariseReceivables(aging);
+  assert.equal(r.totalOwedRm, 1308);
+  assert.deepEqual(r.byAgeRm, { current: 1, days30: 2, days60: 0, days90: 1250, over90: 55 });
+  assert.equal(r.customers[0].customer, "B");
+  assert.deepEqual(r.oldestUnpaid.map((d) => d.invoice), ["I9", "I8"]);
+});
+
+test("material shortages: only short rows, soonest first, BOM gaps counted", () => {
+  const plan = { success: true, data: { calculatedAt: "2026-11-26T01:00:00Z", materials: [
+    { code: "F1", description: "Fabric", uom: "MTR", needed: 10, stock: 2, poOutstanding: 3, short: 5, firstNeedBy: "2026-12-01", mainSupplier: "Meditex", orders: [{}, {}] },
+    { code: "W1", description: "Wood", uom: "PCS", needed: 4, stock: 9, poOutstanding: 0, short: 0, firstNeedBy: "2026-11-27", orders: [] },
+    { code: "F2", description: "Foam", uom: "PCS", needed: 3, stock: 0, poOutstanding: 0, short: 3, firstNeedBy: "2026-11-28", mainSupplier: null, orders: [{}] },
+  ], productionOrders: { open: 40, noBom: 4 }, unresolved: [{}, {}] } };
+  const m = summariseShortages(plan);
+  assert.equal(m.materialsShort, 2);
+  assert.deepEqual(m.shortages.map((x) => x.code), ["F2", "F1"]);
+  assert.equal(m.shortages[1].onOrder, 3);
+  assert.deepEqual(m.productionOrders, { open: 40, withoutBom: 4 });
+  assert.equal(m.bomLinesNotMapped, 2);
 });

@@ -49,6 +49,8 @@ reply). They read the same endpoints the Dashboard reads, as the person, through
 the module gate and redaction are unchanged. `erp_get` also takes `fields` to keep only the keys
 needed, and its cap dropped to 30k. The instructions now tell the AI to try a quick answer first.
 
+**More quick answers (2026-11-26):** `order_backlog` (sales-orders/stats + the Dashboard's production block: orders and RM by status, not yet delivered, backlog days, overdue by customer), `receivables_summary` (accounting/aging, AR only: owed by age, top debtors, oldest unpaid), `material_shortages` (mrp/plan: short materials soonest-needed first, BOM gaps). Same `readValue` path, so each is refused for a role that may not open its source page.
+
 **search / fetch (2026-11-25).** ChatGPT outside Developer Mode only accepts a connector with a
 `search` and a `fetch` tool, and deep research uses only those two
 (https://developers.openai.com/api/docs/mcp). `search {query}` returns `{results:[{id,title,url}]}`
