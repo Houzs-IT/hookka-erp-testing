@@ -123,3 +123,27 @@ test("mounted: the connector before authMiddleware, the admin page behind it; ap
     assert.match(admin.slice(at, at + 160), /const denied = requireSuperAdmin\(c\);/, route);
   }
 });
+
+test("leak check: list endpoints only, side-effect GETs skipped, field names only, token revoked", async () => {
+  const lc = await import("../src/api/lib/mcp-leak-check.ts");
+  const paths = lc.leakCheckPaths([
+    { method: "GET", path: "/api/sales-orders" },
+    { method: "GET", path: "/api/sales-orders/:id" },
+    { method: "POST", path: "/api/sales-orders" },
+    { method: "GET", path: "/api/mrp/stock-status" },
+    { method: "GET", path: "/api/production-orders/warm" },
+    { method: "GET", path: "/api/users" },
+    { method: "GET", path: "/api/invoices/export-csv" },
+  ]);
+  assert.deepEqual(paths, ["/api/mrp/stock-status", "/api/sales-orders"]);
+  const opened = lc.analyseToolText("/api/production-orders", 'Fields hidden for this person: price, cost.\n{"data":[{"poNo":"x","quantity":1,"lineValueRm":5}]}', false);
+  assert.equal(opened.outcome, "opened");
+  assert.deepEqual(opened.hidden, ["price", "cost"]);
+  assert.deepEqual(opened.kept, ["lineValueRm"]);
+  assert.equal(opened.keptExpected, false);
+  assert.equal(lc.analyseToolText("/api/payroll", "Not available to your role: you do not have read permission for payroll.", true).outcome, "refused");
+  const admin = read("src/api/routes/mcp-admin.ts");
+  const at = admin.indexOf('app.post("/admin/leak-check"');
+  assert.match(admin.slice(at, at + 200), /const denied = requireSuperAdmin\(c\);/);
+  assert.match(admin.slice(at), /\} finally \{\n\s+await revokeToken\(db, tok\.tokenId\);/);
+});
