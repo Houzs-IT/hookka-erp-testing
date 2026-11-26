@@ -41,11 +41,29 @@ test("money in the report style", () => {
   assert.equal(fmtMoney(-5000), "(50.00)");
 });
 
-test("the screen: the desktop read, sums from the helper, words for loading / failure / nothing", () => {
-  assert.match(src, /useCachedJson<AgingResp>\("\/api\/accounting\/aging"\)/);
+test("the screen: the desktop reads, sums from the helper, words for loading / failure / nothing", () => {
+  assert.match(src, /const agingUrl = `\/api\/accounting\/aging\$\{/);
+  assert.match(src, /asOf=\$\{asOf\}/, "a past month-end reads the server's as-at aging");
   assert.match(src, /total: agingRowTotal\(r\),/);
-  assert.match(src, /const totals = useMemo\(\(\) => agingTotals\(parties\.map\(\(p\) => p\.row\)\), \[parties\]\);/);
-  assert.match(src, /\(side === "debtor" \? data\?\.data\?\.ar : data\?\.data\?\.ap\) \?\? \[\]/);
-  assert.match(src, /<FinanceNote tone="error">/, "a failed read says so — never a card of zeros");
-  assert.match(src, /as at today/, "aging as at a month-end is deferred");
+  assert.match(src, /const totals = agingTotals\(parties\.map/);
+  assert.match(src, /\(cred \? data\?\.data\?\.ap : data\?\.data\?\.ar\) \?\? \[\]/);
+  assert.match(src, /t="Couldn't load the aging\."/, "a failed read says so — never a card of zeros");
+  assert.match(src, /\/api\/accounting\/ar-control/);
+  assert.match(src, /\/api\/accounting\/ap-control/);
+  assert.doesNotMatch(src, /\/api\/invoices\/aging/, "the Invoices AR Aging stays a separate report");
+});
+
+test("debtor document → invoice: only a number that names exactly one sales invoice", async () => {
+  const { uniqueInvoiceIds } = await import("../src/pages/m/screens/finance/m-finance-lib.ts");
+  const m = uniqueInvoiceIds([
+    { kind: "INV", id: "inv-1", no: "INV-1" },
+    { kind: "INV", id: "inv-2", no: "INV-2" },
+    { kind: "INV", id: "inv-2b", no: "INV-2" },
+    { kind: "OD", id: "od-1", no: "INV-3" },
+    { kind: "INV", id: "", no: "INV-4" },
+  ]);
+  assert.equal(m.get("INV-1"), "inv-1");
+  assert.equal(m.has("INV-2"), false, "an ambiguous number opens nothing");
+  assert.equal(m.has("INV-3"), false, "an other-debtor bill is not an invoice");
+  assert.equal(m.has("INV-4"), false);
 });

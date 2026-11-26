@@ -69,7 +69,8 @@ test("Debtor Aging lists trade customers and other debtors, chips and sections, 
 
 test("the phone's Debtor Aging lists the other debtors too (Creditor Aging its other creditors)", () => {
   const m = read("src/pages/m/screens/finance/AgingScreen.tsx");
-  assert.match(m, /useCachedJson<OtherResp>\(`\/api\/accounting\/other-party-aging\?type=\$\{side === "debtor" \? "DEBTOR" : "CREDITOR"\}`\)/);
+  // Batch 3: same read (plus the as-at month-end), the other parties labelled by kind on their card.
+  assert.match(m, /useCachedJson<OtherResp>\(`\/api\/accounting\/other-party-aging\?type=\$\{cred \? "CREDITOR" : "DEBTOR"\}\$\{hist \? `&asOf=\$\{asOf\}` : ""\}`\)/);
   assert.match(m, /otherPartyAgingRows\(other\.data\?\.bills \?\? \[\]\)/);
-  assert.match(m, /data-m-fin=\{`\$\{p\.kind\}-tag`\}/);
+  assert.match(m, /k === "other" \? \(cred \? "Other creditor" : "Other debtor"\)/);
 });

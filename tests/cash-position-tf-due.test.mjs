@@ -58,5 +58,8 @@ test("the desktop lists it under TO REPAY and takes it off the bottom line; imag
   assert.match(ui, /\{tfShownSen \? ` − trade finance \$\{formatCurrency\(tfShownSen\)\}` : ""\}/);
   assert.doesNotMatch(ui, /TF \/ loans are not included here/);
   assert.match(read("src/lib/cash-position-image.ts"), /\$\{tfShownSen \? ` − trade finance \$\{rm\(tfShownSen\)\}` : ""\}/);
-  assert.match(read("src/pages/m/screens/finance/CashScreen.tsx"), /\{totals\.tfShownSen \? ` − trade finance \$\{fmtMoney\(totals\.tfShownSen\)\}` : ""\}/);
+  // Batch 3: the phone shows trade finance as its own hero tile and takes it off the bottom line.
+  const cash = read("src/pages/m/screens/finance/CashScreen.tsx");
+  assert.match(cash, /\{ k: "Trade finance", v: rm\(shown\.tfShownSen\), dot: "#C9A24B" \}/);
+  assert.match(cash, /netAfterSen: cur\.totalAvailableSen - repayShownSen - tfShownSen \+ recvShownSen/);
 });

@@ -144,6 +144,7 @@ test("screens keep no more fixed-position layers than the known full-screen ones
   // Floor Live adds one: FloorLiveCompleted.tsx, the full-screen monthly "Completed" detail (Claude Design handoff).
   // Home Operations v3 adds one: OpsWorklistPage.tsx, the full-page "View all" worklist of Overdue production orders / Due within 3 days (a portal into body, like FloorLiveCompleted).
   // Home Sales v12 adds one: HomeDashboard.tsx, the viewport-sized page glow behind the Home (a background, pointer-events none; not a toast, bar or banner).
+  // Finance / Receivable (Batch 3) add one: finance/fin-overlay.tsx, the prototype's full-page form (Edit voucher, Scan to create) and its centred confirm dialog (portals into body); its toast and action dock use ResponsiveActionDock.
   assert.deepEqual(found, [
     "cases/case-overlay.tsx",
     "dashboard/FloorLiveCompleted.tsx",
@@ -156,6 +157,7 @@ test("screens keep no more fixed-position layers than the known full-screen ones
     "employees/PayslipPage.tsx",
     "employees/PunchPhotoViewer.tsx",
     "employees/RevenueUnitsPage.tsx",
+    "finance/fin-overlay.tsx",
     "procurement/parts.tsx",
   ]);
 });

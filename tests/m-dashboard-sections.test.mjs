@@ -96,28 +96,29 @@ test("the desktop page now reads the same module (its own copies are gone)", () 
 
 test("the phone: the sections in the desktop's order, with its rules for when a card shows", () => {
   const scr = read("src/pages/m/screens/finance/DashScreen.tsx");
-  // Since 2026-10-20 the cards are the owner's phone design (tests/m-dashboard-design.test.mjs).
-  const order = ['<DashCard title="Income Statement"', 'title="Production Salary"', 'title="Non-Production Salary"', "<CostStructureCard", "<CashFlowCard", "<BalanceSheetCard", "<RatiosCard"];
+  // Batch 3 prototype cards, same order and rules.
+  const order = ["<IncomeCard", 'title="Production Salary"', 'title="Non-Production Salary"', "<CostStructureCard", "<CashFlowCard", "<BalanceSheetCard", "<RatiosCard"];
   const at = order.map((s) => scr.indexOf(s));
   assert.ok(at.every((i) => i > 0), "every section is there");
   assert.deepEqual([...at].sort((a, b) => a - b), at, "in the desktop order");
-  assert.match(scr, /const showProdSalary = months\.some\(\(r\) => \(r\.actual\?\.labour \?\? null\) !== null\);/, "the desktop's labourData.some(amount !== null)");
-  assert.match(scr, /\{split\.non\.length > 0 && \(/);
-  assert.match(scr, /const showCostStructure = csCategories\(months\)\.length > 0;/);
-  assert.match(scr, /depts=\{split\.prod\} fallbackLabour denominators test="dash-sal-prod"/);
-  assert.match(scr, /depts=\{split\.non\} fallbackLabour=\{false\} denominators=\{false\} test="dash-sal-non"/);
+  assert.match(scr, /const showProdSalary = periods\.some\(\(r\) => \(r\.actual\?\.labour \?\? null\) !== null\);/, "the desktop's labourData.some(amount !== null)");
+  assert.match(scr, /\{split\.non\.length > 0 && <SalaryCard/);
+  assert.match(scr, /const showCostStructure = csCategories\(periods\)\.length > 0;/);
+  assert.match(scr, /depts=\{split\.prod\} production test="dash-sal-prod"/);
+  assert.match(scr, /depts=\{split\.non\} production=\{false\} test="dash-sal-non"/);
 });
 
 test("the phone's cards: the desktop's own rules for the chosen month", () => {
   const sec = read("src/pages/m/screens/finance/DashSections.tsx");
   // Salary: the card total from the shared module; RM / head and RM / unit divide the P&L labour bucket (the desktop table's base).
-  assert.match(sec, /salaryCardMonth\(r, depts, fallbackLabour \? \{ amount: r\.actual\?\.labour \?\? null, forecast: r\.forecast\?\.labour \?\? null \} : null\)/);
+  assert.match(sec, /salaryCardMonth\(last, depts, production \? \{ amount: last\.actual\?\.labour \?\? null, forecast: last\.forecast\?\.labour \?\? null \} : null\)/);
   assert.match(sec, /const labour = last\.actual\?\.labour \?\? null;/);
   assert.match(sec, /const per = \(base: number \| null\) => \(labour !== null && base !== null && base > 0 \? Math\.round\(labour \/ base\) : null\);/);
-  // Cost structure: spend, all lines; the total is every material (the desktop table's TOTAL), the plan the keyed plans, each % on its own revenue.
-  assert.match(sec, /const amounts = cats\.map\(\(cat\) => csAmount\(r, cat, "spend", "all"\)\);/);
-  assert.match(sec, /const f = csForecastAmt\(r, cat, "all"\);\n\s+if \(f !== null\) plan = \(plan \?\? 0\) \+ f;/);
-  assert.match(sec, /p: pctOf\(total, csLineSales\(r, "all"\)\), pp: pctOf\(total, csLineProdRev\(r, "all"\)\), fp: pctOf\(plan, csForecastSales\(r, "all"\)\)/);
+  // Cost structure: every material through csAmount (measure + line now selectable, as the prototype), the plan the keyed plans, each % on its own revenue.
+  assert.match(sec, /const amounts = cats\.map\(\(c\) => csAmount\(month, c, meas, line\)\);/);
+  assert.match(sec, /const f = csForecastAmt\(month, c, line\); if \(f !== null\) plan = \(plan \?\? 0\) \+ f;/);
+  assert.match(sec, /const pct = pctOf2\(total, csLineSales\(month, line\)\);/);
+  assert.match(sec, /const fpct = pctOf2\(plan, csForecastSales\(month, line\)\);/);
   // Balance sheet: nothing before the opening date says so; ratios: the desktop's six.
   assert.match(sec, /Balances start at the opening date — nothing before it\./);
   for (const l of ["Gross margin", "Net margin", "Current ratio", "Quick ratio", "ROE", "ROA"]) assert.ok(sec.includes(`label: "${l}"`), l);

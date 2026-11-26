@@ -5,40 +5,41 @@
 // deep link without permission shows "No access" and the API still denies).
 // ---------------------------------------------------------------------------
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Landmark, LayoutGrid, TrendingUp, ArrowDownUp, Scale, HandCoins, Receipt, WalletCards } from "lucide-react";
+import { ArrowLeftRight, ChartColumn, FileCheck2, FileSpreadsheet, HandCoins, Landmark, LayoutDashboard, Receipt, Scale } from "lucide-react";
 
 export type FinanceScreen = "dashboard" | "cash" | "overview" | "pl" | "cashflow" | "bs" | "debtors" | "creditors" | "vouchers";
 
-export type FinanceRow = { screen: FinanceScreen; label: string; icon: LucideIcon; navGate: string };
+/** `sub`, `c` (icon colour) and `bg` (tile) are the Batch 3 prototype's menu row. */
+export type FinanceRow = { screen: FinanceScreen; label: string; sub: string; icon: LucideIcon; c: string; bg: string; navGate: string };
 
 export const FINANCE_MENU: { title: string; rows: FinanceRow[] }[] = [
   {
     title: "Finance",
     rows: [
-      { screen: "dashboard", label: "Finance Dashboard", icon: BarChart3, navGate: "/finance-dashboard" },
-      { screen: "cash", label: "Daily Cash Position", icon: Landmark, navGate: "/accounting?tab=dailycash" },
+      { screen: "dashboard", label: "Finance Dashboard", sub: "Income, salary, cost, cash and ratios", icon: LayoutDashboard, c: "#6B5C32", bg: "#F4EFE6", navGate: "/finance-dashboard" },
+      { screen: "cash", label: "Daily Cash Position", sub: "What's in the bank today", icon: Landmark, c: "#2B5797", bg: "#E3EAF5", navGate: "/accounting?tab=dailycash" },
     ],
   },
   {
     title: "Reports",
     rows: [
-      { screen: "overview", label: "Overview", icon: LayoutGrid, navGate: "/accounting?tab=overview" },
-      { screen: "pl", label: "P&L", icon: TrendingUp, navGate: "/accounting?tab=pl" },
-      { screen: "cashflow", label: "Cash Flow", icon: ArrowDownUp, navGate: "/accounting?tab=cashflow" },
-      { screen: "bs", label: "Balance Sheet", icon: Scale, navGate: "/accounting?tab=bs" },
+      { screen: "overview", label: "Overview", sub: "Sales, profit and cost trends", icon: ChartColumn, c: "#1F9E89", bg: "#DDF1EC", navGate: "/accounting?tab=overview" },
+      { screen: "pl", label: "P&L", sub: "Profit and loss statement", icon: FileSpreadsheet, c: "#6B4A6D", bg: "#F1E9F0", navGate: "/accounting?tab=pl" },
+      { screen: "cashflow", label: "Cash Flow", sub: "Money in and out by month", icon: ArrowLeftRight, c: "#3E6570", bg: "#E0EDF0", navGate: "/accounting?tab=cashflow" },
+      { screen: "bs", label: "Balance Sheet", sub: "Assets, liabilities and equity", icon: Scale, c: "#85600F", bg: "#FAEFCB", navGate: "/accounting?tab=bs" },
     ],
   },
   {
     title: "Debtors & Creditors",
     rows: [
-      { screen: "debtors", label: "Debtor Aging", icon: HandCoins, navGate: "/accounting?tab=ar" },
-      { screen: "creditors", label: "Creditor Aging", icon: Receipt, navGate: "/accounting?tab=ap" },
+      { screen: "debtors", label: "Debtor Aging", sub: "Who owes us, by month", icon: HandCoins, c: "#4F7C3A", bg: "#EEF3E4", navGate: "/accounting?tab=ar" },
+      { screen: "creditors", label: "Creditor Aging", sub: "What we owe, by month", icon: Receipt, c: "#9A3A2D", bg: "#FBE7E3", navGate: "/accounting?tab=ap" },
     ],
   },
   {
     // The one screen that is not read-only: scan a bill into a draft voucher and walk it along the approval steps.
     title: "Payments",
-    rows: [{ screen: "vouchers", label: "Payment Vouchers", icon: WalletCards, navGate: "/accounting?tab=payments" }],
+    rows: [{ screen: "vouchers", label: "Payment Vouchers", sub: "Prepare, check and approve", icon: FileCheck2, c: "#6B5C32", bg: "#F4EFE6", navGate: "/accounting?tab=payments" }],
   },
 ];
 

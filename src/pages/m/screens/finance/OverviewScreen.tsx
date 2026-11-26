@@ -1,165 +1,175 @@
 // ---------------------------------------------------------------------------
-// The Finance Overview on the phone (finance v2 mobile, part B). Reads the
+// The Finance Overview on the phone (Batch 3 prototype "ovB"). Reads the
 // desktop Overview's trend (/api/accounting/overview-trend?months=3|6|12) and
-// draws the same five figures, one card each, with the latest month on top:
-// sales orders vs invoices, gross and net profit with their % of sales, and
-// raw material and direct labour as a % of sales (shareOfSales, as the
-// desktop). A month before the books opened shows "—", never 0. Each month's
-// point on a percentage chart carries its figure (owner 2026-10-20 「手机版的
-// overview 每个月份的点没有percentage」) — a phone has no hover. Past six months
-// every other label sits under its point, a size smaller, so twelve fit.
+// draws its five figures as bar cards — sales orders vs invoices, gross and
+// net profit, raw material and direct labour as a % of sales (shareOfSales,
+// as the desktop) — then the month's most produced models and the AR / AP
+// aging summaries (/api/accounting/aging, the desktop Overview's read). A tap
+// on a bar opens how that month's figure is made (explainMonth, the desktop's
+// hover). A month before the books opened shows "—", never 0.
 // ---------------------------------------------------------------------------
-import { useState, type ReactNode } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, LabelList, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { BedDouble, ChartColumn, CloudOff, Coins, HandCoins, HardHat, Package, Receipt, ShoppingCart, Sofa, TrendingUp, type LucideIcon } from "lucide-react";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { shareOfSales, type OverviewMonth } from "@/lib/overview-trend";
-import { fmtPct } from "@/lib/finance-money";
-import { MobileCard } from "../../components";
-import { M } from "../../theme";
-import { FinanceHeader, FinanceNote, FinanceSwitch } from "./finance-shell";
-import { fmtMoney, pctLabelBelow, pctPointLabel, PCT_LABELS_ONE_ROW } from "./m-finance-lib";
+import { explainMonth, shareOfSales, type ModelQty, type OverviewMetric, type OverviewMonth } from "@/lib/overview-trend";
+import type { APAgingEntry, ARAgingEntry } from "@/types";
+import { AGING_BUCKETS, agingBarWidths, agingTotals } from "./m-finance-lib";
+import { FinCard, FinScreen, FinSeg, FinSheet, FinSkel, FinState, type SheetRow } from "./fin-kit";
+import { AGE_COLOURS, F, barGeometry, monYear, rm, rmShort, tile } from "./fin-format";
 
 type Range = "3" | "6" | "12";
-const RANGES: { key: Range; label: string }[] = [
-  { key: "3", label: "3 months" },
-  { key: "6", label: "6 months" },
-  { key: "12", label: "12 months" },
-];
-const SAND = "#F2B47E";
-const NAVY = "#1F2A44";
-const PROFIT = "#5AA49B";
-const LOSS = "#9A3A2D";
-const tick = { fontSize: 11, fill: "#4B5563" };
-const monthShort = (ym: string) => new Date(`${ym}-01T00:00:00Z`).toLocaleString("en", { month: "short", timeZone: "UTC" });
-const monthLong = (ym: string) => new Date(`${ym}-01T00:00:00Z`).toLocaleString("en", { month: "short", year: "numeric", timeZone: "UTC" });
-const pct = (v: number | null) => (v === null ? "—" : fmtPct(v));
-const rm = (sen: number | null | undefined) => (sen === null || sen === undefined ? null : sen / 100);
-const compact = (v: number) => {
-  const a = Math.abs(v);
-  return a >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : a >= 1e3 ? `${Math.round(v / 1e3)}k` : String(Math.round(v));
-};
+const pctTxt = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(1)}%`);
+const shortMon = (ym: string) => new Date(`${ym}-01T00:00:00Z`).toLocaleString("en-US", { month: "short", timeZone: "UTC" });
 
-function OverviewCard({ title, sub, value, note, children }: { title: string; sub: string; value: string; note?: string; children: ReactNode }) {
-  return (
-    <MobileCard>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: M.raisin }}>{title}</span>
-        <span style={{ fontSize: 11, color: M.muted, whiteSpace: "nowrap" }}>{sub}</span>
-      </div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-        <span data-m-fin={title} style={{ fontSize: 22, fontWeight: 700, color: M.raisin, fontVariantNumeric: "tabular-nums" }}>{value}</span>
-        {note && <span style={{ fontSize: 12.5, color: M.muted }}>{note}</span>}
-      </div>
-      <div style={{ height: 160, marginTop: 8 }}>{children}</div>
-    </MobileCard>
-  );
-}
+type Series = { title: string; icon: LucideIcon; c: string; metric: OverviewMetric; bar: (m: OverviewMonth) => number | null; label: (m: OverviewMonth) => string; head: (m: OverviewMonth) => string; sub: (m: OverviewMonth) => string };
+
+const SERIES: Series[] = [
+  {
+    title: "Sales Orders vs Invoices", icon: ShoppingCart, c: "#2B5797", metric: "orders",
+    bar: (m) => m.inv.sen,
+    label: (m) => (m.so.sen > 0 ? pctTxt((m.inv.sen / m.so.sen) * 100) : "—"),
+    head: (m) => (m.so.sen > 0 ? pctTxt((m.inv.sen / m.so.sen) * 100) : "—"),
+    sub: (m) => `invoiced ${rm(m.inv.sen)} of ${rm(m.so.sen)} ordered`,
+  },
+  {
+    title: "Gross Profit", icon: TrendingUp, c: "#4F7C3A", metric: "gp",
+    bar: (m) => m.pnl?.grossProfitSen ?? null,
+    label: (m) => rmShort(m.pnl?.grossProfitSen ?? null),
+    head: (m) => rm(m.pnl?.grossProfitSen ?? null),
+    sub: (m) => (m.pnl ? `${pctTxt(shareOfSales(m.pnl.grossProfitSen, m.pnl.netSalesSen))} of sales` : "before the books opened"),
+  },
+  {
+    title: "Net Profit", icon: Coins, c: "#6B5C32", metric: "np",
+    bar: (m) => m.pnl?.netProfitSen ?? null,
+    label: (m) => rmShort(m.pnl?.netProfitSen ?? null),
+    head: (m) => rm(m.pnl?.netProfitSen ?? null),
+    sub: (m) => (m.pnl ? `${pctTxt(shareOfSales(m.pnl.netProfitSen, m.pnl.netSalesSen))} of sales` : "before the books opened"),
+  },
+  {
+    title: "Raw Material % of sales", icon: Package, c: "#85600F", metric: "rm",
+    bar: (m) => (m.pnl ? shareOfSales(m.pnl.rm.usedSen, m.pnl.netSalesSen) : null),
+    label: (m) => pctTxt(m.pnl ? shareOfSales(m.pnl.rm.usedSen, m.pnl.netSalesSen) : null),
+    head: (m) => pctTxt(m.pnl ? shareOfSales(m.pnl.rm.usedSen, m.pnl.netSalesSen) : null),
+    sub: (m) => (m.pnl ? `${rm(m.pnl.rm.usedSen)} used` : "before the books opened"),
+  },
+  {
+    title: "Direct Labour % of sales", icon: HardHat, c: "#6B4A6D", metric: "dl",
+    bar: (m) => (m.pnl ? shareOfSales(m.pnl.labourSen, m.pnl.netSalesSen) : null),
+    label: (m) => pctTxt(m.pnl ? shareOfSales(m.pnl.labourSen, m.pnl.netSalesSen) : null),
+    head: (m) => pctTxt(m.pnl ? shareOfSales(m.pnl.labourSen, m.pnl.netSalesSen) : null),
+    sub: (m) => (m.pnl ? rm(m.pnl.labourSen) : "before the books opened"),
+  },
+];
+
+type AgingResp = { success?: boolean; data?: { ar?: ARAgingEntry[]; ap?: APAgingEntry[] } };
 
 export function OverviewScreen() {
+  const navigate = useNavigate();
   const [range, setRange] = useState<Range>("3");
-  const { data: resp, loading, error } = useCachedJson<{ success?: boolean; error?: string; data?: { months: OverviewMonth[] } }>(
+  const [expl, setExpl] = useState<{ s: Series; m: OverviewMonth } | null>(null);
+  const { data: resp, loading, error, refresh } = useCachedJson<{ success?: boolean; error?: string; data?: { months: OverviewMonth[] } }>(
     `/api/accounting/overview-trend?months=${range}`,
   );
+  const { data: aging } = useCachedJson<AgingResp>("/api/accounting/aging");
   const months = resp?.success ? resp.data?.months ?? [] : [];
   const last = months[months.length - 1];
-  const lp = last?.pnl ?? null;
-  const sub = last ? `${monthLong(last.ym)}${last.running ? " so far" : ""}` : "";
-  const data = months.map((m) => {
-    const p = m.pnl;
-    return {
-      ym: m.ym,
-      label: `${monthShort(m.ym)}${m.running ? "*" : ""}`,
-      so: rm(m.so.sen),
-      inv: rm(m.inv.sen),
-      gp: rm(p?.grossProfitSen),
-      np: rm(p?.netProfitSen),
-      rmPct: p ? shareOfSales(p.rm.usedSen, p.netSalesSen) : null,
-      dlPct: p ? shareOfSales(p.labourSen, p.netSalesSen) : null,
-    };
-  });
   const failed = !!error || resp?.success === false;
-  const ofSales = (sen: number | undefined) => (lp && sen !== undefined ? shareOfSales(sen, lp.netSalesSen) : null);
-  const profitBars = (key: "gp" | "np") => (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="#EEF1F5" />
-        <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} />
-        <YAxis tick={tick} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} tickFormatter={compact} width={38} />
-        <Bar dataKey={key} radius={[3, 3, 0, 0]} maxBarSize={36} isAnimationActive={false}>
-          {data.map((d) => <Cell key={d.ym} fill={(d[key] ?? 0) < 0 ? LOSS : PROFIT} />)}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-  const crowded = data.length > PCT_LABELS_ONE_ROW;
-  const pctLabel = (color: string) => (p: { x?: unknown; y?: unknown; value?: unknown; index?: number }) => {
-    const text = pctPointLabel(p.value);
-    const x = Number(p.x), y = Number(p.y);
-    if (!text || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-    const below = pctLabelBelow(p.index ?? 0, data.length);
+  const n = months.length;
+  const crowded = n > 6;
+  const lastName = last ? `${monYear(last.ym)}${last.running ? " *" : ""}` : "";
+
+  const chart = (s: Series) => {
+    const vals = months.map(s.bar);
+    const geo = barGeometry(vals, null, 100);
     return (
-      <text x={x} y={below ? y + 15 : y - 8} textAnchor="middle" fontSize={crowded ? 10 : 11} fontWeight={600} fill={color}>
-        {text}
-      </text>
+      <FinCard
+        key={s.title}
+        test={`ov-${s.metric}`}
+        title={s.title}
+        icon={s.icon}
+        sub={`Last ${n} month${n === 1 ? "" : "s"}`}
+        val={{ v: s.head(last), s: `${lastName} · ${s.sub(last)}` }}
+        bars={months.map((m, i) => ({
+          l: crowded ? shortMon(m.ym)[0] : `${shortMon(m.ym)}${m.running ? "*" : ""}`,
+          sel: i === n - 1,
+          v: crowded ? "" : s.label(m),
+          vneg: (vals[i] ?? 0) < 0,
+          h: vals[i] == null ? 0 : geo[i].h,
+          c: (vals[i] ?? 0) < 0 ? (i === n - 1 ? F.neg : `${F.neg}88`) : i === n - 1 ? s.c : `${s.c}88`,
+          aria: `${monYear(m.ym)}: ${s.label(m)}`,
+          onTap: () => setExpl({ s, m }),
+        }))}
+      />
     );
   };
-  const pctLine = (key: "rmPct" | "dlPct", color: string) => (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 20, right: 12, left: 0, bottom: crowded ? 6 : 0 }}>
-        <CartesianGrid vertical={false} stroke="#EEF1F5" />
-        <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} padding={{ left: 22, right: 22 }} />
-        <YAxis tick={tick} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} tickFormatter={(v: number) => `${v}%`} width={38} />
-        <Line type="monotone" dataKey={key} stroke={color} strokeWidth={2} dot={{ r: 3 }} connectNulls isAnimationActive={false}>
-          <LabelList dataKey={key} content={pctLabel(color)} />
-        </Line>
-      </LineChart>
-    </ResponsiveContainer>
+
+  const topCard = (title: string, icon: LucideIcon, items: ModelQty[]) => (
+    <FinCard
+      key={title}
+      title={title}
+      icon={icon}
+      sub={`${lastName} · pieces completed`}
+      rows={items.length ? items.map((t, i) => ({ key: t.model, l: t.model, s: `${t.orders} order${t.orders === 1 ? "" : "s"}`, v: `${t.qty.toLocaleString("en-MY")} pcs`, rail: i === 0 ? "#C9A24B" : "transparent" })) : undefined}
+      empty={items.length ? undefined : "No pieces completed this month."}
+    />
   );
 
+  const agingCard = (title: string, icon: LucideIcon, who: string, rows: (ARAgingEntry | APAgingEntry)[], to: string, btn: string) => {
+    const t = agingTotals(rows);
+    const w = agingBarWidths(t.buckets);
+    return (
+      <FinCard
+        key={title}
+        title={title}
+        icon={icon}
+        sub={`${who} · ${rm(t.total)}`}
+        stack={w.map((x, i) => ({ w: x, c: AGE_COLOURS[i] }))}
+        tiles={AGING_BUCKETS.map((b, i) => tile(b.label, rm(t.buckets[b.key]), { dot: AGE_COLOURS[i] }))}
+        btn={{ l: btn, onTap: () => navigate(to) }}
+      />
+    );
+  };
+
+  const explRows: SheetRow[] = expl
+    ? explainMonth(expl.m, expl.s.metric).map((x, i) => ({
+        key: `${x.label}-${i}`,
+        l: x.label,
+        s: x.note,
+        v: x.sen !== undefined ? rm(x.sen) : x.pct !== undefined ? pctTxt(x.pct) : undefined,
+        w: x.total ? 800 : 600,
+      }))
+    : [];
+
   return (
-    <>
-      <FinanceHeader title="Overview" />
-      <div style={{ padding: "12px 14px 28px", display: "flex", flexDirection: "column", gap: 12 }}>
-        <FinanceSwitch label="Months shown" options={RANGES} value={range} onChange={setRange} />
-        {loading && !resp ? (
-          <FinanceNote>Loading…</FinanceNote>
-        ) : failed ? (
-          <FinanceNote tone="error">{resp?.error || error || "Couldn't load the overview."}</FinanceNote>
-        ) : !last ? (
-          <FinanceNote>No months to show.</FinanceNote>
-        ) : (
-          <>
-            <OverviewCard
-              title="Sales Orders vs Invoices"
-              sub={sub}
-              value={fmtMoney(last.inv.sen)}
-              note={last.so.sen > 0 ? `${((last.inv.sen / last.so.sen) * 100).toFixed(1)}% of ${fmtMoney(last.so.sen)} ordered` : undefined}
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#EEF1F5" />
-                  <XAxis dataKey="label" tick={tick} axisLine={false} tickLine={false} />
-                  <YAxis tick={tick} axisLine={{ stroke: "#CBD5E1" }} tickLine={false} tickFormatter={compact} width={38} />
-                  <Bar dataKey="so" name="Sales orders" fill={SAND} radius={[3, 3, 0, 0]} maxBarSize={26} isAnimationActive={false} />
-                  <Bar dataKey="inv" name="Sales invoices" fill={NAVY} radius={[3, 3, 0, 0]} maxBarSize={26} isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </OverviewCard>
-            <OverviewCard title="Gross Profit" sub={sub} value={lp ? fmtMoney(lp.grossProfitSen) : "—"} note={lp ? `${pct(ofSales(lp.grossProfitSen))} of sales` : undefined}>
-              {profitBars("gp")}
-            </OverviewCard>
-            <OverviewCard title="Net Profit" sub={sub} value={lp ? fmtMoney(lp.netProfitSen) : "—"} note={lp ? `${pct(ofSales(lp.netProfitSen))} of sales` : undefined}>
-              {profitBars("np")}
-            </OverviewCard>
-            <OverviewCard title="Raw Material · % of Sales" sub={sub} value={pct(ofSales(lp?.rm.usedSen))} note={lp ? `${fmtMoney(lp.rm.usedSen)} used` : undefined}>
-              {pctLine("rmPct", "#9C6F1E")}
-            </OverviewCard>
-            <OverviewCard title="Direct Labour · % of Sales" sub={sub} value={pct(ofSales(lp?.labourSen))} note={lp ? fmtMoney(lp.labourSen) : undefined}>
-              {pctLine("dlPct", "#3E6570")}
-            </OverviewCard>
-          </>
-        )}
-      </div>
-    </>
+    <FinScreen title="Overview" onBack={() => navigate("/m/finance")}>
+      <FinSeg opts={[{ k: "3", l: "3 months" }, { k: "6", l: "6 months" }, { k: "12", l: "12 months" }]} cur={range} set={setRange} aria="Months shown" />
+      {loading && !resp ? (
+        <FinSkel n={3} h={220} />
+      ) : failed ? (
+        <FinState icon={CloudOff} bg="#FBE7E3" c={F.neg} t="Couldn't load the overview." s={resp?.error || "The finance service didn't answer."} btn={{ l: "Try again", onTap: () => refresh() }} />
+      ) : !last ? (
+        <FinState icon={ChartColumn} bg={F.cream} c={F.gold} t="No months to show" s="The overview has no month with figures yet." />
+      ) : (
+        <>
+          {SERIES.map(chart)}
+          {topCard("Top 5 Sofa models", Sofa, last.top?.SOFA ?? [])}
+          {topCard("Top 5 Bedframe models", BedDouble, last.top?.BEDFRAME ?? [])}
+          {aging?.success ? (
+            <>
+              {agingCard("AR Aging", HandCoins, "Who owes us", aging.data?.ar ?? [], "/m/finance/debtors", "Open Debtor Aging")}
+              {agingCard("AP Aging", Receipt, "What we owe", aging.data?.ap ?? [], "/m/finance/creditors", "Open Creditor Aging")}
+            </>
+          ) : null}
+        </>
+      )}
+      <FinSheet
+        open={!!expl}
+        onClose={() => setExpl(null)}
+        title={expl ? `${expl.s.title} · ${monYear(expl.m.ym)}${expl.m.running ? " *" : ""}` : ""}
+        rows={explRows}
+        note="Same calculation as the desktop Overview."
+      />
+    </FinScreen>
   );
 }

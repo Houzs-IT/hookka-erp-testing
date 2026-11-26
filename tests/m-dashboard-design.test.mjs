@@ -61,35 +61,23 @@ test("the smooth line, the cash sections, the share bar", () => {
 });
 
 test("one month for every card, chosen by a tap; the latest at first", () => {
-  assert.match(scr, /const months = phoneDashMonths\(rows\);/);
-  assert.match(scr, /const sel = pick !== null && pick < months\.length \? pick : months\.length - 1;/);
-  assert.equal((scr.match(/onSel=\{setPick\}/g) ?? []).length, 4, "the chart, both salary cards and the cost card choose it");
-  assert.match(scr, /<CashFlowCard month=\{last\} \/>/);
-  assert.match(scr, /<BalanceSheetCard month=\{last\} \/>/);
+  // Batch 3: the prototype's period chips and bars choose the month for every card.
+  assert.match(scr, /: phoneDashMonths\(rows\);/);
+  assert.match(scr, /const sel = pick !== null && pick < periods\.length \? pick : periods\.length - 1;/);
+  assert.match(scr, /<IncomeCard months=\{periods\} sel=\{sel\} onSel=\{setPick\}/);
+  assert.match(scr, /<SalaryCard title="Production Salary" months=\{periods\} sel=\{sel\}/);
+  assert.match(scr, /<CashFlowCard month=\{last\}/);
+  assert.match(scr, /<BalanceSheetCard month=\{last\}/);
   assert.match(scr, /<RatiosCard month=\{last\} \/>/);
-  assert.match(scr, /is still running — figures are so far\./);
-  // Money out reads as an amount, as the design: "Out 363,252".
-  assert.match(sec, /Out \$\{rmWhole\(cf\?\.outflow == null \? null : Math\.abs\(cf\.outflow\)\)\}/);
 });
 
-test("the design's look: the mini chart, the pill, the list, the share bar, the tiles", () => {
-  // Mini chart: teal bars, the chosen one full and the rest at .45; the forecast red, dashed, smooth, hollow dots.
-  assert.match(sec, /rx=\{4\} fill=\{CH\.single\}/);
-  assert.match(sec, /opacity: me \? 1 : 0\.45, transition: "y \.45s ease, height \.45s ease, opacity \.2s"/);
-  assert.match(sec, /<path d=\{smoothPath\(pts\)\} fill="none" stroke=\{CH\.fc\} strokeWidth=\{2\} strokeDasharray=\{FORECAST_DASH\}/);
-  assert.match(sec, /<circle key=\{k\} cx=\{cx\} cy=\{cy\} r=\{3\} fill="#FFFFFF" stroke=\{CH\.fc\} strokeWidth=\{2\}/);
-  // The pill: green on #E8F3EC when good, red on #FBEAE7 when not; "Forecast …" under it.
-  assert.match(sec, /background: vs\.good \? "#E8F3EC" : "#FBEAE7", color: vs\.good \? GREEN : RED/);
-  assert.match(sec, /Forecast \{vs\.forecast\}/);
-  // The list: the chosen month on #E9F2F1; % of sales red over plan, green within.
-  assert.match(sec, /background: r\.selected \? "#E9F2F1" : "transparent"/);
-  assert.match(sec, /const vsColour = \(p: number \| null, fp: number \| null\) => \(p === null \|\| fp === null \? MUTED : p > fp \? RED : GREEN\);/);
-  // The share bar in the desktop's band colours; the tiles.
-  assert.match(sec, /background: CS_COLOURS\[i % CS_COLOURS\.length\], transition: "width \.4s ease"/);
-  assert.match(sec, /\{ label: "Headcount", value: head === null \? "-" : String\(head\), col: CH\.teal \}/);
-  assert.match(sec, /\{ label: "RM \/ unit", value: rmWhole\(per\(units\)\), col: CH\.green \}/);
-  // The card frame.
-  assert.match(sec, /background: "#FFFFFF", border: "1px solid #E7E0D4", borderRadius: 16, padding: 14/);
+test("the design's look (Batch 3 prototype): kit cards, bars with the forecast tick, share bar, tiles", () => {
+  assert.match(sec, /from "\.\/fin-kit"/, "the shared Finance kit draws every card");
+  assert.match(sec, /barGeometry\(/, "bars scaled the prototype's way, the forecast as a dashed tick");
+  assert.match(sec, /const widths = shareWidths\(m\.byDept\.map\(\(d\) => d\.amount\)\);/, "the departments' share bar");
+  assert.match(sec, /tile\("RM per head", rm\(per\(head\)\)\)/);
+  assert.match(sec, /tile\("RM per unit", rm\(per\(units\)\)\)/);
+  assert.match(sec, /Units completed run high \(double-counted batches\), so RM \/ unit runs low\. RM \/ head is unaffected\./, "the repo's warning stays");
 });
 
 test("month names: in words, starred while running", () => {
@@ -105,7 +93,8 @@ test("swipe back: from the left edge, past 30% of the width, in the iPhone home-
   assert.match(shell, /if \(!enabled\) return <>\{children\}<\/>;/);
   assert.match(shell, /if \(e\.clientX - box\.left > SWIPE_EDGE_PX\) return;/);
   assert.match(shell, /transition: dragging \? "none" : "transform \.22s cubic-bezier\(\.2,\.8,\.2,1\)"/);
-  assert.match(read(dir + "FinanceRoute.tsx"), /return <SwipeBack onBack=\{\(\) => navigate\("\/m\/finance"\)\}>\{render\(\)\}<\/SwipeBack>;/);
+  assert.match(read(dir + "FinanceRoute.tsx"), /return <SwipeBack onBack=\{back\}>\{render\(back\)\}<\/SwipeBack>;/);
+  assert.match(read(dir + "FinanceRoute.tsx"), /const back = \(\) => navigate\(toMenu\);/);
 });
 
 test("a percentage chart's point carries its figure on the phone (owner 2026-10-20)", () => {

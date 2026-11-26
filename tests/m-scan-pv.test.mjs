@@ -199,7 +199,9 @@ test("create: success only for a real id, an unknown outcome makes the next tap 
 test("the voucher screens: one ladder call per tap, reject needs a reason, approve says it books the ledger, actions gated by the server's permission keys", () => {
   const code = codeOf(read("screens/finance/VoucherScreens.tsx"));
   assert.match(code, /hasPermission\(\.\.\.PV_ACTION_PERM\[k\]\)/);
-  assert.match(code, /disabled=\{!reason\.trim\(\)\}/);
+  // Batch 3: the reason box is the prototype's dialog; OK refuses a blank reason (useFinDialog).
+  assert.match(code, /okL: "Reject", danger: true, reason: true/);
+  assert.match(read("screens/finance/fin-dialog.tsx"), /if \(spec && \(spec\.reason \|\| spec\.accounts\) && !value\.trim\(\)\) \{ setTried\(true\); return; \}/);
   assert.match(code, /This is the step that books it/);
   assert.match(code, /approval`, \{ action, reason \}/);
   const run = code.slice(code.indexOf("const run = async"), code.indexOf("const onPickFile"));
@@ -213,7 +215,7 @@ test("a voucher with no formal number yet says so (the number is issued at Check
 });
 
 test("the Finance menu row and routes exist, gated like the desktop Payment Vouchers page", () => {
-  assert.match(read("finance-menu.ts"), /screen: "vouchers", label: "Payment Vouchers", icon: WalletCards, navGate: "\/accounting\?tab=payments"/);
+  assert.match(read("finance-menu.ts"), /screen: "vouchers", label: "Payment Vouchers", sub: "Prepare, check and approve", icon: FileCheck2, c: "#6B5C32", bg: "#F4EFE6", navGate: "\/accounting\?tab=payments"/);
   assert.match(read("MobileLayout.tsx"), /path="finance\/:screen\/:id"/);
   assert.match(read("screens/finance/FinanceRoute.tsx"), /VoucherDetailScreen id=\{id\}/);
 });
