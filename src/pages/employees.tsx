@@ -1380,7 +1380,32 @@ function WorkingHoursTab({
   const removeRow = useCallback(async (idx: number) => {
     const row = rows[idx];
     if (!row) return;
-    if (row.id) {
+    if (!row.id && (row.clockIn || row.clockOut)) {
+      // Draft built from a punch (refresh) — dropping it locally would let the
+      // punch rebuild it on the next refresh (HK-0178), so the punch goes on the server.
+      if (
+        !(await confirm({
+          title: "Remove this punch?",
+          message: "This deletes the worker's clock-in / clock-out for this day, and any automatic short-hour deduction from it. This cannot be undone.",
+          confirmLabel: "Remove",
+          tone: "danger",
+        }))
+      ) {
+        return;
+      }
+      try {
+        const q = `workerId=${encodeURIComponent(row.workerId)}&date=${encodeURIComponent(row.date)}`;
+        const res = await fetch(`/api/working-hour-entries/punch?${q}`, { method: "DELETE" });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          patchRow(idx, { saveError: j?.error || humanizeError({ status: res.status }, "Couldn't remove. Please try again.") });
+          return;
+        }
+      } catch (e) {
+        patchRow(idx, { saveError: humanizeError(e, "Couldn't remove. Please try again.") });
+        return;
+      }
+    } else if (row.id) {
       // Persisted entry — ask before the destructive server DELETE.
       if (
         !(await confirm({
@@ -1396,7 +1421,8 @@ function WorkingHoursTab({
       try {
         const res = await fetch(`/api/working-hour-entries/${row.id}`, { method: "DELETE" });
         if (!res.ok) {
-          patchRow(idx, { saveError: humanizeError({ status: res.status }, "Couldn't delete. Please try again.") });
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          patchRow(idx, { saveError: j?.error || humanizeError({ status: res.status }, "Couldn't delete. Please try again.") });
           return;
         }
       } catch (e) {

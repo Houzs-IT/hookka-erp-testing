@@ -9,7 +9,8 @@
 //   POST   /api/working-hour-entries                — create one entry
 //   POST   /api/working-hour-entries/bulk            — replace all entries for an attendance
 //   PUT    /api/working-hour-entries/:id             — update hours / category / notes
-//   DELETE /api/working-hour-entries/:id
+//   DELETE /api/working-hour-entries/:id             — last entry of a day also drops its punch + AUTO dock
+//   DELETE /api/working-hour-entries/punch?workerId=&date= — drop a punch that has no entry
 //
 // One row per (attendance × department × category). Hours are decimal
 // (e.g. 7.5). PRODUCTION_SHORTFALL / WAREHOUSING / REPAIR / MAINTENANCE are
@@ -25,6 +26,8 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { ensureDeptScanEvents, liveTimedSegments } from "../lib/punch-autofill";
+import { ensureDeductionSourceColumn } from "../lib/attendance-deduct";
+import { isPayrollLocked, PAYROLL_LOCKED_ERROR, punchCleanupStatements } from "../lib/remove-worker-day";
 import { mytWallClock } from "../../lib/utils";
 import { ensureNonprodRequests } from "./worker";
 import { loadProductionRevenue } from "../lib/production-revenue";
@@ -1069,15 +1072,48 @@ app.put("/:id", async (c) => {
 // ---------------------------------------------------------------------------
 // DELETE /:id
 // ---------------------------------------------------------------------------
+// DELETE /punch?workerId=&date= — remove a punch that has NO entry (the grid's
+// draft row, HK-0178). Registered before /:id so "punch" is not read as an id.
+app.delete("/punch", async (c) => {
+  const denied = await requirePermission(c, "attendance", "delete");
+  if (denied) return denied;
+  const workerId = c.req.query("workerId") ?? "";
+  const date = c.req.query("date") ?? "";
+  if (!workerId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ success: false, error: "workerId and date (YYYY-MM-DD) are required" }, 400);
+  }
+  if (await isPayrollLocked(c.var.DB, date)) {
+    return c.json({ success: false, error: PAYROLL_LOCKED_ERROR }, 409);
+  }
+  await ensureDeductionSourceColumn(c.var.DB);
+  await c.var.DB.batch(punchCleanupStatements(c.var.DB, getOrgId(c), workerId, date));
+  return c.json({ success: true, data: { workerId, date } });
+});
+
 app.delete("/:id", async (c) => {
   const denied = await requirePermission(c, "attendance", "delete");
   if (denied) return denied;
   const id = c.req.param("id");
-  const existing = await c.var.DB.prepare("SELECT id FROM working_hour_entries WHERE id = ?")
+  const existing = await c.var.DB.prepare(
+    "SELECT id, workerId, date FROM working_hour_entries WHERE id = ?",
+  )
     .bind(id)
-    .first<{ id: string }>();
+    .first<{ id: string; workerId: string; date: string }>();
   if (!existing) return c.json({ success: false, error: "Entry not found" }, 404);
-  await c.var.DB.prepare("DELETE FROM working_hour_entries WHERE id = ?").bind(id).run();
+  // Last entry of the day → its punch goes too (HK-0178), so check the payroll lock first.
+  const others = await c.var.DB.prepare(
+    "SELECT COUNT(*) AS c FROM working_hour_entries WHERE workerId = ? AND date = ? AND id != ?",
+  )
+    .bind(existing.workerId, existing.date, id)
+    .first<{ c: number | string }>();
+  if (Number(others?.c ?? 0) === 0 && (await isPayrollLocked(c.var.DB, existing.date))) {
+    return c.json({ success: false, error: PAYROLL_LOCKED_ERROR }, 409);
+  }
+  await ensureDeductionSourceColumn(c.var.DB);
+  await c.var.DB.batch([
+    c.var.DB.prepare("DELETE FROM working_hour_entries WHERE id = ?").bind(id),
+    ...punchCleanupStatements(c.var.DB, getOrgId(c), existing.workerId, existing.date),
+  ]);
   return c.json({ success: true, data: { id } });
 });
 
