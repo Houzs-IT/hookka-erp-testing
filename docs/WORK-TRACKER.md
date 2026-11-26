@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-26**: AI Connector round 4 (Hookka K1–K12 + company_report) added (branch `feat/mcp-round4`, PR open, not merged); nothing else re-checked.
 > **Last verified: 2026-11-26**: Batch 3 Finance + Receivable phone redesign added (branch `redesign/mobile-finance-receivable-v3`, rebased onto upstream/main `b1ee4d7e0`, committed locally, not pushed; owner approved); nothing else re-checked.
 > **Last verified: 2026-11-26**: AI Connector round 3 (quick answers, daily brief, Excel export, rate limit, speed) added (branch `feat/mcp-round3`, PR open, not merged); nothing else re-checked.
 > **Last verified: 2026-11-26**: Home Operations v3 phone redesign, Phases A (Overview) and B/C (Output & Cost, Floor Live) added (branch `redesign/mobile-dashboard-operations-v3`, to `main`); nothing else re-checked.
@@ -7811,3 +7812,10 @@ Owner: "除了carres 剩下的都要做MCP… 根据每个系统的重要性去�
 5. DONE (owner reviewed on localhost): Announcements and IT Support approved as built.
 6. DONE (this PR; checked with MOCK data, owner approved): Meetings v3 (`src/pages/m/screens/comms/meetings/`) and Mail Centre v3 (`src/pages/m/screens/comms/mail/`) from the owner's REVISED prototypes; where a prototype disagrees with the ERP (e.g. Mail Undo / quick-filter chips, read-only mailboxes; Meetings room options, email-status wording), the ERP's behaviour is kept.
 7. DONE: owner reviewed and approved all four (2026-11-26); committed and PR opened to Houzs-IT/main (NOT merged). AFTER MERGE: verify the four screens on prod (read path; write paths with a test account only).
+
+## 2026-11-26 — MCP round 4 (owner 2026-11-26): complete every connector per system; checklist in PR
+Branch `feat/mcp-round4` (worktree `hookka-erp-testing-worktrees/mcp-round4`). Spec: owner's round-4 list + "Owner additions" (permissions first; `company_report`). Hookka part only.
+1. DONE (PR, not merged): K1 `po_overdue`, K2 `supplier_lateness`, K3 `uninvoiced_deliveries`, K4 `stock_check`, K5 `product_cost`, K6 `production_output`, K8 `raw_material_summary`, K9 `gross_profit`, K10 `production_lead_time`, K11 `worker_efficiency`, K12 `deliveries_due` extended (next_week + overdue DOs), `company_report`. Every period tool takes `period` and compares with the period before.
+2. SKIPPED: K7 PO server PDF — the PO prints through a browser-only jsPDF template, not a clean Worker port (same decision as round 3). K8 consumption this month — no bounded endpoint (only the all-time cost ledger). K6/K4 per-warehouse split — Hookka has no warehouse dimension for RM or FG stock.
+3. DONE: permissions — module-gate table + low-privilege redaction tests (`tests/mcp-round4.test.mjs`); the admin leak check now also runs every round-4 tool as the chosen account (`tool:<name>` rows).
+4. NOT DONE (main session): merge, deploy, live check of every tool through the owner's connector, and a leak-check run as a low-privilege account.

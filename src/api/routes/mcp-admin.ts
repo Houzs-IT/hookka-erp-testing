@@ -16,7 +16,7 @@ import { emitAudit } from "../lib/audit";
 import { DEFAULT_ORG_ID } from "../lib/tenant";
 import { ensureNotificationsUserColumn } from "./it-support";
 import { appLabel, ensureMcpTables, hasMcpAccess, issueTokens, randomToken, revokeToken, revokeUserTokens } from "../lib/mcp-store";
-import { analyseToolText, leakCheckPaths, type LeakRow } from "../lib/mcp-leak-check";
+import { analyseToolText, leakCheckTargets, LEAK_CHECK_TOOLS, type LeakRow } from "../lib/mcp-leak-check";
 import { mcpAppRoutes, runToolAs } from "./mcp";
 import { actionsEnabled, setActionsEnabled } from "../lib/mcp-actions";
 import { LEAK_CHECK_CLIENT_ID, latencyByTool, RATE_PER_DAY, RATE_PER_MINUTE } from "../lib/mcp-limits";
@@ -390,7 +390,7 @@ app.post("/admin/leak-check", async (c) => {
     .prepare("INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES (?, 'Leak check', '[]', ?) ON CONFLICT (client_id) DO NOTHING")
     .bind(LEAK_CLIENT_ID, new Date().toISOString())
     .run();
-  const paths = leakCheckPaths(mcpAppRoutes());
+  const paths = leakCheckTargets(mcpAppRoutes());
   const page = paths.slice(offset, offset + LEAK_PAGE);
   const tok = await issueTokens(db, userId, LEAK_CLIENT_ID);
   const rows: LeakRow[] = [];
@@ -411,7 +411,10 @@ app.post("/admin/leak-check", async (c) => {
     // — the one entry in tests/no-query-in-loop.baseline.json for this file.
     for (const path of page) {
       try {
-        const res = await runToolAs(c, who, tok.accessToken, "erp_get", { path, query: { limit: 5, page: 1 } });
+        const tool = path.startsWith("tool:") ? LEAK_CHECK_TOOLS.find((t) => `tool:${t.name}` === path) : undefined;
+        const res = tool
+          ? await runToolAs(c, who, tok.accessToken, tool.name, tool.args)
+          : await runToolAs(c, who, tok.accessToken, "erp_get", { path, query: { limit: 5, page: 1 } });
         rows.push(analyseToolText(path, res.content[0]?.text ?? "", !!res.isError));
       } catch (e) {
         rows.push({ path, outcome: "error", status: e instanceof Error ? e.message : String(e), hidden: [], kept: [], keptExpected: false });

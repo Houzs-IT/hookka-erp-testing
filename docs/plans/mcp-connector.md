@@ -1,6 +1,6 @@
 # Hookka ERP MCP connector — plan
 
-> **Last verified: 2026-11-26** — v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit on `feat/mcp-round3` (§3c).
+> **Last verified: 2026-11-26** — v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit (§3c); round 4 Hookka K1–K12 + `company_report` on `feat/mcp-round4` (§3d).
 
 Owner 2026-11-25: 「我的全套系统都要有mcp」, staff (non-IT) should ask Claude / ChatGPT
 questions about the ERP the way the owner asks in this session; 「按员工自己的权限」 —
@@ -161,14 +161,14 @@ Decisions worth knowing:
 
 | # | Question | Tool |
 | --- | --- | --- |
-| P1 | Which POs are overdue? | `purchasing_summary {view: "overdue"}` |
-| P2 | Which suppliers are late most often? | `purchasing_summary {view: "suppliers", days: 30 \| 90}` |
+| P1 | Which POs are overdue? | `po_overdue` (round 4; also `purchasing_summary {view: "overdue"}`) |
+| P2 | Which suppliers are late most often? | `supplier_lateness {period}` (round 4; also `purchasing_summary {view: "suppliers"}`) |
 | P3 | How much do we owe suppliers? | `payables_summary` (accounting permission) |
 | P4 | What is still waiting to be received? | `purchasing_summary {view: "awaiting"}` |
 | P5 | Show the flow of PO X | `document_flow` (purchase order → GRN → purchase invoice) |
 | S1 | Which SOs are overdue? | `so_overdue` (no salesperson field in Hookka) |
-| S2 | What is due for delivery today / this week? | `deliveries_due {range: "today" \| "week"}` |
-| S3 | Delivered not invoiced; invoiced not paid? | `receivables_summary` |
+| S2 | What is due for delivery today / this week / next week, and what is overdue? | `deliveries_due {range: "today" \| "week" \| "next_week"}` |
+| S3 | Delivered not invoiced (with age); invoiced not paid? | `uninvoiced_deliveries`; `receivables_summary` |
 | S4 | Sales by salesperson / outlet | not in Hookka (no salesperson / outlet data); totals and by customer: `sales_summary` |
 | S5 | Show the flow of SO X | `document_flow` |
 | M1 | Which production orders are late? | `production_late` |
@@ -177,6 +177,14 @@ Decisions worth knowing:
 | H5 | Who is on leave or absent today? | `attendance_today` (HR only) |
 | E1 | What do I need to look at today? | `daily_brief` / prompt `daily-brief` |
 | E2 | Export X to Excel | `export_excel` |
+| K4 | Do we have stock of X? | `stock_check {query}` |
+| K5 | What does product X cost to make? | `product_cost {product}` (costing permission) |
+| K6 | What did each department / worker produce today / this week? | `production_output {period}` |
+| K8 | Raw materials: low, short, price changes | `raw_material_summary {period}` |
+| K9 | Gross profit by product / customer / invoice | `gross_profit {period, by}` (cost needs costing permission) |
+| K10 | How long does product X take to make? | `production_lead_time {product, period}` |
+| K11 | Who / which department is least efficient, and the labour cost? | `worker_efficiency {period}` |
+| R1 | The company's management report for a month / quarter / year | `company_report {period, month}` (accounting permission) |
 
 **Untested live (round 3):** every new tool against prod data and a real Claude / ChatGPT
 client; the xlsx download through the signed link; the rate limit under real traffic.
@@ -184,6 +192,55 @@ client; the xlsx download through the signed link; the rate limit under real tra
 "The whole system" = every module's GET endpoints, through `erp_get`; the catalog tells the
 model which endpoint answers which question (production revenue, department output, MRP /
 stock status, orders, delivery, invoices, payroll for those allowed, …).
+
+## 3d. Round 4 — complete the connector (owner 2026-11-26)
+
+Branch `feat/mcp-round4`. Code: `src/api/lib/mcp-round4.ts` (pure summaries), `routes/mcp.ts`
+`round4Tool` (the reads), tests `tests/mcp-round4.test.mjs`. Same rule as before: every read
+goes through `readValue` as the person (module gate → inner GET → `makeRedactor`); a refused
+read becomes "You don't have access to X"; a money field the person may not see comes out as
+`null` (never 0). At most 5 reads per answer, in parallel.
+
+**Period** (every period tool): `period` = `today` | `week` (Monday → today) | `month` (to date)
+| `last_month` | `quarter` (to date) | `year` (to date) | `custom` with `from` / `to`; the answer
+carries the period before (same days of the previous week / month / quarter / year, or the
+same length before a custom range) — `resolvePeriod`.
+
+| Tool | Reads (as the person) | ERP permission that gates it (module gate → route) |
+| --- | --- | --- |
+| `po_overdue` (K1) | `/api/purchase-orders/stats` | `purchase-orders:read` → same. Houzs output shape. |
+| `supplier_lateness {period \| days}` (K2) | `/api/purchase-orders/stats` | `purchase-orders:read`. Received date = set by the GRN that completed the PO. Default last 90 days. |
+| `uninvoiced_deliveries` (K3) | `/api/delivery-orders?status=SIGNED,DELIVERED` (500 a page, ≤ 4 pages) | `delivery-orders:read` → same. |
+| `stock_check {query}` (K4) | `/api/inventory?buckets=rawMaterials`, `/api/products?search=`, `/api/inventory/fg-stock`, `/api/procurement-reports/outstanding-lines` | `inventory:read` / `products:read` / `purchase-orders:read`, each optional. `balanceQty` is a "balance" key, so it is hidden for roles without pricing / accounting (existing redaction rule — reported, not changed). |
+| `product_cost {product, tier}` (K5) | `/api/products?search=`, `/api/product-costing/:id` | gate `cost-ledger:read` OR `product-pricing:read` (route: `products:read`) — the connector is stricter than the page. Inside the gate costing money is shown (cost-ledger is a money module). |
+| `production_output {period}` (K6) | `/api/dashboard/floor-live/completed` (period + period before), `/api/dashboard/floor-live/summary`, `/api/dashboard/floor-live` (live today) | gate `dashboard` / `dashboard-experimental` / `production-orders` read (route: `production-orders:read` or the Operations dashboard tab). Production value (`…Sen`) hidden without pricing. |
+| `worker_efficiency {period}` (K11) | as K6 + `/api/accounting/dashboard` (whole-month periods, labour cost by department) | as K6; labour cost needs `accounting:read`, refused → left out. |
+| `raw_material_summary {period}` (K8) | `/api/inventory?buckets=rawMaterials`, `/api/mrp/plan`, `/api/price-history` | `inventory:read` (needed), `mrp:read`, `price-history:read` (optional). |
+| `gross_profit {period, by}` (K9) | `/api/invoices/line-summary` (period + period before), `/api/product-costing/summary` | `invoices:read` (needed); cost needs `cost-ledger` / `product-pricing` read, else revenue only. |
+| `production_lead_time {product, period}` (K10) | `/api/production-orders?status=COMPLETED&include=none` (500 a page, ≤ 4 pages, newest first) | `production-orders:read`. |
+| `deliveries_due {range}` (K12, extended) | unchanged reads; `range` adds `next_week`; adds `overdueDeliveryOrders` | `delivery-orders:read`, `sales-orders:read`. |
+| `company_report {period, month}` | `/api/accounting/dashboard?granularity=month&from&to` (the Board Report's source rows), `/api/accounting/aging` | `accounting:read` → same. |
+
+Decisions worth knowing:
+- **K7 PO server PDF: skipped.** The PO prints through a browser-only jsPDF + autotable
+  template; porting it is not cheap (see §3b). `get_pdf` for a PO still returns the page link.
+- **K8 consumption this month: skipped** — the only source is `GET /api/cost-ledger?type=RM_ISSUE`,
+  which returns the whole history (no date filter). Not read.
+- **No warehouse split** in K4 / K8: Hookka has one balance per raw material and counts finished
+  goods from production orders (`RmLot.warehouse` is always null).
+- **GP cost** = today's BOM costing (labour + priced materials, first fabric tier) × quantity — a
+  standard cost, flagged `costUnderstated` when the BOM has unpriced lines. Invoice lines carry no
+  SO number, so "GP per document" is per invoice.
+- **Efficiency** = Floor Live's earned ÷ clocked minutes, helpers left out; past days from Floor
+  Live's saved copies + today live. Merging today into the saved days recomputes earned ÷ clocked
+  (a helper-only day keeps the person unrated).
+- **company_report** uses the Finance dashboard's monthly rows rather than the cached Board
+  Report itself: the Board Report is one month at a time and may answer "building" (202).
+- **Leak check** now also runs every round-4 tool as the chosen account (`LEAK_CHECK_TOOLS`,
+  rows `tool:<name>`); RM fields left in a tool that is not a money module are flagged.
+
+**Untested live (round 4):** every tool against prod data through a real client; the leak check
+as a low-privilege account.
 
 ## 4. OAuth (what Claude / ChatGPT need)
 

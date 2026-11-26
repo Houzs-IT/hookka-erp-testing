@@ -53,6 +53,8 @@ import {
 } from "../lib/mcp-actions";
 import { FLOW_API, parseAnchorId, pickFlowAnchor, shapeFlow, soRefsFromDoc, type FlowKind } from "../lib/mcp-flow";
 import {
+  addDays,
+  listRows,
   BRIEF_MAIL_LIMIT,
   BRIEF_SO_TOP,
   buildDailyBrief,
@@ -83,6 +85,30 @@ import {
   type PurchasingView,
 } from "../lib/mcp-quick";
 import { pickPurchaseAnchor, shapePurchaseFlow } from "../lib/mcp-flow";
+import {
+  floorDeptNames,
+  labourByDept,
+  mergeFloorWorkers,
+  overdueDeliveries,
+  pickProduct,
+  reportMonths,
+  resolvePeriod,
+  summariseCompanyReport,
+  summariseGrossProfit,
+  summariseLeadTimes,
+  summarisePoOverdue,
+  summariseProductCost,
+  summariseProductionOutput,
+  summariseRawMaterials,
+  summariseStockCheck,
+  summariseSupplierLateness,
+  summariseUninvoiced,
+  PERIODS,
+  UNINVOICED_STATUSES,
+  type GpBy,
+  type Period,
+  type ReportPeriod,
+} from "../lib/mcp-round4";
 import { renderServerPdf, uploadExportAndSign, uploadPdfAndSign, SERVER_PDF_KINDS, XLSX_CONTENT_TYPE, type PdfKind } from "../lib/mcp-pdf";
 import { buildXlsx, EXPORT_LISTS, EXPORT_MAX_ROWS, EXPORT_PAGE_SIZE, exportFileName, exportRows, exportTotal, filterRows, pagesToRead, pickColumns } from "../lib/mcp-export";
 import { AnswerCache, CACHEABLE_TOOLS, countRecentCalls, RATE_LIMIT_STATUS, rateDecision } from "../lib/mcp-limits";
@@ -412,6 +438,8 @@ ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - Purchasing: purchasing_summary {view: "overview" | "overdue" (late POs) | "awaiting" (still to be received) | "suppliers" (who delivers late, {days})}.
 - Which materials are short: material_shortages. Low or negative stock: inventory_summary. Late production orders: production_late.
 - Who is on leave or absent today (HR only): attendance_today. "What do I need to look at today?": daily_brief.
+- Round 4: overdue POs / still to receive: po_overdue. Late suppliers: supplier_lateness {period}. Delivered not invoiced (with age): uninvoiced_deliveries. "Do we have stock of X?": stock_check {query}. What a product costs to make: product_cost {product}. Output by department / worker: production_output {period}. Lowest-efficiency workers and departments (+ labour cost): worker_efficiency {period}. Raw-material stock, shortages and price changes: raw_material_summary {period}. Gross profit: gross_profit {period, by: product | customer | invoice}. How long a product takes to make: production_lead_time {product, period}. Delivery schedule incl. next week and overdue: deliveries_due {range: today | week | next_week}. The company management report: company_report {period: month | quarter | year, month}.
+- period (every period tool): today | week | month | last_month | quarter | year, or from + to (YYYY-MM-DD); the answer compares with the period before.
 - A list as an Excel file: export_excel {list, search, status, from, to, fields} (15-minute download link).
 - A document by number or a customer / product name: search {query}, then fetch {id} for the full record.
 Only when no quick answer fits: list_modules → list_endpoints → erp_get. With erp_get pass "fields" (only the keys you need) and query filters (from/to YYYY-MM-DD, page/limit, search) to keep replies small.
@@ -421,6 +449,34 @@ Keep replies short: lead with the count and the few lines that matter, give link
 For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
 ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. Nothing else can be changed: no orders, money, stock, approvals or deletes.
 If a call says "not available to your role", tell the user they do not have permission for that data.`;
+
+// ── round 4 tool list (owner 2026-11-26) ────────────────────────────────────
+const RO = { readOnlyHint: true, openWorldHint: false };
+const PERIOD_PROPS = {
+  period: { type: "string", enum: [...PERIODS], description: "today, week (Monday to today), month (to date), last_month, quarter (to date), year (to date) or custom with from/to." },
+  from: { type: "string", description: "YYYY-MM-DD (custom period)" },
+  to: { type: "string", description: "YYYY-MM-DD (custom period)" },
+};
+const NO_ARGS = { type: "object", properties: {}, additionalProperties: false };
+const ROUND4_TOOLS = [
+  { name: "po_overdue", title: "Overdue POs and what is still to be received (quick answer)", description: "Open purchase orders past their expected date (supplier, days late, value RM) and everything still waiting to be received (sent, partly received), due this week and by supplier, in ONE call.", inputSchema: NO_ARGS, annotations: RO },
+  { name: "supplier_lateness", title: "Which suppliers are late most often (quick answer)", description: "Late deliveries per supplier over a period: POs received after their expected date (count, average days late, on-time %) and open POs past their date, compared with the period before. Default: the last 90 days.", inputSchema: { type: "object", properties: { ...PERIOD_PROPS, days: { type: "number", description: "Instead of period: the last N days (default 90)." } }, additionalProperties: false }, annotations: RO },
+  { name: "uninvoiced_deliveries", title: "Delivered but not invoiced (quick answer)", description: "Delivery orders signed / delivered with no invoice yet: count, value (RM), by age (0-7, 8-30, 31-60, over 60 days), by customer, and the oldest with links.", inputSchema: NO_ARGS, annotations: RO },
+  { name: "stock_check", title: "Do we have stock? (quick answer)", description: "One item by code or name: raw material on hand, minimum, quantity on open POs with the next ETA; finished goods in stock, reserved and available.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Item code or part of its name" } }, required: ["query"], additionalProperties: false }, annotations: RO },
+  { name: "product_cost", title: "What a product costs to make (quick answer)", description: "A product's BOM cost from the costing module: total, labour and materials (RM), by department, each material line with price and amount, lines not counted, fabric tiers and the standard cost. Money only for people who may see costing in the ERP.", inputSchema: { type: "object", properties: { product: { type: "string", description: "Product code or name" }, tier: { type: "string", description: "Fabric price tier, e.g. Lv2 (default: the first)" } }, required: ["product"], additionalProperties: false }, annotations: RO },
+  { name: "production_output", title: "Production output by department and worker (quick answer)", description: "For a period: pieces completed per department (bedframe units, sofa sets) and their value, against the usual day and the period before; workers, hours and efficiency per department; top workers and the lowest efficiency. Default period: today.", inputSchema: { type: "object", properties: PERIOD_PROPS, additionalProperties: false }, annotations: RO },
+  { name: "worker_efficiency", title: "Lowest-efficiency workers and departments (quick answer)", description: "For a period: departments and workers with the lowest efficiency (earned / clocked minutes), with their output and hours, and the labour cost per department for whole-month periods where the person may see finance figures. Default period: week.", inputSchema: { type: "object", properties: PERIOD_PROPS, additionalProperties: false }, annotations: RO },
+  { name: "raw_material_summary", title: "Raw materials (quick answer)", description: "Raw-material stock (low, negative, zero, by group), what is short for open production orders, and supplier price changes in the period (biggest increases first). Default period: month.", inputSchema: { type: "object", properties: PERIOD_PROPS, additionalProperties: false }, annotations: RO },
+  { name: "gross_profit", title: "Gross profit (quick answer)", description: "Gross profit for a period: invoiced revenue against each product's BOM cost, by product, customer or invoice, with margin %, the lowest margins and the period before. Cost only for people who may see costing in the ERP. Default period: month.", inputSchema: { type: "object", properties: { ...PERIOD_PROPS, by: { type: "string", enum: ["product", "customer", "invoice"], description: "Default: product." } }, additionalProperties: false }, annotations: RO },
+  { name: "production_lead_time", title: "How long a product takes to make (quick answer)", description: "Days from production start to completion over orders completed in a period: median and average overall and per product, against the period before. Give a product to narrow it. Default: the last 90 days.", inputSchema: { type: "object", properties: { product: { type: "string", description: "Product code or name (optional)" }, ...PERIOD_PROPS }, additionalProperties: false }, annotations: RO },
+  {
+    name: "company_report",
+    title: "Company management report",
+    description: "The management report for a month, quarter or year in ONE call: revenue, gross profit and margin, costs by type, net profit, cash flow, balance sheet, what customers owe and what we owe, production revenue and headcount, against the period before. Finance (accounting) permission needed.",
+    inputSchema: { type: "object", properties: { period: { type: "string", enum: ["month", "quarter", "year"], description: "Default: month." }, month: { type: "string", description: "YYYY-MM: the month, or the last month of the quarter / year to date. Default: last month." } }, additionalProperties: false },
+    annotations: RO,
+  },
+];
 
 const TOOLS = [
   {
@@ -579,8 +635,8 @@ const TOOLS = [
   {
     name: "deliveries_due",
     title: "Deliveries due (quick answer)",
-    description: "What is due for delivery today or this week in ONE call: delivery orders not yet delivered by delivery date (customer, hub, lorry, status) and sales orders due by their expected date.",
-    inputSchema: { type: "object", properties: { range: { type: "string", enum: ["today", "week"], description: "Default: today." } }, additionalProperties: false },
+    description: "The delivery schedule in ONE call: delivery orders not yet delivered by delivery date (customer, hub, lorry, status) and sales orders due by their expected date, for today, this week (today + 6 days) or next week (the 7 days after), plus every delivery order already past its date and not delivered (overdue).",
+    inputSchema: { type: "object", properties: { range: { type: "string", enum: ["today", "week", "next_week"], description: "Default: today." } }, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -604,6 +660,7 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
+  ...ROUND4_TOOLS,
   {
     name: "export_excel",
     title: "Export a list to Excel",
@@ -1111,7 +1168,7 @@ async function quickTool(c: Context<Env>, id: McpIdentity, token: string, name: 
   }
 
   if (name === "deliveries_due") {
-    const range = args.range === "week" ? "week" : "today";
+    const range = args.range === "week" ? "week" : args.range === "next_week" ? "next_week" : "today";
     const [dos, sos] = await Promise.all([
       readValue(c, token, "/api/delivery-orders", { status: DO_NOT_DELIVERED, page: 1, limit: 500 }),
       readValue(c, token, "/api/sales-orders", { fields: "orders-due", top: BRIEF_SO_TOP }),
@@ -1120,7 +1177,12 @@ async function quickTool(c: Context<Env>, id: McpIdentity, token: string, name: 
       const a = P.need(dos, "delivery orders");
       if (!a.ok) return fin(`deliveries:${range}`, a.step);
     }
-    return fin(`deliveries:${range}`, P.done(summariseDeliveriesDue(range, P.opt(dos, "delivery orders"), P.opt(sos, "sales orders"), today, origin)));
+    const d = P.opt(dos, "delivery orders");
+    return fin(
+      `deliveries:${range}`,
+      // Round 4 (K12): the overdue half of the schedule, from the same read.
+      P.done({ ...summariseDeliveriesDue(range, d, P.opt(sos, "sales orders"), today, origin), ...(d !== null ? { overdueDeliveryOrders: overdueDeliveries(d, today, origin) } : {}) }),
+    );
   }
 
   if (name === "production_late") {
@@ -1185,6 +1247,182 @@ async function quickTool(c: Context<Env>, id: McpIdentity, token: string, name: 
         ...(shipped !== null ? { shippedNotInvoiced: { ...summariseShippedNotInvoiced(shipped, today, origin), countedFrom: "the 500 most recent shipped delivery orders" } } : {}),
       }),
     );
+  }
+
+  // ── round 4 (owner 2026-11-26) ───────────────────────────────────────────
+  const r4 = await round4Tool(c, token, name, args, today, origin, P);
+  if (r4) return r4;
+
+  return null;
+}
+
+/** A period argument, or a plain 400 step. */
+function periodOr(args: Record<string, unknown>, today: string, dflt: Period["period"], target: string): Period | Step {
+  const p = resolvePeriod(args, today, dflt);
+  return "error" in p ? { result: text(p.error, true), status: 400, target, note: "" } : p;
+}
+const isStep = (x: unknown): x is Step => !!x && typeof x === "object" && "result" in (x as object);
+
+/** Pages 2..n of a paginated list, all at once (bounded by `maxPages`). */
+async function morePages(c: Context<Env>, token: string, path: string, query: Record<string, unknown>, first: ReadValue, limit: number, maxPages: number): Promise<{ rows: Record<string, unknown>[]; truncated: boolean; failed: ReadValue | null }> {
+  if (!first.ok) return { rows: [], truncated: false, failed: first };
+  const rows = listRows(first.value);
+  const total = Number((first.value as { total?: unknown } | null)?.total) || rows.length;
+  const pages = Math.min(maxPages, Math.ceil(total / limit));
+  if (pages > 1) {
+    const more = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => readValue(c, token, path, { ...query, page: i + 2, limit })));
+    for (const m of more) {
+      if (!m.ok) return { rows, truncated: true, failed: m };
+      rows.push(...listRows(m.value));
+    }
+  }
+  return { rows, truncated: total > pages * limit, failed: null };
+}
+
+/**
+ * The round-4 quick answers (K1–K12 + company_report). Every read goes through
+ * readValue as the person — the module gate (mcp-access.ts), the route's own
+ * permission check and the money redaction all apply. At most 4 reads, in
+ * parallel. null = not one of them.
+ */
+async function round4Tool(c: Context<Env>, token: string, name: string, args: Record<string, unknown>, today: string, origin: string, P: Parts): Promise<Step | null> {
+  const fin = (target: string, s: Omit<Step, "target">): Step => ({ ...s, target });
+
+  if (name === "po_overdue") {
+    const a = P.need(await readValue(c, token, "/api/purchase-orders/stats", undefined), "purchase orders");
+    if (!a.ok) return fin("po_overdue", a.step);
+    return fin(`po_overdue:${today}`, P.done(summarisePoOverdue(a.value, today, origin)));
+  }
+
+  if (name === "supplier_lateness") {
+    const days = Math.max(1, Math.min(400, Number(args.days) || 90));
+    const p = args.period || args.from ? periodOr(args, today, "month", "supplier_lateness") : ({ period: "custom", from: addDays(today, -(days - 1)), to: today, prev: { from: addDays(today, -(2 * days - 1)), to: addDays(today, -days) } } as Period);
+    if (isStep(p)) return p;
+    const a = P.need(await readValue(c, token, "/api/purchase-orders/stats", undefined), "purchase orders");
+    if (!a.ok) return fin("supplier_lateness", a.step);
+    return fin(`supplier_lateness:${p.from}..${p.to}`, P.done(summariseSupplierLateness(a.value, p, today)));
+  }
+
+  if (name === "uninvoiced_deliveries") {
+    const q = { status: UNINVOICED_STATUSES };
+    const first = await readValue(c, token, "/api/delivery-orders", { ...q, page: 1, limit: 500 });
+    const a = P.need(first, "delivery orders");
+    if (!a.ok) return fin("uninvoiced", a.step);
+    const got = await morePages(c, token, "/api/delivery-orders", q, first, 500, 4);
+    if (got.failed && got.failed !== first) P.opt(got.failed, "delivery orders (later pages)");
+    return fin("uninvoiced", P.done(summariseUninvoiced(got.rows, today, origin, got.truncated)));
+  }
+
+  if (name === "stock_check") {
+    const query = String(args.query ?? "").trim().slice(0, 60);
+    if (!query) return { result: text("Give an item code or name.", true), status: 400, target: "stock_check", note: "" };
+    const [inv, prods, fg, lines] = await Promise.all([
+      readValue(c, token, "/api/inventory", { buckets: "rawMaterials" }),
+      readValue(c, token, "/api/products", { search: query }),
+      readValue(c, token, "/api/inventory/fg-stock", undefined),
+      readValue(c, token, "/api/procurement-reports/outstanding-lines", undefined),
+    ]);
+    if (!inv.ok && !prods.ok) {
+      const a = P.need(inv, "inventory");
+      if (!a.ok) return fin(`stock_check:${query}`, a.step);
+    }
+    const i = P.opt(inv, "raw-material stock");
+    const pr = P.opt(prods, "products");
+    const f = P.opt(fg, "finished-goods stock");
+    const l = i !== null ? P.opt(lines, "open purchase-order lines") : null;
+    return fin(`stock_check:${query}`, P.done(summariseStockCheck(query, i, pr, f, l, today)));
+  }
+
+  if (name === "product_cost") {
+    const q = String(args.product ?? args.query ?? "").trim().slice(0, 60);
+    if (!q) return { result: text("Give a product code or name.", true), status: 400, target: "product_cost", note: "" };
+    const tier = typeof args.tier === "string" && /^[A-Za-z0-9 _-]{1,20}$/.test(args.tier) ? args.tier : undefined;
+    const s = P.need(await readValue(c, token, "/api/products", { search: q }), "products");
+    if (!s.ok) return fin(`product_cost:${q}`, s.step);
+    const prod = pickProduct(q, s.value);
+    if (!prod || !SAFE_REF.test(prod.id)) return { result: text(`No product matches "${q}".`, true), status: 404, target: `product_cost:${q}`, note: "" };
+    const a = P.need(await readValue(c, token, `/api/product-costing/${prod.id}`, tier ? { tier } : undefined), "product costing");
+    if (!a.ok) return fin(`product_cost:${prod.code}`, a.step);
+    return fin(`product_cost:${prod.code}`, P.done(summariseProductCost(a.value, origin)));
+  }
+
+  if (name === "production_output" || name === "worker_efficiency") {
+    const view = name === "worker_efficiency" ? "efficiency" : "output";
+    const p = periodOr(args, today, view === "efficiency" ? "week" : "today", name);
+    if (isStep(p)) return p;
+    const withLive = p.to >= today;
+    const onlyToday = p.from === today && p.to === today;
+    // Labour cost: whole-month periods only (payroll is monthly), from the Finance dashboard.
+    const wholeMonths = ["month", "last_month", "quarter", "year"].includes(p.period);
+    const [cur, prev, summary, live, dash] = await Promise.all([
+      readValue(c, token, "/api/dashboard/floor-live/completed", { from: p.from, to: p.to }),
+      readValue(c, token, "/api/dashboard/floor-live/completed", { from: p.prev.from, to: p.prev.to, month: p.prev.to.slice(0, 7) }),
+      onlyToday ? Promise.resolve(null) : readValue(c, token, "/api/dashboard/floor-live/summary", { from: p.from, to: p.to }),
+      withLive ? readValue(c, token, "/api/dashboard/floor-live", undefined) : Promise.resolve(null),
+      view === "efficiency" && wholeMonths ? readValue(c, token, "/api/accounting/dashboard", { granularity: "month", from: p.from.slice(0, 7), to: p.to.slice(0, 7) }) : Promise.resolve(null),
+    ]);
+    const a = P.need(cur, "production (Floor Live)");
+    if (!a.ok) return fin(`${name}:${p.from}..${p.to}`, a.step);
+    const s = P.opt(summary, "per-worker figures (Floor Live summary)");
+    const savedToday = !!s && Array.isArray((s as { savedDays?: unknown }).savedDays) && ((s as { savedDays: unknown[] }).savedDays).includes(today);
+    const lv = withLive && !savedToday ? P.opt(live, "today's floor") : null;
+    const workers = s === null && lv === null ? null : mergeFloorWorkers(s, lv);
+    const labour = dash ? labourByDept(P.opt(dash, "labour cost (finance)"), p.from, p.to) : null;
+    return fin(`${name}:${p.from}..${p.to}`, P.done(summariseProductionOutput(view, p, a.value, P.opt(prev, "the previous period"), workers, floorDeptNames(s, lv), labour)));
+  }
+
+  if (name === "raw_material_summary") {
+    const p = periodOr(args, today, "month", name);
+    if (isStep(p)) return p;
+    const [inv, plan, prices] = await Promise.all([
+      readValue(c, token, "/api/inventory", { buckets: "rawMaterials" }),
+      readValue(c, token, "/api/mrp/plan", undefined),
+      readValue(c, token, "/api/price-history", undefined),
+    ]);
+    const a = P.need(inv, "raw-material stock (inventory)");
+    if (!a.ok) return fin(`raw_materials:${p.from}..${p.to}`, a.step);
+    return fin(`raw_materials:${p.from}..${p.to}`, P.done(summariseRawMaterials(a.value, P.opt(plan, "MRP shortages"), P.opt(prices, "supplier price history"), p)));
+  }
+
+  if (name === "gross_profit") {
+    const p = periodOr(args, today, "month", name);
+    if (isStep(p)) return p;
+    const by = (["product", "customer", "invoice"].includes(String(args.by)) ? String(args.by) : "product") as GpBy;
+    const [lines, prevLines, costs] = await Promise.all([
+      readValue(c, token, "/api/invoices/line-summary", { from: p.from, to: p.to }),
+      readValue(c, token, "/api/invoices/line-summary", { from: p.prev.from, to: p.prev.to }),
+      readValue(c, token, "/api/product-costing/summary", undefined),
+    ]);
+    const a = P.need(lines, "invoices");
+    if (!a.ok) return fin(`gp:${by}:${p.from}..${p.to}`, a.step);
+    return fin(`gp:${by}:${p.from}..${p.to}`, P.done(summariseGrossProfit(by, p, a.value, P.opt(prevLines, "the previous period's invoices"), P.opt(costs, "product costing"))));
+  }
+
+  if (name === "production_lead_time") {
+    const q = String(args.product ?? args.query ?? "").trim().slice(0, 60);
+    const p = args.period || args.from ? periodOr(args, today, "month", name) : ({ period: "custom", from: addDays(today, -89), to: today, prev: { from: addDays(today, -179), to: addDays(today, -90) } } as Period);
+    if (isStep(p)) return p;
+    // Newest first (created_at DESC); no job cards — only the order's dates are needed.
+    const query = { status: "COMPLETED", include: "none" };
+    const first = await readValue(c, token, "/api/production-orders", { ...query, page: 1, limit: 500 });
+    const a = P.need(first, "production orders");
+    if (!a.ok) return fin(`lead_time:${q}`, a.step);
+    const got = await morePages(c, token, "/api/production-orders", query, first, 500, 4);
+    if (got.failed && got.failed !== first) P.opt(got.failed, "production orders (later pages)");
+    return fin(`lead_time:${q}:${p.from}..${p.to}`, P.done(summariseLeadTimes(got.rows, p, q, got.truncated)));
+  }
+
+  if (name === "company_report") {
+    const period = (["month", "quarter", "year"].includes(String(args.period)) ? String(args.period) : "month") as ReportPeriod;
+    const m = reportMonths(period, args.month, today);
+    const all = [...m.prevMonths, ...m.months].sort();
+    const [dash, aging] = await Promise.all([
+      readValue(c, token, "/api/accounting/dashboard", { granularity: "month", from: all[0], to: all[all.length - 1] }),
+      readValue(c, token, "/api/accounting/aging", undefined),
+    ]);
+    const a = P.need(dash, "the company figures (accounting / finance)");
+    if (!a.ok) return fin(`company_report:${period}:${m.label}`, a.step);
+    return fin(`company_report:${period}:${m.label}`, P.done(summariseCompanyReport(period, m, a.value, P.opt(aging, "AR / AP ageing"))));
   }
 
   return null;

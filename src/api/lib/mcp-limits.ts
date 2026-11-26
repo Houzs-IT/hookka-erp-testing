@@ -75,6 +75,18 @@ export const CACHEABLE_TOOLS = new Set([
   "purchasing_summary",
   "attendance_today",
   "daily_brief",
+  // round 4 (2026-11-26)
+  "po_overdue",
+  "supplier_lateness",
+  "uninvoiced_deliveries",
+  "stock_check",
+  "product_cost",
+  "production_output",
+  "worker_efficiency",
+  "raw_material_summary",
+  "gross_profit",
+  "production_lead_time",
+  "company_report",
 ]);
 
 export class AnswerCache<T> {
