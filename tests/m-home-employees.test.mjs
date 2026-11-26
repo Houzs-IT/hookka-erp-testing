@@ -9,11 +9,12 @@ import {
   eff, ratio, effColor, hrs, pct, buildWindow, rosterOf, presenceOn, sumWindow, headlineOf, workerRows, rankSplit, deptRowsOf, deptTotalOf, foldProgressive,
   npData, npChartPoints, mainChartPoints, lateMin, labourStateOf, dayLog, monthLog, loggedUnder, mainAxis, axisLabelIdx, shiftDay, dLab, dShort, deptWorkers, costCentreName,
 } from "../src/pages/m/screens/dashboard/emp-lib.ts";
+import { labourSplitOf, labourLabel } from "../src/pages/m/screens/dashboard/emp-labour.ts";
 import { DASHBOARD_VIEWS, effectivePeriod, viewAllowsDay } from "../src/pages/m/screens/dashboard/home-lib.ts";
 import { AMBER, GREEN, MUTED, RED } from "../src/pages/dashboards/dashboard-shared-lib.ts";
 
 const read = (p) => readFileSync(new URL(`../src/pages/m/screens/dashboard/${p}`, import.meta.url), "utf8");
-const EMP_FILES = ["EmpView.tsx", "HomeEmpA.tsx", "HomeEmpB.tsx", "HomeEmpSheets.tsx", "emp-lib.ts", "emp-data.ts", "emp-model.ts", "emp-rows.ts", "emp-ui.tsx"];
+const EMP_FILES = ["EmpView.tsx", "HomeEmpA.tsx", "HomeEmpB.tsx", "HomeEmpSheets.tsx", "HomeEmpLabour.tsx", "HomeEmpPresent.tsx", "emp-lib.ts", "emp-labour.ts", "emp-data.ts", "emp-model.ts", "emp-rows.ts", "emp-ui.tsx", "emp-glass.tsx", "emp-tables.tsx"];
 
 // ---- fixture -----------------------------------------------------------------------------------------------------------
 const W = (id, name, dept, extra = {}) => ({ id, name, dept, empNo: id.toUpperCase(), role: null, countsToHeadcount: true, ...extra });
@@ -297,6 +298,84 @@ test("salary needs payroll AND its server-gated inputs; revenue and department o
 test("no prototype sample value, timer-driven state or desktop edit ships in the Employees files", () => {
   for (const f of EMP_FILES) {
     const s = read(f);
-    assert.doesNotMatch(s, /Ahmad Faiz|Kelvin Ng|TEST Account|setTimeout|Math\.sin\(/, `${f}: no invented data or timers`);
+    assert.doesNotMatch(s, /Ahmad Faiz|Kelvin Ng|TEST Account|Zulaikha|Lee Chee Keong|setTimeout|Math\.sin\(|showToast|tot \* \.79|np \* \.46/, `${f}: no invented data, prototype splits or timers`);
   }
+});
+
+// ---- Home Employees v3 (2026-11-26) --------------------------------------------------------------------------------------
+const LM = (o) => ({
+  ym: "2026-10", finished: true, totalSen: 100000, asOf: "2026-10-31",
+  split: { directSen: 80000, nonProductionSen: 20000, outsourceSen: 10000, warehousingSen: 9000, shortfallSen: 2000, overheadSen: 0, underRecordedSen: 1500, nonProductionLines: [{ departmentCode: "REPAIR", sen: 6000 }, { departmentCode: "WAREHOUSING", sen: 9000 }, { departmentCode: "R_AND_D", sen: 0 }] },
+  payroll: { slips: 3, approved: 3, draft: 0 },
+  byDept: [{ departmentCode: "UPHOLSTERY", workers: 2, costSen: 60000, outsourceSen: 10000 }, { departmentCode: "WAREHOUSING", workers: 1, costSen: 40000, outsourceSen: 0 }],
+  workers: [{ id: "a", costSen: 50000, directSen: 50000, nonProductionSen: 0 }, { id: "b", costSen: 40000, directSen: 20000, nonProductionSen: 20000 }, { id: "c", costSen: 0, directSen: 0, nonProductionSen: 0 }],
+  ...o,
+});
+test("labour card = the desktop LabourSplitCard grouping (payroll months, never the design's sample split)", () => {
+  const s = labourSplitOf([LM({})]);
+  assert.equal(s.show, true);
+  assert.equal(s.t.totalSen, 100000);
+  assert.equal(s.directPct, 80);
+  assert.deepEqual(s.outsourceDepts, [["UPHOLSTERY", 10000]]);
+  assert.deepEqual(s.nonProd, [["WAREHOUSING", 9000], ["REPAIR", 6000]], "largest first, zero lines dropped");
+  assert.deepEqual(s.staff.map(([id]) => id), ["a", "b"], "a person with no cost is not listed");
+  assert.equal(s.status.text, "From approved payroll");
+  assert.equal(labourSplitOf([LM({ finished: false })]).status.text, "Labour to date · payroll not finished");
+  assert.equal(labourSplitOf([LM({ payroll: { slips: 3, approved: 1, draft: 2 } })]).status.text, "2 payslips still draft");
+  assert.equal(labourSplitOf([]).show, false, "no payroll months: the card is not drawn (desktop returns null)");
+  assert.equal(labourSplitOf([LM({ totalSen: 0 })]).show, false);
+  // Two months: a department's people is the larger month, its cost the sum (desktop rule).
+  const two = labourSplitOf([LM({}), LM({ ym: "2026-11", byDept: [{ departmentCode: "UPHOLSTERY", workers: 3, costSen: 5000, outsourceSen: 0 }] })]);
+  assert.deepEqual(two.depts.find(([c]) => c === "UPHOLSTERY")[1], { workers: 3, costSen: 65000, outsourceSen: 10000 });
+  assert.equal(labourLabel("R_AND_D"), "R&D");
+  assert.equal(labourLabel("UPHOLSTERY"), "Upholstery");
+});
+
+test("department output keeps Accessory as its own part of Sofa (output total and labour % unchanged)", () => {
+  const prog = foldProgressive({ "UPHOLSTERY|BEDFRAME": 1000, "UPHOLSTERY|SOFA": 2000, "UPHOLSTERY|ACCESSORY": 500 });
+  const rows = deptRowsOf({ days: byDay, winDates: new Set(byDay.map((d) => d.date)), workerById: new Map(workers.map((w) => [w.id, w])), costByWorkerDay: new Map(), costByDept: new Map(), hourEntries: [], progByDept: prog, outsourced: new Set(["c"]) });
+  const up = rows.find((r) => r.dept === "UPHOLSTERY");
+  assert.equal(up.sofa, 2500, "sofa still holds the accessory part");
+  assert.equal(up.acc, 500);
+  const t = deptTotalOf(rows, prog);
+  assert.equal(t.bf + t.sofa, 3500, "output total = the Upholstery row");
+  assert.equal(t.acc, 500);
+});
+
+test("attendance groups carry the worker id (the card's punch photo), absent rows included", () => {
+  const l = dayLog(slice, "2026-10-05");
+  assert.equal(l.groups.absent[0].id, "b");
+  assert.equal(l.groups.late[0].id, "a");
+});
+
+test("Present sheet: attendance:read only, the Employees → Attendance request and fence rule, never an empty list for no access", () => {
+  const d = read("emp-data.ts");
+  assert.match(d, /hasPermission\("attendance", "read"\)/);
+  assert.match(d, /attendanceUrl\(\{ kind: "day", date: day \}\)/);
+  assert.match(d, /slotStatus\(slot as Slot, allowed\)/, "no permission or a 401/403 reads DENIED");
+  const a = read("HomeEmpA.tsx");
+  assert.match(a, /if \(m\.punches\.allowed \|\| m\.punches\.permLoading\) m\.open\(\{ type: "present" \}\)/);
+  assert.match(a, /else \{ m\.setLogPick\(null\); m\.open\(\{ type: "log" \}\); \}/, "without attendance:read the tile opens the feed's own attendance log");
+  const p = read("HomeEmpPresent.tsx");
+  for (const k of ["rowLocation", "locCounts", "filterByLoc", "PunchPhotoViewer", "AttendanceDetail"]) assert.match(p, new RegExp(k));
+  assert.match(p, /You don't have access to attendance punches\./);
+});
+
+test("Labour cost card and sheet read the period's payroll months, payroll access only", () => {
+  const m = read("emp-model.ts");
+  assert.match(m, /labourMonthsWithin\(money\.labour\.months, keepDaysWithin\(costByWorkerDay, focus\.from, focus\.to\)\)/);
+  assert.match(m, /sumWindow\(allDays, \(d\) => inFocus\(period, d\)/);
+  const l = read("HomeEmpLabour.tsx");
+  assert.match(l, /if \(!m\.canSalary \|\| !s\.show\) return null;/);
+  assert.match(l, /gross pay plus employer EPF, SOCSO and EIS|Direct labour \(outsource included\)/);
+  const s = read("HomeEmpSheets.tsx");
+  assert.match(s, /gross pay plus employer EPF, SOCSO and EIS/);
+});
+
+test("the department filter and the attendance log (Today / Yesterday / This month) are kept in v3", () => {
+  const b = read("HomeEmpB.tsx");
+  assert.match(b, /aria-label="Department"/);
+  assert.match(b, /m\.open\(\{ type: "log" \}\)/);
+  const s = read("HomeEmpSheets.tsx");
+  assert.match(s, /\["today", "Today"\], \["yday", "Yesterday"\], \["month", "This month"\]/);
 });
