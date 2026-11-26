@@ -1,0 +1,65 @@
+/* Mail Center (Batch 2 v3): the few colours the comms kit does not carry.
+ * Light = the approved prototype's values; dark follows comms-theme.css. */
+body[data-theme="light"],
+body:not([data-theme]) {
+  --mc-row-read: #FAF8F4;
+  --mc-row-sel: #F6F1E6;
+  --mc-sh-unread: inset 0 0 0 1px rgba(107,92,50,.30), 0 6px 14px -10px rgba(107,92,50,.45);
+  --mc-sh-read: inset 0 0 0 1px #EEE9E4;
+  --mc-sh-sel: inset 0 0 0 1.5px #6B5C32;
+  --mc-unread-bar: #6B5C32;
+  --mc-selbar-bg: #1F1D1B;
+  --mc-selbar-btn: rgba(255,255,255,.08);
+  --mc-selbar-btn2: rgba(255,255,255,.12);
+  --mc-hero: linear-gradient(150deg, #4A3F21 0%, #6B5C32 60%, #8B7A4E 100%);
+  --mc-hero-sh: 0 14px 28px -16px rgba(74,63,33,.7);
+  --mc-hero-sub: #E9D9A8;
+  --mc-tile-on: linear-gradient(150deg, #6B5C32, #8B7A4E);
+  --mc-tile-on-sh: 0 12px 22px -12px rgba(74,63,33,.75);
+  --mc-thread-hero: linear-gradient(160deg, rgba(255,255,255,.92) 0%, rgba(255,255,255,.75) 55%, rgba(250,244,232,.8) 100%);
+  --mc-thread-hero-sh: inset 0 1px 0 rgba(255,255,255,.95), 0 0 0 1px rgba(31,29,27,.05), 0 2px 4px rgba(31,29,27,.05), 0 12px 26px -12px rgba(107,92,50,.38);
+  --mc-msg-sh: 0 0 0 1px #E6E0D9, 0 2px 4px rgba(31,29,27,.05), 0 10px 22px -12px rgba(31,29,27,.24);
+  --mc-file-bg: #FAF8F4;
+  --mc-file-ring: 0 0 0 1px #EEE9E4;
+  --mc-teal-ring: 0 0 0 1px #C9DDE2;
+  --mc-teal-ink: #1F4654;
+  --mc-star: #C9A24B;
+  --mc-ack: #4F7C3A;
+  --mc-quote-bg: #F4EFE6;
+  --mc-guard-ring: inset 0 0 0 1px #EAD9AE;
+  --mc-chip-bad-ring: inset 0 0 0 1px #E7B4AA;
+  --mc-frame-ring: 0 0 0 1px #EEE9E4;
+}
+
+body[data-theme="dark"] {
+  --mc-row-read: #24211D;
+  --mc-row-sel: #3A3324;
+  --mc-sh-unread: inset 0 0 0 1px rgba(217,189,123,.35), 0 6px 14px -10px rgba(0,0,0,.6);
+  --mc-sh-read: inset 0 0 0 1px #34302A;
+  --mc-sh-sel: inset 0 0 0 1.5px #D9BD7B;
+  --mc-unread-bar: #D9BD7B;
+  --mc-selbar-bg: #3A352C;
+  --mc-selbar-btn: rgba(255,255,255,.07);
+  --mc-selbar-btn2: rgba(255,255,255,.12);
+  --mc-hero: linear-gradient(150deg, #3A3119 0%, #5A4D2A 60%, #75663F 100%);
+  --mc-hero-sh: 0 14px 28px -16px rgba(0,0,0,.7);
+  --mc-hero-sub: #E9D9A8;
+  --mc-tile-on: linear-gradient(150deg, #5A4D2A, #75663F);
+  --mc-tile-on-sh: 0 12px 22px -12px rgba(0,0,0,.75);
+  --mc-thread-hero: linear-gradient(160deg, #2E2A25 0%, #2A2722 60%, #2C2720 100%);
+  --mc-thread-hero-sh: 0 0 0 1px rgba(255,255,255,.06), 0 2px 4px rgba(0,0,0,.25), 0 12px 26px -12px rgba(0,0,0,.6);
+  --mc-msg-sh: 0 0 0 1px #3A352C, 0 2px 4px rgba(0,0,0,.2), 0 10px 22px -12px rgba(0,0,0,.5);
+  --mc-file-bg: #24211D;
+  --mc-file-ring: 0 0 0 1px #34302A;
+  --mc-teal-ring: 0 0 0 1px rgba(111,163,176,.35);
+  --mc-teal-ink: #A9CED8;
+  --mc-star: #E0B85A;
+  --mc-ack: #4F7C3A;
+  --mc-quote-bg: #24211D;
+  --mc-guard-ring: inset 0 0 0 1px rgba(217,164,65,.35);
+  --mc-chip-bad-ring: inset 0 0 0 1px rgba(214,123,107,.45);
+  --mc-frame-ring: 0 0 0 1px #3A352C;
+}
+
+.mc-select { appearance: none; -webkit-appearance: none; }
+.mc-select option { color: #1F1D1B; background: #FFFFFF; }

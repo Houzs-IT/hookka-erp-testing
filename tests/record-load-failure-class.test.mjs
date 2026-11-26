@@ -134,6 +134,8 @@ const CONSUMERS = [
   ["src/pages/m/screens/orders/LegacyOrderDetail.tsx", "isUnknownOutcome", "\"Repair order not found\" (mobile legacy detail)"],
   ["src/pages/m/screens/SalesDetailScreen.tsx", "hook-error-gate", '"Order not found."'],
   ["src/pages/m/screens/ProductionDetailScreen.tsx", "hook-error-gate", '"Production order not found."'],
+  // Batch 2 Announcements v3 detail: "not found" only when the list loaded with no error.
+  ["src/pages/m/screens/comms/announcements/AnnouncementDetail.tsx", "hook-error-gate", '"Announcement not found"'],
   ["src/pages/m/screens/MailCenterScreen.tsx", "hook-error-gate", '"Thread not found."'],
   ["src/pages/m/screens/DocumentDetailScreen.tsx", "hook-error-gate", '"Document not found."'],
   ["src/pages/mail-center/detail.tsx", "hook-error-gate", '"Thread not found."'],

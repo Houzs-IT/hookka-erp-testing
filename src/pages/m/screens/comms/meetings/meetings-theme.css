@@ -1,0 +1,41 @@
+/* Meetings v3 (Batch 2): the few colours the comms palette (comms-theme.css) does not
+ * carry — the prototype's blue (video, "Invited", Join), the guest teal and the
+ * room-card glass. Light = the approved prototype; dark lifts each for a dark card. */
+body[data-theme="light"],
+body:not([data-theme]) {
+  --mt-blue: #2B5797;
+  --mt-blue-bg: #E3EAF5;
+  --mt-guest: #1F9E89;
+  --mt-guest-ring: #C9DDE2;
+  --mt-tile: #FFFFFF;
+  --mt-room-glass: linear-gradient(160deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.66) 60%, rgba(250,244,232,.7) 100%);
+  --mt-room-sh: inset 0 1px 0 rgba(255,255,255,.95), inset 0 0 0 1px rgba(255,255,255,.55), 0 1px 2px rgba(31,29,27,.04), 0 0 0 1px rgba(31,29,27,.05), 0 2px 4px rgba(31,29,27,.05), 0 12px 26px -12px rgba(107,92,50,.38);
+  --mt-grid: rgba(31,29,27,.07);
+  --mt-col: rgba(250,248,244,.6);
+  --mt-col-today: rgba(240,234,216,.55);
+  --mt-closed-a: #F0ECE9;
+  --mt-closed-b: #FAF8F4;
+  --mt-join-sh: 0 10px 18px -10px rgba(43,87,151,.7);
+  --mt-unread: rgba(240,234,216,.45);
+}
+
+body[data-theme="dark"] {
+  --mt-blue: #8FB0E6;
+  --mt-blue-bg: rgba(143,176,230,.16);
+  --mt-guest: #5CC2AF;
+  --mt-guest-ring: rgba(111,163,176,.35);
+  --mt-tile: #23201C;
+  --mt-room-glass: linear-gradient(160deg, #2E2A25 0%, #2A2722 60%, #2C2720 100%);
+  --mt-room-sh: 0 0 0 1px rgba(255,255,255,.06), 0 2px 4px rgba(0,0,0,.25), 0 12px 26px -12px rgba(0,0,0,.6);
+  --mt-grid: rgba(255,255,255,.07);
+  --mt-col: rgba(255,255,255,.03);
+  --mt-col-today: rgba(217,189,123,.10);
+  --mt-closed-a: #2F2C26;
+  --mt-closed-b: #24211D;
+  --mt-join-sh: 0 10px 18px -10px rgba(0,0,0,.7);
+  --mt-unread: rgba(217,189,123,.10);
+}
+
+.mt-slot:hover { background: rgba(201,169,97,.10); }
+.mt-x { scrollbar-width: none; }
+.mt-x::-webkit-scrollbar { display: none; }

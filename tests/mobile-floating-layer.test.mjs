@@ -147,6 +147,10 @@ test("screens keep no more fixed-position layers than the known full-screen ones
   // Finance / Receivable (Batch 3) add one: finance/fin-overlay.tsx, the prototype's full-page form (Edit voucher, Scan to create) and its centred confirm dialog (portals into body); its toast and action dock use ResponsiveActionDock.
   assert.deepEqual(found, [
     "cases/case-overlay.tsx",
+    // Batch 2 comms adds one: comms-overlay.tsx, the centred confirm dialog and the dark media viewer (portals; not a toast, bar or banner).
+    "comms/comms-overlay.tsx",
+    // Batch 2 Meetings adds one: meetings-overlay.tsx, the stacked three-button repeat-scope alert ("This meeting / This and following / Back"); a dialog, not a toast, bar or banner.
+    "comms/meetings/meetings-overlay.tsx",
     "dashboard/FloorLiveCompleted.tsx",
     "dashboard/HomeDashboard.tsx",
     "dashboard/OpsWorklistPage.tsx",
