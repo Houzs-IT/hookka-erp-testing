@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import {
   DASHBOARD_VIEWS, allowedViews, resolveView, legacyDashboardTarget, effectivePeriod, viewAllowsDay, periodMode, switchMode, stepSales,
   stateTile, revenuePoints, niceAxis, pipelineOf, perDayOf, perDayNote, buildForecast, forecastUnit, fcTone,
-  customerRows, catRev, topPlusOthers, periodResolved, fitLabel, wrapLabel, attribute, productsSold, stateSlices, donutArcs, problemDest, titleCase, todayLabel,
+  customerRows, catRev, topPlusOthers, periodResolved, fitLabel, wrapLabel, attribute, productsSold, stateSlices, donutArcs, problemDest, titleCase, todayLabel, greetingWord,
 } from "../src/pages/m/screens/dashboard/home-lib.ts";
 
 const read = (p) => readFileSync(new URL(`../src/pages/m/${p}`, import.meta.url), "utf8");
@@ -285,7 +285,7 @@ test("problem tiles lead to a real list or say they cannot", () => {
 test("text helpers", () => {
   assert.equal(titleCase("IN_PRODUCTION"), "In Production");
   assert.equal(titleCase("(no category)"), "(no category)");
-  assert.equal(todayLabel(new Date(2026, 9, 30)), "Fri, 30 Oct 2026");
+  assert.equal(todayLabel(new Date(Date.UTC(2026, 9, 30))), "Fri, 30 Oct 2026", "reads a Malaysia wall-clock Date through its UTC fields");
 });
 
 test("no desktop dashboard view is embedded and no prototype sample value is shipped", () => {
@@ -473,4 +473,20 @@ test("phone Home shows Today's problems from the desktop tile rules", () => {
   const src = readFileSync("src/pages/m/screens/dashboard/HomeDashboard.tsx", "utf8");
   assert.match(src, /useProblemTiles/);
   assert.match(src, /aria-label="Today's problems"/);
+});
+
+test("the Home date, greeting and today follow the Malaysia clock, not the phone's zone", () => {
+  // 2026-10-30 18:30 UTC is already 02:30 on 31 Oct in Malaysia (UTC+8): the label and the greeting must say Saturday 31 Oct, morning.
+  const my = new Date(Date.UTC(2026, 9, 30, 18, 30) + 8 * 3600_000);
+  assert.equal(todayLabel(my), "Sat, 31 Oct 2026");
+  assert.equal(greetingWord(my), "Good morning");
+  assert.equal(greetingWord(new Date(Date.UTC(2026, 9, 31, 13, 0))), "Good afternoon");
+  assert.equal(greetingWord(new Date(Date.UTC(2026, 9, 31, 19, 0))), "Good evening");
+  const dir = "../src/pages/m/screens/dashboard/";
+  const home = readFileSync(new URL(dir + "HomeDashboard.tsx", import.meta.url), "utf8");
+  const hooks = readFileSync(new URL(dir + "hooks.ts", import.meta.url), "utf8");
+  assert.match(home, /const today = todayYmdMY\(\);/, "the shell's today is the Malaysia date");
+  assert.match(hooks, /resolvePeriod\(raw, months, todayYmdMY\(\)/, "the period a bare URL opens on is the Malaysia date");
+  assert.doesNotMatch(home, /ymd\(new Date\(\)\)/);
+  assert.doesNotMatch(hooks, /ymd\(new Date\(\)\)/);
 });

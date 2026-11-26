@@ -2,7 +2,8 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useCachedJson } from "@/lib/cached-fetch";
-import { opensOnToday, ymd, type Period } from "../../../dashboards/dashboard-shared-lib";
+import { todayYmdMY } from "@/lib/utils";
+import { opensOnToday, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { LEGACY, TAB_SUBS } from "../../../dashboards/dashboard-url-state-lib";
 import { readPeriod, resolvePeriod, writePeriod } from "./dashboard-m-lib";
 import { DASHBOARD_FEED_URL, type DashboardFeed } from "./types";
@@ -33,7 +34,7 @@ export function useDashboardFeed() {
 export function useDashboardPeriod(months: string[], tab?: string) {
   const [params, setParams] = useSearchParams();
   const raw = useMemo(() => readPeriod(params), [params]);
-  const period = useMemo(() => resolvePeriod(raw, months, ymd(new Date()), opensOnToday(tab)), [raw, months, tab]);
+  const period = useMemo(() => resolvePeriod(raw, months, todayYmdMY(), opensOnToday(tab)), [raw, months, tab]);
   const setPeriod = useCallback(
     (p: Period) => setParams((prev) => writePeriod(prev, p), { replace: true, preventScrollReset: true }),
     [setParams],

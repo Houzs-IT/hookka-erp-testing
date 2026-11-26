@@ -14,6 +14,9 @@ import { formatCurrency } from "../../../../lib/utils";
 import { parseDashPeriod } from "../../../../api/lib/dash-period";
 import { inFocus, inPeriod, monthLabel, shiftMonth, type Period } from "../../../dashboards/dashboard-shared-lib";
 import { DEPT_FLOOR, deptName } from "../../../dashboards/ops-floor-lib";
+import { backlogMonthKeys, deptMonthSegments, filterDeptByMonths, filterJobs, monthColor, shownBacklogMin, type JobsMonth, type MonthMin } from "../../../dashboards/backlog-months";
+import { bucketLabel, NO_DATE, OVERDUE } from "../../../../lib/delivery-bucket";
+import type { ProductionRevenue } from "../../../dashboards/use-production-revenue";
 import { pickCat, pickSets, type RevCat, type SetCount } from "../../../dashboard-b/revenue-split";
 
 // ---------------------------------------------------------------------------
@@ -71,8 +74,10 @@ export type OpsFeed = {
 };
 export type JobsBreakdown = { bedframeUnits: number; sofaSets: number; byCustomer: { customer: string; bedframeUnits: number; sofaSets: number }[] };
 export type FabricCat = {
-  list: { fabCode: string; meters: number; past30Meters: number; next30Meters: number; buyAvgSen: number; buyMinSen: number; buyMaxSen: number }[];
-  monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
+  /** `costSen` / `fifoPerMeterSen` are the FIFO cost of the metres USED in the period (dashboard-overview `fabListByCat`); 0 = no priced receipt behind them. */
+  list: { fabCode: string; meters: number; past30Meters: number; next30Meters: number; costSen?: number; fifoPerMeterSen?: number }[];
+  /** `pricedMeters` = the part of `meters` that has a receipt behind it; `costSen` covers only those. */
+  monthly: { month: string; meters: number; pricedMeters?: number; lateMeters?: number; costSen?: number }[];
 };
 export type OpsOverview = {
   success?: boolean;
@@ -81,8 +86,10 @@ export type OpsOverview = {
     activeJobs: JobsBreakdown; completedYesterday: JobsBreakdown;
     completedLast7: { date: string; bedframeUnits: number; sofaSets: number }[];
     completedRange?: { bedframeUnits: number; sofaSets: number };
-    capacityDays: { date: string; minutes: number; workers: number }[];
-    backlogByDept: { dept: string; sofaMin: number; bedframeMin: number; totalMin: number; dailyCapMin: number; backlogDays: number | null; sofaCapMin?: number; bedframeCapMin?: number; sofaDays?: number | null; bedframeDays?: number | null }[];
+    capacityDays: { date: string; minutes: number; workers: number; outsourceMinutes?: number }[];
+    backlogByDept: { dept: string; sofaMin: number; bedframeMin: number; totalMin: number; dailyCapMin: number; backlogDays: number | null; sofaCapMin?: number; bedframeCapMin?: number; sofaDays?: number | null; bedframeDays?: number | null; byMonth?: MonthMin[] }[];
+    /** Active Jobs per customer per delivery bucket (absent on an older / snapshot feed: the month toggles are then hidden). */
+    activeJobsByMonth?: JobsMonth[];
     backlogGrandMin: number;
   };
   purchasing?: { openPOCount: number; outstandingPOValueSen: number; itemsPendingReceipt: number };
@@ -139,6 +146,8 @@ export const DR_CHECKS = [
 export type DrKey = (typeof DR_CHECKS)[number][0];
 
 export type ComplianceData = {
+  /** The report's own date (Malaysia), from the server: the day these checks were run for. */
+  today?: string;
   counts: Partial<Record<DrKey | "pendingTimeAdjustments", number | null>> & { total: number; checksRun?: number; checksTotal?: number };
   unavailable?: { check: string; message: string }[];
   groups?: Partial<Record<DrKey | "pendingTimeAdjustments", unknown[]>>;
@@ -170,23 +179,24 @@ export function drSummary(d: ComplianceData): DrSummary {
 
 /** What each check looks at, in words that carry no threshold (the grace days are server config). */
 export const DR_RULE: Record<DrKey, string> = {
-  overdueOrders: "Sales orders past the customer's delivery date",
+  overdueOrders: "Sales orders past the customer’s delivery date that are still open (draft, confirmed, in production or on hold), with nothing delivered yet.",
   soNoInvoice: "Sales orders with no invoice",
   pricingIssues: "Pricing integrity problems",
   cogsIssues: "Delivered units with no cost behind them",
   doNotInvoiced: "Delivered delivery orders with no invoice",
-  doPendingDispatch: "Delivery orders created and not yet dispatched",
+  doPendingDispatch: "Delivery orders created but not yet dispatched.",
   doNotDelivered: "Dispatched delivery orders not yet delivered",
   soNoDo: "Sales orders with no delivery order",
-  poNotReceived: "Purchase orders not yet received",
+  poNotReceived: "Purchase orders still waiting for goods to arrive.",
   lowEfficiencyWorkers: "Workers under the efficiency band",
-  processSkips: "Orders where a later stage finished before an earlier one",
+  processSkips: "A later department completed while an earlier one is still unfinished.",
   missingWipTimes: "Products with no WIP time for a department",
   incompleteBoms: "Products with an incomplete bill of materials",
   rdStalled: "R&D projects past their target launch date",
 };
 
-export type DrRow = { key: string; ref: string; sub: string; right: string; rightSub: string; link: { kind: "so" | "do"; id: string } | null };
+export type DrLink = { kind: "so" | "do" | "po" | "prod"; id: string };
+export type DrRow = { key: string; ref: string; sub: string; right: string; rightSub: string; link: DrLink | null };
 type R = Record<string, unknown>;
 const s = (v: unknown): string => (v == null ? "" : String(v));
 const days = (v: unknown): string => (v == null || v === "" ? "" : `${s(v)} d`);
@@ -203,9 +213,9 @@ export function drRows(key: DrKey, groups: ComplianceData["groups"]): DrRow[] {
       case "soNoDo":
       case "soNoInvoice": return { key: k, ref: s(r.companySOId), sub: s(r.customerName), right: days(r.days), rightSub: s(r.status), link: r.id ? { kind: "so", id: s(r.id) } : null };
       case "overdueOrders": return { key: k, ref: s(r.companySOId), sub: [s(r.customerName), s(r.productSummary)].filter(Boolean).join(" · "), right: days(r.daysOverdue), rightSub: s(r.status), link: r.salesOrderId ? { kind: "so", id: s(r.salesOrderId) } : null };
-      case "poNotReceived": return { key: k, ref: s(r.poNo), sub: s(r.supplierName), right: days(r.daysOpen), rightSub: s(r.status), link: null };
+      case "poNotReceived": return { key: k, ref: s(r.poNo), sub: s(r.supplierName), right: days(r.daysOpen), rightSub: s(r.status), link: r.id ? { kind: "po", id: s(r.id) } : null };
       case "lowEfficiencyWorkers": return { key: k, ref: s(r.name), sub: s(r.departmentName), right: r.efficiencyPct == null ? "" : `${Math.round(Number(r.efficiencyPct))}%`, rightSub: "efficiency", link: null };
-      case "processSkips": return { key: k, ref: s(r.poNo), sub: s(r.productName), right: days(r.days), rightSub: [s(r.doneDept) && `${s(r.doneDept)} done`, s(r.blockedByDept) && `${s(r.blockedByDept)} ${s(r.blockedByStatus)}`.trim()].filter(Boolean).join(" · "), link: r.salesOrderId ? { kind: "so", id: s(r.salesOrderId) } : null };
+      case "processSkips": return { key: k, ref: s(r.poNo), sub: s(r.productName), right: days(r.days), rightSub: [s(r.doneDept) && `${s(r.doneDept)} done`, s(r.blockedByDept) && `${s(r.blockedByDept)} ${s(r.blockedByStatus)}`.trim()].filter(Boolean).join(" · "), link: r.productionOrderId ? { kind: "prod", id: s(r.productionOrderId) } : null };
       case "missingWipTimes": return { key: k, ref: s(r.productCode), sub: s(r.productName), right: s(r.departmentCode), rightSub: "", link: null };
       case "incompleteBoms": return { key: k, ref: s(r.productCode), sub: s(r.productName), right: "", rightSub: s(r.reason), link: null };
       case "rdStalled": return { key: k, ref: s(r.name), sub: s(r.currentStage), right: days(r.daysOverdue), rightSub: s(r.status), link: null };
@@ -225,13 +235,14 @@ export type SplitResp = {
   revenue?: { bucket: string; production: CatSplit }[];
   departments?: { code: string; label: string; period: CatSplit; byBucket: CatSplit[]; sets?: SetCount; setsByBucket?: SetCount[] }[];
 };
-export type OpsRevCat = Extract<RevCat, "all" | "bedframe" | "sofa">;
+export type OpsRevCat = RevCat;
 
 /** Index of the picked day in a per-day split; -1 unless the split is daily (a month). Same rule as dayBucketIndex. */
 export const splitDayIndex = (d: SplitResp | null | undefined, day: string | undefined): number =>
   !day || d?.granularity !== "day" ? -1 : (d.revenue ?? []).findIndex((r) => r.bucket === day);
 
-export type DeptRevRow = { code: string; label: string; value: number; frac: number; sets: number };
+/** `bed` = bedframe UNITS (every SKU x quantity, no pairing), `sofa` = sofa SETS (1 per order), `sets` = their sum (the desktop's Sets column). */
+export type DeptRevRow = { code: string; label: string; value: number; frac: number; sets: number; bed: number; sofa: number };
 /**
  * One row per department in the order the API returns (the desktop's fixed floor order,
  * which the desktop card does not re-sort). The value is the picked day's when the split is
@@ -244,6 +255,8 @@ export function deptRevenueRows(d: SplitResp | null | undefined, cat: OpsRevCat,
     code: x.code, label: x.label,
     value: pickCat(di >= 0 ? x.byBucket[di] ?? undefined : x.period, cat),
     sets: pickSets(di >= 0 ? x.setsByBucket?.[di] : x.sets, cat) ?? 0,
+    bed: (di >= 0 ? x.setsByBucket?.[di] : x.sets)?.bedframe ?? 0,
+    sofa: (di >= 0 ? x.setsByBucket?.[di] : x.sets)?.sofa ?? 0,
   }));
   const max = Math.max(0, ...rows.map((r) => r.value));
   return rows.map((r) => ({ ...r, frac: max > 0 ? r.value / max : 0 }));
@@ -401,8 +414,9 @@ export function shortageSummary(rows: NonNullable<OpsFeed["inventory"]>["materia
 // ---------------------------------------------------------------------------
 // 8 · Costing vs production revenue
 // ---------------------------------------------------------------------------
-export type Bucket = { revenue: number; material: number; labour: number; purchases: number };
-export const ZERO: Bucket = { revenue: 0, material: 0, labour: 0, purchases: 0 };
+/** `direct` + `nonProd` split `labour` at each month's own ratio (desktop CostingPanel); they always add up to `labour`. */
+export type Bucket = { revenue: number; material: number; labour: number; direct: number; nonProd: number; purchases: number };
+export const ZERO: Bucket = { revenue: 0, material: 0, labour: 0, direct: 0, nonProd: 0, purchases: 0 };
 export type CostStructure = { data?: { cols?: string[]; groups?: { group?: string; description?: string; months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
 export type Pi = { piNo?: string | null; invoiceDate: string | null; dueDate?: string | null; amountSen: number | string | null; paidAmountSen?: number | string | null; status: string; supplierName?: string | null };
 
@@ -451,6 +465,8 @@ export function materialLines(sets: (CostStructure | null | undefined)[], ym: st
 /** Everything per day (desktop CostingPanel `byDay`): revenue, materials at the month's P&L ratio (the running month at the last finished month's), labour, purchases. */
 export function costingByDay(a: {
   revByDay: Map<string, { total: number }>; pnl: Map<string, number>; labourByDay: Map<string, number>; pis: Pi[]; from: string; to: string;
+  /** month → direct share of that month's labour (desktop `directShare`); a month without one is all direct. */
+  directShare?: Map<string, number>;
 }): Map<string, Bucket> {
   const m = new Map<string, Bucket>();
   const add = (key: string, k: keyof Bucket, v: number) => { const b = m.get(key) ?? { ...ZERO }; b[k] += v; m.set(key, b); };
@@ -466,7 +482,10 @@ export function costingByDay(a: {
     return last ? (a.pnl.get(last) ?? 0) / (revByMonth.get(last) ?? 1) : 0;
   };
   for (const [d, v] of a.revByDay) if (d >= a.from && d <= a.to) add(d, "material", v.total * ratioOf(d.slice(0, 7)));
-  for (const [d, v] of a.labourByDay) add(d, "labour", v);
+  for (const [d, v] of a.labourByDay) {
+    const r = a.directShare?.get(d.slice(0, 7)) ?? 1;
+    add(d, "labour", v); add(d, "direct", v * r); add(d, "nonProd", v * (1 - r));
+  }
   for (const p of a.pis) {
     const d = String(p.invoiceDate ?? "").slice(0, 10);
     if (p.status === "CANCELLED" || d < a.from || d > a.to) continue;
@@ -498,14 +517,14 @@ export type CostCol = { label: string; sub: string; b: Bucket; avg?: boolean; ym
 export function costingCols(a: { byDay: Map<string, Bucket>; byMonth: Map<string, Bucket>; focusMonth: string; day?: string; today: string; estimated: (ym: string) => boolean }): CostCol[] {
   const prev = shiftMonth(a.focusMonth, -1);
   const three = [1, 2, 3].map((i) => a.byMonth.get(shiftMonth(a.focusMonth, -i)) ?? ZERO);
-  const sum = three.reduce<Bucket>((x, y) => ({ revenue: x.revenue + y.revenue, material: x.material + y.material, labour: x.labour + y.labour, purchases: x.purchases + y.purchases }), { ...ZERO });
+  const sum = three.reduce<Bucket>((x, y) => ({ revenue: x.revenue + y.revenue, material: x.material + y.material, labour: x.labour + y.labour, direct: x.direct + y.direct, nonProd: x.nonProd + y.nonProd, purchases: x.purchases + y.purchases }), { ...ZERO });
   const isCurrent = a.focusMonth === a.today.slice(0, 7);
   const est = a.estimated(a.focusMonth) ? " · materials est." : "";
   return [
     ...(a.day ? [{ label: a.day.slice(5).replace("-", "/"), sub: "the selected day", b: a.byDay.get(a.day) ?? ZERO }] : []),
     { label: monthLabel(a.focusMonth), sub: isCurrent ? `to date · live${est}` : `whole month${est}`, b: a.byMonth.get(a.focusMonth) ?? ZERO, ym: a.focusMonth },
     { label: monthLabel(prev), sub: "last month", b: a.byMonth.get(prev) ?? ZERO, ym: prev },
-    { label: "3-month avg", sub: `${monthLabel(shiftMonth(a.focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: sum.revenue / 3, material: sum.material / 3, labour: sum.labour / 3, purchases: sum.purchases / 3 }, avg: true },
+    { label: "3-month avg", sub: `${monthLabel(shiftMonth(a.focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: sum.revenue / 3, material: sum.material / 3, labour: sum.labour / 3, direct: sum.direct / 3, nonProd: sum.nonProd / 3, purchases: sum.purchases / 3 }, avg: true },
   ];
 }
 export const costOf = (b: Bucket, withLabour: boolean): number => b.material + (withLabour ? b.labour : 0);
@@ -662,14 +681,278 @@ export function fabricRows(cat: FabricCat | undefined, mode: FabMode) {
 /** Meters posted: last 12 posting months, or last 8 quarters, newest first; cost per metre = issue cost ÷ meters. */
 export function fabricTrend(cat: FabricCat | undefined, gran: FabGran): { key: string; label: string; meters: number; perM: number | null }[] {
   const monthly = [...(cat?.monthly ?? [])].sort((a, b) => b.month.localeCompare(a.month));
-  if (gran === "monthly") return monthly.slice(0, 12).map((m) => ({ key: m.month, label: monthLabel(m.month), meters: m.meters, perM: m.meters > 0 && m.costSen != null ? m.costSen / m.meters : null }));
-  const q = new Map<string, { meters: number; cost: number; hasCost: boolean }>();
+  // Cost per metre = FIFO cost ÷ the PRICED metres (the cost covers only metres with a receipt behind them; dividing by every metre
+  // understated it). Rows that predate `pricedMeters` fall back to all metres, as before.
+  const priced = (m: { meters: number; pricedMeters?: number }) => m.pricedMeters ?? m.meters;
+  if (gran === "monthly") return monthly.slice(0, 12).map((m) => ({ key: m.month, label: monthLabel(m.month), meters: m.meters, perM: priced(m) > 0 && m.costSen != null ? m.costSen / priced(m) : null }));
+  const q = new Map<string, { meters: number; priced: number; cost: number; hasCost: boolean }>();
   for (const m of monthly) {
     const key = `${m.month.slice(0, 4)}-Q${Math.floor((Number(m.month.slice(5, 7)) - 1) / 3) + 1}`;
-    const e = q.get(key) ?? { meters: 0, cost: 0, hasCost: false };
+    const e = q.get(key) ?? { meters: 0, priced: 0, cost: 0, hasCost: false };
     e.meters += m.meters;
+    e.priced += priced(m);
     if (m.costSen != null) { e.cost += m.costSen; e.hasCost = true; }
     q.set(key, e);
   }
-  return [...q.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8).map(([key, e]) => ({ key, label: `Q${key.slice(6)} ${key.slice(0, 4)}`, meters: e.meters, perM: e.meters > 0 && e.hasCost ? e.cost / e.meters : null }));
+  // The feed carries at most 12 months, so this is at most 5 quarters (the oldest may be partial); the heading counts what is shown.
+  return [...q.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8).map(([key, e]) => ({ key, label: `Q${key.slice(6)} ${key.slice(0, 4)}`, meters: e.meters, perM: e.priced > 0 && e.hasCost ? e.cost / e.priced : null }));
 }
+
+// ---------------------------------------------------------------------------
+// Operations v3 · Overview (owner 2026-11-23). Pure helpers for the four fixed Daily Report tiles, the
+// Backlog / Plant Load delivery-month toggles and the Daily production revenue card. Same rules as the desktop.
+// ---------------------------------------------------------------------------
+
+/** The four Daily Report categories the phone always shows, even at zero (owner 2026-11-23). */
+export const DR_FIXED = [
+  { key: "overdueOrders", label: "Production overdue", tone: "r" },
+  { key: "doPendingDispatch", label: "DO pending dispatch", tone: "a" },
+  { key: "poNotReceived", label: "PO not received", tone: "a" },
+  { key: "processSkips", label: "Process skips", tone: "r" },
+] as const satisfies readonly { key: DrKey; label: string; tone: "r" | "a" }[];
+
+export type DrFixedTile = { key: DrKey; label: string; tone: "r" | "a"; /** null = this check did not run (unknown, not zero). */ n: number | null };
+export type DrFull = {
+  /** The full-report total (every check that ran, incl. pendingTimeAdjustments). A floor when `partial`. */
+  total: number; partial: boolean; failed: number; checksTotal: number;
+  tiles: DrFixedTile[];
+  /** Issue RECORDS in the total that are not in the four tiles. */
+  otherIssues: number;
+  /** Other CHECKS (categories) that have at least one record. */
+  otherChecks: number;
+  /** Other checks that could not run. */
+  otherUnavailable: number;
+  clear: boolean;
+};
+
+/** The four fixed tiles plus the facts for the "more on desktop" line. Nothing is re-ranked or hidden. */
+export function drFull(d: ComplianceData): DrFull {
+  const unavailable = new Set((d.unavailable ?? []).map((u) => u.check));
+  const failed = d.unavailable?.length ?? 0;
+  const tiles: DrFixedTile[] = DR_FIXED.map((f) => {
+    const raw = d.counts[f.key];
+    return { ...f, n: unavailable.has(f.key) || raw == null ? null : raw };
+  });
+  const fixedKeys = new Set<string>(DR_FIXED.map((f) => f.key));
+  const total = d.counts.total ?? 0;
+  const shown = tiles.reduce((a, t) => a + (t.n ?? 0), 0);
+  const others = ([...DR_CHECKS.map((c) => c[0]), "pendingTimeAdjustments"] as const).filter((k) => !fixedKeys.has(k));
+  const tilesDown = tiles.filter((t) => t.n === null).length;
+  return {
+    total, failed, partial: failed > 0, checksTotal: d.counts.checksTotal ?? 15, tiles,
+    otherIssues: Math.max(0, total - shown),
+    otherChecks: others.filter((k) => (d.counts[k] ?? 0) > 0).length,
+    otherUnavailable: Math.max(0, failed - tilesDown),
+    clear: total === 0 && failed === 0,
+  };
+}
+
+/** The footer line: "+10 more issues on the desktop Daily Report" (a partial total says "+10+"); null when nothing lies outside the four tiles. */
+export function drMoreText(f: DrFull): string | null {
+  if (f.otherIssues <= 0) return null;
+  return `+${f.otherIssues}${f.partial ? "+" : ""} more ${f.otherIssues === 1 ? "issue" : "issues"} on the desktop Daily Report`;
+}
+
+/** The same fact in full for screen readers: issue RECORDS and other CHECKS kept apart. */
+export function drMoreDetail(f: DrFull): string | null {
+  const parts: string[] = [];
+  if (f.otherIssues > 0) {
+    const issues = `+${f.otherIssues}${f.partial ? "+" : ""} more ${f.otherIssues === 1 ? "issue" : "issues"}`;
+    parts.push(f.otherChecks > 0 ? `${issues} across ${f.otherChecks} other ${f.otherChecks === 1 ? "check" : "checks"}` : issues);
+  }
+  if (f.otherUnavailable > 0) parts.push(`${f.otherUnavailable} other ${f.otherUnavailable === 1 ? "check" : "checks"} couldn’t run`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+// ---- Department Backlog / Plant Load under the Sofa-Bedframe and delivery-month toggles ----
+type BacklogDept = NonNullable<OpsOverview["production"]>["backlogByDept"][number];
+export type BacklogToggleSets = { hiddenCat: ReadonlySet<string>; hiddenMonth: ReadonlySet<string> };
+export type BacklogSeg = { month: string; days: number; color: string };
+export type BacklogViewRow = BacklogRow & { segs: BacklogSeg[] };
+
+/** Every delivery bucket present, in display order, with the colour the desktop gives it. */
+export function backlogMonthChips(prod: NonNullable<OpsOverview["production"]>): { key: string; label: string; color: string }[] {
+  const keys = backlogMonthKeys(prod.backlogByDept, prod.activeJobsByMonth);
+  const idx = new Map(keys.filter((k) => k !== OVERDUE && k !== NO_DATE).map((k, i) => [k, i]));
+  return keys.map((k) => ({ key: k, label: bucketLabel(k), color: monthColor(k, idx.get(k) ?? 0) }));
+}
+
+/**
+ * Backlog rows under the toggles (desktop dashboard-b/index.tsx): each department is re-derived from its visible
+ * delivery months (filterDeptByMonths), then the category rule of backlogRows applies; rows sort by days to clear,
+ * stalled first. `segs` = days per visible month on the capacity the row uses (empty on a feed without `byMonth`).
+ */
+export function backlogView(prod: NonNullable<OpsOverview["production"]>, t: BacklogToggleSets): BacklogViewRow[] {
+  const sofaOn = !t.hiddenCat.has("Sofa");
+  const bedOn = !t.hiddenCat.has("Bedframe");
+  const chips = backlogMonthChips(prod);
+  const colorOf = new Map(chips.map((c) => [c.key, c.color]));
+  const raws = prod.backlogByDept as BacklogDept[];
+  const filtered = raws.map((r) => filterDeptByMonths(r, t.hiddenMonth));
+  const rows = backlogRows(filtered, sofaOn, bedOn);
+  const segsOf = new Map(raws.map((r) => [r.dept, deptMonthSegments(r, t.hiddenMonth, sofaOn, bedOn).map((s) => ({ month: s.month, days: s.days, color: colorOf.get(s.month) ?? "#A8A196" }))]));
+  return rows
+    .map((r) => ({ ...r, segs: segsOf.get(r.dept) ?? [] }))
+    .sort((a, b) => (b.shown ?? Infinity) - (a.shown ?? Infinity));
+}
+
+export type PlantFiltered = {
+  filtered: boolean; backlogDays: number; backlogMin: number;
+  jobs: { bedframeUnits: number; sofaSets: number; byCustomer: { customer: string; bedframeUnits: number; sofaSets: number }[] };
+  showing: string;
+};
+/** Total Backlog / Active Jobs under the same toggles, the desktop's own arithmetic (dashboard-b/index.tsx plantLoad). */
+export function plantFiltered(prod: NonNullable<OpsOverview["production"]>, t: BacklogToggleSets): PlantFiltered {
+  const sofaOn = !t.hiddenCat.has("Sofa");
+  const bedOn = !t.hiddenCat.has("Bedframe");
+  const filtered = t.hiddenMonth.size > 0 || !sofaOn || !bedOn;
+  const shownMin = filtered ? shownBacklogMin(prod.backlogByDept, t.hiddenMonth, sofaOn, bedOn) : prod.backlogMin;
+  const backlogDays = filtered && prod.backlogMin > 0 ? Math.round(((prod.backlogDays * shownMin) / prod.backlogMin) * 10) / 10 : prod.backlogDays;
+  const jobs = prod.activeJobsByMonth
+    ? filterJobs(prod.activeJobsByMonth, t.hiddenMonth, sofaOn, bedOn)
+    : {
+      bedframeUnits: bedOn ? prod.activeJobs.bedframeUnits : 0,
+      sofaSets: sofaOn ? prod.activeJobs.sofaSets : 0,
+      byCustomer: prod.activeJobs.byCustomer.map((c) => ({ ...c, bedframeUnits: bedOn ? c.bedframeUnits : 0, sofaSets: sofaOn ? c.sofaSets : 0 })).filter((c) => c.bedframeUnits || c.sofaSets),
+    };
+  const keys = backlogMonthKeys(prod.backlogByDept, prod.activeJobsByMonth);
+  const showing = `${sofaOn && bedOn ? "Sofa + Bedframe" : sofaOn ? "Sofa" : bedOn ? "Bedframe" : "nothing"} · ${t.hiddenMonth.size === 0 ? "all delivery months" : keys.filter((k) => !t.hiddenMonth.has(k)).map(bucketLabel).join(", ") || "no month"}`;
+  return { filtered, backlogDays, backlogMin: shownMin, jobs, showing };
+}
+
+// ---- Daily production revenue (desktop DailyProductionRevenueCard, same rules) ----
+export type ProdRevBar = { key: string; label: string; bedframe: number; sofa: number; other: number; total: number };
+export type ProdRevView = {
+  rows: ProdRevBar[]; total: number; avg: number; workDays: number; best: [string, number] | null; bfShare: number | null; byMonth: boolean;
+};
+/**
+ * One bar per day (per month on a Year view), Bedframe / Sofa / Other stacked. A working day = any department produced
+ * something (the Department Revenue "Avg / day" rule); idle Sundays stay off the axis; days after today are left out.
+ */
+export function prodRevenueView(rev: ProductionRevenue, period: Period, today: string): ProdRevView {
+  const byMonth = period.mode === "ytd";
+  const days = [...rev.byDay.entries()].filter(([d]) => d <= today && inPeriod(period, d)).sort(([a], [b]) => a.localeCompare(b));
+  const buckets = new Map<string, { bedframe: number; sofa: number; total: number }>();
+  for (const [d, v] of days) {
+    const k = byMonth ? d.slice(0, 7) : d;
+    const b = buckets.get(k) ?? { bedframe: 0, sofa: 0, total: 0 };
+    b.bedframe += v.bedframe; b.sofa += v.sofa; b.total += v.total;
+    buckets.set(k, b);
+  }
+  const sum = days.reduce((a, [, v]) => a + v.total, 0);
+  const bf = days.reduce((a, [, v]) => a + v.bedframe, 0);
+  const sofa = days.reduce((a, [, v]) => a + v.sofa, 0);
+  const deptActive = (d: string) => [...rev.dept.values()].some((m) => (m.get(d)?.total ?? 0) > 0);
+  const active = days.filter(([d, v]) => v.total > 0 || deptActive(d));
+  const best = days.filter(([, v]) => v.total > 0).reduce<[string, number] | null>((m, [d, v]) => (!m || v.total > m[1] ? [d, v.total] : m), null);
+  return {
+    byMonth, total: sum, workDays: active.length, avg: active.length ? sum / active.length : 0, best,
+    bfShare: bf + sofa > 0 ? Math.round((bf / (bf + sofa)) * 100) : null,
+    rows: [...buckets.entries()]
+      .filter(([k, b]) => byMonth || b.total > 0 || deptActive(k) || new Date(`${k}T00:00:00Z`).getUTCDay() !== 0)
+      .map(([k, b]) => ({ key: k, label: byMonth ? monthLabel(k).slice(0, 3) : String(Number(k.slice(8, 10))), bedframe: b.bedframe, sofa: b.sofa, other: Math.max(0, b.total - b.bedframe - b.sofa), total: b.total })),
+  };
+}
+
+// ---- Department Revenue "Avg / day" (desktop dashboard-b/DeptRevenueCard.tsx, same rule) ----
+/**
+ * Working days behind the Avg / day figure. A daily split: days up to today on which any department produced
+ * something (idle days out). A weekly or monthly split: the Mon-Sat days elapsed. `today` is the Malaysia date.
+ */
+export function deptWorkDays(d: SplitResp | null | undefined, today: string): number {
+  const buckets = (d?.revenue ?? []).map((r) => r.bucket);
+  if (!buckets.length) return 0;
+  const depts = d?.departments ?? [];
+  const g = d?.granularity;
+  if (g === "day") {
+    return buckets.filter((b, i) => b <= today && depts.some((x) => (x.byBucket[i]?.total ?? 0) > 0)).length;
+  }
+  const first = g === "month" ? `${buckets[0]}-01` : buckets[0];
+  const start = new Date(`${first}T00:00:00Z`);
+  const lastBucket = buckets[buckets.length - 1];
+  const lastEnd = new Date(`${g === "month" ? `${lastBucket}-01` : lastBucket}T00:00:00Z`);
+  if (g === "month") { lastEnd.setUTCMonth(lastEnd.getUTCMonth() + 1); lastEnd.setUTCDate(lastEnd.getUTCDate() - 1); }
+  else lastEnd.setUTCDate(lastEnd.getUTCDate() + 6);
+  const cap = new Date(`${today}T00:00:00Z`);
+  const end = cap < lastEnd ? cap : lastEnd;
+  let n = 0;
+  for (const x = new Date(start); x <= end; x.setUTCDate(x.getUTCDate() + 1)) if (x.getUTCDay() !== 0) n++;
+  return n;
+}
+/** Total ÷ working days, whole sen; null when there is no working day yet (shown as a dash, never RM 0). */
+export const deptAvg = (totalSen: number, workDays: number): number | null => (workDays > 0 ? Math.round(totalSen / workDays) : null);
+/** Does any department carry Accessory value? Only then is the Accessory category offered (desktop rule). */
+export const hasAccessory = (d: SplitResp | null | undefined): boolean => (d?.departments ?? []).some((x) => x.period.accessory > 0);
+
+// ---- Daily Report detail cards (design: ref + status pill, a labelled grid, a highlighted Problem row, "Open ref") ----
+/** Sort hint beside each list's label: only where the server really orders the rows that way (compliance-report.ts / schedule-overdue-report.ts). */
+export const DR_SORT: Partial<Record<DrKey, string>> = { overdueOrders: "Most overdue first", doPendingDispatch: "Longest waiting first", poNotReceived: "Oldest first" };
+/** Section label of each list. */
+export const DR_LIST_HEAD: Partial<Record<DrKey, string>> = { overdueOrders: "SALES ORDERS", doPendingDispatch: "DELIVERY ORDERS", poNotReceived: "PURCHASE ORDERS", processSkips: "PRODUCTION ORDERS" };
+
+/** A side read the card needs (the report row does not carry it): loading, ready, or not available (no permission / request failed). */
+export type DrSide<T> = { state: "idle" | "loading" | "ready" | "unavailable"; byId: ReadonlyMap<string, T> };
+export type DrJoin = { po?: DrSide<{ expectedDate: string; status: string }>; prod?: DrSide<{ status: string }> };
+
+export type DrCard = {
+  key: string; ref: string;
+  /** Which repo status map colours the pill; "" = no pill. */
+  statusKind: "so" | "po" | "prod" | "do" | ""; statusRaw: string;
+  grid: [string, string][];
+  problem: { text: string; tone: "warn" | "danger" } | null;
+  link: DrRow["link"];
+};
+
+const MONTH3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-22" or "2026-10-22T..." to "22 Oct 2026" ("" when absent). */
+export const fullDateLabel = (iso: unknown): string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s(iso));
+  return m ? `${m[3]} ${MONTH3[Number(m[2]) - 1]} ${m[1]}` : "";
+};
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+/**
+ * One card per flagged record of a fixed Daily Report category. Every value is a field the report returns, or one joined from an
+ * existing authorised read (PO list: the real Expected date; production board: the order's own status). A field that cannot be read
+ * is shown as loading or "—", never filled in; no date is ever derived from a rounded day count.
+ */
+export function drCards(key: DrKey, groups: ComplianceData["groups"], join: DrJoin = {}): DrCard[] {
+  const rows = (groups?.[key] ?? []) as R[];
+  const link = drRows(key, groups);
+  const pair = (k: string, v: string): [string, string][] => (v ? [[k, v]] : []);
+  return rows.map((r, i): DrCard => {
+    const base = { key: link[i]?.key ?? `${key}-${i}`, link: link[i]?.link ?? null };
+    switch (key) {
+      case "overdueOrders": {
+        const n = Number(r.daysOverdue);
+        return { ...base, ref: s(r.companySOId), statusKind: "so", statusRaw: s(r.status), grid: [...pair("Customer", s(r.customerName)), ...pair("Promised", fullDateLabel(r.customerDeliveryDate))],
+          problem: Number.isFinite(n) && r.daysOverdue != null ? { text: `${plural(n, "day")} overdue \u2014 not delivered yet`, tone: "danger" } : null };
+      }
+      case "doPendingDispatch": {
+        const n = Number(r.daysWaiting);
+        return { ...base, ref: s(r.doNo), statusKind: "do", statusRaw: "DRAFT", grid: [...pair("Customer", s(r.customerName)), ...pair("Created", fullDateLabel(r.createdAt))],
+          problem: Number.isFinite(n) && r.daysWaiting != null ? { text: `Waiting ${plural(n, "day")} to dispatch`, tone: "warn" } : null };
+      }
+      case "poNotReceived": {
+        const side = join.po;
+        const hit = side?.byId.get(s(r.id));
+        const expected = side?.state === "loading" ? "\u2026" : hit ? (fullDateLabel(hit.expectedDate) || "Not set") : "\u2014";
+        const late = Number(r.expectedOverdueDays);
+        return { ...base, ref: s(r.poNo), statusKind: "po", statusRaw: s(r.status), grid: [...pair("Supplier", s(r.supplierName)), ...pair("Ordered", fullDateLabel(r.orderDate)), ["Expected", expected]],
+          problem: { text: late > 0 ? `${plural(late, "day")} past expected arrival` : "Goods not received yet", tone: "warn" } };
+      }
+      case "processSkips": {
+        const st = join.prod?.byId.get(s(r.productionOrderId))?.status ?? "";
+        const done = s(r.doneDept) ? deptName(s(r.doneDept)) : "";
+        const blocked = s(r.blockedByDept) ? deptName(s(r.blockedByDept)) : "";
+        const unfinished = [blocked, s(r.blockedByStatus) ? statusWords(s(r.blockedByStatus)) : ""].filter(Boolean).join(" \u00b7 ");
+        return { ...base, ref: s(r.poNo), statusKind: st ? "prod" : "", statusRaw: st, grid: [...pair("Product", s(r.productName)), ...pair("Completed", done), ...pair("Unfinished", unfinished)],
+          problem: done && blocked ? { text: `${done} finished before ${blocked}`, tone: "danger" } : null };
+      }
+      default: return { ...base, ref: link[i]?.ref ?? "", statusKind: "", statusRaw: "", grid: [...pair("Detail", link[i]?.sub ?? ""), ...pair(link[i]?.rightSub ?? "Value", link[i]?.right ?? "")], problem: null };
+    }
+  });
+}
+
+/** "IN_PROGRESS" to "In Progress". */
+export const statusWords = (raw: string): string => raw.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
