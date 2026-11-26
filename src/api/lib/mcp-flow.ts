@@ -194,3 +194,57 @@ export function shapeFlow(soDetail: unknown, footprint: unknown, origin: string)
   }
   return { salesOrder: soNo, customer: s(so.customerName), links };
 }
+
+// ── purchase flow: PO → GRN → purchase invoice (round 3, FAQ P5) ────────────
+
+/**
+ * A purchase order the person asked for: "purchase_order:<id>" from search, or
+ * a search hit of kind purchase_order whose number matches exactly (or the
+ * only purchase-order hit when no sales-side document matched).
+ */
+export function pickPurchaseAnchor(raw: string, searchBody: unknown): string | null {
+  const m = /^purchase_order:([A-Za-z0-9._-]{1,80})$/.exec(raw.trim());
+  if (m) return m[1];
+  if (searchBody === null || searchBody === undefined) return null;
+  const q = raw.trim().toLowerCase();
+  const groups = arr(obj(obj(searchBody).data).groups);
+  const pos = groups.filter((g) => s(g.kind) === "purchase_order").flatMap((g) => arr(g.items));
+  const exact = pos.find((it) => s(it.label).toLowerCase() === q || s(it.id).toLowerCase() === q);
+  if (exact) return s(exact.id) || null;
+  const salesSide = groups.some((g) => (FLOW_KINDS as readonly string[]).includes(s(g.kind)) && arr(g.items).length);
+  return !salesSide && pos.length === 1 ? s(pos[0].id) || null : null;
+}
+
+export type PurchaseFlowLink = { type: "purchase-order" | "grn" | "purchase-invoice"; number: string; status: string; date: string | null; amountRm: number | null; url: string; detail?: string };
+
+/** PO detail + its GRNs (GET /api/grn?poId=) + the supplier's purchase invoices (filtered to this PO) → the chain. */
+export function shapePurchaseFlow(poDetail: unknown, grns: unknown, pis: unknown, origin: string): { purchaseOrder: string; supplier: string; links: PurchaseFlowLink[] } {
+  const po = obj(obj(poDetail).data ?? poDetail);
+  const poId = s(po.id);
+  const poNo = s(po.poNo) || poId;
+  const e = encodeURIComponent;
+  const rows = (v: unknown): Obj[] => (Array.isArray(v) ? arr(v) : arr(obj(v).data));
+  const links: PurchaseFlowLink[] = [
+    { type: "purchase-order", number: poNo, status: s(po.status), date: day(po.orderDate), amountRm: rmOrNull(po.totalSen), url: `${origin}/procurement/${e(poId)}`, ...(day(po.expectedDate) ? { detail: `expected ${day(po.expectedDate)}` } : {}) },
+  ];
+  const grnRows = rows(grns);
+  const grnIds = new Set(grnRows.map((g) => s(g.id)));
+  for (const g of grnRows) {
+    links.push({ type: "grn", number: s(g.grnNumber), status: s(g.status), date: day(g.receiveDate), amountRm: null, url: `${origin}/procurement/grn/${e(s(g.id))}`, ...(s(g.arrival_state) ? { detail: `arrival ${s(g.arrival_state)}` } : {}) });
+  }
+  for (const p of rows(pis)) {
+    const mine = s(p.purchaseOrderId) === poId || grnIds.has(s(p.grnId)) || (!!poNo && s(p.poRef).includes(poNo));
+    if (!mine) continue;
+    const paid = rmOrNull(p.paidAmountSen);
+    links.push({
+      type: "purchase-invoice",
+      number: s(p.piNo) || s(p.supplierInvoiceNo),
+      status: s(p.status),
+      date: day(p.invoiceDate),
+      amountRm: rmOrNull(p.amountSen),
+      url: `${origin}/procurement/pi/${e(s(p.id))}`,
+      detail: [s(p.supplierInvoiceNo) ? `supplier inv ${s(p.supplierInvoiceNo)}` : "", day(p.dueDate) ? `due ${day(p.dueDate)}` : "", paid !== null ? `paid RM ${paid.toFixed(2)}` : ""].filter(Boolean).join(" · "),
+    });
+  }
+  return { purchaseOrder: poNo, supplier: s(po.supplierName), links };
+}

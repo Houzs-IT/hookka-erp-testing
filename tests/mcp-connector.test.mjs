@@ -92,7 +92,7 @@ test("every tool but the four confirmed-action tools is read-only; every call is
   const mcp = read("src/api/routes/mcp.ts");
   const tools = mcp.slice(mcp.indexOf("const TOOLS = ["), mcp.indexOf("];", mcp.indexOf("const TOOLS = [")));
   const names = [...tools.matchAll(/name: "([a-z_]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(names.sort(), ["cancel_action", "confirm_action", "document_flow", "erp_get", "erp_link", "fetch", "get_pdf", "list_endpoints", "list_modules", "material_shortages", "order_backlog", "production_summary", "propose_email", "propose_meeting", "receivables_summary", "sales_summary", "search", "whoami"]);
+  assert.deepEqual(names.sort(), ["attendance_today", "cancel_action", "confirm_action", "daily_brief", "deliveries_due", "document_flow", "erp_get", "erp_link", "export_excel", "fetch", "get_pdf", "inventory_summary", "list_endpoints", "list_modules", "material_shortages", "order_backlog", "payables_summary", "production_late", "production_summary", "propose_email", "propose_meeting", "purchasing_summary", "receivables_summary", "sales_summary", "search", "so_overdue", "whoami"]);
   const actionTools = ["cancel_action", "confirm_action", "propose_email", "propose_meeting"];
   assert.equal((tools.match(/readOnlyHint: true/g) ?? []).length, names.length - actionTools.length);
   assert.equal((tools.match(/readOnlyHint: false/g) ?? []).length, actionTools.length);

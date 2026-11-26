@@ -52,8 +52,40 @@ import {
   type ActionKind,
 } from "../lib/mcp-actions";
 import { FLOW_API, parseAnchorId, pickFlowAnchor, shapeFlow, soRefsFromDoc, type FlowKind } from "../lib/mcp-flow";
-import { docTitle, FETCH_API, myToday, normalisePeriod, parseFetchId, pickFields, PROMPTS, promptText, sameDaysPrevMonth, searchResults, summariseOrders, summariseProduction, summariseReceivables, summariseSales, summariseShortages, validRange } from "../lib/mcp-quick";
-import { renderServerPdf, uploadPdfAndSign, SERVER_PDF_KINDS, type PdfKind } from "../lib/mcp-pdf";
+import {
+  BRIEF_MAIL_LIMIT,
+  BRIEF_SO_TOP,
+  buildDailyBrief,
+  docTitle,
+  FETCH_API,
+  myToday,
+  normalisePeriod,
+  parseFetchId,
+  pickFields,
+  PROMPTS,
+  promptText,
+  sameDaysPrevMonth,
+  searchResults,
+  summariseAttendance,
+  summariseDeliveriesDue,
+  summariseInventory,
+  summariseOrders,
+  summariseOverdueSales,
+  summarisePayables,
+  summariseProduction,
+  summariseProductionLate,
+  summarisePurchasing,
+  summariseReceivables,
+  summariseSales,
+  summariseShippedNotInvoiced,
+  summariseShortages,
+  validRange,
+  type PurchasingView,
+} from "../lib/mcp-quick";
+import { pickPurchaseAnchor, shapePurchaseFlow } from "../lib/mcp-flow";
+import { renderServerPdf, uploadExportAndSign, uploadPdfAndSign, SERVER_PDF_KINDS, XLSX_CONTENT_TYPE, type PdfKind } from "../lib/mcp-pdf";
+import { buildXlsx, EXPORT_LISTS, EXPORT_MAX_ROWS, EXPORT_PAGE_SIZE, exportFileName, exportRows, exportTotal, filterRows, pagesToRead, pickColumns } from "../lib/mcp-export";
+import { AnswerCache, CACHEABLE_TOOLS, countRecentCalls, RATE_LIMIT_STATUS, rateDecision } from "../lib/mcp-limits";
 import {
   consumeCode,
   createCode,
@@ -375,11 +407,17 @@ Reading is limited to what this person may see in the ERP; fields they may not s
 ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - Sales (this month, a month, quarter or year; by customer, top products, daily, trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"}.
 - Production (production revenue, by department, daily, top products, units completed, workforce, backlog; compared with the same days last month): production_summary {from, to} (default: this month to today).
-- Orders in the pipeline, what is overdue: order_backlog. Who owes us money: receivables_summary. Which materials are short: material_shortages.
+- Orders in the pipeline: order_backlog. Which sales orders are overdue: so_overdue. What is due for delivery today / this week: deliveries_due {range}.
+- Who owes us money, and what is delivered but not invoiced: receivables_summary. What we owe suppliers: payables_summary.
+- Purchasing: purchasing_summary {view: "overview" | "overdue" (late POs) | "awaiting" (still to be received) | "suppliers" (who delivers late, {days})}.
+- Which materials are short: material_shortages. Low or negative stock: inventory_summary. Late production orders: production_late.
+- Who is on leave or absent today (HR only): attendance_today. "What do I need to look at today?": daily_brief.
+- A list as an Excel file: export_excel {list, search, status, from, to, fields} (15-minute download link).
 - A document by number or a customer / product name: search {query}, then fetch {id} for the full record.
 Only when no quick answer fits: list_modules → list_endpoints → erp_get. With erp_get pass "fields" (only the keys you need) and query filters (from/to YYYY-MM-DD, page/limit, search) to keep replies small.
 Money in the ERP is integer sen (RM × 100) unless a field says RM. Dates are Malaysia time.
-A document's chain (sales order → production orders → job cards → delivery orders → invoices → payments, or back from any of them): document_flow {number_or_id}.
+A document's chain (sales order → production orders → job cards → delivery orders → invoices → payments, or back from any of them; or a purchase order → GRNs → purchase invoices): document_flow {number_or_id}.
+Keep replies short: lead with the count and the few lines that matter, give links. If a tool says the person has no access to something, say so in one line — never guess the figure.
 For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
 ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. Nothing else can be changed: no orders, money, stock, approvals or deletes.
 If a call says "not available to your role", tell the user they do not have permission for that data.`;
@@ -492,7 +530,7 @@ const TOOLS = [
   {
     name: "receivables_summary",
     title: "Receivables / debtor ageing (quick answer)",
-    description: "Who owes us and for how long: total owed (RM) by age (current, 30, 60, 90, over 90), the customers owing most and the oldest unpaid invoices. Same as Accounting > Debtor Aging. ONE call.",
+    description: "Who owes us and for how long: total owed (RM) by age (current, 30, 60, 90, over 90), the customers owing most and the oldest unpaid invoices (Accounting > Debtor Aging), plus delivery orders shipped but not yet invoiced. ONE call.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -501,6 +539,88 @@ const TOOLS = [
     title: "Material shortages (quick answer)",
     description: "Raw materials short for open production orders, from the MRP page's calculation: how many are short, the 15 needed soonest (short, stock, on order, need-by date, main supplier) and BOM gaps. ONE call.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "inventory_summary",
+    title: "Stock levels (quick answer)",
+    description: "Low and negative stock in ONE call: raw materials below their minimum, below zero and at zero (by group, the worst first), and finished goods in stock / reserved. Same data as the Inventory page.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "purchasing_summary",
+    title: "Purchasing (quick answer)",
+    description: "Purchase orders in ONE call. view \"overview\" (default): open POs by status (RM), overdue, awaiting GRN, expected in the next 7 days. \"overdue\": POs past their expected date and not fully received — supplier, days late, value. \"awaiting\": still to be received (partly received first). \"suppliers\": which suppliers deliver late most often over the last `days` (default 90; 30 = about this month) — late count, on-time %, average days late.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        view: { type: "string", enum: ["overview", "overdue", "awaiting", "suppliers"] },
+        days: { type: "number", description: "For view suppliers: the window in days (default 90)." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "payables_summary",
+    title: "What we owe suppliers (quick answer)",
+    description: "Unpaid supplier invoices in ONE call: total owed (RM) by age, past due, due in the next 7 days and the suppliers owed most. Same as Accounting > Creditor Aging; needs the accounting permission.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "so_overdue",
+    title: "Overdue sales orders (quick answer)",
+    description: "Open sales orders past their Hookka expected delivery date in ONE call: count, value (RM), by customer, and the 15 most late with days late and links.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "deliveries_due",
+    title: "Deliveries due (quick answer)",
+    description: "What is due for delivery today or this week in ONE call: delivery orders not yet delivered by delivery date (customer, hub, lorry, status) and sales orders due by their expected date.",
+    inputSchema: { type: "object", properties: { range: { type: "string", enum: ["today", "week"], description: "Default: today." } }, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "production_late",
+    title: "Late production orders (quick answer)",
+    description: "Live production orders past their target end date in ONE call: count, by department (where each is now) and customer, and the 15 most late with links.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "attendance_today",
+    title: "Who is away today (quick answer, HR)",
+    description: "Who is on approved leave, absent or not clocked in yet today, from Attendance and Leave. Only for people with HR access; others are told they have no access.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "daily_brief",
+    title: "What do I need to look at today?",
+    description: "The person's day in ONE call: overdue and due-in-3-days sales orders and purchase orders, Mail Center threads waiting for them, and service-case / leave approvals waiting for them — each with a count and the top 5 with links.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "export_excel",
+    title: "Export a list to Excel",
+    description: "A real .xlsx of one ERP list, read as the person (their permissions and hidden fields apply), up to 5,000 rows, money in RM. Returns a 15-minute download link, the row count and whether it was cut at the cap.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        list: { type: "string", enum: Object.keys(EXPORT_LISTS) },
+        search: { type: "string", description: "Keep rows containing this text" },
+        status: { type: "string", description: "Keep rows with this status, e.g. CONFIRMED" },
+        from: { type: "string", description: "YYYY-MM-DD, on the list's document date" },
+        to: { type: "string", description: "YYYY-MM-DD" },
+        fields: { type: "array", items: { type: "string" }, description: "Only these columns (keys or column titles)" },
+      },
+      required: ["list"],
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -520,10 +640,10 @@ const TOOLS = [
   {
     name: "document_flow",
     title: "Document flow (SO → production → DO → invoice → payment)",
-    description: "The whole chain around one document, in ONE call: its sales order, production orders and job cards, delivery orders, invoices and payments — each with number, status, date, amount (RM) and its ERP link. Give a sales order, production order, delivery order or invoice number (or an id from search).",
+    description: "The whole chain around one document, in ONE call: its sales order, production orders and job cards, delivery orders, invoices and payments — each with number, status, date, amount (RM) and its ERP link. Give a sales order, production order, delivery order or invoice number (or an id from search). For a purchase order (number, or purchase_order:<id> from search): the PO, its GRNs and its purchase invoices.",
     inputSchema: {
       type: "object",
-      properties: { number_or_id: { type: "string", description: "e.g. SO-2611-376, DO-2611-102, INV-2611-088, or sales_order:abc123 from search" } },
+      properties: { number_or_id: { type: "string", description: "e.g. SO-2611-376, DO-2611-102, INV-2611-088, a PO number, or sales_order:abc123 from search" } },
       required: ["number_or_id"],
       additionalProperties: false,
     },
@@ -598,15 +718,27 @@ async function canAny(c: Context<Env>, resources: string[]): Promise<boolean> {
   return false;
 }
 
-/** Permission answers for the redactor, looked up once per call. */
-async function permLookup(c: Context<Env>): Promise<(perm: string) => boolean> {
+/**
+ * Permission answers for the redactor. Round 3 perf: looked up ONCE per request
+ * and person (a quick answer / export makes 2–10 reads, each used to ask the
+ * same six questions again), in parallel. Keyed by user + role too, because the
+ * leak check runs several people's calls on one admin request (runToolAs).
+ */
+const permMemo = new WeakMap<object, Map<string, Promise<(perm: string) => boolean>>>();
+function permLookup(c: Context<Env>): Promise<(perm: string) => boolean> {
+  const g = c as unknown as { get: (k: string) => unknown };
+  const who = `${String(g.get("userId") ?? "")}|${String(g.get("userRole") ?? "")}`;
+  let m = permMemo.get(c);
+  if (!m) permMemo.set(c, (m = new Map()));
+  const hit = m.get(who);
+  if (hit) return hit;
   const perms = ["payroll:read", "payslips:read", "cost-ledger:read", "accounting:read", "product-pricing:read", "revenue-figures:read"];
-  const got = new Map<string, boolean>();
-  for (const p of perms) {
-    const [r, a] = p.split(":");
-    got.set(p, await hasPermission(c, r, a));
-  }
-  return (p) => got.get(p) === true;
+  const p = Promise.all(perms.map((x) => hasPermission(c, x.split(":")[0], x.split(":")[1]))).then((ans) => {
+    const got = new Map(perms.map((x, i) => [x, ans[i]]));
+    return (q: string) => got.get(q) === true;
+  });
+  m.set(who, p);
+  return p;
 }
 
 async function innerGet(c: Context<Env>, token: string, pathWithQuery: string): Promise<Response> {
@@ -631,9 +763,18 @@ type ReadValue =
   | { ok: true; status: number; value: unknown; removed: Set<string>; target: string }
   | { ok: false; status: number; message: string; note: string; target: string };
 
+/**
+ * A fixed endpoint outside the readable-module map, used by ONE tool for a
+ * narrow purpose (daily_brief's Mail Center count). Not reachable through
+ * erp_get. Same gate (the resource's read) + inner GET as the person +
+ * redaction as any other read; the route still runs its own scope check.
+ */
+type FixedRead = { path: string; resources: string[] };
+const MAIL_THREADS_READ: FixedRead = { path: "/api/mail-center/threads", resources: ["mail-center"] };
+
 /** Read one endpoint as the person: gated, then redacted. Shared by erp_get and the quick answers. */
-async function readValue(c: Context<Env>, token: string, rawPath: string, query: Record<string, unknown> | undefined): Promise<ReadValue> {
-  const d = classifyPath(rawPath);
+async function readValue(c: Context<Env>, token: string, rawPath: string, query: Record<string, unknown> | undefined, fixed?: FixedRead): Promise<ReadValue> {
+  const d = fixed ? { ok: true as const, path: fixed.path, resources: fixed.resources } : classifyPath(rawPath);
   if (!d.ok) return { ok: false, status: 400, message: d.reason, note: "blocked path", target: rawPath };
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) {
@@ -704,6 +845,23 @@ const errText = (body: unknown): string =>
 
 const SAFE_REF = /^[A-Za-z0-9._-]{1,80}$/;
 
+/** document_flow for a purchase order: the PO and its GRNs at once, then the supplier's purchase invoices (FAQ P5). */
+async function purchaseFlow(c: Context<Env>, token: string, poId: string, target: string): Promise<Step> {
+  if (!SAFE_REF.test(poId)) return { result: text("That purchase order id cannot be read.", true), status: 400, target, note: "" };
+  const [po, grns] = await Promise.all([
+    readValue(c, token, `/api/purchase-orders/${poId}`, undefined),
+    readValue(c, token, "/api/grn", { poId }),
+  ]);
+  if (!po.ok) return { result: text(po.status === 403 ? "You don't have access to purchase orders." : po.message, true), status: po.status, target, note: po.note };
+  const d = (po.value && typeof po.value === "object" ? ((po.value as { data?: unknown }).data ?? po.value) : {}) as Record<string, unknown>;
+  const supplierId = String(d.supplierId ?? "");
+  const pis = supplierId && SAFE_REF.test(supplierId) ? await readValue(c, token, "/api/purchase-invoices", { supplierId }) : null;
+  const P = new Parts();
+  P.opt(po, "purchase orders");
+  const flow = shapePurchaseFlow(po.value, P.opt(grns, "goods received (GRN)"), P.opt(pis, "purchase invoices"), originOf(c));
+  return { ...P.done({ from: `purchase_order:${poId}`, flows: [flow], tip: "Amounts are RM; null means not shown to this person. Give the person the links." }), target };
+}
+
 /** document_flow: the anchor → its sales order(s) → each chain, every read AS THE PERSON through readValue. */
 async function documentFlow(c: Context<Env>, token: string, raw: string): Promise<Step> {
   const q = raw.trim();
@@ -711,9 +869,13 @@ async function documentFlow(c: Context<Env>, token: string, raw: string): Promis
   const fail = (message: string, status: number, note = ""): Step => ({ result: text(message, true), status, target, note });
   if (!q || q.length > 80) return fail("Give a sales order, production order, delivery order or invoice number.", 400);
   let anchor: { kind: FlowKind; id: string } | null = parseAnchorId(q);
+  const directPo = anchor ? null : pickPurchaseAnchor(q, null);
+  if (directPo) return purchaseFlow(c, token, directPo, target);
   if (!anchor) {
     const sr = await readValue(c, token, "/api/search", { q, limit: 8 });
     if (!sr.ok) return fail(sr.message, sr.status, sr.note);
+    const poId = pickPurchaseAnchor(q, sr.value);
+    if (poId) return purchaseFlow(c, token, poId, target);
     anchor = pickFlowAnchor(sr.value, q);
     if (!anchor) return fail(`No sales order, production order, delivery order or invoice matches "${q}".`, 404);
   }
@@ -862,14 +1024,266 @@ async function confirmAction(c: Context<Env>, id: McpIdentity, token: string, ra
   return { result: text(d.text, !d.ok), status: out.status, target, note: "" };
 }
 
+// ── round 3 quick answers, daily brief, export (owner 2026-11-26) ───────────
+
+/** Collects what a multi-read answer could not read: 403 → "no access", anything else → a problem line. */
+class Parts {
+  noAccess: string[] = [];
+  problems: string[] = [];
+  hidden = new Set<string>();
+  /** The value of a read the answer can do without (null when refused or failed). */
+  opt(r: ReadValue | null, label: string): unknown {
+    if (!r) return null;
+    if (r.ok) {
+      for (const k of r.removed) this.hidden.add(k);
+      return r.value;
+    }
+    if (r.status === 403) this.noAccess.push(label);
+    else this.problems.push(`${label} could not be read (${r.message})`);
+    return null;
+  }
+  /** A read the answer needs: its value, or the plain refusal as the whole answer. */
+  need(r: ReadValue, label: string): { ok: true; value: unknown } | { ok: false; step: Omit<Step, "target"> } {
+    if (r.ok) {
+      for (const k of r.removed) this.hidden.add(k);
+      return { ok: true, value: r.value };
+    }
+    const message = r.status === 403 ? `You don't have access to ${label}.` : r.message;
+    return { ok: false, step: { result: text(message, true), status: r.status, note: r.note } };
+  }
+  done(summary: Record<string, unknown>): Omit<Step, "target"> {
+    const out: Record<string, unknown> = { ...summary };
+    if (this.noAccess.length) out.noAccess = [...new Set(this.noAccess)].map((x) => `You don't have access to ${x}.`);
+    if (this.problems.length) out.couldNotRead = this.problems;
+    const head = this.hidden.size ? `Fields hidden for this person: ${[...this.hidden].join(", ")}.\n` : "";
+    let body = JSON.stringify(out);
+    if (body.length > MAX_RESULT_CHARS) body = body.slice(0, MAX_RESULT_CHARS);
+    return { result: text(head + body), status: 200, note: [...this.hidden].join(",") };
+  }
+}
+
+const DO_NOT_DELIVERED = "DRAFT,LOADED,DISPATCHED,IN_TRANSIT";
+const DO_SHIPPED = "LOADED,DISPATCHED,IN_TRANSIT,SIGNED,DELIVERED";
+
+/** The round-3 quick answers + daily brief. null = not one of them. */
+async function quickTool(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<Step | null> {
+  const today = myToday();
+  const origin = originOf(c);
+  const P = new Parts();
+  const fin = (target: string, s: Omit<Step, "target">): Step => ({ ...s, target });
+
+  if (name === "inventory_summary") {
+    const [inv, fg] = await Promise.all([
+      // ?buckets=rawMaterials: the one bucket needed (the whole reply is ~1.2 MB).
+      readValue(c, token, "/api/inventory", { buckets: "rawMaterials" }),
+      readValue(c, token, "/api/inventory/fg-stock", undefined),
+    ]);
+    const a = P.need(inv, "inventory");
+    if (!a.ok) return fin("inventory", a.step);
+    return fin("inventory", P.done(summariseInventory(a.value, P.opt(fg, "finished-goods stock"))));
+  }
+
+  if (name === "purchasing_summary") {
+    const view = (["overview", "overdue", "awaiting", "suppliers"].includes(String(args.view)) ? String(args.view) : "overview") as PurchasingView;
+    const days = Math.max(1, Math.min(400, Number(args.days) || 90));
+    const wantGrn = view === "overview" || view === "awaiting";
+    const [po, grn] = await Promise.all([
+      readValue(c, token, "/api/purchase-orders/stats", undefined),
+      wantGrn ? readValue(c, token, "/api/grn/stats", undefined) : Promise.resolve(null),
+    ]);
+    const a = P.need(po, "purchase orders");
+    if (!a.ok) return fin(`purchasing:${view}`, a.step);
+    return fin(`purchasing:${view}${view === "suppliers" ? `:${days}d` : ""}`, P.done(summarisePurchasing(a.value, P.opt(grn, "goods received (GRN)"), today, origin, view, days)));
+  }
+
+  if (name === "payables_summary") {
+    const ag = await readValue(c, token, "/api/accounting/aging", undefined);
+    const a = P.need(ag, "accounting (creditor aging)");
+    if (!a.ok) return fin("payables", a.step);
+    return fin("payables", P.done(summarisePayables(a.value, today)));
+  }
+
+  if (name === "so_overdue") {
+    const due = await readValue(c, token, "/api/sales-orders", { fields: "orders-due", top: BRIEF_SO_TOP });
+    const a = P.need(due, "sales orders");
+    if (!a.ok) return fin("so_overdue", a.step);
+    return fin("so_overdue", P.done(summariseOverdueSales(a.value, today, origin)));
+  }
+
+  if (name === "deliveries_due") {
+    const range = args.range === "week" ? "week" : "today";
+    const [dos, sos] = await Promise.all([
+      readValue(c, token, "/api/delivery-orders", { status: DO_NOT_DELIVERED, page: 1, limit: 500 }),
+      readValue(c, token, "/api/sales-orders", { fields: "orders-due", top: BRIEF_SO_TOP }),
+    ]);
+    if (!dos.ok && !sos.ok) {
+      const a = P.need(dos, "delivery orders");
+      if (!a.ok) return fin(`deliveries:${range}`, a.step);
+    }
+    return fin(`deliveries:${range}`, P.done(summariseDeliveriesDue(range, P.opt(dos, "delivery orders"), P.opt(sos, "sales orders"), today, origin)));
+  }
+
+  if (name === "production_late") {
+    const board = await readValue(c, token, "/api/production-orders/board", undefined);
+    const a = P.need(board, "production orders");
+    if (!a.ok) return fin("production_late", a.step);
+    return fin("production_late", P.done(summariseProductionLate(a.value, today, origin)));
+  }
+
+  if (name === "attendance_today") {
+    const [att, lv, wk] = await Promise.all([
+      readValue(c, token, "/api/attendance", { date: today }),
+      readValue(c, token, "/api/leaves", { status: "APPROVED" }),
+      readValue(c, token, "/api/workers", undefined),
+    ]);
+    if (!att.ok && !lv.ok) {
+      const status = att.status === 403 && lv.status === 403 ? 403 : att.status;
+      return fin(`attendance:${today}`, { result: text(status === 403 ? "You don't have access to attendance or leave (HR only)." : att.message, true), status, note: att.note });
+    }
+    const a = P.opt(att, "attendance");
+    const l = P.opt(lv, "leave");
+    const w = att.ok ? P.opt(wk, "the worker list (needed for 'not clocked in yet')") : null;
+    return fin(`attendance:${today}`, P.done(summariseAttendance(today, a, l, w)));
+  }
+
+  if (name === "daily_brief") {
+    const [mayApproveCases, mayApproveLeave] = await Promise.all([hasPermission(c, "service-cases", "approve"), hasPermission(c, "leaves", "update")]);
+    // At most five reads, all at once.
+    const [so, po, mail, svc, lv] = await Promise.all([
+      readValue(c, token, "/api/sales-orders", { fields: "orders-due", top: BRIEF_SO_TOP }),
+      readValue(c, token, "/api/purchase-orders/stats", undefined),
+      readValue(c, token, MAIL_THREADS_READ.path, { status: "open", limit: BRIEF_MAIL_LIMIT }, MAIL_THREADS_READ),
+      mayApproveCases ? readValue(c, token, "/api/service-cases/approvals", undefined) : Promise.resolve(null),
+      mayApproveLeave ? readValue(c, token, "/api/leaves", { status: "PENDING" }) : Promise.resolve(null),
+    ]);
+    const brief = buildDailyBrief({
+      today,
+      origin,
+      userId: id.userId,
+      salesDue: P.opt(so, "sales orders"),
+      poStats: P.opt(po, "purchase orders"),
+      mailThreads: P.opt(mail, "Mail Center"),
+      serviceApprovals: P.opt(svc, "service-case approvals"),
+      leaveApprovals: P.opt(lv, "leave approvals"),
+      noAccess: [],
+    });
+    return fin(`brief:${today}`, P.done(brief));
+  }
+
+  if (name === "receivables_summary") {
+    const [ag, dos] = await Promise.all([
+      readValue(c, token, "/api/accounting/aging", undefined),
+      readValue(c, token, "/api/delivery-orders", { status: DO_SHIPPED, page: 1, limit: 500 }),
+    ]);
+    const a = P.need(ag, "accounting (debtor aging)");
+    if (!a.ok) return fin("receivables", a.step);
+    const shipped = P.opt(dos, "delivery orders");
+    return fin(
+      "receivables",
+      P.done({
+        ...summariseReceivables(a.value),
+        ...(shipped !== null ? { shippedNotInvoiced: { ...summariseShippedNotInvoiced(shipped, today, origin), countedFrom: "the 500 most recent shipped delivery orders" } } : {}),
+      }),
+    );
+  }
+
+  return null;
+}
+
+/** export_excel: page through one allowlisted list as the person, build the .xlsx, store it like get_pdf. */
+async function exportExcel(c: Context<Env>, id: McpIdentity, token: string, args: Record<string, unknown>): Promise<Step> {
+  const listName = String(args.list ?? "");
+  const spec = EXPORT_LISTS[listName];
+  let target = `export:${listName}`;
+  const fail = (message: string, status: number, note = ""): Step => ({ result: text(message, true), status, target, note });
+  if (!spec) return fail(`Choose a list: ${Object.keys(EXPORT_LISTS).join(", ")}.`, 400);
+  const first = await readValue(c, token, spec.api, { ...(spec.query ?? {}), ...(spec.paginated ? { page: 1, limit: EXPORT_PAGE_SIZE } : {}) });
+  if (!first.ok) return fail(first.status === 403 ? `You don't have access to ${spec.label.toLowerCase()}.` : first.message, first.status, first.note);
+  const hidden = new Set(first.removed);
+  let rows = exportRows(first.value, spec.rowsAt);
+  const total = exportTotal(first.value);
+  let sourceRows = total ?? rows.length;
+  if (spec.paginated) {
+    const pages = pagesToRead(total, rows.length);
+    if (pages > 1) {
+      // The rest at once (≤ 9 more), not one after another.
+      const more = await Promise.all(
+        Array.from({ length: pages - 1 }, (_, i) => readValue(c, token, spec.api, { ...(spec.query ?? {}), page: i + 2, limit: EXPORT_PAGE_SIZE })),
+      );
+      for (const m of more) {
+        if (!m.ok) return fail(`Page could not be read: ${m.message}`, m.status, m.note);
+        for (const k of m.removed) hidden.add(k);
+        rows = rows.concat(exportRows(m.value, spec.rowsAt));
+      }
+    }
+    if (total === null) sourceRows = rows.length >= EXPORT_MAX_ROWS ? EXPORT_MAX_ROWS + 1 : rows.length;
+  }
+  const truncated = sourceRows > EXPORT_MAX_ROWS || rows.length > EXPORT_MAX_ROWS;
+  const f = filterRows(rows.slice(0, EXPORT_MAX_ROWS), {
+    search: typeof args.search === "string" ? args.search : undefined,
+    status: typeof args.status === "string" ? args.status : undefined,
+    from: typeof args.from === "string" ? args.from : undefined,
+    to: typeof args.to === "string" ? args.to : undefined,
+  });
+  const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).map(String).filter(Boolean).slice(0, 60) : [];
+  const cols = pickColumns(f.rows, spec.prefer, fields);
+  if (!f.rows.length) return { result: text(JSON.stringify({ list: listName, rows: 0, note: "No rows match, so no file was made." })), status: 200, target: `${target} rows=0`, note: [...hidden].join(",") };
+  if (!cols.length) return fail("None of the requested fields exist in this list.", 400);
+  const filename = exportFileName(listName, myToday());
+  const bytes = buildXlsx(spec.label, f.rows, cols);
+  const url = await uploadExportAndSign(c.env, id.orgId || "hookka", filename, bytes, XLSX_CONTENT_TYPE, ".xlsx");
+  target = `${target} rows=${f.rows.length}${truncated ? " truncated" : ""}`;
+  return {
+    result: text(
+      (hidden.size ? `Fields hidden for this person: ${[...hidden].join(", ")}.\n` : "") +
+        JSON.stringify({
+          list: listName,
+          filename,
+          downloadUrl: url,
+          expiresInMinutes: 15,
+          rows: f.rows.length,
+          truncated,
+          ...(truncated ? { truncatedNote: `Only the newest ${EXPORT_MAX_ROWS} rows were read; filters were applied to those.` } : {}),
+          ...(f.dateKey ? { dateFilteredOn: f.dateKey } : {}),
+          columns: cols.length,
+          note: "Give the person this link; it downloads the Excel file and stops working after 15 minutes. Money columns are RM.",
+        }),
+    ),
+    status: 200,
+    target,
+    note: [...hidden].join(","),
+  };
+}
+
+/** Successful quick answers, reused for 30 s per person + role + arguments (lib/mcp-limits.ts). */
+const answerCache = new AnswerCache<{ result: ToolResult; target: string; note: string }>();
+
 async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const t0 = Date.now();
   let status = 200;
   let note = "";
   let target = "";
   let result: ToolResult;
+  const cacheKey = CACHEABLE_TOOLS.has(name) ? AnswerCache.key(id.userId, id.role, name, args) : "";
+  const cached = cacheKey ? answerCache.get(cacheKey) : null;
+  let quick: Step | null = null;
   try {
-    if (name === "whoami") {
+    if (cached) {
+      result = cached.result;
+      target = cached.target;
+      note = cached.note ? `cached,${cached.note}` : "cached";
+    } else if ((quick = await quickTool(c, id, token, name, args))) {
+      result = quick.result;
+      status = quick.status;
+      note = quick.note;
+      target = quick.target;
+    } else if (name === "export_excel") {
+      const r = await exportExcel(c, id, token, args);
+      result = r.result;
+      status = r.status;
+      note = r.note;
+      target = r.target;
+    } else if (name === "whoami") {
       const mods: string[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push(m.prefix);
       const actions = await actionsEnabled(c.var.DB);
@@ -993,13 +1407,6 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
       result = q.result;
       status = q.status;
       note = q.note;
-    } else if (name === "receivables_summary") {
-      target = "receivables";
-      const ag = await readValue(c, token, "/api/accounting/aging", undefined);
-      const q = quickResult(ag.ok ? summariseReceivables(ag.value) : null, [ag]);
-      result = q.result;
-      status = q.status;
-      note = q.note;
     } else if (name === "material_shortages") {
       target = "material_shortages";
       const pl = await readValue(c, token, "/api/mrp/plan", undefined);
@@ -1088,6 +1495,7 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
     result = text(`Failed: ${e instanceof Error ? e.message : String(e)}`, true);
     status = 500;
   }
+  if (cacheKey && !cached && !result.isError && status === 200) answerCache.set(cacheKey, { result, target, note });
   const done = logCall(c.var.DB, { tokenId: id.tokenId, userId: id.userId, clientId: id.clientId, tool: name, target, status, ok: !result.isError, note, ms: Date.now() - t0 });
   try {
     c.executionCtx.waitUntil(done);
@@ -1137,6 +1545,25 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     case "tools/call": {
       const name = String(m.params?.name ?? "");
       const args = (m.params?.arguments as Record<string, unknown>) ?? {};
+      // Per-person rate limit (lib/mcp-limits.ts). Only here: runToolAs (the
+      // admin leak check) calls callTool directly and is never limited.
+      let over: string | null = null;
+      try {
+        const n = await countRecentCalls(c.var.DB, id.userId);
+        over = rateDecision(n.lastMinute, n.today);
+      } catch (e) {
+        // The count failing must not take the connector down: let the call through.
+        console.warn("[mcp] rate count failed:", e instanceof Error ? e.message : String(e));
+      }
+      if (over) {
+        const done = logCall(c.var.DB, { tokenId: id.tokenId, userId: id.userId, clientId: id.clientId, tool: name, target: "rate-limited", status: RATE_LIMIT_STATUS, ok: false, note: "rate limit", ms: 0 });
+        try {
+          c.executionCtx.waitUntil(done);
+        } catch {
+          await done;
+        }
+        return reply(text(over, true));
+      }
       return reply(await callTool(c, id, token, name, args));
     }
     case "resources/list":

@@ -73,12 +73,19 @@ export async function renderServerPdf(
 
 /** Upload under the person's org and return a short-lived signed link. */
 export async function uploadPdfAndSign(env: unknown, orgId: string, filename: string, bytes: Uint8Array): Promise<string> {
+  return uploadExportAndSign(env, orgId, filename, bytes, "application/pdf", ".pdf");
+}
+
+export const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/** Any connector export (PDF, and since round 3 the export_excel .xlsx): same place, same 15-minute link. */
+export async function uploadExportAndSign(env: unknown, orgId: string, filename: string, bytes: Uint8Array, contentType: string, ext: string): Promise<string> {
   if (!/^[A-Za-z0-9_-]+$/.test(orgId)) throw new Error("Invalid org");
   const rand = Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b) => b.toString(16).padStart(2, "0")).join("");
-  const safe = filename.replace(/[^A-Za-z0-9._ -]+/g, "").replace(/\s+/g, "_").slice(0, 120) || "document.pdf";
-  const key = `${PDF_PREFIX}/${orgId}/${rand}-${safe.endsWith(".pdf") ? safe : safe + ".pdf"}`;
+  const safe = filename.replace(/[^A-Za-z0-9._ -]+/g, "").replace(/\s+/g, "_").slice(0, 120) || `document${ext}`;
+  const key = `${PDF_PREFIX}/${orgId}/${rand}-${safe.endsWith(ext) ? safe : safe + ext}`;
   const storageEnv = env as Parameters<typeof putFile>[0];
-  await putFile(storageEnv, PDF_BUCKET, key, bytes, "application/pdf");
+  await putFile(storageEnv, PDF_BUCKET, key, bytes, contentType);
   const url = await signedDownloadUrl(storageEnv, PDF_BUCKET, key, PDF_LINK_TTL_S);
   if (!url) throw new Error("File storage is not configured, so a download link cannot be made.");
   return url;

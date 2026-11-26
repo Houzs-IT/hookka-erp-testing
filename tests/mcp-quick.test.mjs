@@ -128,7 +128,7 @@ test("search results in the shape ChatGPT requires, and fetch ids round-trip", (
 });
 
 test("prompts expand to a question; unknown prompt is refused", () => {
-  assert.equal(PROMPTS.length, 3);
+  assert.equal(PROMPTS.length, 4); // + daily-brief (round 3)
   assert.match(promptText("monthly_sales_review", { period: "2026-10" }), /2026-10.*sales_summary/);
   assert.match(promptText("find_document", { number: "SO-2611-001" }), /SO-2611-001/);
   assert.equal(promptText("nope", {}), null);

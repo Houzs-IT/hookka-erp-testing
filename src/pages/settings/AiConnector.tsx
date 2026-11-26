@@ -9,10 +9,14 @@ import { useToast } from "@/components/ui/toast";
 
 type Conn = { tokenId: string; userId: string; name: string; role: string; app: string; connectedAt: string; lastUsedAt: string | null; callsWeek?: number };
 type Call = { at: string; userId: string; name: string; app: string; tool: string; target: string; ok: boolean; status: number; note: string };
-type Me = { allowed: boolean; isSuperAdmin: boolean; actionsEnabled?: boolean; connectorUrl: string; connections: Conn[]; calls: Call[]; pendingRequestAt: string | null };
+type Limits = { perMinute: number; perDay: number };
+type Latency = { tool: string; calls: number; p50: number; p95: number; max: number; cached: number };
+type Me = { allowed: boolean; isSuperAdmin: boolean; actionsEnabled?: boolean; limits?: Limits; connectorUrl: string; connections: Conn[]; calls: Call[]; pendingRequestAt: string | null };
 type Overview = {
   connectorUrl: string;
   actionsEnabled?: boolean;
+  limits?: Limits;
+  latency?: { last24h: Latency[]; previous7d: Latency[] };
   stats: { allowed: number; connectedPeople: number; connectedApps: Record<string, number>; callsToday: number; refusedToday: number };
   connections: Conn[];
   allowed: { userId: string; name: string; role: string; approvedAt: string }[];
@@ -45,6 +49,23 @@ function clock(iso: string): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kuala_Lumpur" });
 }
 
+/** The quick answers, in words (round 3 added inventory → daily brief). */
+const TOOL_WORDS: Record<string, string> = {
+  sales_summary: "Sales summary",
+  production_summary: "Production summary",
+  order_backlog: "Order backlog",
+  receivables_summary: "Who owes us (receivables)",
+  material_shortages: "Material shortages",
+  inventory_summary: "Low / negative stock",
+  purchasing_summary: "Purchasing summary",
+  payables_summary: "What we owe suppliers",
+  so_overdue: "Overdue sales orders",
+  deliveries_due: "Deliveries due",
+  production_late: "Late production orders",
+  attendance_today: "Who is away today",
+  daily_brief: "Daily brief",
+};
+
 /** What the AI looked up, in words. */
 function lookedUp(c: Call): string {
   if (c.tool === "whoami") return "Checked who it is connected as";
@@ -58,13 +79,18 @@ function lookedUp(c: Call): string {
   if (c.tool === "propose_meeting" || c.tool === "propose_email") return `Proposed ${c.target.replace(/^propose:/, "")}`;
   if (c.tool === "confirm_action") return `Confirmed ${c.target.replace(/^confirm:/, "")}`;
   if (c.tool === "cancel_action") return "Cancelled a proposal";
+  if (c.target === "rate-limited") return `${TOOL_WORDS[c.tool] ?? c.tool} (over the limit)`;
+  if (c.tool === "export_excel") return `Excel export of ${c.target.replace(/^export:/, "").replace(/ rows=(d+)/, " ($1 rows)")}`;
+  if (TOOL_WORDS[c.tool]) return TOOL_WORDS[c.tool];
   return c.target || c.tool;
 }
 function result(c: Call): { label: string; cls: string } {
   if (c.ok && c.tool === "confirm_action") return { label: "Done", cls: "bg-[#E7F3EC] text-[#1E6B3F]" };
   if (c.ok && (c.tool === "propose_meeting" || c.tool === "propose_email")) return { label: "Waiting for yes", cls: "bg-[#F3EEDF] text-[#6B5A2E]" };
-  if (c.ok) return { label: c.note ? "Answered (fields hidden)" : "Answered", cls: "bg-[#E7F3EC] text-[#1E6B3F]" };
+  const hidden = c.note.split(",").some((x) => x && x !== "cached");
+  if (c.ok) return { label: hidden ? "Answered (fields hidden)" : "Answered", cls: "bg-[#E7F3EC] text-[#1E6B3F]" };
   if (c.status === 403) return { label: "No permission", cls: "bg-[#FDECEA] text-[#B42318]" };
+  if (c.status === 429) return { label: "Over the limit", cls: "bg-[#F3EEDF] text-[#6B5A2E]" };
   return { label: "Failed", cls: "bg-[#F3F4F6] text-[#55534E]" };
 }
 
@@ -163,6 +189,55 @@ function HowTo({ url }: { url: string }) {
   );
 }
 
+
+/** Super Admin: how fast each tool answers — the last 24 h against the 7 days before (from the question log). */
+function LatencyCard({ latency }: { latency: { last24h: Latency[]; previous7d: Latency[] } }) {
+  const prev = new Map(latency.previous7d.map((r) => [r.tool, r]));
+  const tools = [...new Set([...latency.last24h.map((r) => r.tool), ...latency.previous7d.map((r) => r.tool)])];
+  const s = (ms: number | undefined) => (ms === undefined ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`);
+  return (
+    <section className={`${CARD} overflow-hidden`} aria-labelledby="speed">
+      <div className="border-b border-[#EFEBE2] px-5 py-4">
+        <h2 id="speed" className="text-base font-bold">Answer speed</h2>
+        <p className="text-[13px] text-[#55534E]">Typical (median) and slow (95th percentile) time per tool: the last 24 hours against the 7 days before. Repeat questions within 30 seconds are answered from a short cache.</p>
+      </div>
+      {tools.length === 0 ? (
+        <p className="px-5 py-4 text-sm text-[#6B6B66]">No questions yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] border-collapse text-sm">
+            <thead>
+              <tr className="bg-[#FAF8F3]">
+                <th className={TH}>Tool</th>
+                <th className={`${TH} text-right`}>Questions (24 h)</th>
+                <th className={`${TH} text-right`}>Typical (24 h)</th>
+                <th className={`${TH} text-right`}>Slow (24 h)</th>
+                <th className={`${TH} text-right`}>Typical (7 days before)</th>
+                <th className={`${TH} text-right`}>Slow (7 days before)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tools.map((t) => {
+                const now = latency.last24h.find((r) => r.tool === t);
+                const before = prev.get(t);
+                return (
+                  <tr key={t} className="border-t border-[#EFEBE2]">
+                    <td className={TD}>{TOOL_WORDS[t] ?? t}</td>
+                    <td className={`${TD} text-right tabular-nums`}>{now?.calls ?? 0}</td>
+                    <td className={`${TD} text-right tabular-nums`}>{s(now?.p50)}</td>
+                    <td className={`${TD} text-right tabular-nums`}>{s(now?.p95)}</td>
+                    <td className={`${TD} text-right tabular-nums text-[#55534E]`}>{s(before?.p50)}</td>
+                    <td className={`${TD} text-right tabular-nums text-[#55534E]`}>{s(before?.p95)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
 
 type LeakRow = { path: string; outcome: "opened" | "refused" | "error"; status: string; hidden: string[]; kept: string[]; keptExpected: boolean };
 
@@ -377,7 +452,7 @@ export default function AiConnectorPage() {
             {[
               ["Allowed to connect", ov.stats.allowed, "people approved (you always may)"],
               ["Connected now", ov.stats.connectedPeople, appsLine || "no apps yet"],
-              ["Questions today", ov.stats.callsToday, "ERP look-ups made"],
+              ["Questions today", ov.stats.callsToday, ov.limits ? `limit ${ov.limits.perMinute} a minute, ${ov.limits.perDay} a day per person` : "ERP look-ups made"],
               ["Refused (no permission)", ov.stats.refusedToday, "today"],
             ].map(([l, v, s]) => (
               <div key={String(l)} className={`${CARD} space-y-1 p-4`}>
@@ -517,6 +592,8 @@ export default function AiConnectorPage() {
             )}
           </section>
 
+          {ov.latency && <LatencyCard latency={ov.latency} />}
+
           <LeakCheck people={ov.allowed} />
 
           <section className={`${CARD} overflow-hidden`}>
@@ -599,6 +676,7 @@ export default function AiConnectorPage() {
           ? "The AI reads with your permissions. It can book a meeting or send an email only after you confirm each one; it cannot change orders, money, stock or approvals, or delete anything."
           : "The AI can only read — it cannot create, change or delete anything."}{" "}
         Your admin can see what it looked up and did; the chat itself stays in Claude / ChatGPT.
+        {me.limits ? ` Limits: ${me.limits.perMinute} questions a minute and ${me.limits.perDay} a day per person.` : ""}
       </p>
     </div>
   );
