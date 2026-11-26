@@ -230,7 +230,9 @@ ${inner}
       "Cache-Control": "no-store",
       "X-Frame-Options": "DENY",
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'",
-      "Referrer-Policy": "no-referrer",
+      // same-origin, not no-referrer: with no-referrer the browser sends `Origin: null` on the Allow form
+      // post and the approve handler refused it as cross-site (BUG-2026-11-26, owner could not connect).
+      "Referrer-Policy": "same-origin",
     },
   });
 }
@@ -289,8 +291,13 @@ ${hidden("client_id", p.clientId)}${hidden("redirect_uri", p.redirectUri)}${hidd
 });
 
 app.post("/oauth/approve", async (c) => {
+  // `Origin: null` (privacy mode / a page served with no-referrer) passes only when the browser itself says
+  // the post came from this same site; the CSRF cookie check below still applies.
   const origin = c.req.header("origin");
-  if (origin && origin !== originOf(c)) return page("Refused", `<h1>Refused</h1><p>Cross-site request.</p>`, 403);
+  const site = c.req.header("sec-fetch-site");
+  const nullOk = origin === "null" && (site === "same-origin" || site === "none");
+  if ((origin && origin !== originOf(c) && !nullOk) || site === "cross-site" || site === "same-site")
+    return page("Refused", `<h1>Refused</h1><p>Cross-site request.</p>`, 403);
   const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   const get = (k: string) => (typeof form[k] === "string" ? (form[k] as string) : undefined);
   const csrfCookie = readCookie(c.req.header("cookie"), CSRF_COOKIE);
