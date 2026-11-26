@@ -16,6 +16,7 @@ import { BOM_PRODUCT_TYPES, VARIANT_FIELDS, DEFAULT_VARIANT_FIELDS } from "@/lib
 import { MasterPriceHistoryDialog } from "./MasterPriceHistoryDialog";
 import { CustomerAssignmentsSection } from "./customer-assignments";
 import { CostingExportMenu } from "./costing-export-menu";
+import { useCanSeeCosting } from "./use-can-see-costing";
 import { BatchImportDialog, type ImportColumn } from "@/components/ui/batch-import-dialog";
 import { PRODUCT_IMPORT_COLUMNS } from "@/lib/import-schemas";
 import { exportImportRows } from "@/components/ui/batch-import-dialog";
@@ -2103,6 +2104,8 @@ export default function ProductsPage() {
   // minus cost, so without a price there is nothing to show).
   const { hasPermission: hasPerm } = usePermissions();
   const canSeePricing = hasPerm("product-pricing", "read");
+  // Product costs: Admin / Finance / R&D only (owner 2026-11-26).
+  const canSeeCosting = useCanSeeCosting();
   const PRICE_COL_KEYS = useMemo(
     () => new Set(["price2", "price1", "price3", "basePrice", "marginP2", "marginP1", "laborPctP2", "laborPctP1"]),
     [],
@@ -2941,7 +2944,7 @@ export default function ProductsPage() {
   // the supplier price in effect today (fabric at tier Lv1) + line counts.
   const { data: costResp } = useCachedJson<{
     data?: Record<string, { labourSen: number; materialSen: number; totalSen: number; materialLines: number; otherLines?: number; missingLines: number; fabricLines: number }>;
-  }>(viewMode === "skuMaster" ? "/api/product-costing/summary" : null, 120);
+  }>(viewMode === "skuMaster" && canSeeCosting ? "/api/product-costing/summary" : null, 120);
   const costMap = costResp?.data ?? null;
   const [costFilter, setCostFilter] = useState<"all" | "noMaterials" | "noPrice">("all");
   const costFiltered = useMemo(() => {
@@ -3703,7 +3706,7 @@ export default function ProductsPage() {
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Link to={`/products/${p.id}/costing`}
+          <Link to={`/products/${p.id}/${canSeeCosting ? "costing" : "bom"}`}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#6B5A2E] border border-[#6B5A2E] rounded-md"
             onClick={(e) => e.stopPropagation()}
           >
@@ -3718,12 +3721,14 @@ export default function ProductsPage() {
             </svg>
             View BOM
           </Link>
+          {canSeeCosting && (
           <Link to={`/products/${p.id}/costing`}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6B5A2E] bg-[#F6F1E6] border border-[#D8CBA8] rounded-md hover:bg-[#F6F1E6] transition-colors"
             onClick={(e) => e.stopPropagation()}
           >
             Costing
           </Link>
+          )}
           <Link to={`/products/${p.id}/documents`}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#6B5C32] bg-[#F0ECE9] border border-[#D8CFC0] rounded-md hover:bg-[#E8E2D9] transition-colors"
             onClick={(e) => e.stopPropagation()}
@@ -3742,7 +3747,7 @@ export default function ProductsPage() {
             </svg>
             Manage Variants
           </button>
-          <CostingExportMenu productId={p.id} align="left" />
+          {canSeeCosting && <CostingExportMenu productId={p.id} align="left" />}
           <span className="ml-auto text-[11px] text-[#9CA3AF]">Tip: double-click the row to open the product</span>
         </div>
 
@@ -4239,7 +4244,7 @@ export default function ProductsPage() {
           onDoubleClick={(r) => {
             const el = document.activeElement;
             if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
-            navigate(`/products/${encodeURIComponent(r._p.id)}/costing`);
+            navigate(`/products/${encodeURIComponent(r._p.id)}/${canSeeCosting ? "costing" : "bom"}`);
           }}
           expandedRowKey={expandedId}
           renderRowDetail={(r) => renderSkuDetail(r._p)}

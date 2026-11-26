@@ -21,8 +21,9 @@ test("routes: costing and customers pages exist next to bom and documents", () =
 test("Products list: click still toggles the dropdown, double-click opens the product, not while typing", () => {
   const p = read("src/pages/products/index.tsx");
   assert.match(p, /onRowClick=\{\(r\) => setExpandedId\(\(cur\) => \(cur === r\.id \? null : r\.id\)\)\}/);
-  assert.match(p, /onDoubleClick=\{\(r\) => \{[\s\S]{0,200}INPUT\|TEXTAREA\|SELECT[\s\S]{0,120}navigate\(`\/products\/\$\{encodeURIComponent\(r\._p\.id\)\}\/costing`\)/);
-  assert.match(p, /View BOM\s*<\/Link>\s*<Link to=\{`\/products\/\$\{p\.id\}\/costing`\}/);
+  assert.match(p, /onDoubleClick=\{\(r\) => \{[\s\S]{0,200}INPUT\|TEXTAREA\|SELECT[\s\S]{0,120}navigate\(`\/products\/\$\{encodeURIComponent\(r\._p\.id\)\}\/\$\{canSeeCosting \? "costing" : "bom"\}`\)/);
+  // Costing link only for Admin / Finance / R&D (owner 2026-11-26); others land on the BOM.
+  assert.match(p, /View BOM\s*<\/Link>\s*\{canSeeCosting && \(\s*<Link to=\{`\/products\/\$\{p\.id\}\/costing`\}/);
 });
 
 test("dropdown keeps everything it had (owner: dropdown information remains)", () => {

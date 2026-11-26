@@ -134,11 +134,10 @@ export const MCP_PREFIX_RESOURCES: Record<string, string[]> = {
   // Products
   "/api/products": ["products"],
   "/api/product-configs": ["product-configs"],
-  // Same gate as the ERP route (products:read, routes/product-costing.ts); the
-  // money inside is then hidden by the cost / price families unless the person
-  // holds cost-ledger / product-pricing / accounting read (owner 2026-11-26:
-  // the connector follows the ERP's current RBAC, no stricter, no looser).
-  "/api/product-costing": ["products"],
+  // Same gate as the ERP route (routes/product-costing.ts requireCostingRead):
+  // product-costing or cost-ledger read (owner 2026-11-26: the connector follows
+  // the ERP's RBAC, and costing is locked to Admin / Finance / R&D).
+  "/api/product-costing": ["product-costing", "cost-ledger"],
   "/api/sofa-combos": ["sofa-combos"],
   "/api/rd-projects": ["rd-projects"],
   // People
@@ -244,6 +243,9 @@ export function makeRedactor(can: (perm: string) => boolean, moduleResources: st
   const priceModule = moduleResources.some((r) => PRICE_MODULE_RESOURCES.has(r));
   const active = REDACTION_RULES.filter((rule) => {
     if (rule.family === "price" && priceModule) return false;
+    // Inside the costing module a product-costing holder (R&D) sees the costs,
+    // exactly as on the ERP page; selling prices stay with product-pricing.
+    if (rule.family === "cost" && moduleResources.includes("product-costing") && can("product-costing:read")) return false;
     return !rule.unlock.some(can);
   });
   return (input: unknown) => {

@@ -13,7 +13,19 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../worker";
-import { requirePermission } from "../lib/rbac";
+import { hasPermission, requirePermission } from "../lib/rbac";
+
+/**
+ * Product costs are locked to the people who may see them (owner 2026-11-26,
+ * option B): Super Admin, Admin (rbac short-circuit), Finance (cost-ledger)
+ * and R&D (product-costing, role-policy.ts). Sales, QA, Office, Production,
+ * Warehouse and Procurement keep the products page but not its costs.
+ * Writes still need products:update on top.
+ */
+async function requireCostingRead(c: Parameters<typeof requirePermission>[0]): Promise<Response | null> {
+  if ((await hasPermission(c, "product-costing", "read")) || (await hasPermission(c, "cost-ledger", "read"))) return null;
+  return c.json({ success: false, error: "You don't have permission to see product costs." }, 403);
+}
 import { emitAudit } from "../lib/audit";
 import { actorName } from "../lib/actor-name";
 import { claudeFetch, MISSING_ANTHROPIC_KEY_ERROR } from "../lib/claude-fetch";
@@ -287,7 +299,7 @@ async function latestStandard(db: D1Database, productId: string) {
 // columns (D4): materials at the first fabric tier, line counts for the
 // "No materials" / "no price" flags. Declared before /:productId.
 app.get("/summary", async (c) => {
-  const denied = await requirePermission(c, "products", "read");
+  const denied = await requireCostingRead(c);
   if (denied) return denied;
   const db = c.var.DB;
   const [tplRes, inputs] = await Promise.all([
@@ -329,7 +341,7 @@ app.get("/summary", async (c) => {
 // POST /preview — cost a BOM that has not been saved (the costing editor's
 // live numbers while you type). Writes nothing.
 app.post("/preview", async (c) => {
-  const denied = await requirePermission(c, "products", "read");
+  const denied = await requireCostingRead(c);
   if (denied) return denied;
   const body = (await c.req.json().catch(() => null)) as { bom?: BomIn; tier?: string } | null;
   if (!body || !body.bom || typeof body.bom !== "object") {
@@ -340,7 +352,7 @@ app.post("/preview", async (c) => {
 });
 
 app.get("/:productId", async (c) => {
-  const denied = await requirePermission(c, "products", "read");
+  const denied = await requireCostingRead(c);
   if (denied) return denied;
   const loaded = await loadCosting(c.var.DB, c.req.param("productId"), c.req.query("tier") ?? undefined);
   if (!loaded) return c.json({ success: false, error: "Product not found" }, 404);
@@ -369,6 +381,8 @@ app.get("/:productId", async (c) => {
 app.post("/:productId/standard", async (c) => {
   const denied = await requirePermission(c, "products", "update");
   if (denied) return denied;
+  const noCost = await requireCostingRead(c);
+  if (noCost) return noCost;
   const db = c.var.DB;
   await ensureStandardTable(db);
   const loaded = await loadCosting(db, c.req.param("productId"), c.req.query("tier") ?? undefined);
@@ -413,6 +427,8 @@ app.post("/:productId/standard", async (c) => {
 app.post("/:productId/rd-entry", async (c) => {
   const denied = await requirePermission(c, "products", "update");
   if (denied) return denied;
+  const noCost = await requireCostingRead(c);
+  if (noCost) return noCost;
   const body = (await c.req.json().catch(() => null)) as { formNo?: unknown; filledBy?: unknown; filledOn?: unknown; bomId?: unknown } | null;
   const formNo = String(body?.formNo ?? "").trim().slice(0, 60);
   const filledBy = String(body?.filledBy ?? "").trim().slice(0, 80);
@@ -440,6 +456,8 @@ const RD_SCAN_MAX_BYTES = 20 * 1024 * 1024;
 app.post("/:productId/rd-scan", async (c) => {
   const denied = await requirePermission(c, "products", "update");
   if (denied) return denied;
+  const noCost = await requireCostingRead(c);
+  if (noCost) return noCost;
   const apiKey = c.env?.ANTHROPIC_API_KEY;
   if (!apiKey) return c.json({ success: false, error: MISSING_ANTHROPIC_KEY_ERROR }, 503);
   let file: File | null = null;

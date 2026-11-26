@@ -65,6 +65,7 @@ Money is integer sen; many product columns are legacy camelCase.
   - Products list cost columns (Raw mat. / Total cost / Margin / Cost %) read `GET /api/product-costing/summary` (`costMap` in `index.tsx`).
   - `/products/:id/customers` → `src/pages/products/customers.tsx:10` (Customer Assignments, shared component `customer-assignments.tsx`)
   - The four product pages share the tab strip `product-tabs.tsx` (D13). In the list, CLICK a row = the dropdown (unchanged); DOUBLE-CLICK = `/products/:id/costing`; the dropdown also has a Costing button beside View BOM.
+  - **Costing is locked (owner 2026-11-26):** every `/api/product-costing` cost read/write needs `product-costing` or `cost-ledger` read (`requireCostingRead`), i.e. Super Admin, Admin, Finance and R&D. Sales / QA / Office / Production / Warehouse / Procurement keep the product pages but get no Costing tab, no Costing button, no cost columns; double-click / "Open product" goes to the BOM; the Customers tab reads `/api/products/:id` and shows no margin. `useCanSeeCosting()` in `use-can-see-costing.ts`. The AI connector gates the same way (`mcp-access.ts`).
   - Catalog is NOT a route — `ProductCatalog` (`src/pages/products/catalog.tsx:138`) renders inline as `viewMode==="catalog"`
   - Dialogs: `MasterPriceHistoryDialog.tsx`, `MaintenanceConfigHistoryDialog.tsx`, `MaintenanceItemHistoryDialog.tsx`
 - **API routes**
@@ -113,7 +114,7 @@ Money is integer sen; many product columns are legacy camelCase.
 | `resolvePrices` | `src/api/routes/customer-products.ts:95` | Inherit-or-override price resolution |
 | `app.put("/templates")` | `src/api/routes/bom.ts:460` | Bulk-replace `bom_templates` (DELETE-ALL + INSERT-ALL) |
 | `app.put("/templates/:id")` | `src/api/routes/bom.ts:578` | Single-template upsert |
-| `app.get("/:productId")` (costing) | `src/api/routes/product-costing.ts:342` | Costing of the ACTIVE BOM: labour, materials at the supplier price in effect today, fabric tiers; engine `computeCosting` `src/lib/product-costing.ts:265` |
+| `app.get("/:productId")` (costing) | `src/api/routes/product-costing.ts:354` | Costing of the ACTIVE BOM: labour, materials at the supplier price in effect today, fabric tiers; engine `computeCosting` `src/lib/product-costing.ts:265` |
 | `app.put("/:id")` (master) | `src/api/routes/bom-master-templates.ts:127` | Master preset upsert; bulk replace is `app.put("/")` `:217` (clears sibling isDefault) |
 | `resolveMaintenanceConfigAsOf` | `src/api/routes/maintenance-config.ts:66` | Newest-as-of-today config resolver |
 | `app.post("/changes")` | `src/api/routes/maintenance-config.ts:174` | Append effective-dated config row |
