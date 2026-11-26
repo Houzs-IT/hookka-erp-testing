@@ -15,7 +15,7 @@
 // Pass an optional `id` prop; it falls back to useParams when absent, so the
 // standalone route keeps working unchanged.
 // ---------------------------------------------------------------------------
-import { useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useCachedJson, invalidateCache } from "@/lib/cached-fetch";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,6 +52,10 @@ import { ComposeDialog } from "./compose";
 import { RecipientsInput } from "./recipients-input";
 import { AckRequestRow } from "./ack-request-row";
 import { RecipientPicker } from "./recipient-picker";
+import { AlreadyRepliedBox, DeliveryChip, ReplyingNowBanner } from "./mail-reply-parts";
+import { alreadyRepliedFrom, type AlreadyReplied, type ReplyingPerson } from "./mail-reply-rules";
+import { useReplyingHeartbeat } from "./use-replying-heartbeat";
+import { sentToast, type DeliveryStatus } from "./mail-delivery";
 import {
   replyRecipients,
   recipientsValid,
@@ -124,6 +128,8 @@ type MailMessage = {
   ackRequired?: boolean;
   ackDueAt?: string | null;
   acks?: MailAck[];
+  // Outbound only: queued / failed / delivered / bounced (parity rows 19/20).
+  deliveryStatus?: DeliveryStatus;
 };
 
 type MailAck = {
@@ -159,6 +165,8 @@ type MailThread = {
 type ThreadDetail = {
   thread: MailThread;
   messages: MailMessage[];
+  // Colleagues writing a reply right now (parity row 21).
+  replying?: ReplyingPerson[];
 };
 
 function fmtFull(iso: string): string {
@@ -339,6 +347,7 @@ export default function MailCenterDetailPage({
   // Memoised so the reply-recipient derivation below only re-runs when the
   // thread actually reloads, not on every render.
   const messages = useMemo(() => data?.messages ?? [], [data]);
+  const newestMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
 
   const [replyText, setReplyText] = useState("");
   // Reply vs Reply all (T-012 R2). The To / Cc chips default to what the
@@ -360,6 +369,8 @@ export default function MailCenterDetailPage({
   // R9: org-chart recipient picker for the reply box.
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  // Reply guard (parity row 21): a colleague replied while this one was typed.
+  const [alreadyReplied, setAlreadyReplied] = useState<(AlreadyReplied & { now: number }) | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -630,7 +641,7 @@ export default function MailCenterDetailPage({
   // Send the composed reply, then invalidate this thread's cache so the new
   // outbound message + updated status flag refetch immediately (the hook
   // subscribes to its own URL's invalidations — see lib/cached-fetch.ts).
-  async function handleSend() {
+  async function handleSend(force = false) {
     if (!url || sending || !replyRecipientsOk) return;
     const text = replyText.trim();
     if (!text) return;
@@ -642,6 +653,9 @@ export default function MailCenterDetailPage({
         credentials: "include",
         body: JSON.stringify({
           text,
+          // Reply guard: the newest message on screen; `force` = "Send mine too".
+          afterMessageId: newestMessageId,
+          ...(force ? { force: true } : {}),
           // Explicit recipients (the chips) + the mode, so what the operator
           // saw is exactly what goes out; the server re-validates the set.
           mode: replyMode,
@@ -664,17 +678,24 @@ export default function MailCenterDetailPage({
             : {}),
         }),
       });
+      let resBody: { error?: string; queued?: boolean } | null = null;
+      try {
+        resBody = (await res.json()) as { error?: string; queued?: boolean };
+      } catch {
+        /* non-JSON body — keep the defaults below */
+      }
       if (!res.ok) {
-        let msg = "Failed to send reply. Please try again.";
-        try {
-          const body = (await res.json()) as { error?: string };
-          if (body?.error) msg = body.error;
-        } catch {
-          /* non-JSON error body — keep the default message */
+        const hit = alreadyRepliedFrom(res.status, resBody);
+        if (hit) {
+          // Not sent: show their reply above and let the operator choose.
+          setAlreadyReplied({ ...hit, now: Date.now() });
+          invalidateCache(url);
+          return;
         }
-        toast.error(msg);
+        toast.error(resBody?.error || "Failed to send reply. Please try again.");
         return;
       }
+      setAlreadyReplied(null);
       setReplyText("");
       setFiles([]);
       setAttachError(null);
@@ -683,7 +704,8 @@ export default function MailCenterDetailPage({
       setShowReplyCc(false);
       setShowReplyBcc(false);
       setAckRequired(false);
-      toast.success("Reply sent.");
+      if (resBody?.queued) toast.info(sentToast(true, "Reply sent."));
+      else toast.success("Reply sent.");
       invalidateCache(url);
     } catch {
       toast.error("Failed to send reply. Check your connection and try again.");
@@ -691,6 +713,16 @@ export default function MailCenterDetailPage({
       setSending(false);
     }
   }
+
+  // While typing, each heartbeat says who else is writing and the newest
+  // message id; a newer one means a colleague's reply landed — show it.
+  const beat = useReplyingHeartbeat(id ?? null, replyText.trim().length > 0);
+  useEffect(() => {
+    if (url && beat.latestMessageId && newestMessageId && beat.latestMessageId !== newestMessageId) {
+      invalidateCache(url);
+    }
+  }, [url, beat.latestMessageId, newestMessageId]);
+  const replyingNow = replyText.trim() ? beat.replying : (data?.replying ?? []);
 
   // Mark done / move to Inbox via PATCH status, then refresh the thread.
   // (UI labels only — the API status values are still "open" / "closed".)
@@ -1102,8 +1134,9 @@ export default function MailCenterDetailPage({
                               &lt;{m.fromAddress}&gt;
                             </p>
                           </div>
-                          <span className="shrink-0 text-xs text-muted-foreground">
+                          <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted-foreground">
                             {fmtFull(m.sentAt || m.createdAt)}
+                            {outbound && <DeliveryChip status={m.deliveryStatus} />}
                           </span>
                         </div>
                         {m.toAddresses.length > 0 && (
@@ -1293,6 +1326,7 @@ export default function MailCenterDetailPage({
               of the conversation. */}
           <Card className="border-amber-200/70 shadow-sm">
             <CardContent className="space-y-3 p-4">
+              <ReplyingNowBanner people={replyingNow} />
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
                 <div className="flex items-center gap-1.5">
                   <Send className="h-3.5 w-3.5 text-amber-600" />
@@ -1443,6 +1477,20 @@ export default function MailCenterDetailPage({
                 onHours={setAckDueHours}
               />
 
+              {alreadyReplied && (
+                <AlreadyRepliedBox
+                  hit={alreadyReplied}
+                  now={alreadyReplied.now}
+                  busy={sending}
+                  onSendAnyway={() => void handleSend(true)}
+                  onDiscard={() => {
+                    setAlreadyReplied(null);
+                    setReplyText("");
+                    setFiles([]);
+                  }}
+                />
+              )}
+
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] text-muted-foreground">
                   Sent via Brevo from {replyFrom || "Hookka"}.
@@ -1472,8 +1520,8 @@ export default function MailCenterDetailPage({
                   <Button
                     size="sm"
                     className="gap-1.5 bg-[#6B5C32] text-white hover:bg-[#5a4d2a]"
-                    disabled={sending || !replyText.trim() || !replyRecipientsOk}
-                    onClick={handleSend}
+                    disabled={sending || !replyText.trim() || !replyRecipientsOk || alreadyReplied != null}
+                    onClick={() => void handleSend()}
                   >
                     {sending ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

@@ -112,7 +112,7 @@ test("compose and reply open acknowledgement rows for staff recipients only", ()
     // The sender has obviously read what they just sent.
     assert.match(h, /markThreadRead\(c\.var\.DB, \{/, path);
     // A request nobody can meet is refused BEFORE the mail goes out.
-    assert.ok(h.indexOf("acknowledgement needs at least one staff recipient") < h.indexOf("await sendMail("), path);
+    assert.ok(h.indexOf("acknowledgement needs at least one staff recipient") < h.indexOf("await sendOrQueueMail("), path);
   }
 });
 

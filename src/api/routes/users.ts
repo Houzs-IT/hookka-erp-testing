@@ -521,6 +521,9 @@ app.put("/:id", async (c) => {
       const { purgeUserSessions } = await import("../lib/auth-middleware");
       await purgeUserSessions(c.var.DB, c.env.SESSION_CACHE, id);
     }
+    // Mail Center (Houzs parity row 25): disabling closes their mailbox and
+    // removes their grants; re-enabling reopens their own mailbox only.
+    await syncMailboxWithActive(id, justDisabled, merged.isActive === 1 && existing.isActive === 0, c.var.DB);
 
     const updated = await c.var.DB.prepare("SELECT * FROM users WHERE id = ?")
       .bind(id)
@@ -562,6 +565,29 @@ app.put("/:id", async (c) => {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
 });
+
+// Close (disable) or reopen (re-enable) the person's Mail Center mailbox.
+// Best effort: the account change has already been written, and a mailbox
+// hiccup must not turn it into an error. Failures are logged loudly.
+async function syncMailboxWithActive(
+  userId: string,
+  disabled: boolean,
+  reenabled: boolean,
+  db: D1Database,
+): Promise<void> {
+  if (!disabled && !reenabled) return;
+  try {
+    const { closePersonalMailOnDisable, reopenPersonalMailbox } = await import("../lib/mail-provision");
+    if (disabled) {
+      const r = await closePersonalMailOnDisable(db, userId);
+      console.log(`[users] ${userId} disabled: closed ${r.closed.length} mailbox(es), removed ${r.grantsRemoved} grant(s)`);
+    } else {
+      await reopenPersonalMailbox(db, userId);
+    }
+  } catch (e) {
+    console.error(`[users] mailbox ${disabled ? "close" : "reopen"} failed for ${userId}:`, e);
+  }
+}
 
 // DELETE /api/users/:id — soft delete + session purge
 app.delete("/:id", async (c) => {
@@ -615,6 +641,7 @@ app.delete("/:id", async (c) => {
     .bind(id)
     .run();
   await purgeUserSessions(c.var.DB, c.env.SESSION_CACHE, id);
+  await syncMailboxWithActive(id, existing.isActive === 1, false, c.var.DB);
 
   const updated = await c.var.DB.prepare("SELECT * FROM users WHERE id = ?")
     .bind(id)

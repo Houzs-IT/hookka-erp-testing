@@ -1100,6 +1100,7 @@ that proves those locks can actually go red.
 | `src/pages/mail-center/detail.tsx` — thread detail, reply / reply-all, acknowledge (1576) | `src/api/routes/worker-auth.ts` — factory-worker auth (349) | `mail_user_scope` / `audit_events` | |
 | `src/pages/mail-center/compose.tsx` — compose with To/Cc/Bcc chips (677) | `src/api/routes/mail-center.ts` — email engine (3174) | `mail_thread_reads` / `mail_acknowledgements` (mig 0233) | `tests/mail-threading.test.mjs`, `mail-send-path`, `mail-provision`, `mail-reads-acks`, `email-outbox-attachments`, `mobile-mail-center` |
 | `src/pages/mail-center/recipients-input.tsx` (162) / `recipient-picker.tsx` (252) / `ack-request-row.tsx` (65) / `visibility-panel.tsx` (89) — T-012 pieces | `src/api/lib/mail-threading.ts` (203, pure: recipients + RFC headers) / `mail-provision.ts` (263) / `mail-acks.ts` (454) | | |
+| `src/pages/mail-center/mail-reply-parts.tsx` (writing-now banner, already-replied box, Delivered / Bounced chip) / `mail-reply-rules.ts` / `use-replying-heartbeat.ts` / `mail-delivery.ts`; menu badge `src/lib/mail-waiting.ts` — Houzs parity 2026-11-26, guide `docs/context-packs/mail-center.md` | `src/api/lib/mail-send.ts` (send now, queue on a passing failure) / `email-outbox.ts` (envelope, retry, 5-min lease) / `mail-delivery.ts` (pure status) / `mail-delivery-refresh.ts` (Brevo + Resend polling, bounce bell, parity schema, traffic clock) / `mail-reply-guard.ts`; routes `src/api/routes/mail-reply-guard.ts` (`POST /threads/:id/replying`, `GET /waiting-count`); `mail-provision.ts` `closePersonalMailOnDisable` (from `users.ts` PUT / DELETE) | `mail_thread_replying`; `email_messages.outbox_id` / `delivery_status` / `delivery_status_at` (mig 0260) | `tests/mail-center-parity.test.mjs` |
 | `src/components/flow-files.tsx` — `FlowFilesCard` (document attachments) + `useFlowLineFiles` / `LineFilesButton` (line paperclip, carried-down files read-only) on PO / GRN / PI / DO / delivery-return / invoice detail (review C1-5) | `src/api/routes/files.ts` — generic upload/download (571) + `GET /flow-lines` (C1-5); `src/api/lib/flow-line-files.ts` — line → upstream line resolver (read-only); `src/lib/flow-files.ts` — pure type → RBAC map, grouping, downscale rule | `file_assets` | `tests/flow-attachments.test.mjs` |
 | | `src/api/routes/kv-config.ts` — KV config store (93) | | |
 | | `src/api/routes/org-chart.ts` — reporting lines + photos, both `users` and `workers` on one board | `org_reporting` / `users.photo_file_id` / `workers.photo_file_id` | `tests/org-chart-board.test.mjs`, `org-people.test.mjs`, `org-reporting-wiring.test.mjs`, `org-chart-photos.test.mjs` |
@@ -2568,7 +2569,7 @@ and gets it right — cite it in the fix.
 *after* the global gate `app.use("/api/*", authMiddleware)` (`src/api/worker.ts:1002`), so a
 route is public only when its path is listed in `PUBLIC_PATHS` / `PUBLIC_PREFIXES` inside
 `src/api/lib/auth-middleware.ts`. `customerScopeMiddleware` (`src/api/worker.ts:29`),
-`tenantMiddleware` (`src/api/worker.ts:1189`) and `apiRateLimit` (`src/api/worker.ts:1204`)
+`tenantMiddleware` (`src/api/worker.ts:1203`) and `apiRateLimit` (`src/api/worker.ts:1218`)
 run after it, so **public routes still pass through the rate limiter** but reach the
 handler with no `userId`, no `userRole` and no orgId on the context.
 

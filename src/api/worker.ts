@@ -757,7 +757,21 @@ app.post("/api/internal/process-email-outbox", async (c) => {
     } catch (e) {
       console.warn("[process-email-outbox] ack chase failed:", e);
     }
-    return c.json({ ok: true, ...result, ackChased, healthAlert });
+    // Mail Center parity row 20: Delivered / Bounced for recent replies and
+    // new emails rides the same tick (also run from traffic). Best-effort.
+    let delivery: unknown = null;
+    try {
+      const { refreshOutboundDelivery, DELIVERY_REFRESH_LIMIT } = await import("./lib/mail-delivery-refresh");
+      delivery = await refreshOutboundDelivery(
+        c.var.DB,
+        c.env as unknown as { RESEND_API_KEY?: string; BREVO_API_KEY?: string },
+        DELIVERY_REFRESH_LIMIT,
+        Date.now(),
+      );
+    } catch (e) {
+      console.warn("[process-email-outbox] delivery refresh failed:", e);
+    }
+    return c.json({ ok: true, ...result, ackChased, healthAlert, delivery });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[process-email-outbox] error:", e);

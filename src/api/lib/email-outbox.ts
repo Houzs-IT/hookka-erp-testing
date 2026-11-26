@@ -192,6 +192,67 @@ export interface EnqueueEmailArgs {
    * so the email itself still goes out.
    */
   attachments?: EmailAttachment[];
+  /**
+   * Mail Center reply / compose (Houzs parity row 19): the whole envelope the
+   * drain must use instead of the system defaults — the chosen mailbox as
+   * From, every To / Cc / Bcc, and the threading headers. Stored in
+   * payload_json (kind "mail-center-send"), so no new outbox column.
+   */
+  envelope?: OutboxEnvelope;
+  /**
+   * The request already tried to send once and the provider failed with this
+   * error. The row is written as RETRYING with attempt 1 (so the drain makes
+   * at most two more tries, after the backoff) and no eager push is kicked.
+   */
+  firstAttemptError?: string;
+}
+
+/** What a Mail Center send needs the drain to reproduce exactly. */
+export interface OutboxEnvelope {
+  from: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  headers?: Record<string, string>;
+  /** email_messages.id of the thread entry; the drain stamps the provider id on it. */
+  messageRowId: string;
+}
+
+export const MAIL_CENTER_SEND_KIND = "mail-center-send";
+
+/** payload_json for an envelope row; `kind` first so a LIKE prefix can find it. */
+export function envelopePayload(envelope: OutboxEnvelope): string {
+  return JSON.stringify({ kind: MAIL_CENTER_SEND_KIND, ...envelope });
+}
+
+/** The envelope stored on a row, or null for an ordinary system email / bad JSON. */
+export function parseOutboxEnvelope(raw: string | null | undefined): OutboxEnvelope | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    if (p?.kind !== MAIL_CENTER_SEND_KIND) return null;
+    const list = (v: unknown): string[] =>
+      Array.isArray(v) ? v.map((a) => String(a ?? "").trim()).filter(Boolean) : [];
+    const to = list(p.to);
+    const from = typeof p.from === "string" ? p.from.trim() : "";
+    if (to.length === 0 || !from) return null;
+    const headers =
+      p.headers && typeof p.headers === "object" && !Array.isArray(p.headers)
+        ? Object.fromEntries(
+            Object.entries(p.headers as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+          )
+        : undefined;
+    return {
+      from,
+      to,
+      cc: list(p.cc),
+      bcc: list(p.bcc),
+      headers,
+      messageRowId: typeof p.messageRowId === "string" ? p.messageRowId : "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 // 5 MB decoded — comfortably under both Resend's and Brevo's per-message
@@ -329,6 +390,35 @@ export async function enqueueEmail<E extends Env>(
   // last_attempt_at/sent_at/last_error are NOT in that map. Using camelCase
   // here would slip through translateSql unchanged and Postgres would reject
   // the query ("column toaddress does not exist"). Same shape as audit-replay.ts.
+  const payload = args.envelope
+    ? envelopePayload(args.envelope)
+    : args.payloadJson
+      ? JSON.stringify(args.payloadJson)
+      : null;
+  if (args.firstAttemptError !== undefined) {
+    // Attempt 1 already happened on the request: RETRYING, so the drain
+    // waits out the backoff before the next try (outboxRowDue). No eager
+    // push — it would only skip the row on the backoff anyway.
+    await c.var.DB.prepare(
+      `INSERT INTO outbox_emails (id, to_address, subject, body_html, body_text, payload_json, attachments_json, org_id,
+                                  status, attempts, last_attempt_at, last_error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RETRYING', 1, ?, ?)`,
+    )
+      .bind(
+        id,
+        args.to,
+        args.subject,
+        args.html,
+        args.text ?? null,
+        payload,
+        attachments ? JSON.stringify(attachments) : null,
+        orgId,
+        new Date().toISOString(),
+        (args.firstAttemptError || "unknown").slice(0, 500),
+      )
+      .run();
+    return { id };
+  }
   await c.var.DB.prepare(
     `INSERT INTO outbox_emails (id, to_address, subject, body_html, body_text, payload_json, attachments_json, org_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -339,7 +429,7 @@ export async function enqueueEmail<E extends Env>(
       args.subject,
       args.html,
       args.text ?? null,
-      args.payloadJson ? JSON.stringify(args.payloadJson) : null,
+      payload,
       attachments ? JSON.stringify(attachments) : null,
       orgId,
     )
@@ -380,12 +470,43 @@ export async function enqueueEmail<E extends Env>(
 // them up after the backoff window.
 // ---------------------------------------------------------------------------
 
-const MAX_ATTEMPTS = 3;
+export const OUTBOX_MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = OUTBOX_MAX_ATTEMPTS;
 const BATCH_SIZE = 25;
-// A row claimed (status='SENDING') but never finished — e.g. the immediate
-// post-enqueue drain's waitUntil isolate was evicted mid-send — is reclaimed
-// after this window so it's never stranded.
-const STALE_SENDING_MS = 5 * 60_000;
+// The lease: a row claimed (status='SENDING') but never finished — e.g. the
+// immediate post-enqueue drain's waitUntil isolate was evicted mid-send — is
+// reclaimed after this window so it's never stranded. Until then no other
+// drain may touch it, which is what stops a double delivery.
+export const STALE_SENDING_MS = 5 * 60_000;
+
+/** True when a SENDING claim is older than the lease and may be taken over. */
+export function outboxLeaseExpired(lastAttemptAt: string | null, nowMs: number): boolean {
+  if (!lastAttemptAt) return true;
+  const t = new Date(lastAttemptAt).getTime();
+  return !Number.isFinite(t) || nowMs - t >= STALE_SENDING_MS;
+}
+
+/** Whether the drain should try this row now (status + backoff + lease). */
+export function outboxRowDue(
+  row: { status: string; attempts: number; lastAttemptAt: string | null },
+  nowMs: number,
+): boolean {
+  if (row.status === "PENDING") return true;
+  if (row.status === "SENDING") return outboxLeaseExpired(row.lastAttemptAt, nowMs);
+  if (row.status !== "RETRYING") return false;
+  if (!row.lastAttemptAt) return true;
+  const elapsedS = Math.floor((nowMs - new Date(row.lastAttemptAt).getTime()) / 1000);
+  return elapsedS >= backoffSecondsForAttempt(row.attempts);
+}
+
+/** The row's status after attempt number `newAttempts` succeeded or failed. */
+export function outboxStatusAfterAttempt(
+  newAttempts: number,
+  ok: boolean,
+): "SENT" | "RETRYING" | "FAILED" {
+  if (ok) return "SENT";
+  return newAttempts >= MAX_ATTEMPTS ? "FAILED" : "RETRYING";
+}
 
 // Batch-pick row — METADATA ONLY (the body/attachments are fetched per-row in
 // the loop; see processOutbox). Keeping the pick light is what stops a queue of
@@ -534,13 +655,9 @@ export async function processOutbox(
     // Backoff gate: a RETRYING row whose lastAttemptAt is within the
     // backoff window stays pending until the next tick. Don't reset
     // attempts so the count keeps climbing toward MAX_ATTEMPTS.
-    if (row.status === "RETRYING" && row.lastAttemptAt) {
-      const lastMs = new Date(row.lastAttemptAt).getTime();
-      const elapsedS = Math.floor((nowMs - lastMs) / 1000);
-      if (elapsedS < backoffSecondsForAttempt(row.attempts)) {
-        result.skippedBackoff++;
-        continue;
-      }
+    if (row.status === "RETRYING" && !outboxRowDue(row, nowMs)) {
+      result.skippedBackoff++;
+      continue;
     }
 
     // Atomic claim — flip this row out of the pickable set BEFORE sending so a
@@ -582,7 +699,8 @@ export async function processOutbox(
         .prepare(
           `SELECT body_html       AS "bodyHtml",
                   body_text       AS "bodyText",
-                  attachments_json AS "attachmentsJson"
+                  attachments_json AS "attachmentsJson",
+                  payload_json    AS "payloadJson"
              FROM outbox_emails WHERE id = ? LIMIT 1`,
         )
         .bind(row.id)
@@ -590,10 +708,21 @@ export async function processOutbox(
           bodyHtml: string | null;
           bodyText: string | null;
           attachmentsJson: string | null;
+          payloadJson: string | null;
         }>();
+      // A Mail Center reply / compose carries its own From / Cc / Bcc /
+      // threading headers; a system email uses the defaults.
+      const envelope = parseOutboxEnvelope(full?.payloadJson);
 
-      const send = await sendMail(env, from, {
-        to: row.toAddress,
+      const send = await sendMail(env, envelope?.from ?? from, {
+        to: envelope?.to ?? row.toAddress,
+        ...(envelope
+          ? {
+              cc: envelope.cc,
+              bcc: envelope.bcc,
+              ...(envelope.headers ? { headers: envelope.headers } : {}),
+            }
+          : {}),
         subject: row.subject,
         html: full?.bodyHtml ?? "",
         text: full?.bodyText ?? undefined,
@@ -616,10 +745,24 @@ export async function processOutbox(
           .bind(newAttempts, nowIso, nowIso, row.id)
           .run();
         result.sent++;
+        // The thread entry learns the provider id, so Delivered / Bounced can
+        // be looked up (lib/mail-delivery-refresh.ts). Best effort.
+        if (envelope?.messageRowId && send.id) {
+          try {
+            await db
+              .prepare(
+                `UPDATE email_messages SET provider_message_id = COALESCE(provider_message_id, ?) WHERE id = ?`,
+              )
+              .bind(send.id, envelope.messageRowId)
+              .run();
+          } catch (e) {
+            console.warn("[email-outbox] provider id write-back failed:", e);
+          }
+        }
         continue;
       }
 
-      if (newAttempts >= MAX_ATTEMPTS) {
+      if (outboxStatusAfterAttempt(newAttempts, false) === "FAILED") {
         await db
           .prepare(
             `UPDATE outbox_emails
