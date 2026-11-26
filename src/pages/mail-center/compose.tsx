@@ -37,6 +37,7 @@ import { AckRequestRow } from "./ack-request-row";
 import { RecipientPicker } from "./recipient-picker";
 import { parseAddressList, recipientsValid } from "@/api/lib/mail-threading";
 import { useFormDiscardGuard } from "@/lib/use-discard-guard";
+import { sentToast } from "./mail-delivery";
 
 // One picked file held in memory for the compose POST. contentBase64 is the
 // RAW base64 (the `data:...;base64,` prefix is stripped on read) so it maps
@@ -78,6 +79,8 @@ type ComposeResponse = {
   threadId?: string;
   messageId?: string;
   error?: string;
+  // The first try failed and the outbox will retry it (parity row 19).
+  queued?: boolean;
 };
 
 export type ComposeDialogProps = {
@@ -405,7 +408,10 @@ export function ComposeDialog({
         toast.error(payload.error || "Failed to send email. Please try again.");
         return;
       }
-      toast.success("Email sent.");
+      // Parity row 19: a provider blip queues the email for retry; say so
+      // instead of "sent" (or "failed", which would make them send it twice).
+      if (payload.queued) toast.info(sentToast(true, "Email sent."));
+      else toast.success("Email sent.");
       // If this came from a saved draft, drop it now that it's been sent.
       if (draftId) deleteDraft(draftId);
       invalidateCachePrefix("/api/mail-center/threads");

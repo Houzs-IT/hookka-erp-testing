@@ -64,6 +64,7 @@ import { usePermissions } from "@/lib/use-permission";
 import { prefetchRoute } from "@/dashboard-routes";
 import { markWorkspaceOpenIntent } from "@/lib/workspaceTabs";
 import { useMeetingsUnread } from "@/lib/meetings-unread";
+import { useMailWaiting } from "@/lib/mail-waiting";
 
 interface NavItem {
   name: string;
@@ -562,6 +563,8 @@ export function Sidebar({
   // that would otherwise lead to a redirect or 403. SUPER_ADMIN gets ["*"]
   // from the backend so hasPermission always returns true for them.
   const { isNavAllowed } = usePermissions();
+  // Mail Center badge: emails waiting on me; no requests without access.
+  const mailWaiting = useMailWaiting(isNavAllowed("/mail-center"));
 
   // Which links to hide is decided by the API and handed over as a list of
   // path prefixes (owner 2026-08-05: "直接从 backend 就挡掉嘛"). The browser
@@ -597,6 +600,8 @@ export function Sidebar({
   const groupsWithBadge = navigationGroups.map((group) => {
     let items = group.items.map((item) => {
       if (item.name === "Notifications") return { ...item, badge: unreadCount };
+      // Emails waiting on me (Mail Center parity row 13).
+      if (item.name === "Mail Center") return { ...item, badge: mailWaiting };
       return item;
     });
     if (group.label === "SYSTEM" && isSuperAdmin) {

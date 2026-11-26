@@ -26,7 +26,12 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../worker";
 import { requireSuperAdmin, requirePermission } from "../lib/rbac";
 import { getOrgId, DEFAULT_ORG_ID } from "../lib/tenant";
-import { sendMail } from "../lib/email";
+import { sendOrQueueMail } from "../lib/mail-send";
+import { deliveryStatus } from "../lib/mail-delivery";
+import { ensureMailParitySchema } from "../lib/mail-delivery-refresh";
+import { afterReplySent, findReplyConflict, replyingOn } from "../lib/mail-reply-guard";
+import { registerReplyGuardRoutes } from "./mail-reply-guard";
+import { selfApplyForRead } from "../lib/self-apply";
 import { validateMailAttachments } from "../lib/mail-attachments";
 import {
   EMAIL_RE,
@@ -766,6 +771,12 @@ type MessageRow = {
   created_at: string | null;
   ack_required?: number | boolean | null;
   ack_due_at?: string | null;
+  // Parity rows 19/20: the outbox row of a queued send (joined as
+  // outbox_status) and the provider's Delivered / Bounced answer.
+  outbox_status?: string | null;
+  outboxStatus?: string | null;
+  delivery_status?: string | null;
+  deliveryStatus?: string | null;
   // The pg driver camelCases EVERY result column (db-pg.ts transform.column.from),
   // so the snake reads above arrive camelCased and the snake key is undefined.
   // Without dual-reads the detail view shows EMPTY messages. Dual-read like
@@ -822,6 +833,11 @@ function rowToMessage(r: MessageRow) {
     sentByName: r.sentByName ?? r.sent_by_name ?? undefined,
     ackRequired: Number(r.ackRequired ?? r.ack_required ?? 0) === 1,
     ackDueAt: r.ackDueAt ?? r.ack_due_at ?? null,
+    // queued / failed / delivered / bounced / null (lib/mail-delivery.ts).
+    deliveryStatus:
+      r.direction === "outbound"
+        ? deliveryStatus(r.outboxStatus ?? r.outbox_status, r.deliveryStatus ?? r.delivery_status)
+        : null,
     createdAt: r.createdAt ?? r.created_at ?? "",
   };
 }
@@ -1199,11 +1215,24 @@ app.get("/threads/:id", async (c) => {
     return c.json({ error: "Thread not found" }, 404);
   }
 
+  // The outbox status rides along so a queued send shows "Queued, retrying" /
+  // "Not delivered" (parity row 19). If the parity columns cannot be applied
+  // yet, fall back to the plain read rather than failing the thread.
+  await selfApplyForRead("mail-center.parity", () => ensureMailParitySchema(c.var.DB));
   const msgs = await c.var.DB.prepare(
-    `SELECT * FROM email_messages WHERE org_id = ? AND thread_id = ? ORDER BY created_at ASC`,
+    `SELECT m.*, o.status AS outbox_status FROM email_messages m
+       LEFT JOIN outbox_emails o ON o.id = m.outbox_id
+      WHERE m.org_id = ? AND m.thread_id = ? ORDER BY m.created_at ASC`,
   )
     .bind(orgId, id)
-    .all<MessageRow>();
+    .all<MessageRow>()
+    .catch(() =>
+      c.var.DB.prepare(
+        `SELECT * FROM email_messages WHERE org_id = ? AND thread_id = ? ORDER BY created_at ASC`,
+      )
+        .bind(orgId, id)
+        .all<MessageRow>(),
+    );
   const mappedMsgs = (msgs.results ?? []).map(rowToMessage);
 
   // Attachments — load every attachment for THIS thread's messages, then stamp
@@ -1283,6 +1312,8 @@ app.get("/threads/:id", async (c) => {
 
   return c.json({
     thread: { ...rowToThread(thread), unread: false, readBy, audience },
+    // Colleagues writing a reply right now (parity row 21).
+    replying: await replyingOn(c.var.DB, orgId, id, scope.userId),
     messages: mappedMsgs.map((m) => ({
       ...m,
       attachments: attByMsg.get(m.id) ?? [],
@@ -1387,6 +1418,9 @@ function outboxAttachmentNames(raw: string | null): string[] {
 }
 
 const OUTBOX_STATUSES = ["PENDING", "RETRYING", "SENDING", "SENT", "FAILED"];
+// A Mail Center reply / compose queued for retry (lib/mail-send.ts) is an
+// outbox row too; its payload_json starts with this kind (envelopePayload).
+const NOT_MAIL_CENTER_SEND = `COALESCE(payload_json, '') NOT LIKE '{"kind":"mail-center-send"%'`;
 
 // GET /api/mail-center/outbox?status=&q=&limit=&offset= — the org's auto-sent
 // log (newest first). Returns metadata + a snippet + attachment NAMES; the full
@@ -1410,7 +1444,9 @@ app.get("/outbox", async (c) => {
   const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
 
   try {
-    const where: string[] = ["org_id = ?"];
+    // Mail Center replies queued for retry (parity row 19) live on their
+    // thread, not in this auto-sent log.
+    const where: string[] = ["org_id = ?", NOT_MAIL_CENTER_SEND];
     const binds: (string | number)[] = [orgId];
     if (status && OUTBOX_STATUSES.includes(status)) {
       where.push("status = ?");
@@ -1463,7 +1499,7 @@ app.get("/outbox", async (c) => {
     // can show sent / failed / pending totals and surface any failures.
     const counts = { sent: 0, failed: 0, pending: 0 };
     const countRes = await c.var.DB.prepare(
-      `SELECT status, COUNT(*) AS n FROM outbox_emails WHERE org_id = ? GROUP BY status`,
+      `SELECT status, COUNT(*) AS n FROM outbox_emails WHERE org_id = ? AND ${NOT_MAIL_CENTER_SEND} GROUP BY status`,
     )
       .bind(orgId)
       .all<{ status: string; n: number | string }>();
@@ -1510,7 +1546,7 @@ app.get("/outbox/:id", async (c) => {
               body_text        AS "bodyText",
               body_html        AS "bodyHtml"
          FROM outbox_emails
-        WHERE org_id = ? AND id = ? LIMIT 1`,
+        WHERE org_id = ? AND id = ? AND ${NOT_MAIL_CENTER_SEND} LIMIT 1`,
     )
       .bind(orgId, id)
       .first<OutboxReadRow>();
@@ -2585,6 +2621,9 @@ async function storeOutboundAttachments(
   );
 }
 
+// Reply guard heartbeat + waiting-count badge (parity rows 13 + 21).
+registerReplyGuardRoutes(app, getMailScope, (db, userId) => senderName(db, userId));
+
 // POST /api/mail-center/threads/:id/reply — send an outbound reply via the
 // shared sender (Brevo when BREVO_API_KEY is set — hookka.com is verified
 // there, so replies SEND today without any MX change), then record it.
@@ -2620,6 +2659,10 @@ app.post("/threads/:id/reply", async (c) => {
     ackDueHours?: number;
     // Inline outbound attachments (images + PDF), base64 (no data: prefix).
     attachments?: OutboundAttachmentBody[];
+    // Reply guard (parity row 21): the newest message the sender had on
+    // screen; `force` sends past a colleague's newer reply.
+    afterMessageId?: string | null;
+    force?: boolean;
   };
   const body: ReplyBody = await c.req
     .json<ReplyBody>()
@@ -2632,10 +2675,10 @@ app.post("/threads/:id/reply", async (c) => {
   }
 
   const attachments = body.attachments ?? [];
-  // This route, like /compose, sends SYNCHRONOUSLY via sendMail and BYPASSES
-  // the outbox, so the outbox's MAX_ATTACHMENT_TOTAL_BYTES guard does NOT
-  // protect it — own the cap here (same 5 MB decoded / 10-file / images+PDF
-  // rule the frontend mirrors). Interactive path → reject clearly.
+  // This route, like /compose, sends SYNCHRONOUSLY first (lib/mail-send.ts)
+  // and only queues on a passing failure, so own the cap here (same 5 MB
+  // decoded / 10-file / images+PDF rule the frontend mirrors). Interactive
+  // path → reject clearly.
   const attachCheck = validateMailAttachments(attachments);
   if (!attachCheck.ok) {
     return c.json({ error: attachCheck.error || "Invalid attachments." }, 400);
@@ -2680,7 +2723,23 @@ app.post("/threads/:id/reply", async (c) => {
   )
     .bind(orgId, id)
     .all<MessageRow>();
-  const history: ThreadMessageLite[] = (msgs.results ?? []).map(rowToMessage);
+  const historyRows = (msgs.results ?? []).map(rowToMessage);
+  const history: ThreadMessageLite[] = historyRows;
+
+  // Reply guard: a colleague replied after the newest message this sender
+  // saw. Refuse once with who and when; the sender may then force it.
+  const userId = getUserId(
+    c as unknown as { get: (k: string) => string | undefined },
+  );
+  if (!body.force) {
+    const clash = findReplyConflict(historyRows, body.afterMessageId ?? null, userId);
+    if (clash) {
+      return c.json(
+        { code: "already_replied", ...clash, error: `${clash.by} already replied.` },
+        409,
+      );
+    }
+  }
 
   const mode = body.mode === "reply_all" ? "reply_all" : "reply";
   const ours = [fromAddress, mailbox].filter(Boolean);
@@ -2725,7 +2784,13 @@ app.post("/threads/:id/reply", async (c) => {
   const references = referencesChain(base?.referenceIds, base?.messageId);
   const headers = buildThreadingHeaders({ messageId, inReplyTo, references });
 
-  const result = await sendMail(c.env, from, {
+  // Parity row 19: send now; on a passing provider failure the mail is
+  // queued for retry and recorded on the thread as "Queued, retrying" rather
+  // than answered 502 (which would make the operator send it twice).
+  await ensureMailParitySchema(c.var.DB);
+  const rowId = crypto.randomUUID();
+  const result = await sendOrQueueMail(c, {
+    from,
     to,
     cc,
     bcc,
@@ -2733,30 +2798,26 @@ app.post("/threads/:id/reply", async (c) => {
     text: text || undefined,
     html: htmlBody,
     headers,
-    // Forward the validated attachments (already capped at 5 MB / 10 files /
-    // images+PDF above). Omitted when empty so the payload is byte-identical to
-    // the pre-attachment behaviour.
-    ...(attachments.length > 0 ? { attachments } : {}),
+    // The validated attachments (already capped at 5 MB / 10 files /
+    // images+PDF above).
+    attachments,
+    messageRowId: rowId,
   });
-  if (!result.ok) {
+  if (result.status === "error") {
     return c.json({ error: result.error || "failed to send reply" }, 502);
   }
 
-  const userId = getUserId(
-    c as unknown as { get: (k: string) => string | undefined },
-  );
   const fromName = await senderName(c.var.DB, userId);
 
   const now = new Date().toISOString();
   const snippet = (text || stripHtml(htmlBody)).slice(0, 240);
-  const rowId = crypto.randomUUID();
   await c.var.DB.prepare(
     `INSERT INTO email_messages
        (id, org_id, thread_id, direction, message_id, in_reply_to, reference_ids,
         from_address, from_name, to_addresses, cc_addresses, bcc_addresses,
         subject, text_body, html_body, sent_at, received_at,
-        sent_by_user_id, sent_by_name, provider_message_id, created_at)
-     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sent_by_user_id, sent_by_name, provider_message_id, outbox_id, created_at)
+     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       rowId,
@@ -2780,7 +2841,8 @@ app.post("/threads/:id/reply", async (c) => {
       now,
       userId,
       fromName || null,
-      result.id ?? null,
+      result.status === "sent" ? result.providerId : null,
+      result.status === "queued" ? result.outboxId : null,
       now,
     )
     .run();
@@ -2815,14 +2877,37 @@ app.post("/threads/:id/reply", async (c) => {
     });
   }
 
+  // No longer writing; an unassigned email becomes the replier's (row 13).
+  // Best effort: the reply is already sent and recorded.
+  const assigned = await afterReplySent(c.var.DB, {
+    orgId,
+    threadId: id,
+    assignedToUserId: thread.assignedToUserId ?? thread.assigned_to_user_id ?? null,
+    me: userId,
+    myName: fromName || null,
+  }).catch((e: unknown) => {
+    console.warn("[mail-center] auto-assign after reply failed:", e);
+    return false;
+  });
+
   await emitAudit(c, {
     resource: "mail-center",
     resourceId: id,
     action: "reply",
-    after: { messageId: rowId, from: fromAddress, to, cc, bcc: bcc.length, mode },
+    after: {
+      messageId: rowId,
+      from: fromAddress,
+      to,
+      cc,
+      bcc: bcc.length,
+      mode,
+      ...(result.status === "queued" ? { queued: true } : {}),
+      ...(assigned ? { assignedTo: userId } : {}),
+      ...(body.force ? { forced: true } : {}),
+    },
   });
 
-  return c.json({ ok: true, messageId: rowId, to, cc });
+  return c.json({ ok: true, messageId: rowId, to, cc, queued: result.status === "queued" });
 });
 
 // POST /api/mail-center/compose — start a NEW outbound conversation (the reply
@@ -2884,10 +2969,10 @@ app.post("/compose", async (c) => {
     return c.json({ error: "message body is required" }, 400);
   }
 
-  // This route sends SYNCHRONOUSLY via sendMail and BYPASSES the outbox, so the
-  // outbox's MAX_ATTACHMENT_TOTAL_BYTES guard does NOT protect it — own the cap
-  // here (same 5 MB decoded / 10-file / images+PDF rule the frontend mirrors).
-  // Interactive path → reject clearly, never silently drop the attachment.
+  // This route sends SYNCHRONOUSLY first (lib/mail-send.ts) and only queues on
+  // a passing failure, so own the cap here (same 5 MB decoded / 10-file /
+  // images+PDF rule the frontend mirrors). Interactive path → reject clearly,
+  // never silently drop the attachment.
   const attachCheck = validateMailAttachments(attachments);
   if (!attachCheck.ok) {
     return c.json({ error: attachCheck.error || "Invalid attachments." }, 400);
@@ -2919,7 +3004,11 @@ app.post("/compose", async (c) => {
   const messageId = newMessageId();
   const headers = buildThreadingHeaders({ messageId });
 
-  const result = await sendMail(c.env, from, {
+  // Parity row 19: send now, queue for retry on a passing provider failure.
+  await ensureMailParitySchema(c.var.DB);
+  const rowId = crypto.randomUUID();
+  const result = await sendOrQueueMail(c, {
+    from,
     to,
     cc,
     bcc,
@@ -2927,12 +3016,12 @@ app.post("/compose", async (c) => {
     text,
     html: htmlBody,
     headers,
-    // Forward the validated attachments (already capped at 5 MB / 10 files /
-    // images+PDF above). Omitted when empty so the payload is byte-identical to
-    // the pre-attachment behaviour.
-    ...(attachments.length > 0 ? { attachments } : {}),
+    // The validated attachments (already capped at 5 MB / 10 files /
+    // images+PDF above).
+    attachments,
+    messageRowId: rowId,
   });
-  if (!result.ok) {
+  if (result.status === "error") {
     // Surface the REAL provider error instead of a blank "send failed" — the
     // owner needs to see WHY (e.g. "No email provider configured" when staging
     // has no BREVO_API_KEY, or a Brevo "sender not authenticated" after the
@@ -2948,7 +3037,6 @@ app.post("/compose", async (c) => {
   const now = new Date().toISOString();
   const snippet = text.slice(0, 200);
   const threadId = crypto.randomUUID();
-  const rowId = crypto.randomUUID();
 
   // NEW thread row — outbound-initiated, so last_direction='outbound',
   // message_count=1, unread=0 (we sent it; nothing for us to read). The
@@ -2968,8 +3056,8 @@ app.post("/compose", async (c) => {
     `INSERT INTO email_messages
        (id, org_id, thread_id, direction, message_id, from_address, from_name,
         to_addresses, cc_addresses, bcc_addresses, subject, text_body, html_body,
-        sent_at, sent_by_user_id, sent_by_name, provider_message_id, created_at)
-     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sent_at, sent_by_user_id, sent_by_name, provider_message_id, outbox_id, created_at)
+     VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       rowId,
@@ -2987,7 +3075,8 @@ app.post("/compose", async (c) => {
       now,
       userId,
       fromName || null,
-      result.id ?? null,
+      result.status === "sent" ? result.providerId : null,
+      result.status === "queued" ? result.outboxId : null,
       now,
     )
     .run();
@@ -3022,10 +3111,11 @@ app.post("/compose", async (c) => {
       cc,
       bcc: bcc.length,
       ...(forwardOf ? { forwardOf } : {}),
+      ...(result.status === "queued" ? { queued: true } : {}),
     },
   });
 
-  return c.json({ ok: true, threadId, messageId: rowId }, 201);
+  return c.json({ ok: true, threadId, messageId: rowId, queued: result.status === "queued" }, 201);
 });
 
 // PATCH /api/mail-center/threads/:id — mutate a thread: assign / resolve /

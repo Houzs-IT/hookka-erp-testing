@@ -261,3 +261,59 @@ export async function preProvisionInviteMailbox(
     .run();
   return address;
 }
+
+// ---------------------------------------------------------------------------
+// Disabling a member (Houzs parity row 25, like Houzs closePersonalMailOnDisable).
+//
+// The person's mailbox (every address assigned to them) is closed — active = 0,
+// so it drops out of every Mail Center scope and the send-from list — and every
+// mailbox grant they held is removed, so re-enabling them later does not quietly
+// hand back shared mailboxes. Colleagues' grants ON the closed mailbox stay, so
+// reopening it restores their view. Rows are kept, never deleted: the mail
+// history stays, and an admin can reassign the address.
+// ---------------------------------------------------------------------------
+export async function closePersonalMailOnDisable(
+  db: D1Database,
+  userId: string,
+): Promise<{ closed: string[]; grantsRemoved: number }> {
+  await ensureMailSchema(db);
+  const owned = await db
+    .prepare(
+      `SELECT address FROM email_addresses WHERE assigned_user_id = ? AND active = 1`,
+    )
+    .bind(userId)
+    .all<{ address: string }>();
+  const grants = await db
+    .prepare(`DELETE FROM email_address_access WHERE user_id = ?`)
+    .bind(userId)
+    .run();
+  await db
+    .prepare(
+      `UPDATE email_addresses SET active = 0 WHERE assigned_user_id = ? AND active = 1`,
+    )
+    .bind(userId)
+    .run();
+  return {
+    closed: (owned.results ?? []).map((r) => r.address),
+    grantsRemoved: Number(
+      (grants as unknown as { meta?: { changes?: number } }).meta?.changes ?? 0,
+    ),
+  };
+}
+
+/**
+ * Re-enabling opens their own mailbox again (like Houzs reopenPersonalMailbox);
+ * shared mailboxes come back only when an admin grants them.
+ */
+export async function reopenPersonalMailbox(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await ensureMailSchema(db);
+  await db
+    .prepare(
+      `UPDATE email_addresses SET active = 1 WHERE assigned_user_id = ? AND active = 0`,
+    )
+    .bind(userId)
+    .run();
+}

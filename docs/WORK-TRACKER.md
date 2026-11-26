@@ -7768,3 +7768,10 @@ Ask (nhzulaikha26): put the two Claude Design handoffs on the phone Floor Live (
 2. KEPT (owner condition): department filter; attendance log with Today / Yesterday / This month and row details; problem tiles unchanged (shell).
 3. CHECKED with MOCK data only (local harness, git-excluded): phone, tablet portrait / landscape, dark mode, no payroll, no attendance:read. Production figures: NOT checked by the agent (owner reviews on localhost).
 4. WAITING: the owner merges the PR. After deploy: verify Home → Employees on prod (read path; the view has no write path), incl. the Present sheet with an attendance:read account and the Labour cost card with payroll access.
+
+## 2026-11-26 — Mail Center works like Houzs ERP's (owner: every system's Mail Center the same, Houzs is the standard)
+1. IN PROGRESS (branch `feat/mail-center-parity`, PR open — NOT merged): reliable sending — a reply / new email whose first send fails on a passing error is queued in the outbox and retried (3 tries, 5-minute lease), the thread shows "Queued, retrying" / "Not delivered".
+2. IN PROGRESS (same PR): reply guard — "X is writing a reply", 409 when a colleague replied since you opened (Send mine too / Discard mine), the replier becomes the assignee of an unassigned thread, waiting count on the Mail Center menu item.
+3. IN PROGRESS (same PR): Delivered / Bounced from Brevo (events API by messageId) or Resend (GET /emails/:id), polled on traffic + the 5-minute tick, bell notice to the sender on a bounce.
+4. IN PROGRESS (same PR): disabling a member closes their mailbox and removes their grants; re-enabling reopens their own mailbox.
+5. NOT IN SCOPE: phone screen reply guard / delivery chip; access-model parity (rows 4, 5, 7, 17); ack parity (row 23). Guide: `docs/modules/mail-center.md`.
