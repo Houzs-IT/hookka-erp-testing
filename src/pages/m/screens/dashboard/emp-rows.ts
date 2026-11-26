@@ -53,7 +53,7 @@ export function npDeptRow(m: EmpModel, d: { dept: string; non: number; all: numb
 }
 
 /** Labour % needs BOTH the salary and the department output answered; any other state says which kind of gap it is. */
-function labourPctText(m: EmpModel, lp: number | null): string {
+export function labourPctText(m: EmpModel, lp: number | null): string {
   if (m.salaryStatus === "denied" || m.outStatus === "denied") return "No access";
   if (m.salaryStatus === "ready" && m.outStatus === "ready") return pct(lp);
   if (m.salaryStatus === "loading" || m.outStatus === "loading") return "…";

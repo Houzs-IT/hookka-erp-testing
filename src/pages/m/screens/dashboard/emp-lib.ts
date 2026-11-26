@@ -197,7 +197,9 @@ export const departmentsOf = (workers: EmpWorker[]) => [...new Set(workers.map((
 // ---------------------------------------------------------------------------
 // Department efficiency (desktop: deptRows / deptTotal / progByDept)
 // ---------------------------------------------------------------------------
-export type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; hw: number; hp: number; cost: number; bf: number; sofa: number };
+/** `sofa` holds sofa + accessory output (labour % and the output total read bf + sofa); `acc` is the accessory part of it, shown
+ *  as its own segment of the output bar (desktop keeps an Accessory column). */
+export type DeptRow = { dept: string; people: Set<string>; work: number; prod: number; hw: number; hp: number; cost: number; bf: number; sofa: number; acc: number };
 export function foldProgressive(byDeptCategory: Record<string, number> | undefined) {
   const m = new Map<string, { bf: number; sofa: number; other: number }>();
   for (const [k, v] of Object.entries(byDeptCategory ?? {})) {
@@ -218,7 +220,7 @@ export function deptRowsOf(a: {
   const floor = floorSet();
   const m = new Map<string, DeptRow>();
   const row = (k: string) => {
-    const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0 };
+    const r = m.get(k) ?? { dept: k, people: new Set<string>(), work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, acc: 0 };
     m.set(k, r);
     return r;
   };
@@ -263,6 +265,7 @@ export function deptRowsOf(a: {
     const r = row(dep);
     r.bf = pr.bf;
     r.sofa = pr.sofa + pr.other;
+    r.acc = pr.other;
   }
   return [...m.values()]
     .filter((r) => r.work > 0 || r.prod > 0 || r.cost > 0 || r.bf + r.sofa > 0)
@@ -273,12 +276,12 @@ export function deptRowsOf(a: {
  *  once per department. Without the map the rows are summed (old callers). */
 export function deptTotalOf(rows: DeptRow[], progByDept?: Map<string, { bf: number; sofa: number; other: number }>) {
   const t = rows.reduce(
-    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, people: new Set([...t.people, ...r.people]) }),
-    { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, people: new Set<string>() },
+    (t, r) => ({ work: t.work + r.work, prod: t.prod + r.prod, hw: t.hw + r.hw, hp: t.hp + r.hp, cost: t.cost + r.cost, bf: t.bf + r.bf, sofa: t.sofa + r.sofa, acc: t.acc + r.acc, people: new Set([...t.people, ...r.people]) }),
+    { work: 0, prod: 0, hw: 0, hp: 0, cost: 0, bf: 0, sofa: 0, acc: 0, people: new Set<string>() },
   );
   if (!progByDept) return t;
   const up = progByDept.get("UPHOLSTERY");
-  return { ...t, bf: up?.bf ?? 0, sofa: (up?.sofa ?? 0) + (up?.other ?? 0) };
+  return { ...t, bf: up?.bf ?? 0, sofa: (up?.sofa ?? 0) + (up?.other ?? 0), acc: up?.other ?? 0 };
 }
 /** Workers whose home department this is, or who logged hours there in the window (desktop deptDrill). */
 export function deptWorkers(rows: Row[], hourEntries: HourEntry[], winDates: Set<string>, dept: string) {
@@ -381,7 +384,9 @@ export type LogRow = {
   key: string; id: string | null; name: string; dept: string | null; date: string | null; clockIn: string | null; clockOut: string | null;
   working: number | null; prod: number | null; nonProd: number | null; eff: number | null; absent: boolean; days: number; late: number;
 };
-export type LogGroups = { absent: { n: string; d: string }[]; late: { n: string; d: string }[]; on: { n: string; d: string }[] };
+/** `id` = the worker the row belongs to (lets the card show that person's punch photo); null when the record has no worker. */
+export type LogItem = { n: string; d: string; id?: string | null };
+export type LogGroups = { absent: LogItem[]; late: LogItem[]; on: LogItem[] };
 export type MonthRow = { id: string; name: string; dept: string | null; daysIn: number; notIn: number; late: number; lateMin: number };
 
 const workerIdOf = (r: EmpAtt, byId: Set<string>, byName: Map<string, string>) =>
@@ -423,9 +428,9 @@ export function dayLog(slice: EmpSlice, day: string, tileRule = false): { rows: 
   rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   const absent = rows.filter((r) => r.absent), late = rows.filter((r) => !r.absent && r.late > 0), on = rows.filter((r) => !r.absent && r.late === 0);
   const groups: LogGroups = {
-    absent: absent.map((r) => ({ n: r.name, d: r.dept ? deptName(r.dept) : "—" })),
-    late: [...late].sort((a, b) => b.late - a.late).map((r) => ({ n: r.name, d: `${hhmm(r.clockIn)} · ${r.late}m late` })),
-    on: [...on].sort((a, b) => (a.clockIn ?? "").localeCompare(b.clockIn ?? "")).map((r) => ({ n: r.name, d: hhmm(r.clockIn) })),
+    absent: absent.map((r) => ({ n: r.name, d: r.dept ? deptName(r.dept) : "—", id: r.id })),
+    late: [...late].sort((a, b) => b.late - a.late).map((r) => ({ n: r.name, d: `${hhmm(r.clockIn)} · ${r.late}m late`, id: r.id })),
+    on: [...on].sort((a, b) => (a.clockIn ?? "").localeCompare(b.clockIn ?? "")).map((r) => ({ n: r.name, d: hhmm(r.clockIn), id: r.id })),
   };
   return { rows, absent: absent.length, late: late.length, on: on.length, groups };
 }
@@ -472,6 +477,8 @@ const AVC: [string, string][] = [["#F4EFE6", "#6B5C32"], ["#E7EEF1", "#1F4654"],
 export const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 export const avatarOf = (n: string) => { const c = AVC[[...n].reduce((a, ch) => a + ch.charCodeAt(0), 0) % AVC.length]; return { ini: initials(n), avBg: c[0], avFg: c[1] }; };
 /** Efficiency bar: scale 0..130 %, the dark tick sits at the configured target. */
+/** Compact RM for table cells: RM 1.09M · RM 283.8k · RM 950 (sen in). */
+export const kfmt = (sen: number) => { const r = sen / 100; return r >= 1e6 ? `RM ${(r / 1e6).toFixed(2)}M` : r >= 1e3 ? `RM ${(r / 1e3).toFixed(1)}k` : `RM ${Math.round(r).toLocaleString("en-MY")}`; };
 export const effBar = (v: number | null, target: number) => (v == null ? null : { w: `${(Math.min(v, 130) / 130) * 100}%`, t: `${(Math.min(target, 130) / 130) * 100}%`, c: "" });
 
 /** Chart geometry that does not depend on React (axis ticks of the main chart). */

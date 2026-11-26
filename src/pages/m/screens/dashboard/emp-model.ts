@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatCurrency } from "@/lib/utils";
 import { monthsOf } from "../../../dashboards/use-production-revenue";
-import { shiftMonth, stepDay, type Period } from "../../../dashboards/dashboard-shared-lib";
-import { useEmpFeed, useEmpMoney, type EmpAccess } from "./emp-data";
+import { inFocus, shiftMonth, stepDay, type Period } from "../../../dashboards/dashboard-shared-lib";
+import { keepDaysWithin, labourMonthsWithin } from "@/lib/labour-to-payroll";
+import { useDayPunches, useEmpFeed, useEmpMoney, type EmpAccess } from "./emp-data";
+import { labourSplitOf } from "./emp-labour";
 import {
   buildWindow, dayLog, departmentsOf, deptRowsOf, deptTotalOf, foldProgressive, headlineOf, latestDay, mainChartPoints, monthLog, npChartPoints, npData,
   lowEffOn, periodDays, presenceOn, rankSplit, rosterOf, sumWindow, workerRows, type EmpSlice, type EmpWorker, type Win,
@@ -14,7 +16,8 @@ export type LogPick = "today" | "yday" | "month" | null;
 export type Sheet =
   | { type: "tile"; kind: "salary" | "eff" } | { type: "depts" } | { type: "dept"; dept: string } | { type: "worker"; id: string }
   | { type: "rank"; half: "upper" | "lower" } | { type: "np" } | { type: "log" } | { type: "lowEff"; date: string }
-  | { type: "logRow"; id: string | null; name: string; date: string } | { type: "logm"; id: string };
+  | { type: "logRow"; id: string | null; name: string; date: string } | { type: "logm"; id: string }
+  | { type: "present" } | { type: "labour" };
 
 const EMPTY: EmpSlice = { workers: [], attendance: [], performance: { byDay: [] } };
 /** empty = the question was answered and there is nothing to compute from (no hour entries): not a zero. */
@@ -62,6 +65,14 @@ export function useEmpModel({ access, period, today, logSignal, drill }: { acces
   const prev = useMemo(() => (money.prevYm ? sumWindow(allDays, (d) => d.startsWith(money.prevYm), money.prevLabour.byWorkerDay, outsourced, money.revenue.byDay) : null), [allDays, money.prevYm, money.prevLabour.byWorkerDay, outsourced, money.revenue.byDay]);
   const head = headlineOf({ totals, prev, costByDept, winDates: W.winDates, revenueKnown: money.revenue.status === "ready" });
   const pres = useMemo(() => presenceOn(employee, roster, W.anchor), [employee, roster, W.anchor]);
+  // Labour cost card (desktop LabourSplitCard): payroll months cut to the PERIOD (the picked day in Day mode), with the
+  // period's own revenue and full-time people, exactly as EmployeesDashboard passes them.
+  const focus = useMemo(() => (period.day ? { from: period.day, to: period.day } : W.range), [period.day, W.range]);
+  const periodLabour = useMemo(() => labourMonthsWithin(money.labour.months, keepDaysWithin(costByWorkerDay, focus.from, focus.to)), [money.labour.months, costByWorkerDay, focus]);
+  const labourSplit = useMemo(() => labourSplitOf(periodLabour), [periodLabour]);
+  const periodTotals = useMemo(() => sumWindow(allDays, (d) => inFocus(period, d), costByWorkerDay, outsourced, money.revenue.byDay), [allDays, period, costByWorkerDay, outsourced, money.revenue.byDay]);
+  // Punches of the anchor day (Present sheet + the attendance card's photos): attendance:read, else DENIED.
+  const punches = useDayPunches(W.anchor);
 
   const rows = useMemo(() => workerRows(days, W.winDates, workerById, dept, costByWorkerDay), [days, W.winDates, workerById, dept, costByWorkerDay]);
   const split = useMemo(() => rankSplit(rows, outsourced), [rows, outsourced]);
@@ -112,7 +123,7 @@ export function useEmpModel({ access, period, today, logSignal, drill }: { acces
   return {
     feed, employee, target, access, today, period, latest: latestDay(days),
     win, setWin, dept, setDept, depts, W, workerById, roster, outsourced,
-    money, totals, head, pres, rows, split, deptRows, deptTotal, chart, npPoints, np, hourEntries, costByWorkerDay,
+    money, totals, head, pres, periodLabour, labourSplit, periodTotals, punches, rows, split, deptRows, deptTotal, chart, npPoints, np, hourEntries, costByWorkerDay,
     logPick, setLogPick, logDay, monthYm, dayL, monthL, lowEff,
     stack, push: (s: Sheet) => setStack((x) => [...x, s]), open: (s: Sheet) => setStack([s]), back: () => setStack((x) => x.slice(0, -1)), replaceTop: (s: Sheet) => setStack((x) => [...x.slice(0, -1), s]), close: () => setStack([]),
     chSel, setChSel, npSel, setNpSel, hide, setHide, npHide, setNpHide, npView, setNpView, rkHalf, setRkHalf,

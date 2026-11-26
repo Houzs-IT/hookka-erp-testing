@@ -7,6 +7,9 @@ import { useLabourCost } from "../../../dashboards/use-labour-cost";
 import { shiftMonth, ymd } from "../../../dashboards/dashboard-shared-lib";
 import { slotStatus, sectionStatus, type Avail, type Status } from "./ops-lib";
 import { labourStateOf, type EmpSlice, type LabourState } from "./emp-lib";
+import { usePermissions } from "@/lib/use-permission";
+import { attendanceUrl, punchRows, type AttRow } from "../employees/attendance-model";
+import { rowsOf } from "../employees/time-adjustments-model";
 
 /** What this user may read, from usePermissions (client-side; the server still decides). */
 export type EmpAccess = {
@@ -64,6 +67,20 @@ export function useEmpFeed(access: EmpAccess) {
 }
 
 export type { LabourState } from "./emp-lib";
+
+/**
+ * The punches of one day for the Present sheet: the SAME request and row rule as Employees → Attendance
+ * (attendanceUrl / punchRows), gated by attendance:read on the client and the server. Without the permission nothing
+ * is fetched and the status is DENIED (never an empty list); a 401 / 403 also reads DENIED.
+ */
+export function useDayPunches(day: string) {
+  const { hasPermission, loading: permLoading } = usePermissions();
+  const allowed = !permLoading && hasPermission("attendance", "read");
+  const slot = useCachedJson<unknown>(allowed && day ? attendanceUrl({ kind: "day", date: day }) : null, 60);
+  const status: Status = permLoading || (allowed && !day) ? "loading" : slotStatus(slot as Slot, allowed);
+  const rows = useMemo(() => (status === "ready" ? punchRows(rowsOf<AttRow>(slot.data)) : []), [status, slot.data]);
+  return { allowed, permLoading, status, rows, refresh: slot.refresh };
+}
 
 const monthsOfRange = (from: string, to: string): string[] => {
   if (!from || !to) return [];
