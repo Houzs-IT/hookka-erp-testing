@@ -582,15 +582,56 @@ test("the HTML's card anatomy is present: icon tile, state tag, backlog filters,
   assert.match(p, /toggleBacklogMonth/, "the desktop's delivery-month toggle");
   assert.match(p, /QUEUE VS 14D/);
   const b = read("HomeOpsB.tsx");
-  assert.match(b, /planned<\/span>/, "plan headline");
+  assert.match(b, /Are we keeping up with the plan\?/, "plan card title");
+  assert.match(b, /Due by today/, "plan tiles");
   assert.match(b, /textAnchor="end"/, "chart y-axis labels");
-  assert.match(b, /strokeDasharray="5 4"/, "dashed plan line");
+  assert.match(b, /LegendToggle label="Completed"/, "the design's chart legend toggles");
   assert.doesNotMatch(b, /Sparkline/, "owner removed the extra sparkline");
   const c = read("HomeOpsC.tsx");
-  assert.match(c, /OWN PERIOD/);
   assert.match(c, /Overall \(all issued\)/);
   assert.match(c, /Excl\. Bedframe & Sofa/);
   assert.doesNotMatch(c, /\["Bedframe", rm\(fc\.bedframe\)\]|\["Sofa", rm\(fc\.sofa\)\]/, "two desktop cost tiles, not three");
+});
+
+test("Output & Cost follows the approved design: glass cards, Day-by-day only on real month cards, approved exceptions kept", () => {
+  const b = read("HomeOpsB.tsx");
+  const c = read("HomeOpsC.tsx");
+  assert.match(b, /<OGCard icon=\{Calculator\}/, "glass Costing card");
+  assert.match(b, /const link = !!c\.ym;/, "Day by day belongs to the month cards (the 3-month average and the selected day have no ym)");
+  assert.doesNotMatch(b + c, /0\.62|62%|> ?62/, "no invented 62% threshold on the cost pills");
+  assert.match(b, /Direct labour/);
+  assert.match(b, /Non-production/);
+  assert.match(b, /Purchases · not in cost/);
+  assert.match(b, /Materials used breakdown/);
+  assert.doesNotMatch(b + c, /Illustrative|sample data/i, "no prototype sample wording");
+  // Purchasing: four tiles open four details with the design's lists.
+  for (const t of ["Invoiced spend", "% of production revenue", "Outstanding POs", "Raw material stock", "TOP SUPPLIERS", "BY P&L ACCOUNT", "Not the live system balance"]) assert.ok(c.includes(t), t);
+  // Forecast is metres only: no cost is invented for metres not yet cut.
+  assert.match(c, /next \? "—" : priced\(r\.fifoPerMeterSen\)/);
+  assert.match(c, /next \? "—" : priced\(r\.costSen\)/);
+  assert.match(c, /QUARTER\$\{trend\.length === 1 \? "" : "S"\}/, "the quarterly heading counts the quarters really shown");
+  assert.doesNotMatch(c, /LAST 8"/, "no fixed 'last 8' claim");
+});
+
+test("fabric cost per metre divides the FIFO cost by the PRICED metres (a metre with no receipt carries no cost)", () => {
+  const cat = { list: [], monthly: [{ month: "2026-10", meters: 100, pricedMeters: 50, costSen: 100000 }, { month: "2026-09", meters: 80, costSen: 80000 }, { month: "2026-08", meters: 40, pricedMeters: 0, costSen: 0 }] };
+  const t = fabricTrend(cat, "monthly");
+  assert.equal(t[0].perM, 2000, "100000 sen over the 50 priced metres, not over all 100");
+  assert.equal(t[1].perM, 1000, "a row from before pricedMeters falls back to all metres");
+  assert.equal(t[2].perM, null, "no priced metres = no cost, never RM 0");
+  const q = fabricTrend({ list: [], monthly: cat.monthly.slice(0, 1) }, "quarterly");
+  assert.equal(q[0].perM, 2000);
+});
+
+test("labour splits into direct and non-production at each month's own ratio, and always adds up", () => {
+  const revByDay = new Map([["2026-10-01", { total: 100000 }]]);
+  const byDay = costingByDay({ revByDay, pnl: new Map(), labourByDay: new Map([["2026-10-01", 40000]]), directShare: new Map([["2026-10", 0.75]]), pis: [], from: "2026-10-01", to: "2026-10-31" });
+  const b = byDay.get("2026-10-01");
+  assert.equal(b.direct, 30000);
+  assert.equal(b.nonProd, 10000);
+  assert.equal(b.direct + b.nonProd, b.labour);
+  const none = costingByDay({ revByDay, pnl: new Map(), labourByDay: new Map([["2026-10-01", 40000]]), pis: [], from: "2026-10-01", to: "2026-10-31" }).get("2026-10-01");
+  assert.equal(none.direct, 40000, "a month without a ratio is all direct (desktop)");
 });
 
 test("Daily Report detail cards: real fields only, a joined read where the report lacks one, never an invented value", () => {

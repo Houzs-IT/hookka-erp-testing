@@ -74,8 +74,10 @@ export type OpsFeed = {
 };
 export type JobsBreakdown = { bedframeUnits: number; sofaSets: number; byCustomer: { customer: string; bedframeUnits: number; sofaSets: number }[] };
 export type FabricCat = {
-  list: { fabCode: string; meters: number; past30Meters: number; next30Meters: number; buyAvgSen: number; buyMinSen: number; buyMaxSen: number }[];
-  monthly: { month: string; meters: number; lateMeters?: number; costSen?: number }[];
+  /** `costSen` / `fifoPerMeterSen` are the FIFO cost of the metres USED in the period (dashboard-overview `fabListByCat`); 0 = no priced receipt behind them. */
+  list: { fabCode: string; meters: number; past30Meters: number; next30Meters: number; costSen?: number; fifoPerMeterSen?: number }[];
+  /** `pricedMeters` = the part of `meters` that has a receipt behind it; `costSen` covers only those. */
+  monthly: { month: string; meters: number; pricedMeters?: number; lateMeters?: number; costSen?: number }[];
 };
 export type OpsOverview = {
   success?: boolean;
@@ -412,8 +414,9 @@ export function shortageSummary(rows: NonNullable<OpsFeed["inventory"]>["materia
 // ---------------------------------------------------------------------------
 // 8 · Costing vs production revenue
 // ---------------------------------------------------------------------------
-export type Bucket = { revenue: number; material: number; labour: number; purchases: number };
-export const ZERO: Bucket = { revenue: 0, material: 0, labour: 0, purchases: 0 };
+/** `direct` + `nonProd` split `labour` at each month's own ratio (desktop CostingPanel); they always add up to `labour`. */
+export type Bucket = { revenue: number; material: number; labour: number; direct: number; nonProd: number; purchases: number };
+export const ZERO: Bucket = { revenue: 0, material: 0, labour: 0, direct: 0, nonProd: 0, purchases: 0 };
 export type CostStructure = { data?: { cols?: string[]; groups?: { group?: string; description?: string; months?: ({ opening?: number; purchase?: number; closing?: number } | null)[] }[] } };
 export type Pi = { piNo?: string | null; invoiceDate: string | null; dueDate?: string | null; amountSen: number | string | null; paidAmountSen?: number | string | null; status: string; supplierName?: string | null };
 
@@ -462,6 +465,8 @@ export function materialLines(sets: (CostStructure | null | undefined)[], ym: st
 /** Everything per day (desktop CostingPanel `byDay`): revenue, materials at the month's P&L ratio (the running month at the last finished month's), labour, purchases. */
 export function costingByDay(a: {
   revByDay: Map<string, { total: number }>; pnl: Map<string, number>; labourByDay: Map<string, number>; pis: Pi[]; from: string; to: string;
+  /** month → direct share of that month's labour (desktop `directShare`); a month without one is all direct. */
+  directShare?: Map<string, number>;
 }): Map<string, Bucket> {
   const m = new Map<string, Bucket>();
   const add = (key: string, k: keyof Bucket, v: number) => { const b = m.get(key) ?? { ...ZERO }; b[k] += v; m.set(key, b); };
@@ -477,7 +482,10 @@ export function costingByDay(a: {
     return last ? (a.pnl.get(last) ?? 0) / (revByMonth.get(last) ?? 1) : 0;
   };
   for (const [d, v] of a.revByDay) if (d >= a.from && d <= a.to) add(d, "material", v.total * ratioOf(d.slice(0, 7)));
-  for (const [d, v] of a.labourByDay) add(d, "labour", v);
+  for (const [d, v] of a.labourByDay) {
+    const r = a.directShare?.get(d.slice(0, 7)) ?? 1;
+    add(d, "labour", v); add(d, "direct", v * r); add(d, "nonProd", v * (1 - r));
+  }
   for (const p of a.pis) {
     const d = String(p.invoiceDate ?? "").slice(0, 10);
     if (p.status === "CANCELLED" || d < a.from || d > a.to) continue;
@@ -509,14 +517,14 @@ export type CostCol = { label: string; sub: string; b: Bucket; avg?: boolean; ym
 export function costingCols(a: { byDay: Map<string, Bucket>; byMonth: Map<string, Bucket>; focusMonth: string; day?: string; today: string; estimated: (ym: string) => boolean }): CostCol[] {
   const prev = shiftMonth(a.focusMonth, -1);
   const three = [1, 2, 3].map((i) => a.byMonth.get(shiftMonth(a.focusMonth, -i)) ?? ZERO);
-  const sum = three.reduce<Bucket>((x, y) => ({ revenue: x.revenue + y.revenue, material: x.material + y.material, labour: x.labour + y.labour, purchases: x.purchases + y.purchases }), { ...ZERO });
+  const sum = three.reduce<Bucket>((x, y) => ({ revenue: x.revenue + y.revenue, material: x.material + y.material, labour: x.labour + y.labour, direct: x.direct + y.direct, nonProd: x.nonProd + y.nonProd, purchases: x.purchases + y.purchases }), { ...ZERO });
   const isCurrent = a.focusMonth === a.today.slice(0, 7);
   const est = a.estimated(a.focusMonth) ? " · materials est." : "";
   return [
     ...(a.day ? [{ label: a.day.slice(5).replace("-", "/"), sub: "the selected day", b: a.byDay.get(a.day) ?? ZERO }] : []),
     { label: monthLabel(a.focusMonth), sub: isCurrent ? `to date · live${est}` : `whole month${est}`, b: a.byMonth.get(a.focusMonth) ?? ZERO, ym: a.focusMonth },
     { label: monthLabel(prev), sub: "last month", b: a.byMonth.get(prev) ?? ZERO, ym: prev },
-    { label: "3-month avg", sub: `${monthLabel(shiftMonth(a.focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: sum.revenue / 3, material: sum.material / 3, labour: sum.labour / 3, purchases: sum.purchases / 3 }, avg: true },
+    { label: "3-month avg", sub: `${monthLabel(shiftMonth(a.focusMonth, -3))} – ${monthLabel(prev)}`, b: { revenue: sum.revenue / 3, material: sum.material / 3, labour: sum.labour / 3, direct: sum.direct / 3, nonProd: sum.nonProd / 3, purchases: sum.purchases / 3 }, avg: true },
   ];
 }
 export const costOf = (b: Bucket, withLabour: boolean): number => b.material + (withLabour ? b.labour : 0);
@@ -673,16 +681,21 @@ export function fabricRows(cat: FabricCat | undefined, mode: FabMode) {
 /** Meters posted: last 12 posting months, or last 8 quarters, newest first; cost per metre = issue cost ÷ meters. */
 export function fabricTrend(cat: FabricCat | undefined, gran: FabGran): { key: string; label: string; meters: number; perM: number | null }[] {
   const monthly = [...(cat?.monthly ?? [])].sort((a, b) => b.month.localeCompare(a.month));
-  if (gran === "monthly") return monthly.slice(0, 12).map((m) => ({ key: m.month, label: monthLabel(m.month), meters: m.meters, perM: m.meters > 0 && m.costSen != null ? m.costSen / m.meters : null }));
-  const q = new Map<string, { meters: number; cost: number; hasCost: boolean }>();
+  // Cost per metre = FIFO cost ÷ the PRICED metres (the cost covers only metres with a receipt behind them; dividing by every metre
+  // understated it). Rows that predate `pricedMeters` fall back to all metres, as before.
+  const priced = (m: { meters: number; pricedMeters?: number }) => m.pricedMeters ?? m.meters;
+  if (gran === "monthly") return monthly.slice(0, 12).map((m) => ({ key: m.month, label: monthLabel(m.month), meters: m.meters, perM: priced(m) > 0 && m.costSen != null ? m.costSen / priced(m) : null }));
+  const q = new Map<string, { meters: number; priced: number; cost: number; hasCost: boolean }>();
   for (const m of monthly) {
     const key = `${m.month.slice(0, 4)}-Q${Math.floor((Number(m.month.slice(5, 7)) - 1) / 3) + 1}`;
-    const e = q.get(key) ?? { meters: 0, cost: 0, hasCost: false };
+    const e = q.get(key) ?? { meters: 0, priced: 0, cost: 0, hasCost: false };
     e.meters += m.meters;
+    e.priced += priced(m);
     if (m.costSen != null) { e.cost += m.costSen; e.hasCost = true; }
     q.set(key, e);
   }
-  return [...q.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8).map(([key, e]) => ({ key, label: `Q${key.slice(6)} ${key.slice(0, 4)}`, meters: e.meters, perM: e.meters > 0 && e.hasCost ? e.cost / e.meters : null }));
+  // The feed carries at most 12 months, so this is at most 5 quarters (the oldest may be partial); the heading counts what is shown.
+  return [...q.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8).map(([key, e]) => ({ key, label: `Q${key.slice(6)} ${key.slice(0, 4)}`, meters: e.meters, perM: e.priced > 0 && e.hasCost ? e.cost / e.priced : null }));
 }
 
 // ---------------------------------------------------------------------------

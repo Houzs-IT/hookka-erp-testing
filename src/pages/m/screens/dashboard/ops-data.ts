@@ -164,6 +164,8 @@ export function useOpsData(a: { periodKey: string; period: Period; sub: "overvie
         : wk.data && he.data && ((wk.data.data ?? []).length === 0 || (he.data.data ?? []).length === 0) ? "none"
           : "loading";
   const labourByDay = useMemo(() => labourPerDay(labour.byWorkerDay), [labour.byWorkerDay]);
+  // Direct vs non-production labour at each month's own ratio (desktop CostingPanel `directShare`).
+  const directShare = useMemo(() => new Map(labour.months.map((lm) => [lm.ym, lm.totalSen > 0 ? lm.split.directSen / lm.totalSen : 1])), [labour.months]);
 
   // ---- Purchasing -----------------------------------------------------------
   const pis = useCachedJson<{ data?: Pi[] }>(outOn && access.invoices ? "/api/purchase-invoices" : null);
@@ -181,7 +183,7 @@ export function useOpsData(a: { periodKey: string; period: Period; sub: "overvie
     compliance: { status: complianceS, data: compliance.data?.data ?? null, retry: compliance.refresh },
     revenue,
     cost: { status: costS, prevStatus: prevS, pnl, sets: [csPrev.data, csNow.data] as (CostStructure | null)[] },
-    labour: { state: labourState, byDay: labourByDay },
+    labour: { state: labourState, byDay: labourByDay, directShare },
     pis: { status: pisS, rows: pis.data?.data ?? [] },
     focusMonth, costMonths, pm, from, to,
     refresh, retryFeed: feed.refresh, retryOverview: overview.refresh, retrySplit: split.refresh,

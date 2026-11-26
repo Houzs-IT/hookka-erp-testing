@@ -20,11 +20,12 @@ export function OpsView({
 }: { access: OpsAccess; period: Period; periodKey: string; sub: OpsSubKey; today: string; onPeriod: (p: Period) => void }) {
   const d = useOpsData({ periodKey, period, sub, access, today });
   const curYm = today.slice(0, 7);
-  // The design lays the Overview out in two columns on a tablet; Daily Report, Department Revenue and Daily production revenue span both.
+  // The design lays both tabs out in two columns on a tablet: Daily Report, Department Revenue and Daily production revenue span both
+  // on the Overview; Costing, Plan vs actual and Material shortage span both on Output & Cost (Purchasing and Fabric sit side by side).
   const phone = useResponsiveLayout().mode === "phone";
   const cell = (node: ReactNode, full?: boolean) => <div style={{ minWidth: 0, ...(full && !phone ? { gridColumn: "1 / -1" } : null) }}>{node}</div>;
   return (
-    <div style={{ padding: "14px 16px 120px", display: "grid", gridTemplateColumns: phone || sub !== "overview" ? "minmax(0,1fr)" : "repeat(2,minmax(0,1fr))", gap: 16, alignItems: "start" }} data-testid="ops-view" data-ops-sub={sub}>
+    <div style={{ padding: "14px 16px 120px", display: "grid", gridTemplateColumns: phone ? "minmax(0,1fr)" : "repeat(2,minmax(0,1fr))", gap: 16, alignItems: "start" }} data-testid="ops-view" data-ops-sub={sub}>
       {sub === "overview" ? (
         <>
           {cell(<DailyReportCard d={d} />, true)}
@@ -37,11 +38,11 @@ export function OpsView({
         </>
       ) : (
         <>
-          <CostingCard d={d} period={period} today={today} />
-          <PlanCard d={d} period={period} onPeriod={onPeriod} today={today} />
-          <PurchasingCard d={d} period={period} today={today} canPo={access.purchaseOrders} />
-          <FabricCard d={d} period={period} />
-          <ShortageCard d={d} />
+          {cell(<CostingCard d={d} period={period} today={today} />, true)}
+          {cell(<PlanCard d={d} period={period} onPeriod={onPeriod} today={today} />, true)}
+          {cell(<PurchasingCard d={d} period={period} today={today} canPo={access.purchaseOrders} />)}
+          {cell(<FabricCard d={d} period={period} />)}
+          {cell(<ShortageCard d={d} />, true)}
         </>
       )}
     </div>

@@ -11,7 +11,7 @@
 // The desktop FloorLiveView is untouched.
 // ---------------------------------------------------------------------------
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { CloudOff, Gauge, LogIn, Clock, Package, Search, TriangleAlert, UserCheck, type LucideIcon } from "lucide-react";
+import { CalendarRange, CloudOff, Factory, Gauge, LogIn, Clock, Package, Search, TriangleAlert, UserCheck, Users, type LucideIcon } from "lucide-react";
 import { useInterval } from "@/lib/scheduler";
 import { useCachedJson } from "@/lib/cached-fetch";
 import { CategoryStrip, CompletedDetail } from "./FloorLiveCompleted";
@@ -22,16 +22,21 @@ import {
 } from "../../../dashboards/floor-live-lib";
 import type { Period } from "../../../dashboards/dashboard-shared-lib";
 import { M } from "../../theme";
-import { SHADOW_CARD, DATA, TNUM, NOWRAP_ELLIPSIS } from "./home-style";
+import { DATA, TNUM, NOWRAP_ELLIPSIS } from "./home-style";
+import { G } from "./sales-glass";
+import { CREAM, ROW_LINE, mixInto } from "./ops-oc-style";
 
 const ROW_LIMIT = 6;
 const REFRESH_MS = 3 * 60 * 1000;
 
-const SHADOW_PANEL = "0 0 0 1px rgba(31,29,27,.04),0 2px 4px rgba(31,29,27,.06),0 14px 30px -14px rgba(31,29,27,.30)";
-const SHADOW_SEARCH = "0 1px 2px rgba(31,29,27,.05),0 8px 22px -10px rgba(31,29,27,.18)";
+// Home Operations v3 · Floor Live: the approved design's glass cards (Sales v12 system) with white ring cards inside.
+const SHADOW_PANEL = `0 0 0 1px ${M.hairline}, 0 10px 22px -16px rgba(107,92,50,.40)`;
+const SHADOW_SEARCH = `inset 0 1px 0 ${M.card}, inset 0 0 0 1px rgba(31,29,27,.06), 0 8px 22px -12px rgba(107,92,50,.30)`;
+/** Glass section card; the Floor Live page has its own 16 px gutter, so no negative margin. */
+const glassCard: CSSProperties = { ...G.card, margin: 0 };
 const RED = "#DC2626";
-const RED_ROW = `color-mix(in srgb, ${DATA.red} 8%, ${M.card})`;
-const HEAD_BG = `color-mix(in srgb, ${M.raisin} 3%, ${M.card})`;
+const RED_ROW = `color-mix(in srgb, ${DATA.red} 9%, ${M.card})`;
+const HEAD_BG = CREAM;
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const dLab = (d: string) => `${+d.slice(8)} ${MON[+d.slice(5, 7) - 1]} ${d.slice(0, 4)}`;
@@ -61,7 +66,7 @@ function HelperPill() {
   return (
     <span
       title="Helper — assists others; no personal efficiency, no efficiency allowance"
-      style={{ flex: "none", height: 18, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 999, backgroundColor: M.divider, color: M.ink, fontSize: 10, fontWeight: 700 }}
+      style={{ flex: "none", height: 18, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 999, backgroundColor: `color-mix(in srgb, ${M.divider} 80%, ${M.card})`, color: M.ink, fontSize: 10, fontWeight: 700 }}
     >
       Helper
     </span>
@@ -73,7 +78,7 @@ function MoreButton({ open, total, onClick }: { open: boolean; total: number; on
     <button
       type="button"
       onClick={onClick}
-      style={{ width: "100%", height: 40, border: "none", borderTop: `1px solid ${M.divider}`, backgroundColor: M.card, fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: M.taupe, cursor: "pointer" }}
+      style={{ width: "100%", height: 40, border: "none", borderTop: `1px solid ${ROW_LINE}`, backgroundColor: "transparent", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: M.taupe, cursor: "pointer" }}
     >
       {open ? "Show fewer" : `+${total - ROW_LIMIT} more`}
     </button>
@@ -83,7 +88,7 @@ function MoreButton({ open, total, onClick }: { open: boolean; total: number; on
 // ---- shared bits ------------------------------------------------------------
 function SearchBox({ q, onQ }: { q: string; onQ: (v: string) => void }) {
   return (
-    <label style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "0 13px", borderRadius: 14, backgroundColor: M.card, boxShadow: SHADOW_SEARCH }}>
+    <label style={{ flex: 1, minWidth: 0, height: 44, boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, padding: "0 13px", borderRadius: 14, backgroundColor: `color-mix(in srgb, ${M.card} 78%, transparent)`, backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", boxShadow: SHADOW_SEARCH }}>
       <Search size={18} strokeWidth={1.9} color={M.muted} aria-hidden="true" />
       <input
         type="search"
@@ -131,7 +136,7 @@ function WorkerRow({ p, production }: { p: FloorLiveRow; production: boolean }) 
   const red = production ? p.effPct != null && p.effPct < 80 : p.overHourNonProd;
   const hot = !production && p.overHourNonProd;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: DAY_GRID, gap: 8, alignItems: "center", minHeight: 38, padding: "4px 14px", borderTop: `1px solid ${M.divider}`, backgroundColor: red ? RED_ROW : M.card, fontSize: 13, ...TNUM }}>
+    <div style={{ display: "grid", gridTemplateColumns: DAY_GRID, gap: 8, alignItems: "center", minHeight: 38, padding: "4px 14px", borderTop: `1px solid ${ROW_LINE}`, backgroundColor: red ? RED_ROW : "transparent", fontSize: 13, ...TNUM }}>
       <span style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
         <span aria-label={p.clockOut ? "Clocked out" : "Still in"} style={{ width: 7, height: 7, flex: "none", borderRadius: "50%", backgroundColor: p.clockOut ? M.faint : DATA.moss }} />
         <span title={p.name} style={{ minWidth: 0, fontWeight: 600, color: M.raisin, ...NOWRAP_ELLIPSIS }}>{p.name}</span>
@@ -152,7 +157,7 @@ function DeptCard({ name, rows, production, effPct, overallPct = null, helperMin
   const overall = production ? overallText(overallPct, helperMinutes) : "";
   return (
     <div style={{ ...panel, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", backgroundColor: HEAD_BG, borderBottom: `1px solid ${M.divider}` }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", backgroundColor: HEAD_BG, borderBottom: `1px solid ${ROW_LINE}` }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: M.raisin }}>{name}</span>
           <span style={{ fontSize: 13, color: M.ink }}> · {rows.length}</span>
@@ -169,7 +174,7 @@ function DeptCard({ name, rows, production, effPct, overallPct = null, helperMin
         <div style={{ padding: "10px 14px 12px", fontSize: 12.5, color: M.muted }}>Nobody here today</div>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: DAY_GRID, gap: 8, padding: "6px 14px", backgroundColor: M.card, fontSize: 11.5, fontWeight: 600, color: M.muted }}>
+          <div style={{ display: "grid", gridTemplateColumns: DAY_GRID, gap: 8, padding: "7px 14px", fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: M.taupe }}>
             <span>Worker</span>
             <span style={{ textAlign: "right" }}>{production ? "In" : "Since"}</span>
             <span style={{ textAlign: "right" }}>Done</span>
@@ -183,12 +188,22 @@ function DeptCard({ name, rows, production, effPct, overallPct = null, helperMin
   );
 }
 
-function GroupTitle({ title, sub }: { title: string; sub: string }) {
+/** A glass section card of the design: icon tile, name + sub, divider, then the body. */
+function GlassSection({ icon: Icon, name, sub, children }: { icon: LucideIcon; name: string; sub: string; children: ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "2px 8px", padding: "6px 2px 0" }}>
-      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: M.taupe }}>{title}</span>
-      <span style={{ fontSize: 12, color: M.ink }}>{sub}</span>
-    </div>
+    <section aria-label={name} style={glassCard}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span aria-hidden="true" style={{ width: 36, height: 36, flex: "none", borderRadius: 11, background: G.tileGradient, boxShadow: "inset 0 1px 0 rgba(255,255,255,.28),0 8px 16px -8px rgba(107,92,50,.75)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
+          <Icon size={16} strokeWidth={2} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 15, fontWeight: 700, color: M.raisin, letterSpacing: -0.2 }}>{name}</span>
+          <span style={{ display: "block", fontSize: 12, lineHeight: 1.4, color: M.ink, marginTop: 2 }}>{sub}</span>
+        </span>
+      </div>
+      <div aria-hidden="true" style={{ height: 1, background: G.rule, margin: "14px 0 12px" }} />
+      {children}
+    </section>
   );
 }
 
@@ -201,13 +216,12 @@ type Tile = { icon: LucideIcon; label: string; value: string; fg: string; sub: s
 function KpiTile({ k }: { k: Tile }) {
   const Icon = k.icon;
   return (
-    <div className={k.wide ? "fl-wide" : undefined} style={{ position: "relative", overflow: "hidden", minWidth: 0, display: "flex", flexDirection: "column", backgroundColor: M.card, borderRadius: 16, padding: 12, boxShadow: SHADOW_CARD }}>
-      <span aria-hidden="true" style={{ position: "absolute", right: -26, top: -26, width: 76, height: 76, borderRadius: "50%", backgroundColor: `color-mix(in srgb, ${k.rail} 16%, ${M.card})`, opacity: 0.65 }} />
+    <div className={k.wide ? "fl-wide" : undefined} style={{ position: "relative", overflow: "hidden", minWidth: 0, display: "flex", flexDirection: "column", background: `linear-gradient(150deg,${M.card} 45%,${mixInto(k.rail, 15)})`, borderRadius: 16, padding: 12, boxShadow: `inset 0 1px 0 ${M.card}, inset 0 0 0 1px rgba(255,255,255,.6), 0 1px 2px rgba(31,29,27,.04), 0 10px 22px -14px rgba(107,92,50,.35)` }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <span aria-hidden="true" style={{ width: 30, height: 30, flex: "none", borderRadius: 10, backgroundColor: k.rail, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 10px -4px ${k.rail}` }}>
+        <span aria-hidden="true" style={{ width: 30, height: 30, flex: "none", borderRadius: 10, backgroundColor: k.rail, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `inset 0 1px 0 rgba(255,255,255,.28), 0 6px 12px -6px ${k.rail}` }}>
           <Icon size={15} strokeWidth={2} color="#FFFFFF" />
         </span>
-        <span style={{ height: 20, display: "inline-flex", alignItems: "center", gap: 4, padding: "0 7px", borderRadius: 999, backgroundColor: M.card, color: k.rail, fontSize: 10, fontWeight: 700, letterSpacing: 0.3, whiteSpace: "nowrap", boxShadow: `0 0 0 1px color-mix(in srgb, ${k.rail} 25%, ${M.card})` }}>
+        <span style={{ height: 20, display: "inline-flex", alignItems: "center", gap: 4, padding: "0 7px", borderRadius: 999, backgroundColor: M.card, color: k.rail, fontSize: 10, fontWeight: 700, letterSpacing: 0.3, whiteSpace: "nowrap", boxShadow: `0 0 0 1px ${mixInto(k.rail, 22)}` }}>
           <span aria-hidden="true" style={{ width: 5, height: 5, borderRadius: "50%", backgroundColor: k.rail }} />
           {k.tag}
         </span>
@@ -263,78 +277,81 @@ function FloorDayView({ day, today }: { day: string; today: string }) {
   const filtering = q.trim().length > 0 || issuesOnly;
   const t = layout.totals;
   const tiles: Tile[] = [
-    { icon: LogIn, label: "Punched in", value: `${t.punched}`, fg: M.raisin, sub: "", rail: DATA.teal, tag: "TODAY" },
-    { icon: UserCheck, label: "Still in", value: `${t.stillIn}`, fg: M.raisin, sub: "", rail: DATA.moss, tag: "LIVE" },
-    { icon: Package, label: "Pcs done today", value: fmtPcs(t.done), fg: M.raisin, sub: "", rail: DATA.so, tag: "TODAY" },
-    { icon: Gauge, label: "Floor efficiency", value: effText(t.effPct), fg: effColor(t.effPct), sub: overallText(t.overallPct, t.helperMinutes), rail: DATA.amber, tag: "SO FAR" },
-    { icon: Clock, label: "Non-prod 1h+", value: `${t.overHour}`, fg: t.overHour > 0 ? DATA.red : M.raisin, sub: "", rail: DATA.red, tag: "LIVE", wide: true },
+    { icon: LogIn, label: "Punched in", value: `${t.punched}`, fg: M.raisin, sub: "", rail: "#3E6570", tag: "TODAY" },
+    { icon: UserCheck, label: "Still in", value: `${t.stillIn}`, fg: M.raisin, sub: "", rail: "#4F7C3A", tag: "LIVE" },
+    { icon: Package, label: "Pcs done today", value: fmtPcs(t.done), fg: M.raisin, sub: "", rail: "#6B5C32", tag: "TODAY" },
+    { icon: Gauge, label: "Floor efficiency", value: effText(t.effPct), fg: effColor(t.effPct), sub: overallText(t.overallPct, t.helperMinutes), rail: "#9C6F1E", tag: "SO FAR" },
+    { icon: Clock, label: "Non-prod 1h+", value: `${t.overHour}`, fg: t.overHour > 0 ? DATA.red : M.raisin, sub: "", rail: "#9A3A2D", tag: "LIVE", wide: true },
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
       <style>{CSS}</style>
-      <div>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 24, maxWidth: "100%", padding: "0 10px", borderRadius: 999, backgroundColor: pastDay ? M.divider : "#EAF3EC", color: pastDay ? M.ink : "#2F5E3C", fontSize: 11, fontWeight: 700, letterSpacing: 0.2, whiteSpace: "nowrap", overflow: "hidden" }}>
-          <span style={{ flex: "none", width: 6, height: 6, borderRadius: "50%", backgroundColor: pastDay ? M.muted : "#3E7A4F" }} />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-            {pastDay
-              ? `END OF DAY · ${dLab(data?.date ?? day)}${data?.frozen ? " · saved copy" : " · recomputed (no saved copy)"}`
-              : `LIVE · ${data?.asOf} · every 3 min`}
-          </span>
-        </span>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <SearchBox q={q} onQ={setQ} />
-        <button
-          type="button"
-          aria-pressed={issuesOnly}
-          aria-label="Issues only"
-          title="Issues only"
-          onClick={() => setIssuesOnly((v) => !v)}
-          style={{ flex: "none", width: 44, height: 44, borderRadius: "50%", border: "none", padding: 0, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backgroundColor: issuesOnly ? DATA.red : M.card, color: issuesOnly ? "#FFFFFF" : DATA.red, boxShadow: issuesOnly ? "0 6px 14px -6px rgba(154,58,45,.55)" : "inset 0 0 0 1.5px #E8B2A1" }}
-        >
-          <TriangleAlert size={18} strokeWidth={2} aria-hidden="true" />
-          {!issuesOnly ? (
-            <span style={{ position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, boxSizing: "border-box", padding: "0 5px", borderRadius: 999, backgroundColor: DATA.red, color: "#FFFFFF", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 0 2px ${M.paper}` }}>
-              {issueCount}
+      <section aria-label="Floor live" style={glassCard}>
+        <div style={{ display: "flex", marginBottom: 12 }}>
+          <span style={{ minWidth: 0, display: "inline-flex", alignItems: "center", gap: 6, height: 24, maxWidth: "100%", padding: "0 10px", borderRadius: 999, backgroundColor: pastDay ? M.divider : "#EAF3EC", color: pastDay ? M.ink : "#2F5E3C", fontSize: 11, fontWeight: 700, letterSpacing: 0.2, whiteSpace: "nowrap", overflow: "hidden" }}>
+            <span style={{ flex: "none", width: 6, height: 6, borderRadius: "50%", backgroundColor: pastDay ? M.muted : "#3E7A4F" }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              {pastDay
+                ? `END OF DAY · ${dLab(data?.date ?? day)}${data?.frozen ? " · saved copy" : " · recomputed (no saved copy)"}`
+                : `LIVE · ${data?.asOf} · every 3 min`}
             </span>
-          ) : null}
-        </button>
-      </div>
-
-      <div role="group" aria-label="Floor totals" className="fl-tiles">
-        {tiles.map((k) => <KpiTile key={k.label} k={k} />)}
-      </div>
-
-      <Legend />
-
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
-        <GroupTitle title="PRODUCTION" sub="pieces done today · efficiency so far" />
-        {layout.production.length === 0 ? <EmptyNote text={filtering ? "No production workers match." : "Nobody on the floor yet."} /> : null}
-        <div className="fl-cards">
-          {layout.production.map((d) => (
-            <DeptCard
-              key={d.code}
-              name={d.name}
-              rows={d.rows}
-              production
-              effPct={d.effPct}
-              overallPct={d.overallPct}
-              helperMinutes={d.helperMinutes}
-              completed={<CategoryStrip code={d.code} name={d.name} data={completed.data} showUsual live={!pastDay} onOpen={detail.open} />}
-            />
-          ))}
+          </span>
         </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
-        <GroupTitle title="NON-PRODUCTION" sub="time scanned in · red after 1 hour · day’s pieces and efficiency still shown" />
-        {layout.nonProduction.length === 0 ? <EmptyNote text={filtering ? "No non-production workers match." : "Nobody in non-production."} /> : null}
-        <div className="fl-cards">
-          {layout.nonProduction.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production={false} effPct={null} />)}
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <SearchBox q={q} onQ={setQ} />
+            <button
+              type="button"
+              aria-pressed={issuesOnly}
+              aria-label="Issues only"
+              title="Issues only"
+              onClick={() => setIssuesOnly((v) => !v)}
+              style={{ flex: "none", width: 44, height: 44, borderRadius: "50%", border: "none", padding: 0, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backgroundColor: issuesOnly ? "#9A3A2D" : M.card, color: issuesOnly ? "#FFFFFF" : "#9A3A2D", boxShadow: issuesOnly ? "0 6px 14px -6px rgba(154,58,45,.55)" : "inset 0 0 0 1.5px #E8B2A1" }}
+            >
+              <TriangleAlert size={18} strokeWidth={2} aria-hidden="true" />
+              {!issuesOnly ? (
+                <span style={{ position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, boxSizing: "border-box", padding: "0 5px", borderRadius: 999, backgroundColor: "#9A3A2D", color: "#FFFFFF", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 0 2px ${M.paper}` }}>
+                  {issueCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+          <div role="group" aria-label="Floor totals" className="fl-tiles">
+            {tiles.map((k) => <KpiTile key={k.label} k={k} />)}
+          </div>
+          <Legend />
         </div>
-      </div>
+      </section>
+
+      <GlassSection icon={Factory} name="Production" sub="Pieces done today · efficiency so far">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+          {layout.production.length === 0 ? <EmptyNote text={filtering ? "No production workers match." : "Nobody on the floor yet."} /> : null}
+          <div className="fl-cards">
+            {layout.production.map((d) => (
+              <DeptCard
+                key={d.code}
+                name={d.name}
+                rows={d.rows}
+                production
+                effPct={d.effPct}
+                overallPct={d.overallPct}
+                helperMinutes={d.helperMinutes}
+                completed={<CategoryStrip code={d.code} name={d.name} data={completed.data} showUsual live={!pastDay} onOpen={detail.open} />}
+              />
+            ))}
+          </div>
+        </div>
+      </GlassSection>
+
+      <GlassSection icon={Users} name="Non-production" sub="Time scanned in · red after 1 hour · day’s pieces and efficiency still shown">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 10 }}>
+          {layout.nonProduction.length === 0 ? <EmptyNote text={filtering ? "No non-production workers match." : "Nobody in non-production."} /> : null}
+          <div className="fl-cards">
+            {layout.nonProduction.map((d) => <DeptCard key={d.code} name={d.name} rows={d.rows} production={false} effPct={null} />)}
+          </div>
+        </div>
+      </GlassSection>
       {detail.target ? <CompletedDetail target={detail.target} data={completed.data} onClose={detail.close} /> : null}
     </div>
   );
@@ -345,7 +362,7 @@ const SUM_GRID = "minmax(0,1fr) 32px 36px 40px 40px 30px";
 
 function SummaryRow({ r }: { r: FloorSummaryRow }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: SUM_GRID, gap: 6, alignItems: "center", minHeight: 38, padding: "4px 14px", borderTop: `1px solid ${M.divider}`, backgroundColor: r.overHourDays > 0 ? RED_ROW : M.card, fontSize: 13, ...TNUM }}>
+    <div style={{ display: "grid", gridTemplateColumns: SUM_GRID, gap: 6, alignItems: "center", minHeight: 38, padding: "4px 14px", borderTop: `1px solid ${ROW_LINE}`, backgroundColor: r.overHourDays > 0 ? RED_ROW : "transparent", fontSize: 13, ...TNUM }}>
       <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
         <span title={r.name} style={{ minWidth: 0, fontWeight: 600, color: M.raisin, ...NOWRAP_ELLIPSIS }}>{r.name}</span>
         {r.isHelper ? <HelperPill /> : null}
@@ -364,12 +381,12 @@ function SummaryCard({ name, rows, completed = null }: { name: string; rows: Flo
   const shown = open ? rows : rows.slice(0, ROW_LIMIT);
   return (
     <div style={{ ...panel, overflow: "hidden" }}>
-      <div style={{ padding: "10px 14px", backgroundColor: HEAD_BG, borderBottom: `1px solid ${M.divider}` }}>
+      <div style={{ padding: "10px 14px", backgroundColor: HEAD_BG, borderBottom: `1px solid ${ROW_LINE}` }}>
         <span style={{ fontSize: 14, fontWeight: 700, color: M.raisin }}>{name}</span>
         <span style={{ fontSize: 13, color: M.ink }}> · {rows.length}</span>
       </div>
       {completed}
-      <div style={{ display: "grid", gridTemplateColumns: SUM_GRID, gap: 6, padding: "6px 14px", backgroundColor: M.card, fontSize: 11.5, fontWeight: 600, color: M.muted }}>
+      <div style={{ display: "grid", gridTemplateColumns: SUM_GRID, gap: 6, padding: "7px 14px", fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: M.taupe }}>
         <span>Worker</span>
         <span style={{ textAlign: "right" }}>Days</span>
         <span style={{ textAlign: "right" }}>Done</span>
@@ -397,41 +414,42 @@ function FloorSummaryView({ period, today, onLiveNow }: { period: Period; today:
   }
   const saved = data?.savedDays.length ?? 0;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
       <style>{CSS}</style>
-      <div style={{ fontSize: 12.5, color: M.ink }}>
-        {dLab(from)} → {dLab(to)} · from {saved} saved day{saved === 1 ? "" : "s"} (one copy a day, saved after midnight)
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <SearchBox q={q} onQ={setQ} />
-        <button
-          type="button"
-          onClick={onLiveNow}
-          style={{ flex: "none", height: 44, padding: "0 14px", borderRadius: 14, border: "none", backgroundColor: M.card, color: "#2F5E3C", boxShadow: "inset 0 0 0 1.5px #4F7C3A", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#4F7C3A" }} />
-          Live now
-        </button>
-      </div>
-      {saved === 0 ? (
-        <div style={{ ...panel, padding: "20px 18px", fontSize: 13, lineHeight: 1.5, color: M.ink }}>
-          No saved days in this period yet. Each day is saved after midnight; pick a day (or Live now) to see the floor.
+      <GlassSection icon={CalendarRange} name="Floor summary" sub={`${dLab(from)} → ${dLab(to)} · from ${saved} saved day${saved === 1 ? "" : "s"} (one copy a day, saved after midnight)`}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <SearchBox q={q} onQ={setQ} />
+            <button
+              type="button"
+              onClick={onLiveNow}
+              style={{ flex: "none", height: 44, padding: "0 14px", borderRadius: 14, border: "none", backgroundColor: M.card, color: "#2F5E3C", boxShadow: "inset 0 0 0 1.5px #4F7C3A", fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#4F7C3A" }} />
+              Live now
+            </button>
+          </div>
+          {saved === 0 ? (
+            <div style={{ ...panel, padding: "20px 18px", fontSize: 13, lineHeight: 1.5, color: M.ink }}>
+              No saved days in this period yet. Each day is saved after midnight; pick a day (or Live now) to see the floor.
+            </div>
+          ) : (
+            <div className="fl-cards">
+              {cards.map((c) => (
+                <SummaryCard
+                  key={c.code}
+                  name={c.name}
+                  rows={c.rows}
+                  completed={<CategoryStrip code={c.code} name={c.name} data={completed.data} showUsual={false} live={false} onOpen={detail.open} />}
+                />
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 11.5, lineHeight: 1.5, color: M.ink, padding: "0 2px" }}>
+            Grouped by home department. Days = days punched in · Done = pieces · Eff. = earned ÷ worked minutes over the period (red below 80%) · NP h = hours in non-production departments · 1h+ = days in a non-production department for over an hour (red row).
+          </div>
         </div>
-      ) : (
-        <div className="fl-cards">
-          {cards.map((c) => (
-            <SummaryCard
-              key={c.code}
-              name={c.name}
-              rows={c.rows}
-              completed={<CategoryStrip code={c.code} name={c.name} data={completed.data} showUsual={false} live={false} onOpen={detail.open} />}
-            />
-          ))}
-        </div>
-      )}
-      <div style={{ fontSize: 11.5, lineHeight: 1.5, color: M.ink, padding: "0 2px" }}>
-        Grouped by home department. Days = days punched in · Done = pieces · Eff. = earned ÷ worked minutes over the period (red below 80%) · NP h = hours in non-production departments · 1h+ = days in a non-production department for over an hour (red row).
-      </div>
+      </GlassSection>
       {detail.target ? <CompletedDetail target={detail.target} data={completed.data} onClose={detail.close} /> : null}
     </div>
   );
