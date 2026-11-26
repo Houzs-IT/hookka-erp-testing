@@ -720,6 +720,11 @@ export default function ProductionPage({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- setDatesSeeded retained for future flip if needed; intentionally unused after F1
   const [datesSeeded, setDatesSeeded] = useState<boolean>(true);
   const { data: workersResp } = useCachedJson<{ success?: boolean; data?: WorkerRec[] }>("/api/workers");
+  // Per-WIP raw-material status from the MRP (owner 2026-11-23: 「是在这里看到
+  // stocks status 不是新的界面 多一个column而已」) — one extra "Stock" column on
+  // the existing sheet. Keyed "poId|wipKey"; "poId|" = lines not tied to a WIP.
+  const { data: stockResp } = useCachedJson<{ success?: boolean; data?: Record<string, "READY" | "WAITING_PO" | "SHORT"> }>("/api/mrp/stock-status");
+  const stockStatus = stockResp?.success ? stockResp.data : undefined;
   const { data: warehouseResp } = useCachedJson<{ success?: boolean; data?: Array<{ rack: string; status: string; productCode?: string; customerName?: string }> }>("/api/warehouse");
   // OEM Tag/Label marking — per customer × category (customers.oem_marking).
   // Shown on the Fab Cut / Fab Sew sticker Notes so the line knows to attach
@@ -3759,7 +3764,7 @@ export default function ProductionPage({
     _field: "dueDate" | "completedDate",
     value: string,
     onChange: (v: string) => void,
-    placeholder = "— Set —",
+    placeholder = "— Set —",
   ) => {
     const has = !!value;
     return (
@@ -3773,7 +3778,7 @@ export default function ProductionPage({
         title="Click to edit date"
       >
         <span
-          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full ${
+          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full min-w-[64px] ${
             has
               ? "bg-[#F5F2EE] text-[#1F1D1B]"
               : "text-[#BDB4A8] border border-dashed border-[#E6E0D9] hover:bg-[#FFF8E6]"
@@ -3887,7 +3892,7 @@ export default function ProductionPage({
     renderDateCell(row, "dueDate", row.dueDate, (v) => applyDueDateBound(row, v));
 
   // Clickable completion date cell. Shows the stamped date in a cyan
-  // pill when present, or a subtle "— Set —" placeholder when empty. The
+  // pill when present, or a subtle "— Set —" placeholder (non-breaking spaces) when empty. The
   // full cell area is a native date picker, matching the dept column pill
   // UX so the user can fill/clear from one place.
   //
@@ -3931,7 +3936,7 @@ export default function ProductionPage({
         }
       >
         <span
-          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full ${
+          className={`flex items-center justify-center px-1.5 py-[2px] rounded-sm text-[10px] font-semibold whitespace-nowrap leading-tight w-full min-w-[64px] ${
             has
               ? "bg-[#E0EDF0] text-[#3E6570]"
               : isPartial
@@ -3943,7 +3948,7 @@ export default function ProductionPage({
             ? fmtShortDate(row.completedDate)
             : isPartial
             ? `${done}/${total}`
-            : "— Set —"}
+            : "— Set —"}
         </span>
       </div>
     );
@@ -4117,6 +4122,46 @@ export default function ProductionPage({
                 {holdReason}
               </span>
             )}
+          </span>
+        );
+      },
+    },
+    // Stock (MRP, 2026-11-23): are the raw materials THIS department issues for
+    // this WIP covered (per dept since 2026-11-25)? READY =
+    // all from stock, WAITING PO = the rest is on an open PO, SHORT = not
+    // covered. "—" = nothing left to issue (no BOM materials, or already
+    // deducted when the WIP's job card completed). Toggle it in Columns.
+    {
+      key: "stockStatus",
+      label: "Stock",
+      type: "text",
+      width: "104px",
+      align: "center",
+      render: (_v, row) => {
+        if (!stockStatus) return <span className="text-[11px] text-[#9CA3AF]">…</span>;
+        // Only the materials THIS department issues (owner 2026-11-25). A Fab
+        // Cut row is one merged cut per order + fabric (its wipKey is not a BOM
+        // WIP key): it reads the order's FAB_CUT status ("poId|@FAB_CUT").
+        const st =
+          (row.wipKey ?? "").endsWith("::FAB_CUT")
+            ? stockStatus[`${row.poId}|@FAB_CUT`]
+            : stockStatus[`${row.poId}|${row.wipKey ?? ""}|@${activeTab}`];
+        if (!st) {
+          return (
+            <span className="text-[11px] text-[#9CA3AF]" title="Nothing left to issue — no BOM materials, or already deducted">
+              —
+            </span>
+          );
+        }
+        const cfg =
+          st === "READY"
+            ? { label: "Ready", cls: "bg-[#E7F3EC] text-[#1E6B3F]", tip: "All materials covered by stock" }
+            : st === "WAITING_PO"
+              ? { label: "Waiting PO", cls: "bg-[#E8F0F8] text-[#1F4E6B]", tip: "Part of the materials is still on an open PO" }
+              : { label: "Short", cls: "bg-[#FDECEA] text-[#B42318]", tip: "Materials not covered — see Planning > MRP" };
+        return (
+          <span className={`inline-block whitespace-nowrap rounded px-2 py-0.5 text-[11px] font-bold ${cfg.cls}`} title={cfg.tip}>
+            {cfg.label}
           </span>
         );
       },
@@ -4372,7 +4417,7 @@ export default function ProductionPage({
         );
       },
     },
-  ], [activeTab, upstreamDepts, isTablet]);
+  ], [activeTab, upstreamDepts, isTablet, stockStatus]);
 
   const activeDept = DEPARTMENTS.find((d) => d.code === activeTab);
 

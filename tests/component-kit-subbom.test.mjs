@@ -220,9 +220,10 @@ const flat = (p) => read(p).replace(/\s+/g, " ");
 
 test("cascade explodes kits on the FINAL resolved lines", () => {
   const f = flat("src/api/lib/po-cost-cascade.ts");
-  assert.match(f, /import \{ explodeKits \} from "\.\/component-bom"/);
-  // resolveBomMaterials wraps the raw resolver + explodes.
-  assert.match(f, /const lines = await resolveBomMaterialsRaw\(db, po\); return explodeKits\(db, lines\)/);
+  assert.match(f, /import \{ explodeKits, loadAllKits \} from "\.\/component-bom"/);
+  // resolveBomMaterials wraps the raw resolver + explodes (bulk callers pass
+  // their preloaded kits through).
+  assert.match(f, /const lines = await resolveBomMaterialsRaw\(db, po, cache\); return explodeKits\(db, lines, cache\?\.kitsByParent\)/);
   assert.match(f, /async function resolveBomMaterialsRaw\(/);
 });
 

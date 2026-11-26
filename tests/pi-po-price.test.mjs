@@ -34,3 +34,14 @@ test("the detail page shows the PO price only when it differs", () => {
   const src = readFileSync("src/pages/procurement/PurchaseInvoiceDetail.tsx", "utf8");
   assert.match(src, /it\.poUnitPriceSen != null && it\.poUnitPriceSen !== it\.unitPriceSen/);
 });
+
+test("the material's base unit is attached by code, case-blind; a failing lookup leaves lines as they are", async () => {
+  const { attachMaterialUnits } = await import("../src/api/routes/purchase-invoices.ts");
+  const rm = [{ itemCode: "FAB-01", baseUOM: "MTR" }];
+  const [a, b] = await attachMaterialUnits(db(rm), "org1", [line({ materialCode: " fab-01 " }), line({ materialCode: "OTHER" })]);
+  assert.equal(a.materialUnit, "MTR");
+  assert.equal(b.materialUnit, null);
+  const broken = { prepare: () => { throw new Error("db down"); } };
+  const [c] = await attachMaterialUnits(broken, "org1", [line({ materialCode: "FAB-01" })]);
+  assert.equal(c.materialUnit, undefined);
+});

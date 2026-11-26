@@ -27,6 +27,7 @@ import type { Context } from "hono";
 import type { Env } from "../worker";
 import { hasPermission } from "../lib/rbac";
 import { apiRateLimit } from "../lib/api-rate-limit";
+import { mailSoon } from "../lib/meeting-mail";
 
 const app = new Hono<Env>();
 export const publicMeetings = new Hono<Env>();
@@ -120,6 +121,13 @@ async function readJson(c: Context<Env>): Promise<Record<string, unknown> | null
   }
 }
 const jsonInit = (method: string, body: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+
+/** After a booking, change or cancellation, send the emails it made through Hookka's Mail Center (lib/meeting-mail.ts). */
+async function thenMail(c: Context<Env>, res: Promise<Response>): Promise<Response> {
+  const out = await res;
+  if (out.ok) mailSoon(c, false);
+  return out;
+}
 const UNREADABLE = "That could not be read. Please try again.";
 const GONE = "That meeting is not there any more.";
 
@@ -210,6 +218,8 @@ app.get("/unread-count", async (c) => {
   if (hub instanceof Response) return hub;
   const res = await relay(c, hubFetch(hub, "/unread"));
   if (!res.ok) return res;
+  // Every signed-in page polls this, so it also sends waiting meeting emails (reminders too), at most once a minute.
+  mailSoon(c, true);
   const n = Number(((await res.json()) as { unread?: unknown }).unread);
   return c.json({ count: Number.isFinite(n) && n > 0 ? n : 0 });
 });
@@ -218,6 +228,13 @@ app.post("/notifications/read", async (c) => {
   const hub = await hubFor(c);
   if (hub instanceof Response) return hub;
   return relay(c, hubFetch(hub, "/notifications/read", { method: "POST" }));
+});
+
+// A new Google Meet link for the booking window (the hub creates it).
+app.post("/meet-link", async (c) => {
+  const hub = await hubFor(c);
+  if (hub instanceof Response) return hub;
+  return relay(c, hubFetch(hub, "/meet-link", { method: "POST" }));
 });
 
 app.get("/meetings/:id", async (c) => {
@@ -233,7 +250,7 @@ app.post("/meetings", async (c) => {
   if (hub instanceof Response) return hub;
   const body = await readJson(c);
   if (!body) return c.json({ error: UNREADABLE }, 400);
-  return relay(c, hubFetch(hub, "/meetings", jsonInit("POST", body)));
+  return thenMail(c, relay(c, hubFetch(hub, "/meetings", jsonInit("POST", body))));
 });
 
 app.patch("/meetings/:id", async (c) => {
@@ -243,7 +260,7 @@ app.patch("/meetings/:id", async (c) => {
   if (!ID.test(id)) return c.json({ error: GONE }, 404);
   const body = await readJson(c);
   if (!body) return c.json({ error: UNREADABLE }, 400);
-  return relay(c, hubFetch(hub, `/meetings/${id}`, jsonInit("PATCH", body)));
+  return thenMail(c, relay(c, hubFetch(hub, `/meetings/${id}`, jsonInit("PATCH", body))));
 });
 
 app.post("/meetings/:id/:act{cancel|start|end}", async (c) => {
@@ -251,7 +268,7 @@ app.post("/meetings/:id/:act{cancel|start|end}", async (c) => {
   if (hub instanceof Response) return hub;
   const id = c.req.param("id");
   if (!ID.test(id)) return c.json({ error: GONE }, 404);
-  return relay(c, hubFetch(hub, `/meetings/${id}/${c.req.param("act")}`, jsonInit("POST", (await readJson(c)) ?? {})));
+  return thenMail(c, relay(c, hubFetch(hub, `/meetings/${id}/${c.req.param("act")}`, jsonInit("POST", (await readJson(c)) ?? {}))));
 });
 
 app.post("/meetings/:id/files", async (c) => {
@@ -374,6 +391,17 @@ publicMeetings.get("/links/:code/slots", async (c) => {
   return relay(c, hubFetch(hub, `/public/links/${code}/slots?day=${day}`));
 });
 
+// One day of a link: each room's taken times (no titles, no people), for the guest to pick a room and time.
+publicMeetings.get("/links/:code/day", async (c) => {
+  const code = c.req.param("code");
+  const day = c.req.query("day") ?? "";
+  if (!LINK_CODE.test(code)) return c.json({ error: DEAD }, 404);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return c.json({ error: "Pick a day." }, 400);
+  const hub = guestHub(c);
+  if (hub instanceof Response) return hub;
+  return relay(c, hubFetch(hub, `/public/links/${code}/day?day=${day}`));
+});
+
 publicMeetings.post("/links/:code/book", async (c) => {
   const code = c.req.param("code");
   if (!LINK_CODE.test(code)) return c.json({ error: DEAD }, 404);
@@ -381,9 +409,9 @@ publicMeetings.post("/links/:code/book", async (c) => {
   if (hub instanceof Response) return hub;
   const b = await readJson(c);
   if (!b) return c.json({ error: UNREADABLE }, 400);
-  // Only these five fields reach the hub; the guest cannot pick a room or a host.
-  const body = { start: b.start, name: b.name, phone: b.phone, email: b.email, company: b.company };
-  return relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body)));
+  // Only these fields reach the hub. The guest picks the room and the time range; never a host or attendees.
+  const body = { start: b.start, end: b.end, roomId: b.roomId, name: b.name, phone: b.phone, email: b.email, company: b.company, department: b.department, title: b.title, people: b.people };
+  return thenMail(c, relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body))));
 });
 
 publicMeetings.get("/bookings/:token", async (c) => {
@@ -399,7 +427,7 @@ publicMeetings.post("/bookings/:token/cancel", async (c) => {
   if (!TOKEN.test(token)) return c.json({ error: "Booking not found" }, 404);
   const hub = guestHub(c);
   if (hub instanceof Response) return hub;
-  return relay(c, hubFetch(hub, `/public/bookings/${token}/cancel`, { method: "POST" }));
+  return thenMail(c, relay(c, hubFetch(hub, `/public/bookings/${token}/cancel`, { method: "POST" })));
 });
 
 export default app;

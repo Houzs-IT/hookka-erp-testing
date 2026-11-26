@@ -20,6 +20,7 @@ import { Hono } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
+import { memoizeSelfApply, runSelfApply } from "../lib/self-apply";
 import { removeStoredFile } from "./files";
 import {
   personKey,
@@ -37,8 +38,7 @@ const WORKER_DEPARTMENT = "Production";
 // exists only because this runs and is AWAITED before the first read or write.
 let _mig: Promise<void> | null = null;
 export function ensureOrgReporting(db: D1Database): Promise<void> {
-  if (_mig) return _mig;
-  _mig = (async () => {
+  return memoizeSelfApply(() => _mig, (p) => { _mig = p; }, async () => {
     await db
       .prepare(
         `CREATE TABLE IF NOT EXISTS org_reporting (
@@ -53,8 +53,7 @@ export function ensureOrgReporting(db: D1Database): Promise<void> {
         "CREATE INDEX IF NOT EXISTS idx_org_reporting_manager ON org_reporting (manager_key)",
       )
       .run();
-  })();
-  return _mig;
+  });
 }
 
 /** For tests — reset the module-level migration cache. */
@@ -70,16 +69,14 @@ export function _resetOrgReportingMigForTests(): void {
 // (source, id) the way org_reporting has to be.
 let _photoMig: Promise<void> | null = null;
 function ensureOrgPhotoColumns(db: D1Database): Promise<void> {
-  if (_photoMig) return _photoMig;
-  _photoMig = (async () => {
-    await db
-      .prepare('ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_file_id TEXT')
-      .run();
-    await db
-      .prepare('ALTER TABLE workers ADD COLUMN IF NOT EXISTS photo_file_id TEXT')
-      .run();
-  })();
-  return _photoMig;
+  return memoizeSelfApply(() => _photoMig, (p) => { _photoMig = p; }, async () => {
+    // runSelfApply skips a column already there — no ACCESS EXCLUSIVE lock on
+    // users / workers per cold request (BUG-2026-11-24-556).
+    await runSelfApply(db, "org-chart.photo", [
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_file_id TEXT',
+      'ALTER TABLE workers ADD COLUMN IF NOT EXISTS photo_file_id TEXT',
+    ]);
+  });
 }
 
 /** For tests — reset the module-level migration cache. */

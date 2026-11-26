@@ -63,7 +63,8 @@ import {
   repairComponentScale,
 } from "../../lib/repair-scope";
 import { deriveTopLevelWipKey } from "./bom-wip-breakdown";
-import { explodeKits } from "./component-bom";
+import { explodeKits, loadAllKits } from "./component-bom";
+import { DEPT_ORDER } from "./lead-times";
 
 type RMBatchRow = {
   id: string;
@@ -78,7 +79,7 @@ type RMBatchRow = {
   notes: string | null;
 };
 
-type ProductionOrderRow = {
+export type ProductionOrderRow = {
   id: string;
   poNo: string;
   productId: string | null;
@@ -107,7 +108,7 @@ type ProductionOrderRow = {
   repairscope?: string | null;
 };
 
-type BomVersionRow = {
+export type BomVersionRow = {
   id: string;
   productId: string;
   productCode: string | null;
@@ -301,21 +302,83 @@ function collectTreeMaterials(
 // via autoDetect=LEG also pulls its screws. Every consumer (consumption,
 // costing, shortage report) goes through here, so the kit is intrinsic to the
 // BOM everywhere. See component-bom.ts.
+// Optional read-through cache for BULK callers (the MRP walks ~500 production
+// orders in one request). Every map is pre-loaded once by the caller; a miss
+// in a provided map means "no such row" (no DB fallback), so a cached run
+// issues no per-PO queries for these four tables. Single-PO callers (the
+// consume path) pass nothing and behave exactly as before.
+export type BomResolveCache = {
+  versionsByProductId: Map<string, BomVersionRow>;
+  versionsByProductCode: Map<string, BomVersionRow>;
+  templatesByProductCode: Map<string, { id: string; wipComponents: string | null }>;
+  rmByItemCode: Map<string, Record<string, unknown>>;
+  rmByDescriptionLower: Map<string, Record<string, unknown>>;
+  kitsByParent: Map<string, Record<string, unknown>[]>;
+};
+
+export async function loadBomResolveCache(db: D1Database): Promise<BomResolveCache> {
+  const [vers, tpls, rms] = await Promise.all([
+    db
+      .prepare("SELECT id, productId, productCode, status, tree FROM bom_versions WHERE status = 'ACTIVE'")
+      .all<BomVersionRow>(),
+    db
+      .prepare(
+        "SELECT id, productCode, wipComponents FROM bom_templates WHERE versionStatus = 'ACTIVE' ORDER BY effectiveFrom DESC",
+      )
+      .all<{ id: string; productCode: string | null; wipComponents: string | null }>(),
+    db.prepare("SELECT * FROM raw_materials").all<Record<string, unknown>>(),
+  ]);
+  const cache: BomResolveCache = {
+    versionsByProductId: new Map(),
+    versionsByProductCode: new Map(),
+    templatesByProductCode: new Map(),
+    rmByItemCode: new Map(),
+    rmByDescriptionLower: new Map(),
+    kitsByParent: new Map(),
+  };
+  for (const v of vers.results ?? []) {
+    if (v.productId && !cache.versionsByProductId.has(v.productId)) cache.versionsByProductId.set(v.productId, v);
+    if (v.productCode && !cache.versionsByProductCode.has(v.productCode)) cache.versionsByProductCode.set(v.productCode, v);
+  }
+  // ORDER BY effectiveFrom DESC → first row per productCode wins, same as the
+  // single-PO query's LIMIT 1.
+  for (const t of tpls.results ?? []) {
+    if (t.productCode && !cache.templatesByProductCode.has(t.productCode)) {
+      cache.templatesByProductCode.set(t.productCode, { id: t.id, wipComponents: t.wipComponents });
+    }
+  }
+  for (const r of rms.results ?? []) {
+    const code = String(r.itemCode ?? "");
+    if (code && !cache.rmByItemCode.has(code)) cache.rmByItemCode.set(code, r);
+    const desc = String(r.description ?? "").toLowerCase();
+    if (desc && !cache.rmByDescriptionLower.has(desc)) cache.rmByDescriptionLower.set(desc, r);
+  }
+  cache.kitsByParent = await loadAllKits(db);
+  return cache;
+}
+
 async function resolveBomMaterials(
   db: D1Database,
   po: ProductionOrderRow,
+  cache?: BomResolveCache,
 ): Promise<MaterialLine[]> {
-  const lines = await resolveBomMaterialsRaw(db, po);
-  return explodeKits(db, lines);
+  const lines = await resolveBomMaterialsRaw(db, po, cache);
+  return explodeKits(db, lines, cache?.kitsByParent);
 }
 
 async function resolveBomMaterialsRaw(
   db: D1Database,
   po: ProductionOrderRow,
+  cache?: BomResolveCache,
 ): Promise<MaterialLine[]> {
   // Try ACTIVE bom_version by productId first, productCode second.
   let version: BomVersionRow | null = null;
-  if (po.productId) {
+  if (cache) {
+    version =
+      (po.productId ? cache.versionsByProductId.get(po.productId) : undefined) ??
+      (po.productCode ? cache.versionsByProductCode.get(po.productCode) : undefined) ??
+      null;
+  } else if (po.productId) {
     version = await db
       .prepare(
         "SELECT id, productId, productCode, status, tree FROM bom_versions WHERE productId = ? AND status = 'ACTIVE' LIMIT 1",
@@ -323,7 +386,15 @@ async function resolveBomMaterialsRaw(
       .bind(po.productId)
       .first<BomVersionRow>();
   }
-  if (!version && po.productCode) {
+  // A version found by productId must ALSO be for this product code
+  // (BUG-2026-11-24-552): 2025 demo bom_versions rows (bom-v-1..3) share
+  // productIds with real products — prod-5 is 1003(A)-(K) but bom-v-3 is a
+  // 5530-1A sofa — so the order picked up the sofa's materials instead of its
+  // own BOM template. The MRP, RM deduction and costing all follow the BOM.
+  if (version && version.productCode && po.productCode && version.productCode !== po.productCode) {
+    version = cache ? cache.versionsByProductCode.get(po.productCode) ?? null : null;
+  }
+  if (!cache && !version && po.productCode) {
     version = await db
       .prepare(
         "SELECT id, productId, productCode, status, tree FROM bom_versions WHERE productCode = ? AND status = 'ACTIVE' LIMIT 1",
@@ -362,12 +433,14 @@ async function resolveBomMaterialsRaw(
   // Walk each root with collectTreeMaterials; the helper accumulates into
   // `acc` across siblings.
   if (po.productCode) {
-    const tplRow = await db
-      .prepare(
-        "SELECT id, wipComponents FROM bom_templates WHERE productCode = ? AND versionStatus = 'ACTIVE' ORDER BY effectiveFrom DESC LIMIT 1",
-      )
-      .bind(po.productCode)
-      .first<{ id: string; wipComponents: string | null }>();
+    const tplRow = cache
+      ? cache.templatesByProductCode.get(po.productCode) ?? null
+      : await db
+          .prepare(
+            "SELECT id, wipComponents FROM bom_templates WHERE productCode = ? AND versionStatus = 'ACTIVE' ORDER BY effectiveFrom DESC LIMIT 1",
+          )
+          .bind(po.productCode)
+          .first<{ id: string; wipComponents: string | null }>();
     if (tplRow?.wipComponents) {
       try {
         const parsed = JSON.parse(tplRow.wipComponents);
@@ -565,7 +638,7 @@ async function substituteAutoDetectMaterials(
 // (fabric / wood / foam — see src/lib/repair-scope.ts). It is a
 // rename-map-known identifier, so the adapter translates it in the
 // explicit projection (unlike the BUG-2026-06-10-001 runtime-column case).
-type ResolvedRm = {
+export type ResolvedRm = {
   id: string;
   itemCode: string;
   description: string;
@@ -592,7 +665,15 @@ function toResolvedRm(row: Record<string, unknown> | null): ResolvedRm | null {
 async function resolveRmFromBom(
   db: D1Database,
   line: MaterialLine,
+  cache?: BomResolveCache,
 ): Promise<ResolvedRm | null> {
+  if (cache) {
+    const hit =
+      (line.inventoryCode ? cache.rmByItemCode.get(line.inventoryCode) : undefined) ??
+      (line.code ? cache.rmByItemCode.get(line.code) : undefined) ??
+      (line.name ? cache.rmByDescriptionLower.get(line.name.toLowerCase()) : undefined);
+    return toResolvedRm(hit ?? null);
+  }
   if (line.inventoryCode) {
     const hit = await db
       .prepare("SELECT * FROM raw_materials WHERE itemCode = ? LIMIT 1")
@@ -810,110 +891,73 @@ export async function recordConsumePreview(
   return { shortages, lines: bomLines.length, unresolved };
 }
 
-export async function consumeRawMaterialsForPO(
+// ---------------------------------------------------------------------------
+// Required material lines for a PO — THE single calculation shared by stock
+// deduction and the MRP, so "what the MRP says will be used" and "what
+// production deducts" can never drift apart.
+//
+// Per BOM line: qtyPerUnit × po.quantity × (1 + waste%) × repair component
+// scale, then the FILLER sheet fraction, then the repair-scope class filter.
+// Unresolvable lines are returned with rm = null (callers report them as
+// shortages / BOM gaps).
+//
+// consumeDept / wipKey say WHEN the line leaves stock (owner 2026-11-23:
+// 「完成了就扣 每个wip完成的就扣」): when the job card of the line's own
+// top-level WIP (wipKey) in the line's own department completes. The dept is
+// the owning BOM node's process dept — the earliest in DEPT_ORDER if a node
+// lists several. Lines with no owner info (legacy bom_versions.tree / flat
+// bom_components shapes) keep the pre-2026-11-23 behaviour: wipKey "" and
+// dept FAB_CUT, i.e. they leave stock at the first FAB_CUT completion.
+// ---------------------------------------------------------------------------
+export type RequiredLine = {
+  name: string;
+  code: string;
+  rm: ResolvedRm | null;
+  required: number;
+  consumeDept: string;
+  wipKey: string;
+};
+
+export const LEGACY_CONSUME_DEPT = "FAB_CUT";
+
+export function consumeDeptOf(ownerDeptCodes: readonly string[] | undefined): string {
+  const depts = (ownerDeptCodes ?? []).filter((d) => d.length > 0);
+  if (depts.length === 0) return LEGACY_CONSUME_DEPT;
+  const order = DEPT_ORDER as readonly string[];
+  const idx = (d: string) => {
+    const i = order.indexOf(d);
+    return i === -1 ? order.length : i;
+  };
+  return depts.slice().sort((a, b) => idx(a) - idx(b))[0];
+}
+
+export async function computeRequiredLines(
   db: D1Database,
-  poId: string,
-  opts?: { forceLive?: boolean },
-): Promise<{
-  skipped: boolean;
-  materialCostSen: number;
-  linesConsumed: number;
-  shortages: { materialName: string; shortageQty: number }[];
-  preview?: boolean;
-}> {
-  // Idempotency — already consumed?
-  const existing = await db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM cost_ledger WHERE refType = 'PRODUCTION_ORDER' AND refId = ? AND type = 'RM_ISSUE'",
-    )
-    .bind(poId)
-    .first<{ n: number }>();
-  if ((existing?.n ?? 0) > 0) {
-    return { skipped: true, materialCostSen: 0, linesConsumed: 0, shortages: [] };
-  }
-
-  // SELECT * (not an explicit projection) — the Repair-Scope column is
-  // runtime-added so an unquoted camelCase projection entry would be the
-  // BUG-2026-06-10-001 trap; SELECT * returns it under the folded key
-  // (`repairscope`), read dual-key below.
-  const po = await db
-    .prepare("SELECT * FROM production_orders WHERE id = ?")
-    .bind(poId)
-    .first<ProductionOrderRow>();
-  if (!po || !po.quantity || po.quantity <= 0) {
-    return { skipped: false, materialCostSen: 0, linesConsumed: 0, shortages: [] };
-  }
-
-  // RM-consumption gate (owner 2026-07-29「等我说 ok 就正式扣料」). When
-  // kv_config['rm_consumption_mode'] = "PREVIEW", record what WOULD leave stock
-  // and return without any rm_batches / raw_materials / RM_ISSUE write. The
-  // default is LIVE — see the note on getRmConsumptionMode for why that is the
-  // opposite of how this was originally written.
-  const mode = opts?.forceLive ? "LIVE" : await getRmConsumptionMode(db);
-  if (mode !== "LIVE") {
-    const preview = await recordConsumePreview(db, po);
-    return {
-      skipped: false,
-      materialCostSen: 0,
-      linesConsumed: 0,
-      shortages: preview.shortages,
-      preview: true,
-    };
-  }
-
-  const bomLines = await resolveBomMaterials(db, po);
-  if (bomLines.length === 0) {
-    // No BOM → nothing to consume; also no FG materialCost.
-    return { skipped: false, materialCostSen: 0, linesConsumed: 0, shortages: [] };
-  }
-
+  po: ProductionOrderRow,
+  opts?: { cache?: BomResolveCache; sheetDefaults?: Record<string, { length: number; width: number }> },
+): Promise<RequiredLine[]> {
+  if (!po.quantity || po.quantity <= 0) return [];
+  const cache = opts?.cache;
+  const bomLines = await resolveBomMaterials(db, po, cache);
+  if (bomLines.length === 0) return [];
   // FILLER sheet-size defaults, loaded once (config overrides, else 8×4).
-  const sheetDefaults = await loadSheetDefaults(db);
+  const sheetDefaults = opts?.sheetDefaults ?? (await loadSheetDefaults(db));
 
   // ---- Repair Scope material filter (0160) -------------------------------
-  // A scoped (non-FULL) repair must NEVER consume the full BOM. The scope
-  // was stamped onto the PO at creation (production-builder), so it always
-  // matches the job cards that were actually built. Per-line rule (see
-  // materialLineInScope in src/lib/repair-scope.ts):
-  //   FABRIC preset → fabric-class lines only (autoDetect:"FABRIC" or
-  //       raw_materials.itemGroup in the fabric groups);
-  //   FRAME → wood-class only (PLYWOOD / WD STRIP);
-  //   FOAM  → foam-class only (B.FILLER / S.FILLER);
-  //   CUSTOM → branch-based: the line's owning BOM node must have at least
-  //       one process in the chosen depts.
-  // Component-level picks (scope.components) apply ON TOP of the dept/class
-  // rule: a line is consumable only when its owning top-level WIP was
-  // picked, and its quantity scales by pickedQty/bomQty for partial picks —
-  // see repairComponentScale in the loop below.
-  // Out-of-scope lines are skipped BEFORE any FIFO consumption — no
-  // rm_batches decrement, no RM_ISSUE ledger row, and no shortage report
-  // (the material simply isn't part of this repair).
+  // A scoped (non-FULL) repair must NEVER consume the full BOM. Per-line rule
+  // in materialLineInScope (src/lib/repair-scope.ts): FABRIC / FRAME / FOAM
+  // presets filter by material class; CUSTOM is branch-based on the owning
+  // node's depts. Component picks (scope.components) apply on top and scale
+  // partial picks via repairComponentScale. Out-of-scope lines are dropped
+  // before any FIFO walk or shortage report.
   const repairScope = parseRepairScope(po.repairScope ?? po.repairscope);
 
-  const dateIso = po.completedDate
-    ? new Date(`${po.completedDate}T12:00:00`).toISOString()
-    : new Date().toISOString();
-
-  let materialCostSen = 0;
-  let linesConsumed = 0;
-  const shortages: { materialName: string; shortageQty: number }[] = [];
-  const statements: D1PreparedStatement[] = [];
-
+  const out: RequiredLine[] = [];
   for (const line of bomLines) {
-    // Component-level Repair Scope gate + quantity scale (on top of the
-    // dept/class filter below — both must pass). repairComponentScale:
-    //   1        → no component picks on the scope, or this line's owning
-    //              component is picked at full BOM qty (multiply-by-1 keeps
-    //              every non-component path byte-identical);
-    //   fraction → partial pick — picked 1 of the 2 divan pieces consumes
-    //              half the line's per-FG quantity (pickedQty / bomQty);
-    //   null     → DROP: the owning component wasn't picked, or the line
-    //              has no derivable owner (legacy bom_versions.tree / flat
-    //              bom_components shapes) — never over-consume on a
-    //              partial repair. No FIFO walk, no shortage report.
-    const componentScale = repairScope
-      ? repairComponentScale(line, repairScope)
-      : 1;
+    //   1        → no component picks / picked at full BOM qty;
+    //   fraction → partial pick (pickedQty / bomQty);
+    //   null     → DROP (component not picked or no derivable owner).
+    const componentScale = repairScope ? repairComponentScale(line, repairScope) : 1;
     if (componentScale === null) continue;
     let required =
       line.qtyPerUnit *
@@ -922,19 +966,12 @@ export async function consumeRawMaterialsForPO(
       componentScale;
     if (required <= 0) continue;
 
-    const rm = await resolveRmFromBom(db, line);
+    const rm = await resolveRmFromBom(db, line, cache);
 
-    // FILLER (sponge) area-based consumption (owner 2026-07-30): a BOM line
-    // with a cut size (inches) consumes a FRACTION of a sheet, not whole
-    // pieces — sheets = (cut area ÷ sheet area) × qty. Applied only when BOTH
-    // the line's cut size and the resolved RM's sheet size are present; any
-    // gap falls back to the plain qtyPerUnit path (no regression). Guard
-    // against a zero/absent sheet area (would otherwise divide by zero).
-    // line.cutLengthIn / cutWidthIn are already the EFFECTIVE size — grown
-    // against the order when the BOM asked for it (see where the line is built).
+    // FILLER (sponge) area-based consumption (owner 2026-07-30): sheets =
+    // (cut area ÷ sheet area) × qty, only when both sizes are known.
+    // line.cutLengthIn / cutWidthIn are already the EFFECTIVE (grown) size.
     if (rm && line.cutLengthIn && line.cutWidthIn) {
-      // Per-SKU sheet size wins; else the category default (config, else the
-      // hardcoded FILLER 8×4). Only FILLER-group materials get a default.
       const catDef = categoryDefaultSheet(rm.itemGroup, sheetDefaults);
       const sheetL = rm.sheetLengthIn ?? catDef?.length ?? 0;
       const sheetW = rm.sheetWidthIn ?? catDef?.width ?? 0;
@@ -946,21 +983,148 @@ export async function consumeRawMaterialsForPO(
     }
     if (required <= 0) continue;
 
-    // Repair Scope: out-of-scope material → skip before any consumption.
-    // Class lookup needs the resolved itemGroup, hence after resolveRmFromBom
-    // but before the shortage report / FIFO walk. Unresolvable AND
-    // unclassifiable lines drop too (never over-consume on a partial
-    // repair); an in-scope-by-autoDetect line that fails to resolve still
-    // falls through to the normal shortage report below.
-    if (
-      repairScope &&
-      !materialLineInScope(line, rm?.itemGroup ?? null, repairScope)
-    ) {
+    // Repair Scope class filter needs the resolved itemGroup. Unresolvable AND
+    // unclassifiable lines drop too (never over-consume on a partial repair).
+    if (repairScope && !materialLineInScope(line, rm?.itemGroup ?? null, repairScope)) {
       continue;
     }
 
+    out.push({
+      name: line.name,
+      code: line.inventoryCode || line.code,
+      rm,
+      required,
+      consumeDept: consumeDeptOf(line.ownerDeptCodes),
+      wipKey: line.ownerWipKey ?? "",
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Consumption marks — which (wipKey, dept) slices of a PO have left stock.
+//
+// One row per (po_id, wip_key, dept_code), claimed with ON CONFLICT DO NOTHING
+// BEFORE any FIFO write, so two concurrent completions can never both deduct
+// the same slice. A claimed slice stays claimed even if its FIFO walk throws
+// part-way — the same "never double-deduct, under-deduct on a lost race" trade
+// the PO-level RM_ISSUE idempotency check made before this table existed.
+//
+// LEGACY POs: a PO whose materials were deducted under the old whole-PO rule
+// has RM_ISSUE rows but NO marks. Such a PO is treated as fully consumed and
+// never touched again (no double deduction across the switch-over).
+// ---------------------------------------------------------------------------
+let rmConsumeMarksEnsured = false;
+export async function ensureRmConsumeMarksTable(db: D1Database): Promise<void> {
+  if (rmConsumeMarksEnsured) return;
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS rm_consume_marks (
+         id TEXT PRIMARY KEY,
+         po_id TEXT NOT NULL,
+         wip_key TEXT NOT NULL DEFAULT '',
+         dept_code TEXT NOT NULL,
+         job_card_id TEXT,
+         created_at TEXT,
+         UNIQUE (po_id, wip_key, dept_code)
+       )`,
+    )
+    .run();
+  rmConsumeMarksEnsured = true;
+}
+
+export const sliceKey = (wipKey: string, dept: string): string => `${wipKey}|${dept}`;
+
+export type PoConsumeState = { legacyConsumed: boolean; consumed: Set<string> };
+
+// Consumption state for many POs in a few queries (MRP) — or one PO (consume).
+export async function loadConsumeState(
+  db: D1Database,
+  poIds: string[],
+): Promise<Map<string, PoConsumeState>> {
+  await ensureRmConsumeMarksTable(db);
+  const out = new Map<string, PoConsumeState>();
+  for (const id of poIds) out.set(id, { legacyConsumed: false, consumed: new Set() });
+  if (poIds.length === 0) return out;
+  const CHUNK = 500;
+  const issued = new Set<string>();
+  for (let i = 0; i < poIds.length; i += CHUNK) {
+    const ids = poIds.slice(i, i + CHUNK);
+    const ph = ids.map(() => "?").join(",");
+    const [marks, issues] = await Promise.all([
+      db
+        .prepare(`SELECT po_id, wip_key, dept_code FROM rm_consume_marks WHERE po_id IN (${ph})`)
+        .bind(...ids)
+        .all<Record<string, unknown>>(),
+      db
+        .prepare(
+          `SELECT DISTINCT refId FROM cost_ledger WHERE refType = 'PRODUCTION_ORDER' AND type = 'RM_ISSUE' AND refId IN (${ph})`,
+        )
+        .bind(...ids)
+        .all<Record<string, unknown>>(),
+    ]);
+    for (const m of marks.results ?? []) {
+      const st = out.get(String(m.po_id ?? m.poId ?? ""));
+      if (st) {
+        st.consumed.add(
+          sliceKey(String(m.wip_key ?? m.wipKey ?? ""), String(m.dept_code ?? m.deptCode ?? "")),
+        );
+      }
+    }
+    for (const r of issues.results ?? []) issued.add(String(r.refId ?? r.refid ?? ""));
+  }
+  for (const [id, st] of out) {
+    if (issued.has(id) && st.consumed.size === 0) st.legacyConsumed = true;
+  }
+  return out;
+}
+
+async function claimSlice(
+  db: D1Database,
+  poId: string,
+  wipKey: string,
+  dept: string,
+  jobCardId: string | null,
+): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `INSERT INTO rm_consume_marks (id, po_id, wip_key, dept_code, job_card_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (po_id, wip_key, dept_code) DO NOTHING`,
+    )
+    .bind(genLedgerId("rmk"), poId, wipKey, dept, jobCardId, new Date().toISOString())
+    .run();
+  return Number(res?.meta?.changes ?? 0) > 0;
+}
+
+export type ConsumeResult = {
+  skipped: boolean;
+  materialCostSen: number;
+  linesConsumed: number;
+  shortages: { materialName: string; shortageQty: number }[];
+  preview?: boolean;
+};
+
+// FIFO-deduct already-computed lines. Writes rm_batches, cost_ledger RM_ISSUE
+// (refType PRODUCTION_ORDER — every existing reader keys on that) and
+// raw_materials.balanceQty.
+async function fifoConsumeLines(
+  db: D1Database,
+  po: ProductionOrderRow,
+  lines: RequiredLine[],
+): Promise<Omit<ConsumeResult, "skipped">> {
+  const dateIso = po.completedDate
+    ? new Date(`${po.completedDate}T12:00:00`).toISOString()
+    : new Date().toISOString();
+
+  let materialCostSen = 0;
+  let linesConsumed = 0;
+  const shortages: { materialName: string; shortageQty: number }[] = [];
+  const statements: D1PreparedStatement[] = [];
+
+  for (const { rm, required, name } of lines) {
     if (!rm) {
-      shortages.push({ materialName: line.name, shortageQty: required });
+      shortages.push({ materialName: name, shortageQty: required });
       continue;
     }
 
@@ -972,7 +1136,6 @@ export async function consumeRawMaterialsForPO(
       .all<RMBatchRow>();
     const rows = batchesRes.results ?? [];
 
-    // Map RMBatchRow → RMBatch (in-memory shape) for fifoConsume().
     const batches: RMBatch[] = rows.map((b) => ({
       id: b.id,
       rmId: b.rmId,
@@ -988,48 +1151,13 @@ export async function consumeRawMaterialsForPO(
 
     const result = fifoConsume(batches, required);
 
-    // PR 0 (2026-05-20, owner-confirmed) — per-slice WHERE guard +
-    // serial execution to prevent FIFO over-pull race.
-    //
-    // Old behaviour:
-    //   1. Snapshot all batches with remainingQty > 0 (line 471-476)
-    //   2. fifoConsume() picks slices against the JS snapshot
-    //   3. Push UPDATE/INSERT pairs into one batch
-    //   4. db.batch(statements) commits at the end
-    //
-    // The UPDATE was `SET remainingQty = remainingQty - ?` — atomic
-    // arithmetic, so two concurrent decrements both land correctly on
-    // remainingQty itself. But fifoConsume() ran against the SNAPSHOT,
-    // so two parallel PO completions both think batch B has 10m
-    // available, both pick a 5m slice, both push UPDATE -5, both push
-    // INSERT cost_ledger {qty: 5}. End state: remainingQty=0 (correct
-    // physical consumption) but cost_ledger has 2×5m=10m issued from
-    // a batch that only had 10m physical — fine in this exact case,
-    // but if either PO needed 8m, the math breaks: total issued
-    // 8+8=16m against a 10m physical batch. raw_materials.balanceQty
-    // would be floored by GREATEST(0,...) and silently under-deducted.
-    //
-    // New behaviour: run each slice as a single conditional UPDATE
-    // (`AND remainingQty >= ?` guard) and inspect meta.changes. If
-    // another writer has already drained the batch below what we
-    // claimed, the UPDATE no-ops and we throw — the caller sees the
-    // race and the PO completion fails atomically (no cost_ledger row
-    // for the failed slice, raw_materials still consistent with
-    // rm_batches). Operator retries; on retry the snapshot reflects
-    // the post-race state and fifoConsume picks differently.
-    //
-    // Serial execution means the slices for THIS PO run one-at-a-time
-    // before the function returns. For a typical PO with 2-3 RM lines
-    // × 1-2 slices each, that's ~5 extra round-trips per completion.
-    // Acceptable given the consequence (silent inventory corruption).
+    // PR 0 (2026-05-20, owner-confirmed) — per-slice WHERE guard + serial
+    // execution to prevent the FIFO over-pull race: each slice is a single
+    // conditional UPDATE (`AND remainingQty >= ?`); if another writer drained
+    // the batch first the UPDATE no-ops and we throw rather than issue stock
+    // that is not physically there.
     for (const slice of result.slices) {
-      // Defence in depth (2026-08-01). fifoConsume no longer emits float-dust
-      // slices, but ANY dust reaching the guard below turns into a bogus
-      // "race lost" throw: a drained batch has remainingQty 0, and
-      // `0 >= 6.9e-77` is false, so the UPDATE no-ops and a worker's scan
-      // fails with a concurrency error that never happened. A sub-epsilon
-      // consumption is not physically real - skip it rather than fail the
-      // whole PO completion over it.
+      // A sub-epsilon slice is float dust, not a real draw (2026-08-01).
       if (slice.qty <= QTY_EPSILON) continue;
       const updateRes = await db
         .prepare(
@@ -1039,7 +1167,7 @@ export async function consumeRawMaterialsForPO(
         .run();
       if (!updateRes.meta || updateRes.meta.changes === 0) {
         throw new Error(
-          `RM batch ${slice.batchId} race lost: PO ${po.poNo} (${line.name}) tried to consume ${slice.qty} but another writer left less than that available. Retry the completion.`,
+          `RM batch ${slice.batchId} race lost: PO ${po.poNo} (${name}) tried to consume ${slice.qty} but another writer left less than that available. Retry the completion.`,
         );
       }
       await db
@@ -1057,8 +1185,8 @@ export async function consumeRawMaterialsForPO(
           slice.qty,
           slice.unitCostSen,
           slice.totalCostSen,
-          poId,
-          `Issued for ${po.poNo} (${line.name})`,
+          po.id,
+          `Issued for ${po.poNo} (${name})`,
         )
         .run();
       materialCostSen += slice.totalCostSen;
@@ -1068,12 +1196,7 @@ export async function consumeRawMaterialsForPO(
       statements.push(
         db
           .prepare(
-            // GREATEST not MAX — Postgres MAX is an aggregate (over rows);
-            // GREATEST returns the largest of N argument values and works
-            // across numeric types (integer 0 vs balanceQty's numeric/float).
-            // SQLite accepted MAX(a, b) as 2-arg max but Postgres errors
-            // with "function max(integer, double precision) does not exist"
-            // (caught 2026-05-07 when running first live RM consume).
+            // GREATEST not MAX — Postgres MAX is an aggregate (caught 2026-05-07).
             "UPDATE raw_materials SET balanceQty = GREATEST(0, balanceQty - ?) WHERE id = ?",
           )
           .bind(result.consumedQty, rm.id),
@@ -1082,15 +1205,106 @@ export async function consumeRawMaterialsForPO(
     }
 
     if (result.shortageQty > 0) {
-      shortages.push({ materialName: line.name, shortageQty: result.shortageQty });
+      shortages.push({ materialName: name, shortageQty: result.shortageQty });
     }
   }
 
   if (statements.length > 0) {
     await db.batch(statements);
   }
+  return { materialCostSen, linesConsumed, shortages };
+}
 
-  return { skipped: false, materialCostSen, linesConsumed, shortages };
+// Shared driver: honour the legacy + PREVIEW gates, claim the slices `pick`
+// selects, FIFO-deduct only the lines of slices this call claimed.
+async function consumeSlices(
+  db: D1Database,
+  poId: string,
+  pick: (line: RequiredLine) => boolean,
+  jobCardId: string | null,
+  opts?: { forceLive?: boolean },
+): Promise<ConsumeResult> {
+  const none: ConsumeResult = { skipped: true, materialCostSen: 0, linesConsumed: 0, shortages: [] };
+  const state = (await loadConsumeState(db, [poId])).get(poId);
+  if (state?.legacyConsumed) return none;
+
+  // SELECT * — the Repair-Scope column is runtime-added (BUG-2026-06-10-001);
+  // read dual-key in computeRequiredLines.
+  const po = await db
+    .prepare("SELECT * FROM production_orders WHERE id = ?")
+    .bind(poId)
+    .first<ProductionOrderRow>();
+  if (!po || !po.quantity || po.quantity <= 0) {
+    return { skipped: false, materialCostSen: 0, linesConsumed: 0, shortages: [] };
+  }
+
+  // RM-consumption gate (owner 2026-07-29). PREVIEW records what WOULD leave
+  // stock for the whole PO and writes nothing else. Default LIVE — see
+  // getRmConsumptionMode.
+  const mode = opts?.forceLive ? "LIVE" : await getRmConsumptionMode(db);
+  if (mode !== "LIVE") {
+    const preview = await recordConsumePreview(db, po);
+    return { skipped: false, materialCostSen: 0, linesConsumed: 0, shortages: preview.shortages, preview: true };
+  }
+
+  const all = await computeRequiredLines(db, po);
+  const wanted = all.filter(
+    (l) => pick(l) && !state?.consumed.has(sliceKey(l.wipKey, l.consumeDept)),
+  );
+  if (wanted.length === 0) return none;
+
+  const bySlice = new Map<string, RequiredLine[]>();
+  for (const l of wanted) {
+    const k = sliceKey(l.wipKey, l.consumeDept);
+    const arr = bySlice.get(k) ?? [];
+    arr.push(l);
+    bySlice.set(k, arr);
+  }
+  const claimed: RequiredLine[] = [];
+  for (const lines of bySlice.values()) {
+    if (await claimSlice(db, poId, lines[0].wipKey, lines[0].consumeDept, jobCardId)) {
+      claimed.push(...lines);
+    }
+  }
+  if (claimed.length === 0) return none;
+  const res = await fifoConsumeLines(db, po, claimed);
+  return { skipped: false, ...res };
+}
+
+// Per-WIP deduction (owner 2026-11-23). Called on EVERY job-card COMPLETED /
+// TRANSFERRED transition: deducts only the BOM lines owned by this job card's
+// top-level WIP in this job card's department. A job card with no wipKey
+// (older cards) matches every WIP's lines of its department. Legacy untagged
+// lines (wipKey "") ride on the first FAB_CUT completion, as before.
+export async function consumeRawMaterialsForJobCard(
+  db: D1Database,
+  poId: string,
+  jc: { id: string; wipKey?: string | null; departmentCode?: string | null },
+  opts?: { forceLive?: boolean },
+): Promise<ConsumeResult> {
+  const dept = String(jc.departmentCode ?? "").toUpperCase();
+  if (!dept) return { skipped: true, materialCostSen: 0, linesConsumed: 0, shortages: [] };
+  const jcWip = String(jc.wipKey ?? "");
+  return consumeSlices(
+    db,
+    poId,
+    (l) => l.consumeDept === dept && (jcWip === "" || l.wipKey === "" || l.wipKey === jcWip),
+    jc.id,
+    opts,
+  );
+}
+
+// Whole-PO deduction of everything NOT yet deducted. Safety net at PO
+// COMPLETED (fg-completion) and the import-completion repair tool: a slice
+// whose job card never fired (e.g. dept not built as a card) still leaves
+// stock once the order is finished. Already-deducted slices and legacy POs are
+// skipped, so this never double-deducts.
+export async function consumeRawMaterialsForPO(
+  db: D1Database,
+  poId: string,
+  opts?: { forceLive?: boolean },
+): Promise<ConsumeResult> {
+  return consumeSlices(db, poId, () => true, null, opts);
 }
 
 // ---------------------------------------------------------------------------

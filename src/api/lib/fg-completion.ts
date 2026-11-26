@@ -220,14 +220,12 @@ export async function postProductionOrderCompletion(
   // cascade can still fill in missing ledger entries. Each helper is
   // independently idempotent via its own guard on cost_ledger rows.
   //
-  // F1 trigger moved 2026-05-07: consumeRawMaterialsForPO now also fires
-  // at FAB_CUT JC completion (see production-orders.ts applyPoUpdate).
-  // Calling it again here at PO completion is a no-op when an RM_ISSUE
-  // row already exists (idempotent on refType='PRODUCTION_ORDER'). The
-  // PO-completion call is kept as a safety net: if a PO somehow reaches
-  // COMPLETED without any FAB_CUT JC having completed first (legacy /
-  // accessory products without an FC step in their BOM, or imported
-  // historical POs), the PO-level call still consumes correctly.
+  // F1 since 2026-11-23: RM is deducted PER WIP at each job-card completion
+  // (consumeRawMaterialsForJobCard — PATCH and every scan path). This
+  // PO-completion call is the safety net: it deducts only the (WIP, dept)
+  // slices that have NOT been deducted yet (rm_consume_marks), e.g. a dept
+  // the BOM names but no job card was built for. Already-deducted slices and
+  // POs deducted under the old whole-PO rule are skipped — no double deduct.
   const rmResult = await consumeRawMaterialsForPO(db, poId);
   const fgCostResult = await backfillFGBatchCost(db, poId);
   // Light WIP marker — full tracking is TODO(wip-phase-2).

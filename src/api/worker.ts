@@ -172,6 +172,26 @@ const app = new Hono<Env>();
 // CORS — allow the Pages origin + local Vite dev server. Override via
 // wrangler.toml [vars] API_CORS_ORIGIN for preview/prod.
 //
+
+// MCP connector (docs/plans/mcp-connector.md): AI apps call discovery, client
+// registration, token and /api/mcp from their own servers or browsers. These
+// endpoints use no cookies (Bearer / PKCE only), so an open CORS policy is
+// safe and needed by browser-based MCP clients. Registered BEFORE cors().
+const MCP_OPEN_CORS = /^\/(\.well-known\/oauth-[a-z-]+(\/.*)?|api\/mcp(\/oauth\/(token|register))?)$/;
+app.use("*", async (c, next) => {
+  if (!MCP_OPEN_CORS.test(c.req.path)) return next();
+  const h = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Protocol-Version, Mcp-Session-Id",
+    "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id",
+    "Access-Control-Max-Age": "600",
+  };
+  if (c.req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
+  await next();
+  for (const [k, v] of Object.entries(h)) c.res.headers.set(k, v);
+});
+
 // 2026-05-27 — Custom-domain transition (erp.hookka.com.my). The
 // allowlist now accepts a comma-separated list so we can serve BOTH
 // the new prod domain AND the old hookka-erp-testing.pages.dev URL
@@ -1137,6 +1157,11 @@ app.post("/api/it-support/hub-events", async (c) => {
 // dashboard session — is the credential. See src/api/routes/push.ts.
 app.route("/api/push", push);
 
+// MCP connector — its own auth (Bearer hkmcp_ / ERP session cookie + CSRF on
+// the Allow form). Before authMiddleware on purpose; see routes/mcp.ts.
+app.route("/api/mcp", mcp);
+app.route("/.well-known", mcpWellKnown);
+
 // Global auth gate for /api/* — skips PUBLIC_PATHS (login/logout/health) and
 // PUBLIC_PREFIXES (worker-auth, worker, fg-units) handled inside the middleware.
 // MUST be registered BEFORE any route that touches business data.
@@ -1734,9 +1759,12 @@ app.route("/api/assistant", assistant);
 // import dispatchReport from ./routes/reports without a cycle at runtime.
 import agentConsole from "./routes/agent-console";
 import { BUILD_COMMIT } from "./build-stamp";
+import mcp, { wellKnown as mcpWellKnown, setMcpApp } from "./routes/mcp";
+import mcpAdmin from "./routes/mcp-admin";
 app.route("/api/agents", agentConsole);
 app.route("/api/org-chart", orgChart);
 app.route("/api/user-permissions", userPermissions);
+app.route("/api/mcp-admin", mcpAdmin);
 
 // Catch-all error handler (Sprint 5). Hono's default behaviour is to surface
 // a 500 with the error message — fine for dev, but in prod we want every
@@ -1820,5 +1848,7 @@ app.all("/api/*", (c) => {
     404,
   );
 });
+
+setMcpApp(app as unknown as Parameters<typeof setMcpApp>[0]);
 
 export default app;

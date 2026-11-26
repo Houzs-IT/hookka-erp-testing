@@ -44,7 +44,7 @@ test("the tooltip: three aligned columns, the Total in bold, lines under a rule"
   assert.match(tip, /border-dashed/);
   // Which series are lines, which charts stack.
   assert.match(src, /<ChartTip shares stackTotal lineKeys=\{\["__cardfc__", "perHead", "perUnit"\]\} \/>/);
-  assert.match(src, /<ChartTip lineKeys=\{line \? \[line\.key\] : \[\]\} dashKeys=\{line\?\.dashed \? \[line\.key\] : \[\]\} \/>/);
+  assert.match(src, /<ChartTip lineKeys=\{allLines\.map\(\(l\) => l\.key\)\} dashKeys=\{allLines\.filter\(\(l\) => l\.dashed\)\.map\(\(l\) => l\.key\)\} \/>/ /* since 2026-11-23 the card's extra forecast lines are lines too */);
   assert.match(src, /<ChartTip shares stackTotal lineKeys=\{\["__fctotal__"\]\} \/>/);
 });
 
@@ -61,9 +61,9 @@ test("chart tabs are the v2 switch", () => {
 });
 
 test("the tables: v2 list look, the period header in the head, the first column pinned", () => {
-  assert.equal((src.match(/<table data-fin-list data-fin-stick className="w-full">/g) ?? []).length, 7);
+  assert.equal((src.match(/<table data-fin-list data-fin-stick className="w-full">/g) ?? []).length, 8); // +1 Cash Flow Detail (Actual | Forecast), 2026-11-23
   assert.doesNotMatch(src, /<table className="w-full">/);
-  assert.equal((src.match(/<thead>\{periodHead(Split)?\(/g) ?? []).length, 6);
+  assert.equal((src.match(/<thead>\{periodHead(Split)?\(/g) ?? []).length, 7);
   assert.doesNotMatch(src, /<tbody>\s*\{periodHead/);
   const heads = src.slice(src.indexOf("const periodHead = "), src.indexOf("\n  return (", src.indexOf("const periodHead = ")));
   assert.doesNotMatch(heads, /<td /, "the period header is header cells");

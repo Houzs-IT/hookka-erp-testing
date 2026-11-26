@@ -68,6 +68,7 @@ async function forEachPaced<R extends { id?: string | null }, D>(
   const getJson = deps.fetchJson ?? defaultFetchJson;
   const wait =
     deps.wait ??
+    // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; the pace between paced requests
     ((ms: number) => new Promise<void>((res) => window.setTimeout(res, ms)));
   const confirmLarge =
     deps.confirmLarge ??

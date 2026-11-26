@@ -11669,12 +11669,12 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
 
 // ============================================================
 // Attendance tab — worker PHONE punches (clock in/out) for a day, with a soft
-// geofence badge (At factory ✓ / Off-site ⚠ / No GPS —) against the 200 m
+// geofence badge (At factory ✓ / Off-site ⚠ / No GPS —) against the 150 m
 // factory fence, so the owner can spot home- / proxy-punching. Photos land here
 // next. Location is judged client-side from the punch's stored GPS — soft only,
 // never blocks a punch (matches the worker-side behaviour).
 // ============================================================
-const ATT_FENCE = { lat: 3.187681, lng: 101.570928, radiusM: 200 };
+const ATT_FENCE = { lat: 3.187681, lng: 101.570928, radiusM: 150 };
 function attMetersFromFactory(lat: number, lng: number): number {
   const R = 6_371_000;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -11892,7 +11892,7 @@ function AttendanceTab({
           </label>
         </div>
         <p className="mt-1 text-xs text-[#6B7280]">
-          When a worker punches in / out on their phone it lands here, with their location vs the 200&nbsp;m factory fence.{" "}
+          When a worker punches in / out on their phone it lands here, with their location vs the {ATT_FENCE.radiusM}&nbsp;m factory fence.{" "}
           <span className="font-medium text-[#9A3A2D]">Off-site</span> = punched away from the factory;{" "}
           <span className="text-[#8A8680]">No GPS</span> = the phone gave no location.
           {offSiteCount > 0 && (

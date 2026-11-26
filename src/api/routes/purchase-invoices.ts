@@ -12,7 +12,7 @@
 // DELETE is gated to DRAFT only — once confirmed we keep the row for audit.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission, requireFinance } from "../lib/rbac";
@@ -47,6 +47,7 @@ import { isPiEditable, piEditBlockedError } from "../../lib/purchase-edit-rules"
 import { loadGrnReturnedBeforeBilling } from "../lib/purchase-return-create";
 import { autoReceivePiStock, backfillAutoGrnLinks, previewPiAutoGrn } from "../lib/pi-auto-grn";
 import { resolvePiLineUoms } from "../lib/pi-line-uom";
+import { rmUnitMap } from "../../lib/material-variants";
 import { todayYmdMY } from "../../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -61,8 +62,7 @@ import { todayYmdMY } from "../../lib/utils";
 // ---------------------------------------------------------------------------
 let piMigrationPromise: Promise<void> | null = null;
 function ensurePiMigrations(db: D1Database): Promise<void> {
-  if (piMigrationPromise) return piMigrationPromise;
-  piMigrationPromise = (async () => {
+  return memoizeSelfApply(() => piMigrationPromise, (p) => { piMigrationPromise = p; }, async () => {
     // A unit price is a RATE with four decimals of sen. Shared with the PO and
     // GRN routes so the three cannot drift apart again.
     await ensureUnitPricePrecision(db);
@@ -151,14 +151,7 @@ function ensurePiMigrations(db: D1Database): Promise<void> {
         `ALTER TABLE grn_items ADD CONSTRAINT ${GRN_INVOICED_QTY_CHECK} CHECK (invoiced_qty >= 0 AND invoiced_qty <= accepted_qty) NOT VALID`,
       ]);
     }
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    piMigrationPromise = null;
-    throw err;
   });
-  return piMigrationPromise;
 }
 
 const AP_CONTROL = "400-0000"; // Trade Creditors
@@ -333,6 +326,8 @@ export type PurchaseInvoiceItem = {
   poQty: number | null;
   /** The PO line's unit, read live with poUnitPriceSen (display only). */
   poUnit?: string | null;
+  /** The raw material's baseUOM, read live (display/export only). */
+  materialUnit?: string | null;
   /** The PO line's unit price, read live on the detail view only (Houzs
    *  review 2026-11-08) so the operator sees billed vs ordered price. */
   poUnitPriceSen?: number | null;
@@ -719,6 +714,37 @@ export async function attachPoPrices(db: D1Database, items: PurchaseInvoiceItem[
   }
 }
 
+// The material's base unit, for lines with no billed unit and no PO line unit
+// (the PI detail export's last UOM fallback). Display only.
+export async function attachMaterialUnits(
+  db: D1Database,
+  orgId: string,
+  items: PurchaseInvoiceItem[],
+): Promise<PurchaseInvoiceItem[]> {
+  const codes = [...new Set(items.map((i) => (i.materialCode ?? "").trim().toUpperCase()).filter(Boolean))];
+  if (codes.length === 0) return items;
+  try {
+    // D1 caps bound parameters at 100 per statement: orgId + 90 codes per query.
+    const chunks: string[][] = [];
+    for (let i = 0; i < codes.length; i += 90) chunks.push(codes.slice(i, i + 90));
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        db
+          .prepare(
+            `SELECT itemCode, baseUOM FROM raw_materials WHERE orgId = ? AND UPPER(TRIM(itemCode)) IN (${chunk.map(() => "?").join(",")})`,
+          )
+          .bind(orgId, ...chunk)
+          .all<{ itemCode: string | null; baseUOM: string | null }>(),
+      ),
+    );
+    const units = rmUnitMap(results.flatMap((r) => r.results ?? []));
+    return items.map((it) => ({ ...it, materialUnit: units.get((it.materialCode ?? "").trim().toUpperCase()) ?? null }));
+  } catch (e) {
+    console.warn("[purchase-invoices] material unit lookup failed:", e instanceof Error ? e.message : e);
+    return items;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Convert-chain RESTORE: build the UPDATE statements that decrement
 // grn_items.invoiced_qty for every PI line that was sourced from a GRN line.
@@ -1075,7 +1101,9 @@ app.get("/:id", async (c) => {
   if (!row) return c.json({ success: false, error: "PI not found" }, 404);
   const projected = rowToPI(row);
   const [items, linkedPayments, linkedGRNs] = await Promise.all([
-    loadItemsForPI(db, id).then((its) => attachPoPrices(db, its)),
+    loadItemsForPI(db, id)
+      .then((its) => attachPoPrices(db, its))
+      .then((its) => attachMaterialUnits(db, getOrgId(c), its)),
     (async () => {
       const res = await db
         .prepare(

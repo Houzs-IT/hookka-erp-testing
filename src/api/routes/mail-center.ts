@@ -58,6 +58,7 @@ import {
 } from "../lib/mail-acks";
 import { ensureOrgReporting, loadPeople } from "./org-chart";
 import { personKey, subtreeKeys, uplineKeys } from "../../lib/org-people";
+import { maskLoginLinks } from "../lib/mail-outbox-mask";
 import {
   DEFAULT_BUCKET,
   putFile,
@@ -1451,10 +1452,10 @@ app.get("/outbox", async (c) => {
       lastError: r.lastError ?? null,
       sentAt: r.sentAt ?? null,
       createdAt: r.createdAt ?? "",
-      snippet: (
-        (r.bodyText && r.bodyText.trim()) ||
-        (r.bodyHtml ? stripHtml(r.bodyHtml) : "")
-      ).slice(0, 200),
+      // Sign-in links (invite / reset) only for a Mail Center admin (lib/mail-outbox-mask.ts).
+      snippet: ((s: string) => (scope.isAdmin ? s : maskLoginLinks(s)))(
+        ((r.bodyText && r.bodyText.trim()) || (r.bodyHtml ? stripHtml(r.bodyHtml) : "")).slice(0, 200),
+      ),
       attachmentNames: outboxAttachmentNames(r.attachmentsJson),
     }));
 
@@ -1524,8 +1525,8 @@ app.get("/outbox/:id", async (c) => {
       lastAttemptAt: r.lastAttemptAt ?? null,
       sentAt: r.sentAt ?? null,
       createdAt: r.createdAt ?? "",
-      bodyText: r.bodyText ?? "",
-      bodyHtml: r.bodyHtml ?? "",
+      bodyText: scope.isAdmin ? r.bodyText ?? "" : maskLoginLinks(r.bodyText),
+      bodyHtml: scope.isAdmin ? r.bodyHtml ?? "" : maskLoginLinks(r.bodyHtml),
       attachmentNames: outboxAttachmentNames(r.attachmentsJson),
     });
   } catch (e) {

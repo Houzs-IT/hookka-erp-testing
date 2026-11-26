@@ -116,21 +116,23 @@ const slice = (src, start, end) => { const a = src.indexOf(start); assert.ok(a >
 
 test("the inputs: each supplier's Forecast P&L dues with its name and term, and each facility's own suppliers", () => {
   const fn = slice(api, "async function cfForecastTfFacilities(", 'app.get("/cashflow-forecast-inputs"');
-  assert.match(fn, /tfForecastDueBySupplier\(\{ months: fcMonths, termMonths: termMonthsOf, fromYm: curYm \}\)/);
+  // Since 2026-11-23: the closed months' unpaid bills + the Forecast P&L from this month on (tests/tf-supplier-flag-actual-bills.test.mjs).
+  assert.match(fn, /tfSupplierDues\(\{ ap: ag\.data\.ap, fcMonths, termMonths: termMonthsOf, curYm \}\)/);
   assert.match(fn, /paidSupplierIds,/);
-  assert.match(fn, /\{ id, name: nameOf\.get\(id\) \|\| id, term: supTerm\.get\(id\), dueBy \}/);
+  assert.match(fn, /\{ id, name: nameOf\.get\(id\) \|\| id, term: supTerm\.get\(id\), dueBy, \.\.\.\(actualBySupplier\[id\]/);
   assert.match(fn, /\.\.\.tfFacilityNow\(sec, curYm\)/, "what is owed, drawn and due, as the forecast loader reads it");
-  assert.match(fn, /return \{ facilities, forecastSuppliers \};/);
+  assert.match(fn, /return \{ facilities, forecastSuppliers, eligibleSupplierIds: await loadTfEligibleSupplierIds\(db\) \};/);
   assert.doesNotMatch(fn, /\b(INSERT|UPDATE|DELETE)\b/);
   const g = slice(api, 'app.get("/cashflow-forecast-inputs"', 'app.put("/cashflow-forecast-inputs"');
   assert.match(g, /cfForecastTfFacilities\(c\.var\.DB, getOrgId\(c\)\)/);
-  assert.match(g, /tf: \{ facilities: tf\.facilities, plans: tfPlans, forecastSuppliers: tf\.forecastSuppliers \}/);
+  assert.match(g, /tf: \{ facilities: tf\.facilities, plans: tfPlans, forecastSuppliers: tf\.forecastSuppliers, eligibleSupplierIds: tf\.eligibleSupplierIds \}/);
 });
 
 test("the Cash Flow forecast works a ticked plan out afresh from today's figures; months before this one keep what was saved", () => {
   const body = slice(api, "async function loadCashflowForecast(", "\nasync function computeCashflowStatement(");
-  assert.match(body, /if \(st\.ticks\) \{/);
-  assert.match(body, /tfTickedPlan\(\{ yms: tfYms, currentYm: curYm, rateBp, tenorDays: tenor, \.\.\.tfFacilityNow\(sec, curYm\), limitSen: tfSrc\?\.limitSen \?\? null \}, tfDues, st\.ticks\)\.months/);
+  // Since 2026-11-23 the "Can use trade finance" suppliers tick themselves (tfAutoTicks); without any, the saved ticks.
+  assert.match(body, /const ticks = tfEligible\.length \? tfAutoTicks\(tfDues, tfEligible, tfYms, st\.off \?\? \{\}\) : st\.ticks;\n\s+if \(ticks\) \{/);
+  assert.match(body, /tfTickedPlan\(\{ yms: tfYms, currentYm: curYm, rateBp, tenorDays: tenor, \.\.\.tfFacilityNow\(sec, curYm\), limitSen: tfSrc\?\.limitSen \?\? null \}, tfDues, ticks\)\.months/);
   assert.match(body, /Object\.entries\(st\.months\)\.filter\(\(\[ym\]\) => ym < curYm\)/);
 });
 
@@ -139,8 +141,8 @@ test("the popup: ticks only after Fill from Forecast P&L; the ticked row decides
   assert.doesNotMatch(dlg, /TfSupplierPicker/, "the first round's Suppliers box is gone");
   assert.ok(!existsSync(resolve(process.cwd(), "src/pages/accounting/tf-supplier-picker.tsx")));
   assert.match(dlg, /ticks: tfDefaultTicks\(tfSuppliers, f\.paidSupplierIds \?\? \[\], yms\)/, "the facility's own suppliers start ticked");
-  assert.match(dlg, /const ticking = p\.ticks !== undefined;/);
-  assert.match(dlg, /const tickFill = ticking \? tfTickedPlan\(inp, tfSuppliers, p\.ticks \?\? \{\}\) : null;/);
+  assert.match(dlg, /const ticks = ticksOf\(p\);\n\s+const ticking = ticks !== undefined;/);
+  assert.match(dlg, /const tickFill = ticking \? tfTickedPlan\(inp, tfSuppliers, ticks \?\? \{\}\) : null;/);
   assert.match(dlg, /tfPlanSchedule\(\{ \.\.\.inp, plan: planMonths \}\)/);
   assert.match(dlg, /\{ticking && tickRows\.map\(/, "the supplier rows only while ticking");
   assert.match(dlg, /tfToggleTick\(/);

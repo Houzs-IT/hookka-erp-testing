@@ -6,7 +6,7 @@
 //      in the request changes who books.
 //   2. "May change rooms" is decided here (meeting-rooms:update) and refused here.
 //   3. A booking conflict (409) reaches the page with its body intact.
-//   4. A guest reaches only the hub's /public routes and can send only five fields.
+//   4. A guest reaches only the hub's /public routes and can send only the booking fields (never a host).
 //   5. Not connected / hub down are statuses, never an empty calendar.
 // ---------------------------------------------------------------------------
 import test from "node:test";
@@ -76,17 +76,26 @@ test("a booking conflict reaches the page with its whole body", async (t) => {
   assert.deepEqual(await res.json(), conflict);
 });
 
-test("a guest sends only the five booking fields, as a guest", async (t) => {
+test("a guest sends only the booking fields, as a guest", async (t) => {
   const calls = fakeHub(t, () => json({ ok: true, token: "a".repeat(64) }, 201));
   const res = await appAs(null).request("/api/public/meetings/links/hk-0123456789/book", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ start: "2026-11-24T02:00:00Z", name: "Mr Lee", phone: "012", email: "lee@example.com", company: "Lee", roomId: 9, host: "boss" }),
+    body: JSON.stringify({ start: "2026-11-24T02:00:00Z", end: "2026-11-24T03:00:00Z", roomId: 9, name: "Mr Lee", phone: "012", email: "lee@example.com", company: "Lee", department: "", title: "Intro", people: 3, host: "boss", attendees: ["x@y"] }),
   });
   assert.equal(res.status, 201);
   assert.equal(calls[0].url, "https://hub.example/api/v1/sys/meetings/public/links/hk-0123456789/book");
   assert.equal(calls[0].headers.get("X-Reporter-Id"), "guest");
-  assert.deepEqual(Object.keys(JSON.parse(calls[0].body)).sort(), ["company", "email", "name", "phone", "start"]);
+  assert.deepEqual(Object.keys(JSON.parse(calls[0].body)).sort(), ["company", "department", "email", "end", "name", "people", "phone", "roomId", "start", "title"]);
+});
+
+test("a guest reads one day of a link through /public only", async (t) => {
+  const calls = fakeHub(t, () => json({ day: "2026-11-24", open: true, rooms: [] }));
+  const res = await appAs(null).request("/api/public/meetings/links/hk-0123456789/day?day=2026-11-24");
+  assert.equal(res.status, 200);
+  assert.equal(calls[0].url, "https://hub.example/api/v1/sys/meetings/public/links/hk-0123456789/day?day=2026-11-24");
+  assert.equal(calls[0].headers.get("X-Reporter-Id"), "guest");
+  assert.equal((await appAs(null).request("/api/public/meetings/links/hk-0123456789/day?day=soon")).status, 400);
 });
 
 test("a malformed link code never reaches the hub", async (t) => {

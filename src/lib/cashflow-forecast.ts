@@ -314,7 +314,22 @@ export type TfTicks = Record<string, string[]>;
  *  tenor and interest (absent = the defaults), the months keyed, and `ticks`
  *  once Fill from Forecast P&L was used: present (even empty), the plan's
  *  drawdowns follow the ticks instead of typed amounts. */
-export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; ticks?: TfTicks; months: Record<string, number> }>;
+export type TfPlanStore = Record<string, { tenorDays?: number; rateBp?: number; ticks?: TfTicks; off?: TfTicks; months: Record<string, number> }>;
+/* `off` (owner 2026-11-23): with suppliers ticked "Can use trade finance" in
+ * Supplier maintenance, the months unticked by hand — every other month such
+ * a supplier has an amount is ticked (tfAutoTicks). */
+
+/** Month → supplier ids, cleaned: YYYY-MM months, trimmed unique ids; a month
+ *  left with none goes. */
+function cleanTicks(raw: object): TfTicks {
+  const ticks: TfTicks = {};
+  for (const [ym, ids] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym) || !Array.isArray(ids)) continue;
+    const clean = [...new Set(ids.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter((x) => x && x.length <= 100))].sort().slice(0, 500);
+    if (clean.length) ticks[ym] = clean;
+  }
+  return ticks;
+}
 
 /** A stored plan, cleaned: trade-finance accounts only (with `allowed`), a
  *  tenor of 1–400 days, a rate of 0–100 %, months as YYYY-MM, whole positive
@@ -334,14 +349,11 @@ export function cleanTfPlans(raw: unknown, allowed: ReadonlySet<string> | null):
     if (o.rateBp !== undefined && o.rateBp !== null && Number.isFinite(rate) && rate >= 0 && rate <= 10_000) out.rateBp = rate;
     // The per-month ticks (2026-11-10): an empty set is every tick cleared,
     // and the plan still follows the ticks. A month left with none goes.
-    if (o.ticks && typeof o.ticks === "object" && !Array.isArray(o.ticks)) {
-      const ticks: TfTicks = {};
-      for (const [ym, ids] of Object.entries(o.ticks as Record<string, unknown>)) {
-        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym) || !Array.isArray(ids)) continue;
-        const clean = [...new Set(ids.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter((x) => x && x.length <= 100))].sort().slice(0, 500);
-        if (clean.length) ticks[ym] = clean;
-      }
-      out.ticks = ticks;
+    if (o.ticks && typeof o.ticks === "object" && !Array.isArray(o.ticks)) out.ticks = cleanTicks(o.ticks);
+    const off = (o as { off?: unknown }).off;
+    if (off && typeof off === "object" && !Array.isArray(off)) {
+      const clean = cleanTicks(off);
+      if (Object.keys(clean).length) out.off = clean;
     }
     for (const [ym, s] of Object.entries((o.months ?? {}) as Record<string, unknown>)) {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) continue;
@@ -498,10 +510,14 @@ export function tfForecastDueBySupplier(o: {
   months: Record<string, FcMonth>;
   termMonths: (id: string) => number;
   fromYm: string;
+  /** The first month bought on the Forecast P&L's figures: a month before it
+   *  has ended, and its real bills stand for it (tfActualDueBySupplier). */
+  firstPurchaseYm?: string;
 }): Record<string, Record<string, number>> {
   const out: Record<string, Record<string, number>> = {};
   for (const [ym, m] of Object.entries(o.months)) {
     if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+    if (o.firstPurchaseYm && ym < o.firstPurchaseYm) continue;
     for (const type of Object.keys(m?.purchasesByType ?? {})) {
       for (const [id, sen] of forecastTypeSupplierCells(m, type)) {
         if (sen <= 0 || id === FC_OTHER_SUPPLIER) continue;
@@ -515,9 +531,83 @@ export function tfForecastDueBySupplier(o: {
   return out;
 }
 
+/** The real bills behind trade finance (owner 2026-11-23 「例如10月真实买了这么
+ *  多货，那么根据term他12月就可以claim trade finance，那么他会replace forecast
+ *  P&L 的trade finance 数据」, 「月份结束才换成真实单据」, 「只算还没付的」): each
+ *  supplier's bills still unpaid from a month that has ended (before `fromYm`),
+ *  each in the month it falls due by the supplier's term — one past due counts
+ *  in `fromYm`. A bill of the current month waits for the month to end: the
+ *  Forecast P&L stands for it until then. */
+export function tfActualDueBySupplier(o: {
+  bills: readonly { supplierId: string; date: string; sen: number }[];
+  termMonths: (id: string) => number;
+  fromYm: string;
+}): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const b of o.bills) {
+    const ym = String(b.date ?? "").slice(0, 7);
+    if (!b.supplierId || !(b.sen > 0) || !/^\d{4}-\d{2}$/.test(ym) || ym >= o.fromYm) continue;
+    const due = addMonthsYm(ym, Math.max(0, Math.round(o.termMonths(b.supplierId))));
+    const at = due < o.fromYm ? o.fromYm : due;
+    const by = (out[b.supplierId] ??= {});
+    by[at] = (by[at] ?? 0) + Math.round(b.sen);
+  }
+  return out;
+}
+
+/** Two supplier → month → sen maps added together. */
+export function tfMergeDues(...maps: readonly Record<string, Record<string, number>>[]): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const m of maps) {
+    for (const [id, by] of Object.entries(m)) {
+      const o = (out[id] ??= {});
+      for (const [ym, sen] of Object.entries(by)) o[ym] = (o[ym] ?? 0) + sen;
+    }
+  }
+  return out;
+}
+
+/** The ticks when suppliers are ticked "Can use trade finance" in Supplier
+ *  maintenance (owner 2026-11-23 「在 Supplier maintenance 打勾的供应商，到了
+ *  Cash Flow 的 trade finance 弹窗里会自动帮你勾好每个月份，你只需要把不要的月份
+ *  取消」): each such supplier, every month in `yms` it has an amount, but the
+ *  months unticked by hand (`off`). A month that comes into view later is
+ *  ticked too; an untick is kept. */
+export function tfAutoTicks(
+  suppliers: readonly { id: string; dueBy: Record<string, number> }[],
+  eligibleIds: readonly string[],
+  yms: readonly string[],
+  off: TfTicks,
+): TfTicks {
+  const eligible = new Set(eligibleIds);
+  const out: TfTicks = {};
+  for (const ym of yms) {
+    const skip = new Set(off[ym] ?? []);
+    const ids = suppliers.filter((s) => eligible.has(s.id) && (s.dueBy[ym] ?? 0) > 0 && !skip.has(s.id)).map((s) => s.id).sort();
+    if (ids.length) out[ym] = ids;
+  }
+  return out;
+}
+
+/** A tick on the name, with auto ticks: every month in `yms` the supplier has
+ *  an amount back on (out of `off`), or all unticked (into `off`) when they
+ *  are all on already. One month's tick is tfToggleTick on `off`. */
+export function tfToggleOffRow(off: TfTicks, row: { id: string; dueBy: Record<string, number> }, yms: readonly string[]): TfTicks {
+  const months = yms.filter((ym) => (row.dueBy[ym] ?? 0) > 0);
+  const allOn = months.length > 0 && months.every((ym) => !(off[ym] ?? []).includes(row.id));
+  let next = off;
+  for (const ym of months) if ((next[ym] ?? []).includes(row.id) !== allOn) next = tfToggleTick(next, row.id, ym);
+  return next;
+}
+
 /** A supplier the Trade finance block can tick: its name, its payment term
  *  and its Forecast P&L dues by month. */
-export type TfForecastSupplier = { id: string; name: string; term?: string; dueBy: Record<string, number> };
+export type TfForecastSupplier = {
+  id: string; name: string; term?: string; dueBy: Record<string, number>;
+  /** The part of `dueBy` from real unpaid bills, by month (owner 2026-11-23
+   *  「用真实的background颜色可以不一样吗？」): the popup shades those cells. */
+  actualBy?: Record<string, number>;
+};
 
 /** The tick grid's rows (owner 2026-11-10, second round): every supplier with
  *  a Forecast P&L amount due in the months shown, biggest total first, then by

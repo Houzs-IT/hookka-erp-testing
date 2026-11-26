@@ -59,9 +59,9 @@ jobs:
       # installed up front so a dependency problem fails the run BEFORE prod is
       # dumped, rather than after staging has already been loaded with
       # unsanitised production data.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

@@ -15,7 +15,7 @@
 // remain valid.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import type { Env } from "../worker";
 import { requirePermission, requireSuperAdmin } from "../lib/rbac";
 import { ensureOrgRoles } from "../lib/ensure-org-roles";
@@ -120,8 +120,7 @@ function genId(): string {
 // toISOString timestamp), so no timestamptz round-trip hazard.
 let orgColumnsEnsured: Promise<void> | null = null;
 function ensureUserOrgColumns(db: D1Database): Promise<void> {
-  if (orgColumnsEnsured) return orgColumnsEnsured;
-  orgColumnsEnsured = (async () => {
+  return memoizeSelfApply(() => orgColumnsEnsured, (p) => { orgColumnsEnsured = p; }, async () => {
     const stmts = [
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT",
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS position TEXT",
@@ -138,14 +137,7 @@ function ensureUserOrgColumns(db: D1Database): Promise<void> {
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
     ];
     await runSelfApply(db, "users", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    orgColumnsEnsured = null;
-    throw err;
   });
-  return orgColumnsEnsured;
 }
 
 // GET /api/users — list all users

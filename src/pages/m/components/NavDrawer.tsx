@@ -21,7 +21,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { LogOut, Moon, Search, Sun, X } from "lucide-react";
 import { M } from "../theme";
-import { visibleModuleGroups, type ModuleGroup } from "../nav";
+import { visibleModuleGroups, withMeetingsBadge, type ModuleGroup } from "../nav";
+import { useMeetingsUnread } from "@/lib/meetings-unread";
 import { NAV_DRAWER_ID } from "../lib/nav-drawer";
 import { useMobileThemeMode } from "../lib/theme-mode";
 import { usePermissions } from "@/lib/use-permission";
@@ -123,7 +124,8 @@ export function NavDrawer({ open, onClose }: Props) {
     };
   }, [open, close]);
 
-  const groups = visibleModuleGroups(isNavAllowed, query);
+  const meetingsUnread = useMeetingsUnread();
+  const groups = withMeetingsBadge(visibleModuleGroups(isNavAllowed, query), meetingsUnread);
   const go = (path: string) => {
     close();
     if (path !== pathname) navigate(path);

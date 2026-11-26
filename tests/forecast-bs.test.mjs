@@ -255,3 +255,60 @@ test("the route and the Monthly Balance Sheet's Forecast switch", () => {
   assert.match(mb, /fyForecastMonths\(/);
   assert.match(mb, /fy\.endYm >= curYm/);
 });
+
+// ---------------------------------------------------------------------------
+// Trade finance (owner 2026-11-23, after the check: the sheet read the facility
+// as nil by January while the Cash Flow forecast drew on it every month). A
+// planned drawdown, the interest owed on it and its repayment settle on the
+// facility; the interest's cost is the profit's; the Forecast P&L's own
+// trade-finance interest is owed to the lender, not depreciation.
+// ---------------------------------------------------------------------------
+import { tfPlanLegs } from "../src/lib/cashflow-forecast.ts";
+
+const TF = "310-0020";
+const TF_INT = "900-I004";
+
+test("a planned drawdown, its interest and its repayment move the facility, not the profit", () => {
+  const plan = [{ accountCode: TF, lender: "Lender", tenorDays: 90, rateBp: 121, months: { "2026-11": 1_000_000 } }];
+  const legs = tfPlanLegs(plan, { kind: "pnl", currentYm: "2026-11", drawnThisMonth: () => 0, interestAccount: TF_INT });
+  const months = ["2026-11", "2026-12", "2027-01", "2027-02"];
+  const d = forecastBsDeltas({ ...BASE, months, pnlLegs: legs, tfAccounts: [TF] });
+  for (const ym of months) assert.equal(sumOf(d[ym] ?? {}), 0, ym);
+  // November: drawn 10,000.00 and 121.00 interest owed (a credit on the facility); the interest costs the profit.
+  assert.equal(d["2026-11"][TF], -(1_000_000 + 12_100));
+  assert.equal(d["2026-11"][FC_PROFIT], 12_100);
+  assert.equal(d["2026-11"][FC_CASH], 1_000_000);
+  // Repaid in full a tenor later (90 days → three months): the facility back to where it was.
+  assert.equal(d["2027-02"][TF], 1_012_100);
+  assert.equal(d["2027-02"][FC_CASH], -1_012_100);
+  assert.equal(months.reduce((t, ym) => t + (d[ym]?.[TF] ?? 0), 0), 0);
+  // Without the facility named, the same legs used to land on the profit.
+  const before = forecastBsDeltas({ ...BASE, months, pnlLegs: legs });
+  assert.equal(before["2026-11"][TF], undefined);
+});
+
+test("the Forecast P&L's own trade-finance interest is owed to the lender, not depreciation", () => {
+  const d = forecastBsDeltas({
+    ...BASE,
+    accounts: { ...ACC, tfInterestTo: TF },
+    accruals: { "2026-11": { salesSen: 0, materialsSen: 0, salariesSen: 0, nonCashSen: 500, tfInterestSen: 300 } },
+  });
+  assert.equal(d["2026-11"][FC_PROFIT], 800);
+  assert.equal(d["2026-11"][FC_DEPN], -500);
+  assert.equal(d["2026-11"][TF], -300);
+  assert.equal(sumOf(d["2026-11"]), 0);
+});
+
+test("the route gives the sheet the Cash Flow page's plans from this month on, and the facilities", () => {
+  const route = read("src/api/routes/accounting.ts");
+  const at = route.indexOf('app.get("/bs-forecast"');
+  const body = route.slice(at, route.indexOf("app.get(", at + 10));
+  assert.doesNotMatch(body, /tfPlans: \[\]/, "the sheet no longer drops the plans");
+  assert.match(body, /Object\.entries\(f\.months\)\.filter\(\(\[ym\]\) => ym >= curYm\)/);
+  assert.match(body, /buildPnlForecastLegs\(\{ \.\.\.p, fcMonths, tfPlans: tfPlansBs \}\)/);
+  assert.match(body, /getTfSources\(db\)/);
+  assert.match(body, /tfAccounts,\n\s+\}\);/);
+  // One interest, not two: with a plan the plan's interest stands for the Forecast P&L's.
+  assert.match(body, /tfInterestSen: tfPlansBs\.length \? 0 :/);
+  assert.match(body, /nonCashSen: cash\.excluded\.filter\(\(e\) => resolveAcct\(e\.code\) !== tfInterestCode\)/);
+});

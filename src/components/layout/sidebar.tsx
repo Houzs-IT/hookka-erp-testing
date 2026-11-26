@@ -63,6 +63,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { usePermissions } from "@/lib/use-permission";
 import { prefetchRoute } from "@/dashboard-routes";
 import { markWorkspaceOpenIntent } from "@/lib/workspaceTabs";
+import { useMeetingsUnread } from "@/lib/meetings-unread";
 
 interface NavItem {
   name: string;
@@ -323,6 +324,9 @@ export const navigationGroups: NavGroup[] = [
     label: "SYSTEM",
     items: [
       { name: "Organisations", href: "/settings/organisations", icon: Building2 },
+      // Ask Claude / ChatGPT about the ERP (MCP connector, owner 2026-11-25).
+      // Every login: their own connections; Super Admin also approves here.
+      { name: "AI Connector", href: "/settings/ai-connector", icon: Bot },
       // "User Management" is injected below (SUPER_ADMIN only) at render time
       { name: "Settings", href: "/settings", icon: Settings },
     ],
@@ -431,6 +435,7 @@ export function Sidebar({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
   const [itUnread, setItUnread] = useState(0);
+  const meetingsUnread = useMeetingsUnread();
   const [orgs, setOrgs] = useState<OrgInfo[]>([]);
   const [activeOrgId, setActiveOrgId] = useState("");
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
@@ -458,6 +463,7 @@ export function Sidebar({
     if (ric) {
       ric(() => prefetchRoute("/dashboard"));
     } else {
+      // eslint-disable-next-line no-restricted-syntax -- inside an effect that clears it in its cleanup
       const t = window.setTimeout(() => prefetchRoute("/dashboard"), 1500);
       return () => window.clearTimeout(t);
     }
@@ -618,7 +624,7 @@ export function Sidebar({
         ...items.slice(0, at),
         KPI_LINK,
         AGENTS_LINK,
-        MEETINGS_LINK,
+        { ...MEETINGS_LINK, badge: meetingsUnread },
         { ...IT_SUPPORT_LINK, badge: itUnread },
         ...items.slice(at),
       ];

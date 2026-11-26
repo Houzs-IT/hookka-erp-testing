@@ -29,8 +29,9 @@ const TODAY = "2026-11-16";
 const params = (o) => (k) => o[k] ?? null;
 
 test("fence constants match the desktop Attendance tab exactly", () => {
-  assert.match(desktop, /const ATT_FENCE = \{ lat: 3\.187681, lng: 101\.570928, radiusM: 200 \};/);
-  assert.deepEqual({ ...ATT_FENCE }, { lat: 3.187681, lng: 101.570928, radiusM: 200 });
+  // 150 m since 2026-11-23 (owner shrank it from 200 m).
+  assert.match(desktop, /const ATT_FENCE = \{ lat: 3\.187681, lng: 101\.570928, radiusM: 150 \};/);
+  assert.deepEqual({ ...ATT_FENCE }, { lat: 3.187681, lng: 101.570928, radiusM: 150 });
   // The haversine and the in / out / none decision are the same lines as desktop's.
   assert.match(desktop, /Math\.cos\(toRad\(lat\)\) \* Math\.cos\(toRad\(ATT_FENCE\.lat\)\) \* Math\.sin\(dLng \/ 2\) \*\* 2/);
   assert.match(desktop, /attMetersFromFactory\(lat, lng\) <= ATT_FENCE\.radiusM \? "in" : "out"/);

@@ -1,4 +1,4 @@
-import { runSelfApply } from "./self-apply";
+import { runSelfApply, memoizeSelfApply } from "./self-apply";
 
 // ---------------------------------------------------------------------------
 // job-card-completed-at.ts — capture the INSTANT a job card was completed.
@@ -74,18 +74,13 @@ let completedAtMigration: Promise<void> | null = null;
  * isolate.
  */
 export function ensureJobCardCompletedAt(db: Runner): Promise<void> {
-  if (completedAtMigration) return completedAtMigration;
-  completedAtMigration = (async () => {
+  return memoizeSelfApply(() => completedAtMigration, (p) => { completedAtMigration = p; }, async () => {
     await runSelfApply(
       db as Parameters<typeof runSelfApply>[0],
       "job-card-completed-at",
       [...JOB_CARD_COMPLETED_AT_STATEMENTS],
     );
-  })().catch((err) => {
-    completedAtMigration = null;
-    throw err;
   });
-  return completedAtMigration;
 }
 
 /** Test-only: forget the memo so a fresh round can be asserted. */

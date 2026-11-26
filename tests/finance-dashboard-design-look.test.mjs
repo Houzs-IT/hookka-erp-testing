@@ -79,8 +79,8 @@ test("every chart on the page uses them; the cards' colours are the design's", (
     assert.match(l, /\{\.\.\.anim\}/, l);
   }
   assert.equal((page.match(/<Tooltip cursor=\{false\}/g) ?? []).length, (page.match(/<Tooltip /g) ?? []).length, "no grey hover block");
-  assert.match(page, /bars=\{\[\{ key: "actual", name: "Actual", color: CH\.actual \}\]\}\n\s+line=\{\{ key: "forecast", name: "Forecast", color: CH\.fc, dashed: true \}\}/);
-  assert.match(page, /bars=\{\[\{ key: "inflow", name: "Money in", color: CH\.in \}, \{ key: "outflow", name: "Money out", color: CH\.out \}\]\}\n\s+line=\{\{ key: "net", name: "Net change", color: CH\.net \}\}/);
+  assert.match(page, /bars=\{\[\{ key: "bar", name: "Actual", color: CH\.actual \}\]\}\n\s+fadeKey="ahead"\n\s+line=\{\{ key: "forecast", name: "Forecast", color: CH\.fc, dashed: true \}\}/);
+  assert.match(page, /bars=\{\[\{ key: "inflow", name: "Money in", color: CH\.in \}, \{ key: "outflowUp", name: "Money out", color: CH\.out \}\]\}\n\s+line=\{\{ key: "value", name: CF_TAB_LABEL\[cfTab\], color: CH\.net \}\}/); // the line follows the tab since 2026-11-23
   assert.match(page, /\{ key: "assets", name: "Total assets", color: CH\.assets \},\n\s+\{ key: "liabilities", name: "Total liabilities", color: CH\.liab \},/);
   assert.match(page, /line=\{\{ key: "debtPct", name: "Debt to assets %", color: CH\.net, axis: "right" \}\}/);
   assert.match(page, /color: CH\.single \}\]\}/);
@@ -94,7 +94,13 @@ test("the periods: 6 / 12 months beside the range, every card reads the shown pe
   assert.match(page, /\(\[6, 12\] as const\)\.map\(\(n, i\) => \{/);
   assert.doesNotMatch(page, /\(rows \?\? \[\]\)\.map\(/, "no card reads the unfiltered rows");
   // "vs last period" still compares with the month before, shown or not.
-  assert.match(page, /const at = all\.indexOf\(r\);\n\s+const prev = at > 0 \? all\[at - 1\]\.actual : null;/);
+  // Owner 2026-11-24: a period ahead compares its forecast; the period before
+  // an explicit From is fetched (dashPeriodBefore) but not drawn.
+  assert.match(page, /const at = all\.indexOf\(r\);\n\s+const prevRow = at > 0 \? all\[at - 1\] : null;\n\s+const prev = prevRow \? prevRow\.actual \?\? prevRow\.forecast \?\? null : null;/);
+  assert.match(page, /&from=\$\{dashPeriodBefore\(fromYm, granularity\)\}&to=\$\{toYm\}/);
+  assert.equal(look.dashPeriodBefore("2026-11", "month"), "2026-10");
+  assert.equal(look.dashPeriodBefore("2027-01", "month"), "2026-12");
+  assert.equal(look.dashPeriodBefore("2026-11", "quarter"), "2026-07");
 });
 
 test("months read as the design labels them", () => {
@@ -103,7 +109,12 @@ test("months read as the design labels them", () => {
   assert.equal(look.dashPeriodLabel("2026-10", true), "Oct 2026 *");
   assert.equal(look.dashPeriodLabel("2026/Q3", true), "2026/Q3 *");
   assert.doesNotMatch(page, /r\.label \+ \(r\.partial \? " \*" : ""\)/, "every card names its periods the one way");
-  assert.equal((page.match(/dashPeriodLabel\(r\.label, r\.partial\)/g) ?? []).length, 7);
+  // Every card names a period through dashRowLabel ("(F)" ahead, owner 2026-11-24);
+  // the Cash Flow / Balance Sheet cards keep their own "ahead" test.
+  assert.equal((page.match(/dashPeriodLabel\(r\.label, r\.partial\)/g) ?? []).length, 2);
+  assert.ok((page.match(/dashRowLabel\(r\)/g) ?? []).length >= 5);
+  assert.equal(look.dashRowLabel({ label: "2026-12", partial: false, actual: null }), "Dec 2026 (F)");
+  assert.equal(look.dashRowLabel({ label: "2026-11", partial: true, actual: {} }), "Nov 2026 *");
 });
 
 test("motion: the dashboard's switches are the design's pills; revealed rows fade in", () => {
@@ -113,7 +124,7 @@ test("motion: the dashboard's switches are the design's pills; revealed rows fad
   const shell = read("src/components/finance/report-shell.tsx");
   assert.match(shell, /rounded-\[9px\] border border-\[#E5E7EB\] bg-\[#F3F4F6\] p-\[3px\]/, "the grey track");
   assert.match(shell, /bg-white font-semibold text-\[#111827\] shadow-\[0_1px_2px_rgba\(17,24,39,\.10\),0_0_0_1px_rgba\(17,24,39,\.06\)\]/, "the chosen one a white pill");
-  assert.equal((page.match(/data-fin-reveal=""/g) ?? []).length, 2);
+  assert.equal((page.match(/data-fin-reveal=""/g) ?? []).length, 4); // +2 Cash Flow Detail group row and its lines (2026-11-23)
   assert.match(read("src/styles/finance-v2.css"), /\[data-fin-ui\] \[data-fin-reveal\] \{\n  animation: fin-reveal \.18s ease-out;\n\}/);
   assert.match(read("src/index.css"), /@keyframes fin-reveal \{\n  from \{ opacity: 0; transform: translateY\(-3px\); \}\n  to \{ opacity: 1; transform: none; \}\n\}/);
 });

@@ -45,7 +45,10 @@ const CSRF_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const API_TIMEOUT_MS = 30_000;
 // OCR calls legitimately run past 30s; they bring their own timeout or sweeper (BUG-2026-10-19-334).
 // The Board Report's first build of a month reads a dozen uncached reports in one call (2026-11-10).
-export const NO_TIMEOUT_PATH = /^\/api\/(scan-queue\/batch\/[^/]+\/work|scan-po\/extract|scan-supplier\/extract|reports\/board)$/;
+// The Cash Flow forecast and the Forecast Balance Sheet, when built afresh, read
+// a dozen agings (measured 55–105 s on prod 2026-11-23); their copy is kept on
+// the server, so only a first build waits that long (owner 「看没有forecast了？」).
+export const NO_TIMEOUT_PATH = /^\/api\/(scan-queue\/batch\/[^/]+\/work|scan-po\/extract|scan-supplier\/extract|reports\/board|accounting\/cashflow-forecast|accounting\/bs-forecast)$/;
 
 function pathOf(url: string): string {
   try {
@@ -104,6 +107,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     }
     const controller = new AbortController();
     if (!NO_TIMEOUT_PATH.test(pathOf(url))) {
+      // eslint-disable-next-line no-restricted-syntax -- plain module, not a component; fetch timeout is cleared when the request ends
       timeoutId = setTimeout(() => {
         aborted = true;
         controller.abort();

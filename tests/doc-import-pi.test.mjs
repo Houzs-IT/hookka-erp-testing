@@ -61,6 +61,7 @@ function makeDb() {
           if (/FROM suppliers WHERE code = \?/.test(sql))
             return { results: st.args[0] === 'S-OCEAN' ? [{ id: 's-1', name: 'Ocean Sky' }] : [] };
           if (/FROM purchase_invoice_items WHERE pi_id/.test(sql)) return { results: ITEMS[st.args[0]] ?? [] };
+          if (/FROM raw_materials/.test(sql)) return { results: [{ itemCode: 'FAB-1', baseUOM: 'MTR' }] };
           return { results: [] };
         },
         async first() {
@@ -102,7 +103,7 @@ function makeCtx() {
         return { success: true, data: { id: 'pi-new', piNo: body?.piNo ?? 'PI-2610-099' } };
       }
       const wrap = new Hono();
-      wrap.use('*', async (c, next) => { c.set('DB', db); await next(); });
+      wrap.use('*', async (c, next) => { c.set('DB', db); c.set('orgId', 'org-1'); await next(); });
       wrap.route('/x', app);
       return (await wrap.request(`/x${path}`)).json();
     },
@@ -136,6 +137,7 @@ test('round trip: an unedited PI export imports back with zero changes', async (
   const aoa = await exportAoa();
   assert.equal(aoa[0][col(aoa, 'Line ID')], 'Line ID');
   assert.equal(aoa.length, 4, 'every line of every PI');
+  assert.equal(aoa.find((r) => r[col(aoa, 'Line ID')] === 'pii-a')[col(aoa, 'UOM')], 'MTR', 'the material base unit is exported');
   const { p } = await plan(aoa);
   assert.deepEqual(p.errors, []);
   assert.deepEqual(p.warnings, []);

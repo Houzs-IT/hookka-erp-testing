@@ -31,7 +31,34 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { postProductionOrderCompletion } from "../lib/fg-completion";
-import { postJobCardLabor } from "../lib/po-cost-cascade";
+import { postJobCardLabor, consumeRawMaterialsForJobCard } from "../lib/po-cost-cascade";
+
+// Per-WIP raw-material deduction on a SCAN completion (owner 2026-11-23:
+// 「完成了就扣 每个wip完成的就扣」). The worker-scan paths complete job cards
+// without going through the PATCH handler, and before this they never deducted
+// RM at all — stock only moved at the PO-completion safety net. Same contract
+// as the PATCH path: idempotent per (PO, wipKey, dept); a failure is logged and
+// never fails the scan (the work physically happened).
+async function consumeRmForScannedJc(
+  db: D1Database,
+  poId: string,
+  jc: { id: string; wipKey?: string | null; departmentCode?: string | null },
+): Promise<void> {
+  try {
+    await consumeRawMaterialsForJobCard(db, poId, {
+      id: jc.id,
+      wipKey: jc.wipKey ?? "",
+      departmentCode: jc.departmentCode ?? "",
+    });
+  } catch (err) {
+    console.error("[consumeRmForScannedJc] cascade failed", {
+      poId,
+      jobCardId: jc.id,
+      dept: jc.departmentCode,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 import { resolveWorkerToken } from "./worker-auth";
 import { workerCoversDept } from "../../lib/worker";
 import { requirePermission } from "../lib/rbac";
@@ -2036,6 +2063,7 @@ async function completeCartonPillows(
           source: "SCAN",
         });
         await postJobCardLabor(db, jc.id, sib.id);
+        await consumeRmForScannedJc(db, sib.id, merged);
         touched = true;
       }
       if (!touched) continue;
@@ -2594,6 +2622,7 @@ app.post("/:id/scan-complete", async (c) => {
 
     // F2 — labor cost posting (idempotent per jobCardId).
     await postJobCardLabor(db, mergedJc.id, target.po.id);
+    await consumeRmForScannedJc(db, target.po.id, mergedJc);
   }
 
   // PO progress rollup. currentDepartment is derived inline; status,
@@ -3029,6 +3058,7 @@ app.post("/:id/scan-complete-dept", async (c) => {
         { orgId: scanOrgId(c), source: "SCAN" },
       );
       await postJobCardLabor(db, mergedJc.id, poId);
+      await consumeRmForScannedJc(db, poId, mergedJc);
       completedJcIds.push(mergedJc.id);
     }
   }
@@ -3544,6 +3574,7 @@ app.post("/:id/scan-complete-shared", async (c) => {
         { orgId: scanOrgId(c), source: "SCAN" },
       );
       await postJobCardLabor(db, mergedJc.id, poId);
+      await consumeRmForScannedJc(db, poId, mergedJc);
       completedJcIds.push(mergedJc.id);
     }
   }

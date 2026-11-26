@@ -171,6 +171,7 @@ const Settings = lazy(() => import('./pages/settings'))
 const Organisations = lazy(() => import('./pages/settings/organisations'))
 const SettingsUsers = lazy(() => import('./pages/settings/Users'))
 const SettingsEmailReports = lazy(() => import('./pages/settings/EmailReports'))
+const SettingsAiConnector = lazy(() => import('./pages/settings/AiConnector'))
 
 // Admin (SUPER_ADMIN-only screens — system health, etc.)
 const AdminHealth = lazy(() => import('./pages/admin/health'))
@@ -526,6 +527,9 @@ export const DASHBOARD_ROUTES: RouteObject[] = [
   // Settings
   { path: '/settings', element: <S><Settings /></S> },
   { path: '/settings/organisations', element: <S><Organisations /></S> },
+  // AI Connector (MCP, docs/plans/mcp-connector.md): every login sees its own
+  // connections; the server decides who sees the admin parts (Super Admin).
+  { path: '/settings/ai-connector', element: <S><SettingsAiConnector /></S> },
   // User Management is SUPER_ADMIN only — coarsest gate, role-based.
   {
     path: '/settings/users',
@@ -730,6 +734,7 @@ const ROUTE_CHUNK_LOADERS: Record<string, () => Promise<unknown>> = {
   '/settings/organisations': () => import('./pages/settings/organisations'),
   '/settings/users': () => import('./pages/settings/Users'),
   '/settings/email-reports': () => import('./pages/settings/EmailReports'),
+  '/settings/ai-connector': () => import('./pages/settings/AiConnector'),
   '/admin/health': () => import('./pages/admin/health'),
   '/agents': () => import('./pages/agents'),
 }

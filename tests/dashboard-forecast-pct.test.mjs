@@ -44,8 +44,8 @@ test("no forecast percentage divides by the ACTUAL sales any more", () => {
 
 test("the actual share still divides by the ACTUAL sales", () => {
   // The fix must not swap both sides onto the same base.
-  assert.match(SRC, /point\[`__pct__\$\{cat\}`\] = sales > 0 \? Math\.round\(\(amt \/ sales\) \* 10000\) \/ 100 : null;/);
-  assert.match(SRC, /pct: sales > 0 \? Math\.round\(\(amt \/ sales\) \* 10000\) \/ 100 : null,/);
+  assert.match(SRC, /point\[`__pct__\$\{cat\}`\] = !csAhead && sales > 0 \? Math\.round\(\(amt \/ sales\) \* 10000\) \/ 100 : null;/);
+  assert.match(SRC, /pct: !trAhead && sales > 0 \? Math\.round\(\(amt \/ sales\) \* 10000\) \/ 100 : null,/);
 });
 
 test("a line view pro-rates the forecast revenue the same way the target is", () => {

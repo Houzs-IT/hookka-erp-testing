@@ -1537,6 +1537,7 @@ export function ScanPOModal({ open, onClose, onCreated, target = "SO" }: Props) 
       }
       return next;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the row COUNT changes; re-running on every claudeRows edit would re-tick rows the operator unticked
   }, [claudeRows.length, parseResult?.purchaseOrders.length]);
 
   // Ask the server which of the scanned customer POs are ALREADY orders. Purely

@@ -47,6 +47,9 @@ export type SupplierFormData = {
   sstRegNo: string;
   currency: string;
   bankAccount: string;
+  /** Can use trade finance (owner 2026-11-23): listed and ticked in the Cash
+   *  Flow forecast's trade-finance block. */
+  tfEligible: boolean;
 };
 
 // editData only needs to provide the editable fields plus rating (preserved on
@@ -70,6 +73,7 @@ export type SupplierFormEditData = {
   sstRegNo?: string;
   currency?: string;
   bankAccount?: string;
+  tfEligible?: boolean;
 };
 
 export function SupplierFormDialog({
@@ -111,6 +115,7 @@ export function SupplierFormDialog({
     currency: editData?.currency || "MYR",
     bankAccount: editData?.bankAccount || "",
   });
+  const [tfEligible, setTfEligible] = useState(!!editData?.tfEligible);
 
   // The main Email is a list (the PO email sends To every address in it), so it
   // is checked with that rule. A refused save says why beside the buttons and
@@ -138,6 +143,7 @@ export function SupplierFormDialog({
       address, paymentTerms, rating, status, purchaseOrgCode,
       registrationNo: registrationNo.trim(), taxEntityTin: finance.tin.trim(), sstRegNo: finance.sstRegNo.trim(),
       currency: finance.currency || "MYR", bankAccount: finance.bankAccount.trim(),
+      tfEligible,
     });
   };
 
@@ -145,7 +151,7 @@ export function SupplierFormDialog({
   // "Discard your changes?" first once anything was typed or picked (review
   // pass 2 C2-1 follow-up). ✕ / Cancel still close at once.
   const guard = useFormDiscardGuard(
-    { code, name, contactPerson, phone, email, email2, email3, address, paymentTerms, status, purchaseOrgCode, registrationNo, finance },
+    { code, name, contactPerson, phone, email, email2, email3, address, paymentTerms, status, purchaseOrgCode, registrationNo, finance, tfEligible },
     { onClose },
   );
   // Menu, link, Back or phone swipe ask "Leave without saving?" too
@@ -213,6 +219,11 @@ export function SupplierFormDialog({
             <Input value={registrationNo} onChange={(e) => setRegistrationNo(e.target.value)} placeholder="e.g. 201901012345" />
           </div>
           <PartyFinanceFields value={finance} onChange={setFinance} labelClassName="block text-sm font-medium text-[#374151] mb-1" />
+          <label className="flex items-center gap-2 text-sm text-[#374151]" data-supplier-tf-eligible="">
+            <input type="checkbox" checked={tfEligible} onChange={(e) => setTfEligible(e.target.checked)} />
+            Can use trade finance
+            <span className="text-xs text-[#6B7280]">— ticked every month in the Cash Flow forecast's trade finance</span>
+          </label>
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1">
               Purchase Company

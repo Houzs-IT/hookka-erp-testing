@@ -72,7 +72,7 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `ProductionPage` | `src/pages/production/index.tsx:669` | WIP board; every column/row branches on `activeTab` |
 | `filteredOrders` (memo) | `src/pages/production/index.tsx:2974` | Dept-narrow + overdue-set grid filter |
 | `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5826 / 5785` | Packing sticker set (pillow carton = one box per order, owner 2026-11-20; immediate paint → /p/ token upgrade) |
-| `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5676 / 5651` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
+| `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5717 / 5692` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
 | `BOMManagementPage` | `src/pages/bom.tsx:5664` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2638 / 3544` | L1+WIP editor / master variants |
 | `RawMaterialSelect` / `MaterialScalingEditor` | `src/components/bom/material-editor.tsx` | BOM material picker + scaling editor, shared with the product costing editor (`src/pages/products/costing-editor.tsx`); pure helpers in `src/lib/bom-material.ts` |
@@ -87,7 +87,8 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 | `app.post("/packing-rack-tokens")` | `production-orders.ts:1642` | Authed /p/ piece-token mint (batched) |
 | `GET /overdue-counts` | `production-orders.ts:393` | Server overdue set behind the grid chips |
 | `deriveTopLevelWipKey` / `breakBomIntoWips` | `src/api/lib/bom-wip-breakdown.ts:125 / 350` | THE wipKey formula / BOM → job-card WIPs |
-| `consumeRawMaterialsForPO` / `postJobCardLabor` | `src/api/lib/po-cost-cascade.ts:813 / 1116` | RM consumption / labour GL posting |
+| `consumeRawMaterialsForJobCard` / `consumeRawMaterialsForPO` / `postJobCardLabor` | `src/api/lib/po-cost-cascade.ts:1279 / 1302 / 1330` | RM deducted per WIP at each job-card completion (2026-11-23) / whole-PO safety net at PO completion / labour GL posting |
+| `computeRequiredLines` | `src/api/lib/po-cost-cascade.ts:934` | THE required-qty calculation shared by RM deduction and the MRP |
 | `applyPackingRack` | `src/api/lib/packing-rack-write.ts:71` | Rack set/clear + rack_items occupancy mirror |
 | `PUT /templates/:id` / `POST /templates/bulk-process-edit` | `src/api/routes/bom.ts:578 / 754` | BOM template update / batch process edit |
 | `GET /:id/events` | `src/api/routes/job-cards.ts:430` | Job-card event timeline |

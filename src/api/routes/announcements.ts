@@ -50,15 +50,24 @@ import {
   type OrderPriority,
 } from "../../lib/order-notification";
 import { capList } from "../lib/list-cap";
+import { memoizeSelfApply, runSelfApply } from "../lib/self-apply";
 import { ensureNotificationsUserColumn } from "./it-support";
 
 // ---- runtime schema self-apply (idempotent, once per isolate) ----
 let _announcementsMig: Promise<void> | null = null;
 function ensureAnnouncementsTable(db: D1Database): Promise<void> {
-  if (_announcementsMig) return _announcementsMig;
-  _announcementsMig = (async () => {
-    await db
-      .prepare(
+  // A best-effort step below that fails sets this, so the round is not
+  // remembered and the next call retries it (the old memo-null self-heal).
+  let retryNextCall = false;
+  return memoizeSelfApply(
+    () => _announcementsMig,
+    (p) => { if (!retryNextCall) _announcementsMig = p; },
+    async () => {
+      // Through runSelfApply so what is already there sends no DDL: every
+      // ALTER TABLE takes an ACCESS EXCLUSIVE lock, even a no-op, and each cold
+      // request runs this round (BUG-2026-11-24-556). The table and its index
+      // are required, so a real failure throws, as before.
+      await runSelfApply(db, "announcements", [
         `CREATE TABLE IF NOT EXISTS announcements (
            id           TEXT PRIMARY KEY,
            org_id       TEXT NOT NULL DEFAULT 'hookka',
@@ -70,167 +79,46 @@ function ensureAnnouncementsTable(db: D1Database): Promise<void> {
            created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
            updated_at   TIMESTAMPTZ
          )`,
-      )
-      .run();
-    await db
-      .prepare(
         `CREATE INDEX IF NOT EXISTS idx_announcements_org_active_created
            ON announcements (org_id, is_active, created_at DESC)`,
-      )
-      .run();
-    // Auto-translation column (added 2026-06-23). Stores ONE JSON blob with the
-    // worker-portal translations: { en:{title,body}, ms:{…}, zh:{…}, my:{…} }.
-    // A single JSONB column (not per-lang columns) keeps the schema stable if a
-    // 5th language is ever added. The migration FILE is inert on prod — this
-    // runtime ALTER is the only way the column reaches prod, awaited before the
-    // first read/write. Wrapped in try/catch like ocr-distill.ensureDistillColumns
-    // so a transient DDL reject can't strand the whole ensure.
-    try {
-      await db
-        .prepare(
+      ]);
+      // The rest is best-effort: a failure does not stop the request, but the
+      // round is not remembered, so the next call retries it. The migration
+      // files are inert on prod; these are the load-bearing copies.
+      try {
+        await runSelfApply(db, "announcements", [
+          // Worker-portal translations, one JSON blob: { en:{title,body}, ms, zh, my } (2026-06-23).
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS translations JSONB",
-        )
-        .run();
-    } catch {
-      // best-effort; column may already exist or DDL transiently rejected.
-      // Clear the memo so a transient DDL reject SELF-HEALS on the next call,
-      // instead of caching a "success" that strands every write (the INSERT
-      // would bind a non-existent `translations` column → 500) for the life of
-      // the isolate.
-      _announcementsMig = null;
-    }
-    // Per-worker read-receipt table (added 2026-06-24). ONE row per
-    // (announcement, worker) the moment a worker taps "Got it" on the phone
-    // popup. The popup gate is now SERVER-driven off this table (the worker GET
-    // returns this worker's acked ids), so a fresh device re-pops every active
-    // notice until the server records the ack. The office reads it back as a
-    // read-receipt (acked vs the active roster) and "remind" re-pops the
-    // un-acked. snake_case columns; the PG driver folds them to camelCase on
-    // read so every read is dual-keyed (r.workerId ?? r.worker_id, etc).
-    //
-    // Same load-bearing pattern as the table above: the migration FILE is INERT
-    // on prod — this runtime CREATE TABLE is the only way it reaches prod,
-    // awaited before the first ack read/write. Wrapped in its own try/catch with
-    // the memo-null self-heal so a transient DDL reject can't strand the ensure.
-    try {
-      await db
-        .prepare(
+          // Per-worker read receipt, one row per (announcement, worker) on "Got it"
+          // (2026-06-24). The worker GET reads this worker's acked ids by worker_id.
           `CREATE TABLE IF NOT EXISTS announcement_acks (
              announcement_id TEXT NOT NULL,
              worker_id       TEXT NOT NULL,
              acked_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
              PRIMARY KEY (announcement_id, worker_id)
            )`,
-        )
-        .run();
-      // Index the worker_id side: the worker GET subquery fetches "this
-      // worker's acked ids" by worker_id, and the office remind/acks join keys
-      // off announcement_id (already covered by the PK's leading column).
-      await db
-        .prepare(
           `CREATE INDEX IF NOT EXISTS idx_announcement_acks_worker
              ON announcement_acks (worker_id)`,
-        )
-        .run();
-    } catch {
-      // best-effort; table/index may already exist or DDL transiently rejected.
-      // Null the memo so a transient reject self-heals on the next call instead
-      // of caching a "success" that strands every ack write for the isolate.
-      _announcementsMig = null;
-    }
-    // Reminder marker (added 2026-06-24). When the office taps "Remind", we
-    // delete the un-acked workers' (absent) ack rows is a no-op, so instead we
-    // stamp reminded_at on the announcement and the worker GET treats a notice
-    // reminded AFTER this worker's last ack as un-acked again — re-popping it.
-    // (For a never-acked worker the notice already pops, so remind is mainly a
-    // way to re-pop for someone who acked an EARLIER version.) Best-effort ALTER
-    // with the same self-heal posture.
-    try {
-      await db
-        .prepare(
+          // "Remind": a notice reminded after a worker's last ack pops again (2026-06-24).
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ",
-        )
-        .run();
-    } catch {
-      _announcementsMig = null;
-    }
-    // Media attachments (added 2026-06-26). A lightweight JSON manifest of the
-    // files attached to a notice — tutorial images/videos and SOP PDFs the
-    // worker portal renders inline / as a download link. The bytes live in the
-    // existing /api/files store; this column only holds
-    //   [ { fileId, name, mime }, ... ]
-    // as a TEXT blob (kept TEXT not JSONB so the SQLite test mirror matches).
-    // INERT migration file (0192) — this runtime ALTER is the load-bearing copy,
-    // awaited before the first read/write. Same self-heal posture as above.
-    try {
-      await db
-        .prepare(
+          // Attachments manifest [ { fileId, name, mime } ], TEXT so the SQLite mirror matches (0192).
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS attachments TEXT",
-        )
-        .run();
-    } catch {
-      _announcementsMig = null;
-    }
-    // Audience targeting (added 2026-06-26). A notice can go to everyone
-    // (default) or be scoped to specific departments and/or specific workers.
-    //   target_type       : ALL | DEPTS | WORKERS | MIXED  (default ALL)
-    //   target_dept_codes : JSON array of dept codes (e.g. '["PACKING","FOAM"]')
-    //   target_worker_ids : JSON array of workers.id values
-    // The worker GET shows a notice iff target_type='ALL' OR one of the worker's
-    // dept codes is in target_dept_codes OR the worker's id is in
-    // target_worker_ids. Existing rows default to ALL → fully back-compatible.
-    // INERT migration file (0194) — these runtime ALTERs are the load-bearing
-    // copy, awaited before the first read/write. Same self-heal posture as above.
-    try {
-      await db
-        .prepare(
+          // Audience: ALL | DEPTS | WORKERS | MIXED, plus JSON arrays of dept codes / worker ids (0194).
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_type TEXT NOT NULL DEFAULT 'ALL'",
-        )
-        .run();
-      await db
-        .prepare(
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_dept_codes TEXT",
-        )
-        .run();
-      await db
-        .prepare(
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_worker_ids TEXT",
-        )
-        .run();
-    } catch {
-      _announcementsMig = null;
-    }
-    // Category (added 2026-06-27). One of GENERAL | WARNING | SOP | LEARNING —
-    // a single lowercase-word column so NO column-rename-map entry is needed.
-    // Existing rows default to GENERAL → fully back-compatible. INERT migration
-    // file — this runtime ALTER is the load-bearing copy, awaited before the
-    // first read/write. Same best-effort self-heal posture as the columns above.
-    try {
-      await db
-        .prepare(
+          // GENERAL | WARNING | SOP | LEARNING (2026-06-27).
           "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'GENERAL'",
-        )
-        .run();
-    } catch {
-      _announcementsMig = null;
-    }
-    // Order notices (HK-0025, 2026-10-15). priority = URGENT | OVERDUE |
-    // PRIORITY (NULL for an ordinary announcement); order_no / order_id name the
-    // production order the notice is about. Nullable, so existing rows are
-    // untouched. Same self-heal posture as the columns above.
-    try {
-      for (const col of ["priority", "order_no", "order_id"]) {
-        await db
-          .prepare(
-            `ALTER TABLE announcements ADD COLUMN IF NOT EXISTS ${col} TEXT`,
-          )
-          .run();
+          // Order notices (HK-0025): URGENT | OVERDUE | PRIORITY, and the order they name.
+          "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS priority TEXT",
+          "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS order_no TEXT",
+          "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS order_id TEXT",
+        ]);
+      } catch {
+        retryNextCall = true;
       }
-    } catch {
-      _announcementsMig = null;
-    }
-  })();
-  return _announcementsMig;
+    },
+  );
 }
 
 // The four announcement categories. GENERAL is the back-compat default.

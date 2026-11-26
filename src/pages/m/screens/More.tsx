@@ -15,13 +15,15 @@ import {
   DesktopAppLink,
   SignedInDevicesCard,
 } from "../components";
-import { visibleModuleGroups } from "../nav";
+import { visibleModuleGroups, withMeetingsBadge } from "../nav";
+import { useMeetingsUnread } from "@/lib/meetings-unread";
 import { usePermissions } from "@/lib/use-permission";
 
 export default function MobileMore() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { isNavAllowed } = usePermissions();
+  const meetingsUnread = useMeetingsUnread();
 
   return (
     <>
@@ -32,7 +34,7 @@ export default function MobileMore() {
         <SignedInDevicesCard />
         <InstallAppCard />
         <ModuleGroupList
-          groups={visibleModuleGroups(isNavAllowed)}
+          groups={withMeetingsBadge(visibleModuleGroups(isNavAllowed), meetingsUnread)}
           onSelect={(path) => navigate(path)}
           currentPath={pathname}
         />

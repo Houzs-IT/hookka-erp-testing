@@ -72,7 +72,7 @@ const NUM = /^-?(\d+\.?\d*|\.\d+)$/;
  *  "RM 1,234.50" → "1234.50", "12.5%" → "12.5", "(1,000)" → "-1000".
  *  "" (or a lone dash) clears the box; null = not a figure (a heading cell), left alone. */
 export function cleanPasteCell(raw: string): string | null {
-  let s = raw.replace(/ /g, " ").trim();
+  let s = raw.replace(/\u00a0/g, " ").trim();
   if (s === "" || s === "-" || s === "—" || s === "–") return "";
   s = s.replace(/RM/gi, "").replace(/[,\s%]/g, "");
   let neg = false;

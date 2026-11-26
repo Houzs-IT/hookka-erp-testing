@@ -23,7 +23,7 @@ import { persistSoOriginal } from "@/lib/so-original";
 import { M, M_ACCENT } from "../../theme";
 import { mutateJson, refreshList } from "../../config/mutate";
 import {
-  blockers, buildSoBody, correctedJsonFor, draftFlags, draftFromPo, fileProblem, idempotencyKeyFor, posOfRow, rmToSen,
+  blockers, buildSoBody, correctedJsonFor, draftFlags, draftFromPo, fileProblem, idempotencyKeyFor, posOfRow, posOfSplit, rmToSen,
   type IdemStore, type RawScanPo, type ReviewDraft, type ReviewItem, type ScanCatalog,
 } from "../../lib/scan-so";
 import {
@@ -37,7 +37,7 @@ import { card, ghost, input, primary, sectionLabel } from "../so/so-style";
 import { TNUM } from "./home-style";
 
 type Step = "pick" | "scanning" | "fail" | "choose" | "review" | "done";
-type Found = { po: RawScanPo; docIdx: number };
+type Found = { po: RawScanPo; docIdx: number; rowId: string; sampleId: string | null };
 type Result = { id: string; soNo: string; warning: string | null };
 type Row = { id: string; sampleId: string | null; fileName: string };
 
@@ -69,6 +69,7 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
   const [failText, setFailText] = useState("");
   const [slow, setSlow] = useState(false);
   const [found, setFound] = useState<Found[]>([]);
+  const [missed, setMissed] = useState(0);
   const [madeList, setMadeList] = useState<MadeRecord[]>(() => loadMade(safeStore()));
   const [row, setRow] = useState<Row>({ id: "", sampleId: null, fileName: "" });
   const [rec, setRec] = useState<MadeRecord | null>(null);
@@ -166,13 +167,9 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
     setStep("review");
   };
 
-  const afterRead = (rawJson: unknown) => {
-    const list = posOfRow(rawJson);
-    if (list.length === 0) {
-      const read = (rawJson as { pos?: unknown } | null)?.pos;
-      toFail(Array.isArray(read) && read.length > 0 ? "A purchase order was found, but none of its item lines could be read." : "No purchase order was found in this file.");
-      return;
-    }
+  const showFound = (list: Found[], emptyText: string, failedParts = 0) => {
+    if (list.length === 0) { toFail(emptyText); return; }
+    setMissed(failedParts);
     setFound(list);
     if (list.length === 1) reviewPo(list[0]);
     else setStep("choose");
@@ -191,14 +188,26 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
       }
       const item = j.data?.items?.find((i) => i.id === b.rowId);
       if (!item) return;
-      if (item.status === "done" || item.status === "cached") {
-        if (item.rawJson == null) return;
+      // A PDF of 3+ pages may be split into one child row per document (BUG-2026-11-23-547).
+      const split = item.status === "split" ? posOfSplit(j.data?.items ?? [], item.id) : null;
+      if ((item.status === "done" || item.status === "cached") && item.rawJson != null) {
         driverRef.current?.stop();
         batchRef.current = null;
         setRow({ id: item.id, sampleId: item.sampleId ?? null, fileName: item.fileName });
         const err = await prepare();
         if (err) { toFail(err); return; }
-        afterRead(item.rawJson);
+        const read = (item.rawJson as { pos?: unknown } | null)?.pos;
+        showFound(
+          posOfRow(item.rawJson).map((f) => ({ ...f, rowId: item.id, sampleId: item.sampleId ?? null })),
+          Array.isArray(read) && read.length > 0 ? "A purchase order was found, but none of its item lines could be read." : "No purchase order was found in this file.",
+        );
+      } else if (split) {
+        driverRef.current?.stop();
+        batchRef.current = null;
+        setRow({ id: item.id, sampleId: null, fileName: item.fileName });
+        const err = await prepare();
+        if (err) { toFail(err); return; }
+        showFound(split.found, split.failed ? "This file held several documents and none of them could be read." : "No purchase order was found in this file.", split.failed);
       } else if (item.status === "failed") {
         batchRef.current = null;
         toFail(item.error ? `The document could not be read (${item.error.slice(0, 140)}).` : "The document could not be read.");
@@ -251,7 +260,7 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
     loadPending();
   };
 
-  const madeFor = (docIdx: number) => madeList.find((m) => sameDoc(m, row.id, docIdx)) ?? null;
+  const madeFor = (f: Found) => madeList.find((m) => sameDoc(m, f.rowId, f.docIdx)) ?? null;
   const saveRecord = (r: MadeRecord) => {
     setMadeList((list) => {
       const next = upsertMade(list, r);
@@ -298,7 +307,8 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
     setRow({ id: v.rowId, sampleId: v.sampleId, fileName: v.fileName });
     const err = await prepare();
     if (err) { toFail(err); return; }
-    const list = v.pos.map(({ po, docIdx }) => ({ po, docIdx }));
+    const list = v.pos.map(({ po, docIdx }) => ({ po, docIdx, rowId: v.rowId, sampleId: v.sampleId }));
+    setMissed(0);
     setFound(list);
     if (list.length === 1) {
       const m = v.pos[0].made;
@@ -358,7 +368,7 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
     // run the follow-through in the background: none of it can undo the order.
     refreshList("/api/sales-orders", "/api/production-orders");
     void teachPartyAlias({ partyType: "CUSTOMER", partyId: draft.customerId, rawName: pick.po.customerName, knownMap: aliasRef.current });
-    const saved = newMadeRecord({ rowId: row.id, docIdx: pick.docIdx, soId: id, soNo: companySOId, poNo: draft.customerPO.trim(), sampleId: row.sampleId, corrected: correctedJsonFor(pick.po, draft, cat) });
+    const saved = newMadeRecord({ rowId: pick.rowId, docIdx: pick.docIdx, soId: id, soNo: companySOId, poNo: draft.customerPO.trim(), sampleId: pick.sampleId, corrected: correctedJsonFor(pick.po, draft, cat) });
     saveRecord(saved);
     setResult({ id, soNo: companySOId, warning: res.body?.warning ?? null });
     setBusy(false);
@@ -463,13 +473,13 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
 
       {step === "choose" ? (
         <div>
-          <div style={{ fontSize: 12.5, color: M.ink, lineHeight: 1.5 }}>{found.length} purchase orders were found in this file. Review and create them one at a time.</div>
+          <div style={{ fontSize: 12.5, color: M.ink, lineHeight: 1.5 }}>{found.length} purchase orders were found in this file. Review and create them one at a time.{missed ? ` ${missed} part${missed === 1 ? "" : "s"} of the file could not be read; check the document for any order missing here.` : ""}</div>
           <div style={{ ...card, marginTop: 10, padding: "0 14px" }}>
             {found.map((f, i) => {
-              const m = madeFor(f.docIdx);
+              const m = madeFor(f);
               const finished = !!m && !hasOpenFollowUps(m);
               return (
-                <button key={f.docIdx} type="button" disabled={finished} onClick={() => (m ? openFinish(m) : reviewPo(f))} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, minHeight: 56, padding: "8px 0", border: "none", borderTop: i ? `1px solid ${M.divider}` : "none", background: "none", fontFamily: "inherit", textAlign: "left", cursor: finished ? "default" : "pointer" }}>
+                <button key={`${f.rowId}-${f.docIdx}`} type="button" disabled={finished} onClick={() => (m ? openFinish(m) : reviewPo(f))} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, minHeight: 56, padding: "8px 0", border: "none", borderTop: i ? `1px solid ${M.divider}` : "none", background: "none", fontFamily: "inherit", textAlign: "left", cursor: finished ? "default" : "pointer" }}>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: M.raisin, overflowWrap: "anywhere" }}>{f.po.customerPO || "PO number not found"}</span>
                     <span style={{ display: "block", fontSize: 12, color: M.ink, overflowWrap: "anywhere" }}>{f.po.customerName || "Customer not found"} · {f.po.items?.length ?? 0} line{(f.po.items?.length ?? 0) === 1 ? "" : "s"}</span>
@@ -595,7 +605,7 @@ export function ScanSoSheet({ open, onClose }: { open: boolean; onClose: () => v
           ) : null}
           <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
             <button type="button" onClick={() => { onClose(); navigate(`/m/sales/${encodeURIComponent(result.id)}`); }} style={primary}>Open sales order</button>
-            <button type="button" onClick={() => (found.some((f) => !madeFor(f.docIdx)) ? setStep("choose") : reset())} style={ghost}>{found.some((f) => !madeFor(f.docIdx)) ? "Review the next PO" : "Scan another"}</button>
+            <button type="button" onClick={() => (found.some((f) => !madeFor(f)) ? setStep("choose") : reset())} style={ghost}>{found.some((f) => !madeFor(f)) ? "Review the next PO" : "Scan another"}</button>
           </div>
         </div>
       ) : null}

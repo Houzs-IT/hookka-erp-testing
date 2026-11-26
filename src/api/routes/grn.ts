@@ -21,7 +21,7 @@
 // arrival_state = 'ARRIVED'.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { ensureUnitPricePrecision } from "../lib/unit-price-precision";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -50,8 +50,7 @@ const app = new Hono<Env>();
 let grnMigrationPromise: Promise<void> | null = null;
 
 export function ensureGrnMigrations(db: D1Database): Promise<void> {
-  if (grnMigrationPromise) return grnMigrationPromise;
-  grnMigrationPromise = (async () => {
+  return memoizeSelfApply(() => grnMigrationPromise, (p) => { grnMigrationPromise = p; }, async () => {
     // A unit price is a RATE with four decimals of sen. Shared with the PO and
     // PI routes so the three cannot drift apart again.
     await ensureUnitPricePrecision(db);
@@ -102,14 +101,7 @@ export function ensureGrnMigrations(db: D1Database): Promise<void> {
         "WHERE status = 'POSTED' AND (arrival_state IS NULL OR arrival_state <> 'ARRIVED')",
     ];
     await runSelfApply(db, "grn", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    grnMigrationPromise = null;
-    throw err;
   });
-  return grnMigrationPromise;
 }
 
 // ---------------------------------------------------------------------------

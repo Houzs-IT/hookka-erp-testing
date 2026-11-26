@@ -35,7 +35,7 @@
 // because the CN money shape omits cost.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import type { Context } from "hono";
 import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
@@ -51,8 +51,7 @@ const app = new Hono<Env>();
 // break these endpoints before migration 0170 lands. Cached per module load.
 let cnPlTableEnsured: Promise<void> | null = null;
 function ensureCnPackingListsTable(db: D1Database): Promise<void> {
-  if (cnPlTableEnsured) return cnPlTableEnsured;
-  cnPlTableEnsured = (async () => {
+  return memoizeSelfApply(() => cnPlTableEnsured, (p) => { cnPlTableEnsured = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS cn_packing_lists (
          id          text PRIMARY KEY,
@@ -71,14 +70,7 @@ function ensureCnPackingListsTable(db: D1Database): Promise<void> {
       "CREATE UNIQUE INDEX IF NOT EXISTS ux_cn_packing_lists_no ON cn_packing_lists (org_id, packing_no)",
     ];
     await runSelfApply(db, "cn-packing-lists", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    cnPlTableEnsured = null;
-    throw err;
   });
-  return cnPlTableEnsured;
 }
 
 // Columns are snake_case in the SQL strings (the adapter rewrites identifiers

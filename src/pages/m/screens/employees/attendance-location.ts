@@ -9,7 +9,7 @@
 // EITHER punch is outside the fence. (Desktop's row badge uses the in-punch only, while its header count uses either
 // punch; mobile uses the count's rule everywhere so a chip and its list can never disagree.)
 
-export const ATT_FENCE = { lat: 3.187681, lng: 101.570928, radiusM: 200 } as const;
+export const ATT_FENCE = { lat: 3.187681, lng: 101.570928, radiusM: 150 } as const;
 
 export function metersFromFactory(lat: number, lng: number): number {
   const R = 6_371_000;

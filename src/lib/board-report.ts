@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import { cashFlowCardMonth } from "./cashflow-card";
+import { dashForecastRatios, type DashBsFigures } from "./dashboard-forecast";
 import type { EfficiencyBandCounts } from "./efficiency-bands";
 import type { StockTakeCheck } from "./stock-take-check";
 
@@ -206,6 +207,8 @@ export type BoardSources = {
   stockTake: Src<StockTakeCheck>;
   /** Optional: a source set without it falls back to the dashboard's labourBase headcount. */
   headcount?: Src<HeadcountPayload>;
+  /** Optional: the Forecast Balance Sheet by month (report month + months ahead). */
+  bsForecast?: Src<Record<string, DashBsFigures>>;
   notes: BoardNotes;
 };
 
@@ -216,7 +219,7 @@ export type IncomeRow = { key: PlLineKey; label: string; depth: 0 | 1; strong: b
 export type TrendPoint = { ym: string; label: string; kind: "actual" | "mtd" | "forecast"; sales: number | null; net: number | null; gross: number | null; forecastSales: number | null; forecastNet: number | null };
 export type LabourDept = { dept: string; cost: number; prev: number | null; forecast: number | null; share: number | null; pctTotalProdRev: number | null; pctOwnProdRev: number | null; ownProdRev: number | null };
 export type MaterialCat = { name: string; spend: number; purchase: number; closing: number; forecast: number | null; prev: number | null; pctOfSales: number | null };
-export type BsRow = { label: string; strong: boolean; cur: number | null; prev: number | null; change: number | null; quarterAgo: number | null };
+export type BsRow = { label: string; strong: boolean; cur: number | null; prev: number | null; change: number | null; quarterAgo: number | null; forecast?: number | null };
 export type CashMonth = { ym: string; label: string; kind: "actual" | "mtd" | "forecast"; operating: number; investing: number; financing: number; net: number; fcf: number;
   /** A forecast month: which Cash Flow forecast it is read from. */
   basis?: "pnl" | "docs" };
@@ -229,7 +232,7 @@ export type CustomerRow = { name: string; total: number; share: number | null; b
   /** Owner 2026-11-13 「你还可以分bedframe sofa啊」: the order value by category (avg x count). */
   bedframeTotal?: number | null; sofaTotal?: number | null };
 export type ProdDept = { code: string; label: string; total: number; prev: number | null; change: number | null };
-export type OutlookMonth = { ym: string; label: string; mtd: DashSlice | null; forecast: DashSlice | null };
+export type OutlookMonth = { ym: string; label: string; mtd: DashSlice | null; forecast: DashSlice | null; bs?: { assets: number; liabilities: number; currentRatio: number | null; quickRatio: number | null; debtPct: number | null } | null };
 export type Flag = { level: "alert" | "check" | "info"; text: string };
 export type TableBlock = { columns: string[]; rows: { label: string; depth: number; strong: boolean; values: (number | null)[] }[] };
 
@@ -250,7 +253,7 @@ export type BoardReport = {
     /** P&L materials not split by category (carriage inwards 700-1015 + SST 706-0000) = total − Σ categories. */
     unsplit?: number; trend: { ym: string; label: string; actual: number | null; forecast: number | null }[] }>;
   trend: Section<{ points: TrendPoint[]; summary: { label: string; kind: TrendPoint["kind"]; sales: number | null; gross: number | null; net: number | null; grossPct: number | null; netPct: number | null }[]; last3: { label: string; sales: number | null; fcSales: number | null; net: number | null; fcNet: number | null }[] }>;
-  balance: Section<{ rows: BsRow[]; ratios: { label: string; cur: number | null; prev: number | null; unit: "x" | "%" }[]; equity: { opening: number | null; net: number | null; other: number | null; closing: number | null }; trend: { ym: string; label: string; assets: number; liabilities: number; equity: number }[] }>;
+  balance: Section<{ rows: BsRow[]; ratios: { label: string; cur: number | null; prev: number | null; forecast?: number | null; unit: "x" | "%" }[]; hasForecast?: boolean; equity: { opening: number | null; net: number | null; other: number | null; closing: number | null }; trend: { ym: string; label: string; assets: number; liabilities: number; equity: number }[] }>;
   cashFlow: Section<{ months: CashMonth[]; bankClose: number | null;
     /** Months after M from the Cash Flow forecast (P&L forecast, else Docs). */
     forecast?: CashMonth[] }>;
@@ -532,15 +535,21 @@ function shapeTrend(d: DashPayload, month: string, running: string): BoardReport
   return { ok: true, data: { points: tail, summary, last3 } };
 }
 
-function shapeBalance(d: DashPayload, month: string): BoardReport["balance"] {
+function shapeBalance(d: DashPayload, month: string, bsFc: Record<string, DashBsFigures> | null = null): BoardReport["balance"] {
   const cur = rowAt(d.rows, month);
   if (!cur?.balanceSheet) return { ok: false, error: `No balance sheet for ${longMonth(month)}` };
   const prev = rowAt(d.rows, addMonths(month, -1));
   const qa = rowAt(d.rows, addMonths(month, -3));
   const b = (r: DashRow | null, f: (x: DashBs) => number) => (r?.balanceSheet ? f(r.balanceSheet) : null);
+  // This month's Forecast Balance Sheet (null when none is kept for it).
+  const fc = bsFc?.[month] ?? null;
+  const fcOf = (f: (x: DashBs) => number): number | null => {
+    if (!fc || fc.currentAssets === undefined || fc.currentLiabilities === undefined) return null;
+    return f({ assets: fc.assets, liabilities: fc.liabilities, equity: fc.equity ?? fc.assets - fc.liabilities, currentAssets: fc.currentAssets, currentLiabilities: fc.currentLiabilities, inventory: fc.inventory ?? 0 } as DashBs);
+  };
   const line = (label: string, strong: boolean, f: (x: DashBs) => number): BsRow => {
     const c = b(cur, f), p = b(prev, f);
-    return { label, strong, cur: c, prev: p, change: c !== null && p !== null ? c - p : null, quarterAgo: b(qa, f) };
+    return { label, strong, cur: c, prev: p, change: c !== null && p !== null ? c - p : null, quarterAgo: b(qa, f), forecast: fcOf(f) };
   };
   const rows: BsRow[] = [
     line("Current assets", false, (x) => x.currentAssets),
@@ -553,12 +562,14 @@ function shapeBalance(d: DashPayload, month: string): BoardReport["balance"] {
     line("Equity (net assets)", true, (x) => x.equity),
   ];
   const rc = cur.ratios, rp = prev?.ratios;
-  const ratios: { label: string; cur: number | null; prev: number | null; unit: "x" | "%" }[] = [
-    { label: "Current ratio", cur: rc?.currentRatio ?? null, prev: rp?.currentRatio ?? null, unit: "x" },
-    { label: "Quick ratio", cur: rc?.quickRatio ?? null, prev: rp?.quickRatio ?? null, unit: "x" },
-    { label: "Debt to assets", cur: rc?.debtToAssetPct ?? null, prev: rp?.debtToAssetPct ?? null, unit: "%" },
-    { label: "Return on equity (month)", cur: rc?.roePct ?? null, prev: rp?.roePct ?? null, unit: "%" },
-    { label: "Return on assets (month)", cur: rc?.roaPct ?? null, prev: rp?.roaPct ?? null, unit: "%" },
+  // The forecast ratios: the month's Forecast P&L over its Forecast Balance Sheet.
+  const rf = fc ? dashForecastRatios(cur.forecast ?? null, fc) : null;
+  const ratios: { label: string; cur: number | null; prev: number | null; forecast?: number | null; unit: "x" | "%" }[] = [
+    { label: "Current ratio", cur: rc?.currentRatio ?? null, prev: rp?.currentRatio ?? null, forecast: rf?.currentRatio ?? null, unit: "x" },
+    { label: "Quick ratio", cur: rc?.quickRatio ?? null, prev: rp?.quickRatio ?? null, forecast: rf?.quickRatio ?? null, unit: "x" },
+    { label: "Debt to assets", cur: rc?.debtToAssetPct ?? null, prev: rp?.debtToAssetPct ?? null, forecast: fc?.debtPct ?? null, unit: "%" },
+    { label: "Return on equity (month)", cur: rc?.roePct ?? null, prev: rp?.roePct ?? null, forecast: rf?.roePct ?? null, unit: "%" },
+    { label: "Return on assets (month)", cur: rc?.roaPct ?? null, prev: rp?.roaPct ?? null, forecast: rf?.roaPct ?? null, unit: "%" },
   ];
   const opening = prev?.balanceSheet?.equity ?? null;
   const closing = cur.balanceSheet.equity;
@@ -568,7 +579,7 @@ function shapeBalance(d: DashPayload, month: string): BoardReport["balance"] {
   // zero before the books opened) are left off the chart.
   const hasBs = (x: DashBs) => x.assets !== 0 || x.liabilities !== 0 || x.equity !== 0;
   const trend = closedMonths(d.rows, month).filter((r) => r.key >= BOARD_DATA_FROM && r.balanceSheet && hasBs(r.balanceSheet)).slice(-CHART_MONTHS).map((r) => ({ ym: r.key, label: shortMonth(r.key), assets: r.balanceSheet!.assets, liabilities: r.balanceSheet!.liabilities, equity: r.balanceSheet!.equity }));
-  return { ok: true, data: { rows, ratios, equity, trend } };
+  return { ok: true, data: { rows, ratios, equity, trend, hasForecast: fc !== null } };
 }
 
 /** The statement's bank balance carried forward at the end of `ym` (the actual column), or null. */
@@ -901,6 +912,23 @@ export function stockTakeFlags(src: Src<StockTakeCheck>, month: string): Flag[] 
   return out;
 }
 
+/** The Forecast Balance Sheet beside each Outlook month (owner 2026-11-24). */
+function withOutlookBs(o: BoardReport["outlook"], bsFc: Record<string, DashBsFigures> | null): BoardReport["outlook"] {
+  if (!o.ok || !bsFc) return o;
+  return {
+    ok: true,
+    data: {
+      ...o.data,
+      months: o.data.months.map((m) => {
+        const f = bsFc[m.ym];
+        if (!f) return { ...m, bs: null };
+        const r = dashForecastRatios(m.forecast ?? null, f);
+        return { ...m, bs: { assets: f.assets, liabilities: f.liabilities, currentRatio: r.currentRatio, quickRatio: r.quickRatio, debtPct: f.debtPct } };
+      }),
+    },
+  };
+}
+
 // ── the whole report ──────────────────────────────────────────────────────
 export function shapeBoardReport(s: BoardSources, month: string, todayYmd: string, generatedAt: string): BoardReport {
   const running = todayYmd.slice(0, 7);
@@ -922,13 +950,13 @@ export function shapeBoardReport(s: BoardSources, month: string, todayYmd: strin
     labour: need((x) => shapeLabour(x, month, s.revSplitCur.ok ? s.revSplitCur.data : null, head)),
     materials: need((x) => shapeMaterials(x, month)),
     trend: need((x) => shapeTrend(x, month, running)),
-    balance: need((x) => shapeBalance(x, month)),
+    balance: need((x) => shapeBalance(x, month, s.bsForecast?.ok ? s.bsForecast.data : null)),
     cashFlow: need((x) => shapeCashFlow(x, month, running, cash, cfFc)),
     cashForecast: s.cashForecast.ok ? shapeCashForecast(s.cashForecast.data, month) : fail(s.cashForecast),
     customers: ov ? shapeCustomers(ov) : fail(s.overview as { ok: false; error: string }),
     newModels: s.newModels.ok ? shapeNewModels(s.newModels.data) : fail(s.newModels),
     operations: need((x) => shapeOperations(x, month, s.revSplitCur, s.revSplitPrev, s.defects, s.workforce, head)),
-    outlook: need((x) => shapeOutlook(x, month, running)),
+    outlook: need((x) => withOutlookBs(shapeOutlook(x, month, running), s.bsForecast?.ok ? s.bsForecast.data : null)),
     notes: { flags: boardFlags(s, month), text: s.notes.text, updatedAt: s.notes.updatedAt, updatedBy: s.notes.updatedBy },
     appendixPl: s.plMonthly.ok ? { ok: true, data: { title: s.plMonthly.data.fyLabel ?? "", ...shapeMatrix(s.plMonthly.data, month) } } : fail(s.plMonthly),
     appendixBs: s.plCur.ok ? { ok: true, data: shapeBsAppendix(s.plCur.data, s.plPrev.ok ? s.plPrev.data : null) } : fail(s.plCur),

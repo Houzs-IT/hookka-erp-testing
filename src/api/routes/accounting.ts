@@ -15,7 +15,7 @@
 import { employedDuring } from "../../lib/employment";
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { roundUnitPriceSen } from "../../lib/unit-price";
 import type { Env } from "../worker";
 import { requirePermission, requireFinance, hasPermission, getRolePermissions } from "../lib/rbac";
@@ -60,6 +60,9 @@ import {
   termMixOf,
   tfForecastDueBySupplier,
   tfTickedPlan,
+  tfActualDueBySupplier,
+  tfAutoTicks,
+  tfMergeDues,
   type TfForecastSupplier,
   type FcCashLine,
   type OpenDoc,
@@ -309,17 +312,11 @@ function rowToCoa(r: CoaRow) {
 // self-apply is the mechanism, awaited before a read or write that names it.
 let _pendingCoaEstimateCol: Promise<void> | null = null;
 function ensureCoaEstimateColumn(db: Env["Variables"]["DB"]): Promise<void> {
-  if (!_pendingCoaEstimateCol) {
-    _pendingCoaEstimateCol = db
-      .prepare("ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS estimate_monthly INTEGER DEFAULT 0")
-      .run()
-      .then(() => undefined)
-      .catch((e) => {
-        _pendingCoaEstimateCol = null;
-        throw e;
-      });
-  }
-  return _pendingCoaEstimateCol;
+  return memoizeSelfApply(() => _pendingCoaEstimateCol, (p) => { _pendingCoaEstimateCol = p; }, async () => {
+    await runSelfApply(db, "accounting.coa-estimate", [
+      "ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS estimate_monthly INTEGER DEFAULT 0",
+    ]);
+  });
 }
 async function estimateMonthlyCodes(db: Env["Variables"]["DB"]): Promise<Set<string>> {
   try {
@@ -1528,12 +1525,9 @@ app.get("/system-journals", async (c) => {
 // self-applied, awaited before the first write that names it.
 let _pendingJournalRefCol: Promise<void> | null = null;
 function ensureJournalReferenceColumn(db: Env["Variables"]["DB"]): Promise<void> {
-  if (!_pendingJournalRefCol) {
-    _pendingJournalRefCol = db.prepare("ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT").run()
-      .then(() => undefined)
-      .catch((e) => { _pendingJournalRefCol = null; throw e; });
-  }
-  return _pendingJournalRefCol;
+  return memoizeSelfApply(() => _pendingJournalRefCol, (p) => { _pendingJournalRefCol = p; }, async () => {
+    await runSelfApply(db, "accounting.journal-reference", ["ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS reference TEXT"]);
+  });
 }
 
 app.post("/journals", async (c) => {
@@ -2737,8 +2731,7 @@ app.put("/purchase-credit-notes/:id", async (c) => {
 // double-counting a prior edit's reversed pair.
 let _pendingPcnStatusMigration: Promise<void> | null = null;
 function ensurePcnCancellable(db: D1Database): Promise<void> {
-  if (_pendingPcnStatusMigration) return _pendingPcnStatusMigration;
-  _pendingPcnStatusMigration = (async () => {
+  return memoizeSelfApply(() => _pendingPcnStatusMigration, (p) => { _pendingPcnStatusMigration = p; }, async () => {
     await runSelfApply(db, "accounting", [
       "ALTER TABLE purchase_credit_notes DROP CONSTRAINT IF EXISTS purchase_credit_notes_status_check",
       "ALTER TABLE purchase_credit_notes DROP CONSTRAINT IF EXISTS purchase_credit_notes_status_chk",
@@ -2746,11 +2739,7 @@ function ensurePcnCancellable(db: D1Database): Promise<void> {
         "CHECK (status IN ('DRAFT','POSTED','CANCELLED'))",
       "ALTER TABLE ledger_journal_entries ADD COLUMN IF NOT EXISTS hidden INTEGER NOT NULL DEFAULT 0",
     ]);
-  })().catch((err) => {
-    _pendingPcnStatusMigration = null;
-    throw err;
   });
-  return _pendingPcnStatusMigration;
 }
 
 // POST /purchase-credit-notes/:id/restate — edit a POSTED supplier discount IN
@@ -8765,8 +8754,7 @@ type PnlWindow = Awaited<ReturnType<typeof computePnlWindow>>;
 
 let _pendingPnlHistMigrations: Promise<void> | null = null;
 function ensurePnlHistorical(db: D1Database): Promise<void> {
-  if (_pendingPnlHistMigrations) return _pendingPnlHistMigrations;
-  _pendingPnlHistMigrations = (async () => {
+  return memoizeSelfApply(() => _pendingPnlHistMigrations, (p) => { _pendingPnlHistMigrations = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS pnl_historical (
          id          TEXT PRIMARY KEY,
@@ -8779,22 +8767,14 @@ function ensurePnlHistorical(db: D1Database): Promise<void> {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_pnl_hist_key ON pnl_historical (org_id, ym, line)`,
     ];
     await runSelfApply(db, "accounting", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _pendingPnlHistMigrations = null;
-    throw err;
   });
-  return _pendingPnlHistMigrations;
 }
 
 // Task 2.2 — inventory_opening (WIP/FG opening-stock seed). Runtime self-apply
 // mirrors ensurePnlHistorical / ensureMaterialOpeningStock.
 let _pendingInventoryOpeningMigrations: Promise<void> | null = null;
 function ensureInventoryOpening(db: D1Database): Promise<void> {
-  if (_pendingInventoryOpeningMigrations) return _pendingInventoryOpeningMigrations;
-  _pendingInventoryOpeningMigrations = (async () => {
+  return memoizeSelfApply(() => _pendingInventoryOpeningMigrations, (p) => { _pendingInventoryOpeningMigrations = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS inventory_opening (
          id         TEXT PRIMARY KEY,
@@ -8807,14 +8787,7 @@ function ensureInventoryOpening(db: D1Database): Promise<void> {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_opening_key ON inventory_opening (org_id, layer)`,
     ];
     await runSelfApply(db, "accounting", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _pendingInventoryOpeningMigrations = null;
-    throw err;
   });
-  return _pendingInventoryOpeningMigrations;
 }
 
 // Month-end stock-take (owner periodic-inventory option, 2026-06-30). Per-group
@@ -8824,8 +8797,7 @@ function ensureInventoryOpening(db: D1Database): Promise<void> {
 // the FIFO closing exactly as before. Runtime self-apply mirrors ensureInventoryOpening.
 let _pendingStockTakeMigrations: Promise<void> | null = null;
 function ensureStockTake(db: D1Database): Promise<void> {
-  if (_pendingStockTakeMigrations) return _pendingStockTakeMigrations;
-  _pendingStockTakeMigrations = (async () => {
+  return memoizeSelfApply(() => _pendingStockTakeMigrations, (p) => { _pendingStockTakeMigrations = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS stock_take (
          id         TEXT PRIMARY KEY,
@@ -8838,14 +8810,7 @@ function ensureStockTake(db: D1Database): Promise<void> {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_take_key ON stock_take (org_id, item_group, ym)`,
     ];
     await runSelfApply(db, "accounting", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _pendingStockTakeMigrations = null;
-    throw err;
   });
-  return _pendingStockTakeMigrations;
 }
 
 // Stock-take ITEM alias (owner rule 2026-07-01; design doc
@@ -8858,8 +8823,7 @@ function ensureStockTake(db: D1Database): Promise<void> {
 // skipped silently forever after, instead of re-prompting every month.
 let _pendingStockTakeItemAliasMigrations: Promise<void> | null = null;
 function ensureStockTakeItemAlias(db: D1Database): Promise<void> {
-  if (_pendingStockTakeItemAliasMigrations) return _pendingStockTakeItemAliasMigrations;
-  _pendingStockTakeItemAliasMigrations = (async () => {
+  return memoizeSelfApply(() => _pendingStockTakeItemAliasMigrations, (p) => { _pendingStockTakeItemAliasMigrations = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS stock_take_item_alias (
          id         TEXT PRIMARY KEY,
@@ -8871,14 +8835,7 @@ function ensureStockTakeItemAlias(db: D1Database): Promise<void> {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_take_item_alias_key ON stock_take_item_alias (org_id, item_key)`,
     ];
     await runSelfApply(db, "accounting", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _pendingStockTakeItemAliasMigrations = null;
-    throw err;
   });
-  return _pendingStockTakeItemAliasMigrations;
 }
 
 // Other Party Bill opening support (owner rule 2026-07-01). Mirrors migration
@@ -8894,21 +8851,13 @@ function ensureStockTakeItemAlias(db: D1Database): Promise<void> {
 // expense, so a prior period's expense isn't re-recognised.
 let _pendingOtherPartyBillOpeningMigrations: Promise<void> | null = null;
 function ensureOtherPartyBillOpening(db: D1Database): Promise<void> {
-  if (_pendingOtherPartyBillOpeningMigrations) return _pendingOtherPartyBillOpeningMigrations;
-  _pendingOtherPartyBillOpeningMigrations = (async () => {
+  return memoizeSelfApply(() => _pendingOtherPartyBillOpeningMigrations, (p) => { _pendingOtherPartyBillOpeningMigrations = p; }, async () => {
     const stmts = [
       `ALTER TABLE other_party_bills ADD COLUMN IF NOT EXISTS is_opening INTEGER NOT NULL DEFAULT 0`,
       `CREATE INDEX IF NOT EXISTS idx_other_party_bills_is_opening ON other_party_bills (is_opening) WHERE is_opening = 1`,
     ];
     await runSelfApply(db, "accounting", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    _pendingOtherPartyBillOpeningMigrations = null;
-    throw err;
   });
-  return _pendingOtherPartyBillOpeningMigrations;
 }
 
 /** Load all historical P&L rows for an org, grouped by ym. */
@@ -9567,6 +9516,8 @@ async function reportSnapshot(
   view: string,
   respond: (c: AccountingCtx) => Promise<Response>,
   live = false,
+  /** Tables a view reads besides the statements' own (its copy rebuilds when they change). */
+  extraSources: readonly string[] = [],
 ): Promise<Response> {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
@@ -9601,7 +9552,7 @@ async function reportSnapshot(
   try {
     const payload = await withSnapshot(
       db,
-      { tableName: REPORT_SNAPSHOT_TABLE, sourceTables: reportSnapshotSourceTables() },
+      { tableName: REPORT_SNAPSHOT_TABLE, sourceTables: [...new Set([...reportSnapshotSourceTables(), ...extraSources])] },
       orgId,
       async () => {
         const res = await respond(c);
@@ -11213,23 +11164,32 @@ async function loadCashflowForecast(
   // afresh on every load, from today's Forecast P&L figures and the facility
   // as at today (tfTickedPlan, as the popup does), so changed figures move it
   // without another Save. Months before this one keep what was saved.
-  const anyTicked = Object.values(tfStore).some((st) => st.ticks);
+  // Suppliers ticked "Can use trade finance" (owner 2026-11-23): every month
+  // they have an amount is ticked, but the months unticked by hand (`off`).
+  const tfEligible = await loadTfEligibleSupplierIds(db);
+  const anyTicked = tfEligible.length > 0 || Object.values(tfStore).some((st) => st.ticks);
   const tfSources = anyTicked ? await getTfSources(db).catch(() => [] as TfSource[]) : [];
   const tfYms = Array.from({ length: KEYED_MONTHS }, (_, i) => addMonthsYm(curYm, i));
   const tfDues = anyTicked
-    ? Object.entries(tfForecastDueBySupplier({ months: fcMonths, termMonths: (id) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1), fromYm: curYm })).map(([id, dueBy]) => ({ id, dueBy }))
+    ? Object.entries(tfSupplierDues({
+        ap: (liveSnap ?? got[got.length - 1])?.ap ?? [],
+        fcMonths,
+        termMonths: (id) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1),
+        curYm,
+      })).map(([id, dueBy]) => ({ id, dueBy }))
     : [];
   for (const sec of tfSecs) {
-    const st = tfStore[sec.accountCode];
+    const st = tfStore[sec.accountCode] ?? (tfEligible.length ? { months: {} } : undefined);
     if (!st) continue;
     const tenor = st.tenorDays ?? sec.tenorDays ?? 90;
     const rateBp = st.rateBp ?? defaultTfRateBp(sec.draws, tenor);
     let planMonths = st.months;
-    if (st.ticks) {
+    const ticks = tfEligible.length ? tfAutoTicks(tfDues, tfEligible, tfYms, st.off ?? {}) : st.ticks;
+    if (ticks) {
       const tfSrc = tfSources.find((x) => x.accountCode === sec.accountCode);
       planMonths = {
         ...Object.fromEntries(Object.entries(st.months).filter(([ym]) => ym < curYm)),
-        ...tfTickedPlan({ yms: tfYms, currentYm: curYm, rateBp, tenorDays: tenor, ...tfFacilityNow(sec, curYm), limitSen: tfSrc?.limitSen ?? null }, tfDues, st.ticks).months,
+        ...tfTickedPlan({ yms: tfYms, currentYm: curYm, rateBp, tenorDays: tenor, ...tfFacilityNow(sec, curYm), limitSen: tfSrc?.limitSen ?? null }, tfDues, ticks).months,
       };
     }
     const yms = Object.keys(planMonths).sort();
@@ -11902,7 +11862,20 @@ app.get("/cashflow-drill", async (c) => {
 // Forecast column beside its Actual one, future months as far as documents
 // reach, and what makes up every forecast cell. Read only. `?asOf=` replays
 // an earlier day (a hand check), never a later one.
-app.get("/cashflow-forecast", async (c) => {
+// The Cash Flow forecast and the Forecast Balance Sheet read the agings as at
+// the 1st of every month shown plus today's (a dozen reports each), measured
+// on prod 2026-11-23 at 55–105 s a call — past the page's 30 s, so the
+// Financial Dashboard and the Cash Flow page showed no forecast (owner 「看没有
+// forecast了？」 → 「Do it」). Both are now kept in the reports' own copy
+// (reportSnapshot: served at once, rebuilt behind when a source table moves
+// or after 15 minutes). These are the tables they read besides the statements'.
+const FORECAST_SNAPSHOT_SOURCES: readonly string[] = [
+  "payment_records", "supplier_payments", "credit_notes", "debit_notes", "purchase_credit_notes",
+  "other_party_bills", "other_party_payments", "planned_payments", "customers", "suppliers",
+  "trade_finance_draws", "trade_finance_repay_allocs", "opening_ap_excludes", "document_lifecycle",
+];
+app.get("/cashflow-forecast", (c) => reportSnapshot(c, "cashflow-forecast", cashflowForecastResponse, false, FORECAST_SNAPSHOT_SOURCES));
+async function cashflowForecastResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const realToday = todayMyt();
@@ -11913,7 +11886,7 @@ app.get("/cashflow-forecast", async (c) => {
   const { bankByMonth: _bank, drill: _drill, sources: _sources, forecastMeta, ...statement } =
     await computeCashflowStatement(c.var.DB, period, false, getOrgId(c), { forecast: { today } });
   return c.json({ success: true, data: { period, ...forecastMeta, ...statement } });
-});
+}
 
 // Capex & financing keyed on the Cash Flow page (owner 2026-11-09 「做」, spec
 // 6.4): forecast only — nothing is posted and no document is made. kv
@@ -11972,6 +11945,45 @@ function tfFacilityNow(sec: TfSecNow | undefined, curYm: string): { owedNowSen: 
   };
 }
 
+// Each supplier's trade-finance dues by month (owner 2026-11-23 「月份结束才换成
+// 真实单据，之前都用 Forecast P&L」, 「只算还没付的」): the bills still unpaid
+// from the months that have ended, the Forecast P&L's figures from this month
+// on, each falling due by the supplier's own term. The Cash Flow forecast and
+// the popup read them the same way.
+function tfSupplierDues(o: {
+  ap: readonly { supplierId: string; docs: readonly { no: string; date: string; amountSen: number }[] }[];
+  fcMonths: Record<string, FcMonth>;
+  termMonths: (id: string) => number;
+  curYm: string;
+}): Record<string, Record<string, number>> {
+  return tfMergeDues(
+    tfActualDuesFromAp(o.ap, o.termMonths, o.curYm),
+    tfForecastDueBySupplier({ months: o.fcMonths, termMonths: o.termMonths, fromYm: o.curYm, firstPurchaseYm: o.curYm }),
+  );
+}
+// The real-bill part on its own (the popup shades those cells).
+function tfActualDuesFromAp(
+  ap: readonly { supplierId: string; docs: readonly { no: string; date: string; amountSen: number }[] }[],
+  termMonths: (id: string) => number,
+  curYm: string,
+): Record<string, Record<string, number>> {
+  const bills = ap.flatMap((r) => r.docs
+    .filter((d) => d.amountSen > 0 && !d.no.endsWith(ADVANCE_DOC_SUFFIX))
+    .map((d) => ({ supplierId: r.supplierId, date: d.date, sen: d.amountSen })));
+  return tfActualDueBySupplier({ bills, termMonths, fromYm: curYm });
+}
+
+// The suppliers ticked "Can use trade finance" in Supplier maintenance (none
+// until the column exists).
+async function loadTfEligibleSupplierIds(db: Env["Variables"]["DB"]): Promise<string[]> {
+  try {
+    const r = await db.prepare("SELECT id FROM suppliers WHERE tf_eligible = 1").all<{ id: string }>();
+    return (r.results ?? []).map((x) => String(x.id)).sort();
+  } catch {
+    return [];
+  }
+}
+
 // What the popup's Trade finance block works from, per facility, as at
 // today: the limit, the defaults, what is owed and drawn and falling due
 // (tfFacilityNow), the bills due by month from the suppliers the facility has
@@ -11984,7 +11996,7 @@ type CfTfFacilityInput = {
   owedNowSen: number; drawnThisMonthSen: number; dueBy: Record<string, number>; billsDue: Record<string, number>;
   paidSupplierIds: string[];
 };
-async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string): Promise<{ facilities: CfTfFacilityInput[]; forecastSuppliers: TfForecastSupplier[] }> {
+async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string): Promise<{ facilities: CfTfFacilityInput[]; forecastSuppliers: TfForecastSupplier[]; eligibleSupplierIds: string[] }> {
   const curYm = todayMyt().slice(0, 7);
   const NO_COMPANY: CompanyFilter = { active: false, sql: "", param: null, orgId: null };
   const [sources, ag, supRes, fcRow] = await Promise.all([
@@ -12011,7 +12023,7 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
     if (name) supIdsByName.set(name, [...(supIdsByName.get(name) ?? []), String(r.id)]);
   }
   const termMonthsOf = (id: string) => (supTerm.has(id) ? parseTermMonths(supTerm.get(id)).months : 1);
-  const dueBySupplier = tfForecastDueBySupplier({ months: fcMonths, termMonths: termMonthsOf, fromYm: curYm });
+  const dueBySupplier = tfSupplierDues({ ap: ag.data.ap, fcMonths, termMonths: termMonthsOf, curYm });
   const facilities = sources.map((s): CfTfFacilityInput => {
     const sec = ag.data.tf.find((t) => t.accountCode === s.accountCode);
     const draws = sec?.draws ?? [];
@@ -12038,8 +12050,9 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
   });
   // Every supplier with Forecast P&L dues, with its name and payment term.
   const nameOf = new Map((supRes.results ?? []).map((r) => [String(r.id), String(r.name ?? "").trim()] as const));
-  const forecastSuppliers = Object.entries(dueBySupplier).map(([id, dueBy]) => ({ id, name: nameOf.get(id) || id, term: supTerm.get(id), dueBy }));
-  return { facilities, forecastSuppliers };
+  const actualBySupplier = tfActualDuesFromAp(ag.data.ap, termMonthsOf, curYm);
+  const forecastSuppliers = Object.entries(dueBySupplier).map(([id, dueBy]) => ({ id, name: nameOf.get(id) || id, term: supTerm.get(id), dueBy, ...(actualBySupplier[id] ? { actualBy: actualBySupplier[id] } : {}) }));
+  return { facilities, forecastSuppliers, eligibleSupplierIds: await loadTfEligibleSupplierIds(db) };
 }
 
 // GET /api/accounting/bs-forecast — the Forecast Balance Sheet's movements
@@ -12054,12 +12067,21 @@ async function cfForecastTfFacilities(db: Env["Variables"]["DB"], orgId: string)
 // (`salaryAccount`) and collects the customers' open invoices
 // (`openingReceipts`) up to the trade debtors on that sheet (`arAccounts`;
 // owner 2026-11-11 「就是这个…我不想要显示」 of the debtors left below zero). Read only.
-app.get("/bs-forecast", async (c) => {
+app.get("/bs-forecast", (c) => reportSnapshot(c, "bs-forecast", bsForecastResponse, false, FORECAST_SNAPSHOT_SOURCES));
+async function bsForecastResponse(c: AccountingCtx) {
   const denied = await requirePermission(c, "accounting", "read");
   if (denied) return denied;
   const db = c.var.DB;
   const orgId = getOrgId(c);
-  const today = todayMyt();
+  // ?start=YYYY-MM, a month before this one (owner 2026-11-24 「要补」 — the
+  // dashboard's past months beside a forecast): that one month worked out as
+  // it would have been then — from the month-end before it (its documents open
+  // at the 1st, its terms from the three months before) and that month's
+  // Forecast P&L. Absent = from this month on, as before.
+  const realToday = todayMyt();
+  const startQ = c.req.query("start") ?? "";
+  const past = /^\d{4}-(0[1-9]|1[0-2])$/.test(startQ) && startQ < realToday.slice(0, 7) ? startQ : null;
+  const today = past ? `${past}-01` : realToday;
   const curYm = today.slice(0, 7);
   const [resolveAcct, dc, sgOverride, bsOverride, coaRes] = await Promise.all([
     loadAccountResolver(db),
@@ -12084,11 +12106,26 @@ app.get("/bs-forecast", async (c) => {
   if (!p || !groups || !capture.forecastCash) return c.json({ success: false, error: "The forecast could not be loaded" }, 500);
   // The Forecast P&L from this month on: the actual documents stand for the months before.
   const fcMonths = Object.fromEntries(Object.entries(p.fcMonths).filter(([ym]) => ym >= curYm));
-  const pnl = buildPnlForecastLegs({ ...p, fcMonths, tfPlans: [] });
+  // Trade finance (owner 2026-11-23: the sheet left it out, so the facility
+  // read nil by January while the Cash Flow forecast drew on it): the plans
+  // keyed on the Cash Flow page, from this month on — the draws before it are
+  // in the documents open at the start (repaid by their due dates), and this
+  // month's cell is the month's whole use, what is drawn already included.
+  const tfPlansBs = (p.tfPlans ?? [])
+    .map((f) => ({ ...f, months: Object.fromEntries(Object.entries(f.months).filter(([ym]) => ym >= curYm)) }))
+    .filter((f) => Object.keys(f.months).length);
+  const pnl = buildPnlForecastLegs({ ...p, fcMonths, tfPlans: tfPlansBs });
+  const tfAccounts = [...new Set([...(await getTfSources(db).catch(() => [] as TfSource[])).map((s) => resolveAcct(s.accountCode)), ...tfPlansBs.map((f) => f.accountCode)])];
+  const tfInterestCode = resolveAcct(TF_INTEREST_ACCT.code);
   const mapped = capture.mapped ?? new Set<string>();
   // To the last month the Forecast P&L has figures for: after it a column would only collect and pay.
   const lastFigureYm = Object.keys(fcMonths).filter((ym) => forecastMonthHasFigures(forecastMonthFigures(fcMonths[ym], groups, mapped))).sort().pop() ?? null;
-  const months = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
+  const monthsAll = forecastBsMonths(pnl.columns.filter((col) => !col.blank).map((col) => col.ym), curYm, lastFigureYm);
+  // A past month with no Forecast P&L figures has no forecast (owner 2026-11-24
+  // 「那就改成「-」吧」): only its bills would move the sheet, never its sales,
+  // so the figure would read far too low.
+  const pastHasPnl = past ? !!fcMonths[past] && forecastMonthHasFigures(forecastMonthFigures(fcMonths[past], groups, mapped)) : true;
+  const months = past ? (pastHasPnl ? monthsAll.filter((ym) => ym === past) : []) : monthsAll;
   const salaryLegAccounts = new Set<string>();
   const accruals: Record<string, ForecastBsAccrual> = {};
   for (const ym of months) {
@@ -12102,10 +12139,17 @@ app.get("/bs-forecast", async (c) => {
       salesSen: f.salesSen,
       materialsSen: groups.materials.reduce((t, a) => t + f.amt(a.code), 0),
       salariesSen: salaries.reduce((t, l) => t + l.amtSen, 0),
-      nonCashSen: cash.excluded.reduce((t, e) => t + e.amtSen, 0),
+      // The Forecast P&L's own trade-finance interest is owed to the lender,
+      // not depreciation; with a plan the plan's interest stands for it (as
+      // the Cash Flow forecast does), so it is not counted twice.
+      nonCashSen: cash.excluded.filter((e) => resolveAcct(e.code) !== tfInterestCode).reduce((t, e) => t + e.amtSen, 0),
+      tfInterestSen: tfPlansBs.length ? 0 : cash.excluded.filter((e) => resolveAcct(e.code) === tfInterestCode).reduce((t, e) => t + e.amtSen, 0),
     };
   }
-  const accounts = { ar: FC_AR, receipt: p.arAcct, ap: capture.apAcct ?? resolveAcct("400-0000"), salary: resolveAcct(LABOUR_ACCRUAL_ACCT) };
+  const accounts = {
+    ar: FC_AR, receipt: p.arAcct, ap: capture.apAcct ?? resolveAcct("400-0000"), salary: resolveAcct(LABOUR_ACCRUAL_ACCT),
+    ...(tfAccounts.length ? { tfInterestTo: tfAccounts[0] } : {}),
+  };
   const openingDocs = capture.baselines?.get(curYm) ?? [];
   const deltas = forecastBsDeltas({
     months,
@@ -12116,6 +12160,7 @@ app.get("/bs-forecast", async (c) => {
     openingSalaryPayableSen: 0,
     inputs: Object.fromEntries(months.map((ym) => [ym, capture.inputs?.[ym] ?? {}])),
     salaryLegAccounts: [...salaryLegAccounts],
+    tfAccounts,
   });
   // The name and section of every account a month moves, by the sheet's own rule.
   const accountsOut: Record<string, { name: string; section: string }> = {};
@@ -12152,7 +12197,7 @@ app.get("/bs-forecast", async (c) => {
     openingReceipts: openingReceiptsByYm(openingDocs, months[0] ?? curYm),
   };
   return c.json({ success: true, data });
-});
+}
 
 app.get("/cashflow-forecast-inputs", async (c) => {
   const denied = await requirePermission(c, "accounting", "read");
@@ -12161,9 +12206,9 @@ app.get("/cashflow-forecast-inputs", async (c) => {
     loadCfForecastInputs(c.var.DB),
     cfForecastInputAccounts(c.var.DB),
     loadTfPlanStore(c.var.DB),
-    cfForecastTfFacilities(c.var.DB, getOrgId(c)).catch(() => ({ facilities: [] as CfTfFacilityInput[], forecastSuppliers: [] as TfForecastSupplier[] })),
+    cfForecastTfFacilities(c.var.DB, getOrgId(c)).catch(() => ({ facilities: [] as CfTfFacilityInput[], forecastSuppliers: [] as TfForecastSupplier[], eligibleSupplierIds: [] as string[] })),
   ]);
-  return c.json({ success: true, data: { months, accounts, tf: { facilities: tf.facilities, plans: tfPlans, forecastSuppliers: tf.forecastSuppliers } } });
+  return c.json({ success: true, data: { months, accounts, tf: { facilities: tf.facilities, plans: tfPlans, forecastSuppliers: tf.forecastSuppliers, eligibleSupplierIds: tf.eligibleSupplierIds } } });
 });
 
 // Replaces the whole map (the table sends every month it holds, the ones
@@ -12689,33 +12734,37 @@ function validateDocLines(
 // mechanism.
 let _pendingPvApprovalCols: Promise<void> | null = null;
 function ensurePvApprovalCols(db: Env["Variables"]["DB"]): Promise<void> {
-  if (!_pendingPvApprovalCols) {
-    _pendingPvApprovalCols = (async () => {
-      for (const col of [
-        "approval_state TEXT", "prepared_at TEXT", "prepared_by TEXT",
-        "checked_at TEXT", "checked_by TEXT", "approved_at TEXT",
-        "approved_by TEXT", "reject_reason TEXT",
-      ]) {
-        await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
-      }
-      await db.prepare(
-        "UPDATE payment_vouchers SET approval_state = 'APPROVED' WHERE approval_state IS NULL",
-      ).run().catch(() => {});
-      // Migration 0159 created `status CHECK (status IN ('POSTED','VOID'))`;
-      // a draft-road voucher carries status 'DRAFT' and was refused by the
-      // constraint on prod (2026-09-22, same class as BUG-2026-09-18-001 —
-      // the PCN 'CANCELLED' void). Re-create the check with DRAFT allowed.
-      // Postgres names the auto constraint payment_vouchers_status_check.
+  return memoizeSelfApply(() => _pendingPvApprovalCols, (p) => { _pendingPvApprovalCols = p; }, async () => {
+    // Through runSelfApply so a column already there sends no ALTER (each one
+    // takes an ACCESS EXCLUSIVE lock, BUG-2026-11-24-556). Failures stay
+    // swallowed, as before.
+    await runSelfApply(db, "accounting.pv-approval", [
+      "approval_state TEXT", "prepared_at TEXT", "prepared_by TEXT",
+      "checked_at TEXT", "checked_by TEXT", "approved_at TEXT",
+      "approved_by TEXT", "reject_reason TEXT",
+    ].map((col) => `ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`)).catch(() => {});
+    // Row locks only (no ACCESS EXCLUSIVE), and it matches nothing once
+    // backfilled — no guard needed.
+    await db.prepare(
+      "UPDATE payment_vouchers SET approval_state = 'APPROVED' WHERE approval_state IS NULL",
+    ).run().catch(() => {});
+    // Migration 0159 created `status CHECK (status IN ('POSTED','VOID'))`;
+    // a draft-road voucher carries status 'DRAFT' and was refused by the
+    // constraint on prod (2026-09-22, same class as BUG-2026-09-18-001 —
+    // the PCN 'CANCELLED' void). Re-create the check with DRAFT allowed.
+    // Postgres names the auto constraint payment_vouchers_status_check.
+    // Rebuilt only when it does not already admit DRAFT: the DROP + ADD lock
+    // the table and re-check every row (BUG-2026-11-24-556).
+    const chk = await db.prepare(
+      "SELECT pg_get_constraintdef(oid) AS \"def\" FROM pg_constraint WHERE conname = 'payment_vouchers_status_check' AND conrelid = 'payment_vouchers'::regclass",
+    ).first<{ def: string }>().catch(() => null);
+    if (!chk?.def?.includes("'DRAFT'")) {
       await db.prepare("ALTER TABLE payment_vouchers DROP CONSTRAINT IF EXISTS payment_vouchers_status_check").run().catch(() => {});
       await db.prepare(
         "ALTER TABLE payment_vouchers ADD CONSTRAINT payment_vouchers_status_check CHECK (status IN ('POSTED','VOID','DRAFT'))",
       ).run().catch(() => {});
-    })().catch((e) => {
-      _pendingPvApprovalCols = null;
-      throw e;
-    });
-  }
-  return _pendingPvApprovalCols;
+    }
+  });
 }
 
 const PV_DRAFT_PREFIX = "DRAFT-";
@@ -12806,45 +12855,42 @@ function validatePvHeader(
 // ---------------------------------------------------------------------------
 let _pendingPvApCols: Promise<void> | null = null;
 function ensurePvApColumns(db: Env["Variables"]["DB"]): Promise<void> {
-  if (!_pendingPvApCols) {
-    _pendingPvApCols = (async () => {
-      // notes / bill_no / bill_date (owner 2026-10-01, the voucher form):
-      // internal notes, the supplier's own bill number and date.
-      // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
-      // finance carries the drawdown's due date and the interest recorded at
-      // drawdown (finance backlog item 17, owner 「提款时就记」).
-      // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
-      // its own field — the description stays the printed text.
-      // fx_currency / fx_rate: an AP Payment of foreign-currency bills pays in
-      // that currency at this rate (Currency & FX step 3, owner 2026-10-20);
-      // fx_bank_confirmed_at / _by: when Finance keyed the RM the bank actually
-      // debited, and who (step 4 — the rate is then the actual one).
-      for (const col of ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"]) {
-        await db.prepare(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
-      }
-      await db.prepare(
-        `CREATE TABLE IF NOT EXISTS payment_voucher_allocs (
-           id TEXT PRIMARY KEY,
-           voucher_id TEXT NOT NULL,
-           doc_kind TEXT NOT NULL,
-           doc_id TEXT NOT NULL,
-           amount_sen INTEGER NOT NULL,
-           line_order INTEGER NOT NULL DEFAULT 0
-         )`,
-      ).run();
-      await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)").run().catch(() => {});
-      await db.prepare("CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)").run().catch(() => {});
-      // A foreign-currency bill: the amount paid in its own currency and
-      // whether it settles all that is left (amount_sen = the booked RM).
-      for (const col of ["foreign_sen INTEGER", "full_pay INTEGER"]) {
-        await db.prepare(`ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS ${col}`).run().catch(() => {});
-      }
-    })().catch((e) => {
-      _pendingPvApCols = null;
-      throw e;
-    });
-  }
-  return _pendingPvApCols;
+  return memoizeSelfApply(() => _pendingPvApCols, (p) => { _pendingPvApCols = p; }, async () => {
+    // notes / bill_no / bill_date (owner 2026-10-01, the voucher form):
+    // internal notes, the supplier's own bill number and date.
+    // tf_due_date / tf_interest_sen: an AP Payment that draws on trade
+    // finance carries the drawdown's due date and the interest recorded at
+    // drawdown (finance backlog item 17, owner 「提款时就记」).
+    // reference: the TT / cheque no. (owner 2026-10-19 「先做 Reference 栏」),
+    // its own field — the description stays the printed text.
+    // fx_currency / fx_rate: an AP Payment of foreign-currency bills pays in
+    // that currency at this rate (Currency & FX step 3, owner 2026-10-20);
+    // fx_bank_confirmed_at / _by: when Finance keyed the RM the bank actually
+    // debited, and who (step 4 — the rate is then the actual one).
+    // Through runSelfApply so a column already there sends no ALTER
+    // (BUG-2026-11-24-556). Failures stay swallowed, as before.
+    await runSelfApply(db, "accounting.pv-ap", ["pv_kind TEXT", "party_kind TEXT", "party_id TEXT", "advance_sen INTEGER", "notes TEXT", "bill_no TEXT", "bill_date TEXT", "tf_due_date TEXT", "tf_interest_sen INTEGER", "reference TEXT", "fx_currency TEXT", "fx_rate DOUBLE PRECISION", "fx_bank_confirmed_at TEXT", "fx_bank_confirmed_by TEXT"]
+      .map((col) => `ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS ${col}`)).catch(() => {});
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS payment_voucher_allocs (
+         id TEXT PRIMARY KEY,
+         voucher_id TEXT NOT NULL,
+         doc_kind TEXT NOT NULL,
+         doc_id TEXT NOT NULL,
+         amount_sen INTEGER NOT NULL,
+         line_order INTEGER NOT NULL DEFAULT 0
+       )`,
+    ).run();
+    // foreign_sen / full_pay: a foreign-currency bill — the amount paid in
+    // its own currency and whether it settles all that is left (amount_sen =
+    // the booked RM).
+    await runSelfApply(db, "accounting.pv-allocs", [
+      "CREATE INDEX IF NOT EXISTS idx_pv_allocs_voucher ON payment_voucher_allocs (voucher_id)",
+      "CREATE INDEX IF NOT EXISTS idx_pv_allocs_doc ON payment_voucher_allocs (doc_kind, doc_id)",
+      "ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS foreign_sen INTEGER",
+      "ALTER TABLE payment_voucher_allocs ADD COLUMN IF NOT EXISTS full_pay INTEGER",
+    ]).catch(() => {});
+  });
 }
 
 const PV_KIND_AP = "AP";
@@ -14258,12 +14304,10 @@ app.post("/payment-vouchers/:id/remind", async (c) => {
   const pvNo = String(pv.pvNo ?? pv.pv_no ?? "");
   const nowMs = Date.now();
   const link = pvRemindLink(id);
-  if (!pvRemindUserColumn) {
-    pvRemindUserColumn = runSelfApply(c.var.DB, "notifications.user_id", [
+  await memoizeSelfApply(() => pvRemindUserColumn, (p) => { pvRemindUserColumn = p; }, () =>
+    runSelfApply(c.var.DB, "notifications.user_id", [
       "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id TEXT",
-    ]).catch((e) => { pvRemindUserColumn = null; throw e; });
-  }
-  await pvRemindUserColumn;
+    ]));
   const last = await c.var.DB.prepare(
     "SELECT MAX(created_at) AS \"lastAt\" FROM notifications WHERE link = ? AND id LIKE 'pv-remind-%'",
   ).bind(link).first<{ lastAt?: string | null; lastat?: string | null }>();
@@ -18685,18 +18729,13 @@ app.post("/fixed-assets/depreciation-run", async (c) => {
 // self-apply — migration files alone are inert on this stack.
 let _pendingBankRecoCols: Promise<void> | null = null;
 function ensureBankRecoCols(db: Env["Variables"]["DB"]): Promise<void> {
-  if (_pendingBankRecoCols) return _pendingBankRecoCols;
-  _pendingBankRecoCols = (async () => {
+  return memoizeSelfApply(() => _pendingBankRecoCols, (p) => { _pendingBankRecoCols = p; }, async () => {
     await runSelfApply(db, "accounting", [
       `ALTER TABLE bank_statement_lines ADD COLUMN IF NOT EXISTS stmt_month TEXT`,
       `ALTER TABLE bank_statement_lines ADD COLUMN IF NOT EXISTS balance_sen INTEGER`,
       `ALTER TABLE bank_statement_lines ADD COLUMN IF NOT EXISTS ignored_at TEXT`,
     ]);
-  })().catch((err) => {
-    _pendingBankRecoCols = null;
-    throw err;
   });
-  return _pendingBankRecoCols;
 }
 
 async function bankAccountOrError(
@@ -19064,8 +19103,8 @@ app.post("/bank-reco/match-group", async (c) => {
 const BANK_LINE_SPLIT_SENTINEL = "SPLIT";
 let _pendingBankLineSplits: Promise<void> | null = null;
 function ensureBankLineSplits(db: Env["Variables"]["DB"]): Promise<void> {
-  if (!_pendingBankLineSplits) {
-    _pendingBankLineSplits = db.prepare(
+  return memoizeSelfApply(() => _pendingBankLineSplits, (p) => { _pendingBankLineSplits = p; }, async () => {
+    await db.prepare(
       `CREATE TABLE IF NOT EXISTS bank_line_leg_splits (
          line_id    TEXT NOT NULL,
          leg_id     TEXT NOT NULL,
@@ -19073,12 +19112,8 @@ function ensureBankLineSplits(db: Env["Variables"]["DB"]): Promise<void> {
          created_at TEXT NOT NULL,
          PRIMARY KEY (line_id, leg_id)
        )`,
-    ).run().then(() => undefined).catch((e) => {
-      _pendingBankLineSplits = null;
-      throw e;
-    });
-  }
-  return _pendingBankLineSplits;
+    ).run();
+  });
 }
 
 app.post("/bank-reco/match-split", async (c) => {
@@ -19874,33 +19909,27 @@ app.get("/bank-reco/daily", async (c) => {
 // mechanism.
 let _pendingCashBoardTables: Promise<void> | null = null;
 function ensureCashBoardTables(db: Env["Variables"]["DB"]): Promise<void> {
-  if (!_pendingCashBoardTables) {
-    _pendingCashBoardTables = (async () => {
-      await db.prepare(
-        `CREATE TABLE IF NOT EXISTS bank_board_cleared (
-           leg_id       TEXT PRIMARY KEY,
-           account_code TEXT NOT NULL,
-           cleared_on   TEXT NOT NULL,
-           created_at   TEXT
-         )`,
-      ).run();
-      await db.prepare(
-        `CREATE TABLE IF NOT EXISTS planned_payments (
-           id            TEXT PRIMARY KEY,
-           party_name    TEXT NOT NULL,
-           ref           TEXT,
-           expected_date TEXT NOT NULL,
-           amount_sen    INTEGER NOT NULL,
-           created_at    TEXT,
-           done_at       TEXT
-         )`,
-      ).run();
-    })().catch((e) => {
-      _pendingCashBoardTables = null;
-      throw e;
-    });
-  }
-  return _pendingCashBoardTables;
+  return memoizeSelfApply(() => _pendingCashBoardTables, (p) => { _pendingCashBoardTables = p; }, async () => {
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS bank_board_cleared (
+         leg_id       TEXT PRIMARY KEY,
+         account_code TEXT NOT NULL,
+         cleared_on   TEXT NOT NULL,
+         created_at   TEXT
+       )`,
+    ).run();
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS planned_payments (
+         id            TEXT PRIMARY KEY,
+         party_name    TEXT NOT NULL,
+         ref           TEXT,
+         expected_date TEXT NOT NULL,
+         amount_sen    INTEGER NOT NULL,
+         created_at    TEXT,
+         done_at       TEXT
+       )`,
+    ).run();
+  });
 }
 
 // Tick / untick one pending voucher: 「我在银行 app 看到已经扣了」.
@@ -21893,8 +21922,7 @@ app.post("/stock-take-item-alias-seed", async (c) => {
 // ---------------------------------------------------------------------------
 let pendingMosMigrations: Promise<void> | null = null;
 function ensureMaterialOpeningStock(db: D1Database): Promise<void> {
-  if (pendingMosMigrations) return pendingMosMigrations;
-  pendingMosMigrations = (async () => {
+  return memoizeSelfApply(() => pendingMosMigrations, (p) => { pendingMosMigrations = p; }, async () => {
     const stmts = [
       `CREATE TABLE IF NOT EXISTS material_opening_stock (
          id            TEXT PRIMARY KEY,
@@ -21909,14 +21937,7 @@ function ensureMaterialOpeningStock(db: D1Database): Promise<void> {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_mos_key ON material_opening_stock (org_id, rm_id)`,
     ];
     await runSelfApply(db, "accounting", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    pendingMosMigrations = null;
-    throw err;
   });
-  return pendingMosMigrations;
 }
 
 type MaterialOpeningStockRow = {

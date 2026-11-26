@@ -172,30 +172,19 @@ test("a reloaded MRP run reports UNCOUNTED coverage as null, never 0", () => {
   );
 });
 
-test("the On Order figure is rendered where it is subtracted", () => {
+// The MRP page was rebuilt 2026-11-23 (raw-material MRP, /api/mrp/plan). The
+// same truthfulness guarantees are re-asserted against the new page + engine.
+test("the PO outstanding figure is rendered where it is netted", () => {
   const src = mrpPage();
-  assert.ok(
-    />\s*On Order\s*</.test(src),
-    "the column must exist — while the server hard-coded 0 there was no column, " +
-      "so the operator could not see that Net Req ignored every open PO",
-  );
-  assert.ok(
-    /\{req\.onOrder > 0 \? req\.onOrder : "-"\}/.test(src),
-    "the row must print the real per-material on-order quantity",
-  );
+  assert.ok(/\{ key: "po", label: "PO Outstanding", num: true \}/.test(src), "the column must exist");
+  assert.ok(/\{fmtQty\(r\.poOutstanding\)\}/.test(src), "the row prints the real per-material outstanding qty");
 });
 
-test("the page states its On-Order coverage instead of implying completeness", () => {
+test("the page states its PO coverage instead of implying completeness", () => {
   const src = mrpPage();
-  assert.ok(
-    /On Order below is a floor/.test(src),
-    "when some open PO lines resolve to no material code, On Order is a floor " +
-      "and the shortage it feeds is overstated — the page must say so",
-  );
-  assert.ok(
-    /onOrderCoverageUnknown/.test(src),
-    "a saved run with no count must say the coverage is unknown, not fine",
-  );
+  assert.ok(/PO outstanding is a floor/.test(src), "unresolvable open PO lines make PO outstanding a floor — the page must say so");
+  const engine = read("src/api/lib/mrp-plan.ts");
+  assert.ok(/openPoLinesUnresolved\+\+/.test(engine), "unresolved open PO lines are counted, not dropped");
 });
 
 // ===========================================================================
@@ -258,22 +247,15 @@ test("no lead time means no deadline — the red 'Order By' date cannot be guess
   );
 });
 
-test("the MRP page renders an em dash for an unstated MOQ / lead time", () => {
+test("the MRP page invents no MOQ or lead time — lead time comes from the binding or the owner's Lead Times", () => {
+  // Owner 2026-11-23 asked for Houzs-style Lead Times (order-by date). Still no
+  // invented number: the binding's own lead time, else the Lead Times setting,
+  // else 0 (order-by = need-by). MOQ is a minimum, 0 = not stated.
   const src = mrpPage();
-  assert.ok(
-    /\{moq == null \? "MOQ —" : `MOQ \$\{moq\}`\}/.test(src),
-    "an unstated MOQ must render '—' beside the suggested quantity",
-  );
-  assert.ok(
-    /\{leadTime == null \? "lead time —" : `\$\{leadTime\}d lead`\}/.test(src),
-    "an unstated lead time must render '—' under the supplier name, not vanish " +
-      "and not print a number",
-  );
-  assert.ok(
-    !/leadTimeDays\s*\?\?\s*\d/.test(src) && !/req\.moq\s*\?\?\s*\d/.test(src),
-    "no numeric fallback may be reintroduced on the page either — the API fix " +
-      "is undone by one `?? 14` in the renderer",
-  );
+  assert.ok(/bound && bound\.leadTimeDays > 0 \? bound\.leadTimeDays : \(leadTimes\[supplierId\] \?\? 0\)/.test(src));
+  // MOQ rounding moved server-side with Proceed PO (2026-11-24): src/api/routes/mrp.ts
+  assert.ok(/Math\.max\(qty, bound\?\.moq \?\? 0\)/.test(readFileSync(new URL("../src/api/routes/mrp.ts", import.meta.url), "utf8")));
+  assert.ok(!/leadTimeDays\s*\?\?\s*[1-9]/.test(src) && !/moq\s*\?\?\s*[1-9]/i.test(src), "no numeric fallback may appear on the page");
 });
 
 test("the shared MRP type carries null, so a fallback cannot be typed away", () => {

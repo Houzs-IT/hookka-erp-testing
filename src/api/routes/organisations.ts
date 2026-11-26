@@ -17,7 +17,7 @@
 // working between deploy and migration apply.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 import { ensureUserActiveOrgColumn } from "../lib/ensure-user-active-org";
 import type { Env } from "../worker";
 import { hasPermission, requirePermission } from "../lib/rbac";
@@ -302,8 +302,7 @@ export function resolveActiveOrgId(
 // over-restrictive CHECK — never removes data.
 let orgRegistryPromise: Promise<void> | null = null;
 function ensureOrganisationRegistry(db: D1Database): Promise<void> {
-  if (orgRegistryPromise) return orgRegistryPromise;
-  orgRegistryPromise = (async () => {
+  return memoizeSelfApply(() => orgRegistryPromise, (p) => { orgRegistryPromise = p; }, async () => {
     const stmts = [
       // Postgres names an inline column CHECK `<table>_<column>_check`.
       "ALTER TABLE organisations DROP CONSTRAINT IF EXISTS organisations_code_check",
@@ -318,15 +317,14 @@ function ensureOrganisationRegistry(db: D1Database): Promise<void> {
       "CREATE UNIQUE INDEX IF NOT EXISTS organisations_code_per_org_uniq ON organisations (org_id, code)",
       "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS purchase_org_code text NOT NULL DEFAULT 'HOOKKA'",
     ];
-    await runSelfApply(db, "organisations", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    orgRegistryPromise = null;
-    throw err;
+    // runSelfApply cannot see constraints, so the DROP would lock the table on
+    // every cold request (BUG-2026-11-24-556). Skip it once the CHECK is gone;
+    // a failed read keeps it, as before.
+    const chk = await db.prepare(
+      "SELECT 1 AS \"x\" FROM pg_constraint WHERE conname = 'organisations_code_check' AND conrelid = 'organisations'::regclass",
+    ).first().catch(() => ({ x: 1 }));
+    await runSelfApply(db, "organisations", chk ? stmts : stmts.filter((sql) => !sql.includes("DROP CONSTRAINT")));
   });
-  return orgRegistryPromise;
 }
 
 // GET /api/organisations — list + active org + inter-company config.

@@ -77,6 +77,11 @@ export type DashSpan = 6 | 12;
 
 /** A period as the design labels it: "Jul 2026" (a quarter key such as
  *  "2026/Q3" stays as it is), starred while it is still running. */
+/** A dashboard row's column label: "Nov 2026 *" running, "Dec 2026 (F)" ahead. */
+export function dashRowLabel(r: { label: string; partial: boolean; actual: unknown }): string {
+  return r.actual === null || r.actual === undefined ? `${dashPeriodLabel(r.label, false)} (F)` : dashPeriodLabel(r.label, r.partial);
+}
+
 export function dashPeriodLabel(label: string, partial: boolean): string {
   const words = /^\d{4}-\d{2}$/.test(label)
     ? new Date(`${label}-01T00:00:00Z`).toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })
@@ -86,6 +91,24 @@ export function dashPeriodLabel(label: string, partial: boolean): string {
 
 /** The first month of a period key — a month "2026-07" is itself; a quarter
  *  "2026-Q3" starts in "2026-07". */
+/** The first month of the period (month or calendar quarter) holding `ym`. */
+export function dashBucketStartYm(ym: string, granularity: "month" | "quarter"): string {
+  if (granularity === "month") return ym.slice(0, 7);
+  const m = Number(ym.slice(5, 7));
+  return `${ym.slice(0, 4)}-${String(Math.floor((m - 1) / 3) * 3 + 1).padStart(2, "0")}`;
+}
+
+/** The first month of the period BEFORE the one holding `ym` — fetched so the
+ *  first column of an explicit range still has a "vs last period". */
+export function dashPeriodBefore(ym: string, granularity: "month" | "quarter"): string {
+  const start = dashBucketStartYm(ym, granularity);
+  const y = Number(start.slice(0, 4));
+  const m = Number(start.slice(5, 7)) - (granularity === "quarter" ? 3 : 1);
+  const yy = m <= 0 ? y - 1 : y;
+  const mm = m <= 0 ? m + 12 : m;
+  return `${yy}-${String(mm).padStart(2, "0")}`;
+}
+
 export function periodStartYm(key: string): string {
   const q = /^(\d{4})-Q([1-4])$/.exec(key);
   if (q) return `${q[1]}-${String((Number(q[2]) - 1) * 3 + 1).padStart(2, "0")}`;
@@ -101,7 +124,10 @@ export function dashPeriods<T extends { key: string; actual: unknown }>(
   opts: { span: DashSpan; granularity: "month" | "quarter"; explicit: boolean },
 ): T[] {
   const happened = rows.filter((r) => r.actual !== null && r.actual !== undefined);
-  if (opts.explicit) return happened;
+  // An explicit From / To shows every period in it (owner 2026-11-24): the
+  // ones that have happened with their actual, future ones with the forecast
+  // "(F)". The rolling 6 / 12 shows only periods that have happened.
+  if (opts.explicit) return rows.filter((r) => (r.actual !== null && r.actual !== undefined) || ((r as { forecast?: unknown }).forecast ?? null) !== null);
   const n = opts.granularity === "quarter" ? opts.span / 3 : opts.span;
   const pool = opts.span === 6 ? happened.filter((r) => periodStartYm(r.key) >= DASH_FIRST_MONTH) : happened;
   return (pool.length ? pool : happened).slice(-n);

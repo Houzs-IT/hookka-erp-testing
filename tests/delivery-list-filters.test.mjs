@@ -26,6 +26,24 @@ test("source guard: the page's loading flag gates on the CURRENT tab's rows only
   assert.match(page, /pageSlice\(readyPOs, page, LIST_PAGE_SIZE, searching\)/);
 });
 
+test("source guard: a column filter / sort spans the whole Planning + Pending Delivery list (HK-0174)", () => {
+  const page = readFileSync(new URL("../src/pages/delivery/index.tsx", import.meta.url), "utf8");
+  // Overdue filter on a 50-row page found 32 rows on page 1 and 5 on page 2,
+  // so one DO for all of them meant selecting page by page.
+  assert.match(page, /const searching = !!search\.trim\(\) \|\| poColumnView;/);
+  assert.equal(page.match(/onColumnViewChange=\{setPoColumnView\}/g)?.length, 2, "both PO grids report their column view");
+  assert.doesNotMatch(page, /\{!search\.trim\(\) && \(\s*<PagerFooter/, "the pager hides while the whole list is shown");
+});
+
+test("source guard: the column-filter popup counts the whole list, not the visible page (HK-0174)", () => {
+  // Prod 2026-11-24: "Overdue (8)" on the chip, 18 rows once applied.
+  const page = readFileSync(new URL("../src/pages/delivery/index.tsx", import.meta.url), "utf8");
+  assert.match(page, /data=\{planningPage\}\s*filterValuesData=\{planningPOs\}/);
+  assert.match(page, /data=\{readyPage\}\s*filterValuesData=\{readyPOs\}/);
+  const grid = readFileSync(new URL("../src/components/ui/data-grid.tsx", import.meta.url), "utf8");
+  assert.match(grid, /let scopedData = filterValuesData \?\? data;/);
+});
+
 test("parseStatusList: comma list, trimmed, blanks dropped", () => {
   assert.deepEqual(parseStatusList("DRAFT"), ["DRAFT"]);
   assert.deepEqual(parseStatusList(" LOADED , IN_TRANSIT ,"), ["LOADED", "IN_TRANSIT"]);

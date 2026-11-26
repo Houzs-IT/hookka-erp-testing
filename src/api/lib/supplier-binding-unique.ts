@@ -141,10 +141,13 @@ export function groupDuplicateRows(rows: DupRow[]): DuplicateBindingGroup[] {
 
 export type IndexOutcome = "created" | "skipped-duplicates" | "failed";
 
-// Once per isolate. A skip / failure is remembered too (the duplicates will not
+// Once per isolate. A skip is remembered; a failure is not (the duplicates will not
 // vanish by themselves within an isolate's life); a new isolate re-checks, so
 // the index lands on its own once the owner has cleaned the pairs up.
-let indexOutcome: Promise<IndexOutcome> | null = null;
+// The SETTLED outcome, never the in-flight promise: a pending promise belongs
+// to the request that made it, and a later request awaiting it fails once that
+// request ends (BUG-2026-11-24-553). Two cold requests may each run the check.
+let indexOutcome: IndexOutcome | null = null;
 
 /** Test hook: forget the memo. */
 export function resetBindingUniqueIndexMemo(): void {
@@ -157,8 +160,8 @@ export function resetBindingUniqueIndexMemo(): void {
  * and a request must not fail because the backstop could not be built.
  */
 export function ensureBindingUniqueIndex(db: Db): Promise<IndexOutcome> {
-  if (indexOutcome) return indexOutcome;
-  indexOutcome = (async (): Promise<IndexOutcome> => {
+  if (indexOutcome) return Promise.resolve(indexOutcome);
+  return (async (): Promise<IndexOutcome> => {
     try {
       const dup = await db
         .prepare(
@@ -194,8 +197,7 @@ export function ensureBindingUniqueIndex(db: Db): Promise<IndexOutcome> {
     }
   })().then((outcome) => {
     // A transient failure should be retried by the next request.
-    if (outcome === "failed") indexOutcome = null;
+    if (outcome !== "failed") indexOutcome = outcome;
     return outcome;
   });
-  return indexOutcome;
 }

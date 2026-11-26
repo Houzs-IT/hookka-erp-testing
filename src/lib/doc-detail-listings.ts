@@ -313,6 +313,12 @@ export type PiDetailItem = {
   materialName?: string | null;
   supplierSku?: string | null;
   qty?: number | null;
+  /** Set only when the line is billed in a different unit than its PO line (HK-0149). */
+  uom?: string | null;
+  /** The PO line's unit, attached by GET /api/purchase-invoices/:id. */
+  poUnit?: string | null;
+  /** The raw material's baseUOM, attached by GET /api/purchase-invoices/:id. */
+  materialUnit?: string | null;
   unitPriceSen?: number | null;
   discountSen?: number | null;
   taxSen?: number | null;
@@ -355,7 +361,7 @@ export function buildPiDetailListingAoa(docs: PiDetailDoc[], supplierCodes?: Par
             itemCode: it.materialCode,
             description: it.materialName,
             qty: num(it.qty),
-            uom: "",
+            uom: it.uom || it.poUnit || it.materialUnit || "", // billed unit, else PO line unit, else material base unit
             unitPriceSen: it.unitPriceSen ?? 0,
             discountSen: it.discountSen ?? 0,
             lineTotalSen: it.lineTotalSen ?? 0,

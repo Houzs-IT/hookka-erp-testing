@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { canonicalizeOrigin } from "../../lib/app-origin";
-import { runSelfApply } from "../lib/self-apply";
+import { runSelfApply, memoizeSelfApply } from "../lib/self-apply";
 
 export type QrTokenTable = "delivery_orders" | "packing_lists";
 
@@ -32,8 +32,7 @@ export function newQrToken(): string {
 // the columns land on first use, and migration 0167 makes them permanent.
 let qrColumnsEnsured: Promise<void> | null = null;
 export function ensureQrTokenColumns(db: D1Database): Promise<void> {
-  if (qrColumnsEnsured) return qrColumnsEnsured;
-  qrColumnsEnsured = (async () => {
+  return memoizeSelfApply(() => qrColumnsEnsured, (p) => { qrColumnsEnsured = p; }, async () => {
     const stmts = [
       "ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS qrtoken TEXT",
       "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS qrtoken TEXT",
@@ -41,14 +40,7 @@ export function ensureQrTokenColumns(db: D1Database): Promise<void> {
       "CREATE INDEX IF NOT EXISTS ix_packing_lists_qrtoken ON packing_lists (qrtoken)",
     ];
     await runSelfApply(db, "do-qr-token", stmts);
-  })().catch((err) => {
-    // A FAILED round must not be remembered as done — otherwise one
-    // transient blip leaves the column unapplied for the life of this
-    // isolate. Dropping the memo lets the next request retry.
-    qrColumnsEnsured = null;
-    throw err;
   });
-  return qrColumnsEnsured;
 }
 
 // Create-if-missing, atomically claimed (UPDATE … WHERE qrtoken IS NULL) so
