@@ -30,7 +30,7 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 162 mounts, 157 route files in
+**Counts at generation time:** 162 mounts, 158 route files in
 `src/api/routes/`, 1192 top-level handler registrations discovered.
 
 ## Scope and limits of this file
@@ -62,7 +62,7 @@ offsets pointing past the end of their own file.
 | `/api/mcp` | `src/api/routes/mcp.ts` | `POST /oauth/register` <sub>:161</sub><br>`GET /oauth/authorize` <sub>:247</sub><br>`POST /oauth/approve` <sub>:291</sub><br>`POST /oauth/token` <sub>:317</sub><br>`POST /` <sub>:1151</sub><br>`GET /` <sub>:1186</sub><br>`DELETE /` <sub>:1187</sub> | **public** (mounted before the gate) |
 | `/.well-known` | `src/api/routes/mcp.ts` | `GET /oauth-protected-resource` <sub>:126</sub><br>`GET /oauth-protected-resource/*` <sub>:127</sub><br>`GET /oauth-authorization-server` <sub>:128</sub><br>`GET /oauth-authorization-server/*` <sub>:129</sub> | **public** (mounted before the gate) |
 | `/api/customers` | `src/api/routes/customers.ts` | `GET /` <sub>:344</sub><br>`POST /` <sub>:380</sub><br>`GET /:id` <sub>:493</sub><br>`POST /_backfill-snapshot-names` <sub>:521</sub><br>`PUT /:id` <sub>:544</sub><br>`DELETE /:id` <sub>:828</sub> | gated |
-| `/api/mail-center` | `src/api/routes/mail-center.ts` | `GET /threads` <sub>:1068</sub><br>`GET /threads/:id` <sub>:1176</sub><br>`POST /threads/:id/messages/:mid/acknowledge` <sub>:1298</sub><br>`GET /outbox` <sub>:1395</sub><br>`GET /outbox/:id` <sub>:1489</sub><br>`GET /outbox/:id/attachments/:idx/download` <sub>:1544</sub><br>`GET /addresses` <sub>:1627</sub><br>`GET /labels` <sub>:1709</sub><br>`POST /labels` <sub>:1726</sub><br>`PATCH /labels/:id` <sub>:1781</sub><br>`DELETE /labels/:id` <sub>:1852</sub><br>`POST /test-inject` <sub>:1919</sub><br>`POST /addresses` <sub>:1955</sub><br>`PATCH /addresses/:id` <sub>:2033</sub><br>`GET /access` <sub>:2108</sub><br>`POST /access` <sub>:2134</sub><br>`DELETE /access` <sub>:2172</sub><br>`GET /directory` <sub>:2226</sub><br>`GET /visibility` <sub>:2353</sub><br>`GET /scope-levels` <sub>:2399</sub><br>`PUT /scope-level` <sub>:2428</sub><br>`POST /threads/:id/reply` <sub>:2597</sub><br>`POST /compose` <sub>:2841</sub><br>`PATCH /threads/:id` <sub>:3037</sub> | gated |
+| `/api/mail-center` | `src/api/routes/mail-center.ts` | `GET /threads` <sub>:1084</sub><br>`GET /threads/:id` <sub>:1192</sub><br>`POST /threads/:id/messages/:mid/acknowledge` <sub>:1329</sub><br>`GET /outbox` <sub>:1429</sub><br>`GET /outbox/:id` <sub>:1525</sub><br>`GET /outbox/:id/attachments/:idx/download` <sub>:1580</sub><br>`GET /addresses` <sub>:1663</sub><br>`GET /labels` <sub>:1745</sub><br>`POST /labels` <sub>:1762</sub><br>`PATCH /labels/:id` <sub>:1817</sub><br>`DELETE /labels/:id` <sub>:1888</sub><br>`POST /test-inject` <sub>:1955</sub><br>`POST /addresses` <sub>:1991</sub><br>`PATCH /addresses/:id` <sub>:2069</sub><br>`GET /access` <sub>:2144</sub><br>`POST /access` <sub>:2170</sub><br>`DELETE /access` <sub>:2208</sub><br>`GET /directory` <sub>:2262</sub><br>`GET /visibility` <sub>:2389</sub><br>`GET /scope-levels` <sub>:2435</sub><br>`PUT /scope-level` <sub>:2464</sub><br>`POST /threads/:id/reply` <sub>:2636</sub><br>`POST /compose` <sub>:2926</sub><br>`PATCH /threads/:id` <sub>:3127</sub> | gated |
 | `/api/datagrid-layouts` | `src/api/routes/datagrid-layouts.ts` | `GET /` <sub>:171</sub><br>`PUT /` <sub>:234</sub><br>`DELETE /` <sub>:320</sub><br>`POST /shared` <sub>:395</sub><br>`PUT /shared/:id` <sub>:487</sub><br>`DELETE /shared/:id` <sub>:552</sub> | gated |
 | `/api/bom` | `src/api/routes/bom.ts` | `GET /` <sub>:201</sub><br>`POST /` <sub>:215</sub><br>`GET /templates` <sub>:302</sub><br>`POST /templates` <sub>:373</sub><br>`PUT /templates` <sub>:460</sub><br>`PUT /templates/:id` <sub>:578</sub><br>`POST /templates/bulk-process-edit` <sub>:754</sub><br>`POST /templates/bulk-activate` <sub>:936</sub><br>`POST /resync-job-card-times` <sub>:1029</sub><br>`POST /audit-contamination` <sub>:1403</sub><br>`GET /:id` <sub>:1542</sub><br>`PUT /:id` <sub>:1554</sub> | gated |
 | `/api/product-costing` | `src/api/routes/product-costing.ts` | `GET /fabric-tiers` <sub>:90</sub><br>`PUT /fabric-tiers` <sub>:97</sub><br>`GET /summary` <sub>:289</sub><br>`POST /preview` <sub>:331</sub><br>`GET /:productId` <sub>:342</sub><br>`POST /:productId/standard` <sub>:369</sub><br>`POST /:productId/rd-entry` <sub>:413</sub><br>`POST /:productId/rd-scan` <sub>:440</sub> | gated |
@@ -132,7 +132,7 @@ offsets pointing past the end of their own file.
 | `/api/auth/totp` | `src/api/routes/auth-totp.ts` | `POST /enroll` <sub>:85</sub><br>`POST /verify` <sub>:142</sub><br>`POST /login-verify` <sub>:198</sub><br>`POST /setup-start` <sub>:401</sub><br>`POST /setup-confirm` <sub>:477</sub><br>`POST /dismiss-prompt` <sub>:548</sub><br>`POST /disable` <sub>:570</sub> | gated (some paths public) |
 | `/api/auth/sessions` | `src/api/routes/auth-sessions.ts` | `GET /` <sub>:33</sub><br>`POST /revoke-others` <sub>:40</sub><br>`DELETE /:id` <sub>:59</sub> | gated |
 | `/api/auth` | `src/api/routes/auth.ts` | `POST /login` <sub>:153</sub><br>`POST /logout` <sub>:466</sub><br>`GET /me` <sub>:499</sub><br>`GET /me/permissions` <sub>:529</sub><br>`POST /change-password` <sub>:691</sub><br>`POST /forgot-password` <sub>:823</sub><br>`POST /reset-password` <sub>:979</sub><br>`GET /role-permissions/:role` <sub>:1160</sub><br>`GET /invite/:token` <sub>:1214</sub><br>`POST /accept-invite` <sub>:1259</sub> | gated (some paths public) |
-| `/api/users` | `src/api/routes/users.ts` | `POST /backfill-org-from-aliases` <sub>:162</sub><br>`GET /` <sub>:221</sub><br>`POST /` <sub>:250</sub><br>`PUT /:id` <sub>:366</sub><br>`DELETE /:id` <sub>:567</sub><br>`POST /:id/reset-password` <sub>:643</sub><br>`POST /invite` <sub>:788</sub><br>`GET /invites` <sub>:947</sub><br>`POST /invites/:token/resend` <sub>:968</sub><br>`DELETE /invites/:token` <sub>:1023</sub><br>`GET /:id` <sub>:1053</sub> | gated |
+| `/api/users` | `src/api/routes/users.ts` | `POST /backfill-org-from-aliases` <sub>:162</sub><br>`GET /` <sub>:221</sub><br>`POST /` <sub>:250</sub><br>`PUT /:id` <sub>:366</sub><br>`DELETE /:id` <sub>:593</sub><br>`POST /:id/reset-password` <sub>:670</sub><br>`POST /invite` <sub>:815</sub><br>`GET /invites` <sub>:974</sub><br>`POST /invites/:token/resend` <sub>:995</sub><br>`DELETE /invites/:token` <sub>:1050</sub><br>`GET /:id` <sub>:1080</sub> | gated |
 | `/api/presence` | `src/api/routes/presence.ts` | `POST /` <sub>:56</sub><br>`GET /` <sub>:106</sub><br>`DELETE /` <sub>:131</sub> | gated |
 | `/api/bom-master-templates` | `src/api/routes/bom-master-templates.ts` | `GET /` <sub>:106</sub><br>`GET /:id` <sub>:115</sub><br>`PUT /:id` <sub>:127</sub><br>`DELETE /:id` <sub>:206</sub><br>`PUT /` <sub>:217</sub> | gated |
 | `/api/kv-config` | `src/api/routes/kv-config.ts` | `GET /:key` <sub>:53</sub><br>`PUT /:key` <sub>:96</sub> | gated |
@@ -224,9 +224,10 @@ offsets pointing past the end of their own file.
 
 ## Route files present but not mounted in `worker.ts`
 
-These are imported elsewhere, mounted conditionally, or dead. 2 file(s):
+These are imported elsewhere, mounted conditionally, or dead. 3 file(s):
 
 - `src/api/routes/_fabric-cascade.ts`
+- `src/api/routes/mail-reply-guard.ts`
 - `src/api/routes/service-case-approvals.ts`
 
 ---
