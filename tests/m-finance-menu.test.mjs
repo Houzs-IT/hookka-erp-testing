@@ -53,9 +53,19 @@ test("routes: /m/finance and /m/finance/:screen, code-split; a refused screen sa
   assert.match(layout, /<Route path="finance" element=\{<FinanceRouteShell \/>\} \/>/);
   assert.match(layout, /<Route path="finance\/:screen" element=\{<FinanceRouteShell \/>\} \/>/);
   const route = read("src/pages/m/screens/finance/FinanceRoute.tsx");
-  assert.match(route, /const row = financeRowFor\(screen, isNavAllowed\);\n\s*if \(!row\) return <FinanceNoAccess title="Finance" \/>;/);
+  assert.match(route, /const row = financeRowFor\(screen, isNavAllowed\);\n\s*if \(!row\) return <FinanceNoAccessScreen title="Finance" onBack=\{back\} \/>;/);
   assert.match(route, /allowedFinanceMenu\(isNavAllowed\)/);
-  assert.match(route, /<MobileHeader title="Finance" onBack=\{\(\) => navigate\("\/m\/more"\)\} \/>/);
-  const shell = read("src/pages/m/screens/finance/finance-shell.tsx");
-  assert.match(shell, /onBack=\{\(\) => navigate\("\/m\/finance"\)\}/, "every screen backs out to the Finance menu");
+  // Batch 3: the menu is the prototype's (drawer on a phone; a tablet backs out to More).
+  assert.match(route, /<FinScreen title="Finance" menu onBack=\{\(\) => navigate\("\/m\/more"\)\}>/);
+  assert.match(route, /const toMenu = "\/m\/finance";/, "every screen backs out to the Finance menu");
+  assert.match(route, /t="No finance pages for your role"/);
+});
+
+test("Batch 3 menu rows: the prototype's subtitle, icon tile and colour; labels and gates unchanged", () => {
+  const rows = FINANCE_MENU.flatMap((s) => s.rows);
+  for (const r of rows) {
+    assert.ok(r.sub && r.c && r.bg && r.icon, r.screen);
+  }
+  assert.equal(rows.find((r) => r.screen === "cash").sub, "What's in the bank today");
+  assert.equal(rows.find((r) => r.screen === "vouchers").sub, "Prepare, check and approve");
 });

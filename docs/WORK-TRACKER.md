@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-26**: Batch 3 Finance + Receivable phone redesign added (branch `redesign/mobile-finance-receivable-v3`, rebased onto upstream/main `b1ee4d7e0`, committed locally, not pushed; owner approved); nothing else re-checked.
 > **Last verified: 2026-11-26**: AI Connector round 3 (quick answers, daily brief, Excel export, rate limit, speed) added (branch `feat/mcp-round3`, PR open, not merged); nothing else re-checked.
 > **Last verified: 2026-11-26**: Home Operations v3 phone redesign, Phases A (Overview) and B/C (Output & Cost, Floor Live) added (branch `redesign/mobile-dashboard-operations-v3`, to `main`); nothing else re-checked.
 > **Last verified: 2026-11-26**: AI Connector actions (meeting / email with confirmation), document flow, SO PDF added (branch `feat/mcp-actions-flow-pdf`, PR open, not merged); nothing else re-checked.
@@ -420,6 +421,20 @@ Owner: 17.4d backlog mixes Nov / Dec / Jan orders; wants the split by customer d
 
 ## ✅ Worker app locks the day AFTER the last working day (#1535, 2026-11-21)
 Owner 2026-11-21: "等到最后上班日之后才锁". A RESIGNED / INACTIVE worker keeps the worker app up to and including `resignedAt`; from the next day every worker-token request is refused. Was: locked + tokens purged the moment the status changed. Live 2026-11-21 after deploy: a leaver whose last day has passed (EMP-012, last day 2026-04-30) is refused at sign-in (403 "Employee account inactive"); an ACTIVE worker still reaches the PIN check; worker routes with an unknown token answer 401 (the new joined token query runs, no 500). UNTESTED live: a real phone token after the change (no worker traffic on Saturday evening) — check Monday.
+
+## 🔵 Batch 3: Finance + Receivable phone redesign (redesign/mobile-finance-receivable-v3, rebased onto upstream/main b1ee4d7e0, 2026-11-26)
+Owner approved the two Claude Design prototypes ("Finance (standalone)", "Receivable (standalone)"), the nine functional corrections and the shared kit, built together in one session; owner approved the implementation 2026-11-26 (committed locally, not pushed). No API, calculation, permission or desktop change; no new financial write.
+- [x] 1. Shared kit `src/pages/m/screens/finance/fin-kit.tsx` + `fin-overlay.tsx` (full-page form, dialog; in the floating-layer allowlist).
+- [x] 2. Finance menu (prototype rows), Debtor / Creditor Aging shared with Receivable (as-at month-end, company, control checks, TF draw lines, invoice link only on an unambiguous number).
+- [x] 3. Finance Dashboard, Daily Cash Position, Overview.
+- [x] 4. P&L (Statement / Monthly / Cost structure), Cash Flow, Balance Sheet.
+- [x] 5. Payment Vouchers list / detail / edit / scan (corrections 1-6; ladder, permissions and confirmations as before).
+- [x] 6. Receivable hub `/m/receivables` + Debtor List, AR Invoices, Customer Statement, Receipts, Credit & Debit Notes (read-only; corrections 7-8).
+- [x] 7. Tests, typecheck, build, side-by-side check against both prototypes at phone / foldable / tablet.
+- Verified 2026-11-26 (local only, fake data from a scratchpad mock API, no production read or write by the app): app typecheck exit 0, lint 0 errors, `npm run build` OK, mobile tests pass; side-by-side at 390 / 673 / 768 px against the prototype; restricted role hides the Dashboard row, Scan, the voucher dock and Add document. Kit fixes found in QA: a new screen opens at its top; long text values wrap; a document number is never cut by its status pill. Not yet: a real-data run (the localhost proxy points at production and needs the owner's sign-in).
+- Owner review 2026-11-26: a voucher with no next step keeps its actions behind the header "…" (no floating button); the action bar is a solid bar on the tab bar; the short confirmation toast stays as it is.
+- Incident 2026-11-26 (QA set-up, not the app): while building the local mock API, one empty `POST /api/accounting/payment-vouchers` (body `{}`, no session cookie) reached another local dev server on port 3010 that proxies to production. Production answered `{"success":false,"error":"Unauthorized"}`, so nothing should have been written; production was NOT checked (UNMEASURED). The mock now refuses to start on a busy port and marks every reply `X-Mock-Api: hookka-fixtures`.
+- Separate issue, not fixed here: the Finance Dashboard menu gate is `forecasts` while its data needs `accounting:read`.
 
 ## 🔵 Home Operations v3 phone redesign (redesign/mobile-dashboard-operations-v3, from upstream/main, 2026-11-23)
 Owner approved the Home Operations v3 design (README + standalone HTML) to be built in THREE reviewed steps: **A. Overview** (committed locally `7554c32bb`, not pushed) · **B. Output & Cost** and **C. Floor Live** (built together 2026-11-26, in the owner's localhost review, uncommitted). PR target is Houzs-IT/main; owner merges. No API, permission or desktop change.

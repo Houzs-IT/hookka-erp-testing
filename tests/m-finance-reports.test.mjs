@@ -64,22 +64,17 @@ test("each screen reads its desktop endpoint", () => {
   assert.match(bs, /sides\.diff === 0 \? "Balanced ✓" : checkLabel\(sides\.diff\)/);
   for (const t of ["CURRENT ASSETS LESS CURRENT LIABILITIES", "FINANCED BY", "TOTAL EQUITY + NON-CURRENT LIABILITIES"]) assert.ok(bs.includes(t), t);
   const ov = read(dir + "OverviewScreen.tsx");
-  assert.match(ov, /`\/api\/accounting\/overview-trend\?months=\$\{range\}`/);
-  assert.match(ov, /rmPct: p \? shareOfSales\(p\.rm\.usedSen, p\.netSalesSen\) : null/, "the desktop's own share");
-  assert.match(ov, /dlPct: p \? shareOfSales\(p\.labourSen, p\.netSalesSen\) : null/);
-  // Each month's point carries its percentage (owner 2026-10-20 「手机版的overview 每个月份的点没有percentage」).
-  assert.match(ov, /<LabelList dataKey=\{key\} content=\{pctLabel\(color\)\} \/>/);
-  assert.match(ov, /const text = pctPointLabel\(p\.value\);/);
-  // Twelve months on a phone: every other label under its point, a size smaller (seen on prod after #1048).
-  assert.match(ov, /<text x=\{x\} y=\{below \? y \+ 15 : y - 8\} textAnchor="middle" fontSize=\{crowded \? 10 : 11\} fontWeight=\{600\} fill=\{color\}>/);
-  assert.match(ov, /const below = pctLabelBelow\(p\.index \?\? 0, data\.length\);/);
-  assert.match(ov, /<LineChart data=\{data\} margin=\{\{ top: 20, right: 12, left: 0, bottom: crowded \? 6 : 0 \}\}>/, "room above the highest point for its label");
+  // Batch 3: the prototype's bar cards — the same read and the desktop's own share and explanation.
+  assert.match(ov, /\/api\/accounting\/overview-trend\?months=/);
+  assert.match(ov, /shareOfSales\(m\.pnl\.rm\.usedSen, m\.pnl\.netSalesSen\)/, "the desktop's own share");
+  assert.match(ov, /shareOfSales\(m\.pnl\.labourSen, m\.pnl\.netSalesSen\)/);
+  assert.match(ov, /explainMonth/, "a bar opens how the desktop makes that month's figure");
 });
 
 test("the menu now lists the four reports; failures and empty months are said in words", () => {
   const route = read(dir + "FinanceRoute.tsx");
   for (const k of ["overview", "pl", "cashflow", "bs"]) assert.match(route, new RegExp(`\\n  ${k}: \\(\\) => <`), k);
   for (const f of ["PlScreen.tsx", "CashFlowScreen.tsx", "BalanceSheetScreen.tsx", "OverviewScreen.tsx"]) {
-    assert.match(read(dir + f), /<FinanceNote tone="error">/, `${f}: a failed read says so`);
+    assert.match(read(dir + f), /<FinState icon=\{CloudOff\} bg="#FBE7E3" c=\{F\.neg\} t="Couldn't load the /, `${f}: a failed read says so`);
   }
 });

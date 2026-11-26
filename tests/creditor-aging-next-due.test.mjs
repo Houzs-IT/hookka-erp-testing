@@ -84,8 +84,10 @@ test("Creditor Aging: three sections in the design's order, Trade Finance by due
 
 test("the phone's Creditor Aging lists other creditors and the open draws with their next due", () => {
   const m = read("src/pages/m/screens/finance/AgingScreen.tsx");
-  assert.match(m, /useCachedJson<TfResp>\(side === "creditor" \? "\/api\/accounting\/trade-finance" : null\)/);
+  // Batch 3: same reads (plus the as-at month-end); next due shown on the card with its tone pill.
+  assert.match(m, /useCachedJson<TfResp>\(cred \? `\/api\/accounting\/trade-finance\$\{hist \? `\?asOf=\$\{asOf\}` : ""\}` : null\)/);
   assert.match(m, /src\.draws\.filter\(\(d\) => d\.outstandingSen > 0\)/);
-  assert.match(m, /data-m-fin="next-due"/);
-  assert.match(m, /nextDue: side === "creditor" \? nextDueOf\(r\.docs \?\? \[\]\) : undefined,/);
+  assert.match(m, /date=\{p\.nextDue \? `Next due \$\{dayMon\(p\.nextDue\)\}` : undefined\}/);
+  assert.match(m, /dueTone\(daysUntil\(p\.nextDue, asOf\)\)/);
+  assert.match(m, /nextDue: cred \? nextDueOf\(r\.docs \?\? \[\]\) \|\| undefined : undefined,/);
 });

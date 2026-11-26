@@ -33,8 +33,9 @@ test("BUG-308: the screen charts the four months ending at the anchor and names 
   const src = readFileSync("src/pages/m/screens/finance/DashScreen.tsx", "utf8").replace(/\r\n/g, "\n");
   // Since 2026-10-20 (the owner's phone design): the last four months that
   // happened — the same guarantee, through the desktop's period rule.
-  assert.match(src, /const months = phoneDashMonths\(rows\);/);
-  assert.match(src, /const last = sel >= 0 \? months\[sel\] : undefined;/);
+  // Batch 3: the prototype's period chips (monthly = the same four months; quarterly the desktop's quarters).
+  assert.match(src, /const periods = quarter \? dashPeriods\(rows, \{ span: 12, granularity: "quarter", explicit: false \}\) : phoneDashMonths\(rows\);/);
+  assert.match(src, /const last = sel >= 0 \? periods\[sel\] : undefined;/);
   assert.doesNotMatch(src, /rows\[rows\.length - 1\]|rows\.slice\(-4\)/, "never the API's last rows");
   const rows = ["2026-07", "2026-08", "2026-09", "2026-10"].map((key) => ({ key, actual: { sales: 1 } }))
     .concat(["2026-11", "2026-12"].map((key) => ({ key, actual: null })));

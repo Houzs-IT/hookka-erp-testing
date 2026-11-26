@@ -80,6 +80,8 @@ const LegacyDashboardRedirect = lazy(() =>
 // The Finance app (finance v2 mobile) is code-split too: its report screens
 // pull in recharts and most phone sessions never open them.
 const FinanceRoute = lazy(() => import("./screens/finance/FinanceRoute"));
+// Receivable (Batch 3): the hub and its six read-only views, code-split like Finance.
+const ReceivableRoute = lazy(() => import("./screens/receivable/ReceivableRoute"));
 // Claude Design `Employees 3.dc.html` (HK-0125): header + nine-section tab bar around the existing Employees lists.
 const EmployeesRoute = lazy(() => import("./screens/employees/EmployeesRoute"));
 // IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
@@ -104,6 +106,14 @@ function FinanceRouteShell() {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
       <FinanceRoute />
+    </Suspense>
+  );
+}
+
+function ReceivableRouteShell() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ReceivableRoute />
     </Suspense>
   );
 }
@@ -440,11 +450,17 @@ export default function MobileLayout() {
               config, so it sits beside the module routes, not inside them. */}
           <Route path="updates" element={<UpdatesScreen />} />
           <Route path="outsource-issue" element={<OutsourceIssueScreen />} />
-          {/* Finance (finance v2 mobile): the menu and its read-only screens,
-              each gated like its desktop page. */}
+          {/* Finance (Batch 3): the menu, its report screens and Payment
+              Vouchers, each gated like its desktop page. */}
           <Route path="finance" element={<FinanceRouteShell />} />
           <Route path="finance/:screen" element={<FinanceRouteShell />} />
           <Route path="finance/:screen/:id" element={<FinanceRouteShell />} />
+          {/* Receivable (Batch 3): the hub, its views and their detail pages,
+              each gated like its desktop page. Replaces the generic
+              receivables list (receivablesConfig stays for its tests). */}
+          <Route path="receivables" element={<ReceivableRouteShell />} />
+          <Route path="receivables/:view" element={<ReceivableRouteShell />} />
+          <Route path="receivables/:view/:id" element={<ReceivableRouteShell />} />
 
           {/* Config-driven L1 lists + L2 document detail.
               When `detail` is supplied + we're on fold, the L2 route renders
@@ -457,7 +473,7 @@ export default function MobileLayout() {
           <Route path="serviceorders/sv/:id/edit" element={<SvOrderForm />} />
           <Route path="serviceorders/sv/:id" element={layout.canSplitDetail ? <TwoPane left={<ServiceOrdersScreen />} right={<SvOrderDetail />} /> : <SvOrderDetail />} />
 
-          {MODULE_CONFIGS.map((cfg) => {
+          {MODULE_CONFIGS.filter((cfg) => cfg.slug !== "receivables").map((cfg) => {
             const CustomL1 = CUSTOM_L1[cfg.slug];
             const L1 = CustomL1 ? <CustomL1 /> : <ModuleListScreen config={cfg} />;
             const CustomL2 = CUSTOM_L2[cfg.slug];

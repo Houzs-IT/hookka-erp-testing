@@ -226,3 +226,17 @@ export function shareWidths(values: readonly (number | null)[]): number[] {
   const sum = pos.reduce((s, v) => s + v, 0);
   return sum > 0 ? pos.map((v) => (v / sum) * 100) : pos.map(() => 0);
 }
+
+// Batch 3: a Debtor Aging document opens its invoice only when its number
+// names exactly one sales invoice (never a guess).
+/** Doc number → invoice id, kept only for numbers that name exactly one sales invoice. */
+export function uniqueInvoiceIds(rows: readonly { kind: string; id: string; no: string }[]): Map<string, string> {
+  const seen = new Map<string, string | null>();
+  for (const r of rows) {
+    if (r.kind !== "INV" || !r.no || !r.id) continue;
+    seen.set(r.no, seen.has(r.no) ? null : r.id);
+  }
+  const out = new Map<string, string>();
+  for (const [no, id] of seen) if (id) out.set(no, id);
+  return out;
+}
