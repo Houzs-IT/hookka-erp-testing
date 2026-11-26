@@ -19,6 +19,9 @@ import { appLabel, ensureMcpTables, hasMcpAccess, issueTokens, randomToken, revo
 import { analyseToolText, leakCheckPaths, type LeakRow } from "../lib/mcp-leak-check";
 import { mcpAppRoutes, runToolAs } from "./mcp";
 import { actionsEnabled, setActionsEnabled } from "../lib/mcp-actions";
+import { LEAK_CHECK_CLIENT_ID, latencyByTool, RATE_PER_DAY, RATE_PER_MINUTE } from "../lib/mcp-limits";
+
+const LIMITS = { perMinute: RATE_PER_MINUTE, perDay: RATE_PER_DAY };
 
 const app = new Hono<Env>();
 
@@ -90,6 +93,7 @@ app.get("/me", async (c) => {
       allowed,
       isSuperAdmin: role(c) === "SUPER_ADMIN",
       actionsEnabled: await actionsEnabled(db),
+      limits: LIMITS,
       connectorUrl: `${new URL(c.req.url).origin}/api/mcp`,
       connections: (toks.results ?? []).map(tokenRow),
       calls: (calls.results ?? []).map(callRow),
@@ -158,7 +162,9 @@ app.get("/admin/overview", async (c) => {
   const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
   const userFilter = c.req.query("userId") ?? "";
 
-  const [conns, allowedRows, reqs, calls, today, week] = await Promise.all([
+  const dayAgo = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+  const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 3600 * 1000).toISOString();
+  const [conns, allowedRows, reqs, calls, today, week, timing] = await Promise.all([
     db
       .prepare(
         `SELECT t.id, t.user_id, t.created_at, t.last_used_at, cl.client_name, u.displayName AS display_name, u.email, u.role
@@ -202,7 +208,19 @@ app.get("/admin/overview", async (c) => {
       .prepare("SELECT user_id, COUNT(*) AS n FROM mcp_calls WHERE created_at >= ? GROUP BY user_id")
       .bind(weekAgo)
       .all<Record<string, unknown>>(),
+    // Latency per tool (round 3): the last 24 h against the 7 days before.
+    // mcp_calls.ms has been logged since launch, so the earlier window is the
+    // "before" for any change shipped in the last day.
+    db
+      .prepare(
+        `SELECT tool, ms, note, created_at FROM mcp_calls
+          WHERE created_at >= ? AND COALESCE(client_id, '') <> ? AND COALESCE(status, 0) <> 429
+          ORDER BY created_at DESC LIMIT 20000`,
+      )
+      .bind(eightDaysAgo, LEAK_CHECK_CLIENT_ID)
+      .all<Record<string, unknown>>(),
   ]);
+  const timingRows = (timing.results ?? []).map((r) => ({ tool: s(r, "tool"), ms: n(r, "ms"), note: s(r, "note"), at: s(r, "created_at", "createdAt") }));
   const weekBy = new Map((week.results ?? []).map((r) => [s(r, "user_id", "userId"), n(r, "n")]));
   const actionsOn = await actionsEnabled(db);
   const connections = (conns.results ?? []).map((r) => ({ ...tokenRow(r), callsWeek: weekBy.get(s(r, "user_id", "userId")) ?? 0 }));
@@ -213,6 +231,11 @@ app.get("/admin/overview", async (c) => {
     data: {
       connectorUrl: `${new URL(c.req.url).origin}/api/mcp`,
       actionsEnabled: actionsOn,
+      limits: LIMITS,
+      latency: {
+        last24h: latencyByTool(timingRows.filter((r) => r.at >= dayAgo)),
+        previous7d: latencyByTool(timingRows.filter((r) => r.at < dayAgo)),
+      },
       stats: {
         allowed: (allowedRows.results ?? []).length,
         connectedPeople: new Set(connections.map((x) => x.userId)).size,
@@ -345,7 +368,7 @@ app.post("/admin/actions", async (c) => {
 // Runs the connector's real read path AS the chosen account over every list
 // endpoint, a page at a time (the page loops `offset` until `done`). Field
 // names and outcomes only, never values. See lib/mcp-leak-check.ts.
-const LEAK_CLIENT_ID = "mcpc_leak_check";
+const LEAK_CLIENT_ID = LEAK_CHECK_CLIENT_ID; // excluded from the rate limit and the latency figures
 const LEAK_PAGE = 20;
 
 app.post("/admin/leak-check", async (c) => {

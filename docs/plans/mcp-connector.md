@@ -1,6 +1,6 @@
 # Hookka ERP MCP connector — plan
 
-> **Last verified: 2026-11-26** — v1 live (#1610); actions with confirmation, document flow and the SO PDF on `feat/mcp-actions-flow-pdf` (§3b).
+> **Last verified: 2026-11-26** — v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit on `feat/mcp-round3` (§3c).
 
 Owner 2026-11-25: 「我的全套系统都要有mcp」, staff (non-IT) should ask Claude / ChatGPT
 questions about the ERP the way the owner asks in this session; 「按员工自己的权限」 —
@@ -105,6 +105,81 @@ ERP page link with "press PDF there".
 
 **Untested live:** confirm against the real IT Hub and the real mail provider (only mocks /
 unit tests so far); the SO PDF from a real order on prod.
+
+## 3c. Round 3 — more quick answers, daily brief, Excel export, rate limit, speed (2026-11-26)
+
+Owner-approved shared spec (Hookka / Houzs / Conts) + the owner's FAQ (one tool call per
+question). Branch `feat/mcp-round3`. **RBAC rule unchanged:** every new tool reads ONLY
+through `readValue` (module gate → inner GET as the person → `makeRedactor`); a 403 becomes
+"You don't have access to X" and the rest of the answer still comes back. No connector-only
+permission rules.
+
+| Tool | Reads (all as the person, in parallel) | Notes |
+| --- | --- | --- |
+| `inventory_summary` | `/api/inventory?buckets=rawMaterials`, `/api/inventory/fg-stock` (optional) | negative / below own minimum / zero raw materials; FG units in stock + reserved |
+| `purchasing_summary {view, days}` | `/api/purchase-orders/stats`, `/api/grn/stats` (overview / awaiting only) | views `overview`, `overdue` (P1), `awaiting` (P4), `suppliers` (P2: received date vs expected date over `days`, default 90) — open/overdue = the Procurement page's `isOverdue` incl. billed-in-full |
+| `payables_summary` | `/api/accounting/aging` (AP half) | needs `accounting:read` (the ERP's finance permission); ERP ageing is by invoice month; past due + due in 7 days use the PI due dates |
+| `so_overdue` | `/api/sales-orders?fields=orders-due&top=50` | Hookka SOs have no salesperson field — the answer says so; capped at the 50 soonest-due (`atLeast` flag) |
+| `deliveries_due {range}` | `/api/delivery-orders?status=DRAFT,LOADED,DISPATCHED,IN_TRANSIT&page=1&limit=500`, orders-due | DOs by delivery date + SOs by Hookka expected date |
+| `production_late` | `/api/production-orders/board` (snapshot, ~125 KB) | live orders past target end date, by current department / customer |
+| `receivables_summary` (extended) | `/api/accounting/aging` + `/api/delivery-orders?status=LOADED,…,DELIVERED&page=1&limit=500` | adds "shipped but not invoiced" (newest 500 shipped DOs) |
+| `attendance_today` | `/api/attendance?date=today`, `/api/leaves?status=APPROVED`, `/api/workers` | HR endpoints only; staff without attendance/leave read get "no access (HR only)" |
+| `daily_brief` + prompt `daily-brief` | orders-due, PO stats, `/api/mail-center/threads?status=open&limit=100`, `/api/service-cases/approvals` (only with `service-cases:approve`), `/api/leaves?status=PENDING` (only with `leaves:update`) | ≤ 5 reads at once; each section = count + top 5 with links |
+| `export_excel {list, search, status, from, to, fields}` | the list's own GET, `page/limit=500`, page 1 then the rest in parallel, cap 5,000 rows | lists: sales-orders, delivery-orders, invoices, purchase-orders, grn, production-orders, customers, suppliers, products, raw-materials, service-cases |
+| `document_flow` (extended) | PO + `/api/grn?poId=` at once, then `/api/purchase-invoices?supplierId=` | P5: purchase order → GRNs → purchase invoices |
+
+Decisions worth knowing:
+- **Mail Center in the brief** reads `/api/mail-center/threads` through a FIXED read
+  (`MAIL_THREADS_READ`, gate `mail-center:read`) — `/api/mail-center` is NOT added to the
+  readable-module map, so `erp_get` still cannot read mail bodies. "Waiting for me" =
+  open, last message inbound, and unread-for-me or assigned to me (first 100 open threads).
+  The Mail Center PR's dedicated `/waiting-count` can replace this later.
+- **Pending acknowledgements**: Hookka's announcement acks are worker-portal only (no ERP
+  user list), so the brief has no acknowledgement section.
+- **Ownership**: Hookka SOs / POs have no personal owner; the brief shows what the person's
+  role can read.
+- **export_excel**: SheetJS `xlsx` (already a dependency, already in the Worker bundle via
+  `lib/assistant-exports.ts`); `…Sen` columns → "(RM)" ÷ 100 with `#,##0.00`; nested lines
+  are left out; filters run on the fetched rows (newest 5,000 when truncated). Stored like
+  `get_pdf`: `hookka-files/mcp-exports/<org>/`, 15-minute signed link
+  (`uploadExportAndSign`). Logged in `mcp_calls` as `export:<list> rows=N [truncated]`.
+- **Rate limit** (`lib/mcp-limits.ts`): `tools/call` only, 30 / minute and 600 / Malaysia
+  day per person, one indexed count on `mcp_calls (user_id, created_at)` (the index
+  `mcp_calls_user_idx` already self-applies in `ensureMcpTables`, so no new migration).
+  Refused calls (status 429) and the leak check (`mcpc_leak_check`, which uses `runToolAs`
+  and never hits the limit) are not counted. Over → ordinary tool result with `isError`.
+  If the count query fails the call goes through (fail open).
+- **Speed**: the six redactor permission checks are asked once per request + person
+  (was once per read, sequential); quick answers read in parallel and use the narrow
+  projections the pages already have (`buckets=rawMaterials`, `fields=orders-due`, `/board`,
+  `/stats`); successful quick answers / daily brief are cached 30 s per person + role +
+  arguments in the isolate (door still checks the token every request). The admin page's
+  "Answer speed" card shows median / p95 per tool for the last 24 h against the 7 days before
+  (from `mcp_calls.ms`, logged since launch) — the before/after for this release.
+
+### FAQ → tool (owner 2026-11-26; Hookka)
+
+| # | Question | Tool |
+| --- | --- | --- |
+| P1 | Which POs are overdue? | `purchasing_summary {view: "overdue"}` |
+| P2 | Which suppliers are late most often? | `purchasing_summary {view: "suppliers", days: 30 \| 90}` |
+| P3 | How much do we owe suppliers? | `payables_summary` (accounting permission) |
+| P4 | What is still waiting to be received? | `purchasing_summary {view: "awaiting"}` |
+| P5 | Show the flow of PO X | `document_flow` (purchase order → GRN → purchase invoice) |
+| S1 | Which SOs are overdue? | `so_overdue` (no salesperson field in Hookka) |
+| S2 | What is due for delivery today / this week? | `deliveries_due {range: "today" \| "week"}` |
+| S3 | Delivered not invoiced; invoiced not paid? | `receivables_summary` |
+| S4 | Sales by salesperson / outlet | not in Hookka (no salesperson / outlet data); totals and by customer: `sales_summary` |
+| S5 | Show the flow of SO X | `document_flow` |
+| M1 | Which production orders are late? | `production_late` |
+| M2 | Which materials are short? | `material_shortages` |
+| M3 | What is low or negative in stock? | `inventory_summary` |
+| H5 | Who is on leave or absent today? | `attendance_today` (HR only) |
+| E1 | What do I need to look at today? | `daily_brief` / prompt `daily-brief` |
+| E2 | Export X to Excel | `export_excel` |
+
+**Untested live (round 3):** every new tool against prod data and a real Claude / ChatGPT
+client; the xlsx download through the signed link; the rate limit under real traffic.
 
 "The whole system" = every module's GET endpoints, through `erp_get`; the catalog tells the
 model which endpoint answers which question (production revenue, department output, MRP /
