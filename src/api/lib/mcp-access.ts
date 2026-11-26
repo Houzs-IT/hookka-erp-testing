@@ -134,7 +134,10 @@ export const MCP_PREFIX_RESOURCES: Record<string, string[]> = {
   // Products
   "/api/products": ["products"],
   "/api/product-configs": ["product-configs"],
-  "/api/product-costing": ["cost-ledger", "product-pricing"],
+  // Same gate as the ERP route (routes/product-costing.ts requireCostingRead):
+  // product-costing or cost-ledger read (owner 2026-11-26: the connector follows
+  // the ERP's RBAC, and costing is locked to Admin / Finance / R&D).
+  "/api/product-costing": ["product-costing", "cost-ledger"],
   "/api/sofa-combos": ["sofa-combos"],
   "/api/rd-projects": ["rd-projects"],
   // People
@@ -227,6 +230,9 @@ export const PRICE_MODULE_RESOURCES = new Set([
   "three-way-match", "stock-value",
 ]);
 
+/** Keys that hold a count or quantity, never an amount of money. */
+export const QTY_KEY = /(qty|quantity|quantities|units|pcs|count)$/i;
+
 export type Redactor = (v: unknown) => { value: unknown; removed: Set<string> };
 
 /**
@@ -237,6 +243,9 @@ export function makeRedactor(can: (perm: string) => boolean, moduleResources: st
   const priceModule = moduleResources.some((r) => PRICE_MODULE_RESOURCES.has(r));
   const active = REDACTION_RULES.filter((rule) => {
     if (rule.family === "price" && priceModule) return false;
+    // Inside the costing module a product-costing holder (R&D) sees the costs,
+    // exactly as on the ERP page; selling prices stay with product-pricing.
+    if (rule.family === "cost" && moduleResources.includes("product-costing") && can("product-costing:read")) return false;
     return !rule.unlock.some(can);
   });
   return (input: unknown) => {
@@ -249,7 +258,10 @@ export function makeRedactor(can: (perm: string) => boolean, moduleResources: st
         for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
           // A key belongs to the FIRST family it matches (salary, then cost,
           // then price): "basicSalarySen" is salary, unlocked by payroll alone.
-          const fam = REDACTION_RULES.find((rule) => rule.test(k));
+          // A quantity is never money: "balanceQty" / "outstandingQty" stay for
+          // anyone who may read the module (owner 2026-11-26: a storekeeper sees
+          // stock quantities, the amounts stay hidden).
+          const fam = QTY_KEY.test(k) ? undefined : REDACTION_RULES.find((rule) => rule.test(k));
           if (fam && active.includes(fam)) {
             removed.add(fam.family);
             continue;

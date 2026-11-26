@@ -281,11 +281,11 @@ const GATES = {
   supplier_lateness: { "/api/purchase-orders/stats": ["purchase-orders"] },
   uninvoiced_deliveries: { "/api/delivery-orders": ["delivery-orders"] },
   stock_check: { "/api/inventory": ["inventory"], "/api/products": ["products"], "/api/inventory/fg-stock": ["inventory"], "/api/procurement-reports/outstanding-lines": ["purchase-orders"] },
-  product_cost: { "/api/products": ["products"], "/api/product-costing/x": ["cost-ledger", "product-pricing"] },
+  product_cost: { "/api/products": ["products"], "/api/product-costing/x": ["product-costing", "cost-ledger"] },
   production_output: { "/api/dashboard/floor-live/completed": ["dashboard", "dashboard-experimental", "production-orders"], "/api/dashboard/floor-live/summary": ["dashboard", "dashboard-experimental", "production-orders"], "/api/dashboard/floor-live": ["dashboard", "dashboard-experimental", "production-orders"] },
   worker_efficiency: { "/api/dashboard/floor-live/completed": ["dashboard", "dashboard-experimental", "production-orders"], "/api/accounting/dashboard": ["accounting"] },
   raw_material_summary: { "/api/inventory": ["inventory"], "/api/mrp/plan": ["mrp"], "/api/price-history": ["price-history"] },
-  gross_profit: { "/api/invoices/line-summary": ["invoices"], "/api/product-costing/summary": ["cost-ledger", "product-pricing"] },
+  gross_profit: { "/api/invoices/line-summary": ["invoices"], "/api/product-costing/summary": ["product-costing", "cost-ledger"] },
   production_lead_time: { "/api/production-orders": ["production-orders"] },
   deliveries_due: { "/api/delivery-orders": ["delivery-orders"], "/api/sales-orders": ["sales-orders"] },
   company_report: { "/api/accounting/dashboard": ["accounting"], "/api/accounting/aging": ["accounting"] },
@@ -304,13 +304,18 @@ test("permissions: every round-4 endpoint is behind the module gate in the PR ta
 /** Strip every key a family's regex matches, as makeRedactor does for a family that is not unlocked. */
 const stripMoney = (v) => (Array.isArray(v) ? v.map(stripMoney) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([k]) => !/(sen$|price|amount|total)/i.test(k)).map(([k, x]) => [k, stripMoney(x)])) : v);
 
-test("permissions: product costing is closed to a role with neither cost-ledger nor product-pricing read", () => {
-  // The module gate (readValue → canAny) refuses before any read: the tool answers "You don't have access to product costing."
+test("permissions: product costing has the ERP route's gate (product-costing or cost-ledger read); R&D sees its costs, others are refused", () => {
   for (const path of ["/api/product-costing/pr1", "/api/product-costing/summary"]) {
     const d = classifyPath(path);
-    assert.ok(d.ok && !d.resources.some((r) => lowPriv(`${r}:read`)), path);
+    assert.ok(d.ok, path);
+    assert.deepEqual(d.resources, ["product-costing", "cost-ledger"], path);
+    assert.ok(!d.resources.some((r) => lowPriv(`${r}:read`)), path);
   }
-  // Inside the gate the ERP shows costing money (cost-ledger is a money module); a reply without it still never invents a figure.
+  // R&D (product-costing:read, no accounting / cost-ledger): costs shown, selling price not.
+  const rd = makeRedactor((p) => p === "product-costing:read" || p === "products:read", ["product-costing", "cost-ledger"])({ materialCostSen: 20000, sellingPriceSen: 90000, qty: 2 }).value;
+  assert.equal(rd.materialCostSen, 20000);
+  assert.equal(rd.qty, 2);
+  // Without cost permission the reply never invents a figure.
   const s = summariseProductCost(stripMoney(COSTING), O);
   assert.equal(s.totalRm, null);
   assert.equal(s.labourRm, null);
@@ -345,7 +350,7 @@ test("permissions: company_report / worker labour cost need accounting read — 
   assert.ok(!JSON.stringify(eff).includes("labourCostRm"));
 });
 
-test("permissions: production value / stock balances hidden for a role without pricing → null, not 0", () => {
+test("permissions: production value hidden for a role without pricing → null, not 0; stock quantities stay", () => {
   const red = redactAs(lowPriv, "/api/dashboard/floor-live/completed", COMPLETED);
   const out = summariseProductionOutput("output", resolvePeriod({ period: "today" }, TODAY), red, null, null, new Map(), null);
   assert.equal(out.factory.valueRm, null);
@@ -353,10 +358,10 @@ test("permissions: production value / stock balances hidden for a role without p
   assert.equal(out.factory.bedframeUnits, 16, "counts are not money and stay");
   const inv = redactAs(lowPriv, "/api/inventory", INV);
   const st = summariseStockCheck("FAB-001", inv, null, null, null, TODAY);
-  assert.equal(st.rawMaterials[0].onHand, null);
-  assert.ok(st.onHandHidden);
+  assert.equal(st.rawMaterials[0].onHand, 12, "a quantity is not money (owner 2026-11-26)");
+  assert.ok(!st.onHandHidden);
   const rmS = summariseRawMaterials(inv, null, null, resolvePeriod({}, TODAY));
-  assert.ok(rmS.stock.balancesHidden);
+  assert.ok(!rmS.stock.balancesHidden);
 });
 
 test("permissions: the leak check runs every round-4 tool as the chosen account; a refusal reads as refused", () => {
@@ -368,4 +373,26 @@ test("permissions: the leak check runs every round-4 tool as the chosen account;
   const opened = analyseToolText("tool:product_cost", JSON.stringify({ totalRm: 300 }), false);
   assert.deepEqual(opened.kept, ["totalRm"]);
   assert.equal(opened.keptExpected, false, "money in a non-money tool is flagged for a human look");
+});
+
+test("permissions: a storekeeper sees stock quantities, never the amounts", () => {
+  const row = { itemCode: "RM-1", balanceQty: 40, outstandingQty: 12, onHandQty: 40, balanceSen: 52000, unitPriceSen: 1300, costSen: 1100 };
+  const out = makeRedactor((p) => p === "inventory:read", ["inventory"])(row).value;
+  assert.deepEqual(out, { itemCode: "RM-1", balanceQty: 40, outstandingQty: 12, onHandQty: 40 });
+});
+
+test("costing lock (owner 2026-11-26): only Admin / Finance / R&D — Sales, QA, Office do not hold product-costing", async () => {
+  const policy = await import("../src/api/lib/role-policy.ts");
+  assert.ok(policy.ALL_RESOURCES.includes("product-costing"));
+  assert.ok(policy.FINANCE_RESOURCES.includes("product-costing"), "kept out of Office's allExcept()");
+  assert.ok(policy.permissionsForRole("R_AND_D").has("product-costing:*") || [...policy.permissionsForRole("R_AND_D")].some((x) => x.startsWith("product-costing:")));
+  for (const role of ["SALES", "QA", "OFFICE", "HR"]) {
+    assert.ok(![...policy.permissionsForRole(role)].some((x) => x.startsWith("product-costing:")), role);
+  }
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/api/routes/product-costing.ts", import.meta.url), "utf8");
+  for (const route of ['app.get("/summary"', 'app.post("/preview"', 'app.get("/:productId"', 'app.post("/:productId/standard"', 'app.post("/:productId/rd-entry"', 'app.post("/:productId/rd-scan"']) {
+    const body = src.slice(src.indexOf(route), src.indexOf(route) + 400);
+    assert.ok(body.includes("requireCostingRead(c)"), route);
+  }
 });

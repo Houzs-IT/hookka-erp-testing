@@ -5,6 +5,7 @@ import { isUnknownOutcome, useCachedJson } from "@/lib/cached-fetch";
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { CustomerAssignmentsSection } from "./customer-assignments";
 import { ProductTabs } from "./product-tabs";
+import { useCanSeeCosting } from "./use-can-see-costing";
 
 type ProductLite = { id: string; code: string; name: string; category: string };
 
@@ -12,10 +13,21 @@ export default function ProductCustomersPage() {
   const { id = "" } = useParams();
   // The costing read takes an id OR a product code (so /products/1003-(K)/customers
   // works too) and carries today's total cost for the margin column.
-  const { data, loading, failure, refresh } = useCachedJson<{ data?: { product: ProductLite; totalSen: number }; error?: string }>(
-    `/api/product-costing/${encodeURIComponent(id)}`,
+  // Without cost permission (owner 2026-11-26: Admin / Finance / R&D only) the
+  // product comes from the products API and the margin column has no cost.
+  const canCost = useCanSeeCosting();
+  const costing = useCachedJson<{ data?: { product: ProductLite; totalSen: number }; error?: string }>(
+    canCost ? `/api/product-costing/${encodeURIComponent(id)}` : null,
     60,
   );
+  const plain = useCachedJson<{ data?: ProductLite; error?: string }>(
+    canCost ? null : `/api/products/${encodeURIComponent(id)}`,
+    60,
+  );
+  const { loading, failure, refresh } = canCost ? costing : plain;
+  const data = canCost
+    ? costing.data
+    : plain.data && { data: plain.data.data ? { product: plain.data.data, totalSen: null as number | null } : undefined, error: plain.data.error };
   const p = data?.data?.product;
   // A failed read is not "not found" — say it could not be loaded.
   if (!p && isUnknownOutcome(failure) && failure) {

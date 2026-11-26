@@ -70,6 +70,9 @@ export const FINANCE_RESOURCES = [
   "cost-ledger",
   "cash-flow",
   "stock-value",
+  // Product costing page (owner 2026-11-26): finance-side, so Office's
+  // allExcept() does not pick it up; R&D holds it explicitly.
+  "product-costing",
 ];
 export const FORECAST_RESOURCES = ["forecasts"];
 
@@ -103,6 +106,9 @@ export const ALL_RESOURCES = [
   "forecasts",
   // Products & master data
   "products", "product-configs", "sofa-combos", "rd-projects", "cnc-templates",
+  // What a product costs to make (/products/:id/costing). Owner 2026-11-26:
+  // only Super Admin, Admin, Finance (cost-ledger) and R&D.
+  "product-costing",
   // Two figures that travel WITH other data rather than on a page of their own,
   // so they need a gate of their own or they ride in on whoever can read the
   // page. Owner 2026-08-05: "我们卖价不需要给他们知道，我们只需要给他们看到成本
@@ -329,6 +335,8 @@ const R_AND_D: RolePolicy = {
   // products WITHOUT `product-pricing` — the catalogue, the BOM and the cost
   // side, but not what it sells for. Owner 2026-08-05.
   products: OPEN,
+  // The costing page itself (owner 2026-11-26: R&D keeps seeing costs).
+  "product-costing": OPEN,
   // Same as QA — product development is exactly who the cutting templates are
   // for. Only Sales loses them.
   "cnc-templates": OPEN,

@@ -5,6 +5,7 @@
 // stays exactly as it was; this is the second, detailed way in.
 // ---------------------------------------------------------------------------
 import { Link } from "react-router-dom";
+import { useCanSeeCosting } from "./use-can-see-costing";
 
 export type ProductTab = "bom" | "costing" | "customers" | "documents";
 
@@ -65,9 +66,10 @@ export function ProductTabs({
 /** Just the tab strip — for the older product pages (BOM, Documents) that
  *  keep their own header. */
 export function ProductTabStrip({ productId, active }: { productId: string; active: ProductTab }) {
+  const canCost = useCanSeeCosting();
   return (
     <div role="tablist" className="inline-flex flex-wrap rounded-lg border border-[#E2DDD8] bg-[#F5F2EC] p-1">
-      {TABS.map((t) => (
+      {TABS.filter((t) => canCost || t.key !== "costing").map((t) => (
         <Link
           key={t.key}
           role="tab"

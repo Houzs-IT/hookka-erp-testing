@@ -171,8 +171,10 @@ test("R&D keeps fabrics even though they sit under Warehouse", () => {
 });
 
 test("R&D is shut out of Finance, Procurement, Sales, HR and System", () => {
+  // The one finance-side resource R&D keeps: product costing (owner 2026-11-26).
+  assert.ok(can("R_AND_D", "product-costing", "read"), "R&D keeps the costing page");
   for (const res of [
-    ...FINANCE_RESOURCES, ...FORECAST_RESOURCES,
+    ...FINANCE_RESOURCES.filter((r) => r !== "product-costing"), ...FORECAST_RESOURCES,
     "purchase-orders", "suppliers", "sales-orders", "customers",
     "payroll", "workers", "users", "organisations",
   ]) {
