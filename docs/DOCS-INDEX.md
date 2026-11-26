@@ -50,7 +50,7 @@ This file organizes key documentation so implementation and operations are easy 
 - `docs/ERP-FEATURE-GAP.md` — **assessment (2026-08-13)**. What this ERP has vs a mature manufacturing ERP, cited `file:line`: what exists and how deep, **what is scaffolding masquerading as a feature** (the section to read first — a shell that looks present gets trusted), and the ranked gaps with business rationale. Covers manufacturing / supply chain / sales-CRM / cross-cutting ops; defers accounting conformance to MFRS-GAP-ANALYSIS and quality to ISO-9001-GAP-ANALYSIS. No code changed.
 
 ## Product / Domain
-- `docs/modules/*.md` — **the 16 per-module deep guides (Mail Center added 2026-11-26). Open the one for your module FIRST.**
+- `docs/modules/*.md` — **the 15 per-module deep guides. Open the one for your module FIRST.** Mail Center: `docs/context-packs/mail-center.md` (Houzs parity: sending, Delivered / Bounced, reply guard, disable).
 - `docs/archive/MODULES.md` — **(archived 2026-08-13)**. The old module reference; it documented a `/portal` module and `PortalLayout` that were never built, and declared auth unwired. Use `docs/modules/*.md` + `docs/CODEBASE-MAP.md`.
 - `docs/API.md` — **GENERATED** endpoint reference: the full mount table, every registered path, and the exact public/auth surface. Rebuild with `node scripts/gen-api-docs.mjs`; never hand-edit.
 - `docs/DESIGN-SYSTEM.md` — UI tokens and shared component conventions.

@@ -7774,4 +7774,4 @@ Ask (nhzulaikha26): put the two Claude Design handoffs on the phone Floor Live (
 2. IN PROGRESS (same PR): reply guard — "X is writing a reply", 409 when a colleague replied since you opened (Send mine too / Discard mine), the replier becomes the assignee of an unassigned thread, waiting count on the Mail Center menu item.
 3. IN PROGRESS (same PR): Delivered / Bounced from Brevo (events API by messageId) or Resend (GET /emails/:id), polled on traffic + the 5-minute tick, bell notice to the sender on a bounce.
 4. IN PROGRESS (same PR): disabling a member closes their mailbox and removes their grants; re-enabling reopens their own mailbox.
-5. NOT IN SCOPE: phone screen reply guard / delivery chip; access-model parity (rows 4, 5, 7, 17); ack parity (row 23). Guide: `docs/modules/mail-center.md`.
+5. NOT IN SCOPE: phone screen reply guard / delivery chip; access-model parity (rows 4, 5, 7, 17); ack parity (row 23). Guide: `docs/context-packs/mail-center.md`.
