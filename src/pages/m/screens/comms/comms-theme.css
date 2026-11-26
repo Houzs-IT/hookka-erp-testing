@@ -1,0 +1,176 @@
+/* ===========================================================================
+ * Batch 2 communication screens (Announcements, IT Support; Meetings and Mail
+ * Centre later): their own colour variables, light + dark.
+ *
+ * Light = the approved Claude Design prototypes' exact values. Dark follows
+ * the /m dark palette in ../../theme-vars.css (surfaces, text, accents) and
+ * lifts each status hue so it stays readable on a dark card.
+ *
+ * Scoped to these screens' own variable names (--c-*) and switched by the same
+ * body[data-theme] attribute the /m shell already sets, so the shared theme
+ * files and the generated dark-theme CSS are not touched.
+ * ========================================================================= */
+
+body[data-theme="light"],
+body:not([data-theme]) {
+  --c-ink: #1F1D1B;
+  --c-body: #4D4630;
+  --c-muted: #6B6358;
+  --c-faint: #9A9082;
+  --c-chev: #B5AC9C;
+  --c-paper: #FAF8F4;
+  --c-card: #FFFFFF;
+  --c-cream: #F4EFE6;
+  --c-track: #F0ECE9;
+  --c-line: #E6E0D9;
+  --c-hair: #EEE9E4;
+  --c-grabber: #E2DDD8;
+  --c-gold: #6B5C32;
+  --c-gold-mid: #8B7A4E;
+  --c-sand: #CDBE98;
+  --c-tint: #F0EAD8;
+  --c-chip-text: #3A352C;
+  --c-note: #9C6F1E;
+  --c-on-accent: #FFFFFF;
+  --c-grad: linear-gradient(135deg, #8B7A4E, #6B5C32);
+  --c-grad-tile: linear-gradient(145deg, #A08C5B, #6B5C32);
+  --c-grad-ok: linear-gradient(145deg, #6F9A55, #4F7C3A);
+  --c-bar-ok: linear-gradient(90deg, #4F7C3A, #6F9A55);
+  --c-dash-bg: rgba(244, 239, 230, 0.6);
+  --c-row-on: rgba(244, 239, 230, 0.6);
+  --c-scrim: rgba(31, 29, 27, 0.45);
+  --c-scrim-strong: rgba(31, 29, 27, 0.5);
+  --c-toast-bg: #1F1D1B;
+  --c-toast-fg: #FAF8F4;
+  --c-divider: rgba(31, 29, 27, 0.08);
+  --c-skel: rgba(255, 255, 255, 0.75);
+
+  /* tones: text / background */
+  --c-green: #4F7C3A;  --c-green-bg: #EEF3E4;  --c-green-ring: #CFE0C3; --c-green-ink: #2F5E3C;
+  --c-red: #9A3A2D;    --c-red-bg: #FBE7E3;    --c-red-ring: #F0D4CD;
+  --c-amber: #85600F;  --c-amber-bg: #FAEFCB;
+  --c-grey: #6B6358;   --c-grey-bg: #F0ECE9;
+  --c-teal: #3E6570;   --c-teal-bg: #E0EDF0;
+  --c-plum: #6B4A6D;   --c-plum-bg: #F1E9F0;
+
+  /* IT Support status colours = desktop STATUS_TONE (src/pages/it-support/index.tsx). */
+  --it-open: #1D4ED8;        --it-open-bg: #EFF6FF;        --it-open-dot: #2563EB;
+  --it-progress: #B45309;    --it-progress-bg: #FFFBEB;    --it-progress-dot: #F59E0B;
+  --it-hold: #475569;        --it-hold-bg: #F1F5F9;        --it-hold-dot: #94A3B8;
+  --it-testing: #6D28D9;     --it-testing-bg: #F5F3FF;     --it-testing-dot: #8B5CF6;
+  --it-waiting: #C2410C;     --it-waiting-bg: #FFF7ED;     --it-waiting-dot: #F97316;
+  --it-resolved: #047857;    --it-resolved-bg: #ECFDF5;    --it-resolved-dot: #10B981;
+  --it-closed: #475569;      --it-closed-bg: #F1F5F9;      --it-closed-dot: #64748B;
+  --it-rejected: #BE123C;    --it-rejected-bg: #FFF1F2;    --it-rejected-dot: #F43F5E;
+  /* urgency = desktop PRIORITY_TONE */
+  --it-urgent: #9F1239;  --it-urgent-ring: #FDA4AF;
+  --it-high: #BE123C;    --it-high-ring: #FECDD3;
+  --it-medium: #B45309;  --it-medium-ring: #FDE68A;
+  --it-low: #475569;     --it-low-ring: #E2E8F0;
+  --it-avatar: #1F4654;
+
+  /* elevation */
+  --c-sh-card: 0 0 0 1px rgba(31,29,27,.06), 0 2px 4px rgba(31,29,27,.06), 0 12px 24px -12px rgba(31,29,27,.30);
+  --c-sh-card-unread: 0 0 0 1.5px rgba(154,58,45,.40), 0 2px 4px rgba(31,29,27,.06), 0 12px 24px -12px rgba(31,29,27,.30);
+  --c-sh-field: 0 1px 2px rgba(31,29,27,.05), 0 8px 22px -10px rgba(31,29,27,.18);
+  --c-sh-panel: 0 0 0 1px #E6E0D9, 0 2px 4px rgba(31,29,27,.05), 0 10px 22px -12px rgba(31,29,27,.24);
+  --c-sh-info: 0 0 0 1px #E6E0D9, 0 2px 4px rgba(31,29,27,.05), 0 12px 24px -12px rgba(107,92,50,.34);
+  --c-sh-ring: 0 0 0 1px #E6E0D9;
+  --c-sh-chip: 0 1px 2px rgba(31,29,27,.06), 0 4px 10px -6px rgba(31,29,27,.16);
+  --c-sh-chip-on: 0 6px 14px -6px rgba(107,92,50,.6);
+  --c-sh-seg-on: 0 1px 2px rgba(31,29,27,.08), 0 6px 14px -6px rgba(31,29,27,.20);
+  --c-sh-primary: 0 8px 18px -8px rgba(107,92,50,.65), inset 0 1px 0 rgba(255,255,255,.18);
+  --c-sh-cta: 0 10px 20px -10px rgba(107,92,50,.7);
+  --c-sh-ghost: inset 0 1px 0 #FFFFFF, 0 0 0 1px rgba(201,169,97,.25), 0 6px 14px -8px rgba(107,92,50,.45);
+  --c-sh-secondary: 0 0 0 1px rgba(201,169,97,.35);
+  --c-sh-dialog: 0 30px 60px -20px rgba(31,29,27,.5);
+  --c-ghost-bg: linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.72));
+  --c-glass-bg: linear-gradient(160deg, rgba(255,255,255,.82) 0%, rgba(255,255,255,.58) 55%, rgba(250,244,232,.62) 100%);
+  --c-glass-sh: inset 0 1px 0 rgba(255,255,255,.95), inset 0 0 0 1px rgba(255,255,255,.55), inset 0 -1px 0 rgba(201,169,97,.18), 0 1px 2px rgba(31,29,27,.04), 0 0 0 1px rgba(31,29,27,.05), 0 2px 4px rgba(31,29,27,.05), 0 12px 26px -12px rgba(107,92,50,.38), 0 28px 48px -30px rgba(31,29,27,.32);
+}
+
+body[data-theme="dark"] {
+  --c-ink: #F0EBE2;
+  --c-body: #D4C9A8;
+  --c-muted: #B9B0A0;
+  --c-faint: #8A8170;
+  --c-chev: #6B6353;
+  --c-paper: #1A1816;
+  --c-card: #2A2722;
+  --c-cream: #36312A;
+  --c-track: #34302A;
+  --c-line: #3A352C;
+  --c-hair: #2F2C26;
+  --c-grabber: #4A443A;
+  --c-gold: #D9BD7B;
+  --c-gold-mid: #B59A5C;
+  --c-sand: #6B6353;
+  --c-tint: #3A3324;
+  --c-chip-text: #D4C9A8;
+  --c-note: #D9A441;
+  --c-on-accent: #FFFFFF;
+  --c-grad: linear-gradient(135deg, #8B7A4E, #6B5C32);
+  --c-grad-tile: linear-gradient(145deg, #A08C5B, #6B5C32);
+  --c-grad-ok: linear-gradient(145deg, #6F9A55, #4F7C3A);
+  --c-bar-ok: linear-gradient(90deg, #6F9A55, #8FBE78);
+  --c-dash-bg: rgba(54, 49, 42, 0.6);
+  --c-row-on: rgba(58, 51, 36, 0.6);
+  --c-scrim: rgba(0, 0, 0, 0.6);
+  --c-scrim-strong: rgba(0, 0, 0, 0.65);
+  --c-toast-bg: #F0EBE2;
+  --c-toast-fg: #1A1816;
+  --c-divider: rgba(255, 255, 255, 0.08);
+  --c-skel: rgba(255, 255, 255, 0.06);
+
+  --c-green: #8FBE78;  --c-green-bg: rgba(143,190,120,.16);  --c-green-ring: rgba(143,190,120,.35); --c-green-ink: #A9D194;
+  --c-red: #D67B6B;    --c-red-bg: rgba(214,123,107,.16);    --c-red-ring: rgba(214,123,107,.35);
+  --c-amber: #D9A441;  --c-amber-bg: rgba(217,164,65,.16);
+  --c-grey: #B9B0A0;   --c-grey-bg: #34302A;
+  --c-teal: #6FA3B0;   --c-teal-bg: rgba(111,163,176,.16);
+  --c-plum: #C49BC6;   --c-plum-bg: rgba(196,155,198,.16);
+
+  --it-open: #93B4F5;        --it-open-bg: rgba(59,130,246,.16);   --it-open-dot: #60A5FA;
+  --it-progress: #F2C46D;    --it-progress-bg: rgba(245,158,11,.16); --it-progress-dot: #FBBF24;
+  --it-hold: #B8C2D0;        --it-hold-bg: rgba(148,163,184,.16);  --it-hold-dot: #94A3B8;
+  --it-testing: #C4B5FD;     --it-testing-bg: rgba(139,92,246,.18); --it-testing-dot: #A78BFA;
+  --it-waiting: #FDBA74;     --it-waiting-bg: rgba(249,115,22,.16); --it-waiting-dot: #FB923C;
+  --it-resolved: #6EE7B7;    --it-resolved-bg: rgba(16,185,129,.16); --it-resolved-dot: #34D399;
+  --it-closed: #B8C2D0;      --it-closed-bg: rgba(148,163,184,.16); --it-closed-dot: #94A3B8;
+  --it-rejected: #FDA4AF;    --it-rejected-bg: rgba(244,63,94,.16);  --it-rejected-dot: #FB7185;
+  --it-urgent: #FDA4AF;  --it-urgent-ring: rgba(253,164,175,.45);
+  --it-high: #FCA5A5;    --it-high-ring: rgba(252,165,165,.35);
+  --it-medium: #F2C46D;  --it-medium-ring: rgba(242,196,109,.35);
+  --it-low: #B8C2D0;     --it-low-ring: rgba(184,194,208,.35);
+  --it-avatar: #3E6570;
+
+  --c-sh-card: 0 0 0 1px rgba(255,255,255,.06), 0 2px 4px rgba(0,0,0,.25), 0 12px 24px -12px rgba(0,0,0,.6);
+  --c-sh-card-unread: 0 0 0 1.5px rgba(214,123,107,.55), 0 2px 4px rgba(0,0,0,.25), 0 12px 24px -12px rgba(0,0,0,.6);
+  --c-sh-field: 0 0 0 1px rgba(255,255,255,.06), 0 8px 22px -10px rgba(0,0,0,.5);
+  --c-sh-panel: 0 0 0 1px #3A352C, 0 2px 4px rgba(0,0,0,.2), 0 10px 22px -12px rgba(0,0,0,.5);
+  --c-sh-info: 0 0 0 1px #3A352C, 0 2px 4px rgba(0,0,0,.2), 0 12px 24px -12px rgba(0,0,0,.5);
+  --c-sh-ring: 0 0 0 1px #3A352C;
+  --c-sh-chip: 0 0 0 1px rgba(255,255,255,.06), 0 4px 10px -6px rgba(0,0,0,.5);
+  --c-sh-chip-on: 0 6px 14px -6px rgba(0,0,0,.6);
+  --c-sh-seg-on: 0 1px 2px rgba(0,0,0,.3), 0 6px 14px -6px rgba(0,0,0,.5);
+  --c-sh-primary: 0 8px 18px -8px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.18);
+  --c-sh-cta: 0 10px 20px -10px rgba(0,0,0,.6);
+  --c-sh-ghost: 0 0 0 1px rgba(217,189,123,.3), 0 6px 14px -8px rgba(0,0,0,.5);
+  --c-sh-secondary: 0 0 0 1px rgba(217,189,123,.35);
+  --c-sh-dialog: 0 30px 60px -20px rgba(0,0,0,.7);
+  --c-ghost-bg: #2A2722;
+  --c-glass-bg: linear-gradient(160deg, #2E2A25 0%, #2A2722 60%, #2C2720 100%);
+  --c-glass-sh: 0 0 0 1px rgba(255,255,255,.06), 0 2px 4px rgba(0,0,0,.25), 0 12px 26px -12px rgba(0,0,0,.6);
+}
+
+@keyframes c-sheet { from { transform: translateY(24px); opacity: .6 } to { transform: none; opacity: 1 } }
+@keyframes c-page { from { transform: translateX(24px); opacity: .6 } to { transform: none; opacity: 1 } }
+@keyframes c-pop { from { transform: scale(.96); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes c-spin { to { transform: rotate(360deg) } }
+@keyframes c-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .55 } }
+.c-scroll { scrollbar-width: none; }
+.c-scroll::-webkit-scrollbar { display: none; }
+.c-input::placeholder { color: var(--c-faint); }
+.c-press:active { transform: scale(.985); }
+@media (prefers-reduced-motion: reduce) {
+  .c-anim { animation: none !important; transition: none !important; }
+}

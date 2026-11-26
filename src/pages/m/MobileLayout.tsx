@@ -22,8 +22,7 @@
 // ===========================================================================
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
-import { ToastProvider } from "@/components/ui/toast";
-import { BottomTabBar, LeftRail, MobileHeader, NavDrawer } from "./components";
+import { BottomTabBar, LeftRail, NavDrawer } from "./components";
 import { NavDrawerProvider } from "./lib/nav-drawer";
 import { M, M_FONT, M_MAX_WIDTH } from "./theme";
 import MobileMore from "./screens/More";
@@ -44,10 +43,13 @@ import { SvOrderDetail } from "./screens/orders/SvOrderDetail";
 import { SvOrderForm } from "./screens/orders/SvOrderForm";
 import { SalesDetailGate } from "./screens/orders/SalesDetailGate";
 import { CaseDetailScreen } from "./screens/cases/CaseDetailScreen";
-import { AnnouncementsScreen } from "./screens/AnnouncementsScreen";
+// Announcements v3 (Batch 2, Claude Design "Announcements (standalone)"): list + composer, and its detail.
+import { AnnouncementsScreen } from "./screens/comms/announcements/AnnouncementsScreen";
+import { AnnouncementDetail } from "./screens/comms/announcements/AnnouncementDetail";
 import { UpdatesScreen } from "./screens/UpdatesScreen";
 import { OutsourceIssueScreen } from "./screens/OutsourceIssueScreen";
-import { MailCenterScreen, MailThreadScreen } from "./screens/MailCenterScreen";
+// Mail Centre v3 (Batch 2, Claude Design "Mail Centre (standalone)"): list (CUSTOM_L1) + thread (CUSTOM_L2).
+import { MailCenterScreen, MailThreadScreen } from "./screens/comms/mail/MailScreens";
 import { MODULE_CONFIGS } from "./config/modules";
 import { preloadMobileCritical } from "./lib/preload";
 import { useAutoUpdateOnNavigate } from "@/lib/use-version-check";
@@ -84,21 +86,23 @@ const FinanceRoute = lazy(() => import("./screens/finance/FinanceRoute"));
 const ReceivableRoute = lazy(() => import("./screens/receivable/ReceivableRoute"));
 // Claude Design `Employees 3.dc.html` (HK-0125): header + nine-section tab bar around the existing Employees lists.
 const EmployeesRoute = lazy(() => import("./screens/employees/EmployeesRoute"));
-// IT Support reuses the desktop page (lazy: it pulls in DataGrid). /m has no
-// ToastProvider, so it brings its own; the light panel keeps the page readable in /m dark mode.
-// Meetings reuses the desktop page, which lays itself out for a phone (meetings-route.tsx).
-const MeetingsRoute = lazy(() => import("./meetings-route"));
-const ItSupportPage = lazy(() => import("@/pages/it-support"));
+// Meetings v3 (Batch 2, Claude Design "Meetings (standalone)"): its own phone / tablet screens (lazy).
+const MeetingsScreen = lazy(() => import("./screens/comms/meetings/MeetingsScreen"));
+function MeetingsRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <MeetingsScreen />
+    </Suspense>
+  );
+}
+// IT Support v3 (Batch 2, Claude Design "IT Support (standalone)"): its own phone / tablet
+// screens, light and dark (lazy: the report form reads the desktop sidebar's module list).
+const ItSupportScreen = lazy(() => import("./screens/comms/it-support/ItSupportScreen"));
 function ItSupportRoute() {
   return (
-    <ToastProvider>
-      <MobileHeader title="IT Support" menu />
-      <div className="bg-[#FAF8F4] p-4">
-        <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
-          <ItSupportPage />
-        </Suspense>
-      </div>
-    </ToastProvider>
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ItSupportScreen />
+    </Suspense>
   );
 }
 
@@ -266,6 +270,8 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   serviceorders: LegacyOrderDetail,
   production: ProductionDetailScreen,
   "mail-center": MailThreadScreen,
+  // Announcements v3 detail (Batch 2); on a tablet it sits beside the list.
+  announcements: AnnouncementDetail,
   // The DO detail with desktop's per-status actions, phone and tablet.
   delivery: DeliveryDetailRoute,
   // Products Hub v2 SKU detail, phone AND tablet (owner 2026-10-21).
