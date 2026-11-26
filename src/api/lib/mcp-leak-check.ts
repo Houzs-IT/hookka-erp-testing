@@ -65,10 +65,11 @@ export type LeakRow = {
  * expected and flagged as such.
  */
 export function analyseToolText(path: string, text: string, isError: boolean): LeakRow {
+  const tool = path.startsWith("tool:") ? LEAK_CHECK_TOOLS.find((t) => `tool:${t.name}` === path) : undefined;
   const d = classifyPath(path);
-  const moneyModule = d.ok && d.resources.some((r) => PRICE_MODULE_RESOURCES.has(r));
+  const moneyModule = tool ? tool.moneyExpected : d.ok && d.resources.some((r) => PRICE_MODULE_RESOURCES.has(r));
   if (isError) {
-    const refused = /not available to your role|permission/i.test(text);
+    const refused = /not available to your role|permission|don't have access/i.test(text);
     return { path, outcome: refused ? "refused" : "error", status: text.slice(0, 120), hidden: [], kept: [], keptExpected: false };
   }
   const nl = text.indexOf("\n");
@@ -85,4 +86,32 @@ export function analyseToolText(path: string, text: string, isError: boolean): L
   const familyOf = (k: string) => REDACTION_RULES.find((r) => r.test(k))?.family;
   const kept = [...keys].filter((k) => SUSPICIOUS_KEY.test(k) && !/(id|no|code|name|date|at|count|qty|quantity|status|type|unit|uom|rateType)$/i.test(k) || familyOf(k) === "salary" || familyOf(k) === "cost").sort();
   return { path, outcome: "opened", status: "ok", hidden, kept: kept.slice(0, 40), keptExpected: moneyModule };
+}
+
+/**
+ * Round 4 (owner 2026-11-26 「权限是第一位」): the quick answers the leak check
+ * also runs AS the chosen account (path "tool:<name>"), after the list
+ * endpoints. Same rule: outcome + field names only. `moneyExpected` = every
+ * read the tool needs is a money module the person was let into (purchase
+ * orders, delivery orders, invoices, accounting), so RM fields in the answer
+ * are what the ERP shows them; otherwise any surviving RM field is flagged.
+ */
+export const LEAK_CHECK_TOOLS: { name: string; args: Record<string, unknown>; moneyExpected: boolean }[] = [
+  { name: "po_overdue", args: {}, moneyExpected: true },
+  { name: "supplier_lateness", args: {}, moneyExpected: true },
+  { name: "uninvoiced_deliveries", args: {}, moneyExpected: true },
+  { name: "stock_check", args: { query: "a" }, moneyExpected: false },
+  { name: "product_cost", args: { product: "a" }, moneyExpected: false },
+  { name: "production_output", args: { period: "today" }, moneyExpected: false },
+  { name: "worker_efficiency", args: { period: "last_month" }, moneyExpected: false },
+  { name: "raw_material_summary", args: {}, moneyExpected: false },
+  { name: "gross_profit", args: {}, moneyExpected: false },
+  { name: "production_lead_time", args: {}, moneyExpected: false },
+  { name: "deliveries_due", args: { range: "week" }, moneyExpected: true },
+  { name: "company_report", args: {}, moneyExpected: true },
+];
+
+/** The leak check's full run: list endpoints, then the round-4 quick answers. */
+export function leakCheckTargets(routes: { method: string; path: string }[]): string[] {
+  return [...leakCheckPaths(routes), ...LEAK_CHECK_TOOLS.map((t) => `tool:${t.name}`)];
 }

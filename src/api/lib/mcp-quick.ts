@@ -729,10 +729,12 @@ export function summariseOverdueSales(due: unknown, today: string, origin: strin
  * delivery date, and sales orders whose Hookka expected date falls in the range
  * (GET /api/sales-orders?fields=orders-due). Either part may be null (no access).
  */
-export function summariseDeliveriesDue(range: "today" | "week", dos: unknown, soDue: unknown, today: string, origin: string) {
-  const end = range === "today" ? today : addDays(today, 6);
-  const inRange = (d: string) => !!d && d >= today && d <= end;
-  const out: Obj = { range, from: today, to: end, note: "Delivery orders by their delivery date (not yet delivered); sales orders by their Hookka expected delivery date (no DO yet or not fully delivered)." };
+export function summariseDeliveriesDue(range: "today" | "week" | "next_week", dos: unknown, soDue: unknown, today: string, origin: string) {
+  // Round 4 (K12): next_week = the 7 days after this week's (today + 7 … + 13).
+  const start = range === "next_week" ? addDays(today, 7) : today;
+  const end = range === "today" ? today : range === "next_week" ? addDays(today, 13) : addDays(today, 6);
+  const inRange = (d: string) => !!d && d >= start && d <= end;
+  const out: Obj = { range, from: start, to: end, note: "Delivery orders by their delivery date (not yet delivered); sales orders by their Hookka expected delivery date (no DO yet or not fully delivered)." };
   if (dos !== null && dos !== undefined) {
     const rows = listRows(dos);
     const due = rows.filter((r) => inRange(ymd(r.deliveryDate))).sort((a, b) => ymd(a.deliveryDate).localeCompare(ymd(b.deliveryDate)));
