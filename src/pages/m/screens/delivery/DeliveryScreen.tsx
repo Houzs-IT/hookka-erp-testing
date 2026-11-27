@@ -13,7 +13,8 @@
 //     Pending Delivery cards are always selectable (prototype + desktop) and
 //     the fixed bar offers Packing List (n) + Create DO (n)
 //   • Packing List    GET /api/packing-lists + the 200 live DOs its buttons move
-//   • 3PL Providers   GET /api/drivers (read-only; editing stays on desktop)
+//   • 3PL Providers   ../threepl/ThreePlScreen (its own reads + editing; a card
+//                     opens /m/logistics/:id)
 // Actions call desktop's endpoints with desktop's rules (./DeliverySheets.tsx,
 // ./actions.ts) and show only with delivery-orders:create / :update — the API
 // still decides.
@@ -40,9 +41,9 @@ import {
   rows, s, searchJumpTab, tabCounts, tabForStatus, totalM3,
   type BulkTarget, type DeliveryTab, type RawRow,
 } from "../../lib/do-mobile";
-import { DoCard, EmptyCard, PlCard, PoCard, ProviderCard } from "./DeliveryCards";
+import { DoCard, EmptyCard, PlCard, PoCard } from "./DeliveryCards";
 import { CreateDoSheet, PlFirstSheet, PlFromDosSheet } from "./DeliverySheets";
-import { ProviderDetail } from "./ProviderDetail";
+import { ThreePlScreen } from "../threepl/ThreePlScreen";
 import { notifyCustomers, noticeToast, runBulk } from "./actions";
 import { BottomDock, Notice, PrimaryButton, SecondaryButton, SectionSwitch } from "./ui";
 import { SHADOW_CARD, SHADOW_CONTROL, sem, type Tone } from "./ui-tokens";
@@ -96,7 +97,6 @@ export function DeliveryScreen() {
   const browse = useCachedJson<Envelope>(isDel && !searching ? doBrowseUrl(tab, page) : isDel && isPL ? doBrowseUrl(tab, 1) : null);
   const found = useCachedJson<Envelope>(isDel && searching ? doSearchUrl(dq) : null);
   const pls = useCachedJson<Envelope>(isDel && !isPO ? "/api/packing-lists" : null);
-  const providers = useCachedJson<Envelope>(!isDel ? "/api/drivers" : null);
 
   const planning = useMemo(() => rows(rp.data?.planning), [rp.data]);
   const ready = useMemo(() => rows(rp.data?.ready), [rp.data]);
@@ -121,10 +121,6 @@ export function DeliveryScreen() {
   const plShown = useMemo(
     () => (isPL ? packingLists.filter((p) => matchesSearch({ ...p, states: Array.isArray(p.states) ? (p.states as string[]).join(" ") : "" }, ["packingNo", "states", "remarks"], dq)) : []),
     [isPL, packingLists, dq],
-  );
-  const providerRows = useMemo(
-    () => rows(providers.data?.data).filter((p) => matchesSearch(p, ["name", "contactPerson", "phone"], dq)),
-    [providers.data, dq],
   );
 
   // ---- counts (whole table; per-tab match counts while searching) ----
@@ -192,7 +188,6 @@ export function DeliveryScreen() {
   const [plFirstOpen, setPlFirstOpen] = useState(false);
   const [plFromDos, setPlFromDos] = useState<RawRow[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [provider, setProvider] = useState<RawRow | null>(null);
 
   const selectedPos = useMemo(
     () => (tab === "pending_delivery" ? ready.filter((p) => selPo.has(s(p, "id"))) : []),
@@ -297,16 +292,17 @@ export function DeliveryScreen() {
       return next;
     });
 
-  if (provider) {
-    return <ProviderDetail provider={provider} onBack={() => setProvider(null)} />;
+  // 3PL Providers tab: the Batch 4 provider list (its own header, switch, sheets).
+  if (!isDel) {
+    return <ThreePlScreen onDeliveries={() => goSection("deliveries")} />;
   }
 
   // ---- list state ----
-  const source = !isDel ? providers : isPO ? rp : isPL ? pls : searching ? found : browse;
+  const source = isPO ? rp : isPL ? pls : searching ? found : browse;
   const loading = source.loading && !source.data;
   const failed = !!source.error && !source.data;
-  const listCount = !isDel ? providerRows.length : isPO ? poMatches.length : isPL ? plShown.length : searching ? doShown.length : (browse.data?.total ?? doShown.length);
-  const noun = !isDel ? "PROVIDER" : isPO ? "PRODUCTION ORDER" : isPL ? "PACKING LIST" : "DELIVERY ORDER";
+  const listCount = isPO ? poMatches.length : isPL ? plShown.length : searching ? doShown.length : (browse.data?.total ?? doShown.length);
+  const noun = isPO ? "PRODUCTION ORDER" : isPL ? "PACKING LIST" : "DELIVERY ORDER";
   const pages = isPO
     ? searching ? 1 : Math.max(1, Math.ceil(poMatches.length / DO_PAGE_SIZE))
     : doTabStatuses && !searching
@@ -324,7 +320,7 @@ export function DeliveryScreen() {
           ? "Select ready production orders to create a Delivery Order. Incomplete sofa sets can’t be selected."
           : "Ready production orders waiting for a Delivery Order."
         : "";
-  const searchPh = !isDel ? "Search providers" : isPO ? "Search SO, PO, customer, product" : "Search DO, SO, customer, vehicle";
+  const searchPh = isPO ? "Search SO, PO, customer, product" : "Search DO, SO, customer, vehicle";
   const showPoBar = poSelectableTab && selectedPos.length > 0;
   const showDoBar = canSelectDos && selectedDos.length > 0;
   const dockScope = inPane ? "list" : "content";
@@ -390,44 +386,42 @@ export function DeliveryScreen() {
           <EmptyCard text={searching ? "No matches for your search." : "Nothing here yet."} />
         ) : (
           <ResponsiveGrid maxColumns={gridMaxColumns} gap={10}>
-            {!isDel
-              ? providerRows.map((p) => <ProviderCard key={s(p, "id")} p={p} onClick={() => setProvider(p)} />)
-              : isPO
-                ? poShown.map((po) => (
-                    <PoCard
-                      key={s(po, "id")}
-                      po={po}
-                      mode={tab === "planning" ? "planning" : "pending"}
-                      selectable={poSelectableTab}
-                      checked={selPo.has(s(po, "id"))}
-                      onToggle={() => togglePo(po)}
+            {isPO
+              ? poShown.map((po) => (
+                  <PoCard
+                    key={s(po, "id")}
+                    po={po}
+                    mode={tab === "planning" ? "planning" : "pending"}
+                    selectable={poSelectableTab}
+                    checked={selPo.has(s(po, "id"))}
+                    onToggle={() => togglePo(po)}
+                  />
+                ))
+              : isPL
+                ? plShown.map((pl) => (
+                    <PlCard
+                      key={s(pl, "id")}
+                      pl={pl}
+                      canAct={canUpdate}
+                      busy={!!busy}
+                      onDispatch={() => void plMove(pl, "LOADED")}
+                      onDeliver={() => void plMove(pl, "DELIVERED")}
                     />
                   ))
-                : isPL
-                  ? plShown.map((pl) => (
-                      <PlCard
-                        key={s(pl, "id")}
-                        pl={pl}
-                        canAct={canUpdate}
-                        busy={!!busy}
-                        onDispatch={() => void plMove(pl, "LOADED")}
-                        onDeliver={() => void plMove(pl, "DELIVERED")}
-                      />
-                    ))
-                  : doShown.map((d) => (
-                      <DoCard
-                        key={s(d, "id")}
-                        d={d}
-                        selecting={selecting}
-                        checked={selDo.has(s(d, "id"))}
-                        current={inPane && s(d, "id") === openId}
-                        onClick={() =>
-                          selecting
-                            ? toggleDo(s(d, "id"))
-                            : navigate({ pathname: `/m/delivery/${encodeURIComponent(s(d, "id"))}`, search: location.search })
-                        }
-                      />
-                    ))}
+                : doShown.map((d) => (
+                    <DoCard
+                      key={s(d, "id")}
+                      d={d}
+                      selecting={selecting}
+                      checked={selDo.has(s(d, "id"))}
+                      current={inPane && s(d, "id") === openId}
+                      onClick={() =>
+                        selecting
+                          ? toggleDo(s(d, "id"))
+                          : navigate({ pathname: `/m/delivery/${encodeURIComponent(s(d, "id"))}`, search: location.search })
+                      }
+                    />
+                  ))}
           </ResponsiveGrid>
         )}
 

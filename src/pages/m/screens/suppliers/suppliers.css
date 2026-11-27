@@ -1,0 +1,12 @@
+/* Suppliers (Batch 4) — the prototype's keyframes and the one colour it hard-codes
+   for the highlighted amount tile (#F7F1E3), given a dark value so ink stays readable. */
+.sup-root { --sup-amt: #F7F1E3; }
+body[data-theme="dark"] .sup-root { --sup-amt: var(--xo-prit); }
+.sup-root input::placeholder, .sup-root textarea::placeholder { color: #9A9082; }
+.sup-scroll::-webkit-scrollbar { display: none; }
+@keyframes sup-sheet { from { transform: translateY(24px); opacity: .6 } to { transform: none; opacity: 1 } }
+@keyframes sup-page { from { transform: translateX(24px); opacity: .6 } to { transform: none; opacity: 1 } }
+@keyframes sup-pop { from { transform: scale(.96); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes sup-pulse { 0%, 100% { opacity: .5 } 50% { opacity: 1 } }
+@keyframes sup-spin { to { transform: rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) { .sup-root, .sup-root * { animation: none !important; transition: none !important } }

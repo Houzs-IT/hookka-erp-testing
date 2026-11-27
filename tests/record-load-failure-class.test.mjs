@@ -131,6 +131,9 @@ const CONSUMERS = [
   //     stopped swallowing the abort. Tracked, not exempt.
   // Mobile Service Orders (2026-11): SV detail + legacy repair-order detail. "not found" only on failure.kind === "notFound".
   ["src/pages/m/screens/orders/SvOrderDetail.tsx", "failure", "\"Order not found\" (mobile SV order detail)"],
+  // Batch 4: "not found" only on failure.kind === "notFound" (a real 404); any other failure shows "Couldn't load" + Try again.
+  ["src/pages/m/screens/suppliers/SupplierDetailScreen.tsx", "failure", "\"Supplier not found\" (mobile supplier detail)"],
+  ["src/pages/m/screens/threepl/ProviderDetailScreen.tsx", "failure", "\"Provider not found\" (mobile 3PL provider detail)"],
   ["src/pages/m/screens/orders/LegacyOrderDetail.tsx", "isUnknownOutcome", "\"Repair order not found\" (mobile legacy detail)"],
   ["src/pages/m/screens/SalesDetailScreen.tsx", "hook-error-gate", '"Order not found."'],
   ["src/pages/m/screens/ProductionDetailScreen.tsx", "hook-error-gate", '"Production order not found."'],

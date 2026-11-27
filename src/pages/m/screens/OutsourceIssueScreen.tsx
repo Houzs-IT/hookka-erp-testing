@@ -1,659 +1,200 @@
-import { useMemo, useState } from "react";
-import type { CSSProperties, JSX } from "react";
+// ---------------------------------------------------------------------------
+// /m/outsource-issue — Outsource Work (Batch 4 redesign, approved Claude Design
+// prototype "Outsource Work"). Issue tab: pick a worker, scan (the real shared
+// scanner) or type a sticker code, undo this session's issues. Tracking tab:
+// status chips with server counts, search, filters, cards and the record page
+// with Approve / Send back. Phone, foldable and tablet (worker aside + split
+// record pane). Every read and write goes through useOutsourceIssue.
+// ---------------------------------------------------------------------------
+import { useState, type JSX } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Camera, Check, CheckCircle2, ChevronDown, CornerUpLeft, Search, Undo2, X, XCircle } from "lucide-react";
-import { QrCameraScanner } from "@/components/qr-camera-scanner";
+import { ListChecks, RefreshCw, ScanQrCode } from "lucide-react";
 import { usePermissions } from "@/lib/use-permission";
-import {
-  daysOut,
-  describeIssue,
-  formatDays,
-  formatIssueDateTime,
-  formatPiece,
-  issueStatusLabel,
-} from "@/lib/outsource-issue-format";
-import {
-  useOutsourceIssue,
-} from "@/pages/production/use-outsource-issue";
-import type {
-  FeedbackTone,
-  OutsourceIssue,
-  OutsourceIssueWithDone,
-  OutsourceWorkerSummary,
-  StatusFilter,
-  UseOutsourceIssueResult,
-} from "@/pages/production/use-outsource-issue";
-import { MobileCard, MobileHeader, SegmentedSwitch, Sheet, StatusPill } from "../components";
-import { ResponsiveActionDock } from "../components/ResponsiveActionDock";
-import { chip, CHIP_ROW, CHIP_ROW_CLASS } from "../lib/control-styles";
-import { M, M_ACCENT, SEMANTIC } from "../theme";
-import type { SemanticStyle } from "../theme";
+import { useOutsourceIssue } from "@/pages/production/use-outsource-issue";
+import type { OutsourceIssueWithDone } from "@/pages/production/use-outsource-issue";
+import { useNavDrawer } from "../lib/nav-drawer";
+import { useResponsiveLayout } from "../lib/responsive-layout";
+import { DetailPlaceholder, IssueDetail, ReviewSheet } from "./outsource/os-detail";
+import { IssueSection, WorkerAside, WorkerPickerSheet, type IssueAccess } from "./outsource/os-issue";
+import { OsHeader, RoundButton } from "./outsource/os-kit";
+import { ScannerOverlay } from "./outsource/os-scanner";
+import { KEYFRAMES, X } from "./outsource/os-style";
+import { TrackingList, type ReviewAccess, type ReviewKind } from "./outsource/os-tracking";
 
-type ScreenTab = "issue" | "tracking";
+type Tab = "issue" | "tracking";
+type Selection = { id: string; snap: OutsourceIssueWithDone; verified: OutsourceIssueWithDone | null };
 
-const SCREEN_TABS: { key: ScreenTab; label: string }[] = [
-  { key: "issue", label: "Issue" },
-  { key: "tracking", label: "Tracking" },
+const TABS: { key: Tab; l: string; icon: typeof ScanQrCode }[] = [
+  { key: "issue", l: "Issue", icon: ScanQrCode },
+  { key: "tracking", l: "Tracking", icon: ListChecks },
 ];
 
-const STATUS_CHIPS: { key: StatusFilter; label: string }[] = [
-  { key: "PENDING_APPROVAL", label: "Pending approval" },
-  { key: "INCOMPLETE", label: "Incomplete" },
-  { key: "COMPLETED", label: "Completed" },
-  { key: "ALL", label: "All" },
-];
-
-const FEEDBACK_TONES: Record<FeedbackTone, { bg: string; fg: string }> = {
-  success: M_ACCENT.moss,
-  warning: M_ACCENT.warning,
-  danger: M_ACCENT.danger,
-};
-
-const INPUT_STYLE: CSSProperties = {
-  width: "100%",
-  height: 48,
-  boxSizing: "border-box",
-  padding: "0 14px",
-  borderRadius: 12,
-  border: `1px solid ${M.border}`,
-  backgroundColor: M.card,
-  color: M.raisin,
-  fontFamily: "inherit",
-  fontSize: 16,
-};
-
-const PRIMARY_BUTTON: CSSProperties = {
-  height: 52,
-  border: "none",
-  borderRadius: 14,
-  backgroundColor: M.taupe,
-  color: "var(--m-text-on-accent)",
-  fontFamily: "inherit",
-  fontSize: 16,
-  fontWeight: 700,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 8,
-  cursor: "pointer",
-  WebkitTapHighlightColor: "transparent",
-};
-
-const MESSAGE_STYLE: CSSProperties = {
-  padding: "32px 16px",
-  textAlign: "center",
-  color: M.muted,
-  fontSize: 14,
-};
-
-function FeedbackBanner({ tone, message }: { tone: FeedbackTone; message: string }): JSX.Element {
-  const colors = FEEDBACK_TONES[tone];
-  const Icon = tone === "success" ? CheckCircle2 : tone === "warning" ? AlertTriangle : XCircle;
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 10,
-        padding: "12px 14px",
-        borderRadius: 14,
-        backgroundColor: colors.bg,
-        color: colors.fg,
-        fontSize: 14,
-        fontWeight: 600,
-        lineHeight: 1.4,
-        overflowWrap: "anywhere",
-      }}
-    >
-      <Icon size={20} style={{ flex: "none", marginTop: 1 }} aria-hidden />
-      <span>{message}</span>
-    </div>
-  );
+function clockLabel(): string {
+  const d = new Date();
+  return `Updated ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-interface WorkerListProps {
-  workers: OutsourceWorkerSummary[];
-  selectedId: string;
-  allLabel?: string;
-  onSelect: (workerId: string) => void;
-}
-
-function WorkerList({ workers, selectedId, allLabel, onSelect }: WorkerListProps): JSX.Element {
-  const [search, setSearch] = useState("");
-  const visible = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return needle
-      ? workers.filter((worker) => `${worker.empNo} ${worker.name}`.toLowerCase().includes(needle))
-      : workers;
-  }, [workers, search]);
-  const rows: { id: string; title: string; detail: string }[] = [
-    ...(allLabel ? [{ id: "", title: allLabel, detail: "" }] : []),
-    ...visible.map((worker) => ({
-      id: worker.id,
-      title: worker.name,
-      detail: `${worker.empNo} · ${worker.departmentNames.join(" / ") || "No department"} · ${worker.incompleteCount} open`,
-    })),
-  ];
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <input
-        type="search"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search name or employee no"
-        aria-label="Search workers"
-        autoComplete="off"
-        style={INPUT_STYLE}
-      />
-      {rows.length === 0 ? (
-        <div style={MESSAGE_STYLE}>{workers.length === 0 ? "No active outsourced workers." : "No worker matches."}</div>
-      ) : (
-        rows.map((row) => {
-          const isSelected = row.id === selectedId;
-          return (
-            <button
-              key={row.id || "all"}
-              type="button"
-              aria-pressed={isSelected}
-              onClick={() => onSelect(row.id)}
-              style={{
-                minHeight: 56,
-                padding: "8px 14px",
-                borderRadius: 14,
-                border: `1px solid ${isSelected ? M.taupe : M.border}`,
-                backgroundColor: isSelected ? M_ACCENT.gold.bg : M.card,
-                color: M.raisin,
-                fontFamily: "inherit",
-                textAlign: "left",
-                cursor: "pointer",
-                WebkitTapHighlightColor: "transparent",
-              }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 700 }}>{row.title}</div>
-              {row.detail ? <div style={{ fontSize: 12.5, color: M.muted }}>{row.detail}</div> : null}
-            </button>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
-function WorkerPickerView({
-  workers,
-  selectedId,
-  onSelect,
-  onClose,
-}: {
-  workers: OutsourceWorkerSummary[];
-  selectedId: string;
-  onSelect: (workerId: string) => void;
-  onClose: () => void;
-}): JSX.Element {
-  return (
-    <div style={{ padding: "0 16px 24px", minHeight: "calc(100dvh - 120px)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: M.raisin }}>Pick a worker</div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          style={{
-            width: 44,
-            height: 44,
-            border: "none",
-            background: "none",
-            color: M.muted,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-          }}
-        >
-          <X size={22} />
-        </button>
-      </div>
-      <WorkerList workers={workers} selectedId={selectedId} onSelect={onSelect} />
-    </div>
-  );
-}
-
-function SessionCard({
-  item,
-  canUndo,
-  isUndoing,
-  onUndo,
-}: {
-  item: OutsourceIssue;
-  canUndo: boolean;
-  isUndoing: boolean;
-  onUndo: () => void;
-}): JSX.Element {
-  return (
-    <MobileCard style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 14.5, fontWeight: 700, color: M.raisin, overflowWrap: "anywhere" }}>
-          {describeIssue(item)}
-        </div>
-        <div style={{ fontSize: 12.5, color: M.muted }}>{item.workerName}</div>
-      </div>
-      {canUndo ? (
-        <button
-          type="button"
-          onClick={onUndo}
-          disabled={isUndoing}
-          style={{
-            flex: "none",
-            minWidth: 44,
-            height: 44,
-            padding: "0 12px",
-            borderRadius: 12,
-            border: `1px solid ${M.border}`,
-            backgroundColor: M.card,
-            color: M.raisin,
-            fontFamily: "inherit",
-            fontSize: 13,
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            cursor: "pointer",
-            opacity: isUndoing ? 0.5 : 1,
-          }}
-        >
-          <Undo2 size={16} aria-hidden />
-          Undo
-        </button>
-      ) : null}
-    </MobileCard>
-  );
-}
-
-function IssuePane({
-  issue,
-  canIssue,
-  canUndo,
-}: {
-  issue: UseOutsourceIssueResult;
-  canIssue: boolean;
-  canUndo: boolean;
-}): JSX.Element {
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [typedCode, setTypedCode] = useState("");
-  const isScanDisabled = !issue.selectedWorker || !canIssue;
-
-  const submitTypedCode = (): void => {
-    const code = typedCode;
-    setTypedCode("");
-    void issue.issueByScan(code);
-  };
-
-  if (isPickerOpen) {
-    return (
-      <WorkerPickerView
-        workers={issue.workers}
-        selectedId={issue.selectedWorkerId}
-        onSelect={(workerId) => {
-          issue.selectWorker(workerId);
-          setIsPickerOpen(false);
-        }}
-        onClose={() => setIsPickerOpen(false)}
-      />
-    );
-  }
-
-  return (
-    <div style={{ padding: "14px 16px 0", display: "flex", flexDirection: "column", gap: 12 }}>
-      <button
-        type="button"
-        onClick={() => setIsPickerOpen(true)}
-        aria-label={issue.selectedWorker ? `Worker: ${issue.selectedWorker.name}. Change worker` : "Pick a worker"}
-        style={{
-          minHeight: 64,
-          padding: "10px 14px",
-          borderRadius: 16,
-          border: `1px solid ${issue.selectedWorker ? M.taupe : M.border}`,
-          backgroundColor: issue.selectedWorker ? M_ACCENT.gold.bg : M.card,
-          color: M.raisin,
-          fontFamily: "inherit",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          cursor: "pointer",
-          WebkitTapHighlightColor: "transparent",
-        }}
-      >
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 12, color: M.muted, fontWeight: 600 }}>Issuing to</div>
-          <div style={{ fontSize: 17, fontWeight: 700, overflowWrap: "anywhere" }}>
-            {issue.selectedWorker ? issue.selectedWorker.name : "Pick a worker"}
-          </div>
-          {issue.selectedWorker ? (
-            <div style={{ fontSize: 12.5, color: M.muted }}>
-              {issue.selectedWorker.empNo} · {issue.selectedWorker.departmentNames.join(" / ") || "No department"} · {issue.selectedWorker.incompleteCount} open
-            </div>
-          ) : null}
-        </div>
-        <ChevronDown size={20} color={M.muted} aria-hidden />
-      </button>
-
-      {issue.isWorkersLoading ? <div style={{ ...MESSAGE_STYLE, padding: 8 }}>Loading workers…</div> : null}
-      {issue.workersError ? (
-        <FeedbackBanner tone="danger" message={`Could not load workers: ${issue.workersError}`} />
-      ) : null}
-      {!canIssue ? (
-        <FeedbackBanner tone="danger" message="You do not have permission to issue work." />
-      ) : null}
-      {cameraError ? <FeedbackBanner tone="danger" message={cameraError} /> : null}
-      {issue.feedback ? <FeedbackBanner tone={issue.feedback.tone} message={issue.feedback.message} /> : null}
-
-      <div style={{ fontSize: 14, fontWeight: 700, color: M.raisin }}>
-        Issued this session{issue.sessionIssues.length > 0 ? ` · ${issue.sessionIssues.length}` : ""}
-      </div>
-      {issue.sessionIssues.length === 0 ? (
-        <div style={{ ...MESSAGE_STYLE, padding: "16px 8px" }}>
-          Nothing issued yet. Pick a worker, then scan the QR on the item's production sticker or its job card.
-        </div>
-      ) : (
-        issue.sessionIssues.map((item) => (
-          <SessionCard
-            key={item.id}
-            item={item}
-            canUndo={canUndo}
-            isUndoing={issue.undoingId === item.id}
-            onUndo={() => void issue.undoIssue(item)}
-          />
-        ))
-      )}
-
-      <ResponsiveActionDock scope="auto" phoneBottom={64} zIndex={45}>
-        <div
-          style={{
-            width: "100%",
-            maxWidth: 414,
-            boxSizing: "border-box",
-            padding: "10px 16px",
-            backgroundColor: M.paper,
-            borderTop: `1px solid ${M.border}`,
-            pointerEvents: "auto",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          <button
-            type="button"
-            disabled={isScanDisabled}
-            onClick={() => {
-              setCameraError(null);
-              setIsCameraOpen(true);
-            }}
-            style={{ ...PRIMARY_BUTTON, opacity: isScanDisabled ? 0.45 : 1 }}
-          >
-            <Camera size={20} aria-hidden />
-            {issue.selectedWorker ? "Scan QR" : "Pick a worker to scan"}
-          </button>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitTypedCode();
-            }}
-            style={{ display: "flex", gap: 8 }}
-          >
-            <input
-              value={typedCode}
-              onChange={(event) => setTypedCode(event.target.value)}
-              placeholder="Or type or paste the sticker code"
-              aria-label="Sticker code"
-              inputMode="text"
-              enterKeyHint="go"
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              disabled={isScanDisabled}
-              style={{ ...INPUT_STYLE, flex: 1, minWidth: 0 }}
-            />
-            <button
-              type="submit"
-              disabled={isScanDisabled || issue.isIssuing || !typedCode.trim()}
-              style={{ ...PRIMARY_BUTTON, height: 48, padding: "0 16px", opacity: typedCode.trim() ? 1 : 0.5 }}
-            >
-              Issue
-            </button>
-          </form>
-        </div>
-      </ResponsiveActionDock>
-
-      {isCameraOpen ? (
-        <QrCameraScanner
-          isFullScreen
-          onDecode={(text) => void issue.issueByScan(text)}
-          onClose={() => setIsCameraOpen(false)}
-          onError={(message) => {
-            setCameraError(message);
-            setIsCameraOpen(false);
-          }}
-          statusText={issue.feedback?.message}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-const STATUS_PILL: Record<OutsourceIssueWithDone["status"], SemanticStyle> = {
-  INCOMPLETE: SEMANTIC.WARNING,
-  PENDING_APPROVAL: SEMANTIC.INFO,
-  COMPLETED: SEMANTIC.SUCCESS,
-};
-
-const OUTLINE_BUTTON: CSSProperties = {
-  ...PRIMARY_BUTTON,
-  height: 44,
-  fontSize: 15,
-  backgroundColor: M.card,
-  color: M.raisin,
-  border: `1px solid ${M.border}`,
-};
-
-interface ReviewAccess {
-  canApprove: boolean;
-  canSendBack: boolean;
-}
-
-interface TrackingCardProps {
-  item: OutsourceIssueWithDone;
-  issue: UseOutsourceIssueResult;
-  access: ReviewAccess;
-}
-
-function ReviewButtons({ item, issue, access }: TrackingCardProps): JSX.Element | null {
-  if (item.status !== "PENDING_APPROVAL" || (!access.canApprove && !access.canSendBack)) return null;
-  const isBusy = issue.reviewingId === item.id;
-  return (
-    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-      {access.canSendBack ? (
-        <button
-          type="button"
-          disabled={isBusy}
-          onClick={() => void issue.sendBackIssue(item)}
-          style={{ ...OUTLINE_BUTTON, flex: 1, opacity: isBusy ? 0.6 : 1 }}
-        >
-          <CornerUpLeft size={18} aria-hidden />
-          Send back
-        </button>
-      ) : null}
-      {access.canApprove ? (
-        <button
-          type="button"
-          disabled={isBusy}
-          onClick={() => void issue.approveIssue(item)}
-          style={{ ...PRIMARY_BUTTON, height: 44, fontSize: 15, flex: 1, opacity: isBusy ? 0.6 : 1 }}
-        >
-          <Check size={18} aria-hidden />
-          Approve
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function TrackingCard({ item, issue, access }: TrackingCardProps): JSX.Element {
-  const isCompleted = item.status === "COMPLETED";
-  const needsCheck = item.status === "INCOMPLETE" && item.workDone;
-  const days = daysOut(item);
-  const daysText = days === null ? "" : isCompleted ? `took ${formatDays(days)}` : `${formatDays(days)} out`;
-  return (
-    <MobileCard style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: M.raisin, overflowWrap: "anywhere" }}>{item.poNo}</div>
-          <div style={{ fontSize: 13.5, color: M.body, overflowWrap: "anywhere" }}>
-            {item.itemLabel}
-            {item.pieceNo === null ? "" : ` · ${formatPiece(item)}`}
-          </div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flex: "none" }}>
-          <StatusPill style={STATUS_PILL[item.status]} label={issueStatusLabel(item.status)} size="sm" />
-          {needsCheck ? <StatusPill style={SEMANTIC.DANGER} label="Check" size="sm" /> : null}
-        </div>
-      </div>
-      <div style={{ fontSize: 12.5, color: M.muted }}>
-        {item.workerName} · {item.departmentName} · Issued {formatIssueDateTime(item.issuedAt)} · {daysText}
-      </div>
-      {item.submittedAt ? (
-        <div style={{ fontSize: 12.5, color: M.muted }}>Finished scan {formatIssueDateTime(item.submittedAt)}</div>
-      ) : null}
-      {isCompleted ? (
-        <div style={{ fontSize: 12.5, color: M.muted }}>
-          Approved {formatIssueDateTime(item.completedAt)}
-          {item.approvedBy ? ` by ${item.approvedBy}` : ""} · Payroll {item.payrollPeriod || "not recorded"}
-        </div>
-      ) : null}
-      <ReviewButtons item={item} issue={issue} access={access} />
-    </MobileCard>
-  );
-}
-
-function TrackingPane({ issue, access }: { issue: UseOutsourceIssueResult; access: ReviewAccess }): JSX.Element {
-  const [isWorkerSheetOpen, setIsWorkerSheetOpen] = useState(false);
-  const filterWorker = issue.workers.find((worker) => worker.id === issue.filters.workerId) ?? null;
-  return (
-    <div style={{ paddingBottom: 24 }}>
-      <div className={CHIP_ROW_CLASS} style={CHIP_ROW}>
-        {STATUS_CHIPS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            aria-pressed={issue.filters.status === option.key}
-            onClick={() => issue.setFilters({ status: option.key })}
-            style={chip(issue.filters.status === option.key)}
-          >
-            {option.label}
-            {issue.statusCounts ? ` · ${issue.statusCounts[option.key]}` : ""}
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setIsWorkerSheetOpen(true)}
-          style={chip(Boolean(filterWorker))}
-          aria-label="Filter by worker"
-        >
-          {filterWorker ? filterWorker.name : "All workers"}
-          <ChevronDown size={14} aria-hidden />
-        </button>
-      </div>
-      <div style={{ padding: "10px 16px 0", position: "relative" }}>
-        <Search
-          size={18}
-          color={M.muted}
-          aria-hidden
-          style={{ position: "absolute", left: 30, top: 25, pointerEvents: "none" }}
-        />
-        <input
-          type="search"
-          value={issue.filters.query}
-          onChange={(event) => issue.setFilters({ query: event.target.value })}
-          placeholder="Search PO no or product"
-          aria-label="Search issues"
-          autoComplete="off"
-          style={{ ...INPUT_STYLE, paddingLeft: 42 }}
-        />
-      </div>
-      <div style={{ padding: "12px 16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
-        {issue.feedback ? <FeedbackBanner tone={issue.feedback.tone} message={issue.feedback.message} /> : null}
-        {issue.listError ? (
-          <div style={MESSAGE_STYLE}>
-            <div>Could not load the list: {issue.listError}</div>
-            <button
-              type="button"
-              onClick={issue.refreshList}
-              style={{ ...PRIMARY_BUTTON, height: 44, margin: "12px auto 0", padding: "0 20px" }}
-            >
-              Retry
-            </button>
-          </div>
-        ) : issue.isListLoading ? (
-          <div style={MESSAGE_STYLE}>Loading…</div>
-        ) : issue.issues.length === 0 ? (
-          <div style={MESSAGE_STYLE}>No issues match these filters.</div>
-        ) : (
-          <>
-            {issue.issues.map((item) => (
-              <TrackingCard key={item.id} item={item} issue={issue} access={access} />
-            ))}
-            {issue.isListTruncated ? (
-              <div style={{ ...MESSAGE_STYLE, padding: 8, fontSize: 12.5 }}>
-                Showing the newest {issue.issues.length}. Narrow the filters to see older ones.
-              </div>
-            ) : null}
-          </>
-        )}
-      </div>
-      <Sheet open={isWorkerSheetOpen} onClose={() => setIsWorkerSheetOpen(false)} title="Filter by worker">
-        <WorkerList
-          workers={issue.workers}
-          selectedId={issue.filters.workerId}
-          allLabel="All workers"
-          onSelect={(workerId) => {
-            issue.setFilters({ workerId });
-            setIsWorkerSheetOpen(false);
-          }}
-        />
-      </Sheet>
-    </div>
-  );
+function scrollPageTo(y: number): void {
+  if (typeof window !== "undefined") window.scrollTo(0, y);
 }
 
 export function OutsourceIssueScreen(): JSX.Element {
   const navigate = useNavigate();
+  const drawer = useNavDrawer();
+  const layout = useResponsiveLayout();
+  const phone = layout.mode === "phone";
+  const wide = layout.canSplitDetail;
   const issue = useOutsourceIssue();
+
+  // Permissions: issue / undo stay allowed while the permission set loads (as before);
+  // approve / send back wait for it. Each review action can appear alone.
   const { hasPermission, loading: isPermissionsLoading } = usePermissions();
-  const canIssue = isPermissionsLoading || hasPermission("outsource-issues", "create");
-  const canUndo = isPermissionsLoading || hasPermission("outsource-issues", "delete");
-  const access: ReviewAccess = {
+  const access: IssueAccess = {
+    canIssue: isPermissionsLoading || hasPermission("outsource-issues", "create"),
+    canUndo: isPermissionsLoading || hasPermission("outsource-issues", "delete"),
+  };
+  const review: ReviewAccess = {
     canApprove: !isPermissionsLoading && hasPermission("production-orders", "create"),
     canSendBack: !isPermissionsLoading && hasPermission("outsource-issues", "update"),
   };
-  const [tab, setTab] = useState<ScreenTab>("issue");
+
+  const [tab, setTab] = useState<Tab>("issue");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [lastAction, setLastAction] = useState<"issue" | "undo">("issue");
+  const [sel, setSel] = useState<Selection | null>(null);
+  const [listScroll, setListScroll] = useState(0);
+  const [asking, setAsking] = useState<{ kind: ReviewKind; item: OutsourceIssueWithDone } | null>(null);
+
+  // "Updated hh:mm": the time the list last finished loading (derived state, no effect).
+  const [loaded, setLoaded] = useState<{ list: unknown; label: string }>({ list: null, label: "" });
+  if (!issue.isListLoading && !issue.listError && loaded.list !== issue.issues) {
+    setLoaded({ list: issue.issues, label: clockLabel() });
+  }
+
+  const pickWorker = (id: string) => {
+    issue.selectWorker(id);
+    issue.clearFeedback();
+    setPickerOpen(false);
+  };
+  const openDetail = (item: OutsourceIssueWithDone) => {
+    if (!wide) {
+      setListScroll(typeof window === "undefined" ? 0 : window.scrollY);
+      scrollPageTo(0);
+    }
+    setSel({ id: item.id, snap: item, verified: null });
+  };
+  const closeDetail = () => {
+    setSel(null);
+    if (!wide) requestAnimationFrame(() => scrollPageTo(listScroll));
+  };
+
+  const live = sel ? issue.issues.find((row) => row.id === sel.id) : undefined;
+  const detailItem = sel ? sel.verified ?? live ?? sel.snap : null;
+  const detailWorker = detailItem ? issue.workers.find((w) => w.id === detailItem.workerId) : undefined;
+
+  const reviewSheet = asking ? (
+    <ReviewSheet
+      kind={asking.kind}
+      item={asking.item}
+      issue={issue}
+      onClose={() => setAsking(null)}
+      onVerified={(row) => setSel((s) => (s && s.id === row.id ? { ...s, verified: row } : s))}
+    />
+  ) : null;
+
+  const rootStyle = wide
+    ? {
+        height: "100dvh",
+        marginBottom: "calc(-24px - env(safe-area-inset-bottom))",
+        display: "flex",
+        flexDirection: "column" as const,
+        overflow: "hidden",
+      }
+    : { minHeight: "100dvh" };
+
+  // Phone / narrow tablet: the record is its own page.
+  if (!wide && detailItem && tab === "tracking") {
+    return (
+      <div data-os="" style={{ background: X.bg, color: X.ink, minHeight: "100dvh", display: "flex", flexDirection: "column" }}>
+        <style>{KEYFRAMES}</style>
+        <IssueDetail item={detailItem} worker={detailWorker} access={review} wide={false} onBack={closeDetail}
+          onAsk={(kind) => setAsking({ kind, item: detailItem })} />
+        {reviewSheet}
+      </div>
+    );
+  }
+
+  const left: "menu" | "back" | null = phone ? (drawer ? "menu" : "back") : null;
 
   return (
-    <>
-      <MobileHeader title="Outsource Work" onBack={() => navigate(-1)} menu />
-      <div style={{ padding: "10px 16px 0" }}>
-        <SegmentedSwitch options={SCREEN_TABS} value={tab} onChange={setTab} ariaLabel="Outsource Work view" />
-      </div>
-      {tab === "issue" ? (
-        <div style={{ paddingBottom: 200 }}>
-          <IssuePane issue={issue} canIssue={canIssue} canUndo={canUndo} />
+    <div data-os="" style={{ background: X.bg, color: X.ink, ...rootStyle }}>
+      <style>{KEYFRAMES}</style>
+      <OsHeader
+        title="Outsource Work"
+        left={left}
+        onLeft={left === "menu" ? drawer?.open : () => navigate(-1)}
+        right={tab === "tracking" ? <RoundButton icon={RefreshCw} aria="Refresh" onTap={issue.refreshList} spin={issue.isListLoading} /> : null}
+      />
+      <div style={{ flex: "none", padding: "2px 16px 0" }}>
+        <div role="tablist" aria-label="Outsource Work" style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 4, height: 46, boxSizing: "border-box", padding: 4, borderRadius: 14, background: X.chip }}>
+          {TABS.map((t) => {
+            const on = tab === t.key;
+            const Icon = t.icon;
+            return (
+              <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => setTab(t.key)}
+                style={{ height: "100%", borderRadius: 10, border: "none", background: on ? X.card : "transparent", color: on ? X.ink : X.sub, fontWeight: on ? 700 : 600, boxShadow: on ? "0 1px 2px rgba(31,29,27,.08),0 6px 14px -6px rgba(31,29,27,.20)" : "none", fontFamily: "inherit", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}>
+                <Icon size={15} strokeWidth={1.9} />{t.l}
+              </button>
+            );
+          })}
         </div>
-      ) : (
-        <TrackingPane issue={issue} access={access} />
-      )}
-    </>
+      </div>
+
+      <div style={wide ? { flex: 1, minHeight: 0, display: "flex" } : undefined}>
+        {tab === "issue" ? (
+          <>
+            {wide ? <WorkerAside issue={issue} onPick={pickWorker} /> : null}
+            <IssueSection
+              issue={issue}
+              access={access}
+              wide={wide}
+              lastAction={lastAction}
+              onAction={setLastAction}
+              onOpenPicker={() => setPickerOpen(true)}
+              onOpenScanner={() => {
+                setLastAction("issue");
+                setScannerOpen(true);
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <section aria-label="Tracking" className={wide ? "os-scroll" : undefined}
+              style={wide ? { flex: "none", width: "min(420px,44%)", overflowY: "auto", scrollbarWidth: "none", borderRight: `1px solid ${X.ln}` } : { paddingBottom: 8 }}>
+              <TrackingList
+                issue={issue}
+                access={review}
+                selectedId={sel?.id ?? ""}
+                wide={wide}
+                updated={loaded.label}
+                onOpen={openDetail}
+                onAsk={(kind, item) => setAsking({ kind, item })}
+              />
+            </section>
+            {wide ? (
+              detailItem ? (
+                <IssueDetail key={detailItem.id} item={detailItem} worker={detailWorker} access={review} wide onBack={() => setSel(null)}
+                  onAsk={(kind) => setAsking({ kind, item: detailItem })} />
+              ) : <DetailPlaceholder />
+            ) : null}
+          </>
+        )}
+      </div>
+
+      {pickerOpen ? <WorkerPickerSheet open onClose={() => setPickerOpen(false)} issue={issue} onPick={pickWorker} /> : null}
+      {scannerOpen && issue.selectedWorker ? <ScannerOverlay issue={issue} onClose={() => setScannerOpen(false)} /> : null}
+      {reviewSheet}
+    </div>
   );
 }

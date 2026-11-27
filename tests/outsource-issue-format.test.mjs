@@ -26,8 +26,10 @@ test("a missing or broken timestamp shows a dash", () => {
 });
 
 test("the phone tracking card and the worker's My task show the issue time, not only the date", () => {
-  const phoneCard = readFileSync("src/pages/m/screens/OutsourceIssueScreen.tsx", "utf8");
+  // Batch 4 redesign: the phone tracking card lives in outsource/os-tracking.tsx and shows
+  // the issue time in its "Issued" tile.
+  const phoneCard = readFileSync("src/pages/m/screens/outsource/os-tracking.tsx", "utf8");
   const myTask = readFileSync("src/pages/worker/tasks.tsx", "utf8");
-  assert.match(phoneCard, /Issued \{formatIssueDateTime\(item\.issuedAt\)\}/);
+  assert.match(phoneCard, />Issued<\/div>\s*<div[^>]*>\{formatIssueDateTime\(item\.issuedAt\)\}/);
   assert.match(myTask, /\$\{formatIssueDateTime\(issue\.issuedAt\)\}/);
 });

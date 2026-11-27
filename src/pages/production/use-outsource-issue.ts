@@ -22,6 +22,8 @@ export type FeedbackTone = "success" | "warning" | "danger";
 export interface IssueFeedback {
   tone: FeedbackTone;
   message: string;
+  /** The server's `code` on a failed request, when it sent one (optional, display only). */
+  code?: string;
 }
 
 export interface TrackingFilters {
@@ -200,6 +202,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
       setFeedback({
         tone: envelope?.code && WARNING_CODES.has(envelope.code) ? "warning" : "danger",
         message: failureMessage(envelope, response.status),
+        code: envelope?.code,
       });
     } catch {
       lastScanRef.current = { value: "", at: 0 };
@@ -265,7 +268,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
         setListReloadTick((current) => current + 1);
         return;
       }
-      setFeedback({ tone: "danger", message: failureMessage(envelope, response.status) });
+      setFeedback({ tone: "danger", message: failureMessage(envelope, response.status), code: envelope?.code });
     } catch {
       setFeedback({ tone: "danger", message: NETWORK_MESSAGE });
     } finally {
@@ -285,7 +288,7 @@ export function useOutsourceIssue(): UseOutsourceIssueResult {
           setListReloadTick((current) => current + 1);
           return;
         }
-        setFeedback({ tone: "danger", message: failureMessage(envelope, response.status) });
+        setFeedback({ tone: "danger", message: failureMessage(envelope, response.status), code: envelope?.code });
       } catch {
         setFeedback({ tone: "danger", message: NETWORK_MESSAGE });
       } finally {
