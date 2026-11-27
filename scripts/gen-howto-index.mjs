@@ -22,5 +22,7 @@ for (const x of m.MODULES) L.push(`- **${x.section}** — ${x.oneLine}`);
 L.push("", `## Glossary and errors`, "", `- \`glossary\`: ${m.GLOSSARY.length} terms (${m.GLOSSARY.map((e) => e.term).join(", ")}).`, `- \`explain_error\`: ${m.ERRORS.length} real ERP messages (\`src/api/lib/howto/errors.ts\`).`);
 const sc = await import("../src/api/lib/mcp-screens.ts");
 L.push("", "## Screen map (`explain_screen`, `where_is`)", "", `- ${sc.SCREENS.length} router pages (${sc.SCREENS.filter((x) => x.detail === "full").length} in full detail), ${sc.SCREENS.reduce((n, x) => n + x.actions.length, 0)} buttons / tabs / menu items — \`src/api/lib/howto/screens-*.ts\`. Links carry \`?highlight=<label>\`, which outlines that element in the ERP.`);
+const hs = await import("../src/api/lib/howto/help-shots.ts");
+L.push("", "## Screenshots (`show_me`)", "", `- ${hs.HELP_SHOTS.length} pages, ${hs.HELP_SHOTS.reduce((n, x) => n + x.boxes.length, 0)} boxed buttons, captured ${hs.HELP_SHOTS_CAPTURED_AT} with mocked demo data — \`public/help/shots/\`, boxes in \`src/api/lib/howto/help-shots.ts\`. Re-capture: \`npm run dev\`, then \`npm run help:shots\`.`);
 writeFileSync(new URL("../docs/how-to/README.md", import.meta.url), L.join("\n") + "\n");
 console.log(`wrote ${L.length} lines`);

@@ -89,3 +89,7 @@ The guides are **data**, not prose: `src/api/lib/howto/`. This index is generate
 ## Screen map (`explain_screen`, `where_is`)
 
 - 157 router pages (48 in full detail), 1206 buttons / tabs / menu items — `src/api/lib/howto/screens-*.ts`. Links carry `?highlight=<label>`, which outlines that element in the ERP.
+
+## Screenshots (`show_me`)
+
+- 78 pages, 269 boxed buttons, captured 2026-11-27 with mocked demo data — `public/help/shots/`, boxes in `src/api/lib/howto/help-shots.ts`. Re-capture: `npm run dev`, then `npm run help:shots`.

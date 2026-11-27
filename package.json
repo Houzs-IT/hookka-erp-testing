@@ -28,7 +28,8 @@
     "_LEGACY_db:studio": "echo 'LEGACY: D1 retired. Inspect Supabase via the Supabase dashboard or psql with DATABASE_URL from .dev.vars.'",
     "prepare": "husky",
     "trust": "node scripts/trust-report.mjs",
-    "gen:dark": "node scripts/gen-dark-theme.mjs"
+    "gen:dark": "node scripts/gen-dark-theme.mjs",
+    "help:shots": "node --import tsx/esm scripts/capture-help-shots.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx}": "node node_modules/eslint/bin/eslint.js"

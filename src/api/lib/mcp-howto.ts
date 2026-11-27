@@ -212,7 +212,7 @@ export async function howTo(args: { question?: unknown; topic?: unknown; company
   const topic = typeof args.topic === "string" ? args.topic.trim() : "";
   const question = typeof args.question === "string" ? args.question.trim().slice(0, 300) : "";
   const company = typeof args.company === "string" ? args.company.trim().toUpperCase() : "";
-  const extra = { showMe: "Ask show_me for a picture of the screen with the button marked (when available).", ...(company ? { company } : {}) };
+  const extra = { showMe: "show_me {guide_id, step} gives a screenshot of that step with the button boxed in red.", ...(company ? { company } : {}) };
   if (topic) {
     const f = FLOWS.find((x) => x.id === topic);
     if (f) return { matched: true, value: { flow: await flowOut(f, origin, can, company), ...extra } };
