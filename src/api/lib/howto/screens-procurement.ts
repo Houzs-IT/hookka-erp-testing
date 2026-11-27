@@ -49,7 +49,7 @@ export const SCREENS: ScreenEntry[] = [
       {
         label: "to GRN",
         kind: "button",
-        does: "The Convert N to GRN button (appears when rows are ticked). For each selected PO creates a full-receipt GRN for every outstanding line (POST /api/grn) and immediately posts it (PUT /api/grn/:id status POSTED). Disabled if any selected PO is not in an eligible status.",
+        does: "The Convert N to GRN button (appears when rows are ticked). First shows a confirmation listing every selected PO, each line and the quantity that will be received and posted to stock (Cancel / Confirm). On Confirm, for each PO creates a full-receipt GRN for every outstanding line (POST /api/grn) and immediately posts it (PUT /api/grn/:id status POSTED). Disabled if any selected PO is not in an eligible status.",
         permission: "grn:create",
         sideEffects: "Posts stock for the whole outstanding quantity, updates the PO received qty/status and clears In Transit. Also needs grn:update to post.",
       },
@@ -63,7 +63,7 @@ export const SCREENS: ScreenEntry[] = [
       },
       { label: "Export", kind: "button", does: "Grid export menu: Listing → Excel / CSV of the visible columns, or Detail Listing (one row per PO line, also the import template)." },
       { label: "View", kind: "row-action", does: "Right-click menu: opens the PO page." },
-      { label: "Edit", kind: "row-action", does: "Right-click menu: opens the PO page (enabled only for DRAFT POs; editing is done on the PO page)." },
+      { label: "Edit", kind: "row-action", does: "Right-click menu: opens the PO page to edit it. Enabled on the same rule as the PO page's Edit button: nothing received yet (no posted GRN) and the PO not CANCELLED / RECEIVED / CLOSED." },
       { label: "Copy as new", kind: "row-action", does: "Right-click menu: opens a new PO pre-filled with this PO's supplier, lines and prices (any status).", permission: "purchase-orders:create" },
       { label: "Print / Preview", kind: "row-action", does: "Right-click menu: generates the PO PDF under the supplier's purchase-company letterhead." },
       { label: "Refresh", kind: "row-action", does: "Right-click menu: reloads suppliers, POs, inventory and supplier bindings." },

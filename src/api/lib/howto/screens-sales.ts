@@ -296,7 +296,7 @@ export const SCREENS: ScreenEntry[] = [
       { label: "Dispatch", kind: "button", does: "Loaded DO: moves it to IN_TRANSIT (out for delivery).", permission: "delivery-orders:update" },
       { label: "Mark Delivered", kind: "button", does: "Loaded or in-transit DO: sets it DELIVERED straight away.", permission: "delivery-orders:update", sideEffects: "Posts cost of goods sold, creates and posts the invoice and emails it to the customer." },
       { label: "Mark documents complete & invoice", kind: "button", does: "Shown when the DO was delivered with issues (\"Delivered with issues — invoice on hold\"): clears the hold and creates the withheld invoice (POST /api/delivery-orders/:id/resolve-incomplete).", permission: "delivery-orders:update", sideEffects: "Creates the invoice and moves the DO and sales order to INVOICED." },
-      { label: "Convert to Invoice", kind: "button", does: "Delivered DO: sets the DO status to INVOICED (PUT /api/delivery-orders/:id). This is a status change only — the invoice itself is normally created automatically when the DO was marked delivered.", permission: "delivery-orders:update" },
+      { label: "Convert to Invoice", kind: "button", does: "Delivered DO with nothing (or not everything) invoiced yet: opens Invoices → New Invoice with this DO already picked; click Create Invoice there (POST /api/invoices). The invoice is normally created automatically when the DO is marked delivered, so this is for a DO whose invoice was voided or never created.", permission: "invoices:create" },
       { label: "Convert to Delivery Return", kind: "button", does: "Delivered / invoiced DO: opens SALES & CUSTOMERS → Delivery Return with this DO pre-selected." },
       { label: "Capture POD", kind: "button", does: "Opens the proof-of-delivery form to add photos / signature (optional; not needed to mark delivered).", permission: "delivery-orders:update" },
       { label: "POD photos PDF", kind: "button", does: "Downloads the captured proof-of-delivery photos as one PDF." },
@@ -369,7 +369,7 @@ export const SCREENS: ScreenEntry[] = [
     ],
     actions: [
       { label: "Import", kind: "button", does: "Opens \"Import invoices from a Detail Listing\": edit invoices in bulk from the exported spreadsheet.", permission: "invoices:update" },
-      { label: "New Invoice", kind: "button", does: "Opens \"Create Invoice from Delivery Order\": pick a DO in \"Select Delivery Order\" and click \"Create Invoice\" (POST /api/invoices). The server only accepts DELIVERED DOs.", permission: "invoices:create", sideEffects: "Creates a DRAFT invoice for the DO's un-invoiced remainder and raises the customer's outstanding." },
+      { label: "New Invoice", kind: "button", does: "Opens \"Create Invoice from Delivery Order\": pick a DO in \"Select Delivery Order\" (only DELIVERED DOs are listed — the same rule the server applies) and click \"Create Invoice\" (POST /api/invoices).", permission: "invoices:create", sideEffects: "Creates a DRAFT invoice for the DO's un-invoiced remainder and raises the customer's outstanding." },
       { label: "Invoices", kind: "tab", does: "Page tab: the invoice list." },
       { label: "AR Aging", kind: "tab", does: "Page tab: \"Accounts Receivable Aging Report\" over the whole table, following the status / customer / date filters." },
       { label: "Draft", kind: "tab", does: "Status tab: invoices not yet posted." },
