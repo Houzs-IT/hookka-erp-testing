@@ -118,6 +118,7 @@ test("the Allow page: ERP login first, access checked, CSRF double-submit on the
   assert.match(mcp, /if \(!csrfCookie \|\| get\("csrf"\) !== csrfCookie\)/);
   assert.match(mcp, /if \(!p\.challenge \|\| p\.method !== "S256"\)/);
   assert.match(mcp, /if \(!cl\.redirectUris\.includes\(p\.redirectUri\) \|\| !validRedirectUri\(p\.redirectUri\)\)/);
+  assert.match(mcp, /if \(!cl\.redirectUris\.every\(validRedirectUri\)\) return err\("invalid_client"/);
   assert.match(mcp, /Your access goes to <b>\$\{esc\(new URL\(p\.redirectUri\)\.host\)\}<\/b>/);
   const login = read("src/pages/login.tsx");
   assert.match(login, /if \(to\.startsWith\("\/api\/mcp\/oauth\/authorize\?"\)\) \{\n\s+window\.location\.assign\(to\);/);

@@ -1658,7 +1658,7 @@ app.put("/:id", async (c) => {
         500,
       );
     }
-    return c.json({ success: true, data: rowToVersion(updated) });
+    return c.json({ success: true, data: (await hideBomCost(c, [rowToVersion(updated)]))[0] });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }

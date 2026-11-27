@@ -283,6 +283,15 @@ test("attachment: bytes and type pass through, a hub failure does not", async (t
   assert.equal((await app.request("/api/it-support/attachments/12")).status, 502);
 });
 
+// R&D 2026-11-27 (Carres #3 sibling): the hub keeps the uploader's declared type.
+test("attachment: an HTML file is served as a download, never inline", async (t) => {
+  fakeHub(t, () => new Response("<script>1</script>", { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": 'inline; filename="x.html"' } }));
+  const res = await appAs("user-aina").request("/api/it-support/attachments/12");
+  assert.equal(res.headers.get("Content-Type"), "application/octet-stream");
+  assert.equal(res.headers.get("Content-Disposition"), 'attachment; filename="x.html"');
+  assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
+});
+
 test("the hub key is read from the environment and appears in no response", async (t) => {
   fakeHub(t, () => json({ error: "nope", echoed: "hub_hk_test-key" }, 500));
   const res = await appAs("user-aina").request("/api/it-support/tickets");

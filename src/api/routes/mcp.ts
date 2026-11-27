@@ -398,7 +398,10 @@ app.post("/oauth/token", async (c) => {
   const err = (error: string, desc: string, status: 400 | 401 = 400) =>
     c.json({ error, error_description: desc }, status, { "Cache-Control": "no-store" });
   const clientId = f.client_id ?? "";
-  if (!clientId || !(await getClient(c.var.DB, clientId))) return err("invalid_client", "Unknown client", 401);
+  const cl = clientId ? await getClient(c.var.DB, clientId) : null;
+  if (!cl) return err("invalid_client", "Unknown client", 401);
+  // A client registered before the redirect allowlist must not keep refreshing tokens it got then.
+  if (!cl.redirectUris.every(validRedirectUri)) return err("invalid_client", "This app's return address is no longer allowed. Remove the connector and add it again.", 401);
 
   let issued: Awaited<ReturnType<typeof issueTokens>> | null = null;
   if (f.grant_type === "authorization_code") {

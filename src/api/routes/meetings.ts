@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { hubFileHeaders } from "../lib/hub-file-headers";
 import type { Env } from "../worker";
 import { hasPermission } from "../lib/rbac";
 import { apiRateLimit } from "../lib/api-rate-limit";
@@ -39,8 +40,6 @@ const LINK_CODE = /^[a-z0-9]{1,8}-[a-f0-9]{6,32}$/;
 const TOKEN = /^[a-f0-9]{64}$/;
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
-// The hub keeps the type the uploader declared; an HTML "attachment" opened inline would run as this site.
-const INLINE_TYPES = ["image/png", "image/jpeg", "application/pdf"];
 export const COMPANY_NAME = "Hookka";
 
 const NOT_CONNECTED = "Meetings is not connected yet. Please tell IT.";
@@ -308,14 +307,7 @@ app.get("/meetings/:id/files/:fid", async (c) => {
   }
   if (res.status === 404) return c.json({ error: "That file could not be found." }, 404);
   if (!res.ok || !res.body) return c.json({ error: UNREACHABLE }, 502);
-  const type = (res.headers.get("Content-Type") ?? "").split(";")[0].trim().toLowerCase();
-  const inline = INLINE_TYPES.includes(type);
-  const headers = new Headers({ "Content-Type": inline ? type : "application/octet-stream", "X-Content-Type-Options": "nosniff" });
-  const disposition = res.headers.get("Content-Disposition");
-  // Not inline: always attachment, keeping the hub's filename parameters.
-  if (inline && disposition) headers.set("Content-Disposition", disposition);
-  else if (!inline) headers.set("Content-Disposition", `attachment${disposition?.replace(/^[^;]*/, "") ?? ""}`);
-  return new Response(res.body, { status: 200, headers });
+  return new Response(res.body, { status: 200, headers: hubFileHeaders(res) });
 });
 
 const MANAGE_ONLY = "You need Manage meeting rooms for that.";

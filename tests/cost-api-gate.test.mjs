@@ -15,6 +15,9 @@ test("/api/products drops costPriceSen unless product-costing or cost-ledger rea
   // Both product reads go through it.
   assert.match(src, /data: await stripSellingPrice\(c, data\)/);
   assert.match(src, /data: \(await stripSellingPrice\(c, \[product\]\)\)\[0\]/);
+  // ...and so do the create / update replies.
+  assert.match(src, /data: \(await stripSellingPrice\(c, \[created\]\)\)\[0\] \}, 201\)/);
+  assert.match(src, /data: \(await stripSellingPrice\(c, \[updated\]\)\)\[0\]/);
 });
 
 test("/api/bom drops labourCost / materialCost / totalCost on both reads without the costing gate", () => {
@@ -23,6 +26,7 @@ test("/api/bom drops labourCost / materialCost / totalCost on both reads without
   assert.match(src, /\{ labourCost: _l, materialCost: _m, totalCost: _t, \.\.\.rest \}/);
   assert.match(src, /const data = await hideBomCost\(c, \(res\.results \?\? \[\]\)\.map\(rowToVersion\)\);/);
   assert.match(src, /data: \(await hideBomCost\(c, \[rowToVersion\(row\)\]\)\)\[0\]/);
+  assert.match(src, /data: \(await hideBomCost\(c, \[rowToVersion\(updated\)\]\)\)\[0\]/);
 });
 
 test("the AI connector loads product-costing:read, so R&D sees costs inside the costing module", () => {

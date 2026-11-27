@@ -846,7 +846,7 @@ app.post("/", async (c) => {
         500,
       );
     }
-    return c.json({ success: true, data: created }, 201);
+    return c.json({ success: true, data: (await stripSellingPrice(c, [created]))[0] }, 201);
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -1271,7 +1271,7 @@ app.put("/:id", async (c) => {
     await c.var.DB.batch(statements);
 
     const updated = await fetchProductWithChildren(c.var.DB, id);
-    return c.json({ success: true, data: updated });
+    return c.json({ success: true, data: (await stripSellingPrice(c, [updated]))[0] });
   } catch {
     return c.json({ success: false, error: "Invalid request body" }, 400);
   }
@@ -1308,7 +1308,7 @@ app.delete("/:id", async (c) => {
     .run();
 
   const updated = await fetchProductWithChildren(c.var.DB, id);
-  return c.json({ success: true, data: updated });
+  return c.json({ success: true, data: (await stripSellingPrice(c, [updated]))[0] });
 });
 
 // ---------------------------------------------------------------------------
