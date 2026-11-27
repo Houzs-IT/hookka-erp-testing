@@ -30,7 +30,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
-import { parseMetresFromName } from "../lib/cnc-cut-list";
+import { parseMetresFromName, stripMetresSuffix } from "../lib/cnc-cut-list";
 import {
   SupabaseStorageNotConfiguredError,
   DEFAULT_BUCKET,
@@ -152,17 +152,21 @@ async function ensureMaterialColumn(db: DbLike): Promise<void> {
   }
   // HK-0036 sofa .plt layouts. One column per ALTER, so the adapter's
   // information_schema pre-check can skip the table lock when it exists.
+  // SELECT_COLS lists both, so a failed ALTER is retried on the next request
+  // instead of being cached as done.
+  let pltOk = true;
   for (const ddl of [
     "ALTER TABLE cnc_templates ADD COLUMN IF NOT EXISTS plt_key TEXT",
     "ALTER TABLE cnc_templates ADD COLUMN IF NOT EXISTS plt_metres DOUBLE PRECISION",
   ]) {
     try {
       await db.prepare(ddl).bind().run();
-    } catch {
-      // already exists / transient — ignore
+    } catch (e) {
+      pltOk = false;
+      console.warn("[cnc-templates] plt column self-apply failed, will retry:", e);
     }
   }
-  materialColEnsured = true;
+  materialColEnsured = pltOk;
 }
 
 // Minimal D1-style prepared-statement contract this route relies on. Avoids
@@ -1031,7 +1035,7 @@ app.post("/import", async (c) => {
     const kind = ext as FileKind;
     // A .plt name ends in "NNMTR" (metres); drop it so the layout lands on the
     // same row as its .dgt/.prj/.emf of that model + size.
-    const plainBase = kind === "plt" ? base.replace(/\s*\d+(?:\.\d+)?\s*MTR\s*$/i, "") || base : base;
+    const plainBase = kind === "plt" ? stripMetresSuffix(base) : base;
     const identity = stripTrailingDgtWord(plainBase);
     const parsed = parseTemplateName(plainBase);
     // Prefer the operator-chosen model over the filename-parsed code, so every

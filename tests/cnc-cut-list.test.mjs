@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 
 const {
   parseMetresFromName,
+  stripMetresSuffix,
   groupCutList,
   exportCutList,
   loadCutBatch,
@@ -37,6 +38,12 @@ test("no trailing NNMTR → blank (null), never a guess", () => {
   assert.equal(parseMetresFromName("46MTR copy.plt"), null);
   assert.equal(parseMetresFromName("MTR.plt"), null);
   assert.equal(parseMetresFromName(""), null);
+});
+
+test("stripping NNMTR lets a sofa .plt join its template row by name", () => {
+  assert.equal(stripMetresSuffix("9999 2S 30' 12MTR"), "9999 2S 30'");
+  assert.equal(stripMetresSuffix("9999 2S 8.5 MTR"), "9999 2S");
+  assert.equal(stripMetresSuffix("9999 2S"), "9999 2S");
 });
 
 // ── 2. grouping ─────────────────────────────────────────────────────────────

@@ -35,6 +35,11 @@ export function parseMetresFromName(name: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** A base name without its trailing "NNMTR"; unchanged when there is none. */
+export function stripMetresSuffix(base: string): string {
+  return base.replace(/\s*\d+(?:\.\d+)?\s*MTR\s*$/i, "").trimEnd() || base;
+}
+
 export type CutRow = {
   jobCardId: string;
   category: string;
@@ -92,7 +97,10 @@ export function groupCutList(rows: CutRow[], layouts: CutLayout[] = []): CutGrou
         : undefined,
     });
   }
-  const catIdx = (c: string) => (CAT_ORDER.indexOf(c) + 4) % 4; // unknown categories last
+  const catIdx = (c: string) => {
+    const i = CAT_ORDER.indexOf(c);
+    return i < 0 ? CAT_ORDER.length : i; // unknown categories last
+  };
   const groups = [...byKey.values()].sort(
     (a, b) =>
       catIdx(a.category) - catIdx(b.category) ||
