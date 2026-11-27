@@ -356,6 +356,18 @@ Not merged, not deployed (coordinator: do NOT merge / deploy).
 Found while reading the code for the guides (NOT fixed, owner to decide): the invoice page's "New Invoice" dialog lists LOADED delivery orders, but the server only accepts DELIVERED ones; the leave screens are switched off "until rollout" (`src/pages/worker/me.tsx`, `src/pages/employees.tsx`), so `apply-leave` tells staff to ask HR; `/invoices/payments` and `/production/fg-scan` are not in the sidebar; the maintenance "Log" date box starts on a fixed old date (2026-04-14). Screen-map pass also found: PO list right-click "Edit" only enables for DRAFT POs but manual POs are saved CONFIRMED; bulk "Convert N to GRN" posts stock in one click with no arrival step; the Purchase Returns subtitle still says stock / Debit Note come "in the next slices" (both built); the /settings "System Information" card shows hard-coded sample numbers; DO detail "Convert to Invoice" only sets status INVOICED (creates no invoice).
 
 
+## 🔵 Six bugs found while writing the how-to guides (owner 2026-11-27 「5个都修」, fix/guide-bugs)
+
+Asks logged from the coordinator's brief, in order. One PR, not merged, not deployed.
+State: all six fixed on the branch (BUG-2026-11-27-591 to -596). Gates: tsc app 0 errors, `npm test` green, eslint 0 errors on touched files. Local UI check with every /api call mocked (nothing reached prod): desktop 1280 and phone 375 — New Invoice lists only the DELIVERED demo DO; `?createFromDo=` pre-picks it, a LOADED one shows the refusal and Create stays disabled; the DO page button lands on that dialog; the bulk GRN confirmation lists POs / lines / quantities and Cancel posts nothing; PO list Edit enabled on CONFIRMED-nothing-received, disabled with a posted GRN; System Information shows users / build / environment from the mocked endpoints. Not seen live: the `/m` "→ GRN" sheet (code + test only). Production count of INVOICED DOs with no live invoice: not run (SQL in the PR).
+1. 🔵 New Invoice dialog lists LOADED DOs but the server only invoices DELIVERED: make the list match the server rule (or the server accept LOADED if that is the business rule — say which and why).
+2. 🔵 Bulk "Convert N to GRN" posts stock in one click: add a confirmation dialog listing each PO, its lines and the quantities that will be received and posted (Cancel / Confirm). Posting flow unchanged.
+3. 🔵 PO list right-click "Edit" almost always disabled (manual POs save CONFIRMED): same rule as the PO detail page, one shared helper.
+4. 🔵 /settings "System Information" shows hard-coded sample numbers: real values from an existing endpoint, or drop them. No invented figures.
+5. 🔵 DO detail "Convert to Invoice" only flips the status: open the real invoice-creation path pre-filled for that DO. Count production DOs that say INVOICED with no live invoice (read-only; no data change).
+6. 🔵 `show_me` returns an SVG image item, which Claude does not accept: return the plain WebP as the image (base64, `image/webp`), the red-box coordinates in the text, keep the 15-minute annotated link (SVG behind the link). Update tests.
+Each: a regression test, a `docs/bugs/` entry, the CODEBASE-MAP entry refreshed.
+
 ## 🔵 Financial Dashboard: Cash Flow and Balance Sheet forecasts (feat/dashboard-cf-bs-forecast, 2026-11-23)
 
 Ask (owner, 23 Nov): 「dashboard那边的balance sheet 和 cash flow 可以显示forecast的相对应数据」, then 「不可以都显示吗？」 (both Cash Flow forecasts, and the months ahead) → 「Build it」.

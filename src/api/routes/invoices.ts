@@ -25,6 +25,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { customerScopeSql } from "../lib/customer-scope";
 import { computeInvoicePrintExtras } from "../lib/invoice-print-extras";
+import { INVOICEABLE_DO_STATUS } from "../../lib/invoiceable-do";
 import { invoiceLineUnitSen } from "../../lib/invoice-line-price";
 // Rollup: S3 won the audit/journal-hash signature change (batched into the
 // invoice txn via buildAuditStatement + buildJournalEntryStatements). S4's
@@ -1837,7 +1838,9 @@ app.post("/", async (c) => {
         404,
       );
     }
-    if (doRow.status !== "DELIVERED") {
+    // The shared rule (src/lib/invoiceable-do.ts) — the New Invoice dialog
+    // lists exactly the DOs this accepts (BUG-2026-11-27-591).
+    if (doRow.status !== INVOICEABLE_DO_STATUS) {
       return c.json(
         {
           success: false,

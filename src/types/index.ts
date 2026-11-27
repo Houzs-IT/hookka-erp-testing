@@ -632,7 +632,7 @@ export type PurchaseOrder = {
   expectedDate: string;
   receivedDate: string | null;
   // Review H2-3 / C2-7: GRNs that received this PO (list GET only).
-  grnRefs?: Array<{ id: string; grnNumber: string; receiveDate: string }>;
+  grnRefs?: Array<{ id: string; grnNumber: string; receiveDate: string; status?: string }>;
   grnNumbers?: string;
   grnDate?: string;
   // Review H2-8: supplier delivery Date 1 + revised 2/3/4 (null = not given).

@@ -13,6 +13,9 @@
 // ===========================================================================
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { buildBulkGrnPlan, bulkGrnItems, type BulkGrnPoInput } from "@/lib/po-bulk-grn";
+import { BulkGrnConfirmBody } from "@/components/procurement/bulk-grn-confirm-body";
 import { isCancelledStatus } from "@/lib/cancelled-doc";
 import { Search, SlidersHorizontal, Plus, ScanLine, FileSearch, ListChecks, X, Download, Check, PackageCheck } from "lucide-react";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
@@ -86,6 +89,7 @@ export function ModuleListScreen({
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const { confirm } = useConfirm();
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -137,35 +141,49 @@ export function ModuleListScreen({
   };
   const bulkCfg = bulkMarkConfig[config.slug];
   /** Procurement-only bulk Convert to GRN. Mirrors desktop pattern in
-   * src/pages/procurement/index.tsx:1186 — for each PO id, fetch the PO,
-   * build full-receipt items from outstanding qty per line, POST /api/grn,
-   * then PUT GRN status=POSTED to fire the cascade. Sequential to avoid
-   * deadlock. */
+   * src/pages/procurement/index.tsx (handleBulkConvertToGRN) — fetch each
+   * selected PO, build ONE plan of the outstanding qty per line, show it for
+   * confirmation (BUG-2026-11-27-592: this used to post stock with no
+   * confirmation at all), then for each PO POST /api/grn and PUT GRN
+   * status=POSTED to fire the cascade. Sequential to avoid deadlock. Nothing
+   * is written before Confirm. */
   async function runBulkConvertToGrn() {
     if (selectedIds.size === 0) return;
     setBulkBusy(true);
     const ids = Array.from(selectedIds);
     let ok = 0, failed = 0;
+    const loaded: BulkGrnPoInput[] = [];
     for (const id of ids) {
       try {
         const poRes = await fetch(`/api/purchase-orders/${encodeURIComponent(id)}`);
         if (!poRes.ok) { failed++; continue; }
-        const poJson = (await poRes.json()) as { data?: { id: string; poNo?: string; items?: { quantity: number; receivedQty?: number }[] } };
+        const poJson = (await poRes.json()) as { data?: BulkGrnPoInput & { items?: BulkGrnPoInput["items"] } };
         const po = poJson.data;
         if (!po?.items) { failed++; continue; }
-        const items = po.items
-          .map((it, idx) => {
-            const outstanding = Math.max(0, it.quantity - (it.receivedQty ?? 0));
-            return outstanding > 0
-              ? { poItemIndex: idx, receivedQty: outstanding, acceptedQty: outstanding, rejectedQty: 0, rejectionReason: null }
-              : null;
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null);
-        if (items.length === 0) { failed++; continue; }
+        loaded.push(po);
+      } catch { failed++; }
+    }
+    const plan = buildBulkGrnPlan(loaded);
+    failed += loaded.length - plan.length; // nothing outstanding
+    if (plan.length === 0) {
+      setBulkBusy(false);
+      setScanToast(`Nothing to receive${failed > 0 ? ` · ${failed} skipped` : ""}`);
+      window.setTimeout(() => setScanToast(null), 3000);
+      return;
+    }
+    const go = await confirm({
+      title: `Receive and post ${plan.length} GRN${plan.length === 1 ? "" : "s"} to stock?`,
+      message: <BulkGrnConfirmBody plan={plan} />,
+      confirmLabel: "Confirm",
+      cancelLabel: "Cancel",
+    });
+    if (!go) { setBulkBusy(false); return; }
+    for (const planned of plan) {
+      try {
         const create = await fetch(`/api/grn`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ poId: po.id, items, receivedBy: "Bulk Convert", notes: `Auto-created from /m bulk Convert (${po.poNo ?? ""})`, qcStatus: "PENDING" }),
+          body: JSON.stringify({ poId: planned.poId, items: bulkGrnItems(planned), receivedBy: "Bulk Convert", notes: `Auto-created from /m bulk Convert (${planned.poNo})`, qcStatus: "PENDING" }),
         });
         const cb = (await create.json().catch(() => ({}))) as { success?: boolean; data?: { id?: string } };
         if (!create.ok || !cb.success || !cb.data?.id) { failed++; continue; }

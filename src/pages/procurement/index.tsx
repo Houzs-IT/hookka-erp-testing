@@ -21,6 +21,9 @@ import { roundUnitPriceSen, lineTotalSen } from "@/lib/unit-price";
 import { useCachedJson, invalidateCachePrefix } from "@/lib/cached-fetch";
 import { fetchAllPages } from "@/lib/fetch-all-pages";
 import type { Supplier, PurchaseOrder, SupplierMaterialBinding, RawMaterial } from "@/types";
+import { isPoEditable, hasReceivingGrn } from "@/lib/po-editable";
+import { buildBulkGrnPlan, bulkGrnItems } from "@/lib/po-bulk-grn";
+import { BulkGrnConfirmBody } from "@/components/procurement/bulk-grn-confirm-body";
 import { useUrlState, useUrlBatch } from "@/lib/use-url-state";
 import { useSessionState } from "@/lib/use-session-state";
 import { matchesCompanyFilter } from "@/lib/company-dimension";
@@ -1261,35 +1264,32 @@ export default function ProcurementPage() {
       toast.error(ineligibleReason);
       return;
     }
-    if (!(await confirm({ title: "Create GRN?", message: `Create GRN for ${selectedPOs.length} PO${selectedPOs.length === 1 ? "" : "s"} and clear In Transit?`, danger: false }))) {
+    // Show every PO, line and quantity that will be received AND posted to
+    // stock before anything is sent (BUG-2026-11-27-592). The same plan
+    // builds the request bodies below, so what is shown is what is posted.
+    const plan = buildBulkGrnPlan(selectedPOs);
+    if (plan.length === 0) return;
+    if (
+      !(await confirm({
+        title: `Receive and post ${plan.length} GRN${plan.length === 1 ? "" : "s"} to stock?`,
+        message: <BulkGrnConfirmBody plan={plan} />,
+        confirmLabel: "Confirm",
+        cancelLabel: "Cancel",
+        danger: false,
+      }))
+    ) {
       return;
     }
     setBulkGrnRunning(true);
     let grnsCreated = 0;
     let itemsReceived = 0;
     try {
-      for (const po of selectedPOs) {
-        // Build full-receipt items from outstanding qty per line. Skip
-        // already-fully-received lines so we don't violate the 110%
-        // over-receipt guard on PARTIAL_RECEIVED top-ups.
-        const items = po.items
-          .map((it, idx) => {
-            const outstanding = Math.max(
-              0,
-              it.quantity - (it.receivedQty || 0),
-            );
-            return outstanding > 0
-              ? {
-                  poItemIndex: idx,
-                  receivedQty: outstanding,
-                  acceptedQty: outstanding,
-                  rejectedQty: 0,
-                  rejectionReason: null,
-                }
-              : null;
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null);
-        if (items.length === 0) continue;
+      for (const planned of plan) {
+        const po = { id: planned.poId, poNo: planned.poNo };
+        // Full receipt of each line's outstanding qty (fully received lines
+        // are already left out, so PARTIAL_RECEIVED top-ups stay inside the
+        // 110% over-receipt guard).
+        const items = bulkGrnItems(planned);
 
         const createRes = await fetch("/api/grn", {
           method: "POST",
@@ -1734,7 +1734,9 @@ export default function ProcurementPage() {
         label: "Edit",
         icon: <Pencil className="h-3.5 w-3.5" />,
         action: () => navigate(`/procurement/${row.id}`),
-        disabled: row.status !== "DRAFT",
+        // Same rule as the PO page's Edit button (BUG-2026-11-27-593): it
+        // used to allow DRAFT only, but manual POs are saved CONFIRMED.
+        disabled: !isPoEditable(row, hasReceivingGrn(row.grnRefs)),
       },
       // Review H2-2 / C2-5: New PO pre-filled from this one (any status).
       {

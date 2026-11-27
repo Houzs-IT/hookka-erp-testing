@@ -413,8 +413,8 @@ export const GUIDES: HowToGuide[] = [
     // src/api/routes/invoices.ts:2451 (base invoices:update), :2502 (post), :2506 (void)
     approvals: "No approval workflow. Posting (DRAFT → SENT) needs invoices:post; voiding needs invoices:void.",
     commonMistakes: [
-      // src/pages/invoices/index.tsx:221 lists LOADED DOs too, but src/api/routes/invoices.ts:1840 refuses anything not DELIVERED
-      { mistake: "Picking a dispatched (LOADED) DO in \"Select Delivery Order\" — the list shows it, but the server refuses it.", fix: "Mark the DO delivered first, then create the invoice." },
+      // src/lib/invoiceable-do.ts — the dialog lists only DELIVERED DOs, the rule POST /api/invoices applies (BUG-2026-11-27-591)
+      { mistake: "Looking for a dispatched (LOADED) DO in \"Select Delivery Order\" — only delivered DOs are listed.", fix: "Mark the DO delivered first, then create the invoice." },
       { mistake: "Creating a second invoice for a DO that was already auto-invoiced on delivery.", fix: "Search the Invoices list by DO No first; the system also refuses a duplicate." },
       { mistake: "Trying to invoice a DO that is only dispatched.", fix: "Mark the DO delivered first (\"Mark Delivered\")." },
       { mistake: "Changing a price after the customer paid.", fix: "Raise a credit note or debit note instead of editing the invoice." },

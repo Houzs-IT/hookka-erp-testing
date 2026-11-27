@@ -4,10 +4,10 @@
 // changed: re-capture screenshots (npm run dev, then npm run help:shots).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, readFileSync } from "node:fs";
 import { HELP_SHOTS, HELP_SHOTS_VIEWPORT } from "../src/api/lib/howto/help-shots.ts";
 import { SCREENS } from "../src/api/lib/mcp-screens.ts";
-import { annotatedSvg, pickShot, realPageLink, TEST_DATA_NOTE } from "../src/api/lib/mcp-show-me.ts";
+import { annotatedSvg, pickShot, realPageLink, showMeContent, TEST_DATA_NOTE } from "../src/api/lib/mcp-show-me.ts";
 import { labelExists } from "./_howto-check.mjs";
 
 const pub = (f) => new URL(`../public${f}`, import.meta.url);
@@ -48,4 +48,38 @@ test("show_me: picks a box by path + label and by guide step; draws a red box", 
   assert.ok("error" in pickShot({ path: "/nope-not-a-page", label: "x" }));
   assert.ok("error" in pickShot({ guide_id: "no-such-guide" }));
   assert.match(TEST_DATA_NOTE, /test data/);
+});
+
+// BUG-2026-11-27-596: Claude does not accept SVG image content. The tool's
+// image item is the plain WebP; the red box goes into the text as coordinates;
+// the annotated SVG stays behind the 15-minute link.
+test("show_me: image item is the plain WebP (never SVG); red-box coordinates and the 15-minute link in the text", () => {
+  if (!HELP_SHOTS.length) return;
+  const s = HELP_SHOTS[0];
+  const pick = pickShot({ path: s.page, label: s.boxes[0].label });
+  assert.ok(!("error" in pick));
+  const content = showMeContent({ webpBase64: "UklGRg==", pick, imageLink: "https://r2.example/show-me.svg?sig=1", realPage: "https://erp.example/x?highlight=y", capturedAt: "2026-11-27" });
+  const images = content.filter((c) => c.type === "image");
+  assert.equal(images.length, 1);
+  assert.equal(images[0].mimeType, "image/webp");
+  assert.equal(images[0].data, "UklGRg==");
+  assert.ok(!content.some((c) => c.type === "image" && /svg/i.test(c.mimeType)), "no SVG image item");
+  const t = JSON.parse(content.find((c) => c.type === "text").text);
+  assert.deepEqual(t.redBox, { x: pick.box.x, y: pick.box.y, width: pick.box.w, height: pick.box.h, screenshotWidth: HELP_SHOTS_VIEWPORT.width, screenshotHeight: HELP_SHOTS_VIEWPORT.height });
+  assert.equal(t.imageLink, "https://r2.example/show-me.svg?sig=1");
+  assert.equal(t.imageLinkExpires, "15 minutes");
+  assert.equal(t.press, pick.box.label);
+  assert.match(t.note, /test data/);
+  // No link → no expiry claim.
+  const noLink = JSON.parse(showMeContent({ webpBase64: "A", pick, imageLink: null, realPage: null, capturedAt: "x" })[1].text);
+  assert.equal(noLink.imageLinkExpires, undefined);
+});
+
+test("show_me route: sends showMeContent, never an image/svg+xml image item", () => {
+  const src = readFileSync(new URL("../src/api/routes/mcp.ts", import.meta.url), "utf8");
+  const block = src.slice(src.indexOf('name === "show_me"'), src.indexOf("HELP_TOOLS.has(name)"));
+  assert.match(block, /showMeContent\(/);
+  assert.doesNotMatch(block, /type: "image"[^}]*svg/);
+  // The SVG is still uploaded behind the link.
+  assert.match(block, /uploadExportAndSign\([^)]*"image\/svg\+xml"/);
 });

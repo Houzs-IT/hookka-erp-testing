@@ -260,6 +260,20 @@ export function doBillingRefusal(
   return null;
 }
 
+/**
+ * PUT /api/delivery-orders/:id with status INVOICED on a DELIVERED DO is a
+ * bare status flip: it creates no invoice (BUG-2026-11-27-595). Allowed only
+ * as a catch-up when live invoices already bill the whole DO; otherwise the
+ * reason to show, pointing at the real path.
+ */
+export function bareInvoicedFlipRefusal(
+  doNo: string,
+  st: DoBillingState,
+): string | null {
+  if (st.fullyInvoiced) return null;
+  return `${doNo} has no invoice for ${st.remainingQty} of its ${st.totalQty} delivered unit(s). Create the invoice (Invoices → New Invoice, or "Convert to Invoice") — changing the status alone does not bill the customer.`;
+}
+
 // ---------------------------------------------------------------------------
 // CONSUME — the draw-down that a new / edited invoice line performs.
 // ---------------------------------------------------------------------------

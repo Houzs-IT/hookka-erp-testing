@@ -5,8 +5,13 @@
 //
 // Screenshots: public/help/shots/*.webp + boxes in ./howto/help-shots.ts,
 // captured by scripts/capture-help-shots.mjs against the local dev server
-// with mocked demo data (no production data, no sign-in). The SVG embeds the
-// screenshot and draws the box, an arrow and a caption.
+// with mocked demo data (no production data, no sign-in).
+//
+// What the tool returns (BUG-2026-11-27-596): the PLAIN WebP screenshot as the
+// image item (Claude does not accept SVG image content; Houzs hit the same
+// and switched), the red-box coordinates in the text so the answer can say
+// where to look, and a 15-minute link to the annotated SVG (the screenshot
+// with the box, an arrow and a caption drawn on it).
 // ---------------------------------------------------------------------------
 import { HELP_SHOTS, HELP_SHOTS_VIEWPORT, type HelpShot, type HelpShotBox } from "./howto/help-shots";
 import { GUIDES, normaliseLabelText, pageLink } from "./mcp-howto";
@@ -91,4 +96,42 @@ export function toBase64(bytes: Uint8Array): string {
 /** The ?highlight= link to the real page for this pick. */
 export function realPageLink(origin: string, pick: ShowMePick): string | null {
   return pageLink(origin, pick.pagePath, pick.box.label);
+}
+
+/** The red box in screenshot pixels, as written into the tool's text. */
+export function redBoxOf(box: HelpShotBox) {
+  const { width, height } = HELP_SHOTS_VIEWPORT;
+  return { x: box.x, y: box.y, width: box.w, height: box.h, screenshotWidth: width, screenshotHeight: height };
+}
+
+/**
+ * The MCP content for a show_me answer: the plain WebP screenshot (base64,
+ * image/webp — never SVG) and one text item with the caption, the button, the
+ * red-box coordinates, the 15-minute annotated link and the live-page link.
+ */
+export function showMeContent(args: {
+  webpBase64: string;
+  pick: ShowMePick;
+  imageLink: string | null;
+  realPage: string | null;
+  capturedAt: string;
+}): Array<{ type: "image"; data: string; mimeType: "image/webp" } | { type: "text"; text: string }> {
+  const { pick, imageLink } = args;
+  return [
+    { type: "image", data: args.webpBase64, mimeType: "image/webp" },
+    {
+      type: "text",
+      text: JSON.stringify({
+        caption: pick.caption,
+        press: pick.box.label,
+        redBox: redBoxOf(pick.box),
+        redBoxNote: `The button to press is inside the red box at x ${pick.box.x}, y ${pick.box.y} (${pick.box.w} × ${pick.box.h} px) on the screenshot. The annotated picture (box, arrow and caption drawn on) is at imageLink.`,
+        imageLink,
+        imageLinkExpires: imageLink ? "15 minutes" : undefined,
+        realPage: args.realPage,
+        note: TEST_DATA_NOTE,
+        capturedAt: args.capturedAt,
+      }),
+    },
+  ];
 }

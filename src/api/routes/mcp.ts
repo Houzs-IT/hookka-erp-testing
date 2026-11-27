@@ -35,7 +35,7 @@ import { MCP_ACTION_HEADER, MCP_INNER_HEADER, armConfirmedAction, mcpInnerSecret
 import { emitAudit } from "../lib/audit";
 import { confirmPending, proposeWrite, WRITE_PERMISSIONS, type ActionDeps, type WriteKind } from "../lib/mcp-write-actions";
 import { explainScreen, whereIs } from "../lib/mcp-screens";
-import { annotatedSvg, pickShot, realPageLink, TEST_DATA_NOTE, toBase64 } from "../lib/mcp-show-me";
+import { annotatedSvg, pickShot, realPageLink, showMeContent, toBase64 } from "../lib/mcp-show-me";
 import { HELP_SHOTS_CAPTURED_AT } from "../lib/howto/help-shots";
 import { explainError, glossary, howTo, moduleOverview, NO_GUIDE_NOTE, onboarding, scrubQuestion } from "../lib/mcp-howto";
 import { needLabel, parseQuickText, QUICK_OUTPUT_SCHEMA, readToolAllowed, STRUCTURED_TOOLS, withLinksAndRm } from "../lib/mcp-visibility";
@@ -453,7 +453,7 @@ Keep replies short: lead with the count and the few lines that matter, give link
 For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
 ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. When the admin switched them on, the same goes for propose_mail_reply (reply to a Mail Center thread — thread_id from daily_brief), propose_note (a note on a purchase order or service case) and propose_po_approval (mark a sent PO Confirmed). Nothing else can be changed: no payments, stock, prices, payroll or deletes.
 If a call says "not available to your role", tell the user they do not have permission for that data.
-HELP ("how do I…", "where is…", "what does X mean", an error message): how_to {question} gives click-by-click steps with ERP links (end-to-end chains such as order to cash or procure to pay come back as one flow); module_overview {module} explains a module; glossary {term} explains a term or abbreviation; explain_error {text} explains an ERP error message (read it off a screenshot if needed); onboarding {role} gives a new starter's first-week reading path. "Where do I open X?": where_is {thing} (sidebar path + a link that outlines the button). "Show me where": show_me {path, label} or {guide_id, step} returns a screenshot of the page with a red box on the button (test data — say so) plus the live-page link. What a screen or button does: explain_screen.
+HELP ("how do I…", "where is…", "what does X mean", an error message): how_to {question} gives click-by-click steps with ERP links (end-to-end chains such as order to cash or procure to pay come back as one flow); module_overview {module} explains a module; glossary {term} explains a term or abbreviation; explain_error {text} explains an ERP error message (read it off a screenshot if needed); onboarding {role} gives a new starter's first-week reading path. "Where do I open X?": where_is {thing} (sidebar path + a link that outlines the button). "Show me where": show_me {path, label} or {guide_id, step} returns a screenshot of the page, where the button is (red-box coordinates; the annotated picture is behind its 15-minute link) (test data — say so) plus the live-page link. What a screen or button does: explain_screen.
 SCREENSHOTS: when the person sends a screenshot or photo of the ERP, read the URL bar (the path after the domain, e.g. /procurement/grn) and the visible button / tab / heading labels, then call explain_screen {path, visible_text: [labels]} — the path if you can read it, the labels either way. Explain the page from its answer, not from guesses; point at buttons by their exact label and give the link. Follow the guide's steps and labels exactly, and if canDo is false tell the person they need to ask their supervisor or admin for the permission. Guides are in English; answer in the person's language.`;
 
 // ── round 4 tool list (owner 2026-11-26) ────────────────────────────────────
@@ -546,7 +546,7 @@ const HOWTO_TOOLS = [
   {
     name: "show_me",
     title: "Show me where to click (screenshot)",
-    description: "A screenshot of the ERP page with a red box and an arrow on the button to press, plus a 15-minute link to the same picture and the live-page link that outlines the button. Give a page path and button label, or a how_to guide id and step number. The screenshot uses test data: names and numbers differ, the layout is the same.",
+    description: "A screenshot of the ERP page (plain WebP) with the red-box coordinates of the button to press, a 15-minute link to the annotated picture (red box, arrow and caption drawn on) and the live-page link that outlines the button. Give a page path and button label, or a how_to guide id and step number. The screenshot uses test data: names and numbers differ, the layout is the same.",
     inputSchema: { type: "object", properties: { path: { type: "string" }, label: { type: "string", description: "The button / tab label" }, guide_id: { type: "string" }, step: { type: "number", description: "Step number in the guide (1-based)" }, company: { type: "string" } }, additionalProperties: false },
     annotations: RO,
   },
@@ -1780,19 +1780,17 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
           note = "shot-missing";
         } else {
           const webp = new Uint8Array(await img.arrayBuffer());
-          const svg = new TextEncoder().encode(annotatedSvg(`data:image/webp;base64,${toBase64(webp)}`, pick.box, pick.caption));
+          const webpBase64 = toBase64(webp);
+          // The annotated SVG lives only behind the 15-minute link: Claude does
+          // not accept SVG image content (BUG-2026-11-27-596).
+          const svg = new TextEncoder().encode(annotatedSvg(`data:image/webp;base64,${webpBase64}`, pick.box, pick.caption));
           let imageLink: string | null = null;
           try {
             imageLink = await uploadExportAndSign(c.env, id.orgId || "hookka", "show-me.svg", svg, "image/svg+xml", ".svg");
           } catch {
             imageLink = null;
           }
-          result = {
-            content: [
-              { type: "image", data: toBase64(svg), mimeType: "image/svg+xml" },
-              { type: "text", text: JSON.stringify({ caption: pick.caption, press: pick.box.label, imageLink, imageLinkExpires: imageLink ? "15 minutes" : undefined, realPage, note: TEST_DATA_NOTE, capturedAt: HELP_SHOTS_CAPTURED_AT }) },
-            ],
-          };
+          result = { content: showMeContent({ webpBase64, pick, imageLink, realPage, capturedAt: HELP_SHOTS_CAPTURED_AT }) };
         }
       }
     } else if (HELP_TOOLS.has(name)) {
