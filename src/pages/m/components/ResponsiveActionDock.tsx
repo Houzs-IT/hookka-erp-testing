@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { useContainerLayout, useResponsiveLayout } from "../lib/responsive-layout";
+import { aboveTabBar } from "../lib/tab-bar";
 
 type Props = {
   children: ReactNode;
@@ -10,7 +11,12 @@ type Props = {
    * working out the split state itself.
    */
   scope?: "content" | "list" | "detail" | "auto";
-  /** Gap above the phone's bottom edge, in px, before the safe-area inset (clears the tab bar). */
+  /**
+   * Gap above the phone's bottom edge, in px, before the safe-area inset,
+   * measured against the old 56px flush tab bar (56 = sitting right on it).
+   * It is re-based onto the floating pill: 56 rests 6px above the pill on
+   * every phone size; larger values keep their extra height.
+   */
   phoneBottom?: number;
   /**
    * Gap above a tablet's bottom edge, in px. 0 (default) sits flush, as the
@@ -47,7 +53,7 @@ export function ResponsiveActionDock({
         right: phone || tabletWidth == null ? 0 : "auto",
         width: tabletWidth,
         bottom: phone
-          ? `calc(${phoneBottom}px + env(safe-area-inset-bottom))`
+          ? aboveTabBar(phoneBottom - 50)
           : tabletBottom > 0
             ? `calc(${tabletBottom}px + env(safe-area-inset-bottom))`
             : 0,

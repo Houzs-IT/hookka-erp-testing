@@ -31,11 +31,12 @@ function dock(shell, props = {}, pane) {
 
 // ---- the dock ---------------------------------------------------------------
 
-test("phone: left/right 0 and the phone gap plus the safe-area inset", () => {
+test("phone: left/right 0 and the gap re-based onto the floating tab bar", () => {
   const html = dock(390, { phoneBottom: 104, zIndex: 80 });
   assert.match(html, /left:0/);
   assert.match(html, /right:0/);
-  assert.ok(html.includes(`bottom:calc(104px + ${SAFE})`), html);
+  // 2026-11-27 floating glass bar: phoneBottom is measured against the old 56px flush bar, so 104 = 54px above the pill top.
+  assert.ok(html.includes("bottom:calc(var(--m-tabbar-top) + 54px)"), html);
   assert.match(html, /z-index:80/);
   assert.match(html, /pointer-events:none/);
 });
@@ -43,7 +44,7 @@ test("phone: left/right 0 and the phone gap plus the safe-area inset", () => {
 test("defaults are unchanged for every existing caller", () => {
   // phoneBottom 56, tablet flush at the bottom, content scope.
   const phone = dock(390);
-  assert.ok(phone.includes(`bottom:calc(56px + ${SAFE})`));
+  assert.ok(phone.includes("bottom:calc(var(--m-tabbar-top) + 6px)"), "phoneBottom 56 rests 6px above the floating pill");
   const tablet = dock(820);
   assert.match(tablet, /bottom:0/);
   assert.doesNotMatch(tablet, /safe-area/);

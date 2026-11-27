@@ -81,9 +81,13 @@ test("header: ⋯ More actions button (shared HeaderMore); the sheets stay close
   assert.ok(html.includes('aria-label="More actions"'));
   assert.ok(!text(html).includes("Download PDF"), "the menu is closed on load");
   assert.ok(detail.includes('import { HeaderMore } from "./procurement/parts";'));
-  // The design's "Sales order PDF" sheet: one row, "Download SO PDF".
-  assert.ok(detail.includes('title="Sales order PDF"'));
+  // The ⋯ "More actions" sheet: "Download SO PDF", plus "Open Service Case" once goods have
+  // shipped (owner 2026-11-27: moved out of the bottom bar, same soActionPlan rule).
+  assert.ok(detail.includes('title="More actions"'));
   assert.ok(detail.includes('{pdfBusy ? "Preparing PDF…" : "Download SO PDF"}'));
+  assert.ok(detail.includes('const canOpenCase = fullPlan.rows.some((r) => r.includes("service-case"));'));
+  assert.ok(detail.includes("{canOpenCase ? ("), "Open Service Case is a ⋯ row, gated by the plan");
+  assert.match(detail, /rows\.map\(\(r\) => r\.filter\(\(k\) => k !== "service-case"\)\)/, "and is not in the bottom bar");
 });
 
 test("Download PDF only lives in the ⋯ menu: no PDF card, no View PDF, a warning sheet for a missing address", () => {

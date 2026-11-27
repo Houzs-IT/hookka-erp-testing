@@ -13,7 +13,7 @@ import { ArrowDownToLine, ArrowUpFromLine, ChevronRight, Search } from "lucide-r
 import { useCachedJson } from "@/lib/cached-fetch";
 import { Sheet } from "../../components";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
-import { M } from "../../theme";
+import { M, aboveTabBar } from "../../theme";
 import { str } from "../../config/helpers";
 import { segmentTrack, segmentButton } from "../../lib/control-styles";
 import {
@@ -201,7 +201,7 @@ export function StockInOutTab({
       <div
         style={{
           position: "sticky",
-          bottom: layout.hasBottomNavigation ? "calc(64px + env(safe-area-inset-bottom))" : 12,
+          bottom: layout.hasBottomNavigation ? aboveTabBar(14) : 12,
           zIndex: 5,
           marginTop: 14,
           padding: "10px 12px",

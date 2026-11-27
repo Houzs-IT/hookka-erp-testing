@@ -24,7 +24,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type Compone
 import { Route, Routes, useLocation } from "react-router-dom";
 import { BottomTabBar, LeftRail, NavDrawer } from "./components";
 import { NavDrawerProvider } from "./lib/nav-drawer";
-import { M, M_FONT, M_MAX_WIDTH } from "./theme";
+import { M, M_FONT, M_MAX_WIDTH, aboveTabBar } from "./theme";
 import MobileMore from "./screens/More";
 import { ComingSoon } from "./screens/ComingSoon";
 import { ModuleListScreen } from "./screens/ModuleListScreen";
@@ -539,7 +539,7 @@ export default function MobileLayout() {
             minWidth: 0,
             minHeight: "100dvh",
             paddingBottom: layout.hasBottomNavigation
-              ? "calc(72px + env(safe-area-inset-bottom))"
+              ? aboveTabBar(22)
               : "calc(24px + env(safe-area-inset-bottom))",
             position: "relative",
             overflowX: "hidden",
