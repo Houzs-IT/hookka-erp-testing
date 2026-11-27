@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-27**: AI Connector round 4b (write actions: Mail Center reply, notes on PO / service case, PO approval, each behind its own default-off switch) + 4c (role-aware tools/list, role prompts, structured output, 60 s cache, links + RM) added (branch `feat/mcp-4bc`, PR open, not merged); nothing else re-checked.
 > **Last verified: 2026-11-26**: AI Connector round 4 (Hookka K1–K12 + company_report) added (branch `feat/mcp-round4`, PR open, not merged); nothing else re-checked.
 > **Last verified: 2026-11-26**: Batch 3 Finance + Receivable phone redesign added (branch `redesign/mobile-finance-receivable-v3`, rebased onto upstream/main `b1ee4d7e0`, committed locally, not pushed; owner approved); nothing else re-checked.
 > **Last verified: 2026-11-26**: AI Connector round 3 (quick answers, daily brief, Excel export, rate limit, speed) added (branch `feat/mcp-round3`, PR open, not merged); nothing else re-checked.

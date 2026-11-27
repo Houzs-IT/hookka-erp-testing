@@ -88,12 +88,12 @@ test("an MCP token is read-only (except a confirmed, allowlisted action) and onl
   assert.doesNotMatch(mcp, /method: "(POST|PUT|PATCH|DELETE)"/);
 });
 
-test("every tool but the four confirmed-action tools is read-only; every call is logged; module gate + redaction run before the reply", () => {
+test("every tool but the confirmed-action tools is read-only; every call is logged; module gate + redaction run before the reply", () => {
   const mcp = read("src/api/routes/mcp.ts");
   const tools = mcp.slice(mcp.indexOf("const TOOLS = ["), mcp.indexOf("];", mcp.indexOf("const TOOLS = [")));
   const names = [...tools.matchAll(/name: "([a-z_]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(names.sort(), ["attendance_today", "cancel_action", "confirm_action", "daily_brief", "deliveries_due", "document_flow", "erp_get", "erp_link", "export_excel", "fetch", "get_pdf", "inventory_summary", "list_endpoints", "list_modules", "material_shortages", "order_backlog", "payables_summary", "production_late", "production_summary", "propose_email", "propose_meeting", "purchasing_summary", "receivables_summary", "sales_summary", "search", "so_overdue", "whoami"]);
-  const actionTools = ["cancel_action", "confirm_action", "propose_email", "propose_meeting"];
+  assert.deepEqual(names.sort(), ["attendance_today", "cancel_action", "confirm_action", "daily_brief", "deliveries_due", "document_flow", "erp_get", "erp_link", "export_excel", "fetch", "get_pdf", "inventory_summary", "list_endpoints", "list_modules", "material_shortages", "order_backlog", "payables_summary", "production_late", "production_summary", "propose_email", "propose_mail_reply", "propose_meeting", "propose_note", "propose_po_approval", "purchasing_summary", "receivables_summary", "sales_summary", "search", "so_overdue", "whoami"]);
+  const actionTools = ["cancel_action", "confirm_action", "propose_email", "propose_meeting", "propose_mail_reply", "propose_note", "propose_po_approval"];
   assert.equal((tools.match(/readOnlyHint: true/g) ?? []).length, names.length - actionTools.length);
   assert.equal((tools.match(/readOnlyHint: false/g) ?? []).length, actionTools.length);
   // Every read — erp_get and the quick answers — goes through readValue.

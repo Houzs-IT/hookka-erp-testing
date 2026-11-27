@@ -337,7 +337,31 @@ export const PROMPTS = [
     description: "Your overdue and due-soon orders, mail waiting for you and approvals waiting for you, with links.",
     arguments: [],
   },
+  // round 4c P2 — one prompt per role (owner 2026-11-26). Each is listed only
+  // when the person can use one of its tools (PROMPT_TOOLS, routes/mcp.ts).
+  { name: "owner_morning_report", title: "Owner morning report", description: "The day at a glance: what is overdue, cash owed both ways, production and the late suppliers.", arguments: [] },
+  { name: "finance_review", title: "Finance review", description: "Receivables, payables and the month's management report against the month before.", arguments: [{ name: "month", description: "YYYY-MM (default last month)", required: false }] },
+  { name: "purchasing_review", title: "Purchasing review", description: "Overdue POs, what is still to be received, late suppliers and raw-material price changes.", arguments: [] },
+  { name: "production_review", title: "Production / factory manager review", description: "Output by department and worker, late production orders, low efficiency and material shortages.", arguments: [{ name: "period", description: "today | week | month (default today)", required: false }] },
+  { name: "warehouse_review", title: "Warehouse review", description: "Low / negative stock, shortages for open orders, deliveries due and delivered-not-invoiced.", arguments: [] },
+  { name: "sales_review", title: "Sales review", description: "Sales this month, overdue sales orders, the order backlog and deliveries due this week.", arguments: [] },
 ];
+
+/** The tools behind each prompt: a prompt is offered only when the person can use one of them (round 4c P1/P2). */
+export const PROMPT_TOOLS: Record<string, string[]> = {
+  monthly_sales_review: ["sales_summary"],
+  production_vs_last_month: ["production_summary"],
+  find_document: ["search"],
+  "daily-brief": ["daily_brief"],
+  owner_morning_report: ["daily_brief", "receivables_summary", "payables_summary", "production_output", "po_overdue"],
+  finance_review: ["receivables_summary", "payables_summary", "company_report"],
+  purchasing_review: ["po_overdue", "supplier_lateness", "raw_material_summary"],
+  production_review: ["production_output", "production_late", "worker_efficiency", "material_shortages"],
+  warehouse_review: ["inventory_summary", "material_shortages", "deliveries_due", "uninvoiced_deliveries"],
+  sales_review: ["sales_summary", "so_overdue", "order_backlog", "deliveries_due"],
+};
+
+const ROLE_PROMPT_TAIL = " If a tool says I don't have access, say so in one line and carry on with the rest. Lead with numbers (RM), give each item's ERP link, keep it short and in plain language.";
 
 /** The message a prompt expands to (prompts/get). Unknown name → null. */
 export function promptText(name: string, a: Record<string, unknown>): string | null {
@@ -351,6 +375,26 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   if (name === "find_document") {
     return `Find "${v("number")}" with search, open the best match with fetch, and summarise it: status, customer, items, amounts and dates. Give the ERP link.`;
+  }
+  if (name === "owner_morning_report") {
+    return "Give me my morning report. Use daily_brief first, then receivables_summary and payables_summary for cash owed both ways, production_output {period: \"today\"} (or yesterday's figures if today has none yet) and po_overdue. Start with what needs a decision today." + ROLE_PROMPT_TAIL;
+  }
+  if (name === "finance_review") {
+    const m = v("month");
+    return `Finance review${m ? ` for ${m}` : ""}: use company_report {period: "month"${m ? `, month: "${m}"` : ""}} for revenue, gross profit, costs, net profit and cash against the month before; receivables_summary for who owes us (oldest first) and delivered-not-invoiced; payables_summary for what we owe and what falls due in 7 days.` + ROLE_PROMPT_TAIL;
+  }
+  if (name === "purchasing_review") {
+    return "Purchasing review: po_overdue (overdue POs and what is still to be received), supplier_lateness (who is late most often) and raw_material_summary {period: \"month\"} (low stock, shortages, supplier price increases)." + ROLE_PROMPT_TAIL;
+  }
+  if (name === "production_review") {
+    const p = ["today", "week", "month"].includes(v("period")) ? v("period") : "today";
+    return `Production review for ${p}: production_output {period: "${p}"} by department and worker against the usual day, production_late for late orders, worker_efficiency {period: "${p === "today" ? "week" : p}"} for the lowest efficiency and labour cost, and material_shortages for what blocks production.` + ROLE_PROMPT_TAIL;
+  }
+  if (name === "warehouse_review") {
+    return "Warehouse review: inventory_summary (negative, below minimum, zero), material_shortages (short for open production orders), deliveries_due {range: \"today\"} and {range: \"week\"}, and uninvoiced_deliveries (delivered but not invoiced, by age)." + ROLE_PROMPT_TAIL;
+  }
+  if (name === "sales_review") {
+    return "Sales review: sales_summary for this month against last month, so_overdue for late sales orders, order_backlog for what is in the pipeline, and deliveries_due {range: \"week\"}." + ROLE_PROMPT_TAIL;
   }
   if (name === "daily-brief") {
     return "What do I need to look at today? Use daily_brief. Start with the most urgent (overdue first), give each item's link, and keep it short, in plain language. If a section says I don't have access, mention it in one line.";
@@ -941,6 +985,7 @@ export function buildDailyBrief(b: BriefInputs) {
       count: waiting.length,
       ...(threads.length >= BRIEF_MAIL_LIMIT ? { countedFrom: `the ${BRIEF_MAIL_LIMIT} most recent open threads` } : {}),
       top: waiting.slice(0, BRIEF_TOP).map((t) => ({
+        threadId: String(t.id ?? ""),
         subject: cut(t.subject),
         from: cut(t.counterpartyName || t.counterpartyEmail, 60),
         assignedToYou: mine(t),

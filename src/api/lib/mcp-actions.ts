@@ -33,7 +33,29 @@ export const ACTION_TTL_MS = 10 * 60 * 1000;
 export const ACTIONS_PER_DAY = 30;
 export const ACTIONS_SWITCH_KEY = "mcp_actions_enabled";
 export const ACTIONS_OFF_MESSAGE = "AI actions are switched off by your admin.";
-export type ActionKind = "meeting" | "email";
+export type ActionKind = "meeting" | "email" | "mail_reply" | "po_note" | "case_note" | "po_approval";
+export const ACTION_KINDS: readonly ActionKind[] = ["meeting", "email", "mail_reply", "po_note", "case_note", "po_approval"];
+
+// ── round 4b: one admin switch per write action (owner 2026-11-26) ──────────
+// Each is OFF until the owner turns it on, and only counts while the main
+// "Allow AI actions" switch is on too (that one stays the master kill switch).
+// kv_config['mcp_action_<name>'] = {"enabled": true|false}.
+export const WRITE_ACTIONS = ["mail_reply", "note", "po_approval"] as const;
+export type WriteAction = (typeof WRITE_ACTIONS)[number];
+export const WRITE_ACTION_LABELS: Record<WriteAction, string> = {
+  mail_reply: "Reply to Mail Center threads",
+  note: "Add notes to purchase orders and service cases",
+  po_approval: "Approve purchase orders",
+};
+/** Which switch a pending action's kind needs (meetings / email only need the main switch). */
+export function switchForKind(kind: ActionKind): WriteAction | null {
+  if (kind === "mail_reply") return "mail_reply";
+  if (kind === "po_note" || kind === "case_note") return "note";
+  if (kind === "po_approval") return "po_approval";
+  return null;
+}
+export const writeSwitchKey = (a: WriteAction): string => `mcp_action_${a}`;
+export const actionOffMessage = (a: WriteAction): string => `"${WRITE_ACTION_LABELS[a]}" is switched off by your admin.`;
 
 const MAX_TITLE = 200;
 const MAX_NOTES = 4000;
@@ -89,10 +111,9 @@ function newId(): string {
   return "mcpa_" + Array.from(a).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The owner's switch (Settings › AI Connector). Off unless explicitly turned on. */
-export async function actionsEnabled(db: Db): Promise<boolean> {
+async function switchOn(db: Db, key: string): Promise<boolean> {
   try {
-    const r = await db.prepare("SELECT value FROM kv_config WHERE key = ?").bind(ACTIONS_SWITCH_KEY).first<Record<string, unknown>>();
+    const r = await db.prepare("SELECT value FROM kv_config WHERE key = ?").bind(key).first<Record<string, unknown>>();
     if (!r) return false;
     const v = JSON.parse(str(r, "value")) as { enabled?: unknown };
     return v?.enabled === true;
@@ -101,14 +122,49 @@ export async function actionsEnabled(db: Db): Promise<boolean> {
   }
 }
 
-export async function setActionsEnabled(db: Db, enabled: boolean, by: string): Promise<void> {
+async function setSwitch(db: Db, key: string, enabled: boolean, by: string): Promise<void> {
   await db
     .prepare(
       `INSERT INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     )
-    .bind(ACTIONS_SWITCH_KEY, JSON.stringify({ enabled, by, at: new Date().toISOString() }), new Date().toISOString())
+    .bind(key, JSON.stringify({ enabled, by, at: new Date().toISOString() }), new Date().toISOString())
     .run();
+}
+
+/** The owner's switch (Settings › AI Connector). Off unless explicitly turned on. */
+export function actionsEnabled(db: Db): Promise<boolean> {
+  return switchOn(db, ACTIONS_SWITCH_KEY);
+}
+
+export function setActionsEnabled(db: Db, enabled: boolean, by: string): Promise<void> {
+  return setSwitch(db, ACTIONS_SWITCH_KEY, enabled, by);
+}
+
+/** One write action's own switch (off unless explicitly on). Does NOT include the main switch. */
+export function writeActionSwitch(db: Db, a: WriteAction): Promise<boolean> {
+  return switchOn(db, writeSwitchKey(a));
+}
+
+export function setWriteActionSwitch(db: Db, a: WriteAction, enabled: boolean, by: string): Promise<void> {
+  return setSwitch(db, writeSwitchKey(a), enabled, by);
+}
+
+/** Every write action's own switch, for the admin page and tools/list. */
+export async function writeActionSwitches(db: Db): Promise<Record<WriteAction, boolean>> {
+  const vals = await Promise.all(WRITE_ACTIONS.map((a) => writeActionSwitch(db, a)));
+  return Object.fromEntries(WRITE_ACTIONS.map((a, i) => [a, vals[i]])) as Record<WriteAction, boolean>;
+}
+
+/**
+ * May an action of this kind run now? The main switch, then (round 4b) the
+ * action's own switch. null = yes; otherwise the plain refusal.
+ */
+export async function kindAllowed(db: Db, kind: ActionKind): Promise<string | null> {
+  if (!(await actionsEnabled(db))) return ACTIONS_OFF_MESSAGE;
+  const sw = switchForKind(kind);
+  if (sw && !(await writeActionSwitch(db, sw))) return actionOffMessage(sw);
+  return null;
 }
 
 export async function createPendingAction(
@@ -167,8 +223,8 @@ export async function consumePendingAction(
     .bind(iso, id, tokenId, userId, iso)
     .first<Record<string, unknown>>();
   if (!r) return null;
-  const kind = str(r, "kind");
-  if (kind !== "meeting" && kind !== "email") return null;
+  const kind = str(r, "kind") as ActionKind;
+  if (!ACTION_KINDS.includes(kind)) return null;
   let payload: unknown = null;
   try {
     payload = JSON.parse(str(r, "payload_json", "payloadJson"));
@@ -176,6 +232,20 @@ export async function consumePendingAction(
     return null;
   }
   return { kind, payload, summary: str(r, "summary") };
+}
+
+/** The kind of a pending action this token + person may still confirm (null if none) — read only, nothing is claimed. */
+export async function peekPendingKind(db: Db, id: string, tokenId: string, userId: string, now = Date.now()): Promise<ActionKind | null> {
+  await ensureActionTables(db);
+  const r = await db
+    .prepare(
+      `SELECT kind FROM mcp_pending_actions
+        WHERE id = ? AND token_id = ? AND user_id = ? AND used_at IS NULL AND cancelled_at IS NULL AND expires_at > ?`,
+    )
+    .bind(id, tokenId, userId, new Date(now).toISOString())
+    .first<Record<string, unknown>>();
+  const kind = r ? (str(r, "kind") as ActionKind) : null;
+  return kind && ACTION_KINDS.includes(kind) ? kind : null;
 }
 
 /** After the action ran: keep the outcome, drop the payload (the email body). */

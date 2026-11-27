@@ -124,9 +124,10 @@ test("owner switch: off unless explicitly on", async () => {
   assert.equal(await actions.actionsEnabled(db), false);
 });
 
-test("write fence: only the two allowlisted routes, only once, only for the armed token / method / path", () => {
+test("write fence: only the allowlisted routes, only once, only for the armed token / method / path", () => {
+  // round 4b added the reply / note / PO-approval routes — tests/mcp-4bc.test.mjs checks the full list.
   assert.deepEqual(
-    inner.ACTION_ALLOWLIST.map((a) => `${a.method} ${a.path}`),
+    inner.ACTION_ALLOWLIST.slice(0, 2).map((a) => `${a.method} ${a.path}`),
     ["POST /api/meetings/meetings", "POST /api/mail-center/compose"],
   );
   const now = 1_000_000;
@@ -342,16 +343,20 @@ test("document_flow: anchor pick, SO refs from any document, the chain in flow o
 
 test("wiring: proposals and confirmations are fenced, logged, and the tools say 'ask first'", () => {
   const mcp = read("src/api/routes/mcp.ts");
-  // confirm_action: switch, daily cap, single-use claim, THEN the inner POST
-  const ca = mcp.slice(mcp.indexOf("async function confirmAction("));
-  const sw = ca.indexOf("if (!(await actionsEnabled(c.var.DB))) return fail(ACTIONS_OFF_MESSAGE, 403);");
+  // confirm_action (round 4b: lib/mcp-write-actions.ts confirmPending): main switch,
+  // daily cap, the action's own switch (peeked), single-use claim, body fence, THEN the write
+  const lib = read("src/api/lib/mcp-write-actions.ts");
+  const ca = lib.slice(lib.indexOf("export async function confirmPending("));
+  const sw = ca.indexOf('const mainOff = await kindAllowed(deps.db, "meeting");');
   const cap = ca.indexOf(">= ACTIONS_PER_DAY");
-  const claim = ca.indexOf("const act = await consumePendingAction(c.var.DB, cid, id.tokenId, id.userId);");
-  const run = ca.indexOf("out = await innerAction(c, id, token, cid, act.kind, act.payload);");
-  assert.ok(sw > 0 && cap > sw && claim > cap && run > claim);
-  // the inner write is armed for exactly the allowlisted route, then sent with both inner headers
-  const ia = mcp.slice(mcp.indexOf("async function innerAction("), mcp.indexOf("async function confirmAction("));
-  assert.match(ia, /const route = allowlistedAction\(kind\);/);
+  const own = ca.indexOf("const off = await kindAllowed(deps.db, peek);");
+  const claim = ca.indexOf("const act = await consumePendingAction(deps.db, cid, deps.tokenId, deps.userId, deps.now?.());");
+  const fence = ca.indexOf("if (!actionBodyAllowed(act.kind, req.body)) {");
+  const run = ca.indexOf("out = await deps.write(cid, { method: req.method, path: req.path, body: req.body });");
+  assert.ok(sw > 0 && cap > sw && own > cap && claim > own && fence > claim && run > fence);
+  assert.match(mcp, /async function confirmAction\([^)]*\): Promise<Step> \{\n\s+const o = await confirmPending\(actionDeps\(c, id, token\), raw\);/);
+  // the inner write is armed for exactly that route, then sent with both inner headers
+  const ia = mcp.slice(mcp.indexOf("async function innerAction("), mcp.indexOf("function actionDeps("));
   assert.match(ia, /armConfirmedAction\(actionId, id\.tokenId, route\.method, route\.path\);/);
   assert.match(ia, /\[MCP_INNER_HEADER\]: mcpInnerSecret\(\),\n\s+\[MCP_ACTION_HEADER\]: actionId,/);
   // propose_*: switch first
