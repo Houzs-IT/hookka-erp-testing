@@ -1175,6 +1175,11 @@ app.route("/api/push", push);
 // the Allow form). Before authMiddleware on purpose; see routes/mcp.ts.
 app.route("/api/mcp", mcp);
 app.route("/.well-known", mcpWellKnown);
+// Round 4d (morning brief + urgent alerts): the 30-minute tick (CRON_SECRET,
+// fired by the agent heartbeat) and the email's unsubscribe link (its random
+// token is the credential). Both do their own auth; see routes/mcp-proactive.ts.
+app.route("/api/internal/mcp-proactive", mcpProactiveInternal);
+app.route("/api/mcp-proactive", mcpProactivePublic);
 
 // Global auth gate for /api/* — skips PUBLIC_PATHS (login/logout/health) and
 // PUBLIC_PREFIXES (worker-auth, worker, fg-units) handled inside the middleware.
@@ -1775,9 +1780,11 @@ import agentConsole from "./routes/agent-console";
 import { BUILD_COMMIT } from "./build-stamp";
 import mcp, { wellKnown as mcpWellKnown, setMcpApp } from "./routes/mcp";
 import mcpAdmin from "./routes/mcp-admin";
+import { internal as mcpProactiveInternal, publicRoutes as mcpProactivePublic, me as mcpProactiveMe } from "./routes/mcp-proactive";
 app.route("/api/agents", agentConsole);
 app.route("/api/org-chart", orgChart);
 app.route("/api/user-permissions", userPermissions);
+app.route("/api/mcp-admin/proactive", mcpProactiveMe);
 app.route("/api/mcp-admin", mcpAdmin);
 
 // Catch-all error handler (Sprint 5). Hono's default behaviour is to surface

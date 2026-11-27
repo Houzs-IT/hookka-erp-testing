@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { useToast } from "@/components/ui/toast";
+import { AiBriefSettings } from "./AiBriefSettings";
 
 type Conn = { tokenId: string; userId: string; name: string; role: string; app: string; connectedAt: string; lastUsedAt: string | null; callsWeek?: number };
 type Call = { at: string; userId: string; name: string; app: string; tool: string; target: string; ok: boolean; status: number; note: string };
@@ -71,6 +72,7 @@ const TOOL_WORDS: Record<string, string> = {
   production_late: "Late production orders",
   attendance_today: "Who is away today",
   daily_brief: "Daily brief",
+  data_gaps: "Data gaps to fill",
 };
 
 /** What the AI looked up, in words. */
@@ -702,6 +704,8 @@ export default function AiConnectorPage() {
       )}
 
       {(me.allowed || me.isSuperAdmin) && <HowTo url={url} />}
+
+      {(me.allowed || me.isSuperAdmin) && <AiBriefSettings />}
 
       {!me.isSuperAdmin && me.allowed && (
         <section className={`${CARD} overflow-hidden`}>

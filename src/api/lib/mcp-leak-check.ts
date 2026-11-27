@@ -109,6 +109,8 @@ export const LEAK_CHECK_TOOLS: { name: string; args: Record<string, unknown>; mo
   { name: "production_lead_time", args: {}, moneyExpected: false },
   { name: "deliveries_due", args: { range: "week" }, moneyExpected: true },
   { name: "company_report", args: {}, moneyExpected: true },
+  // round 4d: counts and names only — any surviving money field is a leak.
+  { name: "data_gaps", args: {}, moneyExpected: false },
 ];
 
 /** The leak check's full run: list endpoints, then the round-4 quick answers. */

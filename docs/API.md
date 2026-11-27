@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 162 mounts, 158 route files in
-`src/api/routes/`, 1194 top-level handler registrations discovered.
+**Counts at generation time:** 165 mounts, 159 route files in
+`src/api/routes/`, 1201 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -59,8 +59,10 @@ offsets pointing past the end of their own file.
 |---|---|---|---|
 | `/api/public/meetings` | `src/api/routes/meetings.ts` | `GET /links/:code` <sub>:376</sub><br>`GET /links/:code/slots` <sub>:384</sub><br>`GET /links/:code/day` <sub>:395</sub><br>`POST /links/:code/book` <sub>:405</sub><br>`GET /bookings/:token` <sub>:417</sub><br>`POST /bookings/:token/cancel` <sub>:425</sub> | **public** (mounted before the gate) |
 | `/api/push` | `src/api/routes/push.ts` | `GET /vapid-public-key` <sub>:107</sub><br>`POST /subscribe` <sub>:120</sub><br>`POST /unsubscribe` <sub>:180</sub><br>`POST /clock-reminder` <sub>:210</sub> | **public** (mounted before the gate) |
-| `/api/mcp` | `src/api/routes/mcp.ts` | `POST /oauth/register` <sub>:218</sub><br>`GET /oauth/authorize` <sub>:306</sub><br>`POST /oauth/approve` <sub>:350</sub><br>`POST /oauth/token` <sub>:381</sub><br>`POST /` <sub>:1986</sub><br>`GET /` <sub>:2021</sub><br>`DELETE /` <sub>:2022</sub> | **public** (mounted before the gate) |
-| `/.well-known` | `src/api/routes/mcp.ts` | `GET /oauth-protected-resource` <sub>:183</sub><br>`GET /oauth-protected-resource/*` <sub>:184</sub><br>`GET /oauth-authorization-server` <sub>:185</sub><br>`GET /oauth-authorization-server/*` <sub>:186</sub> | **public** (mounted before the gate) |
+| `/api/mcp` | `src/api/routes/mcp.ts` | `POST /oauth/register` <sub>:219</sub><br>`GET /oauth/authorize` <sub>:307</sub><br>`POST /oauth/approve` <sub>:351</sub><br>`POST /oauth/token` <sub>:382</sub><br>`POST /` <sub>:2054</sub><br>`GET /` <sub>:2089</sub><br>`DELETE /` <sub>:2090</sub> | **public** (mounted before the gate) |
+| `/.well-known` | `src/api/routes/mcp.ts` | `GET /oauth-protected-resource` <sub>:184</sub><br>`GET /oauth-protected-resource/*` <sub>:185</sub><br>`GET /oauth-authorization-server` <sub>:186</sub><br>`GET /oauth-authorization-server/*` <sub>:187</sub> | **public** (mounted before the gate) |
+| `/api/internal/mcp-proactive` | `src/api/routes/mcp-proactive.ts` | `POST /tick` <sub>:211</sub> | **public** (mounted before the gate) |
+| `/api/mcp-proactive` | `src/api/routes/mcp-proactive.ts` | `GET /unsubscribe` <sub>:264</sub><br>`POST /unsubscribe` <sub>:274</sub> | **public** (mounted before the gate) |
 | `/api/customers` | `src/api/routes/customers.ts` | `GET /` <sub>:344</sub><br>`POST /` <sub>:380</sub><br>`GET /:id` <sub>:493</sub><br>`POST /_backfill-snapshot-names` <sub>:521</sub><br>`PUT /:id` <sub>:544</sub><br>`DELETE /:id` <sub>:828</sub> | gated |
 | `/api/mail-center` | `src/api/routes/mail-center.ts` | `GET /threads` <sub>:1084</sub><br>`GET /threads/:id` <sub>:1192</sub><br>`POST /threads/:id/messages/:mid/acknowledge` <sub>:1329</sub><br>`GET /outbox` <sub>:1429</sub><br>`GET /outbox/:id` <sub>:1525</sub><br>`GET /outbox/:id/attachments/:idx/download` <sub>:1580</sub><br>`GET /addresses` <sub>:1663</sub><br>`GET /labels` <sub>:1745</sub><br>`POST /labels` <sub>:1762</sub><br>`PATCH /labels/:id` <sub>:1817</sub><br>`DELETE /labels/:id` <sub>:1888</sub><br>`POST /test-inject` <sub>:1955</sub><br>`POST /addresses` <sub>:1991</sub><br>`PATCH /addresses/:id` <sub>:2069</sub><br>`GET /access` <sub>:2144</sub><br>`POST /access` <sub>:2170</sub><br>`DELETE /access` <sub>:2208</sub><br>`GET /directory` <sub>:2262</sub><br>`GET /visibility` <sub>:2389</sub><br>`GET /scope-levels` <sub>:2435</sub><br>`PUT /scope-level` <sub>:2464</sub><br>`POST /threads/:id/reply` <sub>:2636</sub><br>`POST /compose` <sub>:2926</sub><br>`PATCH /threads/:id` <sub>:3127</sub> | gated |
 | `/api/datagrid-layouts` | `src/api/routes/datagrid-layouts.ts` | `GET /` <sub>:171</sub><br>`PUT /` <sub>:234</sub><br>`DELETE /` <sub>:320</sub><br>`POST /shared` <sub>:395</sub><br>`PUT /shared/:id` <sub>:487</sub><br>`DELETE /shared/:id` <sub>:552</sub> | gated |
@@ -218,6 +220,7 @@ offsets pointing past the end of their own file.
 | `/api/agents` | `src/api/routes/agent-console.ts` | `GET /status` <sub>:165</sub><br>`GET /review` <sub>:410</sub><br>`POST /run-now` <sub>:562</sub><br>`POST /pause` <sub>:703</sub><br>`POST /kill-all` <sub>:730</sub><br>`POST /gate` <sub>:757</sub><br>`POST /phase` <sub>:787</sub><br>`POST /rollback-last-batch` <sub>:839</sub><br>`GET /config-proposals` <sub>:953</sub><br>`POST /config-proposals/decide` <sub>:983</sub> | gated |
 | `/api/org-chart` | `src/api/routes/org-chart.ts` | `GET /` <sub>:202</sub><br>`POST /auto-wire-production` <sub>:260</sub><br>`PUT /reporting` <sub>:364</sub><br>`PUT /photo` <sub>:435</sub> | gated |
 | `/api/user-permissions` | `src/api/routes/user-permissions.ts` | `GET /catalog` <sub>:64</sub><br>`GET /` <sub>:71</sub><br>`GET /:userId` <sub>:94</sub><br>`PUT /:userId` <sub>:111</sub><br>`DELETE /:userId` <sub>:170</sub> | gated |
+| `/api/mcp-admin/proactive` | `src/api/routes/mcp-proactive.ts` | `GET /me` <sub>:302</sub><br>`PUT /me` <sub>:321</sub><br>`GET /me/preview` <sub>:334</sub><br>`POST /me/test` <sub>:345</sub> | gated |
 | `/api/mcp-admin` | `src/api/routes/mcp-admin.ts` | `GET /me` <sub>:65</sub><br>`POST /me/request` <sub>:106</sub><br>`POST /me/revoke` <sub>:143</sub><br>`GET /admin/overview` <sub>:154</sub><br>`POST /admin/requests/:id/:decision` <sub>:295</sub><br>`POST /admin/access` <sub>:319</sub><br>`DELETE /admin/access/:userId` <sub>:334</sub><br>`POST /admin/revoke` <sub>:345</sub><br>`POST /admin/actions` <sub>:359</sub><br>`POST /admin/write-actions` <sub>:371</sub><br>`POST /admin/leak-check` <sub>:390</sub> | gated |
 
 ---

@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-27**: AI Connector round 4d (D1 morning brief email, D2 urgent alerts, D4 `data_gaps`; D3 is in IT Hub) added (branch `feat/mcp-4d`, PR open, not merged, not deployed, no email sent); nothing else re-checked.
 > **Last verified: 2026-11-27**: Batch 4 3PL Providers + Suppliers + Outsource Work phone redesign added (branch `redesign/mobile-external-operations-v3`, rebased onto upstream/main `70fdb867e`, PR to `main`); nothing else re-checked.
 > **Last verified: 2026-11-27**: AI Connector round 4b (write actions: Mail Center reply, notes on PO / service case, PO approval, each behind its own default-off switch) + 4c (role-aware tools/list, role prompts, structured output, 60 s cache, links + RM) added (branch `feat/mcp-4bc`, PR open, not merged); nothing else re-checked.
 > **Last verified: 2026-11-26**: AI Connector round 4 (Hookka K1–K12 + company_report) added (branch `feat/mcp-round4`, PR open, not merged); nothing else re-checked.

@@ -108,6 +108,7 @@ import {
   type Period,
   type ReportPeriod,
 } from "../lib/mcp-round4";
+import { GAP_SO_SCAN, summariseDataGaps } from "../lib/mcp-proactive";
 import { renderServerPdf, uploadExportAndSign, uploadPdfAndSign, SERVER_PDF_KINDS, XLSX_CONTENT_TYPE, type PdfKind } from "../lib/mcp-pdf";
 import { buildXlsx, EXPORT_LISTS, EXPORT_MAX_ROWS, EXPORT_PAGE_SIZE, exportFileName, exportRows, exportTotal, filterRows, pagesToRead, pickColumns } from "../lib/mcp-export";
 import { AnswerCache, CACHEABLE_TOOLS, countRecentCalls, RATE_LIMIT_STATUS, rateDecision } from "../lib/mcp-limits";
@@ -436,7 +437,7 @@ ANSWER FAST — use a quick answer first, it is one call and already summarised:
 - Who owes us money, and what is delivered but not invoiced: receivables_summary. What we owe suppliers: payables_summary.
 - Purchasing: purchasing_summary {view: "overview" | "overdue" (late POs) | "awaiting" (still to be received) | "suppliers" (who delivers late, {days})}.
 - Which materials are short: material_shortages. Low or negative stock: inventory_summary. Late production orders: production_late.
-- Who is on leave or absent today (HR only): attendance_today. "What do I need to look at today?": daily_brief.
+- Who is on leave or absent today (HR only): attendance_today. "What do I need to look at today?": daily_brief. Missing data to fill in (BOMs, costs, delivery dates, departments, supplier bindings): data_gaps.
 - Round 4: overdue POs / still to receive: po_overdue. Late suppliers: supplier_lateness {period}. Delivered not invoiced (with age): uninvoiced_deliveries. "Do we have stock of X?": stock_check {query}. What a product costs to make: product_cost {product}. Output by department / worker: production_output {period}. Lowest-efficiency workers and departments (+ labour cost): worker_efficiency {period}. Raw-material stock, shortages and price changes: raw_material_summary {period}. Gross profit: gross_profit {period, by: product | customer | invoice}. How long a product takes to make: production_lead_time {product, period}. Delivery schedule incl. next week and overdue: deliveries_due {range: today | week | next_week}. The company management report: company_report {period: month | quarter | year, month}.
 - period (every period tool): today | week | month | last_month | quarter | year, or from + to (YYYY-MM-DD); the answer compares with the period before.
 - A list as an Excel file: export_excel {list, search, status, from, to, fields} (15-minute download link).
@@ -457,6 +458,15 @@ const PERIOD_PROPS = {
   to: { type: "string", description: "YYYY-MM-DD (custom period)" },
 };
 const NO_ARGS = { type: "object", properties: {}, additionalProperties: false };
+const ROUND4D_TOOLS = [
+  {
+    name: "data_gaps",
+    title: "Data gaps to fill (quick answer)",
+    description: "What the ERP is missing, in ONE call: active products without a BOM or selling price, BOMs with no material besides the fabric line, products whose BOM has lines without a price (no full cost), open sales orders without a delivery date, active workers without a department, active suppliers with no material binding. Counts and the first five of each with links. Also sent in the Monday morning brief.",
+    inputSchema: NO_ARGS,
+    annotations: RO,
+  },
+];
 const ROUND4_TOOLS = [
   { name: "po_overdue", title: "Overdue POs and what is still to be received (quick answer)", description: "Open purchase orders past their expected date (supplier, days late, value RM) and everything still waiting to be received (sent, partly received), due this week and by supplier, in ONE call.", inputSchema: NO_ARGS, annotations: RO },
   { name: "supplier_lateness", title: "Which suppliers are late most often (quick answer)", description: "Late deliveries per supplier over a period: POs received after their expected date (count, average days late, on-time %) and open POs past their date, compared with the period before. Default: the last 90 days.", inputSchema: { type: "object", properties: { ...PERIOD_PROPS, days: { type: "number", description: "Instead of period: the last N days (default 90)." } }, additionalProperties: false }, annotations: RO },
@@ -660,6 +670,7 @@ const TOOLS = [
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   ...ROUND4_TOOLS,
+  ...ROUND4D_TOOLS,
   {
     name: "export_excel",
     title: "Export a list to Excel",
@@ -1362,6 +1373,37 @@ async function quickTool(c: Context<Env>, id: McpIdentity, token: string, name: 
     );
   }
 
+  // ── round 4d (owner 2026-11-26): data gaps, also in the Monday brief ─────
+  if (name === "data_gaps") {
+    const reads = await Promise.all([
+      readValue(c, token, "/api/products/setup-incomplete", undefined),
+      readValue(c, token, "/api/product-costing/summary", undefined),
+      readValue(c, token, "/api/sales-orders", { page: 1, limit: GAP_SO_SCAN }),
+      readValue(c, token, "/api/workers", undefined),
+      readValue(c, token, "/api/suppliers", undefined),
+      readValue(c, token, "/api/supplier-materials", undefined),
+    ]);
+    if (reads.every((r) => !r.ok && r.status === 403)) {
+      return fin("data_gaps", { result: text("You don't have access to any of the lists data_gaps checks (products, product costing, sales orders, workers, suppliers).", true), status: 403, note: "no permission" });
+    }
+    const [setup, cost, sos, wk, sup, bind] = reads;
+    return fin(
+      "data_gaps",
+      P.done(
+        summariseDataGaps({
+          today,
+          origin,
+          setupIncomplete: P.opt(setup, "products"),
+          costSummary: P.opt(cost, "product costing"),
+          salesOrders: P.opt(sos, "sales orders"),
+          workers: P.opt(wk, "workers"),
+          suppliers: P.opt(sup, "suppliers"),
+          bindings: P.opt(bind, "supplier material bindings"),
+        }),
+      ),
+    );
+  }
+
   // ── round 4 (owner 2026-11-26) ───────────────────────────────────────────
   const r4 = await round4Tool(c, token, name, args, today, origin, P);
   if (r4) return r4;
@@ -1906,6 +1948,11 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
  * rememberVerified. The token must be a real one issued for that person.
  */
 export async function runToolAs(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return asPerson(c, id, token, () => callTool(c, id, token, name, args));
+}
+
+/** Run `fn` with the person's identity on the context (rbac / tenant / redaction read it), then restore it. */
+async function asPerson<T>(c: Context<Env>, id: McpIdentity, token: string, fn: () => Promise<T>): Promise<T> {
   const ctx = c as unknown as { get: (k: string) => unknown; set: (k: string, v: unknown) => void };
   const saved = { userId: ctx.get("userId"), userRole: ctx.get("userRole"), orgId: ctx.get("orgId") };
   rememberVerified(token, id);
@@ -1913,12 +1960,33 @@ export async function runToolAs(c: Context<Env>, id: McpIdentity, token: string,
   ctx.set("userRole", id.role);
   if (id.orgId) ctx.set("orgId", id.orgId);
   try {
-    return await callTool(c, id, token, name, args);
+    return await fn();
   } finally {
     ctx.set("userId", saved.userId);
     ctx.set("userRole", saved.userRole);
     ctx.set("orgId", saved.orgId);
   }
+}
+
+export type PersonRead = { ok: true; value: unknown } | { ok: false; status: number; message: string };
+
+/**
+ * Round 4d (urgent alerts, routes/mcp-proactive.ts): several reads AS the
+ * person, in parallel, through the SAME readValue path a tool uses — the module
+ * gate, the route's own permission check and makeRedactor all apply. Not a tool
+ * call, so nothing is written to mcp_calls (the alert check runs every 30
+ * minutes; only the emails it sends are logged). One person at a time: the
+ * identity sits on the shared context.
+ */
+export async function readManyAsPerson(c: Context<Env>, id: McpIdentity, token: string, reads: { path: string; query?: Record<string, unknown> }[]): Promise<PersonRead[]> {
+  return asPerson(c, id, token, () =>
+    Promise.all(
+      reads.map(async (r) => {
+        const v = await readValue(c, token, r.path, r.query);
+        return v.ok ? ({ ok: true, value: v.value } as const) : ({ ok: false, status: v.status, message: v.message } as const);
+      }),
+    ),
+  );
 }
 
 async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: RpcReq): Promise<unknown | null> {

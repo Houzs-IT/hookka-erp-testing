@@ -94,6 +94,23 @@ app.post("/heartbeat", async (c) => {
   c.executionCtx.waitUntil(
     sendAiUsageToHubIfDue(db, c.env, new Date()).catch((err) => console.error("[ai-usage-hub] send failed:", err)),
   );
+  // AI Connector round 4d: the morning brief + urgent alerts tick rides this
+  // 30-minute beat on its OWN invocation (a same-origin sub-request, like
+  // run-generate below), so its reads get their own CPU budget and a slow
+  // brief can never starve the agents. Not an agent: the kill switch does not
+  // stop it; people unsubscribe themselves. The tick is idempotent per person
+  // per day, so a double beat (Cron Worker + GitHub fallback) sends nothing twice.
+  c.executionCtx.waitUntil(
+    fetch(new URL("/api/internal/mcp-proactive/tick", c.req.url).toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-cron-secret": expected },
+      body: "{}",
+    })
+      .then((r) => {
+        if (!r.ok) console.warn(`[agents/heartbeat] mcp-proactive tick HTTP ${r.status}`);
+      })
+      .catch((err) => console.error("[agents/heartbeat] mcp-proactive tick failed:", err)),
+  );
   if (await isKillSwitchOn(db)) {
     return c.json({ ok: true, ran: [], skipped: [{ task: "ALL", reason: "kill switch" }] });
   }
