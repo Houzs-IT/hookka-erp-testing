@@ -8,7 +8,7 @@ import { ChevronRight, CircleCheck, Send } from "lucide-react";
 import { M } from "../../theme";
 import { money, resolveStatus, STATUS_MAPS } from "../../config/helpers";
 import {
-  doStatusLabel, fmtShort, m3, n, overdueBadgeDays, plStatusCounts, providerStatusLabel, s, salesOrderNos, setStatusLabel, totalM3, totalQty,
+  doStatusLabel, fmtShort, m3, n, overdueBadgeDays, plStatusCounts, s, salesOrderNos, setStatusLabel, totalM3, totalQty,
   type RawRow,
 } from "../../lib/do-mobile";
 import { CheckBox, FlagPill, Metric, Rail, TilePill } from "./ui";
@@ -254,32 +254,6 @@ export function PlCard({
           </button>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 3PL provider — a GET /api/drivers row. No single rate: pricing is per state
-// (State Rate Card) and per vehicle, so the card shows counts only.
-// ---------------------------------------------------------------------------
-export function ProviderCard({ p, onClick }: { p: RawRow; onClick: () => void }) {
-  const tone: Tone = s(p, "status") === "ACTIVE" ? "success" : "neutral";
-  const states = Array.isArray(p.ratedStates) ? (p.ratedStates as unknown[]).length : null;
-  return (
-    <div role="button" tabIndex={0} onClick={onClick} onKeyDown={onKey(onClick)} style={{ ...cardBase, display: "block", cursor: "pointer", boxShadow: SHADOW_CARD }}>
-      <Rail tone={tone} />
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <TilePill tone={tone} label={providerStatusLabel(s(p, "status"))} />
-        <span style={{ flex: 1 }} />
-        <Chevron />
-      </div>
-      <Title>{s(p, "name") || "—"}</Title>
-      <Sub>{[s(p, "contactPerson"), s(p, "phone")].filter(Boolean).join(" · ") || "—"}</Sub>
-      <MetaRow>
-        <Metric label="STATES" value={states == null ? "—" : String(states)} />
-        <Metric label="VEHICLES" value={p.vehicleCount == null ? "—" : String(n(p, "vehicleCount"))} />
-        <Metric label="DRIVERS" value={p.driverCount == null ? "—" : String(n(p, "driverCount"))} />
-      </MetaRow>
     </div>
   );
 }

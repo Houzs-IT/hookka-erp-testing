@@ -216,6 +216,51 @@ function CustomerDetailRoute() {
   );
 }
 
+// Batch 4 (Claude Design "Suppliers (standalone)"): list + four-tab detail, code-split.
+const SuppliersScreenLazy = lazy(() =>
+  import("./screens/suppliers/SuppliersScreen").then((m) => ({ default: m.SuppliersScreen })),
+);
+const SupplierDetailLazy = lazy(() =>
+  import("./screens/suppliers/SupplierDetailScreen").then((m) => ({ default: m.SupplierDetailScreen })),
+);
+function SuppliersRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <SuppliersScreenLazy />
+    </Suspense>
+  );
+}
+function SupplierDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <SupplierDetailLazy />
+    </Suspense>
+  );
+}
+
+// Batch 4 (Claude Design "3PL Providers (standalone)"): /m/logistics is the provider list
+// (also shown as Delivery's "3PL Providers" tab) and /m/logistics/:id the provider detail.
+const ThreePlScreenLazy = lazy(() =>
+  import("./screens/threepl/ThreePlScreen").then((m) => ({ default: m.ThreePlScreen })),
+);
+const ProviderDetailLazy = lazy(() =>
+  import("./screens/threepl/ProviderDetailScreen").then((m) => ({ default: m.ProviderDetailScreen })),
+);
+function LogisticsRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ThreePlScreenLazy />
+    </Suspense>
+  );
+}
+function LogisticsDetailRoute() {
+  return (
+    <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+      <ProviderDetailLazy />
+    </Suspense>
+  );
+}
+
 function DashboardRoute({ legacy = false }: { legacy?: boolean }) {
   return (
     <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
@@ -258,6 +303,9 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   employees: EmployeesRoute,
   // Claude Design `Customers v3.dc.html` (design-only handoff).
   customers: CustomersRoute,
+  // Batch 4 (Claude Design "Suppliers" / "3PL Providers").
+  suppliers: SuppliersRoute,
+  logistics: LogisticsRoute,
 };
 
 // Modules whose L2 detail is a bespoke screen (v20 alignment) instead of the
@@ -285,6 +333,9 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   customers: CustomerDetailRoute,
   // Service Cases Phase 4 detail (six pages + relationship map + edit sheets).
   servicecases: CaseDetailScreen,
+  // Batch 4 detail pages (Suppliers: Info · Pricing · History · POs; 3PL: provider detail).
+  suppliers: SupplierDetailRoute,
+  logistics: LogisticsDetailRoute,
 };
 
 /** True on /m/<module>/<id>[/…] when that module has a detail screen, i.e. when the split view

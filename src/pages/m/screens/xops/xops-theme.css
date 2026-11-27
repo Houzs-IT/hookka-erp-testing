@@ -1,0 +1,78 @@
+/* ===========================================================================
+ * Batch 4 "external operations" screens (3PL Providers, Suppliers, Outsource
+ * Work): the approved Claude Design prototypes' own colour variables, light +
+ * dark, copied value for value from the prototypes' [data-theme] blocks.
+ *
+ * Scoped to --xo-* names and switched by the same body[data-theme] attribute
+ * the /m shell already sets, so the shared theme files and the generated
+ * dark-theme CSS are not touched. Import once from each module's kit.
+ * ========================================================================= */
+
+body[data-theme="light"],
+body:not([data-theme]) {
+  --xo-page: #ECE7DF;
+  --xo-bg: #FAF8F4;
+  --xo-card: #FFFFFF;
+  --xo-ink: #1F1D1B;
+  --xo-sub: #4D4630;
+  --xo-mut: #6B6358;
+  --xo-ln: #EEE9E4;
+  --xo-chip: #F0ECE9;
+  --xo-tint: #F4EFE6;
+  --xo-br: #6B5C32;
+  --xo-pri: #6B5C32;
+  --xo-prit: #F0EAD8;
+  --xo-ring: rgba(31, 29, 27, .06);
+  --xo-shd: rgba(31, 29, 27, .28);
+  --xo-ok: #4F7C3A;
+  --xo-okb: #EEF3E4;
+  --xo-warn: #9C6F1E;
+  --xo-warnb: #FAEFCB;
+  --xo-neu: #6B7280;
+  --xo-neub: #F5F2ED;
+  --xo-bad: #9A3A2D;
+  --xo-badb: #F9E1DA;      /* Suppliers, Outsource Work */
+  --xo-badb-3pl: #FBE7E3;  /* 3PL Providers */
+  --xo-info: #3E6570;
+  --xo-infob: #E0EDF0;
+  --xo-note: #9C6F1E;
+  --xo-inp: #FFFFFF;
+  --xo-nav: rgba(255, 255, 255, .96);
+  --xo-nav-solid: #FFFFFF; /* Outsource Work */
+  --xo-scrim: rgba(31, 29, 27, .45);
+  --xo-star: #C9A24B;
+}
+
+body[data-theme="dark"] {
+  --xo-page: #0F0E0C;
+  --xo-bg: #171512;
+  --xo-card: #221F1B;
+  --xo-ink: #F3EEE6;
+  --xo-sub: #D2C9B9;
+  --xo-mut: #A39A8A;
+  --xo-ln: #34302A;
+  --xo-chip: #2C2823;
+  --xo-tint: #2E2922;
+  --xo-br: #D9C28A;
+  --xo-pri: #C9A961;
+  --xo-prit: #3A3220;
+  --xo-ring: rgba(255, 255, 255, .08);
+  --xo-shd: rgba(0, 0, 0, .6);
+  --xo-ok: #8FC47A;
+  --xo-okb: #22301C;
+  --xo-warn: #E3BF5E;
+  --xo-warnb: #3A2F14;
+  --xo-neu: #B5AC9C;
+  --xo-neub: #2E2A25;
+  --xo-bad: #F08A78;
+  --xo-badb: #3D1F1A;
+  --xo-badb-3pl: #3D1F1A;
+  --xo-info: #8EC3CF;
+  --xo-infob: #1C2E33;
+  --xo-note: #D9B061;
+  --xo-inp: #1B1916;
+  --xo-nav: rgba(28, 25, 22, .98);
+  --xo-nav-solid: #1C1A17;
+  --xo-scrim: rgba(0, 0, 0, .6);
+  --xo-star: #D9B061;
+}

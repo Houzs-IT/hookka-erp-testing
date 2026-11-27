@@ -1,15 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import { Flashlight, X } from "lucide-react";
 import jsQR from "jsqr";
 
-type ScanMode = "qr" | "barcode";
+export type ScanMode = "qr" | "barcode";
 type ZxingDecoder = (image: ImageData) => string | null;
 
 interface BoundedBarcode {
   rawValue: string;
   format?: string;
   boundingBox?: { x: number; y: number; width: number; height: number };
+}
+
+/**
+ * What a caller-drawn scanner chrome gets (see `renderChrome`). `video` is the
+ * scanner's own <video> element and must be rendered exactly once; `refocus`
+ * is the same tap-to-refocus the default chrome uses (it also calls
+ * `onUserGesture`). Decoding, camera start-up and clean-up stay in here.
+ */
+export interface QrScannerChrome {
+  video: ReactNode;
+  scanMode: ScanMode;
+  setScanMode: (mode: ScanMode) => void;
+  isTorchSupported: boolean;
+  isTorchOn: boolean;
+  toggleTorch: () => void;
+  refocus: () => void;
 }
 
 export interface QrCameraScannerProps {
@@ -19,6 +35,16 @@ export interface QrCameraScannerProps {
   onUserGesture?: () => void;
   statusText?: string;
   isFullScreen?: boolean;
+  /**
+   * Optional (mobile Outsource Work, 2026-11-27): draw the whole scanner chrome
+   * yourself around the scanner's video. Omitted = the default chrome below,
+   * exactly as before (`isFullScreen`, `statusText` and `onClose` apply only to it).
+   */
+  renderChrome?: (chrome: QrScannerChrome) => ReactNode;
+}
+
+function CustomChrome({ render, ...chrome }: QrScannerChrome & { render: (chrome: QrScannerChrome) => ReactNode }): JSX.Element {
+  return <>{render(chrome)}</>;
 }
 
 let zxingDecoder: ZxingDecoder | null = null;
@@ -88,6 +114,7 @@ export function QrCameraScanner({
   onUserGesture,
   statusText,
   isFullScreen = false,
+  renderChrome,
 }: QrCameraScannerProps): JSX.Element {
   const [scanMode, setScanMode] = useState<ScanMode>("qr");
   const [isTorchOn, setIsTorchOn] = useState(false);
@@ -285,6 +312,31 @@ export function QrCameraScanner({
       stopStream();
     };
   }, []);
+
+  if (renderChrome) {
+    return (
+      <CustomChrome
+        render={renderChrome}
+        video={
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000" }}
+          />
+        }
+        scanMode={scanMode}
+        setScanMode={setScanMode}
+        isTorchSupported={isTorchSupported}
+        isTorchOn={isTorchOn}
+        toggleTorch={() => void toggleTorch()}
+        refocus={() => {
+          onUserGesture?.();
+          void refocus();
+        }}
+      />
+    );
+  }
 
   const frameClass = isFullScreen
     ? "fixed inset-0 z-[80] flex flex-col bg-black"
