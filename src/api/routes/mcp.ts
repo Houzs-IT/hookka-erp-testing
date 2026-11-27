@@ -1722,7 +1722,7 @@ async function exportExcel(c: Context<Env>, id: McpIdentity, token: string, args
  * it goes out as `{ text, truncated }` so the schema still holds.
  */
 function structured(name: string, r: ToolResult, origin: string): ToolResult {
-  const raw = r.content[0]?.text ?? "";
+  const raw = r.content.map((x) => ("text" in x ? x.text : "")).join("");
   const q = parseQuickText(raw);
   if (!q) return { ...r, structuredContent: { text: raw, truncated: true } };
   const value = withLinksAndRm(name, q.value, origin);
