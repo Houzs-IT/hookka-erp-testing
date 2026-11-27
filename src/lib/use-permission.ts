@@ -109,6 +109,10 @@ type UsePermissionsResult = {
   home: string;
   /** Experimental dashboard tabs this role is limited to; null means every tab. */
   dashboardTabs: string[] | null;
+  /** The role the server reported with this permission set (the value
+   *  requireSuperAdmin reads); null while unknown. Display gating only —
+   *  the API still refuses whatever the role may not do. */
+  role: string | null;
 };
 
 /**
@@ -150,6 +154,7 @@ export function usePermissions(): UsePermissionsResult {
     loading: loading && !data,
     home,
     dashboardTabs: data?.dashboardTabs ?? null,
+    role: data?.role ?? null,
     hasPermission: (resource: string, action: string) =>
       checkSet(permissions, resource, action),
     /**

@@ -146,6 +146,48 @@ function DeliveryDetailRoute() {
   );
 }
 
+// Final Batch 5 screens, code-split like Delivery. Planning v2 is ported from
+// staging (Schedule · Capacity · Tracker + view-only Lead Times / Proposals; a
+// card opens /m/production/:id, so it has no L2). Inventory, R&D Projects and
+// User Management follow their Claude Design "(standalone)" prototypes.
+const PlanningScreenLazy = lazy(() =>
+  import("./screens/planning/PlanningScreen").then((m) => ({ default: m.PlanningScreen })),
+);
+const InventoryScreenLazy = lazy(() =>
+  import("./screens/inventory/InventoryScreen").then((m) => ({ default: m.InventoryScreen })),
+);
+const InventoryDetailLazy = lazy(() =>
+  import("./screens/inventory/InventoryDetailScreen").then((m) => ({ default: m.InventoryDetailScreen })),
+);
+const RdScreenLazy = lazy(() =>
+  import("./screens/rd/RdScreen").then((m) => ({ default: m.RdScreen })),
+);
+const RdDetailLazy = lazy(() =>
+  import("./screens/rd/RdDetailScreen").then((m) => ({ default: m.RdDetailScreen })),
+);
+const UserMgmtScreenLazy = lazy(() =>
+  import("./screens/usermgmt/UserMgmtScreen").then((m) => ({ default: m.UserMgmtScreen })),
+);
+const AccountDetailLazy = lazy(() =>
+  import("./screens/usermgmt/AccountDetailScreen").then((m) => ({ default: m.AccountDetailScreen })),
+);
+function lazyRoute(Screen: ComponentType): ComponentType {
+  return function Batch5Route() {
+    return (
+      <Suspense fallback={<div style={{ padding: "64px 0", textAlign: "center", color: M.muted, fontSize: 13 }}>Loading…</div>}>
+        <Screen />
+      </Suspense>
+    );
+  };
+}
+const PlanningRoute = lazyRoute(PlanningScreenLazy);
+const InventoryRoute = lazyRoute(InventoryScreenLazy);
+const InventoryDetailRoute = lazyRoute(InventoryDetailLazy);
+const RdRoute = lazyRoute(RdScreenLazy);
+const RdDetailRoute = lazyRoute(RdDetailLazy);
+const UserMgmtRoute = lazyRoute(UserMgmtScreenLazy);
+const AccountDetailRoute = lazyRoute(AccountDetailLazy);
+
 // Procurement core (Orders · Receipts · Invoices) from Claude Design
 // `Procurement.dc.html` (2026-10-21), code-split like Delivery. The detail keeps
 // the old id-prefix dispatch (po- / grn- / pi-), so every /m/procurement/:id
@@ -287,6 +329,11 @@ const CUSTOM_L1: Record<string, ComponentType> = {
   // design v12) — the generic list flattens that signal. Detail route stays
   // generic via productionConfig.detail.
   production: ProductionScreen,
+  // Final Batch 5: Planning v2 (from staging; no L2), Inventory, R&D Projects, User Management.
+  planning: PlanningRoute,
+  inventory: InventoryRoute,
+  rd: RdRoute,
+  usermgmt: UserMgmtRoute,
   // SKU Master | Catalog hub (Products Hub v2) on phone AND tablet; in the
   // tablet split pane it renders one column beside /m/products/:id.
   products: ProductsScreen,
@@ -317,6 +364,10 @@ const CUSTOM_L2: Record<string, ComponentType> = {
   // /m/serviceorders/:id is a LEGACY repair order (SV orders live under /m/serviceorders/sv/:id).
   serviceorders: LegacyOrderDetail,
   production: ProductionDetailScreen,
+  // Final Batch 5 detail pages.
+  inventory: InventoryDetailRoute,
+  rd: RdDetailRoute,
+  usermgmt: AccountDetailRoute,
   "mail-center": MailThreadScreen,
   // Announcements v3 detail (Batch 2); on a tablet it sits beside the list.
   announcements: AnnouncementDetail,

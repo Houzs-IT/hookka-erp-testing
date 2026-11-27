@@ -1,0 +1,41 @@
+/* ==========================================================================
+   Planning v2 screens — the Claude Design `Planning v2.dc.html` palette.
+
+   LIGHT values are the prototype's exact hex; DARK values are the nearest
+   readable equivalents on the /m dark surfaces (the prototype is light-only).
+   Read only by src/pages/m/screens/planning/*. Pills and semantic colours come
+   from the Delivery --dl-* tokens (same design system), so only the extra
+   neutrals are defined here.
+   ========================================================================== */
+body[data-theme="light"],
+body:not([data-theme]) {
+  --pl-cell: #F6F2EB;       /* DEPT DUE / CUSTOMER DD / TARGET END cell */
+  --pl-cell-qty: #F7F1E3;   /* QTY · MIN, HOOKKA DD cell */
+  --pl-chip: #F4EFE6;       /* ref chip */
+  --pl-chip-key: #6B6252;   /* ref chip key */
+  --pl-bar-track: #EFEAE2;  /* pressure bar track */
+  --pl-seg-done: #2D5A54;   /* tracker: department done */
+  --pl-seg-none: #F6F2EB;   /* tracker: not in route */
+  --pl-seg-pending: #E6E0D9;/* tracker: not started */
+  --pl-today: #F7F1E3;      /* today's day tile */
+  --pl-round-btn: #F4EFE6;  /* Today pill / unscheduled button */
+  --pl-note: #FBF7EA;       /* pending-proposals row, help text */
+  --pl-note-icon: #9C6F1E;
+  --pl-ref-line: #C9A961;   /* dashed 100% line */
+}
+
+body[data-theme="dark"] {
+  --pl-cell: #34302A;
+  --pl-cell-qty: #3A352C;
+  --pl-chip: #34302A;
+  --pl-chip-key: #A89F8D;
+  --pl-bar-track: #3A352C;
+  --pl-seg-done: #5FA597;
+  --pl-seg-none: #2F2C26;
+  --pl-seg-pending: #4A443A;
+  --pl-today: #3A352C;
+  --pl-round-btn: #34302A;
+  --pl-note: rgba(201, 169, 97, 0.14);
+  --pl-note-icon: #D9A441;
+  --pl-ref-line: #D9BD7B;
+}

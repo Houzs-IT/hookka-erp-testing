@@ -1336,64 +1336,6 @@ export function recordPaymentSpec(doc: Record<string, unknown>, id: string): For
 }
 
 // ===========================================================================
-// STOCK ADJUSTMENT (Raw Material, REMOVE-ONLY) — POST /api/stock-adjustments
-// { type:"RM", itemId, qtyDelta (negative), unitCostSen:0, reason, notes }.
-// Only negative deltas are exposed on mobile: the backend values a stock-OUT by
-// FIFO on the existing cost layers, so no unit cost is needed (the mobile RM API
-// doesn't return one). Positive "found" adjustments — which WOULD need a cost to
-// value the new stock — stay on desktop. Matches inventory/adjustments.tsx.
-// ===========================================================================
-const ADJUST_REASON_OPTS: SelectOption[] = [
-  { value: "COUNT_CORRECTION", label: "Count correction (reduce)" },
-  { value: "DAMAGED", label: "Damaged" },
-  { value: "WRITE_OFF", label: "Write-off" },
-];
-
-export function stockAdjustmentSpec(doc: Record<string, unknown>, id: string): FormSpec {
-  const balance = n(doc.balanceQty);
-  const uom = s(doc.baseUOM);
-  return {
-    title: "Reduce Stock",
-    submitLabel: "Confirm Adjustment",
-    fields: [
-      { name: "reason", label: "Reason", kind: "select" as const, options: ADJUST_REASON_OPTS, required: true, full: true },
-      {
-        name: "qty",
-        label: `Quantity to remove${uom ? ` (${uom})` : ""}${balance > 0 ? ` — in stock: ${balance}` : ""}`,
-        kind: "number" as const,
-        required: true,
-        full: true,
-      },
-      { name: "notes", label: "Notes", kind: "textarea" as const, full: true },
-    ],
-    initial: { reason: "COUNT_CORRECTION", qty: 0, notes: "" },
-    submit: async (v) => {
-      const qty = n(v.qty);
-      if (qty <= 0) return { ok: false, error: "Enter a quantity to remove." };
-      if (balance > 0 && qty > balance) {
-        return { ok: false, error: `Only ${balance} in stock — can't remove ${qty}.` };
-      }
-      const body = {
-        type: "RM",
-        itemId: id,
-        qtyDelta: -qty, // remove-only
-        unitCostSen: 0, // stock-OUT is FIFO-valued; cost not needed
-        reason: s(v.reason) || "COUNT_CORRECTION",
-        notes: s(v.notes) || null,
-      };
-      const res = await mutateJson("/api/stock-adjustments", "POST", body, {
-        "Idempotency-Key": uuid(),
-      });
-      if (!res.ok) return { ok: false, error: res.error };
-      refreshOne(`/api/raw-materials/${encodeURIComponent(id)}`);
-      refreshList("/api/raw-materials");
-      refreshList("/api/stock-adjustments");
-      return { ok: true };
-    },
-  };
-}
-
-// ===========================================================================
 // 3PL PROVIDER — edit. Wires to PUT /api/drivers/:id (drivers.ts). Design's
 // "Edit provider" pencil. No cascade — a driver/provider is standalone master
 // data. Rates are integer sen (money kind); status ∈ ACTIVE/INACTIVE/ON_LEAVE.
@@ -1449,110 +1391,6 @@ export function editThreePlSpec(doc: Record<string, unknown>, id: string): FormS
       if (!res.ok) return { ok: false, error: res.error };
       refreshOne(`/api/drivers/${encodeURIComponent(id)}`);
       refreshList("/api/drivers");
-      return { ok: true };
-    },
-  };
-}
-
-// ===========================================================================
-// R&D PROJECT — create. Wires to /api/rd-projects POST (rd-projects.ts:383).
-// Required: name + productCategory. Optional: projectType, currentStage,
-// targetLaunchDate, totalBudget.
-// ===========================================================================
-const RD_CATEGORY_OPTS: SelectOption[] = [
-  { value: "BEDFRAME", label: "Bedframe" },
-  { value: "SOFA", label: "Sofa" },
-  { value: "ACCESSORY", label: "Accessory" },
-];
-const RD_STAGE_OPTS: SelectOption[] = [
-  { value: "CONCEPT", label: "Concept" },
-  { value: "DESIGN", label: "Design" },
-  { value: "PROTOTYPE", label: "Prototype" },
-  { value: "TESTING", label: "Testing" },
-  { value: "APPROVED", label: "Approved" },
-  { value: "PRODUCTION_READY", label: "Production Ready" },
-];
-
-export function newRdProjectSpec(): FormSpec {
-  return {
-    title: "New R&D Project",
-    submitLabel: "Create",
-    fields: [
-      { name: "name", label: "Project Name", kind: "text" as const, required: true, full: true },
-      { name: "productCategory", label: "Category", kind: "select" as const, options: RD_CATEGORY_OPTS, required: true, full: true },
-      { name: "currentStage", label: "Current Stage", kind: "select" as const, options: RD_STAGE_OPTS, full: true },
-      { name: "targetLaunchDate", label: "Target Launch Date", kind: "date" as const, full: true },
-      { name: "totalBudget", label: "Total Budget (RM)", kind: "money" as const, full: true },
-      { name: "description", label: "Description", kind: "textarea" as const, full: true },
-    ],
-    initial: {
-      name: "",
-      productCategory: "BEDFRAME",
-      currentStage: "CONCEPT",
-      targetLaunchDate: "",
-      totalBudget: 0,
-      description: "",
-    },
-    submit: async (v) => {
-      const body = {
-        name: s(v.name).trim(),
-        productCategory: s(v.productCategory),
-        description: s(v.description),
-        currentStage: s(v.currentStage) || "CONCEPT",
-        targetLaunchDate: s(v.targetLaunchDate),
-        totalBudget: n(v.totalBudget),
-      };
-      const res = await mutateJson("/api/rd-projects", "POST", body);
-      if (!res.ok) return { ok: false, error: res.error };
-      refreshList("/api/rd-projects");
-      const id = newIdOf(res.body);
-      return {
-        ok: true,
-        navigateTo: id ? `/m/rd/${encodeURIComponent(id)}` : undefined,
-      };
-    },
-  };
-}
-
-// ===========================================================================
-// USER MANAGEMENT — invite. Wires to /api/users/invite POST (users.ts:625).
-// SUPER_ADMIN-only on the backend; FE just opens the form. Body: { email,
-// displayName, role }. Backend generates 72h link.
-// ===========================================================================
-const USER_ROLE_OPTS: SelectOption[] = [
-  { value: "SUPER_ADMIN", label: "Super Admin" },
-  { value: "ADMIN", label: "Admin" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "STAFF", label: "Staff" },
-  { value: "READ_ONLY", label: "Read Only" },
-];
-
-export function inviteUserSpec(): FormSpec {
-  return {
-    title: "Invite User",
-    submitLabel: "Send Invite",
-    fields: [
-      { name: "email", label: "Email", kind: "text" as const, required: true, full: true, placeholder: "name@hookka.com" },
-      { name: "displayName", label: "Display Name", kind: "text" as const, required: true, full: true },
-      { name: "role", label: "Role", kind: "select" as const, options: USER_ROLE_OPTS, required: true, full: true },
-    ],
-    initial: { email: "", displayName: "", role: "STAFF" },
-    validate: (v) => {
-      const e = s(v.email).trim();
-      if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
-        return "Enter a valid email address.";
-      }
-      return null;
-    },
-    submit: async (v) => {
-      const body = {
-        email: s(v.email).trim(),
-        displayName: s(v.displayName).trim(),
-        role: s(v.role) || "STAFF",
-      };
-      const res = await mutateJson("/api/users/invite", "POST", body);
-      if (!res.ok) return { ok: false, error: res.error };
-      refreshList("/api/users");
       return { ok: true };
     },
   };
@@ -1848,10 +1686,6 @@ export function createSpecFor(slug: string): FormSpec | null {
       return newCustomerSpec();
     case "suppliers":
       return newSupplierSpec();
-    case "rd":
-      return newRdProjectSpec();
-    case "usermgmt":
-      return inviteUserSpec();
     case "serviceorders":
       return newServiceOrderSpec();
     default:

@@ -2246,9 +2246,6 @@ const rawMaterialDetail: DetailConfig = {
 
     return lists;
   },
-  // Remove-only stock adjustment (damage / write-off / count-down). Opens the
-  // adjustment form via runCta (inventory slug). Positive "found" stays desktop.
-  primaryCta: () => "Reduce Stock",
 };
 
 const rawMaterialsSource: DataSource = {
@@ -3806,7 +3803,7 @@ const serviceCasesSource: DataSource = {
       title: str(r, "customerName") || "—",
       items: [str(r, "sourceNo") || str(r, "sourceType"), str(r, "rootCauseCategory")].filter(Boolean).join(" · ") || undefined,
       metas: [
-        { label: "Stage", value: str(r, "status") || "—" },
+        { label: "Stage", value: str(r, "currentStage") || "—" },
         { label: "Order", value: firstOrder ? str(firstOrder, "serviceOrderNo") || "—" : "—" },
       ],
       status: resolveStatus(str(r, "status"), SERVICE_CASE_STATUS_MAP),
@@ -4056,208 +4053,17 @@ export const serviceCasesConfig: ModuleConfig = {
 };
 
 // ---------------------------------------------------------------------------
-// USER MANAGEMENT — owner 2026-06-28 design v12 "System" group. Read-only
-// list of system users (publicUser shape from /api/users). Mutations
-// (create / reset-password / role change) stay on the desktop /settings/users
-// page — they're SUPER_ADMIN-only and the mobile detail-edit form isn't
-// built. Tapping a row stays non-tappable for the same reason.
+// USER MANAGEMENT — Final Batch 5: /m/usermgmt is the bespoke screen in
+// src/pages/m/screens/usermgmt (SUPER_ADMIN only, invite-only). The config stays
+// registered for the slug/title (route loop), but carries NO sources and no
+// detail: the generic list / Global Search must never fetch /api/users or
+// /api/users/invites (invite rows carry the raw invite token, which must not
+// reach a URL or persistent storage), and the old invite-token detail route is gone.
 // ---------------------------------------------------------------------------
-// User detail — enables tap-to-open for the per-row admin actions
-// (Reset password / Deactivate / Resend invite / Revoke). Reuses the
-// existing /api/users/:id GET (users.ts) — fields are read from the row.
-const userDetail: DetailConfig = {
-  url: (id) => `/api/users/${encodeURIComponent(id)}`,
-  selectDoc: selectDocData,
-  code: (d) => str(d, "role") || "USER",
-  title: (d) => str(d, "displayName") || str(d, "email") || "—",
-  status: (d) => resolveStatus(
-    read(d, "isActive") === true ? "ACTIVE" : "INACTIVE",
-    PAYMENT_STATUS_MAP,
-  ),
-  fields: [
-    fld("Email", (d) => str(d, "email")),
-    fld("Role", (d) => str(d, "role")),
-    fld("Department", (d) => str(d, "department")),
-    fld("Position", (d) => str(d, "position")),
-    fld("Phone", (d) => str(d, "phone")),
-    fld("Last Login", (d) => dateOnly(d, "lastLoginAt")),
-    fld("Created", (d) => dateOnly(d, "createdAt")),
-  ],
-  // CHANGELOG L: per-row admin actions. Backend already supports each
-  // (users.ts:480 reset-password, :417 DELETE, /invites/:token/resend, etc).
-  extraActions: (_d, id) => [
-    {
-      label: "Reset Password",
-      icon: "package-check",
-      onClick: async () => {
-        if (!window.confirm("Send password reset email to this user?")) return;
-        try {
-          const r = await fetch(`/api/users/${encodeURIComponent(id)}/reset-password`, { method: "POST" });
-          if (r.ok) window.alert("Reset password email sent.");
-          else window.alert("Failed to send reset password email.");
-        } catch {
-          window.alert("Network error.");
-        }
-      },
-    },
-    {
-      label: "Deactivate",
-      icon: "copy",
-      onClick: async () => {
-        if (!window.confirm("Deactivate this user? They will lose access.")) return;
-        try {
-          const r = await fetch(`/api/users/${encodeURIComponent(id)}`, { method: "DELETE" });
-          if (r.ok) window.alert("User deactivated.");
-          else window.alert("Failed to deactivate user.");
-        } catch {
-          window.alert("Network error.");
-        }
-      },
-    },
-  ],
-  hideActionBar: true,
-};
-
-// Pending-invite detail — invites have no single-GET, so (like announcementsDetail)
-// we fetch the invites LIST and find the row by token. Route id is "invite-<token>".
-// Actions map to real endpoints: POST /invites/:token/resend, DELETE /invites/:token.
-const inviteTokenOf = (id: string) => (id ?? "").replace(/^invite-/, "");
-const inviteDetail: DetailConfig = {
-  url: () => "/api/users/invites",
-  selectDoc: (resp, id) => {
-    const token = inviteTokenOf(id);
-    const rows = (resp as { data?: RawRow[] } | null | undefined)?.data;
-    return (Array.isArray(rows) ? rows : []).find((r) => str(r, "token") === token) ?? {};
-  },
-  code: (d) => str(d, "role") || "USER",
-  title: (d) => str(d, "displayName") || str(d, "email") || "—",
-  status: () => resolveStatus("PENDING", PAYMENT_STATUS_MAP),
-  fields: [
-    fld("Email", (d) => str(d, "email")),
-    fld("Role", (d) => str(d, "role")),
-    fld("Invited By", (d) => str(d, "inviterName")),
-    fld("Expires", (d) => dateOnly(d, "expiresAt")),
-  ],
-  extraActions: (_d, id) => {
-    const token = inviteTokenOf(id);
-    return [
-      {
-        label: "Resend Invite",
-        icon: "package-check",
-        onClick: async () => {
-          if (!window.confirm("Resend this invitation email?")) return;
-          try {
-            const r = await fetch(`/api/users/invites/${encodeURIComponent(token)}/resend`, { method: "POST" });
-            window.alert(r.ok ? "Invitation resent." : "Failed to resend invitation.");
-          } catch {
-            window.alert("Network error.");
-          }
-        },
-      },
-      {
-        label: "Revoke Invite",
-        icon: "copy",
-        onClick: async () => {
-          if (!window.confirm("Revoke this invitation? The invite link will stop working.")) return;
-          try {
-            const r = await fetch(`/api/users/invites/${encodeURIComponent(token)}`, { method: "DELETE" });
-            window.alert(r.ok ? "Invitation revoked." : "Failed to revoke invitation.");
-          } catch {
-            window.alert("Network error.");
-          }
-        },
-      },
-    ];
-  },
-  hideActionBar: true,
-};
-
-/** Dispatch the usermgmt detail by route id — "invite-…" → pending invite. */
-function pickUserDetail(id: string): DetailConfig {
-  return id.startsWith("invite-") ? inviteDetail : userDetail;
-}
-const userDetailDispatcher: DetailConfig = {
-  url: (id) => pickUserDetail(id).url(id),
-  selectDoc: (resp, id) => pickUserDetail(id).selectDoc(resp, id),
-  resolve: (_doc, id) => pickUserDetail(id),
-  code: (d) => str(d, "role") || "USER",
-  title: (d) => str(d, "displayName") || str(d, "email") || "—",
-  fields: [],
-};
-
 export const usermgmtConfig: ModuleConfig = {
   slug: "usermgmt",
   title: "User Management",
-  // Members → /m/usermgmt/<userId> (user detail). Pending-invite rows carry a
-  // `token` (no user record) → /m/usermgmt/invite-<token> (invite detail with
-  // Resend / Revoke). The dispatcher picks the right sub-config by id prefix.
-  detailPath: (vm, row) =>
-    read(row, "token")
-      ? `/m/usermgmt/invite-${encodeURIComponent(str(row, "token"))}`
-      : `/m/usermgmt/${encodeURIComponent(vm.id)}`,
-  detail: userDetailDispatcher,
-  sources: [
-    {
-      url: "/api/users",
-      select: selectData,
-      // dc13 (line ~1880): code · name · email · [Role · Last seen]
-      toVM: (r): RowVM => ({
-        id: str(r, "id"),
-        code: str(r, "role") || "USER",
-        title: str(r, "displayName") || str(r, "email") || "—",
-        items: str(r, "email") || undefined,
-        metas: [
-          { label: "Role", value: str(r, "role") || "—" },
-          { label: "Last seen", value: shortDate(dateOnly(r, "lastLoginAt", "createdAt")) || "—" },
-        ],
-        status: resolveStatus(
-          read(r, "isActive") === true ? "ACTIVE" : "INACTIVE",
-          PAYMENT_STATUS_MAP,
-        ),
-      }),
-      columns: [
-        textCol("displayName", "Customer", (r) => str(r, "displayName")),
-        textCol("email", "Reference", (r) => str(r, "email")),
-        textCol("role", "State", (r) => str(r, "role")),
-        textCol("department", "Reference", (r) => str(r, "department")),
-        dateCol("lastLoginAt", "Order Date", (r) =>
-          dateOnly(r, "lastLoginAt", "createdAt"),
-        ),
-        enumCol(
-          "status",
-          "Status",
-          (r) => (read(r, "isActive") === true ? "ACTIVE" : "INACTIVE"),
-          ["ACTIVE", "INACTIVE"],
-        ),
-      ],
-      defaultSort: { key: "displayName", dir: "asc" },
-      subTabs: [{ key: "members", label: "Members", match: () => true }],
-    },
-    // Pending Invites — un-accepted, un-expired invitations (separate table via
-    // GET /api/users/invites). Rows are non-navigable (no user record yet).
-    {
-      url: "/api/users/invites",
-      select: selectData,
-      toVM: (r): RowVM => ({
-        id: str(r, "token"),
-        code: str(r, "role") || "USER",
-        title: str(r, "displayName") || str(r, "email") || "—",
-        items: str(r, "email") || undefined,
-        metas: [
-          { label: "Invited by", value: str(r, "inviterName") || "—" },
-          { label: "Expires", value: shortDate(dateOnly(r, "expiresAt")) || "—" },
-        ],
-        status: resolveStatus("PENDING", PAYMENT_STATUS_MAP),
-      }),
-      columns: [
-        textCol("email", "Reference", (r) => str(r, "email")),
-        textCol("displayName", "Customer", (r) => str(r, "displayName")),
-        textCol("role", "State", (r) => str(r, "role")),
-      ],
-      defaultSort: { key: "email", dir: "asc" },
-      subTabs: [{ key: "pending", label: "Pending Invites", match: () => true }],
-    },
-  ],
+  sources: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -4483,11 +4289,11 @@ const rdSource: DataSource = {
     id: str(r, "id"),
     code: str(r, "code") || "—",
     title: str(r, "name") || "—",
-    items: [str(r, "projectType"), str(r, "leadName") || str(r, "leadId")].filter(Boolean).join(" · ") || undefined,
+    items: str(r, "projectType") || undefined,
     metas: [
       { label: "Stage", value: str(r, "status") || "—" },
-      { label: "Budget", value: money(num(r, "budgetSen")) },
-      { label: "Launch", value: shortDate(dateOnly(r, "targetCompleteAt")) || "—" },
+      { label: "Budget", value: money(num(r, "totalBudget")) },
+      { label: "Launch", value: shortDate(dateOnly(r, "targetLaunchDate")) || "—" },
     ],
     status: resolveStatus(str(r, "status"), PAYMENT_STATUS_MAP),
   }),
@@ -4495,139 +4301,19 @@ const rdSource: DataSource = {
     textCol("code", "Reference", (r) => str(r, "code")),
     textCol("name", "Customer", (r) => str(r, "name")),
     textCol("projectType", "State", (r) => str(r, "projectType")),
-    numCol("budget", "Amount", (r) => num(r, "budgetSen")),
+    numCol("budget", "Budget", (r) => num(r, "totalBudget")),
     dateCol("createdAt", "Order Date", (r) => dateOnly(r, "createdAt")),
     enumCol("status", "Status", (r) => str(r, "status"), RD_STATUSES),
   ],
   defaultSort: { key: "createdAt", dir: "desc" },
-  // v17 (line ~1907): [All, Drafts, Projects, Pipeline, Completed]
-  subTabs: [
-    { key: "all", label: "All", match: () => true },
-    { key: "draft", label: "Drafts", match: (r) => str(r, "status") === "DRAFT" },
-    { key: "active", label: "Projects", match: (r) => ["ACTIVE", "PROTOTYPING", "COSTING", "DESIGN"].includes(str(r, "status")) },
-    { key: "pipeline", label: "Pipeline", match: (r) => ["PIPELINE", "ON_HOLD", "CONCEPT", "AT_RISK"].includes(str(r, "status")) },
-    { key: "done", label: "Completed", match: (r) => ["COMPLETED", "LAUNCHED"].includes(str(r, "status")) },
-  ],
-};
-
-const rdDetail: DetailConfig = {
-  url: (id) => `/api/rd-projects/${encodeURIComponent(id)}`,
-  selectDoc: selectDocData,
-  code: (d) => str(d, "code") || "—",
-  title: (d) => str(d, "name") || "—",
-  status: (d) => resolveStatus(str(d, "status"), PAYMENT_STATUS_MAP),
-  // CHANGELOG I.2 Stage Timeline — the 6-stage R&D lifecycle matches the
-  // milestone array the backend writes at create time (rd-projects.ts:405).
-  flow: {
-    steps: flowSteps(["CONCEPT", "DESIGN", "PROTOTYPE", "TESTING", "APPROVED", "PRODUCTION_READY"]),
-    current: (d) => str(d, "currentStage", "status"),
-  },
-  fields: [
-    fld("Code", (d) => str(d, "code")),
-    fld("Category", (d) => str(d, "productCategory")),
-    fld("Project Type", (d) => str(d, "projectType")),
-    fld("Current Stage", (d) => str(d, "currentStage")),
-    fld("Target Launch", (d) => dateOnly(d, "targetLaunchDate")),
-    fld("Total Budget", (d) => money(num(d, "totalBudget"))),
-    fld("Actual Cost", (d) => money(num(d, "actualCost"))),
-    fld("Labour Cost (logged)", (d) => {
-      const lc = d.labourCost as { totalSen?: number } | undefined;
-      return money(num(lc ?? {}, "totalSen") || num(d, "manualLabourCostSen"));
-    }),
-    fld("Target Sell Price", (d) => money(num(d, "targetSellingPriceSen"))),
-    fld("Target Material Cost", (d) => money(num(d, "targetMaterialCostSen"))),
-    // CHANGELOG I.2: Clone Source block
-    fld("Clone Source", (d) => str(d, "sourceProductName")),
-    fld("Source Brand", (d) => str(d, "sourceBrand")),
-    fld("Source Price", (d) => money(num(d, "sourcePriceSen"))),
-    fld("Started", (d) => dateOnly(d, "createdDate", "startedAt")),
-    fld("Description", (d) => str(d, "description"), true),
-  ],
-  extraFetches: {
-    a: {
-      key: "issuances",
-      url: (id) => `/api/rd-projects/${encodeURIComponent(id)}/issuances`,
-    },
-  },
-  // CHANGELOG I.2 sub-sections: Milestones · Prototypes (per-dept) ·
-  // Material Issuance · Labour Logs. Each rendered as a sub-doc list.
-  subDocLists: (d, _resp, extras) => {
-    const lists: SubDocList[] = [];
-
-    const milestones = asArr(d.milestones);
-    if (milestones.length > 0) {
-      lists.push({
-        title: `Milestones · ${milestones.length}`,
-        rows: milestones.slice(0, 20).map((m, i) => {
-          const stage = str(m, "stage");
-          const done = !!str(m, "actualDate");
-          return {
-            id: stage || String(i),
-            title: stage || "Milestone",
-            subLine: done ? `Done ${shortDate(dateOnly(m, "actualDate"))}` : `Target ${shortDate(dateOnly(m, "targetDate"))}`,
-            trailing: done ? "✓" : undefined,
-            icon: "file-text" as const,
-          };
-        }),
-      });
-    }
-
-    const protos = asArr(d.prototypes);
-    if (protos.length > 0) {
-      lists.push({
-        title: `Prototypes · ${protos.length}`,
-        rows: protos.slice(0, 30).map((p) => ({
-          id: str(p, "id"),
-          title: str(p, "prototypeType") || `v${str(p, "version") || "1"}`,
-          subLine: [str(p, "description"), shortDate(dateOnly(p, "createdDate"))].filter(Boolean).join(" · ") || undefined,
-          trailing: num(p, "labourHours") > 0 ? `${num(p, "labourHours").toFixed(1)}h` : undefined,
-          icon: "package" as const,
-        })),
-      });
-    }
-
-    const issuancesResp = extras?.issuances as
-      | { data?: { id: string; materialCode?: string; materialName?: string; qty?: number; cost?: number; issuedAt?: string }[] }
-      | undefined;
-    const issuances = issuancesResp?.data ?? [];
-    if (issuances.length > 0) {
-      lists.push({
-        title: `Material Issuance · ${issuances.length}`,
-        rows: issuances.slice(0, 30).map((m) => ({
-          id: m.id,
-          title: m.materialName || m.materialCode || "Material",
-          subLine: [m.materialCode, shortDate(m.issuedAt || "")].filter(Boolean).join(" · ") || undefined,
-          trailing: `${m.qty || 0} · ${money((m.cost || 0))}`,
-          icon: "package" as const,
-        })),
-      });
-    }
-
-    const labourLogs = asArr(d.labourLogs);
-    if (labourLogs.length > 0) {
-      lists.push({
-        title: `Labour Hours · ${labourLogs.length}`,
-        rows: labourLogs.slice(0, 30).map((l, i) => ({
-          id: str(l, "id") || String(i),
-          title: str(l, "workerName", "worker") || "Worker",
-          subLine: [str(l, "stage"), shortDate(dateOnly(l, "date", "loggedAt"))].filter(Boolean).join(" · ") || undefined,
-          trailing: `${num(l, "hours").toFixed(1)}h`,
-          icon: "file-text" as const,
-        })),
-      });
-    }
-
-    return lists;
-  },
-  attachmentsResource: (id) => ({ type: "RD_PROJECT", id }),
-  hideActionBar: true,
+  // Kept for Global Search only (/m/rd is the bespoke screen in screens/rd).
+  subTabs: [{ key: "all", label: "All", match: () => true }],
 };
 
 export const rdConfig: ModuleConfig = {
   slug: "rd",
   title: "R&D Projects",
   detailPath: (vm) => `/m/rd/${encodeURIComponent(vm.id)}`,
-  detail: rdDetail,
   sources: [rdSource],
 };
 

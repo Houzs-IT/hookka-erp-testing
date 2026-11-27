@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-27**: Final Batch 5 Planning + Inventory + R&D Projects + User Management phone redesign added (branch `redesign/mobile-final-modules-v3`, PR to `main`); nothing else re-checked.
 > **Last verified: 2026-11-27**: AI Connector round 4d (D1 morning brief email, D2 urgent alerts, D4 `data_gaps`; D3 is in IT Hub) added (branch `feat/mcp-4d`, PR open, not merged, not deployed, no email sent); nothing else re-checked.
 > **Last verified: 2026-11-27**: Batch 4 3PL Providers + Suppliers + Outsource Work phone redesign added (branch `redesign/mobile-external-operations-v3`, rebased onto upstream/main `70fdb867e`, PR to `main`); nothing else re-checked.
 > **Last verified: 2026-11-27**: AI Connector round 4b (write actions: Mail Center reply, notes on PO / service case, PO approval, each behind its own default-off switch) + 4c (role-aware tools/list, role prompts, structured output, 60 s cache, links + RM) added (branch `feat/mcp-4bc`, PR open, not merged); nothing else re-checked.
@@ -425,6 +426,39 @@ Owner: 17.4d backlog mixes Nov / Dec / Jan orders; wants the split by customer d
 
 ## ✅ Worker app locks the day AFTER the last working day (#1535, 2026-11-21)
 Owner 2026-11-21: "等到最后上班日之后才锁". A RESIGNED / INACTIVE worker keeps the worker app up to and including `resignedAt`; from the next day every worker-token request is refused. Was: locked + tokens purged the moment the status changed. Live 2026-11-21 after deploy: a leaver whose last day has passed (EMP-012, last day 2026-04-30) is refused at sign-in (403 "Employee account inactive"); an ACTIVE worker still reaches the PIN check; worker routes with an unknown token answer 401 (the new joined token query runs, no 500). UNTESTED live: a real phone token after the change (no worker traffic on Saturday evening) — check Monday.
+
+## 🔵 Final Batch 5: Planning + Inventory + R&D Projects + User Management phone redesign (redesign/mobile-final-modules-v3, upstream/main, 2026-11-27)
+The final mobile redesign batch; it replaces the planned Batch 6. The owner approved:
+- the combined plan;
+- decisions S-1/S-2, P-1, I-1–I-5, R-1–R-5 and U-1–U-4 (invite-only User Management; 12-working-day mobile capacity with desktop and dashboard unchanged; no money in Inventory; R&D reads stay open; the backend token fix kept separate);
+- the three Claude Design prototypes (Inventory, R&D Projects, User Management standalone), with Planning reused from staging;
+- the final UI on 2026-11-27.
+
+No API, database, permission-policy, calculation or desktop change.
+- [x] 1. Planning: staging Planning v2 (`7e9ed1743`) ported selectively. Changes: 12-working-day capacity constant pinned to the dashboard's `CAPACITY_WORKING_DAYS`; Malaysia time; 44 px targets; tablet grid; "No access" states. Menu `navGate` `/planning`.
+- [x] 2. Inventory:
+  - Five tabs plus FG / WIP / RM detail, fabric and adjustment sheets.
+  - Reduce Stock: in-flight lock, one key per intent, re-read when the outcome is uncertain.
+  - No money. Corrected sources, and RM suppliers by code. The old generic Reduce Stock form is removed.
+- [x] 3. R&D Projects: list (6 tabs) and full workspace. Desktop lifecycle with Advance re-read and `verifiedSave`; create, prototypes, hours, milestone photos and files. No Edit, issuance, labour delete or margin.
+- [x] 4. User Management:
+  - Super Admin only (`superAdminOnly` + `withRoleGates`); invite-only; Disable / Enable.
+  - Invite tokens never in a URL, storage, log or Global Search.
+  - `usePermissions()` returns `role` (additive).
+- [x] 5. Shared: MobileLayout routes; nav gates. Old config / form specs removed (usermgmt detail + invite form, `rdDetail` + `newRdProjectSpec`, `stockAdjustmentSpec`). Guard tests: floating-layer `rd/rd-kit.tsx`, record-load-failure-class for both new detail pages, `pass2-reliability` C1-7 now checks the new Reduce Stock sheet.
+- Verified 2026-11-27, local only, in-page mock API (no production read or write by the app):
+  - app typecheck exit 0; eslint clean on changed files; `npm run build` OK;
+  - `npm test`: 9599 tests, 1 guard failure (C1-7) fixed and re-run;
+  - full / staff / view-only / no-access scenarios; phone and tablet, light and dark;
+  - no real `/api` address reached; no invite-token leak.
+
+  Not yet: the foldable width for every screen, real file / photo upload, and a real-data run.
+- **Follow-ups (not in this PR):**
+  - **URGENT:** `docs/bugs/BUG-2026-11-27-563.md`. The invite list returns tokens to `users:read` holders.
+  - `docs/bugs/BUG-2026-11-27-564.md`: stock-adjustment idempotency gaps and adjuster attribution.
+  - Desktop Planning capacity is still 7 days (owner decision).
+  - Inventory / R&D read endpoints are login-only, and `GET /api/inventory` has no organisation filter (RBAC remediation).
+  - The four dead `planningConfig` sources can be retired (`dept-perf-summary-projection` count 3 → 1).
 
 ## 🔵 Batch 4: 3PL Providers + Suppliers + Outsource Work phone redesign (redesign/mobile-external-operations-v3, rebased onto upstream/main 70fdb867e, 2026-11-27)
 Owner approved the three Claude Design prototypes ("3PL Providers", "Suppliers", "Outsource Work" standalone), the functional corrections from validation and decisions D1–D5 (D1 3PL detail page, D2 Edit supplier in More, D3 keep provider attachments; D4 no vehicle / driver delete, D5 no supplier bank / tax fields or SKU price editing); owner approved the implementation 2026-11-27. No API, database, permission, calculation or desktop change.

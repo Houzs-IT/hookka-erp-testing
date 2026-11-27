@@ -165,6 +165,8 @@ test("screens keep no more fixed-position layers than the known full-screen ones
     // Batch 4 Outsource Work adds one: os-scanner.tsx, the full-screen camera overlay around the real QrCameraScanner (a dialog, not a toast, bar or banner).
     "outsource/os-scanner.tsx",
     "procurement/parts.tsx",
+    // Final Batch 5 R&D Projects adds one: rd-kit.tsx, the milestone bottom sheet and the full-screen photo viewer (portals, inset 0); its toast uses ResponsiveActionDock.
+    "rd/rd-kit.tsx",
     // Batch 4 Suppliers adds one: sup-kit.tsx, the bottom-sheet scrim, the full-page Add / Edit supplier form and the centred discard dialog (portals, inset 0); its toast uses ResponsiveActionDock.
     "suppliers/sup-kit.tsx",
     // Batch 4 3PL Providers adds one: tpl-kit.tsx, the full-page provider / rate card / vehicle / driver forms, the bottom-sheet scrim and the centred confirm dialog (portals, inset 0); its toast uses ResponsiveActionDock.
