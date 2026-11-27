@@ -444,7 +444,7 @@ app.post("/admin/leak-check", async (c) => {
         const res = tool
           ? await runToolAs(c, who, tok.accessToken, tool.name, tool.args)
           : await runToolAs(c, who, tok.accessToken, "erp_get", { path, query: { limit: 5, page: 1 } });
-        rows.push(analyseToolText(path, res.content[0]?.text ?? "", !!res.isError));
+        rows.push(analyseToolText(path, res.content.map((x) => ("text" in x ? x.text : "")).join(""), !!res.isError));
       } catch (e) {
         rows.push({ path, outcome: "error", status: e instanceof Error ? e.message : String(e), hidden: [], kept: [], keptExpected: false });
       }

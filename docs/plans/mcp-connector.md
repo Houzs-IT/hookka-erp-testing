@@ -429,6 +429,32 @@ maintenance log"; staff can send Claude a photo or screenshot of the ERP and get
 - Prompts `explain_my_screen`, `where_do_i_open`. Tests `tests/mcp-screen-map.test.mjs` (every
   path in the router, every label in `src/`, every router page covered, matcher unit test).
 
+### show_me — annotated screenshots (owner 2026-11-27, PR 3)
+
+Owner: Claude sends back a picture of the real ERP screen with a RED BOX around the button to
+press; the `?highlight=` link stays alongside it.
+
+- **Capture** `scripts/capture-help-shots.mjs` (`npm run help:shots`, with `npm run dev`
+  running): Playwright opens every screen-map page that needs no record id at 1280×800 and
+  finds each screen-map action / guide-step label with the same matcher as the `?highlight=`
+  helper; saves a WebP (quality 50) to `public/help/shots/` and the boxes to
+  `src/api/lib/howto/help-shots.ts` (page, label, x/y/w/h, viewport).
+  **Safety:** every `/api/*` call is answered inside the script with empty demo data (the dev
+  server's proxy points at production, so nothing is allowed through) and every request to
+  another host is aborted; nothing is typed into a sign-in form — the page is opened as a
+  made-up "Demo Admin" by seeding the client's own session blob, and the mocked permissions
+  answer shows every button. No real names, money or credentials.
+- **Storage:** in the repo under `public/help/shots/` (served as static assets), not R2 —
+  uploading to R2 needs credentials from a terminal; the set stays under 8 MB (test-enforced).
+- **`show_me {path?, label?, guide_id?, step?, company?}`** (`src/api/lib/mcp-show-me.ts`):
+  returns an MCP `image` item — an SVG embedding the screenshot with a red rectangle, an arrow
+  and a caption — plus text with a 15-minute link to the same SVG (R2 `mcp-exports/`, like PDFs),
+  the real-page `?highlight=` link and the note that the screenshot uses test data.
+  `how_to` / `where_is` / `explain_screen` answers mention it.
+- **Freshness:** `tests/mcp-help-shots.test.mjs` (no Playwright in CI) fails with
+  "re-capture screenshots" when a recorded label is gone from `src/`, a file is missing or the
+  set passes 8 MB.
+
 ### FAQ → tool (process help)
 
 | Staff ask | Tool |
@@ -443,6 +469,7 @@ maintenance log"; staff can send Claude a photo or screenshot of the ERP and get
 | "I'm new in purchasing, what should I read first?" | `onboarding {role: "purchasing"}` |
 | "Where do I open a maintenance log?" / "SO 在哪里开?" | `where_is` |
 | (a screenshot of an ERP page) "What is this screen? What does this button do?" | `explain_screen {path, visible_text}` |
+| "Show me where to click" / "给我看在哪里按" | `show_me {path, label}` or `{guide_id, step}` |
 
 ## 4. OAuth (what Claude / ChatGPT need)
 

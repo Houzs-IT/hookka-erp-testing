@@ -352,6 +352,7 @@ export const PROMPTS = [
   { name: "explain_this_error", title: "Explain this error", description: "What an ERP error message means and how to fix it.", arguments: [{ name: "message", description: "The error text", required: true }] },
   { name: "explain_my_screen", title: "Explain my screen", description: "What this ERP page is and what its buttons do — from the URL or a screenshot.", arguments: [{ name: "path", description: "The URL / path, or leave empty and attach a screenshot", required: false }] },
   { name: "where_do_i_open", title: "Where do I open…?", description: "Where something is in the ERP, with a link that marks the button.", arguments: [{ name: "thing", description: "e.g. a maintenance log, a credit note", required: true }] },
+  { name: "show_me_where", title: "Show me where to click", description: "A screenshot of the ERP page with the button to press boxed in red.", arguments: [{ name: "what", description: "e.g. the New Sales Order button, or a page path", required: true }] },
   { name: "my_first_week", title: "My first week", description: "A first-week reading path for a new starter in a role.", arguments: [{ name: "role", description: "sales | purchasing | production | warehouse | finance | after-sales", required: true }] },
 ];
 
@@ -372,6 +373,7 @@ export const PROMPT_TOOLS: Record<string, string[]> = {
   what_does_it_mean: ["glossary"],
   explain_this_error: ["explain_error"],
   my_first_week: ["onboarding"],
+  show_me_where: ["show_me"],
   explain_my_screen: ["explain_screen"],
   where_do_i_open: ["where_is"],
 };
@@ -428,6 +430,9 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   if (name === "where_do_i_open") {
     return `Where do I open ${v("thing") || "…"} in the ERP? Use where_is {thing: "${v("thing")}"} and give me the sidebar path and the link (it marks the button to press).`;
+  }
+  if (name === "show_me_where") {
+    return `Show me where to click for: ${v("what") || "…"}. Find the page and button (where_is or how_to if needed), then call show_me {path, label} or {guide_id, step}. Show the picture, say it uses test data, and give me the live-page link.`;
   }
   if (name === "my_first_week") {
     return `I am new in ${v("role") || "my role"}. Use onboarding {role: "${v("role")}"} and give me my first-week reading path day by day; for each item give one line on why it matters and its link.`;

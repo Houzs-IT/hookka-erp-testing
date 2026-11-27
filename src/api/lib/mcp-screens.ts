@@ -20,7 +20,7 @@ import { resourceForNav } from "./nav-permissions";
 
 export const SCREENS: ScreenEntry[] = [...SALES, ...PROCUREMENT, ...PRODUCTION, ...PRODUCTS, ...OVERVIEW];
 
-const SHOW_ME_TIP = "Ask show_me for a picture of this screen with the button marked (when available).";
+const SHOW_ME_TIP = "show_me {path, label} gives a screenshot of this page with the button boxed in red.";
 
 const norm = (p: string) => p.replace(/\/+$/, "") || "/";
 

@@ -111,8 +111,10 @@ async function withPersonToken<T>(c: Context<Env>, p: Person, fn: (id: McpIdenti
 }
 
 /** A quick answer's JSON: structuredContent when present, else the text parsed. */
-function answerValue(r: { content: { text: string }[]; structuredContent?: Obj; isError?: boolean }): { ok: true; value: Obj } | { ok: false; message: string } {
-  const t = r.content[0]?.text ?? "";
+function answerValue(r: { content: ({ type?: string; text?: string } | { type: "image"; data: string; mimeType: string })[]; structuredContent?: Obj; isError?: boolean }): { ok: true; value: Obj } | { ok: false; message: string } {
+  // A tool answer may now carry an image item too (show_me); the brief only reads the text.
+  const first = r.content.find((x): x is { type?: string; text?: string } => "text" in x && typeof x.text === "string");
+  const t = first?.text ?? "";
   if (r.isError) return { ok: false, message: t.slice(0, 200) };
   const sc = r.structuredContent;
   if (sc && !("truncated" in sc && sc.truncated === true)) return { ok: true, value: sc };
