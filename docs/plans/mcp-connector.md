@@ -1,6 +1,6 @@
 # Hookka ERP MCP connector — plan
 
-> **Last verified: 2026-11-26** — v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit (§3c); round 4 Hookka K1–K12 + `company_report` on `feat/mcp-round4` (§3d).
+> **Last verified: 2026-11-27** — v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit (§3c); round 4 Hookka K1–K12 + `company_report` (§3d); round 4b write actions + 4c platform quality on `feat/mcp-4bc` (§3e).
 
 Owner 2026-11-25: 「我的全套系统都要有mcp」, staff (non-IT) should ask Claude / ChatGPT
 questions about the ERP the way the owner asks in this session; 「按员工自己的权限」 —
@@ -241,6 +241,63 @@ Decisions worth knowing:
 
 **Untested live (round 4):** every tool against prod data through a real client; the leak check
 as a low-privilege account.
+
+## 3e. Round 4b write actions + round 4c platform quality (owner 2026-11-26)
+
+Branch `feat/mcp-4bc`. Code: `src/api/lib/mcp-write-actions.ts` (propose → confirm, pure + deps),
+`src/api/lib/mcp-visibility.ts` (role-aware list, structured output, links + RM), fence in
+`mcp-inner.ts`, switches in `mcp-actions.ts`, wiring in `routes/mcp.ts`; tests
+`tests/mcp-4bc.test.mjs`.
+
+**4b — write actions.** Same mechanism as §3b: `propose_*` stores one pending action (10 minutes,
+single use, same token + person) and writes nothing; `confirm_action` → main switch → 30-a-day cap →
+the action's own switch (peeked, so a switched-off action is refused without using up the id) →
+single-use claim → **body fence** (`actionBodyAllowed`) → ONE in-process call to the ERP's own route as
+the person (`innerAction`, armed one-shot). The route's own permission check, validation, reply guard /
+stale-edit check and audit decide. Every proposal / confirmation is a row in `mcp_calls` (target = kind +
+record, never the message or note text).
+
+| Tool (args) | ERP endpoint (existing) | ERP permission the route checks | Switch | Audit trail |
+| --- | --- | --- | --- | --- |
+| `propose_mail_reply {thread_id, body, from_mailbox?}` | `POST /api/mail-center/threads/:id/reply` with `{text, afterMessageId, fromAddress?}` — `force` is never sent, so the reply guard refuses if a colleague replied after the proposal | `mail-center:create` + the thread must be in the person's mailbox scope | `mcp_action_mail_reply` | route's own `emitAudit` (mail-center reply) |
+| `propose_note {target_type: purchase_order, number_or_id, note}` | `PUT /api/purchase-orders/:id` with `{notes, expectedUpdatedAt}` — one `[Note <date> <name> (via AI Connector): …]` line appended to the notes read at confirm time (the PO page's own annotation style) | `purchase-orders:update` | `mcp_action_note` | route's own `emitAudit` (PO update, before/after) |
+| `propose_note {target_type: service_case, number_or_id, note}` | `PUT /api/service-cases/:id` with `{actionLog}` — one "Action taken" entry appended to the log read at confirm time (the case page's own body) | `service-cases:update` | `mcp_action_note` | the route writes none, so the connector writes one `audit_events` row (`emitAudit`, source `api`) |
+| `propose_po_approval {number_or_id}` | `PUT /api/purchase-orders/:id` with `{status: "CONFIRMED", expectedUpdatedAt}` = the PO page's "Mark Confirmed"; only offered for a `SUBMITTED` PO; carries the stamp the person saw, so a PO changed since is refused (409) | `purchase-orders:update` + `purchase-orders:approve` | `mcp_action_po_approval` | route's own `emitAudit` |
+
+- **Switches:** Settings › AI Connector › "AI write actions", one per row above, default OFF
+  (`kv_config['mcp_action_<name>']`), Super Admin only (`POST /api/mcp-admin/admin/write-actions`),
+  effective only while "Allow AI actions" (the main switch) is on.
+- **Skipped — no note endpoint:** sales orders (only the full edit `PUT /api/sales-orders/:id`, which
+  locks once production starts and rewrites the header + BOM check) and production orders (their
+  `PUT` / `PATCH` has no notes field). Not a new write path, so not built.
+- **The fence:** `ACTION_ALLOWLIST` is now six patterned routes (`:ref` = one safe id segment); the body
+  per kind may carry only the keys the ERP screen sends for that action — a PO note can never carry
+  items, prices, supplier or status; a PO approval only `status: "CONFIRMED"`. Payments, stock,
+  prices, payroll and deletes stay unreachable.
+- **Race handling:** notes are appended to what is stored at confirm time (a colleague's note added in
+  between survives); the PO note carries that read's `updatedAt`.
+
+**4c — quality.**
+- **P1 role-aware tools/list:** each read tool lists the endpoints it reads (`TOOL_NEEDS`); it is
+  listed only when the person passes the SAME module gate `readValue` applies (`classifyPath` →
+  resources → `read`). E.g. `payables_summary` / `company_report` need `accounting`, `product_cost`
+  needs `products` + (`product-costing` or `cost-ledger`). Write tools: switch on + the route's
+  permission. A hidden tool called directly answers "You don't have access to this in the ERP".
+- **P2 prompts per role:** `owner_morning_report`, `finance_review`, `purchasing_review`,
+  `production_review`, `warehouse_review`, `sales_review` (plus the four before); `prompts/list` shows a
+  prompt when one of its tools is listed (`PROMPT_TOOLS`).
+- **P3 structured output:** the 24 quick answers carry an open `outputSchema`; their result carries
+  `structuredContent` (the same JSON as the text, which stays).
+- **P4 cache:** 60 s per person + role + arguments (was 30 s); `payables_summary`, `so_overdue`,
+  `deliveries_due`, `production_late` added.
+- **P5 links + RM:** every quick answer gets `erpLink` (its ERP page); a row with a record id but no
+  link gets `url`; any `…Sen` key left in an answer becomes `…Rm` (a hidden figure stays null).
+  Rows keyed only by a name (supplier in `supplier_lateness`, stock items) have no record page to point
+  at and rely on `erpLink`.
+
+**Untested live (4b / 4c):** every write action against prod through a real client (unit tests use a
+faked ERP that applies the route's permission gate); `structuredContent` against Claude / ChatGPT's
+validators; the filtered tools/list in a real client.
 
 ## 4. OAuth (what Claude / ChatGPT need)
 

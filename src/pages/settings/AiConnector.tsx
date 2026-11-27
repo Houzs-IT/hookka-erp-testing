@@ -11,10 +11,17 @@ type Conn = { tokenId: string; userId: string; name: string; role: string; app: 
 type Call = { at: string; userId: string; name: string; app: string; tool: string; target: string; ok: boolean; status: number; note: string };
 type Limits = { perMinute: number; perDay: number };
 type Latency = { tool: string; calls: number; p50: number; p95: number; max: number; cached: number };
-type Me = { allowed: boolean; isSuperAdmin: boolean; actionsEnabled?: boolean; limits?: Limits; connectorUrl: string; connections: Conn[]; calls: Call[]; pendingRequestAt: string | null };
+type WriteActions = { mail_reply?: boolean; note?: boolean; po_approval?: boolean };
+const WRITE_ACTION_ROWS: { key: keyof WriteActions; label: string; help: string }[] = [
+  { key: "mail_reply", label: "Reply to Mail Center threads", help: "Drafts a reply in an existing thread from the person's own mailbox; not sent if a colleague replies first. Needs Mail Center send permission." },
+  { key: "note", label: "Add notes to purchase orders and service cases", help: "Adds one dated note with the person's name (PO notes, case “Action taken”). Needs edit permission on that document." },
+  { key: "po_approval", label: "Approve purchase orders", help: "Marks a sent PO Confirmed, like “Mark Confirmed” on the PO page. Needs the PO approve permission." },
+];
+type Me = { allowed: boolean; isSuperAdmin: boolean; actionsEnabled?: boolean; writeActions?: WriteActions; limits?: Limits; connectorUrl: string; connections: Conn[]; calls: Call[]; pendingRequestAt: string | null };
 type Overview = {
   connectorUrl: string;
   actionsEnabled?: boolean;
+  writeActions?: WriteActions;
   limits?: Limits;
   latency?: { last24h: Latency[]; previous7d: Latency[] };
   stats: { allowed: number; connectedPeople: number; connectedApps: Record<string, number>; callsToday: number; refusedToday: number };
@@ -467,7 +474,7 @@ export default function AiConnectorPage() {
             <div className="min-w-0 flex-1 basis-[420px] space-y-1">
               <h2 className="text-base font-bold">Allow AI actions (meetings, email)</h2>
               <p className="text-[13px] text-[#55534E]">
-                When on, a connected AI can book a meeting or send an email for the person — it shows them each one first and does it only after they confirm. Up to 30 a day per person, as that person, logged below. Never orders, money, stock, approvals or deletes.
+                When on, a connected AI can book a meeting or send an email for the person — it shows them each one first and does it only after they confirm. Up to 30 a day per person, as that person, logged below. This is also the main switch for the write actions below. Never payments, stock, prices, payroll or deletes.
               </p>
             </div>
             <label className="flex items-center gap-3 text-sm font-semibold">
@@ -484,6 +491,40 @@ export default function AiConnectorPage() {
                 <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${ov.actionsEnabled ? "left-[22px]" : "left-0.5"}`} />
               </button>
             </label>
+          </section>
+
+          <section className={`${CARD} space-y-3 p-5`}>
+            <div className="space-y-1">
+              <h2 className="text-base font-bold">AI write actions</h2>
+              <p className="text-[13px] text-[#55534E]">
+                Each is off until you turn it on, and works only while “Allow AI actions” above is on. The person always sees the exact change first and confirms it; the ERP&apos;s own permission and checks decide, and it is logged here and in the ERP&apos;s audit trail. Never payments, stock, prices, payroll or deletes.
+              </p>
+            </div>
+            {WRITE_ACTION_ROWS.map((r) => {
+              const on = !!ov.writeActions?.[r.key];
+              return (
+                <div key={r.key} className="flex flex-wrap items-center justify-between gap-3 border-t border-[#EFEBE2] pt-3">
+                  <div className="min-w-0 flex-1 basis-[320px]">
+                    <div className="text-sm font-semibold">{r.label}</div>
+                    <div className="text-[13px] text-[#55534E]">{r.help}</div>
+                  </div>
+                  <label className="flex items-center gap-3 text-sm font-semibold">
+                    <span>{on ? (ov.actionsEnabled ? "On" : "On (main switch off)") : "Off"}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={r.label}
+                      disabled={busy}
+                      onClick={() => act(() => api("/api/mcp-admin/admin/write-actions", { method: "POST", body: JSON.stringify({ action: r.key, enabled: !on }) }), on ? `${r.label}: off` : `${r.label}: on`)}
+                      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${FOCUS} ${on ? "bg-[#6B5C32]" : "bg-[#D9D4C7]"}`}
+                    >
+                      <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`} />
+                    </button>
+                  </label>
+                </div>
+              );
+            })}
           </section>
 
           <section id="approve" className="overflow-hidden rounded-xl border border-[#EADFC2] bg-white">
@@ -673,7 +714,7 @@ export default function AiConnectorPage() {
 
       <p className="text-xs text-[#6B6B66]">
         {me.actionsEnabled
-          ? "The AI reads with your permissions. It can book a meeting or send an email only after you confirm each one; it cannot change orders, money, stock or approvals, or delete anything."
+          ? "The AI reads with your permissions. It can book a meeting, send an email — and, where your admin turned them on, reply to a Mail Center thread, add a note to a PO or service case, or approve a PO — only after you confirm each one, and only where your ERP permissions allow; it cannot touch payments, stock, prices or payroll, or delete anything."
           : "The AI can only read — it cannot create, change or delete anything."}{" "}
         Your admin can see what it looked up and did; the chat itself stays in Claude / ChatGPT.
         {me.limits ? ` Limits: ${me.limits.perMinute} questions a minute and ${me.limits.perDay} a day per person.` : ""}

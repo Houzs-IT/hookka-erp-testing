@@ -61,7 +61,8 @@ export async function countRecentCalls(db: D1Database, userId: string, now: Date
 
 // ── answer cache ────────────────────────────────────────────────────────────
 
-export const ANSWER_CACHE_TTL_MS = 30_000;
+// Round 4c P4 (owner 2026-11-26): about a minute per person for the heavy summaries.
+export const ANSWER_CACHE_TTL_MS = 60_000;
 export const ANSWER_CACHE_MAX = 300;
 
 /** The tools whose successful answers may be reused for ANSWER_CACHE_TTL_MS. */
@@ -73,6 +74,10 @@ export const CACHEABLE_TOOLS = new Set([
   "material_shortages",
   "inventory_summary",
   "purchasing_summary",
+  "payables_summary",
+  "so_overdue",
+  "deliveries_due",
+  "production_late",
   "attendance_today",
   "daily_brief",
   // round 4 (2026-11-26)

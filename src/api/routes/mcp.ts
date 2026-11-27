@@ -31,25 +31,23 @@ import type { Env } from "../worker";
 import { hasPermission } from "../lib/rbac";
 import { readCookie, SESSION_COOKIE, CSRF_COOKIE } from "../lib/auth-middleware";
 import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from "../lib/mcp-access";
-import { MCP_ACTION_HEADER, MCP_INNER_HEADER, allowlistedAction, armConfirmedAction, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
+import { MCP_ACTION_HEADER, MCP_INNER_HEADER, armConfirmedAction, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
+import { emitAudit } from "../lib/audit";
+import { confirmPending, proposeWrite, WRITE_PERMISSIONS, type ActionDeps, type WriteKind } from "../lib/mcp-write-actions";
+import { needLabel, parseQuickText, QUICK_OUTPUT_SCHEMA, readToolAllowed, STRUCTURED_TOOLS, withLinksAndRm } from "../lib/mcp-visibility";
 import {
   ACTIONS_OFF_MESSAGE,
-  ACTIONS_PER_DAY,
   actionsEnabled,
   buildEmailProposal,
   buildMeetingProposal,
   cancelPendingAction,
-  confirmedSince,
-  consumePendingAction,
   createPendingAction,
-  describeOutcome,
-  finishPendingAction,
   meetingBusyWarnings,
-  myDayStartIso,
   readBootstrap,
   readMailboxes,
-  actionTarget,
+  writeActionSwitches,
   type ActionKind,
+  type WriteAction,
 } from "../lib/mcp-actions";
 import { FLOW_API, parseAnchorId, pickFlowAnchor, shapeFlow, soRefsFromDoc, type FlowKind } from "../lib/mcp-flow";
 import {
@@ -65,6 +63,7 @@ import {
   parseFetchId,
   pickFields,
   PROMPTS,
+  PROMPT_TOOLS,
   promptText,
   sameDaysPrevMonth,
   searchResults,
@@ -447,7 +446,7 @@ Money in the ERP is integer sen (RM × 100) unless a field says RM. Dates are Ma
 A document's chain (sales order → production orders → job cards → delivery orders → invoices → payments, or back from any of them; or a purchase order → GRNs → purchase invoices): document_flow {number_or_id}.
 Keep replies short: lead with the count and the few lines that matter, give links. If a tool says the person has no access to something, say so in one line — never guess the figure.
 For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
-ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. Nothing else can be changed: no orders, money, stock, approvals or deletes.
+ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. When the admin switched them on, the same goes for propose_mail_reply (reply to a Mail Center thread — thread_id from daily_brief), propose_note (a note on a purchase order or service case) and propose_po_approval (mark a sent PO Confirmed). Nothing else can be changed: no payments, stock, prices, payroll or deletes.
 If a call says "not available to your role", tell the user they do not have permission for that data.`;
 
 // ── round 4 tool list (owner 2026-11-26) ────────────────────────────────────
@@ -757,6 +756,46 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // ── round 4b write actions (owner 2026-11-26), each behind its own switch ──
+  {
+    name: "propose_mail_reply",
+    title: "Propose a Mail Center reply (needs the person's yes)",
+    description: "Prepare a reply in an existing Mail Center thread, from the person's own mailbox, to the thread's latest correspondent. Nothing is sent yet: it returns the draft, the recipients and the thread as a summary and a confirmationId. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes. If a colleague replies first, the reply is not sent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        thread_id: { type: "string", description: "The thread id (threadId in daily_brief's mail list, or the id in the thread's link)" },
+        body: { type: "string", description: "The reply, plain text" },
+        from_mailbox: { type: "string", description: "Which of the person's mailboxes to reply from (default: the thread's mailbox)" },
+      },
+      required: ["thread_id", "body"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "propose_note",
+    title: "Propose a note on a PO or service case (needs the person's yes)",
+    description: "Prepare a note on a purchase order (added to the end of its notes) or a service case (added under \"Action taken\"), with today's date and the person's name. Nothing is saved yet: it returns a summary and a confirmationId. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes. Sales orders and production orders have no note endpoint in the ERP.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_type: { type: "string", enum: ["purchase_order", "service_case"] },
+        number_or_id: { type: "string", description: "The PO or case number (or an id from search)" },
+        note: { type: "string", description: "The note, one short paragraph" },
+      },
+      required: ["target_type", "number_or_id", "note"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "propose_po_approval",
+    title: "Propose approving a purchase order (needs the person's yes)",
+    description: "Prepare the approval of a sent (SUBMITTED) purchase order — the PO page's \"Mark Confirmed\" — for a person who holds the ERP's PO approve permission. Nothing is approved yet: it returns a summary and a confirmationId. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes.",
+    inputSchema: { type: "object", properties: { number_or_id: { type: "string", description: "The PO number (or an id from search)" } }, required: ["number_or_id"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
 ];
 
 /** Document → its ERP page (where the PDF is made) and its read API. */
@@ -767,7 +806,7 @@ export const DOC_LINKS: Record<string, { page: string; api: string }> = {
   invoice: { page: "/invoices", api: "/api/invoices" },
 };
 
-type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; structuredContent?: Record<string, unknown> };
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
 async function canAny(c: Context<Env>, resources: string[]): Promise<boolean> {
@@ -1024,14 +1063,14 @@ async function proposeAction(c: Context<Env>, id: McpIdentity, token: string, ki
 }
 
 /**
- * The ONE write an MCP token can make: the ERP's own create-meeting / compose
- * route, in-process, as the person. Armed for this token + method + path just
- * before the call; auth-middleware.ts takes the arm once (mcp-inner.ts).
+ * The ONE write a confirmed action makes: the ERP's own route, in-process, as
+ * the person. Armed for this token + method + path just before the call;
+ * auth-middleware.ts takes the arm once (mcp-inner.ts). The route and body come
+ * from lib/mcp-write-actions.ts requestFor, already checked against
+ * ACTION_ALLOWLIST and actionBodyAllowed.
  */
-async function innerAction(c: Context<Env>, id: McpIdentity, token: string, actionId: string, kind: ActionKind, body: unknown): Promise<{ status: number; body: unknown }> {
+async function innerAction(c: Context<Env>, id: McpIdentity, token: string, actionId: string, route: { method: string; path: string; body: unknown }): Promise<{ status: number; body: unknown }> {
   if (!appRef) throw new Error("MCP app not initialised");
-  const route = allowlistedAction(kind);
-  if (!route) throw new Error(`Not an allowed action: ${kind}`);
   let ctx: unknown;
   try {
     ctx = c.executionCtx;
@@ -1049,7 +1088,7 @@ async function innerAction(c: Context<Env>, id: McpIdentity, token: string, acti
         "content-type": "application/json",
         accept: "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(route.body),
     }),
     c.env,
     ctx,
@@ -1057,28 +1096,102 @@ async function innerAction(c: Context<Env>, id: McpIdentity, token: string, acti
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-/** confirm_action: switch on, under the daily cap, single-use claim, then the real route. */
+/** Mail Center reads used only by propose_mail_reply (not reachable through erp_get). */
+const MAIL_FIXED = /^\/api\/mail-center\/(threads\/[A-Za-z0-9._-]{1,80}|addresses)$/;
+
+/** The real I/O for lib/mcp-write-actions.ts: reads as the person, the armed write, the ERP's permission check and audit trail. */
+function actionDeps(c: Context<Env>, id: McpIdentity, token: string): ActionDeps {
+  return {
+    db: c.var.DB,
+    tokenId: id.tokenId,
+    userId: id.userId,
+    userName: id.name,
+    read: async (path, query) => {
+      const fixed = MAIL_FIXED.test(path) ? { path, resources: ["mail-center"] } : undefined;
+      const r = await readValue(c, token, path, query, fixed);
+      return r.ok ? { status: 200, body: r.value } : { status: r.status, body: { error: r.message } };
+    },
+    write: (actionId, req) => innerAction(c, id, token, actionId, req),
+    can: (resource, action) => hasPermission(c, resource, action),
+    audit: async (kind, ref, after) => {
+      await emitAudit(c, { resource: kind === "case_note" ? "service-cases" : "purchase-orders", resourceId: ref, action: "update", after, source: "api" });
+    },
+  };
+}
+
+/** confirm_action, every kind: lib/mcp-write-actions.ts confirmPending (switches → cap → single-use claim → body fence → one write). */
 async function confirmAction(c: Context<Env>, id: McpIdentity, token: string, raw: string): Promise<Step> {
-  const cid = raw.trim();
-  let target = `confirm:${cid}`;
-  const fail = (message: string, status: number): Step => ({ result: text(message, true), status, target, note: "" });
-  if (!/^mcpa_[a-f0-9]{24}$/.test(cid)) return fail("Give the confirmationId from propose_meeting or propose_email.", 400);
-  if (!(await actionsEnabled(c.var.DB))) return fail(ACTIONS_OFF_MESSAGE, 403);
-  if ((await confirmedSince(c.var.DB, id.userId, myDayStartIso())) >= ACTIONS_PER_DAY) {
-    return fail(`You have reached today's limit of ${ACTIONS_PER_DAY} AI actions. Do it in the ERP instead, or try again tomorrow.`, 429);
-  }
-  const act = await consumePendingAction(c.var.DB, cid, id.tokenId, id.userId);
-  if (!act) return fail("That confirmation is unknown, already used, cancelled, expired (10 minutes) or not yours. Propose it again.", 404);
-  target = actionTarget(act.kind, act.payload);
-  let out: { status: number; body: unknown };
-  try {
-    out = await innerAction(c, id, token, cid, act.kind, act.payload);
-  } catch (e) {
-    out = { status: 502, body: { error: e instanceof Error ? e.message : String(e) } };
-  }
-  const d = describeOutcome(act.kind, out.status, out.body);
-  await finishPendingAction(c.var.DB, cid, out.status, d.text);
-  return { result: text(d.text, !d.ok), status: out.status, target, note: "" };
+  const o = await confirmPending(actionDeps(c, id, token), raw);
+  return { result: text(o.text, !o.ok), status: o.status, target: o.target, note: "" };
+}
+
+/** propose_mail_reply / propose_note / propose_po_approval. Nothing is written yet. */
+async function proposeWriteStep(c: Context<Env>, id: McpIdentity, token: string, kind: WriteKind, args: Record<string, unknown>): Promise<Step> {
+  const o = await proposeWrite(actionDeps(c, id, token), kind, args);
+  if (!o.ok) return { result: text(o.text, true), status: o.status, target: o.target, note: "" };
+  return {
+    result: text(
+      JSON.stringify({
+        confirmationId: o.confirmationId,
+        summary: o.summary,
+        warnings: o.warnings ?? [],
+        expiresInMinutes: 10,
+        next: "Nothing has been done yet. Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes; otherwise call cancel_action.",
+      }),
+    ),
+    status: 200,
+    target: o.target,
+    note: "",
+  };
+}
+
+// ── round 4c: role-aware tools/list (P1) ────────────────────────────────────
+
+const WRITE_TOOL_KIND: Record<string, { switch: WriteAction; kinds: WriteKind[] }> = {
+  propose_mail_reply: { switch: "mail_reply", kinds: ["mail_reply"] },
+  propose_note: { switch: "note", kinds: ["po_note", "case_note"] },
+  propose_po_approval: { switch: "po_approval", kinds: ["po_approval"] },
+};
+const ACTION_TOOLS = new Set(["propose_meeting", "propose_email", "confirm_action", "cancel_action", ...Object.keys(WRITE_TOOL_KIND)]);
+
+/**
+ * Which tools this person can use: read tools by the module gate of the
+ * endpoints they read (lib/mcp-visibility.ts), write tools by their switches
+ * and the ERP permission the route checks. Memoised per call.
+ */
+async function toolAccess(c: Context<Env>): Promise<(name: string) => Promise<boolean>> {
+  const memo = new Map<string, Promise<boolean>>();
+  const ask = (r: string, a: string) => {
+    const k = `${r}:${a}`;
+    let p = memo.get(k);
+    if (!p) memo.set(k, (p = hasPermission(c, r, a)));
+    return p;
+  };
+  const [main, switches] = await Promise.all([actionsEnabled(c.var.DB), writeActionSwitches(c.var.DB)]);
+  const writeOk = async (tool: string): Promise<boolean> => {
+    const w = WRITE_TOOL_KIND[tool];
+    if (!main || !switches[w.switch]) return false;
+    for (const k of w.kinds) {
+      let all = true;
+      for (const [r, a] of WRITE_PERMISSIONS[k]) if (!(await ask(r, a))) all = false;
+      if (all) return true;
+    }
+    return false;
+  };
+  const one = async (name: string): Promise<boolean> => {
+    if (WRITE_TOOL_KIND[name]) return writeOk(name);
+    if (name === "propose_meeting") return main;
+    if (name === "propose_email") return main && (await ask("mail-center", "create"));
+    if (name === "confirm_action" || name === "cancel_action") return main;
+    return readToolAllowed(name, (r) => ask(r, "read"));
+  };
+  return one;
+}
+
+async function visibleTools(c: Context<Env>): Promise<Record<string, unknown>[]> {
+  const ok = await toolAccess(c);
+  const flags = await Promise.all(TOOLS.map((t) => ok(t.name)));
+  return TOOLS.filter((_, i) => flags[i]).map((t) => (STRUCTURED_TOOLS.has(t.name) ? { ...t, outputSchema: QUICK_OUTPUT_SCHEMA } : t));
 }
 
 // ── round 3 quick answers, daily brief, export (owner 2026-11-26) ───────────
@@ -1493,7 +1606,26 @@ async function exportExcel(c: Context<Env>, id: McpIdentity, token: string, args
   };
 }
 
-/** Successful quick answers, reused for 30 s per person + role + arguments (lib/mcp-limits.ts). */
+/**
+ * Round 4c P3 + P5: a quick answer also as `structuredContent` (its tools/list
+ * entry carries an open outputSchema), with an ERP link and money in RM; the
+ * text carries the same JSON. A reply cut at the size cap cannot be parsed —
+ * it goes out as `{ text, truncated }` so the schema still holds.
+ */
+function structured(name: string, r: ToolResult, origin: string): ToolResult {
+  const raw = r.content[0]?.text ?? "";
+  const q = parseQuickText(raw);
+  if (!q) return { ...r, structuredContent: { text: raw, truncated: true } };
+  const value = withLinksAndRm(name, q.value, origin);
+  if (q.hidden.length) value.hiddenFields = q.hidden;
+  let body = JSON.stringify(value);
+  if (body.length > MAX_RESULT_CHARS) body = body.slice(0, MAX_RESULT_CHARS);
+  const head = q.hidden.length ? `Fields hidden for this person: ${q.hidden.join(", ")}.
+` : "";
+  return { ...r, content: [{ type: "text", text: head + body }], structuredContent: value };
+}
+
+/** Successful quick answers, reused for 60 s per person + role + arguments (lib/mcp-limits.ts). */
 const answerCache = new AnswerCache<{ result: ToolResult; target: string; note: string }>();
 
 async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -1506,7 +1638,15 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
   const cached = cacheKey ? answerCache.get(cacheKey) : null;
   let quick: Step | null = null;
   try {
-    if (cached) {
+    // Round 4c P1: a tool hidden from this person's tools/list answers "no
+    // access" when called directly (same gate the list uses). Action tools keep
+    // their own plain refusals (switched off / ERP permission) below.
+    if (!cached && !ACTION_TOOLS.has(name) && TOOLS.some((t) => t.name === name) && !(await (await toolAccess(c))(name))) {
+      result = text(`You don't have access to this in the ERP (${name} needs read permission for ${needLabel(name)}).`, true);
+      status = 403;
+      note = "no permission";
+      target = name;
+    } else if (cached) {
       result = cached.result;
       target = cached.target;
       note = cached.note ? `cached,${cached.note}` : "cached";
@@ -1525,7 +1665,9 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
       const mods: string[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push(m.prefix);
       const actions = await actionsEnabled(c.var.DB);
-      result = text(JSON.stringify({ name: id.name, role: id.role, readableModules: mods.length, readOnly: !actions, actions: actions ? "meetings and email, after the person confirms" : "switched off" }));
+      const sw = actions ? await writeActionSwitches(c.var.DB) : null;
+      const on = sw ? ["meetings", "email", ...(sw.mail_reply ? ["Mail Center replies"] : []), ...(sw.note ? ["notes on POs / service cases"] : []), ...(sw.po_approval ? ["PO approval"] : [])] : [];
+      result = text(JSON.stringify({ name: id.name, role: id.role, readableModules: mods.length, readOnly: !actions, actions: actions ? `${on.join(", ")}, each after the person confirms` : "switched off" }));
     } else if (name === "list_modules") {
       const mods: { prefix: string; module: string }[] = [];
       for (const m of moduleCatalog()) if (await canAny(c, m.resources)) mods.push({ prefix: m.prefix, module: m.resources[0] });
@@ -1706,6 +1848,18 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
       result = r.result;
       status = r.status;
       target = r.target;
+    } else if (WRITE_TOOL_KIND[name]) {
+      const kind: WriteKind = name === "propose_note" ? (args.target_type === "service_case" ? "case_note" : "po_note") : WRITE_TOOL_KIND[name].kinds[0];
+      if (name === "propose_note" && args.target_type !== "service_case" && args.target_type !== "purchase_order") {
+        result = text('Give target_type "purchase_order" or "service_case". Sales orders and production orders have no note endpoint in the ERP.', true);
+        status = 400;
+        target = "propose:note";
+      } else {
+        const r = await proposeWriteStep(c, id, token, kind, args);
+        result = r.result;
+        status = r.status;
+        target = r.target;
+      }
     } else if (name === "confirm_action") {
       const r = await confirmAction(c, id, token, String(args.confirmationId ?? ""));
       result = r.result;
@@ -1716,7 +1870,7 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
       const cid = String(args.confirmationId ?? "").trim();
       target = `cancel:${cid}`;
       const ok = /^mcpa_[a-f0-9]{24}$/.test(cid) && (await cancelPendingAction(c.var.DB, cid, id.tokenId, id.userId));
-      result = ok ? text("Cancelled. Nothing was booked or sent.") : text("Nothing to cancel: that confirmation is unknown, already used or not yours.", true);
+      result = ok ? text("Cancelled. Nothing was done.") : text("Nothing to cancel: that confirmation is unknown, already used or not yours.", true);
       status = ok ? 200 : 404;
     } else if (name === "erp_get") {
       const fields = Array.isArray(args.fields) ? (args.fields as unknown[]).map(String).filter(Boolean).slice(0, 40) : [];
@@ -1734,6 +1888,7 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
     status = 500;
   }
   if (cacheKey && !cached && !result.isError && status === 200) answerCache.set(cacheKey, { result, target, note });
+  if (STRUCTURED_TOOLS.has(name) && !result.isError) result = structured(name, result, originOf(c));
   const done = logCall(c.var.DB, { tokenId: id.tokenId, userId: id.userId, clientId: id.clientId, tool: name, target, status, ok: !result.isError, note, ms: Date.now() - t0 });
   try {
     c.executionCtx.waitUntil(done);
@@ -1779,7 +1934,8 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     case "ping":
       return reply({});
     case "tools/list":
-      return reply({ tools: TOOLS });
+      // Round 4c P1: only the tools this person can use.
+      return reply({ tools: await visibleTools(c) });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
       const args = (m.params?.arguments as Record<string, unknown>) ?? {};
@@ -1806,8 +1962,15 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
     }
     case "resources/list":
       return reply({ resources: [] });
-    case "prompts/list":
-      return reply({ prompts: PROMPTS });
+    case "prompts/list": {
+      // Round 4c P2: a prompt shows when the person can use one of its tools.
+      const ok = await toolAccess(c);
+      const shown = await Promise.all(PROMPTS.map(async (p) => {
+        for (const t of PROMPT_TOOLS[p.name] ?? []) if (await ok(t)) return true;
+        return !(p.name in PROMPT_TOOLS);
+      }));
+      return reply({ prompts: PROMPTS.filter((_, i) => shown[i]) });
+    }
     case "prompts/get": {
       const pname = String(m.params?.name ?? "");
       const ptext = promptText(pname, (m.params?.arguments as Record<string, unknown> | undefined) ?? {});

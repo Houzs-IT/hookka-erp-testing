@@ -55,34 +55,78 @@ export function recallVerified<T>(token: string, now = Date.now()): T | null {
 }
 
 // ── the write fence: confirmed actions only ─────────────────────────────────
-// The connector is read-only EXCEPT for the two actions the owner allowed
-// (2026-11-26: book a meeting, send an email), each only after the person said
-// yes (routes/mcp.ts confirm_action). auth-middleware.ts lets an MCP token make
-// a non-GET request ONLY when ALL of these hold:
+// The connector is read-only EXCEPT for the actions the owner allowed
+// (2026-11-26: book a meeting, send an email; round 4b: reply to a Mail Center
+// thread, add a note to a PO / service case, approve a PO), each only after the
+// person said yes (routes/mcp.ts confirm_action). auth-middleware.ts lets an
+// MCP token make a non-GET request ONLY when ALL of these hold:
 //   1. the per-isolate inner secret (MCP_INNER_HEADER) — it came from the tool
 //      runner in this isolate, not from outside;
 //   2. MCP_ACTION_HEADER names a confirmed action;
 //   3. that action was ARMED here for this same token, method and path, within
 //      the last ARM_TTL_MS — confirm_action arms it right after it consumed the
 //      pending row (single-use UPDATE … RETURNING) in this same request;
-//   4. method + path is in ACTION_ALLOWLIST.
+//   4. method + path matches ACTION_ALLOWLIST.
 // takeConfirmedAction is one-shot: the arm is deleted on first use, so one
-// "yes" is one write. Anything else stays 403.
+// "yes" is one write. Anything else stays 403. The BODY an action may carry is
+// fenced too (actionBodyAllowed, checked before arming): a PO note can only
+// carry notes, a PO approval only status CONFIRMED — never items, prices,
+// supplier or any other field the same PUT route would accept.
 export const MCP_ACTION_HEADER = "x-hookka-mcp-action";
 
-/** The ONLY non-GET requests an MCP token can ever make. */
-export const ACTION_ALLOWLIST: readonly { kind: "meeting" | "email"; method: "POST"; path: string }[] = [
+export type FencedKind = "meeting" | "email" | "mail_reply" | "po_note" | "case_note" | "po_approval";
+
+const REF = "[A-Za-z0-9._-]{1,80}";
+/** The ONLY non-GET requests an MCP token can ever make. `:ref` = one safe id segment. */
+export const ACTION_ALLOWLIST: readonly { kind: FencedKind; method: "POST" | "PUT"; path: string }[] = [
   { kind: "meeting", method: "POST", path: "/api/meetings/meetings" },
   { kind: "email", method: "POST", path: "/api/mail-center/compose" },
+  { kind: "mail_reply", method: "POST", path: "/api/mail-center/threads/:ref/reply" },
+  { kind: "po_note", method: "PUT", path: "/api/purchase-orders/:ref" },
+  { kind: "case_note", method: "PUT", path: "/api/service-cases/:ref" },
+  { kind: "po_approval", method: "PUT", path: "/api/purchase-orders/:ref" },
 ];
 
-export function allowlistedAction(kind: string): { method: "POST"; path: string } | null {
+// The allowlist paths hold only letters, "/", "-" and ":ref" — no regex metacharacters to escape.
+const pathRe = (pattern: string) => new RegExp(`^${pattern.replace(":ref", REF)}$`);
+const ALLOW_RE = ACTION_ALLOWLIST.map((a) => ({ ...a, re: pathRe(a.path) }));
+
+/** The concrete route for an action kind (`ref` fills `:ref`), or null for an unknown kind / unsafe ref. */
+export function allowlistedAction(kind: string, ref = ""): { method: "POST" | "PUT"; path: string } | null {
   const e = ACTION_ALLOWLIST.find((a) => a.kind === kind);
-  return e ? { method: e.method, path: e.path } : null;
+  if (!e) return null;
+  if (!e.path.includes(":ref")) return { method: e.method, path: e.path };
+  if (!new RegExp(`^${REF}$`).test(ref)) return null;
+  return { method: e.method, path: e.path.replace(":ref", ref) };
 }
 
 export function isAllowlisted(method: string, path: string): boolean {
-  return ACTION_ALLOWLIST.some((a) => a.method === method.toUpperCase() && a.path === path);
+  return ALLOW_RE.some((a) => a.method === method.toUpperCase() && a.re.test(path));
+}
+
+/** The keys each kind's body may carry (exactly what the ERP's own screen sends for that action). */
+const BODY_KEYS: Record<FencedKind, readonly string[] | null> = {
+  meeting: null, // the hub's draftBody, built by buildMeetingProposal
+  email: null, // the compose body, built by buildEmailProposal
+  mail_reply: ["text", "fromAddress", "afterMessageId"],
+  po_note: ["notes", "expectedUpdatedAt"],
+  case_note: ["actionLog"],
+  po_approval: ["status", "expectedUpdatedAt"],
+};
+
+/** True when `body` is a plain object carrying only the keys `kind` may send (PO approval: status CONFIRMED only). */
+export function actionBodyAllowed(kind: string, body: unknown): boolean {
+  if (!(kind in BODY_KEYS)) return false;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const keys = BODY_KEYS[kind as FencedKind];
+  if (keys === null) return true;
+  const b = body as Record<string, unknown>;
+  if (!Object.keys(b).every((k) => keys.includes(k))) return false;
+  if (kind === "po_approval" && b.status !== "CONFIRMED") return false;
+  if (kind === "po_note" && typeof b.notes !== "string") return false;
+  if (kind === "case_note" && !Array.isArray(b.actionLog)) return false;
+  if (kind === "mail_reply" && (typeof b.text !== "string" || !b.text.trim())) return false;
+  return true;
 }
 
 const ARM_TTL_MS = 30_000;

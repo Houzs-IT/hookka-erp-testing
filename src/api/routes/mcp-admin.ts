@@ -18,7 +18,7 @@ import { ensureNotificationsUserColumn } from "./it-support";
 import { appLabel, ensureMcpTables, hasMcpAccess, issueTokens, randomToken, revokeToken, revokeUserTokens } from "../lib/mcp-store";
 import { analyseToolText, leakCheckTargets, LEAK_CHECK_TOOLS, type LeakRow } from "../lib/mcp-leak-check";
 import { mcpAppRoutes, runToolAs } from "./mcp";
-import { actionsEnabled, setActionsEnabled } from "../lib/mcp-actions";
+import { actionsEnabled, setActionsEnabled, setWriteActionSwitch, WRITE_ACTIONS, writeActionSwitches, type WriteAction } from "../lib/mcp-actions";
 import { LEAK_CHECK_CLIENT_ID, latencyByTool, RATE_PER_DAY, RATE_PER_MINUTE } from "../lib/mcp-limits";
 
 const LIMITS = { perMinute: RATE_PER_MINUTE, perDay: RATE_PER_DAY };
@@ -93,6 +93,7 @@ app.get("/me", async (c) => {
       allowed,
       isSuperAdmin: role(c) === "SUPER_ADMIN",
       actionsEnabled: await actionsEnabled(db),
+      writeActions: await writeActionSwitches(db),
       limits: LIMITS,
       connectorUrl: `${new URL(c.req.url).origin}/api/mcp`,
       connections: (toks.results ?? []).map(tokenRow),
@@ -231,6 +232,7 @@ app.get("/admin/overview", async (c) => {
     data: {
       connectorUrl: `${new URL(c.req.url).origin}/api/mcp`,
       actionsEnabled: actionsOn,
+      writeActions: await writeActionSwitches(db),
       limits: LIMITS,
       latency: {
         last24h: latencyByTool(timingRows.filter((r) => r.at >= dayAgo)),
@@ -362,6 +364,20 @@ app.post("/admin/actions", async (c) => {
   await setActionsEnabled(c.var.DB, body.enabled, uid(c));
   await emitAudit(c, { resource: "ai-connector", resourceId: "actions", action: "update", after: { actionsEnabled: body.enabled } });
   return c.json({ success: true, data: { actionsEnabled: body.enabled } });
+});
+
+// Round 4b: one switch per write action (Mail Center reply, notes, PO approval),
+// default OFF, each only effective while "Allow AI actions" is on too.
+app.post("/admin/write-actions", async (c) => {
+  const denied = requireSuperAdmin(c);
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => ({}))) as { action?: unknown; enabled?: unknown };
+  if (!WRITE_ACTIONS.includes(body.action as WriteAction)) return c.json({ success: false, error: `action must be one of ${WRITE_ACTIONS.join(", ")}` }, 400);
+  if (typeof body.enabled !== "boolean") return c.json({ success: false, error: "enabled (true / false) required" }, 400);
+  const action = body.action as WriteAction;
+  await setWriteActionSwitch(c.var.DB, action, body.enabled, uid(c));
+  await emitAudit(c, { resource: "ai-connector", resourceId: `action:${action}`, action: "update", after: { [action]: body.enabled } });
+  return c.json({ success: true, data: { writeActions: await writeActionSwitches(c.var.DB) } });
 });
 
 // ── leak check (Super Admin) ────────────────────────────────────────────────
