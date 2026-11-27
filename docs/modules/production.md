@@ -69,10 +69,10 @@ Owns the shop floor: a **dept-tabbed WIP board** (one production_order per confi
 ## Key functions / sections (locate-to-function)
 | Symbol / section | file:line | Role |
 |---|---|---|
-| `ProductionPage` | `src/pages/production/index.tsx:669` | WIP board; every column/row branches on `activeTab` |
-| `filteredOrders` (memo) | `src/pages/production/index.tsx:2974` | Dept-narrow + overdue-set grid filter |
-| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5826 / 5785` | Packing sticker set (pillow carton = one box per order, owner 2026-11-20; immediate paint → /p/ token upgrade) |
-| `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5717 / 5692` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
+| `ProductionPage` | `src/pages/production/index.tsx:701` | WIP board; every column/row branches on `activeTab` |
+| `filteredOrders` (memo) | `src/pages/production/index.tsx:3015` | Dept-narrow + overdue-set grid filter |
+| `loadFgStickers` / `packingStickerUrl` | `src/pages/production/index.tsx:5913 / 5872` | Packing sticker set (pillow carton = one box per order, owner 2026-11-20; immediate paint → /p/ token upgrade) |
+| `handlePrintFibreStickers` / `loadPackingHeadersForFibre` | `src/pages/production/index.tsx:5763 / 5738` | Fibre tab Print All (HK-0159): 100×150 Fibre sticker, top half = the packing-sticker data for the PO (sofa SO siblings loaded for the WIP line), bottom = Fibre job-card QR + component + n/N within the SO. Layout `components/FibreStickerPage.tsx`, logic `fibre-sticker-set.ts`. Creates FG units at print time via `fetchFgStickersForOrders`, like Foam's packing pre-print |
 | `BOMManagementPage` | `src/pages/bom.tsx:5664` | BOM page shell (tabs, list) |
 | `EditBOMDialog` / `MasterTemplatesDialog` | `src/pages/bom.tsx:2638 / 3544` | L1+WIP editor / master variants |
 | `RawMaterialSelect` / `MaterialScalingEditor` | `src/components/bom/material-editor.tsx` | BOM material picker + scaling editor, shared with the product costing editor (`src/pages/products/costing-editor.tsx`); pure helpers in `src/lib/bom-material.ts` |

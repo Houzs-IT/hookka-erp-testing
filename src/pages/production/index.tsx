@@ -557,6 +557,38 @@ function MultiSelectFilter({
   );
 }
 
+// HK-0179: text box + tick-list of the column's values. The text box narrows
+// the list; ticked values = show only those rows (empty = all).
+function TextAndPickFilter({
+  text, onText, options, picked, onPick,
+}: {
+  text: string;
+  onText: (v: string) => void;
+  options: string[];
+  picked: string[];
+  onPick: (next: string[]) => void;
+}) {
+  const q = text.toLowerCase();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <TextContainsFilter value={text} onChange={onText} placeholder="Contains…" />
+      <MultiSelectFilter
+        options={q ? options.filter((o) => o.toLowerCase().includes(q)) : options}
+        selected={picked}
+        onChange={onPick}
+      />
+    </div>
+  );
+}
+
+// Overview columns that get a tick-list (HK-0179) → the order value they show.
+type OverviewPickCol = "soId" | "product" | "customerPO" | "specialOrder";
+const overviewPickValue = (
+  o: { poNo?: string | null; productCode?: string | null; customerPOId?: string | null; specialOrder?: string | null },
+  col: OverviewPickCol,
+): string =>
+  (col === "soId" ? o.poNo : col === "product" ? o.productCode : col === "customerPO" ? o.customerPOId : o.specialOrder) || "";
+
 function DeptStatusFilter({
   selected, onChange,
   dateRange, onDateRangeChange,
@@ -1301,6 +1333,8 @@ export default function ProductionPage({
     // latestCompleted; others use earliestDue). Independent of deptStatuses
     // so operators can combine both: "FAB CUT pending AND due before 12 May".
     deptDates: Partial<Record<string, { from: string; to: string }>>;
+    // HK-0179: ticked values per text column; empty / missing = all.
+    picks: Partial<Record<OverviewPickCol, string[]>>;
   };
   const emptyOverviewFilters: OverviewFilters = {
     soId: "", product: "", customers: [], customerPO: "", specialOrder: "",
@@ -1308,6 +1342,7 @@ export default function ProductionPage({
     customerDDFrom: "", customerDDTo: "", ourExpectedDDFrom: "", ourExpectedDDTo: "",
     deptStatuses: {},
     deptDates: {},
+    picks: {},
   };
   const OVERVIEW_TABLE_LS_KEY = "hookka-production-overview-table-state";
   type OverviewTableState = { sort: OverviewSort; filters: OverviewFilters };
@@ -1467,11 +1502,11 @@ export default function ProductionPage({
   const isFilterActive = useCallback((col: string): boolean => {
     const f = overviewFilters;
     switch (col) {
-      case "soId": return !!f.soId;
-      case "product": return !!f.product;
+      case "soId": return !!f.soId || !!f.picks.soId?.length;
+      case "product": return !!f.product || !!f.picks.product?.length;
       case "customer": return f.customers.length > 0;
-      case "customerPO": return !!f.customerPO;
-      case "specialOrder": return !!f.specialOrder;
+      case "customerPO": return !!f.customerPO || !!f.picks.customerPO?.length;
+      case "specialOrder": return !!f.specialOrder || !!f.picks.specialOrder?.length;
       case "qty": return !!f.qtyMin || !!f.qtyMax;
       case "customerDD": return !!f.customerDDFrom || !!f.customerDDTo;
       case "ourExpectedDD": return !!f.ourExpectedDDFrom || !!f.ourExpectedDDTo;
@@ -1488,6 +1523,7 @@ export default function ProductionPage({
     const f = overviewFilters;
     if (f.soId || f.product || f.customerPO || f.specialOrder || f.qtyMin || f.qtyMax || f.customerDDFrom || f.customerDDTo || f.ourExpectedDDFrom || f.ourExpectedDDTo) return true;
     if (f.customers.length > 0) return true;
+    if (Object.values(f.picks).some((v) => v && v.length > 0)) return true;
     for (const k of Object.keys(f.deptStatuses)) {
       if ((f.deptStatuses[k] || []).length > 0) return true;
     }
@@ -3149,6 +3185,9 @@ export default function ProductionPage({
         if (f.customers.length > 0 && !f.customers.includes(o.customerName)) return false;
         if (f.customerPO && !((o.customerPOId || "").toLowerCase().includes(f.customerPO.toLowerCase()))) return false;
         if (f.specialOrder && !((o.specialOrder || "").toLowerCase().includes(f.specialOrder.toLowerCase()))) return false;
+        for (const [col, vals] of Object.entries(f.picks) as [OverviewPickCol, string[] | undefined][]) {
+          if (vals && vals.length > 0 && !vals.includes(overviewPickValue(o, col))) return false;
+        }
         if (f.qtyMin && Number(o.quantity) < Number(f.qtyMin)) return false;
         if (f.qtyMax && Number(o.quantity) > Number(f.qtyMax)) return false;
         const custDD = o.customerDeliveryDate || "";
@@ -6470,6 +6509,7 @@ export default function ProductionPage({
           <td class="so">${o.poNo || ""}</td>
           <td class="prod"><b>${o.productCode || ""}</b><br/><small>${details.join(" · ")}</small></td>
           <td>${o.customerName || ""}</td>
+          <td class="so">${o.customerPOId || ""}</td>
           <td class="num">${o.quantity || ""}</td>
           <td>${fmt(o.customerDeliveryDate || "")}</td>
           <td>${fmt(o.hookkaExpectedDD || "")}</td>
@@ -6483,6 +6523,7 @@ export default function ProductionPage({
               <th>SO ID</th>
               <th>Product</th>
               <th>Customer</th>
+              <th>PO No</th>
               <th class="num">Qty</th>
               <th>Cust DD</th>
               <th>Our DD</th>
@@ -6491,8 +6532,8 @@ export default function ProductionPage({
           </thead>
           <tbody>${rowsHtml}</tbody>
         </table>`;
-      // 6 fixed columns (SO ID, Product, Customer, Qty, Cust DD, Our DD) + 8 dept matrix columns.
-      columnCount = 6 + DEPARTMENTS.length;
+      // 7 fixed columns (SO ID, Product, Customer, PO No, Qty, Cust DD, Our DD) + 8 dept matrix columns.
+      columnCount = 7 + DEPARTMENTS.length;
     } else {
       // Dept sub-tab: print template mirrors the on-screen Production Sheet
       // columns 1:1 so the operator sees the same data on paper. Trimmed to
@@ -7340,6 +7381,15 @@ export default function ProductionPage({
       className="cursor-pointer align-middle"
     />
   );
+  const pickFilter = (col: OverviewPickCol) => (
+    <TextAndPickFilter
+      text={overviewFilters[col]}
+      onText={(v) => setOverviewFilters((p) => ({ ...p, [col]: v }))}
+      options={Array.from(new Set(orders.map((o) => overviewPickValue(o, col)).filter(Boolean))).sort()}
+      picked={overviewFilters.picks[col] || []}
+      onPick={(next) => setOverviewFilters((p) => ({ ...p, picks: { ...p.picks, [col]: next } }))}
+    />
+  );
   const overviewFieldFilters: {
     key: (typeof OVERVIEW_FIXED_COLS)[number];
     label: string;
@@ -7349,24 +7399,12 @@ export default function ProductionPage({
     {
       key: "soId",
       label: "SO ID",
-      render: () => (
-        <TextContainsFilter
-          value={overviewFilters.soId}
-          onChange={(v) => setOverviewFilters((p) => ({ ...p, soId: v }))}
-          placeholder="Contains…"
-        />
-      ),
+      render: () => pickFilter("soId"),
     },
     {
       key: "product",
       label: "Product",
-      render: () => (
-        <TextContainsFilter
-          value={overviewFilters.product}
-          onChange={(v) => setOverviewFilters((p) => ({ ...p, product: v }))}
-          placeholder="Contains…"
-        />
-      ),
+      render: () => pickFilter("product"),
     },
     {
       key: "customer",
@@ -7382,24 +7420,12 @@ export default function ProductionPage({
     {
       key: "customerPO",
       label: "Customer PO",
-      render: () => (
-        <TextContainsFilter
-          value={overviewFilters.customerPO}
-          onChange={(v) => setOverviewFilters((p) => ({ ...p, customerPO: v }))}
-          placeholder="Contains…"
-        />
-      ),
+      render: () => pickFilter("customerPO"),
     },
     {
       key: "specialOrder",
       label: "Special Order",
-      render: () => (
-        <TextContainsFilter
-          value={overviewFilters.specialOrder}
-          onChange={(v) => setOverviewFilters((p) => ({ ...p, specialOrder: v }))}
-          placeholder="Contains…"
-        />
-      ),
+      render: () => pickFilter("specialOrder"),
     },
     {
       key: "qty",
