@@ -27,6 +27,8 @@ export type CncTemplate = {
   hasDgt: boolean;
   hasPrj: boolean;
   hasEmf: boolean;
+  hasPlt: boolean;
+  pltMetres: number | null;
   sizeBytes: number;
   updatedAt: string;
 };
@@ -50,7 +52,7 @@ function FileButton({
   label,
 }: {
   templateId: string;
-  kind: "dgt" | "prj" | "emf";
+  kind: "dgt" | "prj" | "emf" | "plt";
   label: string;
 }) {
   return (
@@ -142,7 +144,7 @@ export function CncTemplatePanel({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".dgt,.prj,.emf"
+          accept=".dgt,.prj,.emf,.plt"
           multiple
           className="hidden"
           onClick={(e) => e.stopPropagation()}
@@ -191,6 +193,13 @@ export function CncTemplatePanel({
                 {t.hasDgt && <FileButton templateId={t.id} kind="dgt" label="DGT" />}
                 {t.hasPrj && <FileButton templateId={t.id} kind="prj" label="PRJ" />}
                 {t.hasEmf && <FileButton templateId={t.id} kind="emf" label="EMF" />}
+                {t.hasPlt && (
+                  <FileButton
+                    templateId={t.id}
+                    kind="plt"
+                    label={t.pltMetres != null ? `PLT · ${t.pltMetres} m` : "PLT"}
+                  />
+                )}
               </div>
             </div>
           ))}

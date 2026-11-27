@@ -89,6 +89,7 @@ import {
   type PackingStickerHeader,
 } from "./fibre-sticker-set";
 import { SendOrderNotificationDialog } from "./components/SendOrderNotificationDialog";
+import { CutListButton } from "./components/CutListDialog";
 import {
   BatchActionToolbar,
   ApplyBatchDateDialog,
@@ -8928,6 +8929,7 @@ export default function ProductionPage({
                   >
                     {printingFabSew ? "Generating…" : "Print Fab Sew Stickers"}
                   </Button>
+                  <CutListButton />
                 </>
               );
             })()}

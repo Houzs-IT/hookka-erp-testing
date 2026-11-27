@@ -97,7 +97,7 @@ is enforced by hand in the handler, not by the middleware.
 | `POST /:rackId/stock-in` | `src/api/routes/public-rack-qr.ts:666` | Public rack QR stock-in handler |
 | `resolveCard` | `src/api/routes/public-rack-write.ts:80` | Archive-aware token → packing card |
 | `POST /:token/rack` | `src/api/routes/public-rack-write.ts:228` | Public `/p/` set/clear rackingNumber |
-| `POST /:token/advance` | `src/api/routes/public-do-qr.ts:707` | Public DO forward transition (dispatch/deliver) |
+| `POST /:token/advance` | `src/api/routes/public-do-qr.ts:715` | Public DO forward transition (dispatch/deliver) |
 | `resolveToken` | `src/api/routes/public-do-qr.ts:181` | 64-hex qrtoken → DO(s) resolver |
 | `applyPackingRack` | `src/api/lib/packing-rack-write.ts:71` | Rack set/clear + `rack_items` occupancy mirror |
 | `ensurePiecePicsRackingColumn` | `src/api/lib/packing-rack-write.ts:35` | Shared mig-0192 DDL self-apply |

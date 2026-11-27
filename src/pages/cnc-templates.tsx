@@ -189,12 +189,12 @@ function suggestName(opts: {
   return parts.filter(Boolean).join(" ");
 }
 
-// Group multiple picked files into the {dgt,prj,emf} slots by extension.
-function filesByKind(files: File[]): Partial<Record<"dgt" | "prj" | "emf", File>> {
-  const out: Partial<Record<"dgt" | "prj" | "emf", File>> = {};
+// Group multiple picked files into the {dgt,prj,emf,plt} slots by extension.
+function filesByKind(files: File[]): Partial<Record<"dgt" | "prj" | "emf" | "plt", File>> {
+  const out: Partial<Record<"dgt" | "prj" | "emf" | "plt", File>> = {};
   for (const f of files) {
     const ext = f.name.split(".").pop()?.toLowerCase();
-    if (ext === "dgt" || ext === "prj" || ext === "emf") out[ext] = f;
+    if (ext === "dgt" || ext === "prj" || ext === "emf" || ext === "plt") out[ext] = f;
   }
   return out;
 }
@@ -206,7 +206,7 @@ function FileButton({
   label,
 }: {
   templateId: string;
-  kind: "dgt" | "prj" | "emf";
+  kind: "dgt" | "prj" | "emf" | "plt";
   label: string;
 }) {
   return (
@@ -238,6 +238,7 @@ type EditDraft = {
   pieceLabel: string;
   totalHeight: string;
   fabricWidth: string;
+  pltMetres: string;
   material: "fabric" | "wood";
 };
 
@@ -485,6 +486,7 @@ export default function CncTemplatesPage() {
       pieceLabel: t.pieceLabel || "",
       totalHeight: t.totalHeight || "",
       fabricWidth: t.fabricWidth || "",
+      pltMetres: t.pltMetres == null ? "" : String(t.pltMetres),
       material: t.material === "wood" ? "wood" : "fabric",
     });
   };
@@ -505,6 +507,7 @@ export default function CncTemplatesPage() {
         pieceLabel: edit.pieceLabel.trim(),
         totalHeight: edit.totalHeight.trim(),
         fabricWidth: edit.fabricWidth.trim(),
+        pltMetres: edit.pltMetres.trim(),
         material: edit.material,
       });
       toast.success("Template updated.");
@@ -991,10 +994,10 @@ export default function CncTemplatesPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <label className="inline-flex items-center gap-1.5 rounded-md border border-[#A8CAD2] bg-[#E0EDF0] px-2.5 py-1 text-[11px] font-medium text-[#3E6570] hover:bg-[#D2E4E8] cursor-pointer transition-colors">
                     <Upload className="h-3.5 w-3.5" />
-                    Choose files (.dgt / .prj / .emf)
+                    Choose files (.dgt / .prj / .emf / .plt)
                     <input
                       type="file"
-                      accept=".dgt,.prj,.emf"
+                      accept=".dgt,.prj,.emf,.plt"
                       multiple
                       className="hidden"
                       onChange={(e) =>
@@ -1114,7 +1117,14 @@ export default function CncTemplatesPage() {
                               {t.hasDgt && <FileButton templateId={t.id} kind="dgt" label="DGT" />}
                               {t.hasPrj && <FileButton templateId={t.id} kind="prj" label="PRJ" />}
                               {t.hasEmf && <FileButton templateId={t.id} kind="emf" label="EMF" />}
-                              {!t.hasDgt && !t.hasPrj && !t.hasEmf && (
+                              {t.hasPlt && (
+                                <FileButton
+                                  templateId={t.id}
+                                  kind="plt"
+                                  label={t.pltMetres != null ? `PLT · ${t.pltMetres} m` : "PLT"}
+                                />
+                              )}
+                              {!t.hasDgt && !t.hasPrj && !t.hasEmf && !t.hasPlt && (
                                 <span className="text-[11px] text-[#9CA3AF] italic">No files</span>
                               )}
                             </div>
@@ -1158,6 +1168,9 @@ export default function CncTemplatesPage() {
                                     ["pieceLabel", "Piece", "e.g. ARM / CUSHION"],
                                     ["totalHeight", "Height (cm) / Seat size", "e.g. 20 / 28"],
                                     ["fabricWidth", "Fabric Width", ""],
+                                    ...(t.hasPlt
+                                      ? [["pltMetres", ".plt metres (blank if unknown)", "from NNMTR in the file name"]]
+                                      : []),
                                   ] as [keyof EditDraft, string, string][]
                                 ).map(([field, label, ph]) => (
                                   <label
@@ -1349,7 +1362,7 @@ function BulkUploadCard({
           <input
             ref={inputRef}
             type="file"
-            accept=".dgt,.prj,.emf"
+            accept=".dgt,.prj,.emf,.plt"
             multiple
             className="hidden"
             onChange={(e) => {
@@ -1364,7 +1377,9 @@ function BulkUploadCard({
           Pick a model so the files are filed under the right product instead of being guessed from
           the name. Leave it blank to use the filename. <span className="font-medium text-[#6B5C32]">.dgt</span>{" "}
           and <span className="font-medium text-[#6B5C32]">.emf</span> are machine files for the BUYI cutter;{" "}
-          <span className="font-medium text-[#6B5C32]">.prj</span> is the project file.
+          <span className="font-medium text-[#6B5C32]">.prj</span> is the project file;{" "}
+          <span className="font-medium text-[#6B5C32]">.plt</span> is the ETMark sofa layout (metres from the
+          &quot;NNMTR&quot; at the end of its name).
         </p>
       </CardContent>
     </Card>
@@ -1394,7 +1409,7 @@ function ScopedUploadButton({
       <input
         ref={ref}
         type="file"
-        accept=".dgt,.prj,.emf"
+        accept=".dgt,.prj,.emf,.plt"
         multiple
         className="hidden"
         onChange={(e) => {

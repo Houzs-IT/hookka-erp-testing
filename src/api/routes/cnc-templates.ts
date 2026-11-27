@@ -30,6 +30,7 @@ import type { Env } from "../worker";
 import { requirePermission } from "../lib/rbac";
 import { getOrgId } from "../lib/tenant";
 import { emitAudit } from "../lib/audit";
+import { parseMetresFromName } from "../lib/cnc-cut-list";
 import {
   SupabaseStorageNotConfiguredError,
   DEFAULT_BUCKET,
@@ -48,9 +49,12 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// The three file kinds a template can carry, and the row column each maps to.
-type FileKind = "dgt" | "prj" | "emf";
-const FILE_KINDS: FileKind[] = ["dgt", "prj", "emf"];
+// The file kinds a template can carry, and the row column each maps to.
+// `plt` (HK-0036) is the ETMark nested layout for a sofa model + size, reused
+// for every order of that model + size; its metres come from the "NNMTR" at
+// the end of the file name (plt_metres, editable).
+type FileKind = "dgt" | "prj" | "emf" | "plt";
+const FILE_KINDS: FileKind[] = ["dgt", "prj", "emf", "plt"];
 
 // Raw row as it comes back from the adapter (camelCase keys, snake_case in SQL).
 type CncTemplateRow = {
@@ -65,6 +69,8 @@ type CncTemplateRow = {
   dgtKey: string | null;
   prjKey: string | null;
   emfKey: string | null;
+  pltKey: string | null;
+  pltMetres: number | string | null;
   totalHeight: string | null;
   material: string | null;
   driveFolderId: string | null;
@@ -78,14 +84,14 @@ type CncTemplateRow = {
 // hasn't been applied — the column simply doesn't appear and we fall through
 // the catch below.
 const SELECT_COLS =
-  "id, org_id, product_code, size_label, fabric_width, piece_label, display_name, folder, dgt_key, prj_key, emf_key, total_height, material, drive_folder_id, size_bytes, created_at, updated_at";
+  "id, org_id, product_code, size_label, fabric_width, piece_label, display_name, folder, dgt_key, prj_key, emf_key, plt_key, plt_metres, total_height, material, drive_folder_id, size_bytes, created_at, updated_at";
 
 // Fallback SELECT used when total_height is missing — same columns minus
 // total_height (the adapter will return undefined for the field on the row).
 // `material` is self-applied at runtime (route middleware) so it's always
 // present here; only total_height can be absent (pre-0141 migration).
 const SELECT_COLS_NO_HEIGHT =
-  "id, org_id, product_code, size_label, fabric_width, piece_label, display_name, folder, dgt_key, prj_key, emf_key, material, drive_folder_id, size_bytes, created_at, updated_at";
+  "id, org_id, product_code, size_label, fabric_width, piece_label, display_name, folder, dgt_key, prj_key, emf_key, plt_key, plt_metres, material, drive_folder_id, size_bytes, created_at, updated_at";
 
 // Client-facing shape. The raw storage keys (dgt_key/prj_key/emf_key) are
 // deliberately NOT leaked — only the presence booleans are.
@@ -105,6 +111,8 @@ function rowToCncTemplate(r: CncTemplateRow) {
     hasDgt: Boolean(r.dgtKey && r.dgtKey.length > 0),
     hasPrj: Boolean(r.prjKey && r.prjKey.length > 0),
     hasEmf: Boolean(r.emfKey && r.emfKey.length > 0),
+    hasPlt: Boolean(r.pltKey && r.pltKey.length > 0),
+    pltMetres: r.pltMetres == null || r.pltMetres === "" ? null : Number(r.pltMetres),
     sizeBytes: Number(r.sizeBytes ?? 0),
     updatedAt: r.updatedAt,
   };
@@ -141,6 +149,18 @@ async function ensureMaterialColumn(db: DbLike): Promise<void> {
   } catch {
     // already exists / transient DDL reject — ignore (rowToCncTemplate
     // defaults a missing value to 'fabric').
+  }
+  // HK-0036 sofa .plt layouts. One column per ALTER, so the adapter's
+  // information_schema pre-check can skip the table lock when it exists.
+  for (const ddl of [
+    "ALTER TABLE cnc_templates ADD COLUMN IF NOT EXISTS plt_key TEXT",
+    "ALTER TABLE cnc_templates ADD COLUMN IF NOT EXISTS plt_metres DOUBLE PRECISION",
+  ]) {
+    try {
+      await db.prepare(ddl).bind().run();
+    } catch {
+      // already exists / transient — ignore
+    }
   }
   materialColEnsured = true;
 }
@@ -455,7 +475,23 @@ async function selectOneTemplateByName(
 function keyForKind(r: CncTemplateRow, kind: FileKind): string {
   if (kind === "dgt") return r.dgtKey ?? "";
   if (kind === "prj") return r.prjKey ?? "";
+  if (kind === "plt") return r.pltKey ?? "";
   return r.emfKey ?? "";
+}
+
+// Store a template's .plt layout key + metres (kept out of insert/updateTemplateRow,
+// which carry the pre-0141 fallbacks; plt is self-applied so needs none).
+async function setTemplatePlt(
+  db: DbLike,
+  id: string,
+  orgId: string,
+  key: string,
+  metres: number | null,
+): Promise<void> {
+  await db
+    .prepare("UPDATE cnc_templates SET plt_key = ?, plt_metres = ? WHERE id = ? AND org_id = ?")
+    .bind(key, metres, id, orgId)
+    .run();
 }
 
 // Strip path traversal from a filename — keep the basename only.
@@ -489,7 +525,7 @@ function genId(): string {
 // ---------------------------------------------------------------------------
 
 // File extensions we accept. Anything else is ignored by the importer.
-const IMPORT_EXTS = new Set(["dgt", "prj", "emf"]);
+const IMPORT_EXTS = new Set(["dgt", "prj", "emf", "plt"]);
 
 // Recognised "piece" words from the cutter convention. Matched case-insensitively.
 const PIECE_WORDS = new Set([
@@ -858,7 +894,7 @@ app.post("/", async (c) => {
   // path traversal from displayName so it can't escape the prefix.
   const keyBase = `cnc-templates/${productCode}/${safeBasename(displayName)}`;
 
-  const keys: Record<FileKind, string> = { dgt: "", prj: "", emf: "" };
+  const keys: Record<FileKind, string> = { dgt: "", prj: "", emf: "", plt: "" };
   let totalBytes = 0;
   const uploaded: string[] = [];
 
@@ -890,6 +926,7 @@ app.post("/", async (c) => {
       sizeBytes: totalBytes,
       now,
     });
+    if (keys.plt) await setTemplatePlt(c.var.DB, id, orgId, keys.plt, parseMetresFromName(files.plt!.name));
 
     await emitAudit(c, {
       resource: "cnc-templates",
@@ -992,8 +1029,11 @@ app.post("/import", async (c) => {
     const { base, ext } = splitNameExt(file.name);
     if (!IMPORT_EXTS.has(ext)) continue; // ignore non-cutter extensions
     const kind = ext as FileKind;
-    const identity = stripTrailingDgtWord(base);
-    const parsed = parseTemplateName(base);
+    // A .plt name ends in "NNMTR" (metres); drop it so the layout lands on the
+    // same row as its .dgt/.prj/.emf of that model + size.
+    const plainBase = kind === "plt" ? base.replace(/\s*\d+(?:\.\d+)?\s*MTR\s*$/i, "") || base : base;
+    const identity = stripTrailingDgtWord(plainBase);
+    const parsed = parseTemplateName(plainBase);
     // Prefer the operator-chosen model over the filename-parsed code, so every
     // file in the upload is filed under the picked model.
     if (overrideProductCode) parsed.productCode = overrideProductCode;
@@ -1019,7 +1059,7 @@ app.post("/import", async (c) => {
     return c.json(
       {
         success: false,
-        error: "No .dgt / .prj / .emf files found in the upload.",
+        error: "No .dgt / .prj / .emf / .plt files found in the upload.",
       },
       400,
     );
@@ -1076,6 +1116,7 @@ app.post("/import", async (c) => {
           dgt: newKeys.dgt ?? existing.dgtKey ?? "",
           prj: newKeys.prj ?? existing.prjKey ?? "",
           emf: newKeys.emf ?? existing.emfKey ?? "",
+          plt: newKeys.plt ?? existing.pltKey ?? "", // stored by setTemplatePlt below
         };
         await updateTemplateRow(c.var.DB, {
           id: rowId,
@@ -1110,6 +1151,10 @@ app.post("/import", async (c) => {
           sizeBytes: batchBytes,
           now,
         });
+      }
+
+      if (newKeys.plt) {
+        await setTemplatePlt(c.var.DB, rowId, orgId, newKeys.plt, parseMetresFromName(g.files.plt!.name));
       }
 
       const saved = await selectOneTemplate(c.var.DB, rowId, orgId);
@@ -1224,9 +1269,21 @@ app.patch("/:id", async (c) => {
   if (!displayName) {
     return c.json({ success: false, error: "Display name cannot be empty." }, 400);
   }
+  // .plt metres: blank → null; otherwise a number of 0 or more.
+  const hasPltMetres = Object.prototype.hasOwnProperty.call(body, "pltMetres");
+  const pltRaw = body.pltMetres;
+  const pltMetres = pltRaw == null || String(pltRaw).trim() === "" ? null : Number(pltRaw);
+  if (hasPltMetres && pltMetres !== null && !(Number.isFinite(pltMetres) && pltMetres >= 0)) {
+    return c.json({ success: false, error: "Metres must be a number of 0 or more." }, 400);
+  }
 
   const now = new Date().toISOString();
   try {
+    if (hasPltMetres) {
+      await c.var.DB.prepare("UPDATE cnc_templates SET plt_metres = ? WHERE id = ? AND org_id = ?")
+        .bind(pltMetres, id, orgId)
+        .run();
+    }
     await updateTemplateMeta(c.var.DB, {
       id,
       orgId,
@@ -1257,8 +1314,12 @@ app.patch("/:id", async (c) => {
       totalHeight: existing.totalHeight,
       material: existing.material,
       displayName: existing.displayName,
+      ...(hasPltMetres ? { pltMetres: existing.pltMetres } : {}),
     },
-    after: { productCode, sizeLabel, fabricWidth, pieceLabel, totalHeight, material, displayName },
+    after: {
+      productCode, sizeLabel, fabricWidth, pieceLabel, totalHeight, material, displayName,
+      ...(hasPltMetres ? { pltMetres } : {}),
+    },
   });
 
   const updated = await selectOneTemplate(c.var.DB, id, orgId);
