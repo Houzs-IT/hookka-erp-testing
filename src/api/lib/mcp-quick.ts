@@ -345,6 +345,12 @@ export const PROMPTS = [
   { name: "production_review", title: "Production / factory manager review", description: "Output by department and worker, late production orders, low efficiency and material shortages.", arguments: [{ name: "period", description: "today | week | month (default today)", required: false }] },
   { name: "warehouse_review", title: "Warehouse review", description: "Low / negative stock, shortages for open orders, deliveries due and delivered-not-invoiced.", arguments: [] },
   { name: "sales_review", title: "Sales review", description: "Sales this month, overdue sales orders, the order backlog and deliveries due this week.", arguments: [] },
+  // process help (owner 2026-11-27): staff who don't know how to do something ask here.
+  { name: "how_do_i", title: "How do I…?", description: "Step-by-step help for a task in the ERP, e.g. create a PO or open a service case.", arguments: [{ name: "task", description: "What you want to do", required: true }] },
+  { name: "explain_module", title: "What is this module for?", description: "What an ERP module does, its pages and how it links to the rest.", arguments: [{ name: "module", description: "e.g. Procurement (leave empty for all)", required: false }] },
+  { name: "what_does_it_mean", title: "What does this term mean?", description: "A plain-English meaning of an ERP term or abbreviation.", arguments: [{ name: "term", description: "e.g. GRN, WIP, fabric tier", required: true }] },
+  { name: "explain_this_error", title: "Explain this error", description: "What an ERP error message means and how to fix it.", arguments: [{ name: "message", description: "The error text", required: true }] },
+  { name: "my_first_week", title: "My first week", description: "A first-week reading path for a new starter in a role.", arguments: [{ name: "role", description: "sales | purchasing | production | warehouse | finance | after-sales", required: true }] },
 ];
 
 /** The tools behind each prompt: a prompt is offered only when the person can use one of them (round 4c P1/P2). */
@@ -359,6 +365,11 @@ export const PROMPT_TOOLS: Record<string, string[]> = {
   production_review: ["production_output", "production_late", "worker_efficiency", "material_shortages"],
   warehouse_review: ["inventory_summary", "material_shortages", "deliveries_due", "uninvoiced_deliveries"],
   sales_review: ["sales_summary", "so_overdue", "order_backlog", "deliveries_due"],
+  how_do_i: ["how_to"],
+  explain_module: ["module_overview"],
+  what_does_it_mean: ["glossary"],
+  explain_this_error: ["explain_error"],
+  my_first_week: ["onboarding"],
 };
 
 const ROLE_PROMPT_TAIL = " If a tool says I don't have access, say so in one line and carry on with the rest. Lead with numbers (RM), give each item's ERP link, keep it short and in plain language.";
@@ -395,6 +406,21 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   if (name === "sales_review") {
     return "Sales review: sales_summary for this month against last month, so_overdue for late sales orders, order_backlog for what is in the pipeline, and deliveries_due {range: \"week\"}." + ROLE_PROMPT_TAIL;
+  }
+  if (name === "how_do_i") {
+    return `How do I ${v("task") || "…"} in the ERP? Use how_to {question: "${v("task")}"}. Walk me through the steps in order with the exact button names and each step's link, tell me what to check before I confirm and what cannot be undone. If canDo is false, tell me to ask my supervisor or admin for the permission. If there is no guide, show me the closest titles.`;
+  }
+  if (name === "explain_module") {
+    return `Use module_overview${v("module") ? ` {module: "${v("module")}"}` : ""} and explain ${v("module") ? `the ${v("module")} module` : "the ERP modules"} in plain language: what it is for, its key pages (with links), who uses it and how it connects to the other modules.`;
+  }
+  if (name === "what_does_it_mean") {
+    return `What does "${v("term")}" mean in our ERP? Use glossary {term: "${v("term")}"} and explain it in one or two plain sentences, with where I see it.`;
+  }
+  if (name === "explain_this_error") {
+    return `I got this error in the ERP: "${v("message")}". Use explain_error {text} to tell me what it means, why it happened and what I should do.`;
+  }
+  if (name === "my_first_week") {
+    return `I am new in ${v("role") || "my role"}. Use onboarding {role: "${v("role")}"} and give me my first-week reading path day by day; for each item give one line on why it matters and its link.`;
   }
   if (name === "daily-brief") {
     return "What do I need to look at today? Use daily_brief. Start with the most urgent (overdue first), give each item's link, and keep it short, in plain language. If a section says I don't have access, mention it in one line.";

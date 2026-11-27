@@ -1,4 +1,5 @@
 # Hookka ERP — Work Tracker
+> **Last verified: 2026-11-27**: AI Connector process help (how_to guides, flows, module_overview, glossary, explain_error, onboarding, gap log) added (branch `feat/mcp-howto`, PR open, not merged, not deployed); follow-ups screen map (`feat/mcp-screen-guide`) and annotated screenshots (`feat/mcp-screen-shots`) tracked below; nothing else re-checked.
 > **Last verified: 2026-11-27**: Final Batch 5 Planning + Inventory + R&D Projects + User Management phone redesign added (branch `redesign/mobile-final-modules-v3`, PR to `main`); nothing else re-checked.
 > **Last verified: 2026-11-27**: AI Connector round 4d (D1 morning brief email, D2 urgent alerts, D4 `data_gaps`; D3 is in IT Hub) added (branch `feat/mcp-4d`, PR open, not merged, not deployed, no email sent); nothing else re-checked.
 > **Last verified: 2026-11-27**: Batch 4 3PL Providers + Suppliers + Outsource Work phone redesign added (branch `redesign/mobile-external-operations-v3`, rebased onto upstream/main `70fdb867e`, PR to `main`); nothing else re-checked.
@@ -340,6 +341,20 @@ shipped/parked). Re-read this + `MEMORY.md` at the start of each session and bef
 reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
+
+## 🔵 AI Connector process help — "how do I…" (owner 2026-11-27, feat/mcp-howto → feat/mcp-screen-guide → feat/mcp-screen-shots)
+
+Asks logged from the coordinator's multi-part brief, in order:
+1. 🔵 Task guides (SOP standard: purpose, prerequisites, who, permission, fields, steps with `?highlight=`, checkBefore, result, warnings, undo, approvals, deadlines, common mistakes, worked example, related, next step, contact) — 33 guides in `src/api/lib/howto/` (PR 1).
+2. 🔵 Business rules the system enforces, cited to code lines in comments (no written approval limits exist) (PR 1).
+3. 🔵 Company / customer-type variants; every guide tagged — one tenant org, no company-specific flow in code, so `ALL` + variants (PR 1).
+4. 🔵 End-to-end flows: order to cash, procure to pay, product setup, after-sales, payroll inputs (PR 1).
+5. 🔵 `module_overview`, `glossary`, `explain_error`, `onboarding`, prompts, gap log + admin "Questions with no guide yet" (PR 1).
+6. ⚪ Screen map + `explain_screen` + `where_is` + `?highlight=` frontend helper + server instruction for screenshots (PR 2, `feat/mcp-screen-guide`).
+7. ⚪ Annotated screenshots + `show_me` + freshness test (PR 3, `feat/mcp-screen-shots`).
+Not merged, not deployed (coordinator: do NOT merge / deploy).
+Found while reading the code for the guides (NOT fixed, owner to decide): the invoice page's "New Invoice" dialog lists LOADED delivery orders, but the server only accepts DELIVERED ones; the leave screens are switched off "until rollout" (`src/pages/worker/me.tsx`, `src/pages/employees.tsx`), so `apply-leave` tells staff to ask HR; `/invoices/payments` and `/production/fg-scan` are not in the sidebar; the maintenance "Log" date box starts on a fixed old date (2026-04-14).
+
 
 ## 🔵 Financial Dashboard: Cash Flow and Balance Sheet forecasts (feat/dashboard-cf-bs-forecast, 2026-11-23)
 
