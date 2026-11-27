@@ -79,6 +79,7 @@ export type CncTemplateEdit = {
   totalHeight?: string;
   material?: string; // "fabric" | "wood"
   displayName?: string;
+  pltMetres?: string; // "" clears it
 };
 
 /**
@@ -111,7 +112,7 @@ export async function updateCncTemplate(
 }
 
 // One cutting file (any of the three kinds) attached to a manual create.
-export type CncFileSet = Partial<Record<"dgt" | "prj" | "emf", File>>;
+export type CncFileSet = Partial<Record<"dgt" | "prj" | "emf" | "plt", File>>;
 
 // Fields for a manually-created CNC template. productCode + displayName are
 // required (the server enforces both). The size parameter is carried in
@@ -144,7 +145,7 @@ export async function createCncTemplate(
   if (input.pieceLabel != null) fd.append("pieceLabel", input.pieceLabel);
   if (input.totalHeight != null) fd.append("totalHeight", input.totalHeight);
   if (input.fabricWidth != null) fd.append("fabricWidth", input.fabricWidth);
-  for (const kind of ["dgt", "prj", "emf"] as const) {
+  for (const kind of ["dgt", "prj", "emf", "plt"] as const) {
     const f = input.files?.[kind];
     if (f && f.size > 0) fd.append(kind, f);
   }
