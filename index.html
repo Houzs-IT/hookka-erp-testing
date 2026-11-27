@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/hookka-logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: without it iOS reports every env(safe-area-inset-*) as 0, so the
+         black-translucent status bar covered the /m header and the floating tab bar sat on the
+         home indicator. The /m shell pads for the insets itself (MobileHeader, BottomTabBar). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Hookka Manufacturing ERP</title>
     <!-- PWA — TWO installable apps share this shell:
            • Office ERP (default): black-bg / white-logo icon, theme raisin.
