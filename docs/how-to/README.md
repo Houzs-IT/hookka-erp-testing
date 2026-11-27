@@ -1,5 +1,7 @@
 # How-to guides (AI Connector process help)
 
+> **Last generated: 2026-11-27** by `scripts/gen-howto-index.mjs` from `src/api/lib/howto/`.
+
 Staff ask Claude "how do I…" and the AI Connector answers from these guides (owner ask 2026-11-27).
 The guides are **data**, not prose: `src/api/lib/howto/`. This index is generated from that data — edit the data, then run `node --import tsx/esm scripts/gen-howto-index.mjs`.
 
