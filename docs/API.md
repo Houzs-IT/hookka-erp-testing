@@ -1,7 +1,7 @@
 # API — generated reference
 
 > **GENERATED FILE — do not hand-edit.** Regenerate with `node scripts/gen-api-docs.mjs`.
-> **Last generated: 2026-11-20** from `src/api/worker.ts` + `src/api/routes/*.ts`.
+> **Last generated: 2026-11-27** from `src/api/worker.ts` + `src/api/routes/*.ts`.
 
 The backend is a single [Hono](https://hono.dev) app in `src/api/worker.ts`, served
 as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
@@ -30,8 +30,8 @@ as a Cloudflare Pages Function via `functions/api/[[route]].ts`. There is no
 - **Health** — `GET /api/health` is registered directly on the app (not via a
   route module) and is exempt from the rate limiter.
 
-**Counts at generation time:** 151 mounts, 148 route files in
-`src/api/routes/`, 1070 top-level handler registrations discovered.
+**Counts at generation time:** 152 mounts, 149 route files in
+`src/api/routes/`, 1077 top-level handler registrations discovered.
 
 ## Scope and limits of this file
 
@@ -98,7 +98,8 @@ offsets pointing past the end of their own file.
 | `/api/public/rack-qr` | `src/api/routes/public-rack-qr.ts` | `GET /:rackId` <sub>:415</sub><br>`GET /:rackId/item` <sub>:489</sub><br>`POST /:rackId/stock-in` <sub>:666</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/public/rack-write` | `src/api/routes/public-rack-write.ts` | `GET /:token` <sub>:179</sub><br>`POST /:token/rack` <sub>:228</sub> | **public** (PUBLIC_PREFIXES) |
 | `/api/public/survey` | `src/api/routes/public-kpi-survey.ts` | `GET /:token` <sub>:134</sub><br>`POST /:token` <sub>:166</sub> | **public** (PUBLIC_PREFIXES) |
-| `/api/cnc-templates` | `src/api/routes/cnc-templates.ts` | `GET /` <sub>:692</sub><br>`GET /:id` <sub>:741</sub><br>`GET /:id/file/:kind` <sub>:762</sub><br>`POST /` <sub>:821</sub><br>`POST /import` <sub>:947</sub><br>`PATCH /:id` <sub>:1178</sub><br>`DELETE /:id` <sub>:1272</sub> | gated |
+| `/api/cnc-templates` | `src/api/routes/cnc-templates.ts` | `GET /` <sub>:732</sub><br>`GET /:id` <sub>:781</sub><br>`GET /:id/file/:kind` <sub>:802</sub><br>`POST /` <sub>:861</sub><br>`POST /import` <sub>:988</sub><br>`PATCH /:id` <sub>:1227</sub><br>`DELETE /:id` <sub>:1337</sub> | gated |
+| `/api/cnc-cut-list` | `src/api/routes/cnc-cut-list.ts` | `GET /batches` <sub>:50</sub><br>`GET /batches/:id` <sub>:57</sub><br>`POST /export` <sub>:66</sub><br>`POST /batches/:id/markers` <sub>:83</sub><br>`GET /markers/:id/file` <sub>:148</sub><br>`PATCH /markers/:id` <sub>:172</sub><br>`DELETE /markers/:id` <sub>:198</sub> | gated |
 | `/api/invoices` | `src/api/routes/invoices.ts` | `POST /backfill-po-links` <sub>:755</sub><br>`POST /backfill-so-item-links` <sub>:874</sub><br>`POST /backfill-cancel-reversals` <sub>:1010</sub><br>`POST /backfill-customer-fields` <sub>:1018</sub><br>`POST /backfill-date-from-delivery` <sub>:1161</sub><br>`GET /` <sub>:1240</sub><br>`GET /stats` <sub>:1373</sub><br>`GET /aging` <sub>:1525</sub><br>`POST /import-line-prices` <sub>:1708</sub><br>`POST /` <sub>:1908</sub><br>`GET /:id/print-extras` <sub>:2311</sub><br>`GET /:id` <sub>:2331</sub><br>`PUT /:id` <sub>:2408</sub><br>`DELETE /:id` <sub>:3361</sub> | gated |
 | `/api/payments` | `src/api/routes/payments.ts` | `GET /` <sub>:508</sub><br>`POST /` <sub>:562</sub><br>`GET /:id` <sub>:1024</sub><br>`PUT /:id` <sub>:1049</sub><br>`POST /:id/lifecycle` <sub>:1277</sub><br>`POST /:id/restate` <sub>:1342</sub> | gated |
 | `/api/supplier-payments` | `src/api/routes/supplier-payments.ts` | `GET /` <sub>:55</sub><br>`POST /` <sub>:149</sub><br>`POST /knock-off` <sub>:685</sub><br>`POST /un-knock` <sub>:846</sub><br>`POST /:paymentNo/void` <sub>:1425</sub><br>`POST /:paymentNo/lifecycle` <sub>:1499</sub><br>`POST /recompute-pi-paid` <sub>:1590</sub><br>`POST /:paymentNo/restate` <sub>:1638</sub><br>`GET /debug/last-restate-error` <sub>:1760</sub> | gated |
