@@ -111,7 +111,7 @@ import {
 import { GAP_SO_SCAN, summariseDataGaps } from "../lib/mcp-proactive";
 import { renderServerPdf, uploadExportAndSign, uploadPdfAndSign, SERVER_PDF_KINDS, XLSX_CONTENT_TYPE, type PdfKind } from "../lib/mcp-pdf";
 import { buildXlsx, EXPORT_LISTS, EXPORT_MAX_ROWS, EXPORT_PAGE_SIZE, exportFileName, exportRows, exportTotal, filterRows, pagesToRead, pickColumns } from "../lib/mcp-export";
-import { AnswerCache, CACHEABLE_TOOLS, countRecentCalls, RATE_LIMIT_STATUS, rateDecision } from "../lib/mcp-limits";
+import { AnswerCache, CACHEABLE_TOOLS, countRecentCalls, MAX_BATCH, RATE_LIMIT_STATUS, rateDecision } from "../lib/mcp-limits";
 import {
   consumeCode,
   createCode,
@@ -299,7 +299,8 @@ async function checkAuthParams(c: Context<Env>, p: AuthParams): Promise<{ ok: tr
   if (!p.clientId || !p.redirectUri) return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>Missing client or redirect address.</p>`, 400) };
   const cl = await getClient(c.var.DB, p.clientId);
   if (!cl) return { ok: false, res: page("Unknown app", `<h1>Unknown app</h1><p>This AI app is not registered. Remove the connector and add it again.</p>`, 400) };
-  if (!cl.redirectUris.includes(p.redirectUri)) return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>The return address does not match this app.</p>`, 400) };
+  // validRedirectUri again here: clients registered before the host allowlist must stop working too.
+  if (!cl.redirectUris.includes(p.redirectUri) || !validRedirectUri(p.redirectUri)) return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>The return address does not match this app.</p>`, 400) };
   if (!p.challenge || p.method !== "S256") return { ok: false, res: page("Invalid request", `<h1>Invalid request</h1><p>This app must use PKCE (S256).</p>`, 400) };
   return { ok: true, clientName: cl.clientName };
 }
@@ -333,6 +334,7 @@ app.get("/oauth/authorize", async (c) => {
     "Allow AI to read Hookka ERP",
     `<h1>${app_} wants to use Hookka ERP as you</h1>
 <p>Signed in as <b>${esc(who.name)}</b></p>
+<p>Your access goes to <b>${esc(new URL(p.redirectUri).host)}</b>. If that is not the AI app you are adding, press Cancel.</p>
 <ul>
 <li><span class="tick" aria-hidden="true">✓</span><span><b>Looks things up.</b> It cannot change orders, money, stock or approvals, and cannot delete anything.</span></li>
 <li><span class="tick" aria-hidden="true">✓</span><span><b>Meetings and email only after you say yes.</b> If your admin allows AI actions, it can book a meeting or send an email for you — it shows you each one first and does it only when you confirm.</span></li>
@@ -839,7 +841,7 @@ function permLookup(c: Context<Env>): Promise<(perm: string) => boolean> {
   if (!m) permMemo.set(c, (m = new Map()));
   const hit = m.get(who);
   if (hit) return hit;
-  const perms = ["payroll:read", "payslips:read", "cost-ledger:read", "accounting:read", "product-pricing:read", "revenue-figures:read"];
+  const perms = ["payroll:read", "payslips:read", "cost-ledger:read", "product-costing:read", "accounting:read", "product-pricing:read", "revenue-figures:read"];
   const p = Promise.all(perms.map((x) => hasPermission(c, x.split(":")[0], x.split(":")[1]))).then((ans) => {
     const got = new Map(perms.map((x, i) => [x, ans[i]]));
     return (q: string) => got.get(q) === true;
@@ -1052,7 +1054,7 @@ async function proposeAction(c: Context<Env>, id: McpIdentity, token: string, ki
     const mbRes = await innerGet(c, token, "/api/mail-center/addresses");
     const mbJson = (await mbRes.json().catch(() => null)) as unknown;
     if (mbRes.status >= 400 || !mbJson) return fail(errText(mbJson) || "Mail Center could not be read.", mbRes.status >= 400 ? mbRes.status : 502);
-    p = buildEmailProposal(args, readMailboxes(mbJson), id.userId);
+    p = buildEmailProposal(args, readMailboxes(mbJson), id.userId, id.email);
   }
   if (!p.ok) return fail(p.error, 400);
   target = p.target;
@@ -1989,7 +1991,7 @@ export async function readManyAsPerson(c: Context<Env>, id: McpIdentity, token: 
   );
 }
 
-async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: RpcReq): Promise<unknown | null> {
+async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: RpcReq, seen: { calls: number }): Promise<unknown | null> {
   const reply = (result: unknown) => ({ jsonrpc: "2.0", id: m.id ?? null, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id: m.id ?? null, error: { code, message } });
   const isNotification = m.id === undefined || m.id === null;
@@ -2012,7 +2014,8 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
       let over: string | null = null;
       try {
         const n = await countRecentCalls(c.var.DB, id.userId);
-        over = rateDecision(n.lastMinute, n.today);
+        // Rows are written after the call (waitUntil), so add the calls already made in this request.
+        over = rateDecision(n.lastMinute + seen.calls, n.today + seen.calls);
       } catch (e) {
         // The count failing must not take the connector down: let the call through.
         console.warn("[mcp] rate count failed:", e instanceof Error ? e.message : String(e));
@@ -2026,6 +2029,7 @@ async function handleRpc(c: Context<Env>, id: McpIdentity, token: string, m: Rpc
         }
         return reply(text(over, true));
       }
+      seen.calls++;
       return reply(await callTool(c, id, token, name, args));
     }
     case "resources/list":
@@ -2076,9 +2080,13 @@ app.post("/", async (c) => {
     return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
   }
   const msgs = Array.isArray(body) ? (body as RpcReq[]) : [body as RpcReq];
+  if (msgs.length > MAX_BATCH) {
+    return c.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: `At most ${MAX_BATCH} messages in one batch.` } }, 400);
+  }
   const out: unknown[] = [];
+  const seen = { calls: 0 };
   for (const m of msgs) {
-    const r = await handleRpc(c, id, token, m);
+    const r = await handleRpc(c, id, token, m, seen);
     if (r) out.push(r);
   }
   if (out.length === 0) return c.body(null, 202);

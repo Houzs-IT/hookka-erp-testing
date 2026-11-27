@@ -21,6 +21,8 @@
 export const RATE_PER_MINUTE = 30;
 export const RATE_PER_DAY = 600;
 export const RATE_LIMIT_STATUS = 429;
+/** Most JSON-RPC messages in one POST: call rows are logged after the call, so a big batch would all see the old count. */
+export const MAX_BATCH = 10;
 export const LEAK_CHECK_CLIENT_ID = "mcpc_leak_check";
 /** Round 4d: the morning brief / test brief runs daily_brief as the person under this client. Not counted toward the person's rate limit. */
 export const PROACTIVE_CLIENT_ID = "mcpc_morning_brief";

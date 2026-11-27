@@ -455,11 +455,18 @@ const SELLING_PRICE_FIELDS = [
 ];
 
 async function stripSellingPrice<T>(c: Context<Env>, rows: T[]): Promise<T[]> {
-  if (await hasPermission(c, "product-pricing", "read")) return rows;
+  const [canPrice, canCosting, canLedger] = await Promise.all([
+    hasPermission(c, "product-pricing", "read"),
+    hasPermission(c, "product-costing", "read"),
+    hasPermission(c, "cost-ledger", "read"),
+  ]);
+  // #1631 locked cost to the costing gate (routes/product-costing.ts requireCostingRead) but only in the UI.
+  const hide = [...(canPrice ? [] : SELLING_PRICE_FIELDS), ...(canCosting || canLedger ? [] : ["costPriceSen"])];
+  if (!hide.length) return rows;
   return rows.map((row) => {
     if (!row || typeof row !== "object") return row;
     const out = { ...(row as Record<string, unknown>) };
-    for (const f of SELLING_PRICE_FIELDS) delete out[f];
+    for (const f of hide) delete out[f];
     return out as T;
   });
 }

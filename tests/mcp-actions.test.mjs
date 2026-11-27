@@ -253,11 +253,11 @@ test("propose_email: the compose route's recipient rules, the person's own mailb
     { address: "sales@hookka.com", active: true, assignedUserId: "u5" },
     { address: "old@hookka.com", active: false, assignedUserId: "u1" },
   ]);
-  const p = actions.buildEmailProposal({ to: ["Ali <ali@customer.com>"], cc: "boss@hookka.com", subject: "Delivery date", body: "Your order ships Friday.\nThanks" }, boxes, "u1");
+  const p = actions.buildEmailProposal({ to: ["Ali <ali@hookka.com>"], cc: "boss@hookka.com", subject: "Delivery date", body: "Your order ships Friday.\nThanks" }, boxes, "u1");
   assert.equal(p.ok, true);
-  assert.deepEqual(p.body, { fromAddress: "lim@hookka.com", to: ["ali@customer.com"], cc: ["boss@hookka.com"], subject: "Delivery date", text: "Your order ships Friday.\nThanks" });
+  assert.deepEqual(p.body, { fromAddress: "lim@hookka.com", to: ["ali@hookka.com"], cc: ["boss@hookka.com"], subject: "Delivery date", text: "Your order ships Friday.\nThanks" });
   assert.match(p.summary, /Your order ships Friday/);
-  assert.equal(p.target, "email: to ali@customer.com — Delivery date");
+  assert.equal(p.target, "email: to ali@hookka.com — Delivery date");
   assert.doesNotMatch(p.target, /Friday/);
   assert.equal(actions.actionTarget("email", p.body), p.target);
 
@@ -274,8 +274,19 @@ test("propose_email: the compose route's recipient rules, the person's own mailb
   bad({ from_mailbox: "boss@hookka.com" }, /may not send from boss@hookka\.com/);
   bad({}, /Say which mailbox/, "u9");
   bad({}, /no Mail Center mailbox/, "u1", []);
-  const shared = actions.buildEmailProposal({ to: ["a@x.com"], subject: "s", body: "b", from_mailbox: "sales@hookka.com" }, boxes, "u1");
+  const shared = actions.buildEmailProposal({ to: ["a@hookka.com"], subject: "s", body: "b", from_mailbox: "sales@hookka.com" }, boxes, "u1");
   assert.equal(shared.ok && shared.body.fromAddress, "sales@hookka.com");
+});
+
+test("propose_email: only the sending mailbox's domain or the person's own address (the AI confirms its own proposals)", () => {
+  const boxes = actions.readMailboxes([{ address: "lim@hookka.com", active: true, assignedUserId: "u1" }]);
+  const send = (to, cc = [], own = "") => actions.buildEmailProposal({ to, cc, subject: "s", body: "b" }, boxes, "u1", own);
+  assert.equal(send(["boss@hookka.com"]).ok, true);
+  assert.equal(send(["Me@Gmail.com"], [], "me@gmail.com").ok, true);
+  const out = send(["boss@hookka.com"], ["thief@evil.example"]);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /only email @hookka\.com .*thief@evil\.example/);
+  assert.equal(send(["boss@hookka.com.evil.example"]).ok, false);
 });
 
 test("outcomes in plain words, including a booking clash", () => {

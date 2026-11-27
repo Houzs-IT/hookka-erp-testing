@@ -153,14 +153,17 @@ export async function getClient(db: Db, clientId: string): Promise<McpClient | n
   return { clientId: str(r, "client_id", "clientId"), clientName: str(r, "client_name", "clientName") || "AI app", redirectUris: uris };
 }
 
-/** A redirect URI a client may register: https anywhere, http only for loopback. */
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+// Registration needs no login, so an open https rule let anyone mint a "Claude" client that sends the code to their own host.
+const AI_REDIRECT_HOSTS = ["claude.ai", "claude.com", "chatgpt.com"];
+
+/** A redirect URI a client may use: https to a known AI app host, or loopback (local tools, MCP Inspector). */
 export function validRedirectUri(u: string): boolean {
   try {
     const url = new URL(u);
     if (url.hash) return false;
-    if (url.protocol === "https:") return true;
-    if (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return true;
-    return false;
+    if (LOOPBACK.includes(url.hostname)) return url.protocol === "http:" || url.protocol === "https:";
+    return url.protocol === "https:" && AI_REDIRECT_HOSTS.includes(url.hostname);
   } catch {
     return false;
   }
@@ -292,7 +295,7 @@ export async function refreshTokens(db: Db, refreshToken: string, clientId: stri
   return { accessToken, refreshToken: newRefresh, expiresIn: Math.floor(ACCESS_TTL_MS / 1000), tokenId: str(r, "id") };
 }
 
-export type McpIdentity = { tokenId: string; userId: string; clientId: string; role: string; orgId: string | null; name: string };
+export type McpIdentity = { tokenId: string; userId: string; clientId: string; role: string; orgId: string | null; name: string; email?: string };
 
 /**
  * The person behind an MCP access token — or null when the token is unknown,
@@ -324,6 +327,7 @@ export async function resolveAccessToken(db: Db, token: string): Promise<McpIden
     // Read on the same row that authenticated the token (whoami used a second
     // query that came back without the person's name — BUG-2026-11-25-558).
     name: str(r, "display_name", "displayName", "displayname").trim() || str(r, "email"),
+    email: str(r, "email").trim().toLowerCase(),
   };
   if (!(await hasMcpAccess(db, id.userId, id.role))) return null;
   // last-used, at most once a minute per token

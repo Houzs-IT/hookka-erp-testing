@@ -41,7 +41,9 @@ export const api = {
     const res = await fetch(path, { credentials: "include" });
     if (!res.ok) throw new MeetingsApiError("That file could not be opened.", res.status, "");
     const blob = await res.blob();
-    return URL.createObjectURL(mime ? new Blob([blob], { type: mime }) : blob);
+    // A blob: URL runs as this site, so only these open in the tab; anything else (HTML, SVG...) downloads.
+    const type = ["image/png", "image/jpeg", "application/pdf"].includes((mime ?? blob.type).toLowerCase()) ? (mime ?? blob.type).toLowerCase() : "application/octet-stream";
+    return URL.createObjectURL(new Blob([blob], { type }));
   },
 };
 

@@ -130,3 +130,23 @@ test("the staff list keeps active users, named, as Hookka", () => {
     { id: "u2", name: "b@hookka.test", email: "b@hookka.test", company: "Hookka", department: "" },
   ]);
 });
+
+// Carres #3 / R&D 2026-11-27: the hub serves back the type the uploader declared.
+test("a meeting file opens inline only as png / jpeg / pdf; anything else is a download", async (t) => {
+  let answer = new Response("x");
+  fakeHub(t, () => answer);
+  const get = () => appAs("user-aina").request("/api/meetings/meetings/7/files/9");
+  answer = new Response("<script>alert(1)</script>", { headers: { "Content-Type": "text/html", "Content-Disposition": 'inline; filename="a.html"' } });
+  let res = await get();
+  assert.equal(res.headers.get("Content-Type"), "application/octet-stream");
+  assert.equal(res.headers.get("Content-Disposition"), 'attachment; filename="a.html"');
+  answer = new Response("<svg/>", { headers: { "Content-Type": "image/svg+xml" } });
+  res = await get();
+  assert.equal(res.headers.get("Content-Type"), "application/octet-stream");
+  assert.equal(res.headers.get("Content-Disposition"), "attachment");
+  answer = new Response("%PDF", { headers: { "Content-Type": "application/pdf", "Content-Disposition": 'inline; filename="q.pdf"' } });
+  res = await get();
+  assert.equal(res.headers.get("Content-Type"), "application/pdf");
+  assert.equal(res.headers.get("Content-Disposition"), 'inline; filename="q.pdf"');
+  assert.equal(res.headers.get("X-Content-Type-Options"), "nosniff");
+});

@@ -14,8 +14,9 @@
 // which reads e.g. `template.l1Processes[0].dept` directly.
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { Env } from "../worker";
-import { requirePermission } from "../lib/rbac";
+import { hasPermission, requirePermission } from "../lib/rbac";
 import { buildAuditStatement, emitAudit, recordAuditCreatedMetric } from "../lib/audit";
 import { demoteOtherActiveBomsStatement, oneActivePerProduct } from "../lib/bom-single-active";
 import {
@@ -197,6 +198,12 @@ function genId(): string {
 // bom_versions routes
 // ---------------------------------------------------------------------------
 
+// Same gate as routes/product-costing.ts requireCostingRead: cost figures only for product-costing / cost-ledger read.
+async function hideBomCost<T extends { labourCost: number; materialCost: number; totalCost: number }>(c: Context<Env>, rows: T[]): Promise<T[]> {
+  if ((await hasPermission(c, "product-costing", "read")) || (await hasPermission(c, "cost-ledger", "read"))) return rows;
+  return rows.map(({ labourCost: _l, materialCost: _m, totalCost: _t, ...rest }) => rest as unknown as T);
+}
+
 // GET /api/bom — list all BOM versions, optional ?productId= filter
 app.get("/", async (c) => {
   const productId = c.req.query("productId");
@@ -207,7 +214,7 @@ app.get("/", async (c) => {
     ? c.var.DB.prepare(sql).bind(productId)
     : c.var.DB.prepare(sql);
   const res = await stmt.all<BOMVersionRow>();
-  const data = (res.results ?? []).map(rowToVersion);
+  const data = await hideBomCost(c, (res.results ?? []).map(rowToVersion));
   return c.json({ success: true, data });
 });
 
@@ -1547,7 +1554,7 @@ app.get("/:id", async (c) => {
   if (!row) {
     return c.json({ success: false, error: "BOM version not found" }, 404);
   }
-  return c.json({ success: true, data: rowToVersion(row) });
+  return c.json({ success: true, data: (await hideBomCost(c, [rowToVersion(row)]))[0] });
 });
 
 // PUT /api/bom/:id — update BOM version (shallow merge over existing)
