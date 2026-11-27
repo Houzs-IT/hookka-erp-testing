@@ -350,6 +350,8 @@ export const PROMPTS = [
   { name: "explain_module", title: "What is this module for?", description: "What an ERP module does, its pages and how it links to the rest.", arguments: [{ name: "module", description: "e.g. Procurement (leave empty for all)", required: false }] },
   { name: "what_does_it_mean", title: "What does this term mean?", description: "A plain-English meaning of an ERP term or abbreviation.", arguments: [{ name: "term", description: "e.g. GRN, WIP, fabric tier", required: true }] },
   { name: "explain_this_error", title: "Explain this error", description: "What an ERP error message means and how to fix it.", arguments: [{ name: "message", description: "The error text", required: true }] },
+  { name: "explain_my_screen", title: "Explain my screen", description: "What this ERP page is and what its buttons do — from the URL or a screenshot.", arguments: [{ name: "path", description: "The URL / path, or leave empty and attach a screenshot", required: false }] },
+  { name: "where_do_i_open", title: "Where do I open…?", description: "Where something is in the ERP, with a link that marks the button.", arguments: [{ name: "thing", description: "e.g. a maintenance log, a credit note", required: true }] },
   { name: "my_first_week", title: "My first week", description: "A first-week reading path for a new starter in a role.", arguments: [{ name: "role", description: "sales | purchasing | production | warehouse | finance | after-sales", required: true }] },
 ];
 
@@ -370,6 +372,8 @@ export const PROMPT_TOOLS: Record<string, string[]> = {
   what_does_it_mean: ["glossary"],
   explain_this_error: ["explain_error"],
   my_first_week: ["onboarding"],
+  explain_my_screen: ["explain_screen"],
+  where_do_i_open: ["where_is"],
 };
 
 const ROLE_PROMPT_TAIL = " If a tool says I don't have access, say so in one line and carry on with the rest. Lead with numbers (RM), give each item's ERP link, keep it short and in plain language.";
@@ -418,6 +422,12 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   if (name === "explain_this_error") {
     return `I got this error in the ERP: "${v("message")}". Use explain_error {text} to tell me what it means, why it happened and what I should do.`;
+  }
+  if (name === "explain_my_screen") {
+    return `Explain this ERP screen to me. ${v("path") ? `The address is ${v("path")}.` : "If I attached a screenshot, read the address bar and the visible button / tab labels."} Call explain_screen {path, visible_text} and tell me what the page is for and what each important button does, in plain language; say which buttons I can't use with my permissions.`;
+  }
+  if (name === "where_do_i_open") {
+    return `Where do I open ${v("thing") || "…"} in the ERP? Use where_is {thing: "${v("thing")}"} and give me the sidebar path and the link (it marks the button to press).`;
   }
   if (name === "my_first_week") {
     return `I am new in ${v("role") || "my role"}. Use onboarding {role: "${v("role")}"} and give me my first-week reading path day by day; for each item give one line on why it matters and its link.`;

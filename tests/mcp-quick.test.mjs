@@ -128,7 +128,7 @@ test("search results in the shape ChatGPT requires, and fetch ids round-trip", (
 });
 
 test("prompts expand to a question; unknown prompt is refused", () => {
-  assert.equal(PROMPTS.length, 15); // + daily-brief (round 3) + six role prompts (round 4c) + five help prompts (how-to, 2026-11-27)
+  assert.equal(PROMPTS.length, 17); // + daily-brief (round 3) + six role prompts (round 4c) + five help prompts (how-to) + two screen prompts (2026-11-27)
   assert.match(promptText("monthly_sales_review", { period: "2026-10" }), /2026-10.*sales_summary/);
   assert.match(promptText("find_document", { number: "SO-2611-001" }), /SO-2611-001/);
   assert.equal(promptText("nope", {}), null);

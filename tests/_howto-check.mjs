@@ -94,3 +94,23 @@ export function checkGuides(guides) {
   }
   return bad;
 }
+
+/** Problems in a list of screen-map entries: [{id, problem}]. */
+export function checkScreens(screens) {
+  const bad = [];
+  for (const s of screens) {
+    const id = s.path;
+    if (!pathExists(s.path)) bad.push({ id, problem: "path not in router" });
+    for (const k of ["title", "purpose", "sidebar"]) if (!String(s[k] ?? "").trim()) bad.push({ id, problem: `missing ${k}` });
+    if (!Array.isArray(s.actions)) bad.push({ id, problem: "missing actions" });
+    for (const l of s.sections ?? []) if (!labelExists(l)) bad.push({ id, problem: `section "${l}" not found in src/` });
+    for (const a of s.actions ?? []) {
+      if (!labelExists(a.label)) bad.push({ id, problem: `action "${a.label}" not found in src/` });
+      if (!String(a.does ?? "").trim()) bad.push({ id, problem: `action "${a.label}" has no 'does'` });
+      if (a.permission && !/^[a-z0-9-]+:[a-z]+$/.test(a.permission)) bad.push({ id, problem: `action "${a.label}" permission ${a.permission}` });
+      for (const q of [...quotedLabels(a.does), ...quotedLabels(a.sideEffects)]) if (!labelExists(q)) bad.push({ id, problem: `label "${q}" not found in src/` });
+    }
+    for (const q of [...quotedLabels(s.purpose), ...quotedLabels(s.sidebar)]) if (!labelExists(q)) bad.push({ id, problem: `label "${q}" not found in src/` });
+  }
+  return bad;
+}

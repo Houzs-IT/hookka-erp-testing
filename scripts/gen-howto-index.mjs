@@ -20,5 +20,7 @@ for (const [k, v] of Object.entries(m.ONBOARDING)) L.push(`- **${v.title}** (\`$
 L.push("", "## Modules (`module_overview`)", "");
 for (const x of m.MODULES) L.push(`- **${x.section}** — ${x.oneLine}`);
 L.push("", `## Glossary and errors`, "", `- \`glossary\`: ${m.GLOSSARY.length} terms (${m.GLOSSARY.map((e) => e.term).join(", ")}).`, `- \`explain_error\`: ${m.ERRORS.length} real ERP messages (\`src/api/lib/howto/errors.ts\`).`);
+const sc = await import("../src/api/lib/mcp-screens.ts");
+L.push("", "## Screen map (`explain_screen`, `where_is`)", "", `- ${sc.SCREENS.length} router pages (${sc.SCREENS.filter((x) => x.detail === "full").length} in full detail), ${sc.SCREENS.reduce((n, x) => n + x.actions.length, 0)} buttons / tabs / menu items — \`src/api/lib/howto/screens-*.ts\`. Links carry \`?highlight=<label>\`, which outlines that element in the ERP.`);
 writeFileSync(new URL("../docs/how-to/README.md", import.meta.url), L.join("\n") + "\n");
 console.log(`wrote ${L.length} lines`);
