@@ -227,6 +227,11 @@ body:not([data-theme]) {
   --m-po-done: #2D5A54;         /* Production Orders v3: Done stage (teal) */
   /* Opt-in glass header (MobileHeader glass) + the row stuck under it. */
   --m-header-glass: rgba(250, 248, 244, 0.92);
+  /* Floating glass tab bar (bottom-bar handoff, Style B). */
+  --m-nav-glass: linear-gradient(160deg, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0.74));
+  --m-nav-glass-solid: linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.96));
+  --m-nav-inactive: #4D4630;
+  --m-nav-active-label: #6B5C32;
 }
 
 body[data-theme="dark"] {
@@ -322,6 +327,39 @@ body[data-theme="dark"] {
   --m-inv-paid-label: #8FBE78;
   --m-po-done: #7FB5A8;
   --m-header-glass: rgba(26, 24, 22, 0.92);
+  --m-nav-glass: linear-gradient(160deg, rgba(40, 36, 31, 0.90), rgba(28, 25, 22, 0.76));
+  --m-nav-glass-solid: linear-gradient(160deg, rgba(40, 36, 31, 0.96), rgba(28, 25, 22, 0.96));
+  --m-nav-inactive: #D2C9B9;
+  --m-nav-active-label: #D9C28A;
+}
+
+/* Floating glass tab bar geometry, shared by the pill, the content padding and
+ * every phone dock/toast (via M_TAB_BAR in theme.ts), so they can never drift.
+ *  - bottom: phones with no home indicator (most Android, iPhone SE) float the
+ *    pill 14px up. Phones with one (inset ~34px) tuck it to inset − 12 = 22px,
+ *    just clearing the indicator — the plain `18px + inset` from the handoff
+ *    left a ~52px empty band under the pill on those phones.
+ *  - side: 14px on regular phones, down to 8px on 320–360px screens so five
+ *    labels still fit. */
+body {
+  --m-tabbar-h: 64px;
+  --m-tabbar-bottom: max(14px, calc(env(safe-area-inset-bottom, 0px) - 12px));
+  --m-tabbar-top: calc(var(--m-tabbar-bottom) + var(--m-tabbar-h));
+  --m-tabbar-side: clamp(8px, 3.6vw, 14px);
+}
+
+/* Floating glass tab bar. Kept in CSS (not inline) for the @supports fallback:
+ * without backdrop-filter the translucent gradient would be unreadable over
+ * busy content, so it goes near-opaque instead. */
+.m-tabbar-pill {
+  background: var(--m-nav-glass);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .m-tabbar-pill {
+    background: var(--m-nav-glass-solid);
+  }
 }
 
 /* Foundation breakpoints mirror the existing /m shell: phone first, Fold /

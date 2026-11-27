@@ -49,6 +49,7 @@ import {
   Files,
   History,
   Lamp,
+  LifeBuoy,
   MapPin,
   Package,
   Route,
@@ -1231,7 +1232,7 @@ export function SalesOrderDetail() {
   );
 
   // What this user may do with this order now: the desktop status rules x their permissions (lib/so-actions.ts).
-  const plan = soActionPlan(status, {
+  const fullPlan = soActionPlan(status, {
     can: {
       confirm: hasPermission("sales-orders", "confirm"),
       update: hasPermission("sales-orders", "update"),
@@ -1244,6 +1245,16 @@ export function SalesOrderDetail() {
     eligibility: eligibility.data ?? null,
     isAdmin: ["ADMIN", "SUPER_ADMIN"].includes(userRole()),
   });
+  // Owner 2026-11-27: "Open Service Case" lives in the ⋯ menu, not the bottom bar — on a
+  // shipped / invoiced order it was the only button, floating over the page above the tab bar.
+  // Same rule and permission (soActionPlan decides); only where it is shown moved. With it gone,
+  // the bare "No further status actions" line has nothing left to explain, so the bar goes too.
+  const canOpenCase = fullPlan.rows.some((r) => r.includes("service-case"));
+  const plan = (() => {
+    const rows = fullPlan.rows.map((r) => r.filter((k) => k !== "service-case")).filter((r) => r.length > 0);
+    const note = rows.length === 0 && fullPlan.note === "No further status actions for this state." ? undefined : fullPlan.note;
+    return { ...fullPlan, rows, note };
+  })();
   const hasBar = plan.rows.length > 0 || !!plan.note;
 
   return (
@@ -1316,8 +1327,8 @@ export function SalesOrderDetail() {
       ) : null}
       {toast.node}
 
-      {/* "⋯" — the only entry today is Download PDF (same generator as desktop). */}
-      <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="Sales order PDF">
+      {/* "⋯" — Download PDF (same generator as desktop) and, once goods have shipped, Open Service Case. */}
+      <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More actions">
         <div style={{ fontSize: 12, color: M.ink, margin: "-2px 0 10px", fontVariantNumeric: "tabular-nums" }}>{companySOId}</div>
         <div style={{ background: M.card, borderRadius: 16, overflow: "hidden", boxShadow: "0 1px 2px rgba(31,29,27,.05),0 8px 22px -12px rgba(31,29,27,.18)" }}>
           <button
@@ -1350,6 +1361,28 @@ export function SalesOrderDetail() {
             </span>
             <ChevronRight size={18} strokeWidth={1.9} color="var(--m-inv-icon)" aria-hidden />
           </button>
+          {canOpenCase ? (
+            <button
+              type="button"
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12, minHeight: 60, padding: "0 15px", background: "none", border: "none",
+                borderTop: `1px solid ${M.divider}`, fontFamily: "inherit", cursor: "pointer", textAlign: "left", WebkitTapHighlightColor: "transparent",
+              }}
+              onClick={() => {
+                setMoreOpen(false);
+                actions.setCaseOpen(true);
+              }}
+            >
+              <span aria-hidden style={{ width: 36, height: 36, flex: "none", borderRadius: 11, background: "var(--m-inv-tile-bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <LifeBuoy size={18} strokeWidth={1.9} color={M.taupe} />
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: M.raisin }}>Open Service Case</span>
+                <span style={{ display: "block", fontSize: 12, color: M.ink, marginTop: 2 }}>Report a defect or claim on this order</span>
+              </span>
+              <ChevronRight size={18} strokeWidth={1.9} color="var(--m-inv-icon)" aria-hidden />
+            </button>
+          ) : null}
         </div>
         <div style={{ height: 16 }} />
       </Sheet>

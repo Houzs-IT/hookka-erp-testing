@@ -150,8 +150,12 @@ export function GrnDetail({ id }: { id: string }) {
   const status = g ? s(g, "status") : "";
   const st = statusOf("grn", status);
   const acts = g ? grnActions(g) : { primary: null, postBlocked: false, menu: [] as GrnActionKey[] };
-  const primary = acts.primary && allowed(acts.primary) ? acts.primary : null;
-  const menu = acts.menu.filter(allowed);
+  const allowedPrimary = acts.primary && allowed(acts.primary) ? acts.primary : null;
+  // Owner 2026-11-27: Create Invoice lives at the top of the ⋯ menu, not in a bar floating over
+  // the page above the tab bar. Same rule and permission (grnActions + allowed); only where it is shown moved.
+  const invoiceInMenu = allowedPrimary === "CREATE_INVOICE";
+  const primary = invoiceInMenu ? null : allowedPrimary;
+  const menu = [...(invoiceInMenu ? (["CREATE_INVOICE"] as GrnActionKey[]) : []), ...acts.menu.filter((k) => allowed(k) && !(invoiceInMenu && k === "CREATE_INVOICE"))];
   const arrival = g ? arrivalOf(g) : "ARRIVED";
   const adv = g ? grnArrivalAdvance(g) : null;
   const canUpd = GRN_ARRIVAL_PERM.every(([r, a]) => hasPermission(r, a));

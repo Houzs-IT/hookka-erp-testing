@@ -112,6 +112,9 @@ export const M_DELTA = { up: "#4F7C3A", down: "#9A3A2D" } as const;
 /** Max content width for the phone shell. */
 export const M_MAX_WIDTH = 414;
 
+/** Phone floating glass tab bar geometry — see lib/tab-bar.ts. */
+export { M_TAB_BAR, aboveTabBar } from "./lib/tab-bar";
+
 /** System font stack used everywhere on the phone UI. */
 export const M_FONT =
   'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';

@@ -182,8 +182,12 @@ export function PiDetail({ id }: { id: string }) {
   const status = normalizePiStatus(raw);
   const st = statusOf("pi", raw);
   const acts = p ? piActions(p, canVoid) : { primary: null, menu: [] as PiActionKey[] };
-  const primary = acts.primary && allowed(acts.primary) ? acts.primary : null;
-  const menu = acts.menu.filter(allowed);
+  const allowedPrimary = acts.primary && allowed(acts.primary) ? acts.primary : null;
+  // Owner 2026-11-27: Mark Paid lives at the top of the ⋯ menu, not in a bar floating over the
+  // page above the tab bar. Same rule and permission (piActions + allowed); only where it is shown moved.
+  const paidInMenu = allowedPrimary === "MARK_PAID";
+  const primary = paidInMenu ? null : allowedPrimary;
+  const menu = [...(paidInMenu ? (["MARK_PAID"] as PiActionKey[]) : []), ...acts.menu.filter((k) => allowed(k) && !(paidInMenu && k === "MARK_PAID"))];
   const past = p ? piPastDue(p, todayIso()) : false;
   const paid = p ? n(p, "paidAmountSen") : 0;
   const dockScope = layout.canSplitDetail ? "detail" : "content";

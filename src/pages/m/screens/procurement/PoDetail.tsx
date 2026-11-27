@@ -57,6 +57,9 @@ function cancelReasonOf(notes: string): string {
   return m ? m[1] : "";
 }
 
+/** Actions shown at the top of the ⋯ menu instead of the bottom bar (owner 2026-11-27). */
+const PO_MENU_FIRST = new Set<PoActionKey>(["CREATE_GRN", "RECEIVE_GOODS", "MARK_PARTIAL", "MARK_RECEIVED"]);
+
 export function PoDetail({ id }: { id: string }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -144,9 +147,15 @@ export function PoDetail({ id }: { id: string }) {
   const status = po ? s(po, "status") : "";
   const st = statusOf("po", status);
   const acts = po ? poActions(po, grns, pis) : { primary: null, secondary: null, menu: [] as PoActionKey[], invoiced: false };
-  const primary = acts.primary && allowed(acts.primary) ? acts.primary : null;
-  const secondary = acts.secondary && allowed(acts.secondary) ? acts.secondary : null;
-  const menu = acts.menu.filter((k) => allowed(k) || (k === "CREATE_INVOICE" && acts.invoiced));
+  const allowedPrimary = acts.primary && allowed(acts.primary) ? acts.primary : null;
+  const allowedSecondary = acts.secondary && allowed(acts.secondary) ? acts.secondary : null;
+  // Owner 2026-11-27: the receiving actions (Create GRN / Receive Goods, Mark Partially / Fully
+  // Received) live at the top of the ⋯ menu, not in a bar floating over the page above the tab bar.
+  // Same rules and permissions (poActions + allowed); only where they are shown moved.
+  const inMenuFirst = [allowedPrimary, allowedSecondary].filter((k): k is PoActionKey => !!k && PO_MENU_FIRST.has(k));
+  const primary = allowedPrimary && !PO_MENU_FIRST.has(allowedPrimary) ? allowedPrimary : null;
+  const secondary = primary && allowedSecondary && !PO_MENU_FIRST.has(allowedSecondary) ? allowedSecondary : null;
+  const menu = [...inMenuFirst, ...acts.menu.filter((k) => !inMenuFirst.includes(k) && (allowed(k) || (k === "CREATE_INVOICE" && acts.invoiced)))];
   const label = (k: PoActionKey) =>
     k === "CREATE_INVOICE" && acts.invoiced ? "Invoiced" : k === "EMAIL" && po && s(po, "lastEmailedAt") ? "Resend Email" : PO_ACTION_LABEL[k];
   const dockScope = layout.canSplitDetail ? "detail" : "content";
