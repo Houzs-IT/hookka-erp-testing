@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
+import { useCachedJson } from "@/lib/cached-fetch";
+import { systemInfoItems } from "@/lib/settings-system-info";
 import {
   Building2,
   Hash,
@@ -278,6 +280,14 @@ type LoadState = "loading" | "uninitialized" | "ready";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("company");
+  // System Information card (BUG-2026-11-27-594): real values from existing
+  // endpoints, fetched only while the System tab is open.
+  const { data: usersResp } = useCachedJson<{ success?: boolean; data?: unknown[] }>(
+    activeTab === "system" ? "/api/users" : null,
+  );
+  const { data: healthResp } = useCachedJson<{ commit?: string; env?: string }>(
+    activeTab === "system" ? "/api/health" : null,
+  );
   const [toastState, setToastState] = useState<"success" | "error" | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
 
@@ -945,16 +955,14 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>System Information</CardTitle>
-            <CardDescription>Read-only system statistics</CardDescription>
+            <CardDescription>Read-only facts about this system</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-4">
-              {[
-                { label: "Total Users", value: "5" },
-                { label: "Total Records", value: "1,247" },
-                { label: "System Version", value: systemSettings.systemVersion },
-                { label: "Last Backup", value: "14/04/2026, 02:00" },
-              ].map((item) => (
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+              {systemInfoItems({
+                users: usersResp?.success && Array.isArray(usersResp.data) ? usersResp.data : null,
+                health: healthResp ?? null,
+              }).map((item) => (
                 <div key={item.label} className="rounded-lg border border-[#E2DDD8] bg-[#F0ECE9]/50 p-4">
                   <p className="text-xs text-[#6B7280] mb-1">{item.label}</p>
                   <p className="text-lg font-semibold text-[#1F1D1B]">{item.value}</p>
