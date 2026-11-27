@@ -30,6 +30,7 @@ type Overview = {
   allowed: { userId: string; name: string; role: string; approvedAt: string }[];
   requests: { id: string; userId: string; name: string; role: string; reason: string; at: string }[];
   calls: Call[];
+  noGuide?: { tool: string; question: string; count: number; lastAt: string }[];
 };
 type UserOpt = { id: string; name: string };
 
@@ -653,6 +654,25 @@ export default function AiConnectorPage() {
               </label>
             </div>
             <CallsTable calls={ov.calls} showWho />
+          </section>
+
+          <section className={`${CARD} overflow-hidden`} aria-labelledby="noguide">
+            <div className="border-b border-[#EFEBE2] px-5 py-4">
+              <h2 id="noguide" className="text-base font-bold">Questions with no guide yet</h2>
+              <p className="mt-1 text-[13px] text-[#6B6B66]">Help questions (how to, errors, terms) the connector could not answer in the last 30 days — what to write next. Names, emails and numbers are removed.</p>
+            </div>
+            {(ov.noGuide ?? []).length === 0 ? (
+              <p className="px-5 py-4 text-sm text-[#6B6B66]">Every help question found a guide.</p>
+            ) : (
+              <ul className="divide-y divide-[#EFEBE2]">
+                {(ov.noGuide ?? []).map((g) => (
+                  <li key={`${g.tool}:${g.question}`} className="flex flex-wrap items-baseline justify-between gap-3 px-5 py-3 text-sm">
+                    <span className="min-w-0 break-words">{g.question}</span>
+                    <span className="shrink-0 text-[12px] text-[#6B6B66]">{g.tool} · {g.count}× · {g.lastAt.slice(0, 10)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         </>
       )}

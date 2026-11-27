@@ -34,6 +34,7 @@ import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from 
 import { MCP_ACTION_HEADER, MCP_INNER_HEADER, armConfirmedAction, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
 import { emitAudit } from "../lib/audit";
 import { confirmPending, proposeWrite, WRITE_PERMISSIONS, type ActionDeps, type WriteKind } from "../lib/mcp-write-actions";
+import { explainError, glossary, howTo, moduleOverview, NO_GUIDE_NOTE, onboarding, scrubQuestion } from "../lib/mcp-howto";
 import { needLabel, parseQuickText, QUICK_OUTPUT_SCHEMA, readToolAllowed, STRUCTURED_TOOLS, withLinksAndRm } from "../lib/mcp-visibility";
 import {
   ACTIONS_OFF_MESSAGE,
@@ -448,7 +449,8 @@ A document's chain (sales order → production orders → job cards → delivery
 Keep replies short: lead with the count and the few lines that matter, give links. If a tool says the person has no access to something, say so in one line — never guess the figure.
 For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
 ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. When the admin switched them on, the same goes for propose_mail_reply (reply to a Mail Center thread — thread_id from daily_brief), propose_note (a note on a purchase order or service case) and propose_po_approval (mark a sent PO Confirmed). Nothing else can be changed: no payments, stock, prices, payroll or deletes.
-If a call says "not available to your role", tell the user they do not have permission for that data.`;
+If a call says "not available to your role", tell the user they do not have permission for that data.
+HELP ("how do I…", "where is…", "what does X mean", an error message): how_to {question} gives click-by-click steps with ERP links (end-to-end chains such as order to cash or procure to pay come back as one flow); module_overview {module} explains a module; glossary {term} explains a term or abbreviation; explain_error {text} explains an ERP error message (read it off a screenshot if needed); onboarding {role} gives a new starter's first-week reading path. Follow the guide's steps and labels exactly, and if canDo is false tell the person they need to ask their supervisor or admin for the permission. Guides are in English; answer in the person's language.`;
 
 // ── round 4 tool list (owner 2026-11-26) ────────────────────────────────────
 const RO = { readOnlyHint: true, openWorldHint: false };
@@ -486,6 +488,45 @@ const ROUND4_TOOLS = [
     annotations: RO,
   },
 ];
+
+const HOWTO_TOOLS = [
+  {
+    name: "how_to",
+    title: "How do I… (step-by-step ERP help)",
+    description: "Step-by-step help for doing something in the ERP, e.g. 'how do I create a PO', 'open a service case', '开PO', 'terima barang'. Returns the top 1-3 guides (or one end-to-end flow such as order to cash) with exact button labels, fields, checks, warnings, how to undo, ERP links and canDo (whether this person has the ERP permission). Read-only.",
+    inputSchema: { type: "object", properties: { question: { type: "string", description: "The person's question, in any language" }, topic: { type: "string", description: "A guide or flow id from an earlier answer" }, company: { type: "string", description: "Company code (e.g. HOOKKA, OHANA) to narrow company-specific steps" } }, additionalProperties: false },
+    annotations: RO,
+  },
+  {
+    name: "module_overview",
+    title: "What an ERP module is for",
+    description: "For a sidebar module (Sales, Production, Procurement, Warehouse, Finance, …): what it is for, its key pages (with links and whether this person can open them), who uses it and how it links to other modules. No module: every module in one line.",
+    inputSchema: { type: "object", properties: { module: { type: "string", description: "Module id or sidebar section, e.g. procurement" } }, additionalProperties: false },
+    annotations: RO,
+  },
+  {
+    name: "glossary",
+    title: "What does this ERP term mean",
+    description: "Plain-English meaning of a term or abbreviation staff meet in the ERP (SO, PO, GRN, DO, job card, WIP, FG, BOM, fabric tier, MRP, credit note, AR / AP aging, sen vs RM, Floor Live, efficiency %…). No term: the whole list.",
+    inputSchema: { type: "object", properties: { term: { type: "string" } }, additionalProperties: false },
+    annotations: RO,
+  },
+  {
+    name: "explain_error",
+    title: "Explain an ERP error message",
+    description: "What an ERP error or validation message means, why it happens and how to fix it. Pass the message text (read it off a screenshot if needed).",
+    inputSchema: { type: "object", properties: { text: { type: "string", description: "The error message" } }, required: ["text"], additionalProperties: false },
+    annotations: RO,
+  },
+  {
+    name: "onboarding",
+    title: "First-week reading path for a role",
+    description: "An ordered list of guides and flows for a new starter: sales, purchasing, production, warehouse, finance or after-sales.",
+    inputSchema: { type: "object", properties: { role: { type: "string", description: "sales | purchasing | production | warehouse | finance | after-sales" } }, additionalProperties: false },
+    annotations: RO,
+  },
+];
+const HELP_TOOLS = new Set(HOWTO_TOOLS.map((t) => t.name));
 
 const TOOLS = [
   {
@@ -671,6 +712,7 @@ const TOOLS = [
   },
   ...ROUND4_TOOLS,
   ...ROUND4D_TOOLS,
+  ...HOWTO_TOOLS,
   {
     name: "export_excel",
     title: "Export a list to Excel",
@@ -1697,6 +1739,21 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
       status = quick.status;
       note = quick.note;
       target = quick.target;
+    } else if (HELP_TOOLS.has(name)) {
+      const can = (r: string, a: string) => hasPermission(c, r, a);
+      const origin = originOf(c);
+      const ans =
+        name === "how_to" ? await howTo(args, origin, can)
+        : name === "module_overview" ? await moduleOverview(args, origin, can)
+        : name === "glossary" ? glossary(args, origin)
+        : name === "explain_error" ? explainError(args)
+        : await onboarding(args, origin, can);
+      result = text(JSON.stringify(ans.value));
+      // Gap log: a question with no guide yet is kept (personal data stripped) so the admin page can list what to write next.
+      if (!ans.matched) {
+        note = NO_GUIDE_NOTE;
+        target = scrubQuestion(String(args.question ?? args.topic ?? args.text ?? args.module ?? args.term ?? args.role ?? ""));
+      }
     } else if (name === "export_excel") {
       const r = await exportExcel(c, id, token, args);
       result = r.result;

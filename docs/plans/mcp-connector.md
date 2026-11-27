@@ -377,6 +377,42 @@ list they cannot read is left out (`noAccess`). Counts and the first five with l
 **Untested live:** a real brief / alert email on prod (no email was sent while building); the heartbeat
 sub-request reaching the tick on prod; the unsubscribe page through a real mail client.
 
+## 3g. Process help — how-to guides, flows, modules, glossary, errors (owner 2026-11-27)
+
+Owner ask: staff who don't know how to do something (open a service case, create a PO…) ask
+Claude and get click-by-click guidance. All read-only, no external AI, keyword scoring only.
+Index of every guide / flow / module / term: [`docs/how-to/README.md`](../how-to/README.md).
+
+| Tool | What it returns | Data |
+| --- | --- | --- |
+| `how_to {question?, topic?, company?}` | top 1–3 SOP guides (or one end-to-end flow, every step expanded click by click): sidebar path, exact labels, fields (required / rule / example), checks, result, warnings, undo, approvals, common mistakes, worked example, `?highlight=` step links, and `canDo` from the person's ERP permissions (false → "You don't have permission for this in the ERP — ask your supervisor or admin.") | `src/api/lib/howto/guides-*.ts`, `flows.ts` |
+| `module_overview {module?}` | per sidebar section: purpose, key pages (link + `canOpen` from `nav-permissions.ts`), who uses it, links to other modules; no module → one line each | `howto/modules.ts` |
+| `glossary {term?}` | plain-English definitions (SO, PO, GRN, DO, job card, WIP, FG, BOM, variant, fabric tier, MRP, QC, service case, delivery return, credit note, AR / AP aging, sen vs RM, Floor Live, efficiency %, PIC, ETA, MOQ, …) | `howto/glossary.ts` |
+| `explain_error {text}` | meaning, cause and fix for real ERP error messages (each `match` is a verbatim string from `src/`) | `howto/errors.ts` |
+| `onboarding {role}` | first-week reading path (sales, purchasing, production, warehouse, finance, after-sales) | `howto/flows.ts` `ONBOARDING` |
+
+Prompts: `how_do_i`, `explain_module`, `what_does_it_mean`, `explain_this_error`, `my_first_week`.
+Gap log: a help call with no match is logged in `mcp_calls` with note `no-guide` and the question
+(emails / document numbers / phone numbers stripped, `scrubQuestion`); SYSTEM → AI Connector shows
+"Questions with no guide yet" (last 30 days) so we know what to write next.
+Companies: one tenant org; HOOKKA / OHANA etc. are letterhead / purchase-company / sales-org
+choices and no flow is company-specific in the code, so every guide is tagged `ALL` and the
+real differences (consignment, customer hubs, per-customer prices, purchase company) are
+`variants`. Honesty tests: `tests/mcp-howto.test.mjs`.
+
+### FAQ → tool (process help)
+
+| Staff ask | Tool |
+| --- | --- |
+| "How do I create a PO?" / "开PO" / "macam mana buat PO" | `how_to` |
+| "How do I open a service case?" / "开售后case" | `how_to` |
+| "How do I receive goods?" / "收货" / "terima barang" | `how_to` |
+| "What is the whole process from order to payment?" | `how_to` (returns the order-to-cash flow) |
+| "What is the Procurement module for?" | `module_overview {module: "procurement"}` |
+| "What does GRN / WIP / fabric tier mean?" | `glossary` |
+| "I got 'You're not allowed to do that…' — what now?" | `explain_error` |
+| "I'm new in purchasing, what should I read first?" | `onboarding {role: "purchasing"}` |
+
 ## 4. OAuth (what Claude / ChatGPT need)
 
 - `/.well-known/oauth-protected-resource[/api/mcp]` and

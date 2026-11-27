@@ -8,6 +8,7 @@
 // the question log, and the "Allow AI actions (meetings, email)" switch
 // (owner 2026-11-26, default OFF — lib/mcp-actions.ts).
 // ---------------------------------------------------------------------------
+import { NO_GUIDE_NOTE } from "../lib/mcp-howto";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
@@ -165,7 +166,8 @@ app.get("/admin/overview", async (c) => {
 
   const dayAgo = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
   const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 3600 * 1000).toISOString();
-  const [conns, allowedRows, reqs, calls, today, week, timing] = await Promise.all([
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
+  const [conns, allowedRows, reqs, calls, today, week, timing, gaps] = await Promise.all([
     db
       .prepare(
         `SELECT t.id, t.user_id, t.created_at, t.last_used_at, cl.client_name, u.displayName AS display_name, u.email, u.role
@@ -220,6 +222,16 @@ app.get("/admin/overview", async (c) => {
       )
       .bind(eightDaysAgo, LEAK_CHECK_CLIENT_ID)
       .all<Record<string, unknown>>(),
+    // Help gap log (owner 2026-11-27): how_to / explain_error / … questions that
+    // found no guide, personal data already stripped when logged (mcp-howto.ts scrubQuestion).
+    db
+      .prepare(
+        `SELECT tool, target, COUNT(*) AS n, MAX(created_at) AS last_at FROM mcp_calls
+          WHERE note = ? AND created_at >= ? AND COALESCE(target, '') <> ''
+          GROUP BY tool, target ORDER BY n DESC, last_at DESC LIMIT 50`,
+      )
+      .bind(NO_GUIDE_NOTE, monthAgo)
+      .all<Record<string, unknown>>(),
   ]);
   const timingRows = (timing.results ?? []).map((r) => ({ tool: s(r, "tool"), ms: n(r, "ms"), note: s(r, "note"), at: s(r, "created_at", "createdAt") }));
   const weekBy = new Map((week.results ?? []).map((r) => [s(r, "user_id", "userId"), n(r, "n")]));
@@ -261,6 +273,7 @@ app.get("/admin/overview", async (c) => {
         at: s(r, "created_at", "createdAt"),
       })),
       calls: (calls.results ?? []).map(callRow),
+      noGuide: (gaps.results ?? []).map((r) => ({ tool: s(r, "tool"), question: s(r, "target"), count: n(r, "n"), lastAt: s(r, "last_at", "lastAt") })),
     },
   });
 });
