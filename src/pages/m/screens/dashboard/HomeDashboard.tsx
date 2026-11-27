@@ -24,7 +24,7 @@ import { MenuButton } from "../../components/MenuButton";
 import { useStickyBelowHeader } from "../../lib/header-geometry";
 import { useResponsiveLayout } from "../../lib/responsive-layout";
 import { useNotificationFeed } from "../../lib/use-notification-feed";
-import { visibleModuleGroups } from "../../nav";
+import { visibleModuleGroups, withRoleGates } from "../../nav";
 import { M } from "../../theme";
 import {
   monthLabel, quarterKeyOf, quarterPeriod, widgetPeriod, widgetPeriodLabel, yearsWithData, type Period,
@@ -140,8 +140,8 @@ function HomeTop({ children }: { children: ReactNode }) {
 // ---------------------------------------------------------------------------
 function FallbackHome() {
   const navigate = useNavigate();
-  const { isNavAllowed } = usePermissions();
-  const groups = visibleModuleGroups(isNavAllowed);
+  const { isNavAllowed, role } = usePermissions();
+  const groups = withRoleGates(visibleModuleGroups(isNavAllowed), role);
   return (
     <HomeTop>
       <div style={{ padding: "6px 16px 28px" }}>

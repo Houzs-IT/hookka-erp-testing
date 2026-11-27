@@ -99,6 +99,10 @@ export type ModuleLink = {
   /** Several desktop hrefs: the row shows when ANY of them is allowed (the
    *  Finance menu row — it opens a menu of screens, each gated on its own). */
   navGateAny?: string[];
+  /** Shown only to SUPER_ADMIN — mirrors a desktop page wrapped in
+   *  <RequireRole role="SUPER_ADMIN"> (User Management = /settings/users).
+   *  Applied by withRoleGates(); hidden while the role is still unknown. */
+  superAdminOnly?: boolean;
 };
 
 export type ModuleGroup = {
@@ -142,7 +146,8 @@ export const MORE_GROUPS: ModuleGroup[] = [
     title: "Production",
     items: [
       { label: "Production Orders", icon: Factory, path: "/m/production" },
-      { label: "Planning", icon: CalendarRange, path: "/m/planning" },
+      // Gated like the desktop /planning page (scheduling), Final Batch 5.
+      { label: "Planning", icon: CalendarRange, path: "/m/planning", navGate: "/planning" },
       { label: "Outsource Work", icon: PackageOpen, path: "/m/outsource-issue", navGate: "/production/outsource-issue" },
       { label: "Products", icon: Shapes, path: "/m/products" },
       { label: "Warehouse", icon: Warehouse, path: "/m/warehouse" },
@@ -152,7 +157,8 @@ export const MORE_GROUPS: ModuleGroup[] = [
   {
     title: "Warehouse & Procurement",
     items: [
-      { label: "Inventory", icon: Package, path: "/m/inventory" },
+      // Gated like the desktop /inventory page (inventory), Final Batch 5.
+      { label: "Inventory", icon: Package, path: "/m/inventory", navGate: "/inventory" },
       { label: "Purchase Orders", icon: ShoppingBag, path: "/m/procurement" },
       { label: "Suppliers", icon: UserSquare, path: "/m/suppliers" },
       { label: "3PL Providers", icon: Truck, path: "/m/logistics" },
@@ -169,13 +175,13 @@ export const MORE_GROUPS: ModuleGroup[] = [
     ],
   },
   // System — owner 2026-06-28 design v12: User Management is a SUPER_ADMIN
-  // tool but the link belongs here for parity with the desktop /settings/users.
-  // The mobile list is read-only (mutations live on the desktop page); see
-  // usermgmtConfig in src/pages/m/config/modules.ts.
+  // tool, like the desktop /settings/users (RequireRole SUPER_ADMIN), so the
+  // row is superAdminOnly (Final Batch 5). The screen is
+  // src/pages/m/screens/usermgmt (invite-only on mobile).
   {
     title: "System",
     items: [
-      { label: "User Management", icon: UserPlus, path: "/m/usermgmt" },
+      { label: "User Management", icon: UserPlus, path: "/m/usermgmt", superAdminOnly: true },
       { label: "Meetings", icon: CalendarDays, path: "/m/meetings" },
       { label: "IT Support", icon: LifeBuoy, path: "/m/it-support" },
     ],
@@ -214,6 +220,18 @@ export function visibleModuleGroups(
           : allowed.filter((i) => i.label.toLowerCase().includes(q)),
       };
     })
+    .filter((g) => g.items.length > 0);
+}
+
+/**
+ * Drops rows marked superAdminOnly unless the server-reported role is
+ * SUPER_ADMIN (null = still loading = hidden, like desktop RequireRole).
+ * Wraps visibleModuleGroups(...) at every menu surface; groups left empty drop out.
+ */
+export function withRoleGates(groups: ModuleGroup[], role: string | null): ModuleGroup[] {
+  if (role === "SUPER_ADMIN") return groups;
+  return groups
+    .map((g) => ({ ...g, items: g.items.filter((i) => !i.superAdminOnly) }))
     .filter((g) => g.items.length > 0);
 }
 

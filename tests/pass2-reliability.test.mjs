@@ -181,8 +181,11 @@ test("C1-7: every create screen sends an Idempotency-Key", () => {
   assert.match(emp, /advIdem\.withKey\(`worker:\$\{row\.id\}`, \(key\) =>\s*fetch\("\/api\/employee-advances", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Idempotency-Key": key \}/);
   const sc = read("src/pages/service-cases/detail.tsx");
   assert.match(sc, /issueIdem\.withKey\(\(key\) => fetch\("\/api\/stock-adjustments", \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Idempotency-Key": key \}/);
-  const m = read("src/pages/m/config/forms.ts");
-  assert.match(m, /mutateJson\("\/api\/stock-adjustments", "POST", body, \{\s*"Idempotency-Key": uuid\(\),/);
+  // Mobile Reduce Stock (Final Batch 5 replaced the generic form): one key per
+  // intent, reused when the same body is retried (keyForIntent in inventory-lib).
+  const m = read("src/pages/m/screens/inventory/ReduceStockSheet.tsx");
+  assert.match(m, /key\.current = keyForIntent\(key\.current, body, mintKey\);/);
+  assert.match(m, /fetch\(URLS\.adjustments, \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json", "Idempotency-Key": key\.current\.key \}/);
   // The submit buttons still disable while sending (what stops a double click).
   assert.match(cn, /disabled=\{creating \|\|/);
   assert.match(dn, /disabled=\{creating \|\|/);
