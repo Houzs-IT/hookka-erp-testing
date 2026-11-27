@@ -120,7 +120,9 @@ test("PO actions per status match detail.tsx", () => {
   assert.match(PO_DETAIL, /const canEmail = \["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED"\]/);
   assert.match(PO_DETAIL, /const canCancelWithReason = \["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED"\]/);
   assert.match(PO_DETAIL, /const canPrintGRN = \["PARTIAL_RECEIVED", "RECEIVED"\]/);
-  assert.match(PO_DETAIL, /relatedGrns\.some\(\(g\) => g\.status === "POSTED" \|\| g\.status === "CONFIRMED"\)/);
+  // The posted-GRN lock and the edit rule are the shared helpers (BUG-2026-11-27-593).
+  assert.match(PO_DETAIL, /hasReceivingGrn\(relatedGrns\)/);
+  assert.match(PO_DETAIL, /const isEditable = isPoEditable\(po, hasPostedGrn\)/);
 
   const draft = poActions(po("DRAFT", [item(5)]), [], []);
   assert.equal(draft.primary, "EDIT");

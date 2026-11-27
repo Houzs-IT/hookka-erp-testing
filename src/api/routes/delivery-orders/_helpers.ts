@@ -67,6 +67,7 @@ import {
   buildDrawdownStatements,
   buildInvoiceLineReleaseStatements,
   buildDoStatusSyncStatement,
+  bareInvoicedFlipRefusal,
 } from "../../lib/do-partial-invoice";
 import type { DoDraw } from "../../lib/do-partial-invoice";
 // The append-only FG stock ledger: one immutable row per fg_unit state change,
@@ -4842,6 +4843,20 @@ export async function applyDeliveryOrderUpdate(
           },
           409,
         );
+      }
+      // A bare DELIVERED → INVOICED flip creates no invoice row. It is only a
+      // status catch-up, allowed when invoices already bill the whole DO.
+      // Otherwise it would leave a DO that reads INVOICED with nothing billing
+      // it (BUG-2026-11-27-595: the DO page's "Convert to Invoice" did exactly
+      // this). Invoices are created by POST /api/invoices, which flips the DO
+      // itself once the last of it is billed.
+      if (body.status === "INVOICED" && existing.status === "DELIVERED") {
+        await ensureDoPartialInvoiceColumns(c.var.DB);
+        const billing = await loadDoBillingState(c.var.DB, id);
+        const refusal = bareInvoicedFlipRefusal(existing.doNo, billing);
+        if (refusal) {
+          return c.json({ success: false, error: refusal }, 409);
+        }
       }
       // A cancel is a whole-document reversal (see the `cancelled` block
       // below). Replacing the line items in the SAME request would make it

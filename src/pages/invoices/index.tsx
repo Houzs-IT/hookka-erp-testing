@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { cancelledDocNoClass, cancelledRowClass } from "@/lib/cancelled-doc";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { isInvoiceableDo } from "@/lib/invoiceable-do";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DataGrid } from "@/components/ui/data-grid";
@@ -215,13 +216,37 @@ export default function InvoicesPage() {
   }, [statusStripResp]);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const { data: doResp, refresh: refreshDOs } = useCachedJson<{ success?: boolean; data?: { id: string; doNo: string; customerName: string; status: string }[] }>(showCreateModal ? "/api/delivery-orders" : null);
+  const { data: doResp, refresh: refreshDOs } = useCachedJson<{ success?: boolean; data?: { id: string; doNo: string; customerName: string; status: string; deliveryIncomplete?: boolean | null }[] }>(showCreateModal ? "/api/delivery-orders" : null);
+  // Only the DOs the server will actually invoice (BUG-2026-11-27-591): the
+  // list used to include LOADED ones, which POST /api/invoices refuses.
   const deliveryOrders = useMemo(() => {
     const all = doResp?.success ? doResp.data ?? [] : Array.isArray(doResp) ? doResp : [];
-    return all.filter((o) => o.status === "DELIVERED" || o.status === "LOADED");
+    return all.filter(isInvoiceableDo);
   }, [doResp]);
   const [selectedDOId, setSelectedDOId] = useState("");
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  // "Convert to Invoice" on a DO's page lands here with ?createFromDo=<id>
+  // (BUG-2026-11-27-595): open this same dialog with that DO picked, so the
+  // invoice is created by the one real path (POST /api/invoices), never by a
+  // bare DO status flip. The param is removed once read.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const createFromDo = searchParams.get("createFromDo");
+  /* eslint-disable react-hooks/set-state-in-effect -- one-time hand-off from the URL (an external source); the param is removed in the same pass, so this cannot cascade */
+  useEffect(() => {
+    if (!createFromDo) return;
+    setSelectedDOId(createFromDo);
+    setCreateError(null);
+    setShowCreateModal(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("createFromDo");
+    setSearchParams(next, { replace: true });
+  }, [createFromDo, searchParams, setSearchParams]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+  // A DO handed over by the link but not invoiceable (not DELIVERED, held
+  // for paperwork, already invoiced): say so instead of a blank pick.
+  const preselectMissing =
+    !!selectedDOId && !!doResp && !deliveryOrders.some((d) => d.id === selectedDOId);
 
   // Filters — state declared above (before the list/stats fetches) so both
   // fetches carry them server-side.
@@ -301,12 +326,14 @@ export default function InvoicesPage() {
 
   const openCreate = () => {
     refreshDOs();
+    setCreateError(null);
     setShowCreateModal(true);
   };
 
   const createInvoice = async () => {
-    if (!selectedDOId) return;
+    if (!selectedDOId || preselectMissing) return;
     setCreating(true);
+    setCreateError(null);
     try {
       // Sprint 3 #4 — idempotency. A retry of the create-invoice POST
       // could fan out two invoice rows for the same DO. Send a UUID so
@@ -326,8 +353,9 @@ export default function InvoicesPage() {
         refreshInvStats();
         navigate(`/invoices/${data.data.id}`);
       }
-    } catch {
-      // surface in form via creating state — caller renders generic error
+    } catch (err) {
+      // Show the server's reason (e.g. "already invoiced") in the dialog.
+      setCreateError(err instanceof Error && err.message ? err.message : "Couldn't create the invoice. Please try again.");
     } finally {
       setCreating(false);
     }
@@ -1246,7 +1274,18 @@ export default function InvoicesPage() {
                 </select>
                 {deliveryOrders.length === 0 && (
                   <p className="text-xs text-[#9CA3AF] mt-1">
-                    No eligible delivery orders found (DELIVERED or LOADED status required)
+                    No eligible delivery orders found (DELIVERED status required)
+                  </p>
+                )}
+                {preselectMissing && (
+                  <p className="text-xs text-[#9A3A2D] mt-1" role="alert">
+                    This delivery order can't be invoiced here: it is not DELIVERED, is held for
+                    missing paperwork, or is already fully invoiced.
+                  </p>
+                )}
+                {createError && (
+                  <p className="text-xs text-[#9A3A2D] mt-1" role="alert">
+                    {createError}
                   </p>
                 )}
               </div>
@@ -1258,6 +1297,7 @@ export default function InvoicesPage() {
                 onClick={() => {
                   setShowCreateModal(false);
                   setSelectedDOId("");
+                  setCreateError(null);
                 }}
               >
                 Cancel
@@ -1265,7 +1305,7 @@ export default function InvoicesPage() {
               <Button
                 variant="primary"
                 onClick={createInvoice}
-                disabled={!selectedDOId || creating}
+                disabled={!selectedDOId || preselectMissing || creating}
               >
                 {creating ? "Creating..." : "Create Invoice"}
               </Button>

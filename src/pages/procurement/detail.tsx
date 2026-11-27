@@ -43,6 +43,7 @@ import { LINE_GRID_PROPS } from "@/lib/line-grid-nav";
 import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
 import { useFlowLineFiles } from "@/lib/use-flow-line-files";
 import { PoLineUnitSelect } from "@/components/po-line-unit-select";
+import { isPoEditable, hasReceivingGrn } from "@/lib/po-editable";
 
 const ComposeDialog = lazy(() =>
   import("@/pages/mail-center/compose").then((m) => ({ default: m.ComposeDialog })),
@@ -216,11 +217,7 @@ export default function PurchaseOrderDetailPage() {
   // gate the Mark Received button + show a Create GRN CTA when the
   // operator's at CONFIRMED / PARTIAL_RECEIVED with no GRN yet. Reads the
   // server-side reverse lookup, which is already scoped to this PO.
-  const hasPostedGrn = useMemo(
-    () =>
-      relatedGrns.some((g) => g.status === "POSTED" || g.status === "CONFIRMED"),
-    [relatedGrns],
-  );
+  const hasPostedGrn = useMemo(() => hasReceivingGrn(relatedGrns), [relatedGrns]);
 
   // ------- Edit mode state ------- (`editing` itself is declared above, where
   // it gates the raw-materials fetch)
@@ -693,13 +690,9 @@ export default function PurchaseOrderDetailPage() {
   // route already permits supplier/line edits until a POSTED/CONFIRMED GRN
   // exists (purchase-orders.ts), so this gate just mirrors that server lock
   // instead of the old DRAFT-only rule. Once anything is received (posted GRN
-  // or receivedQty > 0) or the PO is terminal, it locks.
-  const isEditable =
-    !isCancelled &&
-    po.status !== "RECEIVED" &&
-    po.status !== "CLOSED" &&
-    !hasPostedGrn &&
-    totalReceived === 0;
+  // or receivedQty > 0) or the PO is terminal, it locks. Shared with the PO
+  // list's right-click Edit (src/lib/po-editable.ts, BUG-2026-11-27-593).
+  const isEditable = isPoEditable(po, hasPostedGrn);
 
   return (
     <div className="space-y-6">

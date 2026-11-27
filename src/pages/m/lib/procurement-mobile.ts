@@ -21,6 +21,7 @@ import { allocateDiscountSen, roundUnitPriceSen } from "../../../lib/unit-price"
 import { isPiEditable } from "../../../lib/purchase-edit-rules";
 import { poItemsSearchText } from "../../../lib/po-items-search";
 import { fmtDate, n, rows, s, type RawRow } from "./do-mobile";
+import { isPoEditable } from "../../../lib/po-editable";
 
 export { n, rows, s, type RawRow };
 
@@ -424,7 +425,8 @@ export function poActions(po: RawRow, linkedGrns: RawRow[], linkedPis: RawRow[])
   const st = s(po, "status");
   const posted = hasPostedGrn(linkedGrns);
   const received = poQtyTotals(po).received;
-  const editable = st !== "CANCELLED" && st !== "RECEIVED" && st !== "CLOSED" && !posted && received === 0;
+  // The one PO edit rule (src/lib/po-editable.ts) — same as desktop list + detail.
+  const editable = isPoEditable({ status: st, items: [{ receivedQty: received }] }, posted);
   const canEmail = ["SUBMITTED", "CONFIRMED", "PARTIAL_RECEIVED", "RECEIVED"].includes(st);
   const canCancel = OPEN_PO.includes(st);
   const receivable = st === "CONFIRMED" || st === "PARTIAL_RECEIVED";

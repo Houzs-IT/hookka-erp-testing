@@ -15,7 +15,9 @@ export type GrnHeaderLite = {
   status?: string | null;
 };
 export type GrnLineLink = { grnId: string; poId: string };
-export type PoGrnRef = { id: string; grnNumber: string; receiveDate: string };
+// `status` lets the list apply the PO edit lock (a POSTED / CONFIRMED GRN
+// locks the PO — src/lib/po-editable.ts) without another read.
+export type PoGrnRef = { id: string; grnNumber: string; receiveDate: string; status: string };
 export type PoGrnSummary = {
   grnRefs: PoGrnRef[];
   /** "GRN-2611-001, GRN-2611-004" — sortable / searchable text. */
@@ -46,7 +48,7 @@ export function summarizePoGrns(
   const out = new Map<string, PoGrnSummary>();
   for (const poId of poIds) {
     const refs = [...(perPo.get(poId)?.values() ?? [])]
-      .map((g) => ({ id: g.id, grnNumber: String(g.grnNumber ?? ""), receiveDate: day(g.receiveDate) }))
+      .map((g) => ({ id: g.id, grnNumber: String(g.grnNumber ?? ""), receiveDate: day(g.receiveDate), status: String(g.status ?? "").toUpperCase() }))
       .sort((a, b) => a.grnNumber.localeCompare(b.grnNumber));
     const dates = refs.map((r) => r.receiveDate).filter(Boolean).sort();
     out.set(poId, {

@@ -39,6 +39,7 @@ import { usePresence } from "@/lib/use-presence";
 import { PresenceBanner } from "@/components/presence-banner";
 import { FetchJsonError } from "@/lib/fetch-json";
 import { verifiedSave, formatMismatchError } from "@/lib/verified-save";
+import { invoiceFromDoPath } from "@/lib/invoiceable-do";
 // Review C1-5: photos / videos / PDFs on the DO and on each line (a line also
 // shows its SO line's files, read-only).
 import { FlowFilesCard, LineFilesButton } from "@/components/flow-files";
@@ -613,11 +614,18 @@ export default function DeliveryDetailPage() {
               <Button
                 variant="primary"
                 size="sm"
-                onClick={() => advanceStatus("INVOICED")}
+                onClick={() => {
+                  // Opens the New Invoice dialog with this DO picked, so the
+                  // invoice is really created (POST /api/invoices). It used to
+                  // PUT status INVOICED, which created no invoice at all
+                  // (BUG-2026-11-27-595). Fresh DO list so the pick is found.
+                  invalidateCachePrefix("/api/delivery-orders");
+                  navigate(invoiceFromDoPath(order.id));
+                }}
                 disabled={updating}
               >
                 <ReceiptText className="h-4 w-4" />
-                {updating ? "Updating..." : "Convert to Invoice"}
+                Convert to Invoice
               </Button>
             )}
             {(order.status === "DELIVERED" || order.status === "INVOICED") && (
