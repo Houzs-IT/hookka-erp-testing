@@ -52,6 +52,8 @@ export const TOOL_NEEDS: Record<string, ToolNeed> = {
   gross_profit: { all: ["/api/invoices/line-summary"] },
   production_lead_time: { all: ["/api/production-orders"] },
   company_report: { all: ["/api/accounting/dashboard"] },
+  // round 4d: any one of its lists is enough (each part the person cannot read is left out).
+  data_gaps: { any: ["/api/products", "/api/product-costing/x", "/api/sales-orders", "/api/workers", "/api/suppliers"] },
   document_flow: { any: [...DOC_APIS, "/api/production-orders"] },
   get_pdf: { any: DOC_APIS },
   erp_link: { any: DOC_APIS },
@@ -118,6 +120,7 @@ export const STRUCTURED_TOOLS = new Set([
   "gross_profit",
   "production_lead_time",
   "company_report",
+  "data_gaps",
 ]);
 
 /** Open on purpose: summaries differ per tool and fields drop out for some roles. */
@@ -177,6 +180,7 @@ export const TOOL_PAGES: Record<string, string> = {
   gross_profit: "/invoices",
   production_lead_time: "/production",
   company_report: "/accounting",
+  data_gaps: "/products",
 };
 
 /** A row's record id key → its ERP page. */

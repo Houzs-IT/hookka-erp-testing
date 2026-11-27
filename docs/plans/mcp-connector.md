@@ -1,6 +1,6 @@
 # Hookka ERP MCP connector — plan
 
-> **Last verified: 2026-11-27** — v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit (§3c); round 4 Hookka K1–K12 + `company_report` (§3d); round 4b write actions + 4c platform quality on `feat/mcp-4bc` (§3e).
+> **Last verified: 2026-11-27** — round 4d (morning brief email, urgent alerts, `data_gaps`) on `feat/mcp-4d` (§3f). Before that: v1 live (#1610); actions with confirmation, document flow and the SO PDF (§3b); round 3 quick answers, daily brief, Excel export, rate limit (§3c); round 4 Hookka K1–K12 + `company_report` (§3d); round 4b write actions + 4c platform quality on `feat/mcp-4bc` (§3e).
 
 Owner 2026-11-25: 「我的全套系统都要有mcp」, staff (non-IT) should ask Claude / ChatGPT
 questions about the ERP the way the owner asks in this session; 「按员工自己的权限」 —
@@ -298,6 +298,84 @@ record, never the message or note text).
 **Untested live (4b / 4c):** every write action against prod through a real client (unit tests use a
 faked ERP that applies the route's permission gate); `structuredContent` against Claude / ChatGPT's
 validators; the filtered tools/list in a real client.
+
+## 3f. Round 4d — morning brief email, urgent alerts, data gaps (owner 2026-11-26)
+
+Owner: 「加 全部一起做」. Branch `feat/mcp-4d`. Code: `src/api/lib/mcp-proactive.ts` (pure: config, due
+rules, alerts, debounce, data gaps, email HTML), `src/api/lib/mcp-proactive-store.ts` (tables),
+`src/api/routes/mcp-proactive.ts` (tick, unsubscribe, the person's settings),
+`src/pages/settings/AiBriefSettings.tsx` + `useAiBriefSettings.ts`; tests `tests/mcp-proactive.test.mjs`.
+D3 (group monthly report) is built in IT Hub, not here.
+
+**As the person, always.** Each run issues the person a connector token of their own (client
+`mcpc_morning_brief`, "Morning brief" in the connections list for the seconds it lives) and revokes it in
+`finally`. The brief is the `daily_brief` tool through `runToolAs`; Monday adds the `data_gaps` tool the
+same way; the alert reads go through `readManyAsPerson` (`routes/mcp.ts`) — the same `readValue` path
+(module gate, then the route's own permission check, then `makeRedactor`). No service account. A PO / SO
+whose value the person's role hides is never value-alerted (a hidden figure cannot pass a threshold), so an
+alert never reveals a figure they cannot see. The brief / test runs are tool calls in `mcp_calls` (client
+"Morning brief"), excluded from the person's rate limit; the 30-minute alert reads are not logged as calls
+(only the emails they send are).
+
+**Who:** a person approved for AI Connector (or a Super Admin), active, with an email, who opted in on
+Settings > AI Connector > "Morning brief & urgent alerts by email". Defaults: both OFF, 08:00, weekdays.
+
+**Schedule.** No new cron infrastructure: `POST /api/internal/agents/heartbeat` (every 30 min from the
+`hookka-agent-heartbeat` Cron Worker `*/30`, with the hourly GitHub `agent-heartbeat.yml` as fallback)
+fires `POST /api/internal/mcp-proactive/tick` (CRON_SECRET) as a same-origin sub-request on its own
+invocation, before the agents' kill-switch check (it is not an agent). Each tick:
+- **briefs**: people whose time (Malaysia, half-hour steps) has come today and who have not had today's
+  brief, within 4 h of their time; at most 15 a tick;
+- **alerts**: 07:00-20:00 Malaysia time, people with alerts on, least recently checked first, none checked
+  in the last 25 min; at most 15 a tick;
+- a 20 s budget; people one at a time (the identity sits on the request context).
+`?dryRun=1` answers the counts (subscribers, briefs due, alert checks due) and sends nothing.
+
+**Idempotent.** `mcp_proactive_keys (user_id, alert_key, day)` is the ledger: the key `brief` is claimed
+(`INSERT ... ON CONFLICT DO NOTHING RETURNING`) before the brief is built, so a second tick that day gets
+nothing back and sends nothing; a build that fails gives the claim back so a later tick can retry. Alert
+keys (`po:<id>`, `so:<id>`, `prod:<id>`, `mat:<code>`) are claimed before sending and dropped when sent
+within their window (newly overdue: once; shortages: again after 7 days), never twice a day.
+
+**Alert rules** (`PROACTIVE_CONFIG`, the one place; shown read-only on the settings page):
+
+| Alert | Read (as the person) | Rule |
+| --- | --- | --- |
+| PO newly overdue | `GET /api/purchase-orders/stats` | open (not received / closed / cancelled / delivered in full), 1-2 days past its expected date, value >= RM 5,000 (500,000 sen) |
+| SO newly overdue | `GET /api/sales-orders?fields=orders-due&top=50` | open, 1-2 days past its Hookka expected date, value >= RM 5,000 |
+| Production newly late | `GET /api/production-orders/board` | live, 1-2 days past its target end date |
+| Material newly short | `GET /api/mrp/plan` | short > 0 and first needed within 7 days |
+
+One email per tick with every new alert (max 10 lines, the rest counted). Known limit: `orders-due`
+returns the 50 sales orders due soonest, so with more than 50 older overdue orders a newly overdue one can
+fall outside the read.
+
+**Email.** Through the ERP's outbox (`enqueueEmail` into `outbox_emails`, drained to Brevo / Resend).
+Clean English HTML + plain text: each brief section with its count and top 5, every line a link into the
+ERP; Monday appends "data gaps to fill". Footer: settings link + unsubscribe link. Each send is a row in
+`mcp_proactive_sends` (kind, items, outbox id, status), never the body or subject.
+
+**Unsubscribe.** `GET /api/mcp-proactive/unsubscribe?t=<token>` shows one button; the `POST` turns brief
+and alerts off. GET does nothing on purpose: mail scanners (Outlook Safe Links, Gmail) pre-open links. The
+32-character random token is the only credential; no user id in the link.
+
+**The person's own page:** `GET/PUT /api/mcp-admin/proactive/me` (settings), `GET /me/preview` (the brief
+built as you, shown in a sandboxed frame, NOT sent), `POST /me/test` (a `[Test]` brief with data gaps to
+your own email; at most once per 10 minutes).
+
+**`data_gaps` tool (D4).** Read-only quick answer, listed when the person may read any of its lists; each
+list they cannot read is left out (`noAccess`). Counts and the first five with links, no money:
+
+| Gap | Read |
+| --- | --- |
+| products without a BOM / selling price | `GET /api/products/setup-incomplete` |
+| BOMs with no material besides the fabric line (`otherLines = 0`); products whose BOM has lines without a price, or a zero cost | `GET /api/product-costing/summary` |
+| open sales orders without a Hookka expected delivery date | `GET /api/sales-orders?page=1&limit=500` (the 500 newest) |
+| active workers without a department | `GET /api/workers` |
+| active suppliers with no material binding | `GET /api/suppliers` + `GET /api/supplier-materials` |
+
+**Untested live:** a real brief / alert email on prod (no email was sent while building); the heartbeat
+sub-request reaching the tick on prod; the unsubscribe page through a real mail client.
 
 ## 4. OAuth (what Claude / ChatGPT need)
 

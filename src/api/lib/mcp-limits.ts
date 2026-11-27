@@ -22,6 +22,8 @@ export const RATE_PER_MINUTE = 30;
 export const RATE_PER_DAY = 600;
 export const RATE_LIMIT_STATUS = 429;
 export const LEAK_CHECK_CLIENT_ID = "mcpc_leak_check";
+/** Round 4d: the morning brief / test brief runs daily_brief as the person under this client. Not counted toward the person's rate limit. */
+export const PROACTIVE_CLIENT_ID = "mcpc_morning_brief";
 
 export const RATE_MINUTE_MESSAGE = "Too many requests — wait a minute. (Limit: 30 AI questions per minute per person.)";
 export const RATE_DAY_MESSAGE = "Daily limit reached. (Limit: 600 AI questions per person per day; it resets at midnight Malaysia time.)";
@@ -51,9 +53,9 @@ export async function countRecentCalls(db: D1Database, userId: string, now: Date
          FROM mcp_calls
         WHERE user_id = ? AND created_at >= ?
           AND COALESCE(status, 0) <> ${RATE_LIMIT_STATUS}
-          AND COALESCE(client_id, '') <> ?`,
+          AND COALESCE(client_id, '') NOT IN (?, ?)`,
     )
-    .bind(minuteAgo, midnight, userId, since, LEAK_CHECK_CLIENT_ID)
+    .bind(minuteAgo, midnight, userId, since, LEAK_CHECK_CLIENT_ID, PROACTIVE_CLIENT_ID)
     .first<Record<string, unknown>>();
   const n = (v: unknown) => Number(v) || 0;
   return { lastMinute: n(r?.last_minute ?? r?.lastMinute), today: n(r?.today) };
@@ -92,6 +94,8 @@ export const CACHEABLE_TOOLS = new Set([
   "gross_profit",
   "production_lead_time",
   "company_report",
+  // round 4d
+  "data_gaps",
 ]);
 
 export class AnswerCache<T> {
