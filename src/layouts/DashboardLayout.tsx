@@ -12,6 +12,7 @@ import { DASHBOARD_ROUTE_ELEMENTS } from "@/dashboard-routes";
 import { FloatingChatButton } from "@/components/assistant/FloatingChatButton";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { isPhoneUa, prefersDesktop, setPreferDesktop, shouldRedirectToMobile } from "@/lib/prefer-desktop";
+import { HighlightFromUrl } from "@/components/HighlightFromUrl";
 
 // Lives inside ToastProvider so it can pop a toast when a new deploy lands.
 // Polls for a new bundle hash every 2 min + on focus. On change: a toast only,
@@ -198,6 +199,7 @@ export default function DashboardLayout() {
         </div>
       </div>
       <ScrollRestoration />
+      <HighlightFromUrl />
     </ToastProvider>
   );
 }

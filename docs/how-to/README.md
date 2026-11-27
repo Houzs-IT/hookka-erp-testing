@@ -85,3 +85,7 @@ The guides are **data**, not prose: `src/api/lib/howto/`. This index is generate
 
 - `glossary`: 39 terms (SO, PO, Stock PO, GRN, PI, DO, Invoice, Job card, Production order, WIP, FG, BOM, Variant, Fabric tier, MRP, QC, Service case, Service order, Delivery return, Purchase return, Credit note, Debit note, AR aging, AP aging, Receipt, Payment voucher, e-Invoice, Sen vs RM, Floor Live, Efficiency %, PIC, ETA, MOQ, Consignment, Customer hub, Purchase company, Stock adjustment, Stock take, Outsource).
 - `explain_error`: 68 real ERP messages (`src/api/lib/howto/errors.ts`).
+
+## Screen map (`explain_screen`, `where_is`)
+
+- 157 router pages (48 in full detail), 1206 buttons / tabs / menu items — `src/api/lib/howto/screens-*.ts`. Links carry `?highlight=<label>`, which outlines that element in the ERP.

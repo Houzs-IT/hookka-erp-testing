@@ -70,6 +70,7 @@ import {
   writeRailExpandedPreference,
 } from "./lib/responsive-layout";
 import "./theme-vars.css";
+import { HighlightFromUrl } from "@/components/HighlightFromUrl";
 
 // The Home dashboard (Home v10) is code-split; its Sales view draws the charts.
 const HomeDashboard = lazy(() =>
@@ -545,6 +546,7 @@ export default function MobileLayout() {
             overflowX: "hidden",
           }}
         >
+          <HighlightFromUrl />
           <Routes>
           <Route path="/" element={<DashboardRoute />} />
           <Route path="/more" element={<MobileMore />} />

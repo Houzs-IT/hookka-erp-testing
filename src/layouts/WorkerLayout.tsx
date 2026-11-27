@@ -23,6 +23,7 @@ import {
 } from "@/lib/worker-i18n";
 import { useVersionCheck } from "@/lib/use-version-check";
 import PwaInstallPrompt from "@/components/pwa-install-prompt";
+import { HighlightFromUrl } from "@/components/HighlightFromUrl";
 
 // Keys used across the portal. Single source of truth so other
 // pages (e.g. login) can clear / set them consistently.
@@ -159,7 +160,12 @@ export default function WorkerLayout() {
   // black "Worker Portal" strip over the LIGHT login — owner 2026-06-27). The
   // version watcher + token guard above already ran (they're unconditional).
   if (isLogin) {
-    return <Outlet />;
+    return (
+      <>
+        <HighlightFromUrl />
+        <Outlet />
+      </>
+    );
   }
 
   return (
@@ -191,6 +197,7 @@ export default function WorkerLayout() {
             Self-hides when already installed or once dismissed. Skipped on the
             login screen (nothing to anchor an install decision to yet). */}
         {!isLogin && <PwaInstallPrompt />}
+        <HighlightFromUrl />
         <Outlet />
       </main>
 
