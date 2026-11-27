@@ -400,6 +400,35 @@ choices and no flow is company-specific in the code, so every guide is tagged `A
 real differences (consignment, customer hubs, per-customer prices, purchase company) are
 `variants`. Honesty tests: `tests/mcp-howto.test.mjs`.
 
+### Screen map — explain_screen, where_is, ?highlight= (owner 2026-11-27, PR 2)
+
+Owner: every screen and button must be explainable, including "where do I open an SO / a
+maintenance log"; staff can send Claude a photo or screenshot of the ERP and get it explained.
+
+- **Screen map** `src/api/lib/howto/screens-*.ts` (shape `screen-types.ts`): one entry per router
+  page (157), each with purpose, sidebar path, sections / tabs and every button / menu / row
+  action — label, what the handler does, the permission the route checks, side effects. Full
+  detail on the high-traffic pages (SO, PO, GRN, DO, invoice, payments, production, department
+  pages, worker `/worker/*`, service cases, products / BOM, inventory, MRP, Mail Center,
+  maintenance, settings), purpose + main buttons elsewhere.
+- **`explain_screen {path?, visible_text?, company?}`** (`src/api/lib/mcp-screens.ts`): the page
+  from a URL (most specific router pattern, `?tab=` kept) or from labels read off a screenshot
+  (label overlap, with alternatives when close); returns the page guide and `canDo` per action
+  (page read gate + the action's permission).
+- **`where_is {thing, company?}`**: sidebar path + link for "where do I open X"; abbreviations
+  expanded from the glossary (SO → Sales Order); the link carries `?highlight=` for the button
+  named, or the page's create button for "open / create / new / 开 X".
+- **Server instructions:** on a screenshot, read the URL bar and the visible labels, then call
+  `explain_screen`.
+- **`?highlight=<label>` helper** (`src/hooks/use-highlight-param.ts` + `src/lib/highlight-match.ts`,
+  mounted once per layout via `<HighlightFromUrl />` in DashboardLayout, MobileLayout and
+  WorkerLayout): finds the visible element whose text matches (trimmed, case-insensitive; exact
+  > aria-label / title > starts-with > contains, shortest wins), retries ~3 s, scrolls it into
+  view, draws a pulsing gold outline + "Here" tag for ~6 s as a pointer-events:none overlay,
+  then removes the param with `replaceState`. Never clicks or changes anything; no param → no-op.
+- Prompts `explain_my_screen`, `where_do_i_open`. Tests `tests/mcp-screen-map.test.mjs` (every
+  path in the router, every label in `src/`, every router page covered, matcher unit test).
+
 ### FAQ → tool (process help)
 
 | Staff ask | Tool |
@@ -412,6 +441,8 @@ real differences (consignment, customer hubs, per-customer prices, purchase comp
 | "What does GRN / WIP / fabric tier mean?" | `glossary` |
 | "I got 'You're not allowed to do that…' — what now?" | `explain_error` |
 | "I'm new in purchasing, what should I read first?" | `onboarding {role: "purchasing"}` |
+| "Where do I open a maintenance log?" / "SO 在哪里开?" | `where_is` |
+| (a screenshot of an ERP page) "What is this screen? What does this button do?" | `explain_screen {path, visible_text}` |
 
 ## 4. OAuth (what Claude / ChatGPT need)
 

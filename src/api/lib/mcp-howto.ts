@@ -40,6 +40,11 @@ const STOP = new Set(["how", "to", "do", "i", "a", "an", "the", "in", "on", "of"
 
 const CJK = /[㐀-鿿]/;
 
+/** Trim, collapse whitespace, lower-case — for comparing on-screen labels. */
+export function normaliseLabelText(s: string): string {
+  return String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 /** Lower-case latin word tokens (stop words dropped). */
 export function tokens(s: string): string[] {
   return String(s ?? "")

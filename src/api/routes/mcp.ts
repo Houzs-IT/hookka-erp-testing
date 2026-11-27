@@ -34,6 +34,7 @@ import { classifyPath, makeRedactor, moduleCatalog, MCP_PREFIX_RESOURCES } from 
 import { MCP_ACTION_HEADER, MCP_INNER_HEADER, armConfirmedAction, mcpInnerSecret, rememberVerified } from "../lib/mcp-inner";
 import { emitAudit } from "../lib/audit";
 import { confirmPending, proposeWrite, WRITE_PERMISSIONS, type ActionDeps, type WriteKind } from "../lib/mcp-write-actions";
+import { explainScreen, whereIs } from "../lib/mcp-screens";
 import { explainError, glossary, howTo, moduleOverview, NO_GUIDE_NOTE, onboarding, scrubQuestion } from "../lib/mcp-howto";
 import { needLabel, parseQuickText, QUICK_OUTPUT_SCHEMA, readToolAllowed, STRUCTURED_TOOLS, withLinksAndRm } from "../lib/mcp-visibility";
 import {
@@ -450,7 +451,8 @@ Keep replies short: lead with the count and the few lines that matter, give link
 For a PDF: find the document id, then get_pdf (sales orders, delivery orders and invoices come back as a 15-minute download link; purchase orders as a link to the ERP page). Give the person the link.
 ACTIONS (only if the admin switched them on): to book a meeting call propose_meeting, to send an email call propose_email. They do NOTHING yet — they return a summary and a confirmationId. Show the person that summary word for word and ask them to confirm. Only call confirm_action after they explicitly say yes; if they say no or want changes, call cancel_action (and propose again with the changes). Never confirm on your own, never confirm something the person has not seen. When the admin switched them on, the same goes for propose_mail_reply (reply to a Mail Center thread — thread_id from daily_brief), propose_note (a note on a purchase order or service case) and propose_po_approval (mark a sent PO Confirmed). Nothing else can be changed: no payments, stock, prices, payroll or deletes.
 If a call says "not available to your role", tell the user they do not have permission for that data.
-HELP ("how do I…", "where is…", "what does X mean", an error message): how_to {question} gives click-by-click steps with ERP links (end-to-end chains such as order to cash or procure to pay come back as one flow); module_overview {module} explains a module; glossary {term} explains a term or abbreviation; explain_error {text} explains an ERP error message (read it off a screenshot if needed); onboarding {role} gives a new starter's first-week reading path. Follow the guide's steps and labels exactly, and if canDo is false tell the person they need to ask their supervisor or admin for the permission. Guides are in English; answer in the person's language.`;
+HELP ("how do I…", "where is…", "what does X mean", an error message): how_to {question} gives click-by-click steps with ERP links (end-to-end chains such as order to cash or procure to pay come back as one flow); module_overview {module} explains a module; glossary {term} explains a term or abbreviation; explain_error {text} explains an ERP error message (read it off a screenshot if needed); onboarding {role} gives a new starter's first-week reading path. "Where do I open X?": where_is {thing} (sidebar path + a link that outlines the button). What a screen or button does: explain_screen.
+SCREENSHOTS: when the person sends a screenshot or photo of the ERP, read the URL bar (the path after the domain, e.g. /procurement/grn) and the visible button / tab / heading labels, then call explain_screen {path, visible_text: [labels]} — the path if you can read it, the labels either way. Explain the page from its answer, not from guesses; point at buttons by their exact label and give the link. Follow the guide's steps and labels exactly, and if canDo is false tell the person they need to ask their supervisor or admin for the permission. Guides are in English; answer in the person's language.`;
 
 // ── round 4 tool list (owner 2026-11-26) ────────────────────────────────────
 const RO = { readOnlyHint: true, openWorldHint: false };
@@ -523,6 +525,20 @@ const HOWTO_TOOLS = [
     title: "First-week reading path for a role",
     description: "An ordered list of guides and flows for a new starter: sales, purchasing, production, warehouse, finance or after-sales.",
     inputSchema: { type: "object", properties: { role: { type: "string", description: "sales | purchasing | production | warehouse | finance | after-sales" } }, additionalProperties: false },
+    annotations: RO,
+  },
+  {
+    name: "explain_screen",
+    title: "Explain this ERP screen",
+    description: "Which ERP page this is and what every button, tab and menu on it does (with canDo for this person). Give the URL path if you can read it, and/or the labels visible on a screenshot (visible_text).",
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "The URL or path, e.g. /procurement/grn" }, visible_text: { type: "array", items: { type: "string" }, description: "Button / tab / heading labels read off the screenshot" }, company: { type: "string" } }, additionalProperties: false },
+    annotations: RO,
+  },
+  {
+    name: "where_is",
+    title: "Where do I open…",
+    description: "Where something is in the ERP (e.g. 'maintenance log', 'credit note', 'open an SO'): the sidebar path and a link that outlines the button to press, plus the matching how-to guide.",
+    inputSchema: { type: "object", properties: { thing: { type: "string" }, company: { type: "string" } }, required: ["thing"], additionalProperties: false },
     annotations: RO,
   },
 ];
@@ -1747,12 +1763,14 @@ async function callTool(c: Context<Env>, id: McpIdentity, token: string, name: s
         : name === "module_overview" ? await moduleOverview(args, origin, can)
         : name === "glossary" ? glossary(args, origin)
         : name === "explain_error" ? explainError(args)
+        : name === "explain_screen" ? await explainScreen(args, origin, can)
+        : name === "where_is" ? await whereIs(args, origin, can)
         : await onboarding(args, origin, can);
       result = text(JSON.stringify(ans.value));
       // Gap log: a question with no guide yet is kept (personal data stripped) so the admin page can list what to write next.
       if (!ans.matched) {
         note = NO_GUIDE_NOTE;
-        target = scrubQuestion(String(args.question ?? args.topic ?? args.text ?? args.module ?? args.term ?? args.role ?? ""));
+        target = scrubQuestion(String(args.question ?? args.topic ?? args.text ?? args.thing ?? args.path ?? args.module ?? args.term ?? args.role ?? (Array.isArray(args.visible_text) ? args.visible_text.slice(0, 8).join(" | ") : "")));
       }
     } else if (name === "export_excel") {
       const r = await exportExcel(c, id, token, args);
