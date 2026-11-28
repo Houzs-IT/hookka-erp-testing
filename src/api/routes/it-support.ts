@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../worker";
+import { hubFileHeaders } from "../lib/hub-file-headers";
 import { memoizeSelfApply, runSelfApply } from "../lib/self-apply";
 import { DEFAULT_ORG_ID } from "../lib/tenant";
 
@@ -216,11 +217,7 @@ app.get("/attachments/:id", async (c) => {
   if (!res.ok || !res.body) {
     return c.json({ success: false, error: "IT Support is temporarily unavailable. Please try again." }, 502);
   }
-  const headers = new Headers();
-  headers.set("Content-Type", res.headers.get("Content-Type") ?? "application/octet-stream");
-  const disposition = res.headers.get("Content-Disposition");
-  if (disposition) headers.set("Content-Disposition", disposition);
-  return new Response(res.body, { status: 200, headers });
+  return new Response(res.body, { status: 200, headers: hubFileHeaders(res) });
 });
 
 // ---- Hub -> Hookka: IT replied on, or moved, a ticket -----------------------

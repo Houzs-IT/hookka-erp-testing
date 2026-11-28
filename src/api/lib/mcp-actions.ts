@@ -495,7 +495,7 @@ export function readMailboxes(body: unknown): Mailbox[] {
 }
 
 /** Same rules as the Mail Center compose route (recipientsError) plus size caps. */
-export function buildEmailProposal(args: Obj, mailboxes: Mailbox[], userId: string): Proposal<EmailBody> {
+export function buildEmailProposal(args: Obj, mailboxes: Mailbox[], userId: string, ownEmail = ""): Proposal<EmailBody> {
   const to = parseAddressList(strList(args.to));
   const cc = parseAddressList(strList(args.cc));
   if (to.length === 0) return { ok: false, error: "Give at least one recipient (to)." };
@@ -523,6 +523,12 @@ export function buildEmailProposal(args: Obj, mailboxes: Mailbox[], userId: stri
     from = mine.length === 1 ? mine[0] : live.length === 1 ? live[0] : undefined;
     if (!from) return { ok: false, error: `Say which mailbox to send from (from_mailbox): ${live.map((m) => m.address).join(", ")}.` };
   }
+  // The AI confirms its own proposals, so planted text could make it mail ERP data out. Interim rule until a
+  // person approves in the ERP UI: the sending mailbox's own domain, or the person's own address.
+  const domain = (a: string) => a.slice(a.lastIndexOf("@") + 1);
+  const own = ownEmail.trim().toLowerCase();
+  const outside = [...to, ...cc].find((a) => a !== own && domain(a) !== domain(from.address));
+  if (outside) return { ok: false, error: `The AI can only email @${domain(from.address)} addresses or your own address, not ${outside}. Send outside email from Mail Center yourself.` };
   const body: EmailBody = { fromAddress: from.address, to, cc, subject, text };
   const summary =
     `Send an email from ${from.address} to ${to.join(", ")}${cc.length ? `, cc ${cc.join(", ")}` : ""}.\n` +

@@ -66,6 +66,13 @@ test("OAuth helpers: PKCE S256 = base64url(sha256(verifier)) and redirect URIs",
   assert.equal(store.validRedirectUri("http://evil.example/cb"), false);
   assert.equal(store.validRedirectUri("javascript:alert(1)"), false);
   assert.equal(store.validRedirectUri("https://x.example/cb#frag"), false);
+  // Registration needs no login: only known AI app hosts and loopback (finding #1, 2026-11-27).
+  assert.equal(store.validRedirectUri("https://claude.com/api/mcp/auth_callback"), true);
+  assert.equal(store.validRedirectUri("https://127.0.0.1:8443/cb"), true);
+  assert.equal(store.validRedirectUri("https://evil.example/cb"), false);
+  assert.equal(store.validRedirectUri("https://claude.ai.evil.example/cb"), false);
+  assert.equal(store.validRedirectUri("https://evil.claude.ai/cb"), false);
+  assert.equal(store.validRedirectUri("http://claude.ai/cb"), false);
   assert.equal(store.appLabel("Claude"), "Claude");
   assert.equal(store.appLabel("ChatGPT"), "ChatGPT");
 });
@@ -110,7 +117,9 @@ test("the Allow page: ERP login first, access checked, CSRF double-submit on the
   assert.match(mcp, /return c\.redirect\(`\/login\?next=\$\{encodeURIComponent\(here\.pathname \+ here\.search\)\}`, 302\);/);
   assert.match(mcp, /if \(!csrfCookie \|\| get\("csrf"\) !== csrfCookie\)/);
   assert.match(mcp, /if \(!p\.challenge \|\| p\.method !== "S256"\)/);
-  assert.match(mcp, /if \(!cl\.redirectUris\.includes\(p\.redirectUri\)\)/);
+  assert.match(mcp, /if \(!cl\.redirectUris\.includes\(p\.redirectUri\) \|\| !validRedirectUri\(p\.redirectUri\)\)/);
+  assert.match(mcp, /if \(!cl\.redirectUris\.every\(validRedirectUri\)\) return err\("invalid_client"/);
+  assert.match(mcp, /Your access goes to <b>\$\{esc\(new URL\(p\.redirectUri\)\.host\)\}<\/b>/);
   const login = read("src/pages/login.tsx");
   assert.match(login, /if \(to\.startsWith\("\/api\/mcp\/oauth\/authorize\?"\)\) \{\n\s+window\.location\.assign\(to\);/);
 });
@@ -152,4 +161,17 @@ test("leak check: list endpoints only, side-effect GETs skipped, field names onl
   const at = admin.indexOf('app.post("/admin/leak-check"');
   assert.match(admin.slice(at, at + 200), /const denied = requireSuperAdmin\(c\);/);
   assert.match(admin.slice(at), /\} finally \{\n\s+await revokeToken\(db, tok\.tokenId\);/);
+});
+
+// R&D finding #9 (2026-11-27): call rows are logged after the call, so every
+// message in one batch saw the same old count.
+test("rate limit: a batch is capped and the calls already made in this request count", async () => {
+  const { MAX_BATCH, rateDecision, RATE_MINUTE_MESSAGE } = await import("../src/api/lib/mcp-limits.ts");
+  assert.equal(MAX_BATCH, 10);
+  const mcp = read("src/api/routes/mcp.ts");
+  assert.match(mcp, /if \(msgs\.length > MAX_BATCH\) \{/);
+  assert.match(mcp, /rateDecision\(n\.lastMinute \+ seen\.calls, n\.today \+ seen\.calls\)/);
+  assert.match(mcp, /seen\.calls\+\+;\n\s+return reply\(await callTool\(/);
+  // 29 logged + 1 already run in this request reaches the per-minute limit.
+  assert.equal(rateDecision(29 + 1, 0), RATE_MINUTE_MESSAGE);
 });

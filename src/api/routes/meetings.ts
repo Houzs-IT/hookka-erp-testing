@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { hubFileHeaders } from "../lib/hub-file-headers";
 import type { Env } from "../worker";
 import { hasPermission } from "../lib/rbac";
 import { apiRateLimit } from "../lib/api-rate-limit";
@@ -306,10 +307,7 @@ app.get("/meetings/:id/files/:fid", async (c) => {
   }
   if (res.status === 404) return c.json({ error: "That file could not be found." }, 404);
   if (!res.ok || !res.body) return c.json({ error: UNREACHABLE }, 502);
-  const headers = new Headers({ "Content-Type": res.headers.get("Content-Type") ?? "application/octet-stream", "X-Content-Type-Options": "nosniff" });
-  const disposition = res.headers.get("Content-Disposition");
-  if (disposition) headers.set("Content-Disposition", disposition);
-  return new Response(res.body, { status: 200, headers });
+  return new Response(res.body, { status: 200, headers: hubFileHeaders(res) });
 });
 
 const MANAGE_ONLY = "You need Manage meeting rooms for that.";
