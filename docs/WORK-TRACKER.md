@@ -342,6 +342,16 @@ reporting "done". See `docs/DEV-OPERATING-FRAMEWORK.md` for the discipline.
 
 Status key: 🔵 in progress · 🟡 parked/needs owner · ✅ shipped to prod · ⚪ queued
 
+## 🔵 Audit fixes K1–K4 (owner 2026-11-28 「全部修」, fix/audit-2026-11-28)
+
+Asks logged from the coordinator's brief, in order. One PR, not merged, not deployed. Houzs H1–H4 are a separate PR in that repo.
+State: all four fixed on the branch (BUG-2026-11-28-611 to -614).
+1. 🔵 PO "Mark Partially Received" with no receipt: server gives PARTIAL_RECEIVED the RECEIVED posted-GRN gate; desktop + phone offer it only once a GRN is posted. Read-only count of PARTIAL_RECEIVED POs with nothing received; NO data change (query in BUG-2026-11-28-611 for the owner).
+2. 🔵 PI detail "Mark Paid" on a foreign-currency PI: ask the payment-day rate, same as the list and the phone (`markPaidBody`).
+3. 🔵 Bare "PAID" invoice status with no payment: refused server-side unless payments cover the total (PARTIAL_PAID needs a payment); dead phone bulk entry removed.
+4. 🔵 Cover-photo route without a permission check: the upload gate (flow doc `update` / `files:create`).
+Each: a regression test, a `docs/bugs/` entry, the CODEBASE-MAP entry refreshed.
+
 ## 🔵 AI Connector process help — "how do I…" (owner 2026-11-27, feat/mcp-howto → feat/mcp-screen-guide → feat/mcp-screen-shots)
 
 Asks logged from the coordinator's multi-part brief, in order:

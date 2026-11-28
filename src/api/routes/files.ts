@@ -527,15 +527,25 @@ app.get("/flow-lines", async (c) => {
 app.patch("/:id/cover", async (c) => {
   const id = c.req.param("id");
   const orgId = getOrgId(c);
-  await c.var.DB.prepare(
-    "ALTER TABLE file_assets ADD COLUMN IF NOT EXISTS sort_order INTEGER",
-  ).run();
   const row = await c.var.DB.prepare(
     "SELECT * FROM file_assets WHERE id = ? AND orgId = ?",
   )
     .bind(id, orgId)
     .first<FileAssetRow>();
   if (!row) return c.json({ success: false, error: "Not found" }, 404);
+  // BUG-2026-11-28-614: this was the only ungated file write — any signed-in
+  // user could re-cover any product or document. Same gate as upload: a flow
+  // document's file needs that document's update permission, anything else
+  // files:create.
+  const coverType =
+    row.resourceType ?? (row as unknown as { resource_type?: string }).resource_type ?? "";
+  const denied = flowFileResource(coverType)
+    ? await flowGate(c, coverType, "update")
+    : await requirePermission(c, "files", "create");
+  if (denied) return denied;
+  await c.var.DB.prepare(
+    "ALTER TABLE file_assets ADD COLUMN IF NOT EXISTS sort_order INTEGER",
+  ).run();
   await c.var.DB.batch([
     c.var.DB.prepare(
       "UPDATE file_assets SET sort_order = NULL WHERE orgId = ? AND resourceType = ? AND resourceId = ?",

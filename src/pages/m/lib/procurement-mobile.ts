@@ -441,7 +441,8 @@ export function poActions(po: RawRow, linkedGrns: RawRow[], linkedPis: RawRow[])
   } else if (receivable) {
     primary = posted ? "RECEIVE_GOODS" : "CREATE_GRN";
     if (posted) secondary = "MARK_RECEIVED";
-    else if (st === "CONFIRMED") secondary = "MARK_PARTIAL";
+    // BUG-2026-11-28-611: never offered before a GRN is posted (it flipped the
+    // status with nothing received); the server refuses it too.
     if (posted && st === "CONFIRMED") menu.push("MARK_PARTIAL");
     if (editable) menu.push("EDIT");
   } else if (st === "RECEIVED") primary = "CLOSE";

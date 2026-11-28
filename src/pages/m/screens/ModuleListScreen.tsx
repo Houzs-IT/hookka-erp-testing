@@ -107,7 +107,8 @@ export function ModuleListScreen({
   //   sales      → CONFIRMED        (DRAFT → CONFIRMED)
   //   delivery   → DISPATCHED       (LOADED/READY → DISPATCHED)
   //   procurement→ SENT             (DRAFT → SENT)
-  //   invoices   → PAID             (UNPAID → PAID)
+  //   invoices   → none: a paid status needs a recorded payment
+  //                 (BUG-2026-11-28-613); /m/invoices has its own list anyway.
   // For modules with no obvious next-status, the Mark button just toasts.
   const bulkMarkConfig: Record<
     string,
@@ -127,11 +128,6 @@ export function ModuleListScreen({
       label: "Mark Sent",
       status: "SENT",
       endpoint: (id) => `/api/purchase-orders/${encodeURIComponent(id)}`,
-    },
-    invoices: {
-      label: "Mark Paid",
-      status: "PAID",
-      endpoint: (id) => `/api/invoices/${encodeURIComponent(id)}`,
     },
     announcements: {
       label: "Mark Read",

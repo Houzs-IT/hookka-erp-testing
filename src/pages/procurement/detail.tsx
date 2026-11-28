@@ -657,8 +657,12 @@ export default function PurchaseOrderDetailPage() {
   if (po.status === "SUBMITTED") {
     statusActions.push({ label: "Mark Confirmed", status: "CONFIRMED", variant: "primary" });
   } else if (po.status === "CONFIRMED") {
-    statusActions.push({ label: "Mark Partially Received", status: "PARTIAL_RECEIVED", variant: "outline" });
+    // BUG-2026-11-28-611: "Mark Partially Received" only once a GRN is posted,
+    // like Mark Fully Received. Shown bare, it flipped the status with nothing
+    // received; posting a GRN (the Create GRN button) sets PARTIAL_RECEIVED
+    // itself, and the server refuses the flip without a posted GRN.
     if (hasPostedGrn) {
+      statusActions.push({ label: "Mark Partially Received", status: "PARTIAL_RECEIVED", variant: "outline" });
       statusActions.push({ label: "Mark Fully Received", status: "RECEIVED", variant: "primary" });
     }
   } else if (po.status === "PARTIAL_RECEIVED") {

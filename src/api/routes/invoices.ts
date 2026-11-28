@@ -2550,6 +2550,31 @@ app.put("/:id", async (c) => {
       }
     }
 
+    // BUG-2026-11-28-613: a bare { status: "PAID" } (or PARTIAL_PAID) set the
+    // status with no money: no invoice_payments row, no ledger entry, no
+    // change to the customer balance, yet the invoice left the receivables
+    // and aging lists. A paid status must be backed by payments.
+    if (nextStatus !== existing.status) {
+      if (nextStatus === "PAID" && nextPaidAmount < existing.totalSen) {
+        return c.json(
+          {
+            success: false,
+            error: `Payments cover ${(nextPaidAmount / 100).toFixed(2)} of ${(existing.totalSen / 100).toFixed(2)} on this invoice, so it cannot be marked PAID. Record the payment instead (Payments, or send paidAmount).`,
+          },
+          409,
+        );
+      }
+      if (nextStatus === "PARTIAL_PAID" && !(nextPaidAmount > 0)) {
+        return c.json(
+          {
+            success: false,
+            error: "No payment is recorded on this invoice, so it cannot be marked PARTIAL_PAID. Record the payment instead (Payments, or send paidAmount).",
+          },
+          409,
+        );
+      }
+    }
+
     const merged = {
       paymentDate:
         body.paymentDate === undefined
