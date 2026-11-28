@@ -971,7 +971,11 @@ app.put("/:id", async (c) => {
       // rm_batches + cost_ledger empty. Now: requires the operator to
       // create + post a GRN first. CONFIRMED is treated as committed
       // for this check (rare but legal — see grn.ts COMMITTED_STATUSES).
-      if (body.status === "RECEIVED") {
+      // BUG-2026-11-28-611: PARTIAL_RECEIVED takes the same gate. The manual
+      // "Mark Partially Received" flipped CONFIRMED POs with nothing received
+      // (20 of the 40 newest PARTIAL_RECEIVED POs live had 0 received, no GRN),
+      // and the GRN self-heal back to CONFIRMED only runs on GRN events.
+      if (body.status === "RECEIVED" || body.status === "PARTIAL_RECEIVED") {
         await ensureGrnItemPoRef(c.var.DB);
         const postedGrn = await c.var.DB.prepare(
           `SELECT id FROM grns
@@ -985,7 +989,10 @@ app.put("/:id", async (c) => {
           return c.json(
             {
               success: false,
-              error: "Create + post a GRN before marking received",
+              error:
+                body.status === "PARTIAL_RECEIVED"
+                  ? "Receive the goods first (create + post a GRN). The PO turns Partially Received by itself when a GRN is posted."
+                  : "Create + post a GRN before marking received",
               requiresGrn: true,
             },
             412,

@@ -15,7 +15,7 @@ const { default: poApp } = await import(
   pathToFileURL(resolve(process.cwd(), "src/api/routes/purchase-orders.ts")).href
 );
 
-function harness(status) {
+function harness(status, { postedGrn = false } = {}) {
   const existing = {
     id: "po-1",
     poNo: "PO-2608-026",
@@ -37,6 +37,7 @@ function harness(status) {
     bind: (...a) => stmt(sql, a),
     async first() {
       if (/FROM purchase_orders WHERE id = \?/.test(sql)) return existing;
+      if (postedGrn && /FROM grns/.test(sql) && /status IN \('POSTED','CONFIRMED'\)/.test(sql)) return { id: "grn-1" };
       return null;
     },
     async all() {
@@ -94,6 +95,34 @@ test("CONFIRMED -> RECEIVED still needs a posted GRN", async () => {
   const res = await put({ status: "RECEIVED" });
   assert.equal(res.status, 412);
   assert.equal(updates.length, 0);
+});
+
+// BUG-2026-11-28-611: the bare "Mark Partially Received" flipped CONFIRMED POs
+// with nothing received. PARTIAL_RECEIVED now takes the same posted-GRN gate.
+test("CONFIRMED -> PARTIAL_RECEIVED needs a posted GRN too", async () => {
+  const { put, updates } = harness("CONFIRMED");
+  const res = await put({ status: "PARTIAL_RECEIVED" });
+  assert.equal(res.status, 412);
+  const body = await res.json();
+  assert.equal(body.requiresGrn, true);
+  assert.match(body.error, /Receive the goods first/);
+  assert.equal(updates.length, 0);
+});
+
+test("CONFIRMED -> PARTIAL_RECEIVED is allowed once a GRN is posted", async () => {
+  const { put, updates } = harness("CONFIRMED", { postedGrn: true });
+  const res = await put({ status: "PARTIAL_RECEIVED" });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal(statusOf(updates[0]), "PARTIAL_RECEIVED");
+});
+
+test("the PO detail page and the phone offer Mark Partially Received only with a posted GRN", () => {
+  const page = readFileSync(resolve(process.cwd(), "src/pages/procurement/detail.tsx"), "utf8");
+  assert.match(
+    page,
+    /po\.status === "CONFIRMED"\) \{[\s\S]{0,600}?if \(hasPostedGrn\) \{\s*statusActions\.push\(\{ label: "Mark Partially Received"/,
+  );
+  assert.equal(page.match(/label: "Mark Partially Received"/g)?.length, 1);
 });
 
 test("DRAFT and SUBMITTED cannot be closed (nothing was ordered yet)", async () => {

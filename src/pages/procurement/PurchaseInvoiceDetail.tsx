@@ -29,7 +29,10 @@ import { useCachedJson, invalidateCachePrefix, isUnknownOutcome } from "@/lib/ca
 import { RecordLoadError } from "@/components/ui/record-load-error";
 import { getCurrentUser } from "@/lib/auth";
 import { useNavGuard } from "@/lib/use-nav-guard";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, todayYmdMY } from "@/lib/utils";
+import { fetchFxRate } from "@/lib/fx-client";
+import { fmtFxRate } from "@/lib/fx";
+import { markPaidBody } from "@/pages/m/lib/procurement-mobile";
 import { MaterialPicker, type MaterialOption } from "@/components/material-picker";
 import { MoneyInput } from "@/components/ui/money-input";
 import { DiscountInput } from "@/components/ui/discount-input";
@@ -178,6 +181,9 @@ type PurchaseInvoiceDetail = {
   subtotalSen?: number;
   taxSen?: number;
   items?: PurchaseInvoiceItem[];
+  // Multi-currency (rowToPI): a foreign PI settles at the payment-day rate.
+  currency?: string | null;
+  fxRate?: number | null;
 };
 
 // Background colour for the small line-type badge on non-stocked rows.
@@ -284,14 +290,35 @@ export default function PurchaseInvoiceDetailPage() {
 
   // Status transition (PUT {status}) — surfaces failures incl. the backend's
   // GL-posting errors on APPROVED/PAID (do NOT optimistically flip the badge).
+  //
+  // BUG-2026-11-28-612: Mark Paid on a foreign-currency PI asks for the
+  // payment-day rate first, the same prompt and body (markPaidBody) as the
+  // list's right-click and the phone. Without it the server refused with
+  // "provide payFxRate", a field this page never asked for.
   async function changeStatus(next: string, label: string) {
     if (!pi) return;
+    let body: Record<string, unknown> = { status: next };
+    if (next === "PAID" && pi.currency && pi.currency !== "MYR") {
+      const ccy = pi.currency;
+      const setup = await fetchFxRate(ccy, todayYmdMY());
+      const input = window.prompt(
+        `${ccy} invoice — payment-day rate (MYR per 1 ${ccy}; booked at ${pi.fxRate ?? "?"}${setup !== null ? `; this month in Setup: ${fmtFxRate(setup)}` : ""}):`,
+        setup !== null ? fmtFxRate(setup) : String(pi.fxRate ?? ""),
+      );
+      if (input === null) return;
+      const built = markPaidBody(pi as unknown as Record<string, unknown>, input);
+      if (!built.ok) {
+        toast.error(built.error);
+        return;
+      }
+      body = built.body;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/purchase-invoices/${pi.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: next }),
+        body: JSON.stringify(body),
       });
       const j = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
       if (!res.ok || !j?.success) {

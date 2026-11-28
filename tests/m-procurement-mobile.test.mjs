@@ -135,7 +135,9 @@ test("PO actions per status match detail.tsx", () => {
   assert.ok(sub.menu.includes("CANCEL") && sub.menu.includes("EMAIL") && sub.menu.includes("CREATE_INVOICE"));
 
   const conf = poActions(po("CONFIRMED", [item(5)]), [], []);
-  assert.deepEqual([conf.primary, conf.secondary], ["CREATE_GRN", "MARK_PARTIAL"]);
+  // BUG-2026-11-28-611: no Mark Partially Received before a GRN is posted.
+  assert.deepEqual([conf.primary, conf.secondary], ["CREATE_GRN", null]);
+  assert.ok(!conf.menu.includes("MARK_PARTIAL"));
   const confPosted = poActions(po("CONFIRMED", [item(5, 2)]), [{ status: "POSTED" }], []);
   assert.deepEqual([confPosted.primary, confPosted.secondary], ["RECEIVE_GOODS", "MARK_RECEIVED"]);
   assert.ok(confPosted.menu.includes("MARK_PARTIAL"));
@@ -331,6 +333,23 @@ test("Mark Paid on a foreign PI sends the payment-day rate (pi.tsx)", () => {
   assert.deepEqual(markPaidBody({}, ""), { ok: true, body: { status: "PAID" } });
   assert.equal(markPaidBody({ currency: "USD" }, "0").ok, false);
   assert.deepEqual(markPaidBody({ currency: "USD" }, "4.45"), { ok: true, body: { status: "PAID", payFxRate: 4.45 } });
+});
+
+// BUG-2026-11-28-612: the PI DETAIL page's Mark Paid sent a bare { status: "PAID" },
+// which the server refuses for a foreign PI. It must ask for the rate and build
+// the body with the same markPaidBody.
+test("Mark Paid on the PI detail page asks a foreign PI for the payment-day rate", () => {
+  const detail = read("src/pages/procurement/PurchaseInvoiceDetail.tsx");
+  assert.match(detail, /import \{ markPaidBody \} from "@\/pages\/m\/lib\/procurement-mobile"/);
+  assert.match(
+    detail,
+    /if \(next === "PAID" && pi\.currency && pi\.currency !== "MYR"\) \{[\s\S]{0,700}?window\.prompt\([\s\S]{0,500}?markPaidBody\(pi as unknown as Record<string, unknown>, input\)[\s\S]{0,200}?body = built\.body;/,
+  );
+  assert.match(detail, /body: JSON\.stringify\(body\),/);
+  assert.doesNotMatch(detail, /body: JSON\.stringify\(\{ status: next \}\)/);
+  // and the server still demands the rate, so the page must keep sending it
+  const piApi = read("src/api/routes/purchase-invoices.ts");
+  assert.match(piApi, /provide payFxRate \(MYR per 1/);
 });
 
 test("PI create checks + supplier mismatch wording (pi/create.tsx)", () => {

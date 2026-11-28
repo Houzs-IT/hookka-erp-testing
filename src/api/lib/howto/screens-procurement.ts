@@ -166,7 +166,7 @@ export const SCREENS: ScreenEntry[] = [
       {
         label: "Mark Partially Received",
         kind: "button",
-        does: "On a CONFIRMED PO: sets status PARTIAL_RECEIVED.",
+        does: "Only on a CONFIRMED PO that already has a POSTED GRN: sets status PARTIAL_RECEIVED (refused otherwise). Posting a GRN normally sets it by itself — use Create GRN to receive goods.",
         permission: "purchase-orders:receive",
       },
       {
